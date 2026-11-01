@@ -832,11 +832,11 @@ Vector<ExistingProof> findExistingProofs(FunctionPassContext& context, const Tes
     return proofs;
 }
 
-ValueID ensureEdgeResult(IRBuilder& builder, FunctionAnalyses& analyses, Edge edge, uint32_t proof)
+static ValueID ensureEdgeResult(IRBuilder& builder, bool isOnlyWayIn, Edge edge, uint32_t proof)
 {
     Function& function = builder.function();
     // A parameter that other edges fill too is a merge of their arguments, not the proof of this edge.
-    if (!analyses.hasSingleIncomingEdge(targetOf(function, edge).block))
+    if (!isOnlyWayIn)
         builder.splitEdge(edge);
 
     const Target& target = targetOf(function, edge);
@@ -846,6 +846,11 @@ ValueID ensureEdgeResult(IRBuilder& builder, FunctionAnalyses& analyses, Edge ed
 
     builder.setOrigin(function.at(edge.from).terminator.origin());
     return builder.addEdgeResult(edge, proof);
+}
+
+ValueID ensureEdgeResult(IRBuilder& builder, FunctionAnalyses& analyses, Edge edge, uint32_t proof)
+{
+    return ensureEdgeResult(builder, analyses.hasSingleIncomingEdge(targetOf(builder.function(), edge).block), edge, proof);
 }
 
 // Whether a test may look at another definition of what its operand holds.
@@ -5141,6 +5146,9 @@ PassOutcome askWhetherComparedPositionsAreInBounds(FunctionPassContext& context,
         BlockID block;
         ValueID array;
         uint32_t operandOfPosition;
+        // Asked while the graph is the one that was looked at. A test that is put behind one comparison adds no way into the arm of another, which has one block in front of it,
+        // and the graph would be made anew for each comparison to say so.
+        bool isOnlyWayIntoArm;
     };
     Vector<Comparison, 4> comparisons;
     Vector<BlockID, 4> armsWithTest;
@@ -5204,8 +5212,19 @@ PassOutcome askWhetherComparedPositionsAreInBounds(FunctionPassContext& context,
         ValueID identityOfPosition = analyses.identityOf(position);
         // The test names the list as the access does: code generation gives `new Array(n)` the storage that the only cast behind it expects.
         ValueID accessed;
-        for (BlockID other : analyses.cfg().reversePostOrder()) {
-            if (accessed || !analyses.dominators().dominates(whenBelow, other) || (haveTests && function.at(other).frequency.predicted() == BlockFrequency::Rare))
+        // What the arm dominates, in the order of the graph: the rest of the function is not walked for one comparison.
+        const Dominators& dominators = analyses.dominators();
+        Vector<BlockID, 16> dominated { whenBelow };
+        for (size_t index = 0; index < dominated.size(); ++index)
+            dominated.append(dominators.children(dominated[index]));
+        std::ranges::sort(dominated, { }, [&](BlockID other) {
+            return analyses.cfg().reversePostOrderIndex(other);
+        });
+        context.build.statistics().count(StatisticID::BlocksReadForAccessesBehindComparisons, dominated.size());
+        for (BlockID other : dominated) {
+            if (accessed)
+                break;
+            if (haveTests && function.at(other).frequency.predicted() == BlockFrequency::Rare)
                 continue;
             for (ValueID id : function.at(other).values) {
                 const Value& access = function.at(id);
@@ -5234,11 +5253,12 @@ PassOutcome askWhetherComparedPositionsAreInBounds(FunctionPassContext& context,
             continue;
         // `k < list.length && k < n`: the arm of the first comparison holds the second. The test stands behind the last, where the position is the one that the access names.
         if (size_t first = armsWithTest.find(block); first != notFound) {
-            comparisons[first] = { block, accessed, operandOfPosition };
+            comparisons[first] = { block, accessed, operandOfPosition, analyses.hasSingleIncomingEdge(whenBelow) };
             armsWithTest[first] = whenBelow;
             continue;
         }
-        comparisons.append({ block, accessed, operandOfPosition });
+        context.build.statistics().count(StatisticID::BlocksReadForAccessesBehindComparisons, 1);
+        comparisons.append({ block, accessed, operandOfPosition, analyses.hasSingleIncomingEdge(whenBelow) });
         armsWithTest.append(whenBelow);
     }
     if (comparisons.isEmpty())
@@ -5246,7 +5266,7 @@ PassOutcome askWhetherComparedPositionsAreInBounds(FunctionPassContext& context,
 
     IRBuilder builder(analyses.context(), function, context.types, &analyses);
     for (const Comparison& comparison : comparisons) {
-        ValueID position = ensureEdgeResult(builder, analyses, Edge { comparison.block, 0 }, comparison.operandOfPosition);
+        ValueID position = ensureEdgeResult(builder, comparison.isOnlyWayIntoArm, Edge { comparison.block, 0 }, comparison.operandOfPosition);
         BlockID whenBelow = function.at(comparison.block).terminator.taken().block;
         Target whenNotBelow = function.at(comparison.block).terminator.notTaken();
         BlockID rest = builder.splitBlock(ProgramPoint::atHeadOf(whenBelow));
