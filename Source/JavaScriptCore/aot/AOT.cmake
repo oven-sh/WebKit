@@ -594,6 +594,18 @@ function(AOT_GENERATE_RUNTIME_FACTS)
     set(JavaScriptCore_SOURCES ${JavaScriptCore_SOURCES} "${JavaScriptCore_AOT_GENERATED_DIR}/AOTRuntimeFactsOfLayoutsIncludes.h" PARENT_SCOPE)
 endfunction()
 
+# It reads the text of the compiler's sources too. What it writes says only that they have passed.
+function(AOT_CHECK_READS_THAT_ASSUME)
+    file(GLOB_RECURSE sources CONFIGURE_DEPENDS "${JAVASCRIPTCORE_DIR}/aot/*.cpp" "${JAVASCRIPTCORE_DIR}/aot/*.h")
+    add_custom_command(
+        OUTPUT "${JavaScriptCore_AOT_GENERATED_DIR}/AOTReadsThatAssumeChecked.h"
+        DEPENDS ${sources} "${JAVASCRIPTCORE_DIR}/aot/codegen/generator/reads-that-assume.ts" "${JAVASCRIPTCORE_DIR}/aot/codegen/AOTReadsThatAssume.txt"
+        COMMAND "${NODE_EXECUTABLE}" "${JAVASCRIPTCORE_DIR}/aot/codegen/generator/reads-that-assume.ts" --javascriptcore "${JAVASCRIPTCORE_DIR}" --out "${JavaScriptCore_AOT_GENERATED_DIR}"
+        VERBATIM
+    )
+    set(JavaScriptCore_SOURCES ${JavaScriptCore_SOURCES} "${JavaScriptCore_AOT_GENERATED_DIR}/AOTReadsThatAssumeChecked.h" PARENT_SCOPE)
+endfunction()
+
 function(AOT_READ_LIBRARY_SOURCES result problemsResult)
     set(problems)
     set(sources)
@@ -696,6 +708,7 @@ AOT_GENERATE_FROM_SCHEMA()
 AOT_GENERATE_BUILTIN_TABLE()
 AOT_GENERATE_VECTOR()
 AOT_GENERATE_RUNTIME_FACTS()
+AOT_CHECK_READS_THAT_ASSUME()
 AOT_COMPUTE_SOURCES()
 AOT_CHECK_SOURCE_LISTS()
 AOT_CHECK_EXPORTED_HEADERS()
