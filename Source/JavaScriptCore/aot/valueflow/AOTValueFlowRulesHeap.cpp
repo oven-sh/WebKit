@@ -824,11 +824,13 @@ ClimbingSet HeapRule::accessorsFoundFrom(ClimbingSet start, const HeapKey& key, 
     return holdsAnything(others) ? m_context.unite(accessors, m_context.valueOf(m_context.lookup(others, name))) : accessors;
 }
 
-ClimbingSet HeapRule::settersOfProgramLaidAbove(ClimbingSet start, const HeapKey& key)
+ClimbingSet HeapRule::accessorsOfProgramLaidAbove(ClimbingSet start, const HeapKey& key, HeapPropertyPart part)
 {
-    if (key.keyClass != HeapKeyClass::Name && m_context.isSabotaged(Sabotage::StoresUnderUnknownKeysEnterNoSetterThatEscaped))
+    if (part == HeapPropertyPart::Setter && key.keyClass != HeapKeyClass::Name && m_context.isSabotaged(Sabotage::StoresUnderUnknownKeysEnterNoSetterThatEscaped))
         return { };
-    ValueFlowNodeID laid = readWhereWritten(chainFrom(start, key).objects, foundName(key, HeapPropertyPart::Setter));
+    if (part == HeapPropertyPart::Getter && m_context.isSabotaged(Sabotage::ReadsEnterNoGetterThatEscaped))
+        return { };
+    ValueFlowNodeID laid = readWhereWritten(chainFrom(start, key).objects, foundName(key, part));
     return laid ? m_context.valueWithin(ClimbingSet(m_universe.closures()), laid) : ClimbingSet();
 }
 

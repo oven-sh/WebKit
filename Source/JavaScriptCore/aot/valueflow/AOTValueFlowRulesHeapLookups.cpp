@@ -1081,7 +1081,7 @@ void HeapRule::callAccessors(ClimbingSet functions, ValueFlowCallKind kind, cons
     }
     enter(functions, receiver.set);
 
-    if (kind != ValueFlowCallKind::Set || receiver.operand || !receiver.keyLookedUp || !mayBeUnknownObject(functions))
+    if (receiver.operand || !receiver.keyLookedUp || !mayBeUnknownObject(functions))
         return;
     ClimbingSet notCovered = m_context.membersMissingNowFrom(ValueFlowProgramNodes::escaped(), known(receiver.set));
     notCovered = m_context.membersMissingNowFrom(m_context.nodes().ofHost(ValueFlowHostNode::HeldByNativeCode), notCovered);
@@ -1091,7 +1091,7 @@ void HeapRule::callAccessors(ClimbingSet functions, ValueFlowCallKind kind, cons
     if (receivers.rest != ValueSets::nothing)
         receivers.groups.append(receivers.rest);
     for (ValueSetID toldApart : receivers.groups)
-        enter(settersOfProgramLaidAbove(ClimbingSet(toldApart), *receiver.keyLookedUp), ClimbingSet(toldApart));
+        enter(accessorsOfProgramLaidAbove(ClimbingSet(toldApart), *receiver.keyLookedUp, kind == ValueFlowCallKind::Set ? HeapPropertyPart::Setter : HeapPropertyPart::Getter), ClimbingSet(toldApart));
 }
 
 void HeapRule::handOutPrototypeObjectsAtCreation(ClimbingSet receivers, const HeapKey& key, ValueFlowNodeID result)
