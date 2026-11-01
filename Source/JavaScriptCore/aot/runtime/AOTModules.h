@@ -350,6 +350,10 @@ public:
     // The factories that one load calls run one at a time. True: the walk has called one that has not settled, and has stopped there. Whoever walks waits for it and walks again.
     bool runMocksBelow(ModuleID root, RootOfLoad = RootOfLoad::BeginsLoad);
     bool runMocksBelowSlow(ModuleID root, RootOfLoad);
+    void layMocksAgainAtNextLoad(ModuleID module, bool waits) { m_modulesThatLayMocksAgain.set(module.index(), waits); }
+    void layMocksAgainBelow(ModuleID root);
+    bool isBeingEvaluated(ModuleID module) const { return status(module) == ModuleStatus::Evaluating || status(module) == ModuleStatus::EvaluatingAsync; }
+    bool importsByStatements(ModuleID importer, ModuleID importedOfHost) const;
     bool runMocksBelowInImages(ModuleID root, RootOfLoad);
     std::pair<Modules*, ModuleID> fileInImageBelow(ModuleID external) const;
     void linkAnewToFilesOfImagesBelow();
@@ -1045,6 +1049,8 @@ private:
     Vector<ModuleID, 2> m_importsMadeByOwnFactory;
     // AfterFailure::AsksAgain
     BitVector m_modulesWithMockThatAsksAgain;
+    // ModuleHost::layMocksAgain
+    BitVector m_modulesThatLayMocksAgain;
     // The factory of a mock failed while they were loaded, and they import the mocked module by statements, one through another. The loader of `bun test` keeps the record of each with that error:
     // whoever loads one, or comes to one by a statement, gets the error, until the module is taken out of require.cache or the module below is mocked anew.
     BitVector m_modulesWithLoadEndedByMock;

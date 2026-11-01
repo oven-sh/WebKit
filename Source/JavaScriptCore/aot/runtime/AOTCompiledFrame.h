@@ -222,6 +222,8 @@ struct CompiledFrame {
     JS_EXPORT_PRIVATE LineColumn lineColumn() const;
     JS_EXPORT_PRIVATE SourceOrigin sourceOrigin() const;
     JS_EXPORT_PRIVATE bool isActivationOf(JSCell* function) const;
+    // The frame runs the body of a module. The bodies of several may lie in one function.
+    std::optional<ModuleID> moduleWhoseBodyRuns() const;
 
     Instance* instance { nullptr };
     CallFrame* callFrame { nullptr };

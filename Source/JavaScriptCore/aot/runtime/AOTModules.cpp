@@ -2989,7 +2989,13 @@ bool Modules::isFetchedForImportStatement(ModuleID module)
 
 bool Modules::runMocksBelowModuleThatLoaderFetchesSlow(ModuleID module)
 {
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     MockDoor door(this, module, "the loader fetches it"_s);
+    if (!m_modulesThatLayMocksAgain.isEmpty()) [[unlikely]] {
+        layMocksAgainBelow(module);
+        RETURN_IF_EXCEPTION(scope, false);
+    }
+    scope.release();
     if (m_modulesWithMockToRun.isEmpty()) [[likely]] {
         evaluateModulesOwedBelow(module);
         return false;
@@ -3024,6 +3030,45 @@ const MockOperations& Modules::mockOperations()
 const MockOperations* mockOperations()
 {
     return &Modules::mockOperations();
+}
+
+// Ahead of what is owed below: a module that is mocked again stays owed.
+void Modules::layMocksAgainBelow(ModuleID root)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    BitVector reached(m_table.size());
+    Vector<ModuleID, 32> work { root };
+    while (!work.isEmpty()) {
+        ModuleID module = work.takeLast();
+        if (reached.quickSet(module.index()) || isMocked(module))
+            continue;
+        for (const ModuleRequestData& request : m_table.requests(module))
+            work.append(request.targetModule());
+    }
+    scope.release();
+    host().layMocksAgain(m_instance.globalObject, [&](ModuleID moduleOfHost) {
+        std::optional<ModuleID> module = moduleOfImage(*m_instance.program, moduleOfHost);
+        return module && reached.quickGet(module->index());
+    });
+}
+
+bool Modules::importsByStatements(ModuleID importer, ModuleID importedOfHost) const
+{
+    std::optional<ModuleID> imported = moduleOfImage(*m_instance.program, importedOfHost);
+    if (!imported)
+        return false;
+    BitVector reached(m_table.size());
+    Vector<ModuleID, 32> work { importer };
+    while (!work.isEmpty()) {
+        ModuleID module = work.takeLast();
+        if (module == *imported)
+            return true;
+        if (reached.quickSet(module.index()))
+            continue;
+        for (const ModuleRequestData& request : m_table.requests(module))
+            work.append(request.targetModule());
+    }
+    return false;
 }
 
 std::pair<Modules*, ModuleID> Modules::fileInImageBelow(ModuleID external) const
@@ -3076,6 +3121,10 @@ void Modules::linkAnewToFilesOfImagesBelow()
 bool Modules::runMocksBelowSlow(ModuleID root, RootOfLoad rootOfLoad)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    if (!m_modulesThatLayMocksAgain.isEmpty()) [[unlikely]] {
+        layMocksAgainBelow(root);
+        RETURN_IF_EXCEPTION(scope, false);
+    }
     bool factoryHasNotSettled = runMocksBelowInImages(root, rootOfLoad);
     RETURN_IF_EXCEPTION(scope, false);
     if (!factoryHasNotSettled && !m_importersToLinkAnewToFilesBelow.isEmpty()) [[unlikely]] {
@@ -7416,6 +7465,29 @@ void deferMock(JSGlobalObject* realm, ModuleID moduleOfHost, AfterFailure afterF
     MockDoor door(modules, module, afterFailure == AfterFailure::AsksAgain ? "deferMock, asks again"_s : "deferMock"_s);
     if (modules)
         modules->deferMock(module, afterFailure);
+}
+
+bool isBeingEvaluated(JSGlobalObject* realm, ModuleID moduleOfHost)
+{
+    ModuleFromHost module(realm, moduleOfHost);
+    Modules* modules = modulesOf(realm);
+    return modules && modules->isBeingEvaluated(module);
+}
+
+bool importsByStatements(JSGlobalObject* realm, ModuleID importerOfHost, ModuleID importedOfHost)
+{
+    ModuleFromHost importer(realm, importerOfHost);
+    Modules* modules = modulesOf(realm);
+    return modules && modules->importsByStatements(importer, importedOfHost);
+}
+
+void layMocksAgainAtNextLoad(JSGlobalObject* realm, ModuleID moduleOfHost, bool waits)
+{
+    ModuleFromHost module(realm, moduleOfHost);
+    Modules* modules = modulesOf(realm);
+    MockDoor door(modules, module, waits ? "the mocks of its body wait for the next load"_s : "the mocks of its body are laid again"_s);
+    if (modules)
+        modules->layMocksAgainAtNextLoad(module, waits);
 }
 
 JSValue exportsBeforeMock(JSGlobalObject* realm, ModuleID moduleOfHost)

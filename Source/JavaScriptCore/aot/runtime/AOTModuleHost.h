@@ -24,6 +24,7 @@
 namespace JSC {
 
 class AbstractModuleRecord;
+class CallFrame;
 class JSCell;
 class JSGlobalObject;
 class JSObject;
@@ -125,6 +126,9 @@ struct ModuleHost {
     // Answers mockOperations(). The rest of the run time reaches the code of the mocks through what it answers alone, so a host may leave that code out of a program that
     // cannot lay a mock, and answer null there. Null in a host without mocks.
     const MockOperations* (*mockOperations)();
+    // A load begins while layMocksAgainAtNextLoad() has named modules. Their bodies do not run again: the host makes the calls again that the bodies made, in the order in
+    // which they were made, for those that the load comes to. True: it made some. Null in a host without mocks.
+    bool (*layMocksAgain)(JSGlobalObject*, const ScopedLambda<bool(ModuleID)>& isReached);
 };
 
 const ModuleHost& moduleHostOf(JSGlobalObject*);
@@ -302,6 +306,14 @@ JS_EXPORT_PRIVATE bool mayBeMocked(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE String refusedMockMessage(JSGlobalObject*, const String& path);
 // The module has not begun to load: the factory of the mock runs when a graph comes to it (ModuleHost::runMock).
 JS_EXPORT_PRIVATE bool hasBegunToLoad(JSGlobalObject*, ModuleID);
+// The modules whose bodies are on the stack below the frame, the innermost first: whatever runs now was called by them.
+JS_EXPORT_PRIVATE void forEachModuleWhoseBodyRuns(VM&, CallFrame*, const ScopedLambda<void(ModuleID)>&);
+// Its evaluation has begun and not ended. A body that waits at an `await` is on no stack.
+JS_EXPORT_PRIVATE bool isBeingEvaluated(JSGlobalObject*, ModuleID);
+// Through any number of modules, by `import` and `export .. from` statements alone.
+JS_EXPORT_PRIVATE bool importsByStatements(JSGlobalObject*, ModuleID importer, ModuleID imported);
+// The body of the module laid mocks that have ended with their test file. `bun test` runs such a module again for the next test file that imports it.
+JS_EXPORT_PRIVATE void layMocksAgainAtNextLoad(JSGlobalObject*, ModuleID, bool waits = true);
 // Under `bun test` the body of a module that is linked when it is mocked runs then and there: left for later, it would assign over what the mock stores.
 JS_EXPORT_PRIVATE bool runBodyOfLinkedModuleAheadOfMock(JSGlobalObject*, ModuleID);
 // For the counts alone: which call, with which kind of factory, meets the module in which state.
