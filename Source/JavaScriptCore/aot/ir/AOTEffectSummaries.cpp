@@ -782,18 +782,22 @@ EffectSummaries computeEffectSummaries(const Program& program, const FlowResults
     return summaries;
 }
 
-static EffectSummaries computeEffectSummariesByOperandTypes(const Program& program, const FlowResults& flow, BuildContext& build, const EffectSummaries* rowsOfBodies, std::span<const FunctionID> roots, BitVector& bodiesBelowRoots)
+static EffectSummaries computeEffectSummariesByOperandTypes(const Program& program, const FlowResults& flow, BuildContext& build, const EffectSummaries* rowsOfBodies, BorrowedParameters& borrowed, std::span<const FunctionID> roots, BitVector& bodiesBelowRoots)
 {
     BodySummaries nothingKept;
     EffectSummaries summaries;
     EffectSummarizer summarizer(program, flow, build, nothingKept, EffectSummarizer::Witnesses::Found);
     summarizer.setIsOnlyCheck();
     summarizer.readCalleesByOperandTypes();
-    if (rowsOfBodies)
+    if (rowsOfBodies) {
         summarizer.takeRowsOfBodiesFrom(*rowsOfBodies);
+        summarizer.takeBorrowedParametersFrom(borrowed);
+    }
     if (!roots.empty())
         summarizer.readOnlyBodiesBelow(roots, bodiesBelowRoots);
     summarizer.update(summaries);
+    if (!rowsOfBodies)
+        borrowed = nothingKept.borrowedParameters();
     return summaries;
 }
 
@@ -802,8 +806,9 @@ EffectSummaries computeEffectSummariesByOperandTypes(const Program& program, con
     // The seed says nothing of a function that was made after flow analysis, and a call of one may stand where operations of the caller's own body stood.
     // So a body that hands a parameter on to it seems to use the parameter in every way. The second reading knows what the first found in that function's body.
     BitVector bodiesBelowRoots;
-    EffectSummaries first = computeEffectSummariesByOperandTypes(program, flow, build, nullptr, roots, bodiesBelowRoots);
-    return computeEffectSummariesByOperandTypes(program, flow, build, &first, roots, bodiesBelowRoots);
+    BorrowedParameters borrowed;
+    EffectSummaries first = computeEffectSummariesByOperandTypes(program, flow, build, nullptr, borrowed, roots, bodiesBelowRoots);
+    return computeEffectSummariesByOperandTypes(program, flow, build, &first, borrowed, roots, bodiesBelowRoots);
 }
 
 void updateEffectSummaries(const Program& program, const FlowResults& flow, BuildContext& build, BodySummaries& kept, EffectSummaries& summaries, BodyReferences* references)

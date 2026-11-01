@@ -214,7 +214,7 @@ private:
     static constexpr unsigned functionsInChunk = 256;
 
     void countLoweredBodiesWithNewStorageAsChanged();
-    BorrowedParameters computeBorrowedParametersFromLatestTable(const Program&, BuildContext&, std::span<const uint64_t> stampsOfRecords, std::span<const uint8_t> recordLooksDifferent);
+    BorrowedParameters computeBorrowedParametersFromLatestTable(const Program&, BuildContext&, std::span<const uint64_t> stampsOfRecords, std::span<const uint8_t> recordLooksDifferent, const BitVector* bodiesToScan = nullptr);
     void didTouch(FunctionID id)
     {
         if (id.index() < m_wasTouchedSinceLatestTable.size())
@@ -291,6 +291,8 @@ public:
     void readCalleesByOperandTypes() { m_calleesAreRead = CalleesAreRead::ByOperandTypes; }
     // Only from scratch. Where these say that a body uses a parameter in fewer ways than the seed does, a caller that hands it an operand reads what the body does.
     void takeRowsOfBodiesFrom(const EffectSummaries& summaries) { m_rowsOfBodies = &summaries; }
+    // The table of this very program.
+    void takeBorrowedParametersFrom(const BorrowedParameters& table) { m_borrowedParametersOfProgram = &table; }
     // Only from scratch. Reads the bodies that the roots can reach by the functions that each body names, and takes every other function for unknown code.
     // `bodies` is empty, and is filled with what was found, or comes from an earlier reading.
     void readOnlyBodiesBelow(std::span<const FunctionID> roots, BitVector& bodies)
@@ -305,6 +307,7 @@ public:
 
 private:
     void findRecordsThatLookDifferent();
+    void findBodiesToRead();
     void updateSeed(BorrowedParameters&&);
     Vector<ReasonToSummarize> findReasonsToSummarize() const;
     void summarizeBodies();
@@ -356,6 +359,7 @@ private:
     bool m_isOnlyCheck { false };
     CalleesAreRead m_calleesAreRead { CalleesAreRead::AsTheyAre };
     const EffectSummaries* m_rowsOfBodies { nullptr };
+    const BorrowedParameters* m_borrowedParametersOfProgram { nullptr };
     std::span<const FunctionID> m_rootsOfBodiesToRead;
     BitVector* m_bodiesToRead { nullptr };
     BodyReferences* m_references { nullptr };

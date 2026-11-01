@@ -30,7 +30,8 @@ class BorrowingBodies;
 class Program;
 
 JS_EXPORT_PRIVATE BorrowedParameters computeBorrowedParameters(const Program&, BuildContext&);
-BorrowedParameters computeBorrowedParameters(const Program&, BuildContext&, BorrowingBodies& kept, std::span<const uint8_t> hasChanged, std::span<const uint8_t> recordLooksDifferent);
+// A function whose body is not among those to scan borrows nothing.
+BorrowedParameters computeBorrowedParameters(const Program&, BuildContext&, BorrowingBodies& kept, std::span<const uint8_t> hasChanged, std::span<const uint8_t> recordLooksDifferent, const BitVector* bodiesToScan = nullptr);
 
 inline constexpr unsigned maxBorrowedParameters = 21;
 
@@ -60,7 +61,7 @@ public:
     friend bool operator==(const BorrowedParameters&, const BorrowedParameters&) = default;
 
 private:
-    friend BorrowedParameters computeBorrowedParameters(const Program&, BuildContext&, BorrowingBodies&, std::span<const uint8_t>, std::span<const uint8_t>);
+    friend BorrowedParameters computeBorrowedParameters(const Program&, BuildContext&, BorrowingBodies&, std::span<const uint8_t>, std::span<const uint8_t>, const BitVector*);
 
     bool hasBit(FunctionID function, unsigned row, uint32_t entryParameter) const { return entryParameter < maxBorrowedParameters && wordOf(function) >> (row * maxBorrowedParameters + entryParameter) & 1; }
 
@@ -137,7 +138,7 @@ public:
     bool wasLoweredSinceScanned(FunctionID id) const { return id.index() < m_wasLoweredSinceScanned.size() && m_wasLoweredSinceScanned[id.index()]; }
 
 private:
-    friend BorrowedParameters computeBorrowedParameters(const Program&, BuildContext&, BorrowingBodies&, std::span<const uint8_t>, std::span<const uint8_t>);
+    friend BorrowedParameters computeBorrowedParameters(const Program&, BuildContext&, BorrowingBodies&, std::span<const uint8_t>, std::span<const uint8_t>, const BitVector*);
 
     Vector<BorrowingBody> m_bodies;
     HandedOnTargetLists m_targetLists;
