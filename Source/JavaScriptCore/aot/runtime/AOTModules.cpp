@@ -1895,9 +1895,12 @@ bool Modules::setMockInPlace(ModuleID fileOrModule, JSObject* mock, JSValue what
     }
 
     didEndMock(fileOrModule);
+    // The body ran beside the mock, for an importer that got the original. What it exported is the file's from here on, and it does not run again.
+    JSValue original = isFile ? loaded.exportsOfOriginalBesideMock.get() : JSValue();
+    loaded.exportsOfOriginalBesideMock.set(*this, JSValue());
     // An evaluation that came by has marked the module as evaluated. Its body has yet to run, behind a link of its own.
     for (ModuleID each : { fileOrModule, module }) {
-        if (status(each) == ModuleStatus::Evaluated)
+        if (status(each) == ModuleStatus::Evaluated && (!original || each != fileOrModule))
             setStatus(each, ModuleStatus::Unlinked);
         m_modulesOwedToImportersThatRan.set(each.index());
         m_modulesWithNothingOwedBelow.clearAll();
@@ -1912,7 +1915,7 @@ bool Modules::setMockInPlace(ModuleID fileOrModule, JSObject* mock, JSValue what
             setNamespace(each, ModulePhase::Evaluation, nullptr);
     }
     if (isFile)
-        setCommonJSExports(fileOrModule, jsUndefined());
+        setCommonJSExports(fileOrModule, original ? original : jsUndefined());
     else
         loaded.requiredValue.set(*this, JSValue());
     return true;

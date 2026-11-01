@@ -496,7 +496,7 @@ JSValue Modules::callBody(ModuleID module)
 {
     const ModuleData& moduleData = data(module);
     std::optional<FunctionID> body = moduleData.bodyFunction();
-    if (!body || isMocked(module))
+    if (!body || (isMocked(module) && m_fileWhoseOriginalRuns != module))
         return jsUndefined();
 
     VM& vm = *m_instance.vm;
@@ -610,6 +610,9 @@ bool Modules::isAwaitedByImport(ModuleID file)
 // Where the module does not keep the error, whoever asks for it later gets what it had exported when it threw.
 void Modules::didThrowInBody(ModuleID module, JSValue error)
 {
+    // The body ran beside a mock that stands in place of the file. answerRequireWithOriginal() puts back what stood there.
+    if (m_fileWhoseOriginalRuns == module) [[unlikely]]
+        return;
     // `bun run` takes a CommonJS file whose body throws out of require.cache, and the next require() runs it again. A test run loads it again from disk where its build
     // has compiled the code that asks for the file for a file that may load twice.
     if (data(module).kind == ModuleKind::CommonJs && (mayBeEvicted(module) || (data(module).runsAgainAfterThrow() && !isAwaitedByImport(module))) && status(module) == ModuleStatus::Evaluating && !loaderHasFileThatThrew(module)) [[unlikely]] {
@@ -3509,6 +3512,52 @@ JSValue Modules::answerOfRequireToMock(ModuleID target)
     return defaultExport && !defaultExport.isUndefined() ? defaultExport : JSValue(exports);
 }
 
+// Of a CommonJS file of the program whose body a mock has kept from running.
+bool Modules::getsOriginalBesideMock(ModuleID target, ModuleID referrer)
+{
+    if (!m_numberOfMocksInPlace || !host().givesOriginalBesideMock) [[likely]]
+        return false;
+    if (!referrer || data(target).kind != ModuleKind::CommonJs || !mockInPlace(target) || !m_table.hasFilePath(referrer))
+        return false;
+    return host().givesOriginalBesideMock(m_instance.globalObject, m_table.pathText(target), m_table.pathText(referrer), false);
+}
+
+// The answer of the mock stands where the exports of the file are read from, and the file counts as evaluated. The body runs once, with both set aside.
+JSValue Modules::answerRequireWithOriginal(ModuleID file)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    if (JSValue original = ensureLoaded(file).exportsOfOriginalBesideMock.get())
+        return original;
+    // A ring of files comes back while the body runs.
+    if (status(file) == ModuleStatus::Evaluating)
+        return commonJSExports(file);
+    JSObject* mock = mockInPlace(file);
+    JSValue answerOfMock = commonJSExports(file);
+    JSValue settledAnswer = ensureLoaded(file).requiredValue.get();
+    setStatus(file, ModuleStatus::Unlinked);
+    setCommonJSExports(file, jsUndefined());
+    ensureLoaded(file).requiredValue.set(*this, JSValue());
+    {
+        SetForScope fileWhoseOriginalRuns(m_fileWhoseOriginalRuns, std::optional(file));
+        evaluateCommonJS(file);
+    }
+    bool hasThrown = !!scope.exception();
+    JSValue original = commonJSExports(file);
+    // As `bun run` does with a CommonJS file whose body throws: whoever asked hears of it, and the next one runs the body again. didThrowInBody() has left the file to this.
+    if (hasThrown)
+        forgetRunThatThrew(file);
+    markEvaluated(file);
+    setCommonJSExports(file, answerOfMock);
+    ensureLoaded(file).requiredValue.set(*this, settledAnswer);
+    if (hasThrown)
+        return { };
+    ensureLoaded(file).exportsOfOriginalBesideMock.set(*this, original);
+    // The run may have taken the names of the file for whoever imports them.
+    takeNamesOfMockInPlace(moduleWithExportsOf(file), mock);
+    RETURN_IF_EXCEPTION(scope, { });
+    return original;
+}
+
 JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy requiredBy)
 {
     if (JSValue settled = settledAnswerOfRequire(target, requiredBy))
@@ -3528,6 +3577,8 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
     } else
         evaluateModulesOwedBelow(target);
     RETURN_IF_EXCEPTION(scope, { });
+    if (getsOriginalBesideMock(target, referrer)) [[unlikely]]
+        RELEASE_AND_RETURN(scope, answerRequireWithOriginal(target));
     if (isLeftToHost(target)) [[unlikely]]
         RELEASE_AND_RETURN(scope, loadEvictedFile(fileOf(target)));
     if (targetData.isOfLibrary() && isRequiredByProgram && isKeptInRequireCache(target)) [[unlikely]]

@@ -87,6 +87,7 @@ struct LinkContext {
     macro(JSObject*, mockInPlace) \
     macro(JSObject*, recordBeforeMockInPlace) \
     macro(JSValue, requiredValueBeforeMockInPlace) \
+    macro(JSValue, exportsOfOriginalBesideMock) \
     macro(JSObject*, exportsAddedByMock) \
     macro(JSValue, errorKeptByLoader) \
     macro(JSObject*, exportsWhileRequired) \
@@ -810,6 +811,8 @@ private:
     void setRequireCacheValue(ModuleID, JSValue exports);
     JSValue requireThroughCache(ModuleID, ModuleID referrer);
     JSValue answerRequireWithMock(ModuleID, ModuleID referrer);
+    bool getsOriginalBesideMock(ModuleID, ModuleID referrer);
+    JSValue answerRequireWithOriginal(ModuleID file);
     JSValue answerOfRequireToMock(ModuleID);
     bool isMockedLibraryModule(ModuleID);
     JSValue loadEvictedFile(ModuleID);
@@ -1013,6 +1016,8 @@ private:
     const bool m_findsDataFilesByName;
     const bool m_refusesOriginalsBesideMocks;
     bool m_isAskingHost { false };
+    // No body of a mocked module is called but this one: answerRequireWithOriginal().
+    std::optional<ModuleID> m_fileWhoseOriginalRuns;
     bool m_hasAskedEveryClass { false };
     bool m_isWalkingRequests { false };
     struct LoadInFlight {
@@ -1330,6 +1335,9 @@ ALWAYS_INLINE JSValue Modules::settledAnswerOfRequire(ModuleID target, RequiredB
         return { };
     const LoadedModule* loaded = loadedIfExists(target);
     if (!loaded || !loaded->requiredValue || loaded->isBeingRequired || loaded->objectMadeByRequire || storedStatus(target) != StoredModuleStatus::Evaluated || data(target).isOfLibrary())
+        return { };
+    // The answer goes by who asks.
+    if (loaded->mockInPlace && host().givesOriginalBesideMock) [[unlikely]]
         return { };
     return loaded->requiredValue.get();
 }

@@ -118,6 +118,8 @@ struct ModuleHost {
     std::optional<bool> (*isInPreload)(JSGlobalObject*);
     // An executable: no text of the program is read at run time. Null in a host that reads them, or that has none to read.
     bool (*holdsTextsOfProgram)(JSGlobalObject*);
+    // A mock stands over the file at the path. Whether the host's own loader would give this importer the original beside it. Null in a host where everybody gets the mock.
+    bool (*givesOriginalBesideMock)(JSGlobalObject*, const String& path, const String& importer, bool isImport);
 };
 
 const ModuleHost& moduleHostOf(JSGlobalObject*);
