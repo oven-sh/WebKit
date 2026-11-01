@@ -28,6 +28,7 @@
 #include "AOTIntegerRelations.h"
 #include "AOTKnownValue.h"
 #include "AOTPlaceTypeTestsPlan.h"
+#include "AOTPropertyAccessElements.h"
 #include "AOTRegionCloner.h"
 #include "AOTResultRules.h"
 #include "AOTRuleSupport.h"
@@ -1476,19 +1477,11 @@ static bool standsBehindPassedTest(FunctionPassContext& context, BlockID block, 
 // A copy has the storage of the array that it is made from. Once that one is converted, the copies to come pass the test.
 static ValueID findCopiedArrayToConvert(FunctionPassContext& context, ValueID array)
 {
-    static constexpr std::array copyingBuiltins { Builtins::ArrayPrototypeSlice, Builtins::ArrayPrototypeConcat, Builtins::ArrayPrototypeToReversed, Builtins::ArrayPrototypeToSpliced, Builtins::ArrayPrototypeWith };
     const Program& program = context.program;
-    const Value& copy = context.function.at(sameObjectThroughCasts(context.function, array));
-    if (copy.opcode != Opcode::CallBuiltin)
-        return { };
-    BuiltinCall call = builtinCallOf(program, copy);
-    BuiltinID builtin = program.builtins().canonicalID(program.builtins().at(call.overload).builtin);
-    bool copies = call.receiver && std::ranges::any_of(copyingBuiltins, [&](BuiltinID other) {
-        return builtin == program.builtins().canonicalID(other);
-    });
+    ValueID list = findCopiedList(program, context.function, array);
     // A reader of that array would test for the same kind and convert it.
-    const ClassPart* copied = copies ? program.typeOf(context.function, call.receiver).singleBuiltinClass() : nullptr;
-    return copied && copied->arrayStorage == ArrayStorage::Other && arrayStorageDeclaredBy(program, *copied).predicted() == ArrayStorage::Double ? call.receiver : ValueID();
+    const ClassPart* copied = list ? program.typeOf(context.function, list).singleBuiltinClass() : nullptr;
+    return copied && copied->arrayStorage == ArrayStorage::Other && arrayStorageDeclaredBy(program, *copied).predicted() == ArrayStorage::Double ? list : ValueID();
 }
 
 static Vector<FailedStorageTest, 4> collectFailedTestsForDoubleStorage(FunctionPassContext& context)
