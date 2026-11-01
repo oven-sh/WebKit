@@ -171,6 +171,20 @@ inline bool canUseMegamorphicPutById(VM& vm, UniquedStringImpl* uid)
     return !parseIndex(*uid) && uid != vm.propertyNames->underscoreProto;
 }
 
+// Whether the slow path of a megamorphic by-val load or `in` takes a base of this structure. It gives the site up for good otherwise.
+inline bool LEGACY_NODELETE canUseMegamorphicGetFastPath(Structure* structure)
+{
+    TypeInfo typeInfo = structure->typeInfo();
+    return typeInfo.isObject() && (!typeInfo.overridesGetOwnPropertySlot() || typeInfo.type() == ArrayType || typeInfo.type() == JSFunctionType);
+}
+
+// The same for a by-id load.
+inline bool LEGACY_NODELETE canUseMegamorphicGetByIdFastPath(Structure* structure)
+{
+    JSType type = structure->typeInfo().type();
+    return canUseMegamorphicGetFastPath(structure) || type == DerivedStringObjectType || type == StringType;
+}
+
 inline bool LEGACY_NODELETE canUseMegamorphicPutFastPath(Structure* structure)
 {
     while (true) {
