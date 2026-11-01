@@ -147,7 +147,7 @@ enum Sabotage {
     StoredValuesAreNeverRead
     WhatIsGivenTakesThePlaceOfWhatComes
     MergedLoadsOutlastWritesOnUnlikelyPaths
-    StridedIndexesStayInRange CountedIndexesStayInRange
+    StridedIndexesStayInRange
     SlotsOfSitesStayAsTheyAre
     WordsReadAgainOutlastWrites
     VectorTurnsMeetNoOtherAccess

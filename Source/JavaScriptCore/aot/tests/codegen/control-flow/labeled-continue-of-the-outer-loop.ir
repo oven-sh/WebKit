@@ -1,4 +1,5 @@
 # function rowsWithout(grid: Float64Array, width: number, unwanted: number): number {
+# TODO: row-4719: the clamp of loop bounds is switched off, and what rests on it is lost: fast versions of counted loops without range checks, their vectors and written-out turns
 #   let count = 0;
 #   outer: for (let row = 0; row < width; row++) {
 #     for (let column = 0; column < width; column++) {

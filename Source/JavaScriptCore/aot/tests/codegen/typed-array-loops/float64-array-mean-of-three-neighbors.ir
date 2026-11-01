@@ -1,4 +1,5 @@
 # const signal = new Float64Array(514);
+# TODO: row-4719: the clamp of loop bounds is switched off, and what rests on it is lost: fast versions of counted loops without range checks, their vectors and written-out turns
 # const smooth = new Float64Array(514);
 # function turn(i: number): number {
 #   for (let k = 1; k < signal.length - 1; k++) smooth[k] = (signal[k - 1]! + signal[k]! + signal[k + 1]!) / 3;

@@ -1,4 +1,5 @@
 # const order = new Int32Array(512);
+# TODO: row-4719: the clamp of loop bounds is switched off, and what rests on it is lost: fast versions of counted loops without range checks, their vectors and written-out turns
 # function turn(i: number): number {
 #   for (let low = 0, high = order.length - 1; low < high; low++, high--) {
 #     const kept = order[low]!;
