@@ -998,7 +998,7 @@ export default b.declarations(
   webAssemblyClass("Suspending", {
     nativeSymbols: ["callWebAssemblySuspending", "constructWebAssemblySuspending"],
     construct: {
-      args: { called: b.any },
+      args: { called: b.any.optional },
       returns: b.object.fresh,
       capability: "heap",
       throws: true,
@@ -1036,7 +1036,7 @@ export default b.declarations(
   webAssemblyClass("Tag", {
     construct: webAssemblyConstruction(
       "Tag",
-      { type: b.any },
+      { type: b.any.optional },
       { type: [b.runsTransitively("Iterate", "ToPrimitive", b.named("parameters")), b.readsContents()] },
     ),
   }),
