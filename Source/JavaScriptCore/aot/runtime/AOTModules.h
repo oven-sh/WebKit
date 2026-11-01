@@ -443,7 +443,8 @@ public:
         Modules* modulesOfRoot { nullptr };
     };
     // Says whether a file ran.
-    bool evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles = JobsOfImportedFiles::StayQueued, ErrorOfImportedFile = ErrorOfImportedFile::IsThrown, ModuleGraphLoadingState* = nullptr, FilesLeftToLoader* leftToLoader = nullptr);
+    // asyncContextOfImport: of the import() that the files run for, where no load of the loader is given. A file that the loader would run in a job of its own runs under the async context of its load: ModuleLoaderAsyncContextScope.
+    bool evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles = JobsOfImportedFiles::StayQueued, ErrorOfImportedFile = ErrorOfImportedFile::IsThrown, ModuleGraphLoadingState* = nullptr, FilesLeftToLoader* leftToLoader = nullptr, JSValue asyncContextOfImport = { });
     std::pair<Modules*, ModuleID> placeInRealm(ModuleID);
     bool isFileLeftToRun(ModuleID fileOrFace) const;
     ModulesOfRealm filesOfRealmLeftToRunBelow(ModuleID root, ModulesOfRealm& entries, ModulesOfRealm& importers);
@@ -568,7 +569,7 @@ public:
     std::optional<uint64_t> placeOfFirstTextThatWaits() const { return m_textsThatWait.isEmpty() ? std::nullopt : std::optional(m_textsThatWait[m_numberOfTextsThatHaveCome].place); }
     // False: nobody is left to hear of it.
     bool deliverFirstTextThatWaits(TextOfImport = TextOfImport::HasCome);
-    void continueImport(JSPromise* importPromise, ModuleID, std::optional<int64_t> referrerAsyncOrder);
+    void continueImport(JSPromise* importPromise, ModuleID, std::optional<int64_t> referrerAsyncOrder, JSValue asyncContext);
     void resolveWithNamespace(JSPromise* importPromise, ModuleID);
     void finishImportOfEvaluatedModule(JSPromise* importPromise, ModuleID, JSValue error);
     // Says whether the jobs of that import() are counted.
@@ -866,6 +867,8 @@ private:
         std::optional<ModuleID> fileHandedToLoader { };
         // By a CommonJS file: how many modules stand between the root and the nearest one that imports it. Made when something asks.
         Vector<uint32_t> distanceOfFiles { };
+        // The async context that was current before the files ran. A step of the loader that was due by then, of a load that keeps no async context, runs under it: handGraphToLoader().
+        JSValue asyncContext { };
     };
     void handGraphToLoader(FilesBeingRun&, std::optional<ModuleID> finishedFile = std::nullopt);
     void handSynchronousLoadToLoader(FilesBeingRun&);
@@ -1016,8 +1019,13 @@ private:
         std::span<Found> level(size_t depth) { return found.mutableSpan().subspan(levels[depth].first, (depth + 1 == levels.size() ? found.size() : levels[depth + 1].first) - levels[depth].first); }
     };
     bool isLeftToLoad(PlanOfLoad&, PlanOfLoad::Found&);
+    // What an import() that is called now keeps of the async context of its caller: JSModuleLoader::asyncContextForLoad().
+    JSValue asyncContextForImport() const;
+    // For an import() that is kept outside the queue of jobs: the async context of its call, which the jobs that take it up again are queued with. Empty where there is none.
+    Strong<Unknown> currentAsyncContext() const;
     struct CountedImport {
         Strong<JSPromise> promise;
+        Strong<Unknown> asyncContext;
         ModuleID module;
         std::optional<int64_t> referrerAsyncOrder;
         uint32_t serial;
@@ -1117,6 +1125,7 @@ private:
     struct DeferredImport {
         ModuleID file;
         Strong<JSPromise> promise;
+        Strong<Unknown> asyncContext;
     };
     Vector<DeferredImport> m_deferredImports;
     struct TextThatWaits {
@@ -1136,6 +1145,8 @@ private:
         bool levelsAreLeftToCount { false };
         // Both wait for one text, which is the last of either: there both graphs run before either call goes on.
         bool comesWithCallInFront { false };
+        // For an import(): the async context of its call, which the import() goes on under when its text comes. Empty where there is none.
+        Strong<Unknown> asyncContext { };
     };
     // Compared, never read.
     JSPromise* m_promiseOfCallThatOthersComeWith { nullptr };

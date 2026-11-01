@@ -34,11 +34,17 @@ namespace JSC {
 
 const ClassInfo ModuleGraphLoadingState::s_info = { "ModuleGraphLoadingState"_s, nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(ModuleGraphLoadingState) };
 
-ModuleGraphLoadingState::ModuleGraphLoadingState(VM& vm, Structure* structure, JSPromise* promise, RefPtr<ScriptFetcher> scriptFetcher)
+ModuleGraphLoadingState::ModuleGraphLoadingState(VM& vm, Structure* structure, JSPromise* promise, RefPtr<ScriptFetcher> scriptFetcher, JSValue asyncContext)
     : Base(vm, structure)
     , m_promise(promise, WriteBarrierEarlyInit)
+#if USE(BUN_JSC_ADDITIONS)
+    , m_asyncContext(asyncContext, WriteBarrierEarlyInit)
+#endif
     , m_scriptFetcher(WTF::move(scriptFetcher))
 {
+#if !USE(BUN_JSC_ADDITIONS)
+    UNUSED_PARAM(asyncContext);
+#endif
 }
 
 void ModuleGraphLoadingState::destroy(JSCell* cell)
@@ -61,15 +67,18 @@ void ModuleGraphLoadingState::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_promise);
     visitor.append(thisObject->m_fulfillment);
+#if USE(BUN_JSC_ADDITIONS)
+    visitor.append(thisObject->m_asyncContext);
+#endif
     Locker locker { thisObject->cellLock() };
     visitor.append(thisObject->m_visited.begin(), thisObject->m_visited.end());
 }
 
 DEFINE_VISIT_CHILDREN(ModuleGraphLoadingState);
 
-ModuleGraphLoadingState* ModuleGraphLoadingState::create(VM& vm, JSPromise* promise, RefPtr<ScriptFetcher> scriptFetcher)
+ModuleGraphLoadingState* ModuleGraphLoadingState::create(VM& vm, JSPromise* promise, RefPtr<ScriptFetcher> scriptFetcher, JSValue asyncContext)
 {
-    ModuleGraphLoadingState* instance = new (NotNull, allocateCell<ModuleGraphLoadingState>(vm)) ModuleGraphLoadingState(vm, vm.moduleGraphLoadingStateStructure.get(), promise, WTF::move(scriptFetcher));
+    ModuleGraphLoadingState* instance = new (NotNull, allocateCell<ModuleGraphLoadingState>(vm)) ModuleGraphLoadingState(vm, vm.moduleGraphLoadingStateStructure.get(), promise, WTF::move(scriptFetcher), asyncContext);
     instance->finishCreation(vm);
     return instance;
 }

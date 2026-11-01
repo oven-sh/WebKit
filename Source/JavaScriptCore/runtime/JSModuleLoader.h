@@ -50,6 +50,9 @@ enum class ModuleLoadFlag : uint8_t {
     Dynamic = 1 << 1,
     UseImportMap = 1 << 2,
     Deferred = 1 << 3,
+    // JSModuleLoader::loadModuleSync(): the load keeps no async context. What it runs inside the call runs in the
+    // context of the caller.
+    Synchronous = 1 << 4,
 };
 
 class JSModuleLoader final : public JSCell {
@@ -93,6 +96,22 @@ public:
     // (the default): whatever is current when a module is executed.
     JSValue asyncContext() const { return m_asyncContext.get(); }
     void setAsyncContext(VM& vm, JSValue asyncContext) { m_asyncContext.set(vm, this, asyncContext); }
+
+    // The async context of the load that a payload stands for: what was current where import() was called. A load
+    // keeps it in its cells (ModuleLoadingContext, ModuleLoaderPayload, ModuleGraphLoadingState), and every request
+    // that the load makes takes it from there, not from what is current where the request is made.
+    static JSValue asyncContextOfLoad(JSCell* payload);
+
+    // What a load that begins here keeps of the async context of its caller. The host can set a filter for what no
+    // load may keep. Bun.ModuleGraph has the context of a graph in the slot, beside the stores of AsyncLocalStorage, and
+    // what runs in the context of a graph ends with the graph: a hook of the host, or a module of another loader, must
+    // not. So Bun lets a load that begins in the context of a graph keep nothing.
+    using AsyncContextOfLoadFilter = JSValue (*)(JSGlobalObject*, JSValue asyncContext);
+    void setAsyncContextOfLoadFilter(AsyncContextOfLoadFilter filter) { m_asyncContextOfLoadFilter = filter; }
+    JS_EXPORT_PRIVATE JSValue asyncContextForLoad(VM&, JSGlobalObject*) const;
+    // For CyclicModuleRecord::executeAsync(): the async context of the job that runs the modules that wait for a
+    // top-level await. See ModuleEvaluationAsyncContextScope. Empty where no job of the loader evaluates.
+    JSValue asyncContextOfModulesThatWait(VM&, JSGlobalObject*) const;
 #endif
 
     DECLARE_INFO;
@@ -101,7 +120,8 @@ public:
 
     // APIs to control the module loader.
     void provideFetch(JSGlobalObject*, const Identifier& key, ScriptFetchParameters::Type, SourceCode&&);
-    void provideFetch(JSGlobalObject*, const Identifier& key, ScriptFetchParameters::Type, JSValue);
+    // asyncContext: of the load that the module is provided for. See ModuleRegistryEntry::ensureModulePromise().
+    void provideFetch(JSGlobalObject*, const Identifier& key, ScriptFetchParameters::Type, JSValue, JSValue asyncContext = { });
     JSPromise* loadModule(JSGlobalObject*, const Identifier& moduleName, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>, OptionSet<ModuleLoadFlag>, int64_t referrerAsyncOrder = -1, const String& referrer = { }, AbstractModuleRecord* recordInPlaceOfFetch = nullptr);
     JSPromise* linkAndEvaluateModule(JSGlobalObject*, const Identifier& moduleKey, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>);
     JSPromise* requestImportModule(JSGlobalObject*, const Identifier& moduleName, const Identifier& referrer, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>, bool deferred = false, int64_t referrerAsyncOrder = -1);
@@ -174,7 +194,7 @@ public:
     JSPromise* loadModule(JSGlobalObject*, const ModuleReferrer&, const ModuleRequest&, JSCell* payload, RefPtr<ScriptFetcher>, OptionSet<ModuleLoadFlag>);
     void continueModuleLoading(JSGlobalObject*, ModuleGraphLoadingState*, ModuleCompletion result);
     void continueDynamicImport(JSGlobalObject*, ModuleLoaderPayload*, ModuleCompletion, RefPtr<ScriptFetcher>);
-    JSPromise* loadRequestedModules(JSGlobalObject*, AbstractModuleRecord*, RefPtr<ScriptFetcher>);
+    JSPromise* loadRequestedModules(JSGlobalObject*, AbstractModuleRecord*, RefPtr<ScriptFetcher>, JSValue asyncContext = { });
 
     // If moduleData is a JSSourceCode, then it's a JavaScript/WebAssembly/JSON/text source code,
     // and JSC is responsible for turning it into a usable module. Otherwise, the host has already
@@ -323,6 +343,7 @@ private:
     WriteBarrier<JSScope> m_moduleScope;
 #if USE(BUN_JSC_ADDITIONS)
     WriteBarrier<Unknown> m_asyncContext;
+    AsyncContextOfLoadFilter m_asyncContextOfLoadFilter { nullptr };
 #endif
     ModuleMap<WriteBarrier<ModuleRegistryEntry>> m_moduleMap;
 
