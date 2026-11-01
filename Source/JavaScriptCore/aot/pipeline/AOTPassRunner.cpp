@@ -633,7 +633,10 @@ void PassRunner::endProgramPass(PassID id, const Program& program, PassTimer tim
             String problem = findOperationNobodyAnswersFor(id, findOperationsThatWentWithoutReason({ program, noSummaries }, timer.bodiesBefore->functions[index], program.functions[index], timer.bodiesBefore->reasons[index]));
             if (problem.isNull())
                 continue;
-            m_build.diagnostics().add(InternalError { .kind = InternalErrorKind::VerificationFailedAfterPass, .function = findFunctionAsRead(&program, FunctionID(index)), .pass = id, .detail = problem });
+            InternalError failure = InternalError { .kind = InternalErrorKind::VerificationFailedAfterPass, .function = findFunctionAsRead(&program, FunctionID(index)), .pass = id, .detail = problem };
+            if (keepFailedVerification(failure, failure.kind))
+                continue;
+            m_build.diagnostics().add(failure);
             break;
         }
     }
@@ -662,6 +665,26 @@ static String describeError(const InternalError& error, const Function& verified
     return description.toString();
 }
 
+bool PassRunner::keepFailedVerification(const InternalError& failure, InternalErrorKind found) const
+{
+    if (!m_build.options().keepsGoingBehindFailedVerifications)
+        return false;
+    m_build.diagnostics().keepFirstFailureOfFunction(failure, found);
+    return true;
+}
+
+void PassRunner::keepFailedVerifications(PassID pass, const Program& program, Vector<InternalError>&& errors) const
+{
+    for (const InternalError& error : errors) {
+        // What is wrong with a record of the program is wrong for every pass to come.
+        if (!error.function) {
+            m_build.diagnostics().add(error);
+            continue;
+        }
+        keepFailedVerification(InternalError { .kind = InternalErrorKind::VerificationFailedAfterPass, .function = findFunctionAsRead(&program, error.function), .pass = pass, .detail = describeError(error, program.at(error.function)) }, error.kind);
+    }
+}
+
 void PassRunner::verifyAfterProgramPass(const PassDescriptor& descriptor, const Program& program) const
 {
     if (!m_build.options().verifiesAfterEveryPass)
@@ -685,6 +708,17 @@ void PassRunner::verifyAfterProgramPass(const PassDescriptor& descriptor, const 
     VerifierInputs inputs = m_verifierInputs;
     inputs.isOptimizing = form == IRForm::Prepared;
     inputs.effects = &effects;
+    if (m_build.options().keepsGoingBehindFailedVerifications) {
+        Vector<InternalError> errors;
+        {
+            Diagnostics::Interception interception(m_build.diagnostics());
+            if (verifyProgram(program, form, m_build, inputs))
+                return;
+            errors = interception.take();
+        }
+        keepFailedVerifications(descriptor.id, program, WTF::move(errors));
+        return;
+    }
     if (verifyProgram(program, form, m_build, inputs))
         return;
     InternalError failure { .kind = InternalErrorKind::VerificationFailedAfterPass, .pass = descriptor.id };
@@ -907,8 +941,11 @@ NEVER_INLINE PassOutcome PassRunner::runFunctionPassThatMayFire(PassID id, Funct
             tieCasts();
             if (m_build.options().verifiesProgram) [[unlikely]] {
                 if (Vector<CastAwayFromItsValue, 4> found = findCastsAwayFromTheirValues(context.program, context.function); !found.isEmpty()) {
-                    m_build.diagnostics().add(InternalError { .kind = InternalErrorKind::CastWithoutFact, .function = context.id, .block = found[0].block, .value = found[0].cast, .pass = id });
-                    run.isStopped = true;
+                    InternalError failure = InternalError { .kind = InternalErrorKind::CastWithoutFact, .function = context.id, .block = found[0].block, .value = found[0].cast, .pass = id };
+                    if (!keepFailedVerification(failure, failure.kind)) {
+                        m_build.diagnostics().add(failure);
+                        run.isStopped = true;
+                    }
                     return PassOutcome::Unchanged;
                 }
             }
@@ -954,7 +991,10 @@ NEVER_INLINE PassOutcome PassRunner::runFunctionPassThatMayFire(PassID id, Funct
     auto stopWhereThereIsOne = [&](const String& problem) {
         if (problem.isNull())
             return;
-        m_build.diagnostics().add(InternalError { .kind = InternalErrorKind::VerificationFailedAfterPass, .function = run.functionAsRead, .pass = id, .detail = problem });
+        InternalError failure { .kind = InternalErrorKind::VerificationFailedAfterPass, .function = run.functionAsRead, .pass = id, .detail = problem };
+        if (keepFailedVerification(failure, failure.kind))
+            return;
+        m_build.diagnostics().add(failure);
         run.isStopped = true;
     };
     if (m_build.options().checksThatUsedValuesAreListed && outcome == PassOutcome::Changed) [[unlikely]]
@@ -1030,6 +1070,8 @@ void PassRunner::verifyAfterFunctionPass(const PassDescriptor& descriptor, Funct
 {
     if (!m_build.options().verifiesAfterEveryPass || isVerifiedElsewhere(context)) [[likely]]
         return;
+    if (hasFailedVerificationBefore(run.functionAsRead))
+        return;
     IRForm form = descriptor.produces.value_or(context.program.form());
     VerifierInputs inputs = m_verifierInputs;
     inputs.isOptimizing = form == IRForm::Prepared;
@@ -1073,6 +1115,8 @@ void PassRunner::verifyAfterFunctionPass(const PassDescriptor& descriptor, Funct
 
     // A listing of many errors is cut short, so the line that names the pass also says what the verifier found.
     InternalError failure { .kind = InternalErrorKind::VerificationFailedAfterPass, .function = run.functionAsRead, .pass = descriptor.id, .detail = describeError(errors.first(), context.function) };
+    if (keepFailedVerification(failure, errors.first().kind))
+        return;
     for (InternalError& error : errors)
         error.pass = descriptor.id;
     m_build.diagnostics().append(WTF::move(errors));
@@ -1144,6 +1188,8 @@ void PassRunner::verifySkippedFunctionPass(const PassDescriptor& descriptor, con
 {
     if (!m_build.options().verifiesAfterEveryPass || isVerifiedElsewhere(context)) [[likely]]
         return;
+    if (hasFailedVerificationBefore(run.functionAsRead))
+        return;
     Function copy(context.function);
     FunctionAnalyses analyses(context.analyses.context(), copy);
     FunctionPassContext contextOfCopy { context.program, context.inputs, context.id, copy, analyses, context.types, context.strings, m_build };
@@ -1154,7 +1200,10 @@ void PassRunner::verifySkippedFunctionPass(const PassDescriptor& descriptor, con
         return;
 
     const PassSet& changers = run.notes->changersSinceLastRun[static_cast<unsigned>(descriptor.id)];
-    m_build.diagnostics().add(InternalError { .kind = InternalErrorKind::SkippedPassChangesFunction, .function = run.functionAsRead, .pass = descriptor.id, .detail = makeString(describeChangers(changers), describeFirstDifference(context.function, copy)) });
+    InternalError failure = InternalError { .kind = InternalErrorKind::SkippedPassChangesFunction, .function = run.functionAsRead, .pass = descriptor.id, .detail = makeString(describeChangers(changers), describeFirstDifference(context.function, copy)) };
+    if (keepFailedVerification(failure, failure.kind))
+        return;
+    m_build.diagnostics().add(failure);
     run.isStopped = true;
 }
 

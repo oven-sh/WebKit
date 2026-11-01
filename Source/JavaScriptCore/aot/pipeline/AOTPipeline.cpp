@@ -1200,6 +1200,17 @@ PassOutcome Pipeline::verify(IRForm form)
     if (inputs.flow)
         inputs.effects = &m_analyses.effects(*inputs.flow);
     bool isRunning = !m_runner.isStopped();
+    // A program that is not valid as it was read is nothing to go on with.
+    if (m_build.options().keepsGoingBehindFailedVerifications && (form != IRForm::AsRead || m_build.diagnostics().hasKeptFailures())) {
+        Vector<InternalError> errors;
+        {
+            Diagnostics::Interception interception(m_build.diagnostics());
+            read(PassID::VerifyProgram, verifyProgram, m_program, form, m_build, inputs);
+            errors = interception.take();
+        }
+        m_runner.keepFailedVerifications(PassID::VerifyProgram, m_program, WTF::move(errors));
+        return m_runner.lastProgramPassOutcome();
+    }
     bool isValid = read(PassID::VerifyProgram, verifyProgram, m_program, form, m_build, inputs);
     if (isRunning && !isValid && form != IRForm::AsRead && !m_build.options().verifiesAfterEveryStage)
         m_build.diagnostics().add(InternalError { .kind = InternalErrorKind::VerificationFailedAtTheEnd });
@@ -2067,7 +2078,7 @@ std::unique_ptr<PipelineOutput> runPipeline(std::unique_ptr<Program> program, Bu
         pipeline.runAllStages(readBesideLastEffectSummaries, goesOnBehindFlowAnalysis);
         output = pipeline.takeOutput();
     }
-    if (build.diagnostics().hasErrors()) {
+    if (build.diagnostics().hasErrors() || build.diagnostics().hasKeptFailures()) {
         output->waitForRegExps();
         build.diagnostics().finish(output->program.get());
         return nullptr;

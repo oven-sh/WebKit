@@ -340,6 +340,9 @@ Diagnostics& Diagnostics::operator=(Diagnostics&& other) WTF_IGNORES_THREAD_SAFE
         return *this;
     m_userDiagnostics = std::exchange(other.m_userDiagnostics, { });
     m_internalErrors = std::exchange(other.m_internalErrors, { });
+    m_keptFailures = std::exchange(other.m_keptFailures, { });
+    m_functionsWithKeptFailure = std::exchange(other.m_functionsWithKeptFailure, { });
+    RELEASE_ASSERT(!m_interception && !other.m_interception);
     m_userDiagnosticMessages = std::exchange(other.m_userDiagnosticMessages, { });
     m_internalErrorMessages = std::exchange(other.m_internalErrorMessages, { });
     m_hasErrors.store(other.m_hasErrors.exchange(false, std::memory_order_relaxed), std::memory_order_relaxed);
@@ -384,7 +387,50 @@ void Diagnostics::append(Vector<UserDiagnostic>&& diagnostics)
 
 void Diagnostics::append(Vector<InternalError>&& errors)
 {
+    {
+        Locker locker { m_lock };
+        if (m_interception) {
+            m_interception->m_errors.appendVector(WTF::move(errors));
+            return;
+        }
+    }
     appendTo(&Diagnostics::m_internalErrors, WTF::move(errors));
+}
+
+Diagnostics::Interception::Interception(Diagnostics& diagnostics)
+    : m_diagnostics(diagnostics)
+{
+    Locker locker { diagnostics.m_lock };
+    RELEASE_ASSERT(!diagnostics.m_interception);
+    diagnostics.m_interception = this;
+}
+
+Diagnostics::Interception::~Interception()
+{
+    Locker locker { m_diagnostics.m_lock };
+    m_diagnostics.m_interception = nullptr;
+}
+
+void Diagnostics::keepFirstFailureOfFunction(const InternalError& failure, InternalErrorKind found)
+{
+    RELEASE_ASSERT(!Typed::ProvisionalFunctions::contains(failure.function));
+    Locker locker { m_lock };
+    RELEASE_ASSERT(!m_isFinished);
+    if (failure.function && m_functionsWithKeptFailure.set(failure.function.index()))
+        return;
+    m_keptFailures.append({ failure, found });
+}
+
+bool Diagnostics::hasKeptFailureOf(Typed::FunctionID function) const
+{
+    Locker locker { m_lock };
+    return function && m_functionsWithKeptFailure.get(function.index());
+}
+
+bool Diagnostics::hasKeptFailures() const
+{
+    Locker locker { m_lock };
+    return !m_keptFailures.isEmpty();
 }
 
 void Diagnostics::resolveLocations(const Typed::Program& program)
@@ -399,6 +445,29 @@ void Diagnostics::finish(const Typed::Program* program)
 {
     Locker locker { m_lock };
     RELEASE_ASSERT(!m_isFinished);
+    if (!m_keptFailures.isEmpty()) {
+        struct Row {
+            PassID pass;
+            InternalErrorKind found;
+            uint32_t count;
+        };
+        Vector<Row> rows;
+        for (KeptFailure& kept : m_keptFailures) {
+            size_t index = rows.findIf([&](const Row& row) { return row.pass == kept.failure.pass && row.found == kept.found; });
+            if (index == notFound)
+                rows.append({ kept.failure.pass, kept.found, 1 });
+            else
+                ++rows[index].count;
+            m_internalErrors.append(WTF::move(kept.failure));
+        }
+        AOT::sort(rows, std::ranges::greater { }, [](const Row& row) { return std::tuple(row.count, static_cast<unsigned>(row.pass), static_cast<unsigned>(row.found)); });
+        StringBuilder table;
+        for (const Row& row : rows)
+            table.append(table.isEmpty() ? ""_s : " . "_s, row.pass == PassID::None ? "typing"_s : nameOf(row.pass), ' ', nameOf(row.found), ' ', row.count);
+        m_internalErrors.append(InternalError { .kind = InternalErrorKind::BuildWentOnBehindFailedVerifications, .count = static_cast<uint32_t>(m_keptFailures.size()), .detail = table.toString() });
+        m_keptFailures.clear();
+        m_hasErrors.store(true, std::memory_order_relaxed);
+    }
     m_userDiagnosticMessages = finishRecords(m_userDiagnostics, program);
     m_internalErrorMessages = finishRecords(m_internalErrors, program);
     m_isFinished = true;

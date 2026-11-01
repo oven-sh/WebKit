@@ -41,6 +41,7 @@ enum InternalErrorKind (stage: Stage, message: Text) {
     Unknown(Any, "an internal error without a kind was reported")
     InvalidCompileOptions(Any, "the compile options are not valid (reason {count})")
     VerificationFailedAfterPass(Any, "verification failed after {pass}")
+    BuildWentOnBehindFailedVerifications(Any, "the build went on behind verifications that failed in {count} functions: the first of each function has a line of its own")
     VerificationFailedAtTheEnd(Any, "the program that goes to the back end is not valid: build again with --aot-verify-each-pass to find the pass")
     SkippedPassChangesFunction(Any, "{pass} was left out because nothing that changed since its last run can give it work, but it changes the function")
 

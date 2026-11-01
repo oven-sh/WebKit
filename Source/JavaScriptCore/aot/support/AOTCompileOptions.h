@@ -161,6 +161,7 @@ struct CompileOptions {
     unsigned threadCount { 1 };
     CompileAction action { CompileAction::Compile };
     bool verifiesAfterEveryPass { false };
+    bool keepsGoingBehindFailedVerifications { false };
     bool verifiesAfterEveryStage { false };
     bool verifiesProgram { false };
     bool validatesBackEnd { false };

@@ -116,9 +116,17 @@ ValueLocation TypePropagation::locationForRule(ValueID id) const
     return { ValuePlacement::Parameter, BlockID(place.block), place.index };
 }
 
+static void reportTypeOutOfDate(BuildContext& build, const InternalError& error)
+{
+    if (build.options().keepsGoingBehindFailedVerifications)
+        build.diagnostics().keepFirstFailureOfFunction(error, error.kind);
+    else
+        build.diagnostics().add(error);
+}
+
 void TypePropagation::addTypeOutOfDate(ValueID id, ASCIILiteral detail)
 {
-    m_inputs.build.diagnostics().add(InternalError { .kind = InternalErrorKind::TypeOutOfDate, .function = m_inputs.analyses.subject().function, .value = id, .detail = detail });
+    reportTypeOutOfDate(m_inputs.build, InternalError { .kind = InternalErrorKind::TypeOutOfDate, .function = m_inputs.analyses.subject().function, .value = id, .detail = detail });
 }
 
 void TypePropagation::reportRetypedValues(bool countsThem)
@@ -1735,7 +1743,7 @@ TypePropagationOutcome typeChangedValues(const TypePropagationInputs& inputs)
         statistics.count(outcome.didChange() ? StatisticID::FunctionsTypedFromChanges : StatisticID::FunctionsTypedAsBefore);
         // Where the log ran full while this typing wrote into it, every value is pending again.
         if (ValueID value = typedFromNever && !outcome.dependsOnTypesBefore() && !pending->isEverythingPending(log) ? findValueTypedWider(inputs, *typedFromNever, *typesFromNever) : ValueID())
-            inputs.build.diagnostics().add(InternalError { .kind = InternalErrorKind::TypeOutOfDate, .function = inputs.analyses.subject().function, .value = value, .detail = "typed from what changed it is wider than typed from nothing"_s });
+            reportTypeOutOfDate(inputs.build, InternalError { .kind = InternalErrorKind::TypeOutOfDate, .function = inputs.analyses.subject().function, .value = value, .detail = "typed from what changed it is wider than typed from nothing"_s });
     }
     if (pending->isEmpty(log)) {
         inputs.function.changeLog()->didPropagateTypes();
