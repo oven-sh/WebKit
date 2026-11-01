@@ -124,6 +124,7 @@ enum InternalErrorKind (stage: Stage, message: Text) {
     CopyRunsBehindLess(Optimize, "code is copied to where a value stands for another that is of a narrower type, or a guard for one that proves more")
     QuestionBeforeRepair(Optimize, "a question that follows values through block parameters is asked while uses wait for their repair")
     SlotOfOtherForm(Optimize, "the operation takes a slot of {layout} that holds the functions of an accessor for one that holds a value, or the other way round")
+    FieldCreatedBelowAccessor(Optimize, "a store may create a field of {layout} in its slot, which says nothing of member guards, where accesses go past the empty slot to an accessor of the class behind such a guard")
     UnspecifiedValueInspected(Optimize, "the operation looks at value {count}, which is unspecified on a path that reaches it")
     OperandMustBeDefinition(ReadAndVerify, "the operand must be the defining value, not a block parameter")
     CycleWithoutLoopMark(ReadAndVerify, "a cycle has no loop mark")
