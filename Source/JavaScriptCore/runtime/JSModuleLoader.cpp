@@ -380,15 +380,16 @@ void JSModuleLoader::fetchSynchronously(JSGlobalObject* globalObject, JSPromise*
     ASSERT(vm.m_synchronousModuleQueue);
     ASSERT(fetchPromise->status() == JSPromise::Status::Pending);
 
+    JSPromise* promise = nullptr;
 #if ENABLE(AOT)
     // Whoever began the fetch was answered. A module of the image is found again as it was found then.
-    bool wasAskingHost = vm.hasCompiledCode() && AOT::ModuleRecord::setIsAskingHost(globalObject, true);
+    if (vm.hasCompiledCode()) {
+        BitVector imagesThatWereAskingHost = AOT::ModuleRecord::letAllImagesAskHost(globalObject);
+        promise = fetch(globalObject, identifierToJSValue(vm, key), referrer, WTF::move(parameters), WTF::move(scriptFetcher));
+        AOT::ModuleRecord::restoreImagesThatAskHost(globalObject, imagesThatWereAskingHost);
+    } else
 #endif
-    JSPromise* promise = fetch(globalObject, identifierToJSValue(vm, key), referrer, WTF::move(parameters), WTF::move(scriptFetcher));
-#if ENABLE(AOT)
-    if (vm.hasCompiledCode())
-        AOT::ModuleRecord::setIsAskingHost(globalObject, wasAskingHost);
-#endif
+        promise = fetch(globalObject, identifierToJSValue(vm, key), referrer, WTF::move(parameters), WTF::move(scriptFetcher));
     RETURN_IF_EXCEPTION(scope, void());
     if (promise->status() == JSPromise::Status::Fulfilled)
         fetchPromise->fulfillPromise(vm, promise->result());

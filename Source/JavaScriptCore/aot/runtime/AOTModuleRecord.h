@@ -10,6 +10,7 @@
 #include "AOTRecordTypes.h"
 #include "AOTVector.h"
 #include "CyclicModuleRecord.h"
+#include <wtf/BitVector.h>
 #include <wtf/HashSet.h>
 #include <wtf/OrderedHashSet.h>
 
@@ -106,8 +107,9 @@ public:
     void setIsRequestedByWalkedModule() { m_isRequestedByWalkedModule = true; }
     // Around a request that the loader makes for the module. The first returns what the second takes.
     uint8_t willAskHostForRequest();
-    // Answers what it was.
-    static bool setIsAskingHost(JSGlobalObject*, bool);
+    // Around a request that the loader makes for no module of its own: every image of the realm asks. The first returns what the second takes: which of them were asking.
+    static BitVector letAllImagesAskHost(JSGlobalObject*);
+    static void restoreImagesThatAskHost(JSGlobalObject*, const BitVector& wereAsking);
     void didAskHostForRequest(uint8_t flagsBefore);
     // The host threw in place of an answer.
     void didFailToFetchRequest(const Identifier& key, Exception*);

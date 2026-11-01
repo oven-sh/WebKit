@@ -4719,6 +4719,17 @@ AbstractModuleRecord* Modules::uncompiledRecord(ModuleID external)
             record = recordForResolution(moduleWithExportsOf(fileOf(*compiled)));
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
+    // A module of another image that has run needs no record, and a record that is retired leaves the loader: retireRecord().
+    if (!record && m_instance.program->sharesRealms()) [[unlikely]] {
+        Instance::forEachOf(m_instance.globalObject, [&](Instance& instance) {
+            Modules& modules = modulesOf(instance);
+            if (record || &modules == this)
+                return;
+            if (std::optional<ModuleID> compiled = modules.m_table.findByPath(key.string()); compiled && !modules.isEvicted(*compiled))
+                record = modules.recordForResolution(modules.moduleWithExportsOf(modules.fileOf(*compiled)));
+        });
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
     if (!record) {
         throwException(m_instance.globalObject, scope, createExternalModuleNotLoadedError(m_instance.globalObject, m_table.pathText(external)));
         return nullptr;
@@ -6672,13 +6683,25 @@ bool ModuleRecord::isRunningCommonJSFile()
     return modules().isCommonJSFileOrFace(m_module) && modules().isImportedByLoader(m_module) && modules().status(m_module) == ModuleStatus::Evaluating;
 }
 
-bool ModuleRecord::setIsAskingHost(JSGlobalObject* globalObject, bool isAskingHost)
+BitVector ModuleRecord::letAllImagesAskHost(JSGlobalObject* globalObject)
 {
-    bool wasAskingHost = false;
+    BitVector wereAsking;
+    size_t image = 0;
     Instance::forEachOf(globalObject, [&](Instance& instance) {
-        wasAskingHost |= modulesOf(instance).setIsAskingHost(isAskingHost);
+        if (modulesOf(instance).setIsAskingHost(true))
+            wereAsking.set(image);
+        ++image;
     });
-    return wasAskingHost;
+    return wereAsking;
+}
+
+// Each image goes back to what it was: one that asks ends that itself, and nothing would end it for the others. An image that has joined the realm meanwhile stands above them.
+void ModuleRecord::restoreImagesThatAskHost(JSGlobalObject* globalObject, const BitVector& wereAsking)
+{
+    size_t image = 0;
+    Instance::forEachOf(globalObject, [&](Instance& instance) {
+        modulesOf(instance).setIsAskingHost(wereAsking.get(image++));
+    });
 }
 
 uint8_t ModuleRecord::willAskHostForRequest()
