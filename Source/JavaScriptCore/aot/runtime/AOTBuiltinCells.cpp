@@ -813,20 +813,38 @@ String refusedSpyMessage(JSGlobalObject* globalObject, JSObject* object, Uniqued
     return makeString("Cannot spy on "_s, StringView(message).substring(start.length()));
 }
 
+static bool hasUnlocked(const Instance& instance, BuiltinID member)
+{
+    BuiltinCells* cells = instance.state ? instance.state->builtinCells.get() : nullptr;
+    bool hasListOfRealm = cells && !cells->membersUnlockedInRealm().empty();
+    return ProgramTables::isUnlocked(hasListOfRealm ? cells->membersUnlockedInRealm() : instance.tables().unlockedBuiltinMembers(), member.index());
+}
+
+// Over layers a realm runs several images, and each knows the objects that it has locked itself.
 bool isMemberUnlockedForTests(JSObject* object, UniquedStringImpl* key)
 {
-    Instance* instance = instanceOfRealmOf(object);
-    BuiltinID holder = builtinOfLockedObject(instance, object);
-    if (!instance || !holder)
+    Instance* first = instanceOfRealmOf(object);
+    if (!first)
         return false;
     const BuiltinTable& table = BuiltinTable::singleton();
     BuiltinName name = table.nameOf(object->vm(), key);
-    BuiltinID member = name ? table.findOwnMember(holder, name) : BuiltinID();
-    if (!member)
+    if (!name)
         return false;
-    BuiltinCells* cells = instance->state ? instance->state->builtinCells.get() : nullptr;
-    bool hasListOfRealm = cells && !cells->membersUnlockedInRealm().empty();
-    return ProgramTables::isUnlocked(hasListOfRealm ? cells->membersUnlockedInRealm() : instance->tables().unlockedBuiltinMembers(), member.index());
+    bool isKnown = false;
+    bool isUnlockedByAll = true;
+    forEachInstanceOf(object->realm(), [&](Instance& instance) {
+        BuiltinID holder = instance.state ? instance.state->builtinCells->builtinOfLockedObject(object) : BuiltinID();
+        if (!holder)
+            return;
+        isKnown = true;
+        BuiltinID member = table.findOwnMember(holder, name);
+        isUnlockedByAll &= member && hasUnlocked(instance, member);
+    });
+    if (isKnown)
+        return isUnlockedByAll;
+    BuiltinID holder = builtinOfLockedObject(first, object);
+    BuiltinID member = holder ? table.findOwnMember(holder, name) : BuiltinID();
+    return member && hasUnlocked(*first, member);
 }
 
 static bool admitsReplacedBuiltins(const Instance& instance)
