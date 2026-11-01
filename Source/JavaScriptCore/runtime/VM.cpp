@@ -1403,6 +1403,11 @@ NEVER_INLINE bool VM::hasExceptionsAfterHandlingTraps()
 
 void VM::setHasTerminationRequest()
 {
+#if USE(BUN_JSC_ADDITIONS)
+    // A termination begins. What an earlier one set aside, and nobody withdrew, is not for cancelTermination() to put back.
+    if (!m_hasTerminationRequest)
+        defaultMicrotaskQueue().dropJobsSetAsideAtTermination();
+#endif
     m_hasTerminationRequest = true;
     requestEntryScopeService(ConcurrentEntryScopeService::ResetTerminationRequest);
 }
@@ -1425,15 +1430,21 @@ bool VM::cancelTermination()
     ASSERT(!traps().isDeferringTermination());
     ASSERT(!m_executionForbiddenOnTermination);
     bool wasPending = traps().clearTrap(VMTraps::NeedTermination);
+    bool wasTaken = false;
     if (hasPendingTerminationException()) {
         clearException();
-        wasPending = true;
+        wasTaken = true;
     }
     if (hasTerminationRequest()) {
         clearHasTerminationRequest();
-        wasPending = true;
+        wasTaken = true;
     }
-    return wasPending;
+#if USE(BUN_JSC_ADDITIONS)
+    // The jobs of the module loader that the termination took out of a checkpoint: MicrotaskQueue::clearAfterTermination().
+    if (wasTaken)
+        defaultMicrotaskQueue().restoreJobsSetAsideAtTermination();
+#endif
+    return wasPending || wasTaken;
 }
 
 void VM::setException(Exception* exception)
