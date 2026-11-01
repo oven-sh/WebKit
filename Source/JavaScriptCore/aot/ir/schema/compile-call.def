@@ -174,10 +174,12 @@ enum Sabotage {
     WordsCarriedAroundLoopsOutlastWrites
     PassesDropCalls
     AssignmentsPutOffAskNobodyAbove WhatInitializersTakeNeverChanges
-    ListsOfBuiltinsEndWithWhatIsKept DelayedStoresAreSeenByOthers SlotsNeedNoAbsentState CopiesNameNoFile
+    GetsBehindHasOutlastWrites ObjectsWithTheTagOfAnotherAreAbsent
+    ListsOfBuiltinsEndWithWhatIsKept
+    DelayedStoresAreSeenByOthers SlotsNeedNoAbsentState
+    CopiesNameNoFile
     FusedCallsEnterOnlyUnknownCode
     StoresOfConstantsAlwaysLand ConstantFieldsAreStoredOnce DefinitionsPutOffHaveNoDeadZone ClosuresInFieldsCaptureTheirHolder LiteralsOfConstantsAreNeverToldApart
-    GetsBehindHasOutlastWrites ObjectsWithTheTagOfAnotherAreAbsent
     TalliesOutrunTheirCounters
     BuiltinsLookAtTheirOperandsAlone AccessorsCopiedOntoTheRealmStayHidden
     NothingClimbsAboveInstances
