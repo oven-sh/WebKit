@@ -88,6 +88,7 @@ struct LinkContext {
     macro(JSObject*, recordBeforeMockInPlace) \
     macro(JSValue, requiredValueBeforeMockInPlace) \
     macro(JSValue, exportsOfOriginalBesideMock) \
+    macro(JSValue, answerOfMockWhileOriginalRuns) \
     macro(JSObject*, exportsAddedByMock) \
     macro(JSValue, errorKeptByLoader) \
     macro(JSObject*, exportsWhileRequired) \
@@ -1043,8 +1044,8 @@ private:
     const bool m_findsDataFilesByName;
     const bool m_refusesOriginalsBesideMocks;
     bool m_isAskingHost { false };
-    // No body of a mocked module is called but this one: answerRequireWithOriginal().
-    std::optional<ModuleID> m_fileWhoseOriginalRuns;
+    // No body of a mocked module is called but these: answerRequireWithOriginal(). One may load another.
+    BitVector m_filesWhoseOriginalRuns;
     bool m_hasAskedEveryClass { false };
     bool m_isWalkingRequests { false };
     struct LoadInFlight {

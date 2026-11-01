@@ -1909,8 +1909,11 @@ bool Modules::setMockInPlace(ModuleID fileOrModule, JSObject* mock, JSValue what
         ProgramStatics::writeVariable(m_instance, *word, mock ? JSValue(mock) : JSValue());
 
     LoadedModule& loaded = ensureLoaded(fileOrModule);
+    bool originalRuns = isFile && m_filesWhoseOriginalRuns.get(fileOrModule.index());
     if (mock) {
-        if (isFile) {
+        if (originalRuns) [[unlikely]]
+            loaded.answerOfMockWhileOriginalRuns.set(*this, whatRequireAnswers);
+        else if (isFile) {
             // Compiled code calls the body of a CommonJS file itself, and asks for the status first.
             markEvaluated(fileOrModule);
             setCommonJSExports(fileOrModule, whatRequireAnswers);
@@ -1943,7 +1946,9 @@ bool Modules::setMockInPlace(ModuleID fileOrModule, JSObject* mock, JSValue what
         if ((each == fileOrModule || each == module || data(each).hasDynamicStarExport()) && namespaceIfCreated(each, ModulePhase::Evaluation))
             setNamespace(each, ModulePhase::Evaluation, nullptr);
     }
-    if (isFile)
+    if (originalRuns) [[unlikely]]
+        loaded.answerOfMockWhileOriginalRuns.set(*this, JSValue());
+    else if (isFile)
         setCommonJSExports(fileOrModule, original ? original : jsUndefined());
     else
         loaded.requiredValue.set(*this, JSValue());

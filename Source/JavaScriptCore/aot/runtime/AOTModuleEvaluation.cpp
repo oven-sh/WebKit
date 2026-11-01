@@ -496,7 +496,7 @@ JSValue Modules::callBody(ModuleID module)
 {
     const ModuleData& moduleData = data(module);
     std::optional<FunctionID> body = moduleData.bodyFunction();
-    if (!body || (isMocked(module) && m_fileWhoseOriginalRuns != module))
+    if (!body || (isMocked(module) && !m_filesWhoseOriginalRuns.get(module.index())))
         return jsUndefined();
 
     VM& vm = *m_instance.vm;
@@ -611,7 +611,7 @@ bool Modules::isAwaitedByImport(ModuleID file)
 void Modules::didThrowInBody(ModuleID module, JSValue error)
 {
     // The body ran beside a mock that stands in place of the file. answerRequireWithOriginal() puts back what stood there.
-    if (m_fileWhoseOriginalRuns == module) [[unlikely]]
+    if (m_filesWhoseOriginalRuns.get(module.index())) [[unlikely]]
         return;
     // `bun run` takes a CommonJS file whose body throws out of require.cache, and the next require() runs it again. A test run loads it again from disk where its build
     // has compiled the code that asks for the file for a file that may load twice.
@@ -3571,24 +3571,31 @@ JSValue Modules::answerRequireWithOriginal(ModuleID file)
     // A ring of files comes back while the body runs.
     if (status(file) == ModuleStatus::Evaluating)
         return commonJSExports(file);
-    JSObject* mock = mockInPlace(file);
-    JSValue answerOfMock = commonJSExports(file);
+    JSObject* mockBefore = mockInPlace(file);
+    // The variable and the status are the body's while it runs. What the mock answers waits here: for whoever gets no original, and for a mock that is laid meanwhile.
+    ensureLoaded(file).answerOfMockWhileOriginalRuns.set(*this, commonJSExports(file));
     JSValue settledAnswer = ensureLoaded(file).requiredValue.get();
     setStatus(file, ModuleStatus::Unlinked);
     setCommonJSExports(file, jsUndefined());
     ensureLoaded(file).requiredValue.set(*this, JSValue());
-    {
-        SetForScope fileWhoseOriginalRuns(m_fileWhoseOriginalRuns, std::optional(file));
-        evaluateCommonJS(file);
-    }
+    m_filesWhoseOriginalRuns.set(file.index());
+    evaluateCommonJS(file);
+    m_filesWhoseOriginalRuns.clear(file.index());
     bool hasThrown = !!scope.exception();
     JSValue original = commonJSExports(file);
+    JSValue answerOfMock = ensureLoaded(file).answerOfMockWhileOriginalRuns.get();
+    ensureLoaded(file).answerOfMockWhileOriginalRuns.set(*this, JSValue());
+    JSObject* mock = mockInPlace(file);
     // As `bun run` does with a CommonJS file whose body throws: whoever asked hears of it, and the next one runs the body again. didThrowInBody() has left the file to this.
     if (hasThrown)
         forgetRunThatThrew(file);
+    // The mock ended while the body ran: the file is what the run has made of it.
+    if (!mock)
+        return hasThrown ? JSValue() : original;
     markEvaluated(file);
     setCommonJSExports(file, answerOfMock);
-    ensureLoaded(file).requiredValue.set(*this, settledAnswer);
+    if (mock == mockBefore)
+        ensureLoaded(file).requiredValue.set(*this, settledAnswer);
     if (hasThrown)
         return { };
     ensureLoaded(file).exportsOfOriginalBesideMock.set(*this, original);
@@ -3619,6 +3626,8 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
     RETURN_IF_EXCEPTION(scope, { });
     if (getsOriginalBesideMock(target, referrer)) [[unlikely]]
         RELEASE_AND_RETURN(scope, answerRequireWithOriginal(target));
+    if (m_filesWhoseOriginalRuns.get(target.index()) && mockInPlace(target)) [[unlikely]]
+        return ensureLoaded(target).answerOfMockWhileOriginalRuns.get();
     if (isLeftToHost(target)) [[unlikely]]
         RELEASE_AND_RETURN(scope, loadEvictedFile(fileOf(target)));
     if (targetData.isOfLibrary() && isRequiredByProgram && isKeptInRequireCache(target)) [[unlikely]]
