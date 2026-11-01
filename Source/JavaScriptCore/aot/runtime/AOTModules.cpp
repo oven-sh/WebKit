@@ -3226,8 +3226,14 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
         VM& vm = *m_instance.vm;
         JSPromise* promise = promiseForCaller();
         JSFunction* goOn = JSFunction::create(vm, realm, 2, String(), importBehindFactories, ImplementationVisibility::Private);
-        uint64_t moduleAndCaller = static_cast<uint64_t>(moduleIDForHost(*m_instance.program, module).index()) << 1 | static_cast<uint64_t>(caller == ImportCaller::Host);
-        factories->performPromiseThenWithContext(vm, realm, goOn, jsUndefined(), promise, jsNumber(static_cast<double>(moduleAndCaller)));
+        MarkedArgumentBuffer call;
+        call.append(jsNumber(moduleIDForHost(*m_instance.program, module).index()));
+        call.append(referrerAsyncOrder ? jsNumber(static_cast<double>(*referrerAsyncOrder)) : jsUndefined());
+        call.append(jsBoolean(caller == ImportCaller::Host));
+        call.append(jsNumber(static_cast<uint32_t>(text)));
+        JSArray* heldCall = constructArray(realm, static_cast<ArrayAllocationProfile*>(nullptr), call);
+        RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
+        factories->performPromiseThenWithContext(vm, realm, goOn, jsUndefined(), promise, heldCall);
         return promise;
     }
     if (text == TextOfImport::MayComeLater && textOfImportComesInLaterTurn(module, AskedBy::Import)) {
@@ -5739,9 +5745,12 @@ bool isCompiledModuleRecord(AbstractModuleRecord* record)
 
 JSC_DEFINE_HOST_FUNCTION(importBehindFactories, (JSGlobalObject* realm, CallFrame* callFrame))
 {
-    uint64_t moduleAndCaller = static_cast<uint64_t>(callFrame->argument(1).asNumber());
-    ModuleFromHost module(realm, ModuleID(static_cast<uint32_t>(moduleAndCaller >> 1)));
-    return JSValue::encode(modulesOf(realm)->startImport(module, std::nullopt, moduleAndCaller & 1 ? Modules::ImportCaller::Host : Modules::ImportCaller::CompiledCode));
+    JSArray* heldCall = asArray(callFrame->argument(1));
+    ModuleFromHost module(realm, ModuleID(heldCall->getIndexQuickly(0).asUInt32()));
+    JSValue order = heldCall->getIndexQuickly(1);
+    std::optional<int64_t> referrerAsyncOrder = order.isUndefined() ? std::nullopt : std::optional(static_cast<int64_t>(order.asNumber()));
+    auto caller = heldCall->getIndexQuickly(2).asBoolean() ? Modules::ImportCaller::Host : Modules::ImportCaller::CompiledCode;
+    return JSValue::encode(modulesOf(realm)->startImport(module, referrerAsyncOrder, caller, static_cast<Modules::TextOfImport>(heldCall->getIndexQuickly(3).asUInt32())));
 }
 
 JSPromise* importModule(JSGlobalObject* realm, ModuleID moduleOfHost, std::optional<int64_t> referrerAsyncOrder)
