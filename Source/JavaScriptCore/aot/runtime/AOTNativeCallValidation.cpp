@@ -1011,6 +1011,15 @@ private:
         });
     }
 
+    // What the operand's own `next` would do. The call site's writes, which hold those of that code, are checked above.
+    bool isSteppedAsDeclared(const Operand& operand, const OperandDifference& difference) const
+    {
+        return difference.change == OperandChange::InternalStateChanged && isBuiltinIterator(operand.object) && std::ranges::any_of(m_declaration.overloads, [&](const BuiltinOverload* overload) {
+            const BuiltinParameter* parameter = m_table.parameterFor(*overload, operand.position);
+            return parameter && parameter->protocols.contains(Protocol::Iterate);
+        });
+    }
+
     void checkChanges(bool didRunCode)
     {
         AbstractHeaps declared = declaredWrites();
@@ -1056,7 +1065,7 @@ private:
                     fail(ValidationFailureKind::NativeCallChangedOperand, operand.object, makeString(what, ", uses "_s, describeMembers(uses), ", needs "_s, describeMembers(declaring)));
                 else if (change == difference.change && difference.key && uses != OperandUses::all() && !hasActionOn(operand.object, difference.change, difference.key.get()))
                     fail(ValidationFailureKind::NativeCallChangedOperand, operand.object, makeString(what, ", no property action covers the key"_s));
-                else if (!m_declaration.overloads.isEmpty() && !heaps.isEmpty() && !declared.containsAny(heaps))
+                else if (!m_declaration.overloads.isEmpty() && !heaps.isEmpty() && !declared.containsAny(heaps) && !isSteppedAsDeclared(operand, difference))
                     fail(ValidationFailureKind::NativeCallWroteHeap, operand.object, makeString(what, ", the entry writes "_s, describeMembers(declared), ", not "_s, describeMembers(heaps)));
             }
         }
