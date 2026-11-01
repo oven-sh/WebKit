@@ -64,8 +64,8 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #if ENABLE(JIT_PROTECTION_KEY)
 #include <cpuid.h>
+#include <fcntl.h>
 #include <sys/mman.h>
-#include <sys/prctl.h>
 #include <sys/syscall.h>
 #include <sys/utsname.h>
 #include <unistd.h>
@@ -628,6 +628,24 @@ static bool kernelKeepsPKRUAcrossContextSwitches()
     return minor >= 13 || (minor == 10 && patch >= 103) || (minor == 4 && patch >= 182);
 }
 
+static bool mayBeUnderSeccompFilter()
+{
+    // Not prctl(PR_GET_SECCOMP): a filter can tell it from the calls of prctl() that the process makes anyway, and kill for it.
+    // It cannot tell one path from another. Where this says nothing, there may be a filter.
+    int file = open("/proc/thread-self/status", O_RDONLY | O_CLOEXEC);
+    if (file < 0)
+        return true;
+    char status[4096];
+    ssize_t length = read(file, status, sizeof(status) - 1);
+    close(file);
+    if (length <= 0)
+        return true;
+    status[length] = '\0';
+    constexpr const char* label = "\nSeccomp:";
+    const char* line = strstr(status, label);
+    return !line || strtol(line + strlen(label), nullptr, 10);
+}
+
 static void giveJITRegionAProtectionKey(void* base, size_t size)
 {
     if (!Options::useJITProtectionKey() || !operatingSystemHasEnabledProtectionKeys() || !kernelKeepsPKRUAcrossContextSwitches())
@@ -635,7 +653,7 @@ static void giveJITRegionAProtectionKey(void* base, size_t size)
 
     // A seccomp filter may kill the process for a system call that it does not list, and nothing tells what it would do.
     // systemd's @system-service does not list these; Docker's default profile does. So it takes someone who knows the filter.
-    if (prctl(PR_GET_SECCOMP, 0, 0, 0, 0) > 0 && !Options::useJITProtectionKeyUnderSeccompFilter())
+    if (!Options::useJITProtectionKeyUnderSeccompFilter() && mayBeUnderSeccompFilter())
         return;
 
     // Fails where all 15 keys are taken. On success this thread has the rights asked for, and a thread that exists already

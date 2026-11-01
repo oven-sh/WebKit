@@ -11452,8 +11452,8 @@ static void takeAwayRightsToJITRegion()
     __asm__ volatile("wrpkru" : : "a"((eax & ~bits) | (bits & 0x55555555)), "c"(0), "d"(0) : "memory");
 }
 
-// How this program ends when it starts under a seccomp filter that kills it for pkey_alloc(), or nothing where the process
-// may not have a filter.
+// How this program ends when it starts under a seccomp filter that kills it for pkey_alloc(), and for asking prctl() whether
+// there is a filter, or nothing where the process may not have a filter.
 static std::optional<int> statusOfStartingUnderFilterThatKillsForProtectionKey(const char* option)
 {
     constexpr int cannotInstallFilter = 10;
@@ -11469,11 +11469,14 @@ static std::optional<int> statusOfStartingUnderFilterThatKillsForProtectionKey(c
     if (!child) {
         struct sock_filter instructions[] = {
             BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, nr)),
-            BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_pkey_alloc, 0, 1),
+            BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_pkey_alloc, 3, 0),
+            BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_prctl, 0, 3),
+            BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, args[0])),
+            BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, PR_GET_SECCOMP, 0, 1),
             BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_KILL_PROCESS),
             BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
         };
-        struct sock_fprog program { 4, instructions };
+        struct sock_fprog program { 7, instructions };
         if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) || prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &program, 0, 0))
             _exit(cannotInstallFilter);
         struct rlimit noCoreFile { 0, 0 };
