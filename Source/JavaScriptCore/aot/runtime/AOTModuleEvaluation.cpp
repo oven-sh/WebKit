@@ -3191,6 +3191,23 @@ void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason
 }
 
 // No loader has the graph of the root: its evaluation runs the files first. What is left of it runs here, and the evaluation that waits for the file finds it done.
+bool Modules::runBodyOfImportedModuleAheadOfMock(ModuleID module)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    if (!data(module).isESModuleOfProgram() || data(module).isFaceOfFile() || hasBegunToLoad(module))
+        return false;
+    VisitedModuleRecords seen;
+    bool isReady = readyForSyncExecution(module, seen);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!isReady)
+        return false;
+    forgetMockThatWaits(module);
+    RETURN_IF_EXCEPTION(scope, false);
+    evaluateSynchronously(module, SynchronousEvaluationReason::Require);
+    RETURN_IF_EXCEPTION(scope, false);
+    return true;
+}
+
 void Modules::evaluateRootThatWaitedForFile()
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);

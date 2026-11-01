@@ -2005,8 +2005,12 @@ bool Modules::setMockInPlace(ModuleID fileOrModule, JSObject* mock, JSValue what
     m_modulesThatRanBesideMock.clear(module.index());
     // An evaluation that came by has marked the module as evaluated. Its body has yet to run, behind a link of its own.
     for (ModuleID each : { fileOrModule, module }) {
-        if (ranBesideMock) [[unlikely]]
+        if (ranBesideMock) [[unlikely]] {
+            // A record that answered by the mock held the status, and is gone.
+            if (status(each) < ModuleStatus::Evaluating)
+                setStatus(each, ModuleStatus::Evaluated);
             continue;
+        }
         if (status(each) == ModuleStatus::Evaluated && (!original || each != fileOrModule))
             setStatus(each, ModuleStatus::Unlinked);
         m_modulesOwedToImportersThatRan.set(each.index());
@@ -7058,6 +7062,14 @@ void runBodyOfRequiredFileAheadOfMock(JSGlobalObject* realm, ModuleID moduleOfHo
     RETURN_IF_EXCEPTION(scope, void());
     scope.release();
     modules->require(module, ModuleID(), Modules::RequiredBy::Program);
+}
+
+bool runBodyOfImportedModuleAheadOfMock(JSGlobalObject* realm, ModuleID moduleOfHost)
+{
+    ModuleFromHost module(realm, moduleOfHost);
+    Modules* modules = modulesOf(realm);
+    MockDoor door(modules, module, "runBodyOfImportedModuleAheadOfMock"_s);
+    return modules && modules->runBodyOfImportedModuleAheadOfMock(module);
 }
 
 bool runBodyOfLinkedModuleAheadOfMock(JSGlobalObject* realm, ModuleID moduleOfHost)

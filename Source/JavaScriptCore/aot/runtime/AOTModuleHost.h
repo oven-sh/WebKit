@@ -302,6 +302,8 @@ JS_EXPORT_PRIVATE bool hasBegunToLoad(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool runBodyOfLinkedModuleAheadOfMock(JSGlobalObject*, ModuleID);
 // Asked from runMock(), for a CommonJS file that a require() has come to: what deferMock() did is taken back and the body of the file runs. The mock is laid over it.
 JS_EXPORT_PRIVATE void runBodyOfRequiredFileAheadOfMock(JSGlobalObject*, ModuleID);
+// Asked from a factory that takes the original of an ES module which has not begun to load: the same, and the module is evaluated. False, and nothing is done, where some body would await.
+JS_EXPORT_PRIVATE bool runBodyOfImportedModuleAheadOfMock(JSGlobalObject*, ModuleID);
 // `a.txt?text` is a form of `a.txt`: what an import attribute makes of the file. A mock of the path replaces the form that has been loaded, and waits for all of them if none has. `file`: the module under the path itself, if the image holds it.
 JS_EXPORT_PRIVATE std::optional<ModuleID> formThatMockFinds(JSGlobalObject*, StringView path, std::optional<ModuleID> file);
 JS_EXPORT_PRIVATE Vector<ModuleID, 2> formsThatAttributesAskFor(JSGlobalObject*, StringView path);

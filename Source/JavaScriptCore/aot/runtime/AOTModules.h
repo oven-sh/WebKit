@@ -319,6 +319,7 @@ public:
     std::optional<ModuleID> formThatMockFinds(StringView path, std::optional<ModuleID> file) const;
     void deferMock(ModuleID, AfterFailure);
     void forgetMockThatWaits(ModuleID);
+    bool runBodyOfImportedModuleAheadOfMock(ModuleID);
     void endMockOfLibraryModule(ModuleID);
     // What ModuleNamespace::DynamicExports holds.
     void createDynamicExports(ModuleID, JSCellButterfly*& names, JSObject*& capturedValues, JSObject*& liveSources);
