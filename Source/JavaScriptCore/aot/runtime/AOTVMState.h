@@ -182,6 +182,7 @@ public:
     ImageBelowAdapter* endOfRoomForImagesBelowAdapters { nullptr };
     UniqueArray<ImageBelowAdapter> imagesBelowAdapters;
     bool validatesRuntime { false };
+    bool nativeTestChangesObjectsUnseen { false };
     bool didFinishCollection { false };
     // Some object has become a dictionary for the names that it is being given.
     bool hasObjectsBeingFilled { false };

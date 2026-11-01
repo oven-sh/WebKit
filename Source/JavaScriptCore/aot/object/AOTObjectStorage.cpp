@@ -324,10 +324,40 @@ static StringView nameOfLayout(VM& vm, const LayoutData& layout)
     return name && text.hasText(name) ? text.view(name) : StringView("-"_s);
 }
 
+static ASCIILiteral plainWordsFor(ObjectMutation mutation)
+{
+    switch (mutation) {
+    case ObjectMutation::AddProperty:
+        return "added a property to an object"_s;
+    case ObjectMutation::DeleteField:
+        return "deleted a property of an object"_s;
+    case ObjectMutation::RedefineProperty:
+        return "redefined a property of an object"_s;
+    case ObjectMutation::StoreOfOtherType:
+        return "stored a value of a new kind in a property of an object"_s;
+    case ObjectMutation::ChangeIntegrity:
+        return "froze, sealed or closed an object"_s;
+    case ObjectMutation::ChangePrototype:
+        return "changed the prototype of an object"_s;
+    case ObjectMutation::BecomePrototype:
+        return "made an object the prototype of another"_s;
+    default:
+        return "did something to an object"_s;
+    }
+}
+
+static void explainBrokenClaim(ASCIILiteral whatTheProgramDid)
+{
+    dataLogLn("AOT: The program ", whatTheProgramDid, ", which is allowed. The compiler had concluded that it never does, and the compiled code relies on that, so the program can't go on.");
+    dataLogLn("AOT: This is a bug in Bun. Please report it with these lines: https://github.com/oven-sh/bun/issues");
+    dataLogLn("AOT: Until it is fixed, build with --aot-disable=flow-results");
+}
+
 void crashOnImpossibleMutation(VM& vm, const Object& object, ObjectMutation mutation)
 {
     const LayoutData& layout = object.layout();
     dataLogLn("AOT: ", nameOf(mutation), " on an object of layout ", layout.index, " (", nameOfLayout(vm, layout), "), which the compiler assumed never happens");
+    explainBrokenClaim(plainWordsFor(mutation));
     crashOnValidationFailure(vm, { ValidationFailureKind::ImpossibleMutation, { }, { }, &object });
 }
 
@@ -335,6 +365,7 @@ void crashOnImpossibleMutation(VM& vm, const Object& object, PropertyName name, 
 {
     const LayoutData& layout = object.layout();
     dataLogLn("AOT: ", nameOf(mutation), " of ", String(name.uid()), " on an object of layout ", layout.index, " (", nameOfLayout(vm, layout), "), which the compiler assumed never happens");
+    explainBrokenClaim(plainWordsFor(mutation));
     crashOnValidationFailure(vm, { ValidationFailureKind::ImpossibleMutation, { }, { }, &object });
 }
 
@@ -342,6 +373,7 @@ void crashOnImpossibleMutation(VM& vm, const Object& object, const FieldData& fi
 {
     const LayoutData& layout = object.layout();
     dataLogLn("AOT: ", nameOf(mutation), " of field ", String(propertyNameOf(vm, object, field)), " on an object of layout ", layout.index, " (", nameOfLayout(vm, layout), "), which the compiler assumed never happens");
+    explainBrokenClaim(plainWordsFor(mutation));
     crashOnValidationFailure(vm, { ValidationFailureKind::ImpossibleMutation, { }, { }, &object });
 }
 
@@ -349,6 +381,7 @@ void crashOnLostStateOfBirth(VM& vm, const Object& object, const FieldData& fiel
 {
     const LayoutData& layout = object.layout();
     dataLogLn("AOT: ", event, " of field ", String(propertyNameOf(vm, object, field)), " of layout ", layout.index, " (", nameOfLayout(vm, layout), "), which compiled code reads without a test");
+    explainBrokenClaim("changed a property of an object"_s);
     crashOnValidationFailure(vm, { ValidationFailureKind::ImpossibleMutation, { }, { }, &object });
 }
 
