@@ -6296,8 +6296,16 @@ bool hasBegunToLoad(JSGlobalObject* realm, ModuleID moduleOfHost)
 std::optional<ModuleID> formThatMockFinds(JSGlobalObject* realm, StringView path, std::optional<ModuleID> file)
 {
     if (!file) {
-        Modules* modules = modulesOf(realm);
-        return modules ? modules->formThatMockFinds(path, file) : file;
+        // No image holds the file as no attribute asks for it. Whoever mocks may be a test file of the last image, and what attributes make of the file lies where its importers do.
+        std::optional<ModuleID> found;
+        Instance::forEachOf(realm, [&](Instance& instance) {
+            Modules* modules = instance.state ? instance.state->modules.get() : nullptr;
+            if (found || !modules)
+                return;
+            if (std::optional<ModuleID> form = modules->formThatMockFinds(path, std::nullopt))
+                found = moduleIDForHost(*instance.program, *form);
+        });
+        return found;
     }
     ModuleFromHost fileInImage(realm, *file);
     Modules* modules = modulesOf(realm);
