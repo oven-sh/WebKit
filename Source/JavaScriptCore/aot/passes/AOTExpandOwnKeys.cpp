@@ -984,7 +984,7 @@ static ValueID emitWalk(Emission& emission, const OwnKeyWalkSite& site, const Va
         RELEASE_ASSERT(!field.computedKey);
         if (std::ranges::contains(excludedKeys, field.key))
             continue;
-        if (isEnumerableStringField(program, field) || (visitsSymbolKeys(site.walk) && field.key && isSymbolKind(program.at(field.key).kind)))
+        if (isEnumerableStringField(program, field) || (visitsSymbolKeys(site.walk) && field.key && isSymbolKind(program.at(field.key).kind) && !field.form.contains(FieldForm::IsNotEnumerable)))
             walkedFields.append(index);
     }
 

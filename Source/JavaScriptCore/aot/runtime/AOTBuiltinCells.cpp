@@ -381,6 +381,37 @@ JSCell* BuiltinCells::cell(uint32_t number)
     return *found;
 }
 
+static JSC_DECLARE_HOST_FUNCTION(refuseCallOfBuiltinChangedBeforeFirstUse);
+
+JSC_DEFINE_HOST_FUNCTION(refuseCallOfBuiltinChangedBeforeFirstUse, (JSGlobalObject* realm, CallFrame* callFrame))
+{
+    VM& vm = realm->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // Whichever image of the realm made it: as a value it reaches the code of others.
+    for (Instance* instance = realm->aotInstance(); instance; instance = instance->above) {
+        std::optional<BuiltinCellKey> key = instance->state ? instance->state->builtinCells->keyOfCellHolding(callFrame->jsCallee()) : std::nullopt;
+        if (key)
+            return throwVMTypeError(realm, scope, callOfBuiltinChangedBeforeFirstUseMessage(BuiltinTable::singleton().textOf(key->builtin())));
+    }
+    return throwVMTypeError(realm, scope, callOfBuiltinChangedBeforeFirstUseMessage(uncheckedDowncast<JSFunction>(callFrame->jsCallee())->name(vm)));
+}
+
+JSCell* BuiltinCells::cellReadWithoutTest(uint32_t number)
+{
+    if (JSCell* found = cell(number))
+        return found;
+    const BuiltinTable& table = BuiltinTable::singleton();
+    std::optional<BuiltinCellKey> key = BuiltinCellKey::decode(m_tables.builtinCells()[number], table);
+    RELEASE_ASSERT(key);
+    const Builtin& entry = table.at(key->builtin());
+    VM& vm = *m_instance.vm;
+    if (key->kind() != BuiltinCellKey::Kind::Object || !BuiltinBindings::provides(entry.origin) || table.overloadSummariesOf(key->builtin()).empty())
+        return nullptr;
+    JSFunction* refusing = JSFunction::create(vm, m_instance.globalObject, 0, table.identifierOf(vm, entry.name).string(), refuseCallOfBuiltinChangedBeforeFirstUse, ImplementationVisibility::Public);
+    fillAndKeepAlive(number, refusing);
+    return refusing;
+}
+
 JSCell* BuiltinCells::findObject(BuiltinID id)
 {
     if (std::optional<uint32_t> number = numberOf(BuiltinCellKey::object(id)))
@@ -811,6 +842,89 @@ String refusedSpyMessage(JSGlobalObject* globalObject, JSObject* object, Uniqued
     if (!message.startsWith(start))
         return { };
     return makeString("Cannot spy on "_s, StringView(message).substring(start.length()));
+}
+
+static bool hasUnlocked(const Instance& instance, BuiltinID member)
+{
+    BuiltinCells* cells = instance.state ? instance.state->builtinCells.get() : nullptr;
+    bool hasListOfRealm = cells && !cells->membersUnlockedInRealm().empty();
+    return ProgramTables::isUnlocked(hasListOfRealm ? cells->membersUnlockedInRealm() : instance.tables().unlockedBuiltinMembers(), member.index());
+}
+
+// Over layers a realm runs several images, and each knows the objects that it has locked itself.
+bool isMemberUnlockedForTests(JSObject* object, UniquedStringImpl* key)
+{
+    Instance* running = instanceOfRealmOf(object);
+    if (!running)
+        return false;
+    const BuiltinTable& table = BuiltinTable::singleton();
+    BuiltinName name = table.nameOf(object->vm(), key);
+    if (!name)
+        return false;
+    bool isKnown = false;
+    bool isUnlockedByAll = true;
+    forEachInstanceOf(object->realm(), [&](Instance& instance) {
+        BuiltinID holder = instance.state ? instance.state->builtinCells->builtinOfLockedObject(object) : BuiltinID();
+        if (!holder)
+            return;
+        isKnown = true;
+        BuiltinID member = table.findOwnMember(holder, name);
+        isUnlockedByAll &= member && hasUnlocked(instance, member);
+    });
+    if (isKnown)
+        return isUnlockedByAll;
+    BuiltinID holder = builtinOfLockedObject(running, object);
+    BuiltinID member = holder ? table.findOwnMember(holder, name) : BuiltinID();
+    return member && hasUnlocked(*running, member);
+}
+
+// A function of the engine or the host that no image has asked for yet is looked for among the entries of its own name. Which of them it is its identity says.
+static BuiltinID builtinOfFunctionByIdentity(BuiltinCells& cells, JSObject* object)
+{
+    VM& vm = object->vm();
+    if (!object->isCallable())
+        return { };
+    JSValue written = object->getDirect(vm, vm.propertyNames->name);
+    if (!written || !written.isString())
+        return { };
+    const BuiltinTable& table = BuiltinTable::singleton();
+    BuiltinName name = table.nameOf(vm, Identifier::fromString(vm, asString(written)->tryGetValue()).impl());
+    if (!name)
+        return { };
+    for (unsigned index = 0; index < table.builtinCount(); ++index) {
+        BuiltinID id { index };
+        const Builtin& entry = table.at(id);
+        bool isFunction = entry.kind == BuiltinKind::Constructor || entry.kind == BuiltinKind::Function;
+        if (isFunction && entry.name == name && table.canonicalID(id) == id && cells.findObject(id) == object)
+            return id;
+    }
+    return { };
+}
+
+// Compiled code reads a property without a declared type wherever the program does. A declared type would be trusted.
+bool isMemberTakenForConstant(JSObject* object, UniquedStringImpl* key)
+{
+    JSGlobalObject* realm = object->realm();
+    const BuiltinTable& table = BuiltinTable::singleton();
+    BuiltinName name = realm ? table.nameOf(object->vm(), key) : BuiltinName();
+    if (!name)
+        return false;
+    BuiltinID holder;
+    for (Instance* instance = realm->aotInstance(); instance; instance = instance->above) {
+        BuiltinCells* cells = instance->state ? instance->state->builtinCells.get() : nullptr;
+        if (!cells)
+            continue;
+        if (!holder)
+            holder = cells->builtinOfLockedObject(object);
+        if (std::optional<BuiltinCellKey> filled = holder ? std::nullopt : cells->keyOfCellHolding(object); filled && filled->kind() == BuiltinCellKey::Kind::Object)
+            holder = filled->builtin();
+        if (!holder)
+            holder = builtinOfFunctionByIdentity(*cells, object);
+        BuiltinID member = holder ? table.findOwnMember(holder, name) : BuiltinID();
+        if (member && isImmutableLocation(table, instance->tables(), member) && !table.at(member).isReadWithoutType)
+            return true;
+    }
+    return false;
 }
 
 static bool admitsReplacedBuiltins(const Instance& instance)

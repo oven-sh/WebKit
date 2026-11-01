@@ -1,11 +1,11 @@
-# A loop asks whether the first element of a list of numbers and undefined is undefined, and then adds the element at its counter. Behind the tests for Double storage and for its position the answer is no, so nothing reads the first element there:
+# A loop asks whether the first element of a list of numbers is undefined, and then adds the element at its counter. Behind the tests for Double storage and for its position the answer is no, so nothing reads the first element there:
 # only the test of its position is left. The copy for storage that holds any value reads the element behind that test and asks whether it is a number. One that is none leaves where an absent one does
 # FORM: Prepared
 # RUN: pass PlanArrayCapacities
 
 module m0 path="main.js" displayPath="main.js"
 
-function f0 name="sum" parameters=[{type=Array<undefined|number, proven>}] results=[{type=anything}] {
+function f0 name="sum" parameters=[{type=Array<number, proven>}] results=[{type=anything}] {
     v1 = Integer
     v2 = Double number=0.5
     Jump -> next b1(v2, v1)
@@ -38,8 +38,8 @@ function f0 name="sum" parameters=[{type=Array<undefined|number, proven>}] resul
   b8():
     Return v3
 # CHECK: HasArrayStorage v0 arrayStorage=Contiguous
-# CHECK: [[first]]: undefined|number = GetArrayElement v0, v1, {{*}} arrayStorage=Contiguous level=Expected [keyIsIntegral, isPresent]
-# CHECK-NEXT: [[isNumber]]: boolean = TypeTest [[first]] testedType=number
+# CHECK: [[first]]: number = GetArrayElement v0, v1, {{*}} arrayStorage=Contiguous level=Expected [keyIsIntegral, isPresent]
+# CHECK-NEXT: [[isNumber]]: true = TypeTest [[first]] testedType=number
 # CHECK-NEXT: Branch [[isNumber]] -> taken {{*}}, notTaken [[leaves]](| 0)
 # CHECK: [[leaves]](
 # CHECK-NEXT: Jump -> next b6()

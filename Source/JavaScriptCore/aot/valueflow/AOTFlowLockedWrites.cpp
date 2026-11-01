@@ -10,11 +10,14 @@
 
 #include "AOTBuildContext.h"
 #include "AOTBuiltinMembers.h"
+#include "AOTEffectsDescription.h"
+#include "AOTEffectsOfProtocols.h"
 #include "AOTFlowApplication.h"
 #include "AOTFlowBuiltinLocations.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTKnownClosures.h"
 #include "AOTPropertyAccessElements.h"
+#include "AOTSchemaWalkers.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -29,25 +32,237 @@ struct LockedWrite {
 
 } // anonymous namespace
 
-static BitVector findAlwaysEvaluatedModules(const Program& program)
+static Vector<ModuleID> computeModuleEvaluationOrder(const Program& program)
 {
-    BitVector evaluated(program.modules.size());
-    Vector<ModuleID, 16> worklist;
-    auto visit = [&](ModuleID module) {
-        if (!evaluated.quickSet(module.index()))
-            worklist.append(module);
+    struct Frame {
+        ModuleID module;
+        uint32_t nextRequest { 0 };
     };
-
-    for (const Entry& entry : program.entries)
-        visit(entry.module);
-    while (!worklist.isEmpty()) {
-        for (const ModuleRequest& request : program.at(worklist.takeLast()).requests) {
-            if (request.kind == ModuleRequestKind::Import && request.phase == ImportPhase::Evaluation)
-                visit(request.target);
+    Vector<ModuleID> order;
+    BitVector visited(program.modules.size());
+    Vector<Frame, 16> stack;
+    for (const Entry& entry : program.entries) {
+        if (!visited.quickSet(entry.module.index()))
+            stack.append({ entry.module });
+        while (!stack.isEmpty()) {
+            const auto& requests = program.at(stack.last().module).requests;
+            if (stack.last().nextRequest == requests.size()) {
+                order.append(stack.takeLast().module);
+                continue;
+            }
+            const ModuleRequest& request = requests[stack.last().nextRequest++];
+            if (request.kind == ModuleRequestKind::Import && request.phase == ImportPhase::Evaluation && !visited.quickSet(request.target.index()))
+                stack.append({ request.target });
         }
     }
-    return evaluated;
+    return order;
 }
+
+namespace {
+
+class EarlyExitAnalysis {
+public:
+    EarlyExitAnalysis(const Program& program, const FlowResults& results)
+        : m_program(program)
+        , m_results(results)
+        , m_neverExits(program.functions.size())
+        , m_isQueued(program.functions.size())
+    {
+    }
+
+    static bool isUserModule(const Module& module) { return isProgramModuleOf(module.kind) && !module.flags.contains(ModuleFlags::IsLibrary); }
+
+    bool mayExitAt(FunctionID id, const Value& value)
+    {
+        Vector<FunctionID, 4> callees;
+        auto visitCallee = [&](FunctionID callee) {
+            callees.append(callee);
+        };
+        if (mayExitDirectly(codeKindOf(id), m_program.at(id), value, UnknownCallees::AnyProgramFunction, visitCallee))
+            return true;
+        if (hasAccessSite(value.opcode)) {
+            for (const FlowIndirectCall& call : m_results.indirectCallsFrom(id)) {
+                if (call.site == value.accessSite())
+                    visitCallee(call.callee);
+            }
+        }
+        return std::ranges::any_of(callees, [&](FunctionID callee) {
+            return mayExit(callee);
+        });
+    }
+
+    bool mayExitAtTerminator(FunctionID id, const Block& block) const { return throwsExplicitly(codeKindOf(id), block); }
+
+    bool mayExitAtUnknownPosition(FunctionID id)
+    {
+        if (!m_hostCalleeMayExit) {
+            m_hostCalleeMayExit = std::ranges::any_of(m_results.indirectCalls(), [&](const FlowIndirectCall& call) {
+                return !call.caller && codeKindOf(call.callee) == CodeKind::ProgramFunction && mayExit(call.callee);
+            });
+        }
+        return *m_hostCalleeMayExit || std::ranges::any_of(m_results.indirectCallsFrom(id), [&](const FlowIndirectCall& call) {
+            return !call.site && mayExit(call.callee);
+        });
+    }
+
+    bool mayExit(FunctionID root)
+    {
+        if (m_neverExits.quickGet(root.index()))
+            return false;
+        Vector<FunctionID, 16> worklist { root };
+        m_isQueued.quickSet(root.index());
+        bool foundExit = false;
+        for (size_t next = 0; next < worklist.size() && !foundExit; ++next) {
+            foundExit = bodyMayExitDirectly(worklist[next], UnknownCallees::AnyProgramFunction, [&](FunctionID callee) {
+                if (!m_neverExits.quickGet(callee.index()) && !m_isQueued.quickSet(callee.index()))
+                    worklist.append(callee);
+            });
+        }
+        // With recursion, no function is proven safe until every function reachable from the root is.
+        for (FunctionID function : worklist) {
+            m_isQueued.quickClear(function.index());
+            if (!foundExit)
+                m_neverExits.quickSet(function.index());
+        }
+        return foundExit;
+    }
+
+private:
+    enum class CodeKind : uint8_t { ModuleBody, ProgramFunction, Library };
+    enum class UnknownCallees : bool { AnyProgramFunction, Ignored };
+
+    CodeKind codeKindOf(FunctionID id) const
+    {
+        const Function& function = m_program.at(id);
+        if (isLibraryCode(m_program, function))
+            return CodeKind::Library;
+        return function.module && m_program.at(function.module).body == id ? CodeKind::ModuleBody : CodeKind::ProgramFunction;
+    }
+
+    // A handler does not matter: a finally block rethrows.
+    static bool throwsExplicitly(CodeKind codeKind, const Block& block) { return codeKind != CodeKind::Library && block.terminator.kind == TerminatorKind::Throw; }
+
+    bool mayNeverResume(const Function& function, const Value& value) const
+    {
+        switch (value.opcode) {
+        case Opcode::Await:
+            return protocolMayFindMember(m_program, m_program.typeOf(function, value.valueOperand()), Protocol::Thenable);
+        case Opcode::Yield:
+        case Opcode::InitialYield:
+            return true;
+        case Opcode::IteratorResume:
+        case Opcode::IteratorClose:
+            return value.iteratorKind() == IteratorKind::Async;
+        default:
+            return false;
+        }
+    }
+
+    bool mayThrowReferenceError(const Value& value) const
+    {
+        if (value.opcode != Opcode::PropGet || !value.isFreeName() || value.isForTypeOf())
+            return false;
+        const BuiltinTable& table = m_program.builtins();
+        BuiltinID member = findOwnMember(m_program, table.canonicalID(Builtins::GlobalThis), value.key());
+        return !member || table.has(BuiltinMark::MayBeAbsent, member) || table.has(BuiltinMark::IsAddedByOption, member);
+    }
+
+    bool isMarkedAsTerminating(BuiltinID builtin) const
+    {
+        const BuiltinTable& table = m_program.builtins();
+        return table.has(BuiltinMark::MayTerminateProcess, table.canonicalID(builtin));
+    }
+
+    bool mayTerminateProcess(BuiltinID builtin) const { return isMarkedAsTerminating(builtin) || m_program.builtins().overloadsOf(builtin).empty(); }
+
+    bool passesTerminatingBuiltin(const Function& function, const Value& call) const
+    {
+        return std::ranges::any_of(call.operands(), [&](ValueID operand) {
+            return operand && std::ranges::any_of(m_program.typeOf(function, operand).builtins, [&](BuiltinID builtin) {
+                return isMarkedAsTerminating(builtin);
+            });
+        });
+    }
+
+    bool anyProgramFunctionMayExit()
+    {
+        if (!m_anyProgramFunctionMayExit) {
+            auto isUsed = [&](const BuiltinMarkedEntry& entry) {
+                return !m_results.usesOf(entry.builtin).isEmpty();
+            };
+            bool foundExit = m_results.mayRunUnseenCode() || std::ranges::any_of(m_program.builtins().marked(BuiltinMark::MayTerminateProcess), isUsed);
+            for (uint32_t index = 0; index < m_program.functions.size() && !foundExit; ++index) {
+                FunctionID id(index);
+                foundExit = m_program.at(id).hasBody() && codeKindOf(id) != CodeKind::Library && bodyMayExitDirectly(id, UnknownCallees::Ignored, [](FunctionID) { });
+            }
+            m_anyProgramFunctionMayExit = foundExit;
+        }
+        return *m_anyProgramFunctionMayExit;
+    }
+
+    bool mayExitDirectly(CodeKind codeKind, const Function& function, const Value& value, UnknownCallees unknownCallees, NOESCAPE const Invocable<void(FunctionID)> auto& visitCallee)
+    {
+        if ((codeKind == CodeKind::ModuleBody && mayNeverResume(function, value)) || (codeKind != CodeKind::Library && mayThrowReferenceError(value)))
+            return true;
+        switch (value.opcode) {
+        case Opcode::RequireModule:
+        case Opcode::EvaluateModule:
+            if (const Module& target = m_program.at(value.module()); isUserModule(target) && target.body)
+                visitCallee(target.body);
+            return false;
+        case Opcode::RequireDynamic:
+            return true;
+        default:
+            break;
+        }
+        bool isCall = Value::opcodesWithCallees.contains(value.opcode);
+        forEachFunctionReference(value, [&](FunctionID, FunctionReferenceKind referenceKind) {
+            isCall |= referenceKind == FunctionReferenceKind::Call;
+        });
+        if (!isCall)
+            return false;
+        CalleeList callees = calleesOfCall(m_program, value);
+        if (callees.runsNothing())
+            return false;
+        if (codeKind != CodeKind::Library && (value.type == TypeTable::never || passesTerminatingBuiltin(function, value)))
+            return true;
+        for (FunctionID callee : callees.listed().functions)
+            visitCallee(callee);
+        if (std::ranges::any_of(callees.listed().builtins, [&](BuiltinID builtin) { return mayTerminateProcess(builtin); }))
+            return true;
+        return !callees.listsEveryCallee() && unknownCallees == UnknownCallees::AnyProgramFunction && anyProgramFunctionMayExit();
+    }
+
+    bool bodyMayExitDirectly(FunctionID id, UnknownCallees unknownCallees, NOESCAPE const Invocable<void(FunctionID)> auto& visitCallee)
+    {
+        const Function& function = m_program.at(id);
+        if (!function.hasBody())
+            return true;
+        CodeKind codeKind = codeKindOf(id);
+        CFG cfg(function);
+        for (BlockID blockID : cfg.reversePostOrder()) {
+            const Block& block = function.at(blockID);
+            for (ValueID value : block.values) {
+                if (mayExitDirectly(codeKind, function, function.at(value), unknownCallees, visitCallee))
+                    return true;
+            }
+            if (throwsExplicitly(codeKind, block))
+                return true;
+        }
+        for (const FlowIndirectCall& call : m_results.indirectCallsFrom(id))
+            visitCallee(call.callee);
+        return false;
+    }
+
+    const Program& m_program;
+    const FlowResults& m_results;
+    BitVector m_neverExits;
+    BitVector m_isQueued;
+    std::optional<bool> m_anyProgramFunctionMayExit;
+    std::optional<bool> m_hostCalleeMayExit;
+};
+
+} // anonymous namespace
 
 static LockedWriteForm writeFormOf(AccessKind kind)
 {
@@ -98,38 +313,40 @@ static std::optional<LockedWrite> findWrite(const FlowResults& results, const Fu
     return builtinCall;
 }
 
-static bool alwaysRuns(const Program& program, const BitVector& alwaysEvaluatedModules, FunctionAnalyses& analyses, BlockID block)
+static bool alwaysRuns(const Program& program, std::span<const ModuleID> evaluationOrder, EarlyExitAnalysis& earlyExits, FunctionAnalyses& analyses, const LockedWrite& write)
 {
     const Function& function = analyses.function();
     if (!function.module)
         return false;
 
-    const Module& module = program.at(function.module);
-    if (module.body != analyses.context().id || !isProgramModuleOf(module.kind) || module.flags.contains(ModuleFlags::IsLibrary))
+    FunctionID id = analyses.context().id;
+    if (program.at(function.module).body != id || !EarlyExitAnalysis::isUserModule(program.at(function.module)) || function.at(write.block).handler)
         return false;
-    if (!alwaysEvaluatedModules.get(function.module.index()) || function.at(block).handler)
+    auto position = std::ranges::find(evaluationOrder, function.module);
+    if (position == evaluationOrder.end())
+        return false;
+
+    if (earlyExits.mayExitAtUnknownPosition(id))
         return false;
 
     const Dominators& dominators = analyses.dominators();
-    bool hasReturn = false;
     for (BlockID other : analyses.cfg().reversePostOrder()) {
-        if (!returnsToCaller(function.at(other).terminator.kind))
+        if (dominators.strictlyDominates(write.block, other))
             continue;
-        if (!dominators.dominates(block, other))
+        const Block& block = function.at(other);
+        for (ValueID value : block.values) {
+            if (value == write.value)
+                break;
+            if (earlyExits.mayExitAt(id, function.at(value)))
+                return false;
+        }
+        if (other != write.block && (returnsToCaller(block.terminator.kind) || earlyExits.mayExitAtTerminator(id, block)))
             return false;
-        hasReturn = true;
     }
-    if (hasReturn)
-        return true;
-    bool hasEnd = false;
-    for (BlockID other : analyses.cfg().reversePostOrder()) {
-        if (!analyses.cfg().successors(other).empty())
-            continue;
-        if (!dominators.dominates(block, other))
-            return false;
-        hasEnd = true;
-    }
-    return hasEnd;
+    return std::ranges::none_of(std::span(evaluationOrder.begin(), position), [&](ModuleID earlier) {
+        const Module& module = program.at(earlier);
+        return EarlyExitAnalysis::isUserModule(module) && module.body && earlyExits.mayExit(module.body);
+    });
 }
 
 static bool writesOnlyTo(const Program& program, const FlowResults& results, const Function& function, const Value& value, BuiltinID holder)
@@ -388,7 +605,7 @@ static bool copiesProperties(const BuiltinTable& table, BuiltinID callee)
     });
 }
 
-static void reportWrite(const Program& program, const FlowResults& results, BuildContext& build, const BitVector& alwaysEvaluatedModules, const BuiltinLocationFlow& location, UncheckedKeyHashSet<uint64_t>& reportedCalls)
+static void reportWrite(const Program& program, const FlowResults& results, BuildContext& build, std::span<const ModuleID> evaluationOrder, EarlyExitAnalysis& earlyExits, const BuiltinLocationFlow& location, UncheckedKeyHashSet<uint64_t>& reportedCalls)
 {
     const BuiltinTable& table = program.builtins();
     const Witness& witness = location.witness;
@@ -432,7 +649,7 @@ static void reportWrite(const Program& program, const FlowResults& results, Buil
             return UserDiagnosticKind::LockedBuiltinWriteMayRun;
         if (isInSloppyCode && refusalInSloppyCode(table, member) != RefusalInSloppyCode::Throws)
             return UserDiagnosticKind::LockedBuiltinWriteMayRun;
-        bool alwaysThrows = writesOnlyTo(program, results, function, value, location.holder) && alwaysRuns(program, alwaysEvaluatedModules, analyses, write->block);
+        bool alwaysThrows = writesOnlyTo(program, results, function, value, location.holder) && alwaysRuns(program, evaluationOrder, earlyExits, analyses, *write);
         return alwaysThrows ? UserDiagnosticKind::LockedBuiltinWriteAlwaysRuns : UserDiagnosticKind::LockedBuiltinWriteMayRun;
     };
     build.diagnostics().add(UserDiagnostic {
@@ -481,11 +698,12 @@ void checkLockedBuiltinWrites(const Program& program, const FlowResults& results
     if (std::ranges::none_of(results.writesOfBuiltinLocations(), isLockedWrite))
         return;
 
-    BitVector alwaysEvaluatedModules = findAlwaysEvaluatedModules(program);
+    Vector<ModuleID> evaluationOrder = computeModuleEvaluationOrder(program);
+    EarlyExitAnalysis earlyExits(program, results);
     UncheckedKeyHashSet<uint64_t> reportedCalls;
     for (const BuiltinLocationFlow& write : results.writesOfBuiltinLocations()) {
         if (isLockedWrite(write))
-            reportWrite(program, results, build, alwaysEvaluatedModules, write, reportedCalls);
+            reportWrite(program, results, build, evaluationOrder.span(), earlyExits, write, reportedCalls);
     }
 }
 

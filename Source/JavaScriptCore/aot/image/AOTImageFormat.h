@@ -143,6 +143,9 @@ enum class ImageFlag : uint32_t {
     StoresPathOfMainModule = 1 << 10,
     // FlowResults::reachedFunctionsCountUnreadCode(). Without it whatever runs beside the code of the image is a copy of a file of the image.
     RunsUnreadCode = 1 << 11,
+    // Files of the image may be mocked, and the build found nothing in the run that asks for the original beside a mock: no variable has VariableFlags::OriginalMayRun.
+    // The proofs in the code hold only while no such original runs, which would be a copy of the file from disk.
+    RefusesOriginalsBesideMocks = 1 << 12,
 };
 
 // The numbers of an image that cells, or code of another image, may hold. The images of a realm were built one after the other, and none takes a number of those before it.

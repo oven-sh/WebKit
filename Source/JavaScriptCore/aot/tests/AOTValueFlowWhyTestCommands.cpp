@@ -1697,7 +1697,18 @@ void runValueFlowWhyTestCommand(TestCommandContext& context)
             printWhyHeld(out, solution, escaped, universe.closureOf(FunctionID(*function)));
         else if (word.startsWith("lost="_s))
             printWhyHeld(out, solution, lost, universe.closureOf(FunctionID(*function)));
-        else if (word.startsWith("values="_s) || word.startsWith("asks="_s)) {
+        else if (word.startsWith("marks="_s)) {
+            // Of what is made at a site: the number of an object moves with the table.
+            size_t colon = word.find(':');
+            std::optional<uint32_t> site = colon == notFound ? std::nullopt : numberAfter(word, colon + 2);
+            if (!site)
+                return printBadArgument(out, word);
+            for (uint32_t index = 0; index < universe.numberOfObjects(); ++index) {
+                const ValueFlowSite* made = universe.siteOf(ValueFlowObjectID(index));
+                if (made && made->value.index() == *site && universe.functionOf(ValueFlowObjectID(index)) == FunctionID(*function))
+                    printWhoMarks(out, solution, ValueFlowObjectID(index));
+            }
+        } else if (word.startsWith("values="_s) || word.startsWith("asks="_s)) {
             size_t colon = word.find(':');
             std::optional<uint32_t> site = colon == notFound ? std::nullopt : numberAfter(word, colon + 2);
             if (!site)

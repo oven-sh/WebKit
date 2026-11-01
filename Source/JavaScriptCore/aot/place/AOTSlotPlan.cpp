@@ -187,6 +187,7 @@ static Vector<PlannedLayout> createPlannedLayouts(const SlotPlanContext& context
         planned.slots = packed.slots.subvector(context.rows.firstRowOf(id), context.rows.numberOfRowsOf(id));
 
         uint64_t slots = 0;
+        uint64_t slotsWithAbsentState = 0;
         uint64_t fieldsOutOfLine = 0;
         uint64_t deferredClosureSlots = 0;
         for (PlacedSlot& slot : planned.slots.mutableSpan().first(planned.numberOfFields())) {
@@ -195,10 +196,12 @@ static Vector<PlannedLayout> createPlannedLayouts(const SlotPlanContext& context
             if (isCompiledObject)
                 slot.indexInLayoutRecord = planned.numberOfRecordFields++;
             ++slots;
+            slotsWithAbsentState += isCompiledObject && canLeaveSlot(slot.representation);
             fieldsOutOfLine += slot.isOutOfLine();
             deferredClosureSlots += slot.representation == SlotRepresentation::DeferredClosure;
         }
         statistics.count(StatisticID::Slots, slots);
+        statistics.count(StatisticID::SlotsWithAbsentState, slotsWithAbsentState);
         statistics.count(StatisticID::FieldsOutOfLine, fieldsOutOfLine);
         statistics.count(StatisticID::HiddenWordsPlaced, planned.hasExtension() + planned.hasExtraPropertiesWord());
         statistics.count(StatisticID::DeferredClosureSlots, deferredClosureSlots);

@@ -1,6 +1,8 @@
 # `[...list]` of a list proven to have Int32 storage, read where Double storage was expected: the copy is made in one piece without a test of the source, and its reads ask for Int32 storage. Beside it: a copy that is stored into keeps its old way, without a test that cannot pass; a source of no proven storage is tested as before.
 # FORM: Prepared
 # RUN: pass PlanArrayCapacities
+# STATISTIC: KindsOfStorageChanged = 1
+# STATISTIC: ChangesOfStorageKindTakenBack = 0
 # CHECK-LABEL: name="copyThatIsRead"
 # CHECK-NOT: HasArrayStorage v0
 # CHECK: CallBuiltin v0 overload=ArrayPrototypeSlice/0

@@ -109,6 +109,19 @@ void countReasonForSlowStringify(VM& vm, ASCIILiteral reason)
     });
 }
 
+void countMockTransition(VM& vm, const String& transition)
+{
+    if (!Options::aotCountsPath()) [[likely]]
+        return;
+    AtomString name(transition);
+    bool isCounted = false;
+    forEachInstance(vm, [&](Instance& instance) {
+        if (std::exchange(isCounted, true) || !instance.state)
+            return;
+        instance.state->propertyCaches->countNamed("mock"_s, name.impl());
+    });
+}
+
 void countLimitHit(VM& vm, LimitID limit)
 {
     if (RuntimeCounters* counters = vm.aotState().counters.get())
@@ -783,9 +796,10 @@ void AllocationCounts::dump(const Instance& instance, PrintStream& out)
     Lines refills;
     if (counts)
         refills = counts->m_refills;
-    // A VM's free lists are counted for its first instance.
-    if (instance.vm->aotState().instances.first() == &instance)
-        addListsInUse(instance.vm->aotState(), refills);
+    // A VM's free lists are counted for the first instance that forEachInstance() gives.
+    VMState& vmState = instance.vm->aotState();
+    if ((vmState.instances.isEmpty() ? vmState.instancesToDestroy.first() : vmState.instances.first()) == &instance)
+        addListsInUse(vmState, refills);
     dumpLines(out, "refill"_s, refills);
     if (!counts)
         return;

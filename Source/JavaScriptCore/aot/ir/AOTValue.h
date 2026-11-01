@@ -134,23 +134,23 @@ public:
     ValueID operand(uint32_t operandIndex) const
     {
         if (operandIndex < m_numberOfInlineOperands) [[likely]]
-            return ValueID(m_words[operandIndex]);
+            return ValueID::fromBits(m_words[operandIndex]);
         RELEASE_ASSERT(m_hasOutOfLineWords);
         OutOfLineWords words = outOfLineWords();
         RELEASE_ASSERT(operandIndex < words.numberOfOperands());
-        return ValueID(words.operands()[operandIndex]);
+        return ValueID::fromBits(words.operands()[operandIndex]);
     }
 
     void setOperand(uint32_t operandIndex, ValueID id)
     {
         if (operandIndex < m_numberOfInlineOperands) [[likely]] {
-            m_words[operandIndex] = id.index();
+            m_words[operandIndex] = id.bits();
             return;
         }
         RELEASE_ASSERT(m_hasOutOfLineWords);
         OutOfLineWords words = outOfLineWords();
         RELEASE_ASSERT(operandIndex < words.numberOfOperands());
-        words.operands()[operandIndex] = id.index();
+        words.operands()[operandIndex] = id.bits();
     }
 
     std::span<const ValueID> variadicOperands() const LIFETIME_BOUND
@@ -175,7 +175,7 @@ public:
         if (!m_hasOutOfLineWords || count == outOfLineWords().operandCapacity())
             reserveOperands(count + std::max<uint32_t>(2, count / 2));
         OutOfLineWords words = outOfLineWords();
-        words.operands()[count] = id.index();
+        words.operands()[count] = id.bits();
         words.numberOfOperands() = count + 1;
     }
 

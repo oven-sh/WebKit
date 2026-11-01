@@ -50,6 +50,7 @@ struct ScanInputs {
     BitVector runsBeforeEntry;
     Vector<Vector<LayoutID>> layoutsNamedBelow;
     Vector<Vector<ObjectUnderConstruction, 1>> objectsUnderConstruction;
+    mutable std::atomic<uint64_t> numberOfParametersVisitedForNewObjects { 0 };
 };
 
 struct StoreByNameUse {
@@ -415,6 +416,8 @@ public:
         removeRepeatedElements(m_variablesNamed);
         m_uses.variablesNamed = m_variablesNamed;
         m_uses.shrinkToFit();
+        if (m_numberOfParametersVisited)
+            m_inputs.numberOfParametersVisitedForNewObjects.fetch_add(m_numberOfParametersVisited, std::memory_order_relaxed);
         return WTF::move(m_uses);
     }
 
@@ -498,66 +501,206 @@ private:
         }
     }
 
-    bool collectFreshObjects(ValueID value, BlockID join, Vector<ValueID, 4>& visitedParameters, Vector<SlotUseFreshObject, 4>& objects)
-    {
-        ValueID root = rootOf(value);
-        const Value& definition = m_function.at(root);
-        auto addObjectOf = [&](LayoutID layout, FunctionID maker) {
-            objects.append({ layout, maker, root, join ? join : blockOf(root) });
-        };
-        auto addObjectHandedIn = [&](LayoutID layout) {
-            objects.append({ layout, { }, { }, join ? join : entryBlock });
-            return true;
-        };
-        switch (definition.opcode) {
-        case Opcode::NewObject:
-            addObjectOf(definition.layout(), { });
-            return true;
-        case Opcode::CallDirect:
-            if (!definition.isConstruction())
-                addObjectOf({ }, definition.function());
-            else if (LayoutID constructed = m_program.at(definition.function()).constructedClass)
-                addObjectOf(constructed, { });
-            else
-                return false;
-            return true;
-        case Opcode::Construct: {
-            // The list may lack callees. What they make is not seen here, and the estimate does without it.
-            size_t numberOfOtherObjects = objects.size();
-            forEachClassConstructedBy(definition, [&](LayoutID constructed) {
-                addObjectOf(constructed, { });
-            });
-            return objects.size() != numberOfOtherObjects;
-        }
-        default:
-            break;
-        }
-        if (LayoutID constructed = m_function.constructedClass; constructed && root == m_thisParameter)
-            return addObjectHandedIn(constructed);
-        if (definition.opcode != Opcode::Parameter)
-            return false;
-        if (visitedParameters.contains(root))
-            return true;
-        visitedParameters.append(root);
+    struct JoinOnPath {
+        ValueID parameter;
+        std::span<const Edge> edges;
+        uint32_t parameterIndex { 0 };
+        uint32_t nextEdge { 0 };
+        BlockID join;
+        uint32_t number { 0 };
+        uint32_t lowestNumberReached { 0 };
+        uint32_t firstWaiting { 0 };
+        bool isSettled { true };
+        bool hasObjectsBelow { false };
+    };
+    struct SeenParameter {
+        ValueID parameter;
+        uint32_t number { 0 };
+    };
 
-        BlockID block = blockOf(root);
-        if (!block)
-            return false;
-        std::span<const ValueID> parameters = m_function.at(block).parameters.span();
-        auto parameterIndex = static_cast<uint32_t>(std::ranges::find(parameters, root) - parameters.begin());
-        if (block == entryBlock) {
-            std::span<const ObjectUnderConstruction> handedOver = m_inputs.objectsUnderConstruction[m_id.index()].span();
-            auto found = std::ranges::find(handedOver, parameterIndex, &ObjectUnderConstruction::parameterIndex);
-            return found != handedOver.end() && addObjectHandedIn(found->layout);
+    static constexpr uint32_t wasLeftWithoutObjects = std::numeric_limits<uint32_t>::max();
+    static constexpr uint32_t wasLeftSettled = wasLeftWithoutObjects - 1;
+    static constexpr uint32_t wasLeftUnsettled = wasLeftWithoutObjects - 2;
+    static constexpr uint32_t everyWalk = std::numeric_limits<uint32_t>::max();
+
+    static uint64_t markOf(ValueID parameter, PropertyKeyID key) { return static_cast<uint64_t>(parameter.index()) << 32 | key.index(); }
+
+    bool remembersLongWalks() const { return !m_walkOfParameter.isEmpty(); }
+
+    uint32_t* findNumberInWalk(ValueID parameter)
+    {
+        if (remembersLongWalks()) {
+            uint32_t walk = m_walkOfParameter[parameter.index()];
+            return walk == m_walk || walk == everyWalk ? &m_numberInWalk[parameter.index()] : nullptr;
         }
-        std::span<const Edge> edges = m_analyses.cfg().incomingEdges(block);
-        if (!join && edges.size() > 1)
-            join = block;
+        for (SeenParameter& seen : m_seenInShortWalk) {
+            if (seen.parameter == parameter)
+                return &seen.number;
+        }
+        return nullptr;
+    }
+
+    void addToWalk(ValueID parameter, uint32_t number)
+    {
+        if (!remembersLongWalks() && m_seenInShortWalk.size() == m_seenInShortWalk.capacity()) {
+            m_walkOfParameter.fill(0, m_function.values.size());
+            m_numberInWalk.fill(0, m_function.values.size());
+            for (SeenParameter seen : std::exchange(m_seenInShortWalk, { }))
+                addToWalk(seen.parameter, seen.number);
+        }
+        if (!remembersLongWalks()) {
+            m_seenInShortWalk.append({ parameter, number });
+            return;
+        }
+        m_walkOfParameter[parameter.index()] = m_walk;
+        m_numberInWalk[parameter.index()] = number;
+    }
+
+    enum class WalkFor : uint8_t { Result, Store };
+
+    // `visitObject` says whether no later store of the key changes anything about the object. Without a key only what has no objects below it is passed by.
+    template<WalkFor walkFor>
+    bool forEachFreshObject(ValueID start, const Invocable<PropertyKeyID()> auto& keyOfMarks, const Invocable<bool(const SlotUseFreshObject&)> auto& visitObject)
+    {
         bool areAllFresh = true;
-        for (Edge edge : edges) {
-            ValueID passed = valuePassedOn(m_function, edge, parameterIndex);
-            areAllFresh &= passed && collectFreshObjects(passed, join, visitedParameters, objects);
+        uint32_t numberOfJoins = 0;
+        Vector<JoinOnPath, 8>& path = m_path;
+        Vector<ValueID, 8>& waiting = m_waiting;
+        auto leave = [&](ValueID parameter, const JoinOnPath& closing) {
+            *findNumberInWalk(parameter) = !closing.hasObjectsBelow ? wasLeftWithoutObjects : closing.isSettled ? wasLeftSettled : wasLeftUnsettled;
+            if (walkFor == WalkFor::Result)
+                return;
+            if (!closing.hasObjectsBelow) {
+                if (remembersLongWalks())
+                    m_walkOfParameter[parameter.index()] = everyWalk;
+            } else if (closing.isSettled) {
+                if (PropertyKeyID key = keyOfMarks())
+                    m_settledJoins.add(markOf(parameter, key));
+            }
+        };
+        auto visit = [&](ValueID value, BlockID join) {
+            ValueID root = rootOf(value);
+            const Value& definition = m_function.at(root);
+            auto noteObject = [&] {
+                if (!path.isEmpty())
+                    path.last().hasObjectsBelow = true;
+            };
+            auto visitObjectOf = [&](LayoutID layout, FunctionID maker) {
+                noteObject();
+                return visitObject({ layout, maker, root, join ? join : blockOf(root) });
+            };
+            auto visitObjectHandedIn = [&](LayoutID layout) {
+                noteObject();
+                visitObject({ layout, { }, { }, join ? join : entryBlock });
+                return false;
+            };
+            auto isNotFresh = [&] {
+                areAllFresh = false;
+                return true;
+            };
+            switch (definition.opcode) {
+            case Opcode::NewObject:
+                return visitObjectOf(definition.layout(), { });
+            case Opcode::CallDirect:
+                if (!definition.isConstruction())
+                    return visitObjectOf({ }, definition.function());
+                if (LayoutID constructed = m_program.at(definition.function()).constructedClass)
+                    return visitObjectOf(constructed, { });
+                return isNotFresh();
+            case Opcode::Construct: {
+                // The list may lack callees. What they make is not seen here, and the estimate does without it.
+                bool hasObjects = false;
+                bool isSettled = true;
+                forEachClassConstructedBy(definition, [&](LayoutID constructed) {
+                    hasObjects = true;
+                    isSettled &= visitObjectOf(constructed, { });
+                });
+                return hasObjects ? isSettled : isNotFresh();
+            }
+            default:
+                break;
+            }
+            if (LayoutID constructed = m_function.constructedClass; constructed && root == m_thisParameter)
+                return visitObjectHandedIn(constructed);
+            if (definition.opcode != Opcode::Parameter)
+                return isNotFresh();
+            BlockID block = blockOf(root);
+            bool isJoin = block && block != entryBlock;
+            if (isJoin || !path.isEmpty()) {
+                if (uint32_t* number = findNumberInWalk(root)) {
+                    if (*number == wasLeftWithoutObjects)
+                        return true;
+                    if (*number >= wasLeftUnsettled) {
+                        noteObject();
+                        return *number == wasLeftSettled;
+                    }
+                    path.last().lowestNumberReached = std::min(path.last().lowestNumberReached, *number);
+                    return true;
+                }
+                addToWalk(root, wasLeftWithoutObjects);
+            }
+            ++m_numberOfParametersVisited;
+            if (!block)
+                return isNotFresh();
+            std::span<const ValueID> parameters = m_function.at(block).parameters.span();
+            auto parameterIndex = static_cast<uint32_t>(std::ranges::find(parameters, root) - parameters.begin());
+            if (block == entryBlock) {
+                std::span<const ObjectUnderConstruction> handedOver = m_inputs.objectsUnderConstruction[m_id.index()].span();
+                auto found = std::ranges::find(handedOver, parameterIndex, &ObjectUnderConstruction::parameterIndex);
+                if (found == handedOver.end())
+                    return isNotFresh();
+                if (uint32_t* number = findNumberInWalk(root))
+                    *number = wasLeftUnsettled;
+                return visitObjectHandedIn(found->layout);
+            }
+            if (walkFor == WalkFor::Store && !m_settledJoins.isEmpty()) {
+                if (PropertyKeyID key = keyOfMarks(); key && m_settledJoins.contains(markOf(root, key))) {
+                    *findNumberInWalk(root) = wasLeftSettled;
+                    noteObject();
+                    return true;
+                }
+            }
+            std::span<const Edge> edges = m_analyses.cfg().incomingEdges(block);
+            if (!join && edges.size() > 1)
+                join = block;
+            uint32_t number = numberOfJoins++;
+            *findNumberInWalk(root) = number;
+            path.append({ root, edges, parameterIndex, 0, join, number, number, static_cast<uint32_t>(waiting.size()), true, false });
+            return true;
+        };
+
+        ++m_walk;
+        visit(start, { });
+        while (!path.isEmpty()) {
+            if (path.last().nextEdge < path.last().edges.size()) {
+                size_t position = path.size() - 1;
+                Edge edge = path[position].edges[path[position].nextEdge++];
+                ValueID passed = valuePassedOn(m_function, edge, path[position].parameterIndex);
+                if (!passed) {
+                    areAllFresh = false;
+                    continue;
+                }
+                bool isSettled = visit(passed, path[position].join);
+                path[position].isSettled &= isSettled;
+                continue;
+            }
+            JoinOnPath left = path.takeLast();
+            if (left.lowestNumberReached < left.number) {
+                *findNumberInWalk(left.parameter) = left.lowestNumberReached;
+                waiting.append(left.parameter);
+                path.last().lowestNumberReached = std::min(path.last().lowestNumberReached, left.lowestNumberReached);
+            } else {
+                for (size_t index = left.firstWaiting; index < waiting.size(); ++index)
+                    leave(waiting[index], left);
+                waiting.shrink(left.firstWaiting);
+                leave(left.parameter, left);
+            }
+            if (!path.isEmpty()) {
+                path.last().isSettled &= left.isSettled;
+                path.last().hasObjectsBelow |= left.hasObjectsBelow;
+            }
         }
+        m_seenInShortWalk.shrink(0);
         return areAllFresh;
     }
 
@@ -571,9 +714,12 @@ private:
                 return;
             if (block.terminator.kind != TerminatorKind::Return)
                 continue;
-            Vector<ValueID, 4> visitedParameters;
             ValueID returned = block.terminator.valueOperand();
-            if (!returned || !collectFreshObjects(returned, { }, visitedParameters, objects))
+            bool areAllFresh = returned && forEachFreshObject<WalkFor::Result>(returned, [] { return PropertyKeyID(); }, [&](const SlotUseFreshObject& object) {
+                objects.append(object);
+                return false;
+            });
+            if (!areAllFresh)
                 return;
         }
         for (const SlotUseFreshObject& object : objects)
@@ -658,32 +804,30 @@ private:
             noteStoreBehindStore(object, store, m_weights.weightOf(block));
     }
 
-    void scanStoreIntoFreshObject(BlockID block, const Value& store)
+    NEVER_INLINE void scanStoreIntoFreshObject(BlockID block, const Value& store)
     {
         std::optional<uint8_t> receiver = receiverOf(store.opcode);
         std::optional<uint8_t> stored = storedOf(store.opcode);
         if (!receiver || !stored || !Value::opcodesWithKey.contains(store.opcode) || !store.key())
             return;
 
-        Vector<ValueID, 4> visitedParameters;
-        Vector<SlotUseFreshObject, 4> objects;
-        collectFreshObjects(store.operand(*receiver), { }, visitedParameters, objects);
-        if (objects.isEmpty())
-            return;
-
-        bool storesUndefined = isUndefinedConstant(store.operand(*stored));
-        const BlockFrequencies& frequencies = m_analyses.blockFrequencies();
-        double frequencyOfStore = frequencies.frequencyOf(block).predicted();
+        std::optional<bool> storesUndefinedIfAsked;
+        auto storesUndefined = [&] {
+            if (!storesUndefinedIfAsked)
+                storesUndefinedIfAsked = isUndefinedConstant(store.operand(*stored));
+            return *storesUndefinedIfAsked;
+        };
         auto countStoreInto = [&](LayoutID layout) {
             std::optional<uint32_t> field = m_program.at(layout).findField(store.key());
             if (!field)
                 return;
             SlotRowUse& use = rowUseOf(layout, *field);
-            add(storesUndefined ? use.storesOfUndefined : use.storesOfConstructorWithValue, 1);
+            add(storesUndefined() ? use.storesOfUndefined : use.storesOfConstructorWithValue, 1);
         };
-        for (SlotUseFreshObject object : objects) {
-            double share = frequencyOfStore / frequencies.frequencyOf(object.block).predicted();
-            if (object.allocation && !storesUndefined) {
+        forEachFreshObject<WalkFor::Store>(store.operand(*receiver), [&] { return storesUndefined() ? PropertyKeyID() : store.key(); }, [&](const SlotUseFreshObject& object) {
+            const BlockFrequencies& frequencies = m_analyses.blockFrequencies();
+            double share = frequencies.frequencyOf(block).predicted() / frequencies.frequencyOf(object.block).predicted();
+            if (object.allocation && !storesUndefined()) {
                 // Tests split one store of the source into a store on each path.
                 auto& fill = m_fillsBesideAllocation.add(static_cast<uint64_t>(object.allocation.index()) << 32 | store.key().index(), FillOfAllocation { }).iterator->value;
                 if (!fill.firstStore)
@@ -693,18 +837,19 @@ private:
                 if (fill.lastStore != &store)
                     fill.share += share;
                 fill.lastStore = &store;
-                continue;
+                return fill.share > leastShareOfFillBesideAllocation;
             }
-            if (!storesUndefined && share <= 0.5)
-                continue;
+            if (!storesUndefined() && share <= leastShareOfFillBesideAllocation)
+                return false;
             if (object.allocation) {
-                m_uses.fillsBesideCreation.append({ object.layout, object.maker, store.key(), storesUndefined, heatOf(blockOf(object.allocation)) });
-                continue;
+                m_uses.fillsBesideCreation.append({ object.layout, object.maker, store.key(), storesUndefined(), heatOf(blockOf(object.allocation)) });
+                return false;
             }
             countStoreInto(object.layout);
             for (LayoutID below : m_inputs.layoutsNamedBelow[object.layout.index()])
                 countStoreInto(below);
-        }
+            return false;
+        });
     }
 
     void addFillsBesideAllocations()
@@ -713,7 +858,7 @@ private:
         AOT::sort(places);
         for (uint64_t place : places) {
             const FillOfAllocation& fill = m_fillsBesideAllocation.find(place)->value;
-            if (fill.share <= 0.5)
+            if (fill.share <= leastShareOfFillBesideAllocation)
                 continue;
             for (const SlotUseFreshObject& object : fill.objects)
                 m_uses.fillsBesideCreation.append({ object.layout, object.maker, fill.firstStore->key(), false, heatOf(blockOf(object.allocation)) });
@@ -906,6 +1051,15 @@ private:
         Vector<SlotUseFreshObject, 2> objects;
     };
     UncheckedKeyHashMap<uint64_t, FillOfAllocation, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_fillsBesideAllocation;
+    static constexpr double leastShareOfFillBesideAllocation = 0.5;
+    Vector<JoinOnPath, 8> m_path;
+    Vector<ValueID, 8> m_waiting;
+    Vector<SeenParameter, 8> m_seenInShortWalk;
+    uint32_t m_walk { 0 };
+    uint64_t m_numberOfParametersVisited { 0 };
+    Vector<uint32_t> m_walkOfParameter;
+    Vector<uint32_t> m_numberInWalk;
+    UncheckedKeyHashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_settledJoins;
     Vector<double> m_scaleOfArm;
     bool m_readsZeroEncodingCandidate { false };
 };
@@ -1376,6 +1530,7 @@ SlotUses collectSlotUses(const SlotPlanContext& context)
         if (program.functions[index].hasBody())
             collected.append(SlotUseScanner(inputs, uses, FunctionID(index)).run());
     });
+    context.build.statistics().count(StatisticID::ParametersVisitedForNewObjects, inputs.numberOfParametersVisitedForNewObjects.load(std::memory_order_relaxed));
     times.didFinish("scanBodies"_s);
     std::span<const FunctionUses> functions = usesOfFunctions.span();
     Vector<StoreByNameUse> stores;

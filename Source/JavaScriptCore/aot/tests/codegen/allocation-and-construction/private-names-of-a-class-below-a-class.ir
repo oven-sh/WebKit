@@ -296,7 +296,8 @@ function f19 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f20 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f19]
 
 # Classes below a class declare a private field, a private method and a private accessor. Their objects, and those of the classes below them, are allocated in `round`,
-# with room for the private fields, and the initializers and methods are called directly. No private name is defined, read or stored by the run time.
+# with room for the private fields, and the initializers and methods are called directly. No private name is defined, read or stored by the run time, but for one way
+# out of `#next`: the objects leave the program in `answer`, and `tick` hands its receiver on to `#next`, so that may be another object than one of these.
 # CHECK-LABEL: f1: size=
 # CHECK: function f
 # CHECK-COUNT-2: stub AllocateCell.
@@ -310,5 +311,10 @@ function f20 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # ONE-NOT: stub Call
 # ONE-NOT: stub Construct
 # ONE-LABEL: f2: size=
+# ONE-NOT: operationAOTPrivate
+# ONE-NOT: PrivateDefine
+# ONE-LABEL: f4: size=
+# ONE: operation operationAOTPrivateSet x1
+# ONE-LABEL: f5: size=
 # ONE-NOT: operationAOTPrivate
 # ONE-NOT: PrivateDefine

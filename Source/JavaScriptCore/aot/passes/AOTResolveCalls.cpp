@@ -866,7 +866,19 @@ static LayoutID findClassSelectedByNewTarget(const Program& program, const Type&
     LayoutID layout = selecting.constructedClass;
     for (size_t steps = 0; layout && layout != constructed && steps <= program.layouts.size(); ++steps)
         layout = program.at(layout).base;
-    return layout == constructed ? selecting.constructedClass : LayoutID();
+    if (layout != constructed)
+        return { };
+    // The body of the function below never runs on such an object. `function B() { A.call(this); this.extra = 1 }`: where every `new B` fills a field, flow says so of the class,
+    // and an object that A alone has built would belie it. What is said of a field that A has too holds where the same is said of A's own objects.
+    const Layout& selected = program.at(selecting.constructedClass);
+    for (uint32_t field = 0; field < selected.fields.size(); ++field) {
+        if (flowOf(program, { selecting.constructedClass, field }).occupancy == Occupancy::Unknown)
+            continue;
+        std::optional<uint32_t> above = program.at(constructed).findField(selected.fields[field].key);
+        if (!above || flowOf(program, { constructed, *above }).occupancy == Occupancy::Unknown)
+            return { };
+    }
+    return selecting.constructedClass;
 }
 
 static Type classObjectsAllocatedAtOrBelow(const Program& program, LayoutID holder)

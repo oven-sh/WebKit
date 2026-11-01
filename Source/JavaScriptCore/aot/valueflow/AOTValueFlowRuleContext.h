@@ -264,6 +264,7 @@ public:
     bool refusesEvaluatedText() const { return refusedCode().evaluatedText; }
     bool isGuardedByRemovedFeature(BuiltinID) const;
     bool isSabotaged(Sabotage) const;
+    bool handsReceiverOn(FunctionID) const;
 
     static ValueSetID throughMaskOf(const ValueFlowOperand&, ValueSetID value, const ValueFlowSolver&, ValueSetMaker&);
     static ValueSetID valueShownToRules(const ValueFlowOperand&, const ValueFlowSolver&, ValueSetMaker&);

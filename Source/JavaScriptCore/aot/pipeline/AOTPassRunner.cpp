@@ -469,6 +469,7 @@ struct OperationsThatPassAnswersFor {
     bool isEveryOperation;
     TakesHandlersAway takesHandlersAway;
     OpcodeSet opcodes;
+    OpcodeSet opcodesThatMayLoseTheirHandler { };
 };
 
 // An operation that may throw or run code of the program goes where ObservableOperations says that it does neither, where the pass names its reason at the place (explainOperationThatGoes),
@@ -495,7 +496,6 @@ static constexpr OperationsThatPassAnswersFor operationsThatPassesAnswerFor[] {
     { PassID::ResolveBuiltins, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
     { PassID::ResolveCalls, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
     { PassID::RetypeValues, InPlaceOfOperation::NothingBecauseNothingComesHere, true, TakesHandlersAway::No, { } },
-    { PassID::Select, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::Yes, { } },
     { PassID::SeparateUnlikelyLoopPaths, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::No, { } },
     { PassID::SplitBehindEntryChecks, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::Yes, { } },
     { PassID::MoveGeneratorFramesToHeap, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::Yes, { } },
@@ -505,6 +505,8 @@ static constexpr OperationsThatPassAnswersFor operationsThatPassesAnswerFor[] {
     { PassID::StartGeneratorsAtFirstStep, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
     // What it lets go stores to, reads from or casts an object or a list that it holds itself, and that nobody else has seen.
     { PassID::SinkAllocations, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::AppendElement, Opcode::AppendElements, Opcode::AppendHole, Opcode::AppendSpread, Opcode::CheckInitialized, Opcode::CopyDataProperties, Opcode::DestructureIterable, Opcode::ElemGet, Opcode::ElemSet, Opcode::PrivateDefine, Opcode::PrivateSet, Opcode::PropDefine, Opcode::PropGet, Opcode::PropSet, Opcode::PutArrayElement, Opcode::RequireObjectCoercible, Opcode::SetLiteralPrototype } },
+    // A rule takes the members of the group that it has matched out of their blocks. At its end the pass takes the polls of loops out of handlers, as RemoveRedundantHandlers does.
+    { PassID::Select, InPlaceOfOperation::ItsExpansion, false, TakesHandlersAway::No, { Opcode::AwaitBySavingFrame, Opcode::CallBuiltin, Opcode::DefineGetter, Opcode::DefineMethod, Opcode::DefineSetter, Opcode::PropDefine, Opcode::PropGet, Opcode::PropSet, Opcode::SetLiteralPrototype, Opcode::Strcat, Opcode::StringBuilderAppend }, { Opcode::LoopHint } },
     { PassID::CreateStringBuilders, InPlaceOfOperation::ItsExpansion, false, TakesHandlersAway::No, { Opcode::Add, Opcode::Strcat } },
     { PassID::DeferClosuresInFields, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::Call } },
     { PassID::DeferDefinitions, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::CheckInitialized, Opcode::DefineMethod, Opcode::NewClass } },
@@ -547,7 +549,7 @@ static String findOperationNobodyAnswersFor(PassID id, const Vector<OperationTha
             entry = &candidate;
     }
     for (const OperationThatWent& operation : operations) {
-        bool isAnswered = entry && (operation.how == OperationThatWent::How::LostItsHandler ? entry->takesHandlersAway == TakesHandlersAway::Yes : entry->isEveryOperation || entry->opcodes.contains(operation.opcode));
+        bool isAnswered = entry && (operation.how == OperationThatWent::How::LostItsHandler ? entry->takesHandlersAway == TakesHandlersAway::Yes || entry->opcodesThatMayLoseTheirHandler.contains(operation.opcode) : entry->isEveryOperation || entry->opcodes.contains(operation.opcode));
         if (!isAnswered)
             return describe(operation);
         if (listenerOutside)
@@ -631,7 +633,10 @@ void PassRunner::endProgramPass(PassID id, const Program& program, PassTimer tim
             String problem = findOperationNobodyAnswersFor(id, findOperationsThatWentWithoutReason({ program, noSummaries }, timer.bodiesBefore->functions[index], program.functions[index], timer.bodiesBefore->reasons[index]));
             if (problem.isNull())
                 continue;
-            m_build.diagnostics().add(InternalError { .kind = InternalErrorKind::VerificationFailedAfterPass, .function = findFunctionAsRead(&program, FunctionID(index)), .pass = id, .detail = problem });
+            InternalError failure = InternalError { .kind = InternalErrorKind::VerificationFailedAfterPass, .function = findFunctionAsRead(&program, FunctionID(index)), .pass = id, .detail = problem };
+            if (keepFailedVerification(failure, failure.kind))
+                continue;
+            m_build.diagnostics().add(failure);
             break;
         }
     }
@@ -657,7 +662,29 @@ static String describeError(const InternalError& error, const Function& verified
         if (error.value.index() < verifiedBody.values.size())
             description.append(" ("_s, nameOf(verifiedBody.at(error.value).opcode), ')');
     }
+    if (!error.detail.isEmpty())
+        description.append("; "_s, error.detail);
     return description.toString();
+}
+
+bool PassRunner::keepFailedVerification(const InternalError& failure, InternalErrorKind found) const
+{
+    if (!m_build.options().keepsGoingBehindFailedVerifications)
+        return false;
+    m_build.diagnostics().keepFirstFailureOfFunction(failure, found);
+    return true;
+}
+
+void PassRunner::keepFailedVerifications(PassID pass, const Program& program, Vector<InternalError>&& errors) const
+{
+    for (const InternalError& error : errors) {
+        // What is wrong with a record of the program is wrong for every pass to come.
+        if (!error.function) {
+            m_build.diagnostics().add(error);
+            continue;
+        }
+        keepFailedVerification(InternalError { .kind = InternalErrorKind::VerificationFailedAfterPass, .function = findFunctionAsRead(&program, error.function), .pass = pass, .detail = describeError(error, program.at(error.function)) }, error.kind);
+    }
 }
 
 void PassRunner::verifyAfterProgramPass(const PassDescriptor& descriptor, const Program& program) const
@@ -683,6 +710,17 @@ void PassRunner::verifyAfterProgramPass(const PassDescriptor& descriptor, const 
     VerifierInputs inputs = m_verifierInputs;
     inputs.isOptimizing = form == IRForm::Prepared;
     inputs.effects = &effects;
+    if (m_build.options().keepsGoingBehindFailedVerifications) {
+        Vector<InternalError> errors;
+        {
+            Diagnostics::Interception interception(m_build.diagnostics());
+            if (verifyProgram(program, form, m_build, inputs))
+                return;
+            errors = interception.take();
+        }
+        keepFailedVerifications(descriptor.id, program, WTF::move(errors));
+        return;
+    }
     if (verifyProgram(program, form, m_build, inputs))
         return;
     InternalError failure { .kind = InternalErrorKind::VerificationFailedAfterPass, .pass = descriptor.id };
@@ -905,8 +943,11 @@ NEVER_INLINE PassOutcome PassRunner::runFunctionPassThatMayFire(PassID id, Funct
             tieCasts();
             if (m_build.options().verifiesProgram) [[unlikely]] {
                 if (Vector<CastAwayFromItsValue, 4> found = findCastsAwayFromTheirValues(context.program, context.function); !found.isEmpty()) {
-                    m_build.diagnostics().add(InternalError { .kind = InternalErrorKind::CastWithoutFact, .function = context.id, .block = found[0].block, .value = found[0].cast, .pass = id });
-                    run.isStopped = true;
+                    InternalError failure = InternalError { .kind = InternalErrorKind::CastWithoutFact, .function = context.id, .block = found[0].block, .value = found[0].cast, .pass = id };
+                    if (!keepFailedVerification(failure, failure.kind)) {
+                        m_build.diagnostics().add(failure);
+                        run.isStopped = true;
+                    }
                     return PassOutcome::Unchanged;
                 }
             }
@@ -952,7 +993,10 @@ NEVER_INLINE PassOutcome PassRunner::runFunctionPassThatMayFire(PassID id, Funct
     auto stopWhereThereIsOne = [&](const String& problem) {
         if (problem.isNull())
             return;
-        m_build.diagnostics().add(InternalError { .kind = InternalErrorKind::VerificationFailedAfterPass, .function = run.functionAsRead, .pass = id, .detail = problem });
+        InternalError failure { .kind = InternalErrorKind::VerificationFailedAfterPass, .function = run.functionAsRead, .pass = id, .detail = problem };
+        if (keepFailedVerification(failure, failure.kind))
+            return;
+        m_build.diagnostics().add(failure);
         run.isStopped = true;
     };
     if (m_build.options().checksThatUsedValuesAreListed && outcome == PassOutcome::Changed) [[unlikely]]
@@ -1028,6 +1072,8 @@ void PassRunner::verifyAfterFunctionPass(const PassDescriptor& descriptor, Funct
 {
     if (!m_build.options().verifiesAfterEveryPass || isVerifiedElsewhere(context)) [[likely]]
         return;
+    if (hasFailedVerificationBefore(run.functionAsRead))
+        return;
     IRForm form = descriptor.produces.value_or(context.program.form());
     VerifierInputs inputs = m_verifierInputs;
     inputs.isOptimizing = form == IRForm::Prepared;
@@ -1035,7 +1081,6 @@ void PassRunner::verifyAfterFunctionPass(const PassDescriptor& descriptor, Funct
         inputs.effects = &context.inputs.effects;
     // A program pass that is given no summaries simplifies functions which the Optimize loop has left: their guards stand across calls that only the summaries call harmless.
     inputs.cannotJudgeGuards = context.inputs.effects.isEmpty() && m_build.isEnabled(PassID::ComputeEffectSummaries, FunctionID());
-    inputs.otherFunctionsMayChange = true;
     const uint32_t numberOfEdits = context.function.numberOfEdits();
     const bool isAsVerified = run.verified && run.verified->numberOfEdits == numberOfEdits && run.verified->form == form && run.verified->cannotJudgeGuards == inputs.cannotJudgeGuards;
     if (isAsVerified && run.verified->analyses == context.analyses.computed())
@@ -1071,6 +1116,8 @@ void PassRunner::verifyAfterFunctionPass(const PassDescriptor& descriptor, Funct
 
     // A listing of many errors is cut short, so the line that names the pass also says what the verifier found.
     InternalError failure { .kind = InternalErrorKind::VerificationFailedAfterPass, .function = run.functionAsRead, .pass = descriptor.id, .detail = describeError(errors.first(), context.function) };
+    if (keepFailedVerification(failure, errors.first().kind))
+        return;
     for (InternalError& error : errors)
         error.pass = descriptor.id;
     m_build.diagnostics().append(WTF::move(errors));
@@ -1142,6 +1189,8 @@ void PassRunner::verifySkippedFunctionPass(const PassDescriptor& descriptor, con
 {
     if (!m_build.options().verifiesAfterEveryPass || isVerifiedElsewhere(context)) [[likely]]
         return;
+    if (hasFailedVerificationBefore(run.functionAsRead))
+        return;
     Function copy(context.function);
     FunctionAnalyses analyses(context.analyses.context(), copy);
     FunctionPassContext contextOfCopy { context.program, context.inputs, context.id, copy, analyses, context.types, context.strings, m_build };
@@ -1152,7 +1201,10 @@ void PassRunner::verifySkippedFunctionPass(const PassDescriptor& descriptor, con
         return;
 
     const PassSet& changers = run.notes->changersSinceLastRun[static_cast<unsigned>(descriptor.id)];
-    m_build.diagnostics().add(InternalError { .kind = InternalErrorKind::SkippedPassChangesFunction, .function = run.functionAsRead, .pass = descriptor.id, .detail = makeString(describeChangers(changers), describeFirstDifference(context.function, copy)) });
+    InternalError failure = InternalError { .kind = InternalErrorKind::SkippedPassChangesFunction, .function = run.functionAsRead, .pass = descriptor.id, .detail = makeString(describeChangers(changers), describeFirstDifference(context.function, copy)) };
+    if (keepFailedVerification(failure, failure.kind))
+        return;
+    m_build.diagnostics().add(failure);
     run.isStopped = true;
 }
 

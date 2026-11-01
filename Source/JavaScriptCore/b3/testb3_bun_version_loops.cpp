@@ -876,10 +876,10 @@ static void testVersionLoopsStoreInExcursionToResolvedHeaderPhi()
 static void testVersionLoopsTellsLogWhatStandsForVariableReadAgain()
 {
     constexpr int64_t reported = -7;
-    for (bool overlooksWrites : { false, true }) {
+    for (bool ignoresWrites : { false, true }) {
         Policy policy = remarkPolicy();
         policy.validation.logsDecidedComparisons = true;
-        policy.validation.overlooksWritesToWhatLoopsReadAgain = overlooksWrites;
+        policy.validation.ignoresWritesToLocationsReloadedInLoops = ignoresWrites;
         Procedure proc(policy);
         Graph graph { proc };
         BasicBlock* root = proc.addBlock();
@@ -910,13 +910,13 @@ static void testVersionLoopsTellsLogWhatStandsForVariableReadAgain()
         fixSSA(proc);
         validate(proc);
 
-        CHECK_EQ(versionLoopsAndValidate(proc), overlooksWrites);
+        CHECK_EQ(versionLoopsAndValidate(proc), ignoresWrites);
         bool isChecked = proc.movedLoadLog().insertChecks(proc, nullptr, createSharedTask<void(CCallHelpers&, const MovedLoad&, GPRReg, GPRReg)>([](CCallHelpers& jit, const MovedLoad&, GPRReg, GPRReg) {
             jit.move(CCallHelpers::TrustedImm64(reported), GPRInfo::returnValueGPR);
             jit.emitFunctionEpilogue();
             jit.ret();
         }));
-        CHECK_EQ(isChecked, overlooksWrites);
+        CHECK_EQ(isChecked, ignoresWrites);
         auto code = compileProc(proc, 1);
         int64_t memory[2] = { 10, 0 };
         CHECK_EQ(run(*code, 0, memory, std::bit_cast<int64_t>(&memory[1])), 1100);
@@ -924,7 +924,7 @@ static void testVersionLoopsTellsLogWhatStandsForVariableReadAgain()
         int64_t expected = 0;
         for (int64_t i = 0, left = 10; i < left; ++i, --left)
             expected += left * left + left;
-        CHECK_EQ(run(*code, 0, memory, std::bit_cast<int64_t>(&memory[0])), overlooksWrites ? reported : expected);
+        CHECK_EQ(run(*code, 0, memory, std::bit_cast<int64_t>(&memory[0])), ignoresWrites ? reported : expected);
     }
 }
 

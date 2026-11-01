@@ -50,7 +50,7 @@ static bool belongsToOwnConstruction(const Function& function, const Value& valu
         && sameObjectThroughCasts(function, value.newTargetOperand()) == newTarget;
 }
 
-static bool isGuardUse(const Function& function, const Use& use)
+bool isGuardUse(const Function& function, const Use& use)
 {
     switch (use.kind) {
     case Use::Kind::Operand:

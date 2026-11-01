@@ -684,6 +684,19 @@ void runHostRoots(const ValueFlowStatement& statement, ValueFlowRuleContext& con
         for (uint32_t index = 0; index < program.modules.size(); ++index) {
             if (program.modules[index].flags.contains(ModuleFlags::IsShownByEntryOfCache))
                 connect(context, requiredValueOf(context, ModuleID(index)), ValueFlowProgramNodes::escaped());
+            if (program.modules[index].flags.contains(ModuleFlags::IsHandedOutByTestRunner)) {
+                ModuleID module(index);
+                if (isAskedOfHostByName(program.modules[index])) {
+                    context.add(context.nodes().ofHost(ValueFlowHostNode::ModulesOfSeenCode), only(context, universe.namespaceOf(module)));
+                    evaluateModule(context, module);
+                    ClimbingSet holders = valueOf(context, requiredValueOf(context, module));
+                    for (ValueFlowNameKind kind : { ValueFlowNameKind::EveryGetter, ValueFlowNameKind::EverySetter })
+                        context.connect(context.readWhatWasWritten(holders, { kind, 0 }), ValueFlowProgramNodes::escaped());
+                }
+                ValueFlowNodeID hands = program.modules[index].kind == ModuleKind::Runtime ? ValueFlowProgramNodes::escaped() : context.nodes().ofHost(ValueFlowHostNode::HeldByNativeCode);
+                for (const ValueFlowSources& answer : { requiredValueOf(context, module), namespaceOf(context, module) })
+                    connect(context, answer, hands);
+            }
         }
     }
     std::span<const Entry> entries = program.entries.span();
@@ -1434,6 +1447,9 @@ void runUsedBuiltins(const ValueFlowStatement&, ValueFlowRuleContext& context)
         if (callsWhateverHasEscaped || context.contains(run, object))
             attachments.addClassesAnsweredBy(builtin);
     });
+    // Whoever calls a loader gets the object of any module of Bun's own by its name. Any text finds process.getBuiltinModule on the global object.
+    if (callsLoaderThatHasEscaped || membersFollowHolders)
+        context.add(context.nodes().ofHost(ValueFlowHostNode::BuiltinsHeldWithoutBeingListed), universe.builtinTables().heap().objectsOfPublicModulesWithoutLocks());
     if (callsLoaderThatHasEscaped) {
         if (isHostFlagRaised(context, ValueFlowHostNode::ModulesAreRequiredByName) || isHostFlagRaised(context, ValueFlowHostNode::ModulesAreImportedByName))
             handLoadedModulesToNativeCode(context);
@@ -1585,7 +1601,7 @@ static void connectWhatCopiesOfFilesReach(ValueFlowRuleContext& context)
     BitVector isReached = mayRunAsCopy;
     bool hasOriginals = false;
     for (const Variable& variable : program.variables) {
-        if (variable.flags.contains(VariableFlags::HoldsMock) && !program.at(variable.module).runtimeModule) {
+        if (variable.flags.contains(VariableFlags::OriginalMayRun) && !program.at(variable.module).runtimeModule) {
             mayRunAsCopy.quickSet(variable.module.index());
             hasOriginals = true;
         }

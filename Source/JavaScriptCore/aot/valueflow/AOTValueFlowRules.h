@@ -36,10 +36,36 @@ void forEachPartOfCallees(ValueFlowRuleContext& context, ClimbingSet callees, NO
         functor(ClimbingSet(unknownCalleeOfStatement(context)));
 }
 
-ValueID definitionThroughTests(const Function&, ValueID);
-BuiltinID entryNamedByOperations(const Program&, const Function&, ValueID);
-PropertyKeyID keyOfMemberCalledOnItsHolderByText(const Program&, const Function&, const Value& call);
-bool readsUnderNameOfEnumerationOfSameObject(const Function&, const Value& read);
+class DefinitionsThroughTests {
+public:
+    explicit DefinitionsThroughTests(const Function& function)
+        : m_function(function)
+    {
+    }
+
+    const Function& function() const { return m_function; }
+    ValueID of(ValueID);
+    uint64_t numberOfBlocksRead() const { return m_numberOfBlocksRead; }
+
+private:
+    struct WaysIn {
+        uint32_t count { 0 };
+        uint32_t from { 0 };
+        uint32_t targetIndex { 0 };
+    };
+
+    void makeTables();
+
+    const Function& m_function;
+    bool m_hasTables { false };
+    uint64_t m_numberOfBlocksRead { 0 };
+    Vector<BlockID, 128> m_ownerOfParameter;
+    Vector<WaysIn, 32> m_waysIn;
+};
+
+BuiltinID entryNamedByOperations(const Program&, DefinitionsThroughTests&, ValueID);
+PropertyKeyID keyOfMemberCalledOnItsHolderByText(const Program&, DefinitionsThroughTests&, const Value& call);
+bool readsUnderNameOfEnumerationOfSameObject(DefinitionsThroughTests&, const Value& read);
 std::optional<uint8_t> positionInPairWrittenAsKey(const Function&, const Value& read);
 bool areUnchangedPairsOfKeyAndValue(ValueFlowRuleContext&, ClimbingSet containers);
 // `"$" + name`, `"on" + kind + suffix`: the text on the left, where it is written out, is not empty and is ASCII.

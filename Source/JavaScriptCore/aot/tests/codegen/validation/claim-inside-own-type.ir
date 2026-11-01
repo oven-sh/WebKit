@@ -1,0 +1,47 @@
+# A validating build holds a value to its own type where it is made. A claim that this type lies inside asks nothing new, so it gets no test. A claim that says more is tested
+# FORM: Selected
+# RUN: generate-code calls
+# OPTIONS: validate
+# CHECK-LABEL: f0: size=
+# CHECK: operation operationAOTReportValidationFailure x2
+# CHECK-LABEL: f1: size=
+# CHECK: operation operationAOTReportValidationFailure x2
+# CHECK-LABEL: f2: size=
+# CHECK: operation operationAOTReportValidationFailure x3
+# What a type proves about a class is asked in front of the operation that looks at the value. A claim with the same proofs asks none of it again. Proofs that the type lacks are asked
+# CHECK-LABEL: f3: size=
+# CHECK: operation operationAOTContentsHaveType x1
+# CHECK-NEXT: operation operationAOTReportValidationFailure x5
+# CHECK-LABEL: f4: size=
+# CHECK: operation operationAOTContentsHaveType x1
+# CHECK-NEXT: operation operationAOTReportValidationFailure x5
+# CHECK-LABEL: f5: size=
+# CHECK: operation operationAOTContentsHaveType x1
+# CHECK-NEXT: operation operationAOTReportValidationFailure x5
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="noClaim" parameters=[{type=int|string}] results=[{type=int|string}] {
+    Return v0
+}
+function f1 name="claimSaysLess" parameters=[{type=int|string}] results=[{type=int|string}] {
+    ValidateType v0 validatedType=null|number|string
+    Return v0
+}
+function f2 name="claimSaysMore" parameters=[{type=null|number|string}] results=[{type=null|number|string}] {
+    ValidateType v0 validatedType=int|string
+    Return v0
+}
+function f3 name="noClaimAboutArray" parameters=[{type=int|Array<int, proven, pristine[Storage, Names]>}] results=[{type=boolean}] {
+    v1 = TypeTest v0 testedType=int
+    Return v1
+}
+function f4 name="sameProofs" parameters=[{type=int|Array<int, proven, pristine[Storage, Names]>}] results=[{type=boolean}] {
+    ValidateType v0 validatedType=number|Array<int, proven, pristine[Storage, Names]>
+    v2 = TypeTest v0 testedType=int
+    Return v2
+}
+function f5 name="moreProofs" parameters=[{type=int|Array<int>}] results=[{type=boolean}] {
+    ValidateType v0 validatedType=number|Array<int, proven, pristine[Storage, Names]>
+    v2 = TypeTest v0 testedType=int
+    Return v2
+}

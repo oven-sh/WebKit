@@ -39,6 +39,10 @@ constexpr Number24 optionalNumber24(uint32_t word)
     return Number24(word);
 }
 
+enum class OtherNameOfModule : uint8_t;
+// An entry of ProgramTables::modulesReachedUnderOtherNames(), which lists the modules that a test may mock. Ascending.
+constexpr uint32_t moduleReachedUnder(uint32_t module, OtherNameOfModule name) { return module << 2 | static_cast<uint32_t>(name); }
+
 struct ModuleData {
     enum class Flag : uint16_t {
         HasTopLevelAwait = 1 << 0,
@@ -749,6 +753,7 @@ private:
     v(modulesOfUncompiledCode, UncompiledModuleData) \
     v(modulesThatLoadCompiledFilesAlone, uint32_t) \
     v(modulesThatFindBuiltinsReadOnly, uint32_t) \
+    v(modulesReachedUnderOtherNames, uint32_t) \
     v(importsOfHeldFiles, ImportOfHeldFileData) \
     v(namedVariables, uint8_t) \
     v(namedCaptures, uint8_t) \

@@ -310,6 +310,9 @@ void describeDeclaredEntry(const Program& program, const Function& function, con
         return;
     if (reportsNothing(program, function, value) || validatesNothing(program, function, value))
         return;
+    // Unknown code enters accessors, callbacks and what the host calls: not a function that only calls by value reach. The call that was fused names those.
+    if (value.opcode == Opcode::CallMethod)
+        description.addFunctions(calleesOfCall(program, value).listed().functions);
     describeBound(refinedEffectsOf(program, function, value, declared), description);
     if (declared.mayCallUnknownCode)
         return;
@@ -330,6 +333,7 @@ bool isRefinedByValue(Opcode opcode, const Effects& bound)
         || opcode == Opcode::StringBuilderAppendJSON
         || opcode == Opcode::Strcat
         || opcode == Opcode::SuperGet
+        || opcode == Opcode::CallMethod
         || isBoundOf(NamedEffectSet::ResolvesRopes, bound)
         || OperandPosition::position(opcode);
 }

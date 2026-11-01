@@ -42,13 +42,13 @@ enum class KnownProperty : uint8_t {
     Induction,
 };
 
-enum class MoveLeftOutByRegisterAllocator : uint8_t {
+enum class MoveOmittedByRegisterAllocator : uint8_t {
     None,
-    StoreBehindCluster,
-    LoadAheadOfCluster,
-    StoreAheadOfClobber,
-    LoadBehindClobber,
-    StoreBehindSpilledDefinition,
+    StoreAfterCluster,
+    LoadBeforeCluster,
+    StoreBeforeClobber,
+    LoadAfterClobber,
+    StoreAfterSpilledDefinition,
 };
 
 struct ValidationPolicy {
@@ -56,28 +56,29 @@ struct ValidationPolicy {
     bool checksKnownPropertiesAtRunTime { false };
     bool logsMovedLoads { false };
     bool logsDecidedComparisons { false };
-    bool keepsOriginsOfAccessesThatTakeTraps { false };
     // Every read of a spill slot sees the value that the slot stands for, and every read of a register the Tmp that it is read for: AirCheckSpillSlots.h. They change no code.
+    bool continuesAfterMovedLoadReports { false };
+    bool keepsOriginsOfTrappingAccesses { false };
     bool checksSpillSlots { false };
     bool checksAllocatedRegisters { false };
     // These break a phase on purpose, for the tests of the checks.
-    bool overlooksWritesOnUnlikelyPaths { false };
-    bool overlooksWritesBetweenReadsOfBound { false };
-    bool omitsStridedLimitGuard { false };
-    bool omitsLimitOfClampedBound { false };
-    bool overlooksWritesBehindWordsReadAgain { false };
-    bool overlooksWritesToWhatLoopsReadAgain { false };
-    bool overlooksWritesToWordsCarriedAroundLoops { false };
-    bool overlooksWritesBetweenLoadsAndTheirUsers { false };
-    bool overlooksWritesBetweenPairedLoads { false };
-    bool leavesRoomForOneTurnTooFew { false };
-    bool takesAccessesOfVectorTurnsToLieApart { false };
-    bool takesLanesToHoldWholeValues { false };
-    bool takesSumsOfNumbersToBeWhole { false };
-    bool comparesAllLanesWithSign { false };
-    bool setsUpFrameBehindWrites { false };
-    bool overlooksColdUsesOfClustersOverBlocks { false };
-    MoveLeftOutByRegisterAllocator moveLeftOutByRegisterAllocator { MoveLeftOutByRegisterAllocator::None };
+    bool ignoresWritesOnRarePaths { false };
+    bool ignoresWritesBetweenLoadsOfBound { false };
+    bool skipsStridedLimitGuard { false };
+    bool skipsUpperClamp { false };
+    bool ignoresWritesAfterReloadedLocations { false };
+    bool ignoresWritesToLocationsReloadedInLoops { false };
+    bool ignoresWritesToPromotedLocations { false };
+    bool ignoresWritesBetweenLoadsAndUsers { false };
+    bool ignoresWritesBetweenPairedLoads { false };
+    bool reservesOneIterationTooFew { false };
+    bool assumesVectorIterationAccessesAreDisjoint { false };
+    bool assumesLanesHoldWholeValues { false };
+    bool assumesDoubleSumsAreIntegers { false };
+    bool comparesAllLanesAsSigned { false };
+    bool setsUpFrameAfterWrites { false };
+    bool ignoresColdUsesOfCrossBlockClusters { false };
+    MoveOmittedByRegisterAllocator moveOmittedByRegisterAllocator { MoveOmittedByRegisterAllocator::None };
 };
 
 enum class RedundancyElimination : uint8_t {
@@ -158,7 +159,7 @@ struct LoopPolicy {
     bool vectorizes { false };
     bool unrolls { false };
     bool promotesMemory { false };
-    bool (*isTakenOutOfLoopsByClient)(Procedure&, const MemoryValue&) { nullptr };
+    bool (*clientHoistsOutOfLoops)(Procedure&, const MemoryValue&) { nullptr };
     double minFrequencyOfUnrolledLoop { 1 };
     bool hoistsOnlyFromLikelyPaths { false };
     bool hoistsImmutableLoadsPastWrites { false };

@@ -752,7 +752,9 @@ void ObjectInterpreter::listArguments(ValueID list)
     if (singleDescriptionOf(arguments) && tryCopyArguments(list, arguments, 0, cause))
         return;
 
-    if (!singleDescriptionOf(arguments) || singleDescriptionOf(arguments)->numberOfParameters || !requireCellOfRestList(arguments, cause)) {
+    // Only an allocation is a guard of what it makes, and the rest list was not born here.
+    bool guardsItsReads = m_sinking.inputs().listsOfArgumentsNamedAsGuards.get(list.index());
+    if (!singleDescriptionOf(arguments) || singleDescriptionOf(arguments)->numberOfParameters || guardsItsReads || !requireCellOfRestList(arguments, cause)) {
         requireCell(receiver, cause);
         return executeOther(list);
     }

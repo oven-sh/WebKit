@@ -69,6 +69,7 @@ public:
     ValueFlowBehaviorID behaviorThatAsksProxies(ValueFlowBehaviorID behavior) const { return m_behaviorsThatAskProxies.get(behavior.index()); }
     const ValueFlowBehavior& at(ValueFlowBehaviorID behavior) const LIFETIME_BOUND { return m_behaviors[behavior.index()]; }
     unsigned numberOfBehaviors() const { return m_behaviors.size(); }
+    std::span<const BuiltinID> builtinsThatReachAboveTheirOperands() const { return m_builtinsThatReachAboveTheirOperands.span(); }
     ValueFlowBehaviorID conversionToPrimitive() const { return m_conversionToPrimitive; }
     ValueFlowBehaviorID listOfKeysThatTrapAnswers() const { return m_listOfKeysThatTrapAnswers; }
     ValueFlowBehaviorID descriptorThatTrapAnswers() const { return m_descriptorThatTrapAnswers; }
@@ -104,6 +105,7 @@ private:
     Vector<Vector<BuiltinClassID, 1>> m_classesAtOrBelow;
     Vector<ValueFlowBehavior> m_behaviors;
     HashMap<const BuiltinParameter*, ValueFlowBehaviorID> m_behaviorOfParameter;
+    Vector<BuiltinID> m_builtinsThatReachAboveTheirOperands;
     HashMap<const OperandInfo*, ValueFlowBehaviorID> m_behaviorOfOperand;
     HashMap<uint32_t, ValueFlowBehaviorID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_behaviorsThatAskProxies;
     ValueFlowBehaviorID m_conversionToPrimitive;

@@ -149,7 +149,7 @@ void appendChecksAtEntry(const Program& program, BuildContext& build, Function& 
         declared.expect(declared.expected());
         declared.remove(PositionFlags::IsInt32Promise);
 
-        checks.append(ValueID(function.values.size()));
+        checks.append(function.idOfValueAt(function.values.size()));
         function.add(WTF::move(convert));
     }
     function.edit(point.block, BlockEdit::Values).values.insertVector(point.index, checks);
@@ -544,29 +544,86 @@ static Function createTypedBody(const Program& program, Function&& body, std::sp
     return WTF::move(body);
 }
 
-// Beside a class that no test tells from it, a class loses in a cast what is proven of it: `Array<int, proven>|Object` cast to `Array` is `Array`. A check goes with the other checks and its operand says the rest.
-// The claim that stands in its place stays, so it says itself what its operand has proven.
-static bool sayWhatOperandsOfFormerChecksHaveProven(const Program& program, Function& body, TypeArena& types, std::span<const EntryCheck> checks)
+// Beside a class that no test tells from it, a class loses in a cast what is proven of it: `Array<int, proven>|Object` cast to `Array` is `Array`, and no type says both. A check goes with the other checks
+// and its operand says the rest. The claim that stands in its place stays, and stays as it is: what reads it was written for the type of the check.
+// A position that every store is held to takes what flow holds, also in the body in which each check lets everything through. Where the claim alone stands in the way of that,
+// what is stored says itself what the rules give it in the body in which the former checks let everything through too.
+static void sayWhatStoresBehindFormerChecksHold(const AnalysisContext& context, FunctionID id, Function& body, TypeArena& types, BuildContext& build, std::span<const EntryCheck> checks)
 {
-    TypingContext typing { program, body, types };
-    bool hasChanged = false;
+    const Program& program = context.program;
+    Vector<ValueID, 4> claims;
     for (const EntryCheck& check : checks) {
         RELEASE_ASSERT(check.check.index() < body.values.size());
-        if (body.at(check.check).opcode != Opcode::AssumeType)
-            continue;
-        TypeID claimed = body.at(check.check).provenType();
-        TypeID source = body.at(body.at(check.check).valueOperand()).type;
-        if (types.at(claimed).isSubsetOf(types.at(source), program))
-            continue;
-        TypeID kept = types.intersectionOf(claimed, source);
-        if (kept == claimed)
-            continue;
-        Value& proven = body.edit(check.check);
-        proven.becomeAssumeType(proven.valueOperand(), Proven::byPosition(kept));
-        proven.type = computeResultTypeID(typing, proven);
-        hasChanged = true;
+        const Value& claim = body.at(check.check);
+        if (claim.opcode == Opcode::AssumeType && !types.at(claim.provenType()).isSubsetOf(types.at(body.at(claim.valueOperand()).type), program))
+            claims.append(check.check);
     }
-    return hasChanged;
+    if (claims.isEmpty() || build.isSabotaged(Sabotage::StoresBehindFormerEntryChecksSayNothing))
+        return;
+
+    FunctionAnalyses analyses(context, body);
+    Vector<ValueID, 16> whatLetsEverythingThrough;
+    for (BlockID block : analyses.cfg().reversePostOrder()) {
+        for (ValueID value : body.at(block).values) {
+            if (body.at(value).opcode == Opcode::Check && mayTurnValueAway(program, body, body.at(value)))
+                whatLetsEverythingThrough.append(value);
+        }
+    }
+    auto typeWithout = [&](std::span<const ValueID> claimsThatGo) {
+        Function result(body);
+        ExpectedType nothing { types.withPrimitives(TypeTable::anything, Primitive::Absent) };
+        for (ValueID claim : claimsThatGo)
+            becomeExpect(result.edit(claim), body.at(claim).valueOperand(), nothing);
+        BitVector isBehind = valuesBehind(body, analyses.cfg(), whatLetsEverythingThrough.span());
+        forgetProofsOf(result, types, isBehind, isBehind, ExpectedTypes::Dropped);
+        FunctionAnalyses analysesOfResult(context, result);
+        typeValuesWithoutCutting({ program, id, result, analysesOfResult, types, build });
+        return result;
+    };
+    Function withoutChecks = typeWithout({ });
+    whatLetsEverythingThrough.appendVector(claims);
+    Function withoutFormerChecks = typeWithout(claims.span());
+
+    TypingContext typing { program, body, types };
+    IRBuilder builder(context, body, types);
+    auto claimInFrontOf = [&](ProgramPoint point, Origin origin, ValueID stored, TypeID required) -> ValueID {
+        if (!stored || !required || types.at(withoutChecks.at(stored).type).isSubsetOf(types.at(required), program))
+            return { };
+        TypeID held = withoutFormerChecks.at(stored).type;
+        if (!types.at(types.intersectionOf(withoutChecks.at(stored).type, held)).isSubsetOf(types.at(required), program))
+            return { };
+        builder.setOrigin(origin);
+        build.statistics().count(StatisticID::StoresClaimedBehindFormerEntryChecks);
+        if (build.validates())
+            builder.insertBefore(point, makeValidateType(stored, held));
+        return builder.insertBefore(point, makeAssumeType(stored, Proven::byRulesWithoutChecks(held)));
+    };
+    struct Store {
+        ValueID user;
+        uint32_t operandIndex;
+        ValueID claim;
+    };
+    Vector<Store, 4> stores;
+    for (BlockID block : analyses.cfg().reversePostOrder()) {
+        for (uint32_t index = 0; index < body.at(block).values.size(); ++index) {
+            ValueID user = body.at(block).values[index];
+            const Value& value = body.at(user);
+            value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+                if (value.operandKind(operandIndex) != OperandKind::Declared || !takesOnlyWhatFlowHolds(program, value, operandIndex))
+                    return;
+                if (ValueID claim = claimInFrontOf({ block, index }, value.origin(), operand, requiredTypeOfOperand(typing, value, operandIndex)))
+                    stores.append({ user, operandIndex, claim });
+            });
+        }
+        const Terminator& terminator = body.at(block).terminator;
+        if (terminator.kind != TerminatorKind::Return)
+            continue;
+        if (ValueID claim = claimInFrontOf(pointBeforeTerminatorOf(body, block), terminator.origin(), terminator.valueOperand(), requiredTypeOfOperand(typing, terminator, OperandIndex::Return::value)))
+            body.edit(block, BlockEdit::Terminator).terminator.setValueOperand(claim);
+    }
+    for (const Store& store : stores)
+        body.edit(store.user).setOperand(store.operandIndex, store.claim);
+    builder.applyInsertions();
 }
 
 // A cast between a parameter and its check holds what is left of the type that the parameter has behind the tests.
@@ -784,15 +841,10 @@ void splitBehindEntryChecks(ProgramEditor& editor, const Heat* heat, BuildContex
                     return !(check.check = renumbering.newIDOf(check.check));
                 });
             }
-            if (sayWhatOperandsOfFormerChecksHaveProven(program, body, arenas.types, checks.span()))
-                typeValuesFromNever(TypePropagationInputs { program, id, body, analyses, arenas.types, build });
+            sayWhatStoresBehindFormerChecksHold(context, id, body, arenas.types, build, checks.span());
         } else {
             typeCastsAheadOfChecks(program, body, arenas.types, splits[index].checks.span());
-            // What reads a claim is typed by it.
-            if (sayWhatOperandsOfFormerChecksHaveProven(program, body, arenas.types, splits[index].checks.span())) {
-                FunctionAnalyses analyses(context, body);
-                typeValuesFromNever(TypePropagationInputs { program, id, body, analyses, arenas.types, build });
-            }
+            sayWhatStoresBehindFormerChecksHold(context, id, body, arenas.types, build, splits[index].checks.span());
         }
         // While the tests at its head were checks, the function waited for its generic version and kept what stands behind a value of type never. A body without a check waits for nothing.
         if (!waitsForGenericVersion(program, body)) {

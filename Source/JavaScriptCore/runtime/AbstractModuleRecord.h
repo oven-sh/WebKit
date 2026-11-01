@@ -233,6 +233,7 @@ public:
 
     void appendAsyncParentModule(VM&, AbstractModuleRecord*);
     void setTopLevelCapability(VM&, JSPromise*);
+    void clearTopLevelCapability() { m_topLevelCapability.clear(); }
     void setHasTLA(bool);
 
     static size_t estimatedSize(JSCell*, VM&);

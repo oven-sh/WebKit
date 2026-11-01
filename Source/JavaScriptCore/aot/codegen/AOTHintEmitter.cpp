@@ -20,6 +20,7 @@
 #include "AOTStubCatalog.h"
 #include "AOTStubRegisters.h"
 #include "AOTStubsOperations.h"
+#include "AOTValueIdentity.h"
 #include "AllowMacroScratchRegisterUsage.h"
 #include "B3PatchpointValue.h"
 #include "B3StackmapGenerationParams.h"
@@ -120,6 +121,10 @@ void HintEmitter::generateReleaseHint(const ValueContext& value)
     // A number, a boolean or a narrow reference is nothing that the collector takes for a pointer.
     Operand released = get(value->valueOperand());
     if (!released.value || released.value->type() != B3::Int64 || released.value->hasInt64())
+        return;
+    // Nor is what lies in the frame a cell that the collector could free.
+    const Value& named = m_function.at(sameObjectThroughCasts(m_function, value->valueOperand()).valueInFrontOfFacts());
+    if (Value::opcodesWithStorage.contains(named.opcode) && named.storage() != AllocationStorage::Heap)
         return;
     // A parameter that came on the stack is still in the word that the caller stored it to. Nothing reads that word again: this is the store that the program wrote.
     // A function that was suspended runs on above another frame: the word is then somebody else's.

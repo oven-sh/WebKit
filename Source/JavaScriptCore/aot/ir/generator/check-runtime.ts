@@ -1,5 +1,6 @@
 import { kindText } from "./hash.ts";
-import type { InlineBuiltin, RuntimeOperation, RuntimeParameter, Schema, SchemaEnum } from "./model.ts";
+import { entriesOf } from "./model.ts";
+import type { Entry, HeapReference, InlineBuiltin, RuntimeOperation, RuntimeParameter, Schema, SchemaEnum } from "./model.ts";
 import type { ErrorList } from "./source.ts";
 
 export const runtimeValueKinds: ReadonlyMap<string, string> = new Map([
@@ -129,8 +130,65 @@ function checkInlineParameterType(type: SchemaEnum, errors: ErrorList): void {
   errors.add(type.location, `inline parameter ${description} ${type.name} has more than ${limit} members`);
 }
 
+// Generated code is told what the operation AND the function that it calls are both declared to do: RuntimeCallEmitter::effectsOfCall() intersects the two. So a heap that
+// the row of the function leaves out is lost, however right the row of the operation is, and a load of that heap may be carried across the call.
+// Whether a function collects or enters the VM is not asked here: AOT_OPERATION_BEGIN and OperationValidationScope hold the body to its row.
+//
+// WHAT THIS DOES NOT SEE. It holds table against table, for the operations that name a function by `runtime =`: 250 of them when it was written.
+// - 207 of the 344 functions with a narrow row are named by no operation: stubs and emitters call them. What a stub is taken to do is what all that it calls are declared to do
+//   (StubCatalog::Node), so one function there that is declared to call unknown code hides what the rows of the others leave out.
+// - Nobody reads the C++. A row that says less than its body is found here only if the operation says more than the row: where both say as little, both are wrong and this is silent.
+//
+// What an operation is declared to do and its function is not, and why the row of the function is right. A line that no longer applies is an error too.
+const leftOutByRight: ReadonlyMap<string, string> = new Map([
+  ["NewObject writes MemberGuards", "the first allocation of a class may begin a guard; only what ends one has to say so (GuardEmitter::holds())"],
+  ["PrivateSet writes MemberGuards", "DefinesProperty speaks for every definer; a private name is no member, and a guard ends with a member"],
+  ["PrivateDefine writes MemberGuards", "as PrivateSet"],
+  ["InitializeBuiltin writes ExternalState", "it orders the operation among others in the IR; generated code has no load of that heap"],
+  ["StringBuilderAppendNumber writes StringStorage", "AppendsToBuilder speaks for every part; a number resolves no rope"],
+]);
+
+function heapsLeftOut(declared: readonly HeapReference[], byFunction: readonly HeapReference[]): string[] {
+  return declared.filter(({ heap }) => !byFunction.some(other => other.heap === heap)).map(({ heap }) => heap.name);
+}
+
+function checkFunctionCoversOperation(entry: Entry, applied: Set<string>, errors: ErrorList): void {
+  const column = entry.columns.get("runtime");
+  if (column?.tag !== "RuntimeOperation") return;
+  const { effects: byFunction, name } = column.operation;
+  if (byFunction.isUnknownCode) return;
+  const differences: string[] = [];
+  if (entry.effects.isUnknownCode) differences.push("calls unknownCode");
+  if (!byFunction.writesAllHeaps) {
+    if (entry.effects.writesAllHeaps) differences.push("writes all");
+    for (const heap of heapsLeftOut(entry.effects.writes, byFunction.writes)) differences.push(`writes ${heap}`);
+  }
+  if (!byFunction.readsAllHeaps) {
+    if (entry.effects.readsAllHeaps) differences.push("reads all");
+    for (const heap of heapsLeftOut(entry.effects.reads, byFunction.reads)) differences.push(`reads ${heap}`);
+  }
+  for (const difference of differences) {
+    const line = `${entry.name} ${difference}`;
+    if (leftOutByRight.has(line)) applied.add(line);
+    else errors.add(entry.location, `${line}, and runtime ${name} is declared not to: generated code is told only what both say`);
+  }
+}
+
+function checkFunctionsCoverOperations(schema: Schema, errors: ErrorList): void {
+  const applied = new Set<string>();
+  const entries = entriesOf(schema);
+  for (const entry of entries) checkFunctionCoversOperation(entry, applied, errors);
+  for (const line of leftOutByRight.keys()) {
+    if (applied.has(line)) continue;
+    const entry = entries.find(entry => line.startsWith(`${entry.name} `));
+    const location = entry?.location ?? schema.runtimeOperations[0]!.location;
+    errors.add(location, `"${line}" is listed as left out by right in check-runtime.ts, and the rows no longer differ so`);
+  }
+}
+
 export function checkRuntime(schema: Schema, errors: ErrorList): void {
   for (const operation of schema.runtimeOperations) checkRuntimeOperation(operation, errors);
+  checkFunctionsCoverOperations(schema, errors);
   const parameterTypes = new Set<SchemaEnum>();
   for (const builtin of schema.inlineBuiltins) checkInlineBuiltin(builtin, parameterTypes, errors);
   for (const type of parameterTypes) checkInlineParameterType(type, errors);

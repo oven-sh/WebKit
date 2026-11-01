@@ -28,6 +28,7 @@
 #include "AOTIntegerRelations.h"
 #include "AOTKnownValue.h"
 #include "AOTPlaceTypeTestsPlan.h"
+#include "AOTPropertyAccessElements.h"
 #include "AOTRegionCloner.h"
 #include "AOTResultRules.h"
 #include "AOTRuleSupport.h"
@@ -547,7 +548,20 @@ struct CapacityPlanner {
             if ((frequencyOfLoop < frequencies.classOf(loop.at(i))).predicted())
                 barrier.set(loop.at(i).index());
         }
-        BitVector reachedWithoutBlock = analyses.cfg().blocksReachableFrom(loop.header(), barrier);
+        // Inside the loop alone. Whoever leaves it comes back through its header, where the walk began: so nothing outside leads to the end of a turn,
+        // and a function of a thousand loops is not walked to its end for each of them.
+        BitVector reachedWithoutBlock;
+        reachedWithoutBlock.set(loop.header().index());
+        Vector<BlockID, 16> worklist { loop.header() };
+        uint64_t numberOfBlocksReached = 0;
+        while (!worklist.isEmpty()) {
+            ++numberOfBlocksReached;
+            for (BlockID target : analyses.cfg().successors(worklist.takeLast())) {
+                if (loops.belongsTo(target, loop) && !barrier.get(target.index()) && !reachedWithoutBlock.set(target.index()))
+                    worklist.append(target);
+            }
+        }
+        context.build.statistics().count(StatisticID::BlocksReachedToSeeWhatRunsEachTurn, numberOfBlocksReached);
         return std::ranges::none_of(analyses.cfg().incomingEdges(loop.header()), [&](Edge edge) {
             return loops.belongsTo(edge.from, loop) && reachedWithoutBlock.get(edge.from.index());
         });
@@ -1107,6 +1121,108 @@ static ArrayStorage storageHolding(FunctionPassContext& context, const Value& al
     return kind;
 }
 
+// The kind of storage that an operation names is read by the rule that a store leaves storage as it was tested: a store that leaves one kind alone takes an array out of another.
+// So whoever gives operations another kind asks anew whether each of them still finds its proof where it stands, and takes the change back where one does not.
+class ChangeOfStorageKind {
+    WTF_MAKE_NONCOPYABLE(ChangeOfStorageKind);
+public:
+    explicit ChangeOfStorageKind(FunctionPassContext& context)
+        : m_context(context)
+    {
+    }
+
+    void set(ValueID id, ArrayStorage storage)
+    {
+        Value& value = m_context.function.edit(id, ValueEdit::Definition);
+        if (value.arrayStorage() == storage)
+            return;
+        m_changed.append({ id, value.arrayStorage() });
+        value.setArrayStorage(storage);
+        m_fitsOtherAttributes &= fitsOtherAttributes(value);
+    }
+
+    void set(std::span<const ValueID> ids, ArrayStorage storage)
+    {
+        for (ValueID id : ids)
+            set(id, storage);
+    }
+
+    bool keepWhereProofsHold()
+    {
+        if (m_changed.isEmpty())
+            return true;
+        if (!m_fitsOtherAttributes || (!m_context.build.isSabotaged(Sabotage::ChangedKindsOfStorageKeepTheirProofs) && mayLoseProof())) {
+            for (auto [id, storage] : m_changed)
+                m_context.function.edit(id, ValueEdit::Definition).setArrayStorage(storage);
+            m_context.analyses.didChangeValues();
+            m_context.build.statistics().count(StatisticID::ChangesOfStorageKindTakenBack, 1);
+            return false;
+        }
+        m_context.build.statistics().count(StatisticID::KindsOfStorageChanged, 1);
+        return true;
+    }
+
+private:
+    // What else an operation says was said of the kind that it named: only Double storage has a hole that reads as NaN, and a store inside the length takes its value unseen.
+    bool fitsOtherAttributes(const Value& value)
+    {
+        const Program& program = m_context.program;
+        const Function& function = m_context.function;
+        ArrayStorage storage = value.arrayStorage();
+        if (Value::opcodesWithReadsHoleAsNaN.contains(value.opcode) && value.readsHoleAsNaN() && storage != ArrayStorage::Double)
+            return false;
+        if (Value::opcodesWithIsInBounds.contains(value.opcode) && value.isInBounds()) {
+            if (!hasArrayStorageForm(storage))
+                return false;
+            if (OperandPosition::value(value.opcode) && !canStoreWithoutConversion(storage, program.typeOf(function, value.valueOperand())))
+                return false;
+        }
+        if (value.opcode != Opcode::NewArray)
+            return true;
+        if (holdsOnlyNumbers(storage) && (!value.contentsAreProven() || !canStoreWithoutConversion(storage, program.at(value.contents()))))
+            return false;
+        return !value.keepsLength() || hasArrayStorageForm(storage);
+    }
+
+    bool mayLoseProof()
+    {
+        const Function& function = m_context.function;
+        auto reliesOnProof = [&](ValueID id) {
+            const Value& value = function.at(id);
+            for (uint32_t operandIndex = 0; operandIndex < value.numberOfOperands(); ++operandIndex) {
+                if (value.operandKind(operandIndex) == OperandKind::Guard && value.operand(operandIndex))
+                    return true;
+            }
+            return false;
+        };
+        bool anyReliesOnProof = std::ranges::any_of(m_changed, [&](const auto& changed) {
+            return reliesOnProof(changed.first);
+        });
+        if (!anyReliesOnProof)
+            return false;
+        m_context.analyses.didChangeValues();
+        const GuardAvailability& guards = m_context.analyses.guards();
+        for (auto [id, storageBefore] : m_changed) {
+            if (!reliesOnProof(id))
+                continue;
+            const Value& user = function.at(id);
+            ValueLocation location = m_context.analyses.useLists().locationOf(id);
+            GuardAvailability::Cursor cursor(guards, location.block);
+            cursor.advanceTo(location.index);
+            for (uint32_t operandIndex = 0; operandIndex < user.numberOfOperands(); ++operandIndex) {
+                ValueID guard = user.operand(operandIndex);
+                if (user.operandKind(operandIndex) == OperandKind::Guard && guard && cursor.stateOf(guard, user) != GuardState::Available)
+                    return true;
+            }
+        }
+        return false;
+    }
+
+    FunctionPassContext& m_context;
+    Vector<std::pair<ValueID, ArrayStorage>, 8> m_changed;
+    bool m_fitsOtherAttributes { true };
+};
+
 // One value may name either of several arrays under construction: a loop that is there twice makes the array twice and goes on in one place. A store through that value finds one kind of storage in all of them.
 static unsigned chooseStorageOfConstructedArrays(FunctionPassContext& context)
 {
@@ -1222,11 +1338,6 @@ static unsigned chooseStorageOfConstructedArrays(FunctionPassContext& context)
         }
         return groupsReadAsDoubles->quickGet(group);
     };
-    auto setStorage = [&](const Vector<ValueID, 2>& values, ArrayStorage storage) {
-        for (ValueID value : values)
-            function.edit(value, ValueEdit::Definition).setArrayStorage(storage);
-    };
-
     for (unsigned group = 0; group < groups.size(); ++group) {
         Group& uses = groups[group];
         if (uses.hasChosenStorage)
@@ -1242,9 +1353,11 @@ static unsigned chooseStorageOfConstructedArrays(FunctionPassContext& context)
             });
             if (!holdsDoubles || !isReadAsDoubles(group))
                 continue;
-            uses.chosen = ArrayStorage::Double;
-            setStorage(uses.testedStores, ArrayStorage::Double);
-            setStorage(uses.tests, ArrayStorage::Double);
+            ChangeOfStorageKind change(context);
+            change.set(uses.testedStores.span(), ArrayStorage::Double);
+            change.set(uses.tests.span(), ArrayStorage::Double);
+            if (change.keepWhereProofsHold())
+                uses.chosen = ArrayStorage::Double;
             continue;
         }
         // A direct store tests what it is given, so what less frequent code stores need not fit.
@@ -1254,8 +1367,10 @@ static unsigned chooseStorageOfConstructedArrays(FunctionPassContext& context)
             kind = ArrayStorage::Double;
         if (kind == ArrayStorage::Contiguous)
             continue;
-        uses.chosen = kind;
-        setStorage(uses.directStores, kind);
+        ChangeOfStorageKind change(context);
+        change.set(uses.directStores.span(), kind);
+        if (change.keepWhereProofsHold())
+            uses.chosen = kind;
     }
 
     unsigned numberOfChangedAllocations = 0;
@@ -1263,8 +1378,10 @@ static unsigned chooseStorageOfConstructedArrays(FunctionPassContext& context)
         ArrayStorage chosen = groups[leaderOf(ordinal)].chosen;
         if (chosen == ArrayStorage::Other)
             continue;
-        function.edit(allocations[ordinal], ValueEdit::Definition).setArrayStorage(chosen);
-        ++numberOfChangedAllocations;
+        ChangeOfStorageKind change(context);
+        change.set(allocations[ordinal], chosen);
+        if (change.keepWhereProofsHold())
+            ++numberOfChangedAllocations;
     }
     return numberOfChangedAllocations;
 }
@@ -1373,19 +1490,11 @@ static bool standsBehindPassedTest(FunctionPassContext& context, BlockID block, 
 // A copy has the storage of the array that it is made from. Once that one is converted, the copies to come pass the test.
 static ValueID findCopiedArrayToConvert(FunctionPassContext& context, ValueID array)
 {
-    static constexpr std::array copyingBuiltins { Builtins::ArrayPrototypeSlice, Builtins::ArrayPrototypeConcat, Builtins::ArrayPrototypeToReversed, Builtins::ArrayPrototypeToSpliced, Builtins::ArrayPrototypeWith };
     const Program& program = context.program;
-    const Value& copy = context.function.at(sameObjectThroughCasts(context.function, array));
-    if (copy.opcode != Opcode::CallBuiltin)
-        return { };
-    BuiltinCall call = builtinCallOf(program, copy);
-    BuiltinID builtin = program.builtins().canonicalID(program.builtins().at(call.overload).builtin);
-    bool copies = call.receiver && std::ranges::any_of(copyingBuiltins, [&](BuiltinID other) {
-        return builtin == program.builtins().canonicalID(other);
-    });
+    ValueID list = findCopiedList(program, context.function, array);
     // A reader of that array would test for the same kind and convert it.
-    const ClassPart* copied = copies ? program.typeOf(context.function, call.receiver).singleBuiltinClass() : nullptr;
-    return copied && copied->arrayStorage == ArrayStorage::Other && arrayStorageDeclaredBy(program, *copied).predicted() == ArrayStorage::Double ? call.receiver : ValueID();
+    const ClassPart* copied = list ? program.typeOf(context.function, list).singleBuiltinClass() : nullptr;
+    return copied && copied->arrayStorage == ArrayStorage::Other && arrayStorageDeclaredBy(program, *copied).predicted() == ArrayStorage::Double ? list : ValueID();
 }
 
 static Vector<FailedStorageTest, 4> collectFailedTestsForDoubleStorage(FunctionPassContext& context)
@@ -1639,47 +1748,19 @@ static std::optional<Vector<ValueID, 4>> findPresenceTestsThatLostTheirRead(Func
     return tests;
 }
 
-// The blocks that the list comes to from `from` on without passing a test that finds it in the storage that `storageTest` asks for.
-static BitVector blocksReachedWithoutPassing(FunctionPassContext& context, const Value& storageTest, BlockID from)
-{
-    const Function& function = context.function;
-    FunctionAnalyses& analyses = context.analyses;
-    ValueID array = analyses.identityOf(storageTest.arrayOperand());
-    BitVector reached(function.blocks.size());
-    reached.set(from.index());
-    Vector<BlockID, 16> worklist { from };
-    while (!worklist.isEmpty()) {
-        BlockID block = worklist.takeLast();
-        const Terminator& terminator = function.at(block).terminator;
-        const Value* test = findStorageTestBranchedOnBy(function, block);
-        bool asksTheSame = test && test->arrayStorage() == storageTest.arrayStorage() && analyses.identityOf(test->arrayOperand()) == array;
-        for (BlockID successor : analyses.cfg().successors(block)) {
-            if (asksTheSame && successor == terminator.taken().block && successor != terminator.notTaken().block)
-                continue;
-            if (!reached.set(successor.index()))
-                worklist.append(successor);
-        }
-    }
-    return reached;
-}
-
 // A test of the bounds names no kind of storage, so it does not say whose read it has lost. There is no copy where a read may have relied on such a test together with the proof.
-// Nor does it say behind which proof it stands. A loop that asked each element for undefined is a loop that counts, and the general loop beside it asks for Double storage at each turn and goes on in that one:
-// this proof no longer holds there and another one does, which nobody is handed. The copy leaves into the code behind the proof, with a list that may hold undefined.
-// So it may come to no such test but one that is right for any list: one that a list comes to from the head of the function without having been found in Double storage.
+// And there is none for a list that may hold undefined. The copy leaves into the code behind the proof, where `list[i] === undefined` was answered by the storage.
+// What is left of that question cannot be gone by: it may stand under another name of the list, behind a parameter of a block, and nothing at all is left of a loop that only counted and went.
+// Of a list that holds numbers alone every answer that the proof gave follows from the type.
 static bool mayHaveLostReadBehindBoundsTest(FunctionPassContext& context, BlockID tested, const Value& storageTest, const ReadsBehindStorageTest& found, const Vector<ValueID, 8>& testsInFrontOfReads)
 {
     const Function& function = context.function;
     FunctionAnalyses& analyses = context.analyses;
+    if (!holdsOnly(context, storageTest.arrayOperand(), Primitive::Number) && !context.build.isSabotaged(Sabotage::ReadsOfListsThatMayHoldUndefinedAreCopied))
+        return true;
     if (!analyses.opcodesOfValues().contains(Opcode::IsInBounds))
         return false;
     ValueID array = analyses.identityOf(storageTest.arrayOperand());
-    bool mayHoldUndefined = !holdsOnly(context, storageTest.arrayOperand(), Primitive::Number);
-    // What is compared with a kind of storage proves the kind as a test does.
-    if (mayHoldUndefined && analyses.opcodesOfValues().contains(Opcode::ArrayStorageKind))
-        return true;
-    BitVector reachedByCopy = mayHoldUndefined ? blocksReachedWithoutPassing(context, storageTest, found.passed) : BitVector();
-    BitVector reachedInAnyStorage = mayHoldUndefined ? blocksReachedWithoutPassing(context, storageTest, entryBlock) : BitVector();
     for (BlockID block : analyses.cfg().reversePostOrder()) {
         const Terminator& terminator = function.at(block).terminator;
         if (!terminator.isConditionalBranch() || testsInFrontOfReads.contains(terminator.conditionOperand()))
@@ -1693,8 +1774,6 @@ static bool mayHaveLostReadBehindBoundsTest(FunctionPassContext& context, BlockI
             if (!numberOfEdgeResults(function, block, 0) || analyses.guards().stateAt(function.at(inBounds).parameters.last(), ProgramPoint::atHeadOf(found.passed)) != GuardState::Unavailable)
                 return true;
         } else if (analyses.dominators().dominates(found.passed, block) && analyses.guards().stateAt(found.guard, ProgramPoint::atHeadOf(inBounds)) != GuardState::Unavailable)
-            return true;
-        else if (mayHoldUndefined && reachedByCopy.get(block.index()) && !reachedInAnyStorage.get(block.index()))
             return true;
     }
     return false;
@@ -2347,9 +2426,12 @@ static PassOutcome copyListsInOnePiece(FunctionPassContext& context, bool& reads
         OverloadMatch match = matchOverload({ typing, Builtins::ArrayPrototypeSlice, BuiltinCallMode::Call, operands, operands });
         if (match.state != BuiltinMatchState::Proven || !match.requirements.isEmpty())
             continue;
+        // The readers of the copy were held to the kind that they expected. Between them may stand a store through a second name of the copy.
+        ChangeOfStorageKind change(context);
+        change.set(copy.readsToAskForStorage.span(), copy.storage);
+        if (!change.keepWhereProofsHold())
+            continue;
         outcome = PassOutcome::Changed;
-        for (ValueID read : copy.readsToAskForStorage)
-            function.edit(read, ValueEdit::Definition).setArrayStorage(copy.storage);
         readsHaveOtherTypes |= !copy.readsToAskForStorage.isEmpty();
         Value literal = function.at(copy.literal);
         Value cast = function.at(copy.cast);
@@ -2482,8 +2564,11 @@ static void makeListsThatMayReadUndefinedForAnyValue(FunctionPassContext& contex
             if (!part || !part->contentsAreProven)
                 continue;
             const Type& elements = context.program.at(part->expectedContentsAt(context.program.builtins(), ContentsSlot::Element).predicted());
-            if (elements.primitives & Primitive::Undefined)
-                function.edit(list, ValueEdit::Definition).setArrayStorage(ArrayStorage::Contiguous);
+            if (elements.primitives & Primitive::Undefined) {
+                ChangeOfStorageKind change(context);
+                change.set(list, ArrayStorage::Contiguous);
+                change.keepWhereProofsHold();
+            }
         }
     }
 }

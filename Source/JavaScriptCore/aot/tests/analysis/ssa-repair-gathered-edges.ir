@@ -1,0 +1,98 @@
+# Sixteen edges lead into one join and carry the same two variables. One is joined there, and all sixteen are reached by one definition of it. The other is only named on the edges, and a second
+# definition of it stands above eight of them: those eight carry that one, whatever is done for the rest.
+# FORM: Prepared
+# RUN(GATHERED): repair function=f0 variable=v3,v5 variable=v4,v6
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="namedOnEdges" parameters=[{type=boolean}, {type=boolean}, {type=number}] results=[{type=number}] {
+    v3 = Add v2, v2
+    v4 = Mul v2, v2
+    Branch v0 -> taken b1(), notTaken b19()
+  b1():
+    Branch v1 -> taken b2(), notTaken b20(v3)
+  b2():
+    Branch v1 -> taken b3(), notTaken b20(v3)
+  b3():
+    Branch v1 -> taken b4(), notTaken b20(v3)
+  b4():
+    Branch v1 -> taken b5(), notTaken b20(v3)
+  b5():
+    Branch v1 -> taken b6(), notTaken b20(v3)
+  b6():
+    Branch v1 -> taken b7(), notTaken b20(v3)
+  b7():
+    Branch v1 -> taken b8(), notTaken b20(v3)
+  b8():
+    Branch v1 -> taken b9(), notTaken b20(v3)
+  b9():
+    v5 = Sub v2, v2
+    Jump -> next b10()
+  b10():
+    Branch v1 -> taken b11(), notTaken b20(v5)
+  b11():
+    Branch v1 -> taken b12(), notTaken b20(v5)
+  b12():
+    Branch v1 -> taken b13(), notTaken b20(v5)
+  b13():
+    Branch v1 -> taken b14(), notTaken b20(v5)
+  b14():
+    Branch v1 -> taken b15(), notTaken b20(v5)
+  b15():
+    Branch v1 -> taken b16(), notTaken b20(v5)
+  b16():
+    Branch v1 -> taken b17(), notTaken b20(v5)
+  b17():
+    Branch v1 -> taken b18(), notTaken b20(v5)
+  b18():
+    Return v2
+  b19():
+    v6 = Negate v2
+    Jump -> next b20(v3)
+  b20(v7):
+    v8 = Add v4, v7
+    Return v8
+}
+# GATHERED: function f0 name="namedOnEdges"
+# GATHERED: v3: number = Add v2, v2
+# GATHERED: v4: number = Mul v2, v2
+# GATHERED: b1():
+# GATHERED: Branch v1 -> taken b2(), notTaken [[FIRST]]()
+# GATHERED: b2():
+# GATHERED: Branch v1 -> taken b3(), notTaken [[FIRST]]()
+# GATHERED: b3():
+# GATHERED: Branch v1 -> taken b4(), notTaken [[FIRST]]()
+# GATHERED: b4():
+# GATHERED: Branch v1 -> taken b5(), notTaken [[FIRST]]()
+# GATHERED: b5():
+# GATHERED: Branch v1 -> taken b6(), notTaken [[FIRST]]()
+# GATHERED: b6():
+# GATHERED: Branch v1 -> taken b7(), notTaken [[FIRST]]()
+# GATHERED: b7():
+# GATHERED: Branch v1 -> taken b8(), notTaken [[FIRST]]()
+# GATHERED: b8():
+# GATHERED: Branch v1 -> taken b9(), notTaken [[FIRST]]()
+# GATHERED: b9():
+# GATHERED: v5: number = Sub v2, v2
+# GATHERED: b10():
+# GATHERED: Branch v1 -> taken b11(), notTaken b20(v5, v4)
+# GATHERED: b11():
+# GATHERED: Branch v1 -> taken b12(), notTaken b20(v5, v4)
+# GATHERED: b12():
+# GATHERED: Branch v1 -> taken b13(), notTaken b20(v5, v4)
+# GATHERED: b13():
+# GATHERED: Branch v1 -> taken b14(), notTaken b20(v5, v4)
+# GATHERED: b14():
+# GATHERED: Branch v1 -> taken b15(), notTaken b20(v5, v4)
+# GATHERED: b15():
+# GATHERED: Branch v1 -> taken b16(), notTaken b20(v5, v4)
+# GATHERED: b16():
+# GATHERED: Branch v1 -> taken b17(), notTaken b20(v5, v4)
+# GATHERED: b17():
+# GATHERED: Branch v1 -> taken b18(), notTaken b20(v5, v4)
+# GATHERED: b19():
+# GATHERED: v6: number = Negate v2
+# GATHERED: Jump -> next b20(v3, v6)
+# GATHERED: b20(v7: number, [[V]]: number):
+# GATHERED: v8: number = Add [[V]], v7
+# GATHERED: [[FIRST]]():
+# GATHERED: Jump -> next b20(v3, v4)

@@ -3325,7 +3325,8 @@ private:
         if (definition.opcode != Opcode::Call || descriptorIndex >= definition.numberOfOperands() || keyIndex >= definition.numberOfOperands())
             return std::nullopt;
 
-        ValueID read = definitionThroughTests(function, definition.operand(descriptorIndex));
+        DefinitionsThroughTests definitions(function);
+        ValueID read = definitions.of(definition.operand(descriptorIndex));
         if (function.at(read).opcode != Opcode::Call || function.at(read).numberOfOperands() != numberOfOperandsBeforeArguments + 2)
             return std::nullopt;
         const Value& callee = function.at(sameObjectThroughCasts(function, function.at(read).operand(0)));
@@ -3334,7 +3335,7 @@ private:
         BuiltinID reader = m_builtins.canonicalID(callee.builtin());
         if (reader != Builtins::ObjectGetOwnPropertyDescriptor && reader != Builtins::ReflectGetOwnPropertyDescriptor)
             return std::nullopt;
-        if (definitionThroughTests(function, function.at(read).operand(numberOfOperandsBeforeArguments + 1)) != definitionThroughTests(function, definition.operand(keyIndex)))
+        if (definitions.of(function.at(read).operand(numberOfOperandsBeforeArguments + 1)) != definitions.of(definition.operand(keyIndex)))
             return std::nullopt;
         // Each of the two calls converts a key that is an object anew, and may get another name for it.
         ValueSetID convertedByCode = m_context.maker().intersect(m_universe.objects(), ValueSets::complement(m_universe.symbols()));
@@ -4686,8 +4687,19 @@ static void readMembersOfReceivers(ValueFlowRuleContext& context, ValueFlowNodeI
     if (!behavior.protocols.contains(Protocol::Named))
         return;
 
-    if (behavior.namedMembers.empty() && behavior.isTransitive)
-        context.connect(context.readWhatWasWritten(chainOfProgramFrom(context, objects), everyPropertyName), hub);
+    if (behavior.namedMembers.empty() && behavior.isTransitive) {
+        // On a function where a lookup finds no function and no accessor of the program's, a walk finds what Function.prototype has and no more.
+        ClimbingSet found = context.valueOf(context.readWhatWasWritten(chainOfProgramFrom(context, objects), everyPropertyName));
+        ClimbingSet functions = context.restrict(found, universe.callables());
+        context.add(hub, context.restrict(found, ValueSets::complement(universe.callables())));
+        context.add(hub, context.restrict(functions, ValueSets::complement(universe.knownObjects())));
+        context.add(hub, context.markedAmong(functions, { ObjectMutation::AddProperty, ObjectMutation::RedefineProperty }));
+        context.forEachMemberInLine(context.restrict(functions, universe.knownObjects()), [&](ValueFlowObjectID function) {
+            ClimbingSet holders = context.unite(only(context, function), chainOfProgramFrom(context, only(context, function)));
+            if (context.meet(context.valueOf(context.readWhatWasWritten(holders, everyPropertyName)), universe.callables()) || context.meet(context.valueOf(context.readWhatWasWritten(holders, everyGetterName)), ValueSets::anything))
+                context.add(hub, only(context, function));
+        });
+    }
     bool findsUnknownObject = false;
     for (BuiltinName name : behavior.namedMembers) {
         ValueFlowNodeID member = context.lookup(receivers, property(context, name));

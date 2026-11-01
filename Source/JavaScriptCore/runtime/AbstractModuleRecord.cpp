@@ -1220,6 +1220,12 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
     if (someRecordHasLiveExports && frames[0].type == Resolution::Type::NotFound) [[unlikely]]
         frames[0] = firstLiveRecordViaStarExport;
 #endif
+#if ENABLE(AOT)
+    if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(root.moduleRecord); compiled && frames[0].type == Resolution::Type::Resolved) {
+        if (compiled->someMockStandsInPlace() || frames[0].moduleRecord->hasLiveExports())
+            return frames[0];
+    }
+#endif
     //  1. The starting point is always cacheable.
     if (frames[0].type == Resolution::Type::Resolved)
         cacheResolutionForQuery(root, frames[0]);
@@ -1262,9 +1268,11 @@ auto AbstractModuleRecord::resolveExportByName(JSGlobalObject* globalObject, con
 #endif
 
 #if ENABLE(AOT)
-    if (inherits<AOT::ModuleRecord>()) {
-        if (std::optional<Resolution> cachedResolution = tryGetCachedResolution(exportName.impl()))
-            return *cachedResolution;
+    if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(this)) {
+        if (!compiled->someMockStandsInPlace()) {
+            if (std::optional<Resolution> cachedResolution = tryGetCachedResolution(exportName.impl()))
+                return *cachedResolution;
+        }
         RELEASE_AND_RETURN(scope, resolveExportImpl(globalObject, ResolveQuery(this, exportName.impl())));
     }
 #endif

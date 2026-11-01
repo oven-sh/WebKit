@@ -116,9 +116,17 @@ ValueLocation TypePropagation::locationForRule(ValueID id) const
     return { ValuePlacement::Parameter, BlockID(place.block), place.index };
 }
 
+static void reportTypeOutOfDate(BuildContext& build, const InternalError& error)
+{
+    if (build.options().keepsGoingBehindFailedVerifications)
+        build.diagnostics().keepFirstFailureOfFunction(error, error.kind);
+    else
+        build.diagnostics().add(error);
+}
+
 void TypePropagation::addTypeOutOfDate(ValueID id, ASCIILiteral detail)
 {
-    m_inputs.build.diagnostics().add(InternalError { .kind = InternalErrorKind::TypeOutOfDate, .function = m_inputs.analyses.subject().function, .value = id, .detail = detail });
+    reportTypeOutOfDate(m_inputs.build, InternalError { .kind = InternalErrorKind::TypeOutOfDate, .function = m_inputs.analyses.subject().function, .value = id, .detail = detail });
 }
 
 void TypePropagation::reportRetypedValues(bool countsThem)
@@ -471,6 +479,32 @@ void TypePropagation::enqueueUsersOf(ValueID id)
     }
 }
 
+// To put a parameter back costs a walk over what is queued, more than to join a few edges again: with 4 the build of the TypeScript compiler rises by 0.03%, with 2 by 0.26%.
+AOT_THRESHOLD(size_t, fewestEdgesOfWideJoin, 16);
+
+// A block may have as many incoming edges as the function has statements. Taken behind each source that moves, its parameter would be joined over all of them that many times:
+// it goes back below the queued values that lie in front of the last of its sources. It waits for a value that is typed when it is taken, never for another that waits as it does:
+// so it is not taken again before that value is.
+NEVER_INLINE bool TypePropagation::letParameterOfWideJoinWait(ValueID parameter, BlockID block)
+{
+    uint32_t lastSource = 0;
+    for (Edge edge : m_cfg.incomingEdges(block))
+        lastSource = std::max(lastSource, m_cfg.reversePostOrderIndex(edge.from));
+    bool waitsForValueThatIsTyped = false;
+    size_t index = m_worklist.size();
+    for (; index; --index) {
+        ValueLocation location = locationForRule(m_worklist[index - 1]);
+        if (location.placement != ValuePlacement::Detached && m_cfg.isReachable(location.block) && m_cfg.reversePostOrderIndex(location.block) > lastSource)
+            break;
+        waitsForValueThatIsTyped |= location.placement != ValuePlacement::Parameter || m_cfg.incomingEdges(location.block).size() < fewestEdgesOfWideJoin;
+    }
+    if (!waitsForValueThatIsTyped)
+        return false;
+    m_worklist.insert(index, parameter);
+    m_marks[parameter.index()].isQueued = true;
+    return true;
+}
+
 void TypePropagation::propagate(TypeLevel level, Direction direction)
 {
     TypingContext context = typingContext(level);
@@ -491,6 +525,8 @@ void TypePropagation::propagate(TypeLevel level, Direction direction)
             forEachSourceOfParameter(location.block, location.index, markIfNotTaken);
         else if (!isTakenAgain)
             forEachSourceOf(id, markIfNotTaken);
+        else if (location.placement == ValuePlacement::Parameter && m_cfg.incomingEdges(location.block).size() >= fewestEdgesOfWideJoin && letParameterOfWideJoinWait(id, location.block))
+            continue;
         marks.lastWalkThatTookIt = m_numberOfWalks;
         TypeID computed = compute(context, id, location);
         if (level == TypeLevel::Expected)
@@ -1735,7 +1771,7 @@ TypePropagationOutcome typeChangedValues(const TypePropagationInputs& inputs)
         statistics.count(outcome.didChange() ? StatisticID::FunctionsTypedFromChanges : StatisticID::FunctionsTypedAsBefore);
         // Where the log ran full while this typing wrote into it, every value is pending again.
         if (ValueID value = typedFromNever && !outcome.dependsOnTypesBefore() && !pending->isEverythingPending(log) ? findValueTypedWider(inputs, *typedFromNever, *typesFromNever) : ValueID())
-            inputs.build.diagnostics().add(InternalError { .kind = InternalErrorKind::TypeOutOfDate, .function = inputs.analyses.subject().function, .value = value, .detail = "typed from what changed it is wider than typed from nothing"_s });
+            reportTypeOutOfDate(inputs.build, InternalError { .kind = InternalErrorKind::TypeOutOfDate, .function = inputs.analyses.subject().function, .value = value, .detail = "typed from what changed it is wider than typed from nothing"_s });
     }
     if (pending->isEmpty(log)) {
         inputs.function.changeLog()->didPropagateTypes();

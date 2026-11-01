@@ -3380,6 +3380,11 @@ String assignmentToLockedBuiltinMessage(const String& property)
     return printForFuzzilli(withAOTErrorNote(makeString("Cannot assign to "_s, property, " because built-in objects are read-only in a compiled executable"_s)));
 }
 
+String callOfBuiltinChangedBeforeFirstUseMessage(const String& property)
+{
+    return printForFuzzilli(withAOTErrorNote(makeString("Cannot call "_s, property, " because it was replaced, redefined or deleted before its first use, and compiled code calls the built-in function without looking it up"_s)));
+}
+
 String assignmentThatBuildDidNotSeeMessage(const String& property)
 {
     return printForFuzzilli(withAOTErrorNote(makeString("Cannot assign to "_s, property, " because built-in objects are read-only in a compiled executable, and the build didn't see your code assign to this one. Spell out the object and the name where it does, as in "_s, property, " = value"_s)));
@@ -3434,7 +3439,8 @@ String assignmentToLockedBuiltinMessage(VM& vm, BuiltinID holder, UniquedStringI
     const BuiltinTable& table = BuiltinTable::singleton();
     BuiltinName name = table.nameOf(vm, key);
     BuiltinID found = name ? table.findOwnMember(holder, name) : BuiltinID();
-    bool isNewName = !key->isSymbol() && !parseIndex(*key) && !found;
+    // What hides a member of an object above is refused however it is spelled.
+    bool isNewName = !key->isSymbol() && !parseIndex(*key) && !found && (!name || table.findMember(holder, name).outcome != BuiltinMemberLookup::Outcome::Found);
     bool isOpenWhereBuildSeesWrite = found ? table.at(found).mutability == BuiltinMutability::ConstantUnlessWritten : isNewName && table.canonicalID(holder) != Builtins::ObjectPrototype && table.canTakeNameInTestRuns(holder, name);
     if (isOpenWhereBuildSeesWrite)
         return assignmentThatBuildDidNotSeeMessage(memberOfLockedBuiltin(holder, key));

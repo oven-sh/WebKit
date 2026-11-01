@@ -251,23 +251,136 @@ void StoresByLayout::noteListedWrites()
 
 // The objects that are copied onto those of a layout, with what is copied onto them in turn, where the analysis follows each of them: whatever such an object holds
 // was stored through a set that lists it, whoever else has its layout.
-auto StoresByLayout::objectsCopiedOnto(ValueSetMaker& maker, LayoutID target) const -> std::optional<CopiedObjects>
-{
-    const ValueSets& sets = m_inputs.sets();
-    ValueSetID objectsNotFollowed = maker.unite(m_inputs.universe().placeholdersAlone(), maker.unite(m_heap.escaped(), m_heap.lost()));
-    ValueSetID sources = ValueSets::nothing;
-    ValueSetID copiedOnto = m_layoutsOfObjects.objectsWith(target);
-    while (true) {
-        ValueSetID found = m_heap.writtenUnder(maker, copiedOnto, ValueFlowName::of(ValueFlowNameKind::CopiedFrom));
-        if (ValueSets::isComplement(found) || sets.meet(found, objectsNotFollowed))
-            return std::nullopt;
-        if (sets.isSubset(found, sources))
-            break;
-        sources = maker.unite(sources, found);
-        copiedOnto = found;
+// What is copied onto an object, and onto that in turn, is the same whoever asks. The objects that are copied one onto another in a ring have one answer, which is made once:
+// the strongly connected components of "is copied from", by Tarjan's walk, without recursion.
+class StoresByLayout::ObjectsCopiedOnto {
+public:
+    ObjectsCopiedOnto(const StoresByLayout& stores, ValueSetMaker& maker)
+        : m_stores(stores)
+        , m_maker(maker)
+        , m_objectsNotFollowed(maker.unite(stores.m_inputs.universe().placeholdersAlone(), maker.unite(stores.m_heap.escaped(), stores.m_heap.lost())))
+    {
     }
-    return withLayoutsIfFollowed(maker, sources);
-}
+
+    std::optional<ValueSetID> ontoAnyOf(ValueSetID objects)
+    {
+        Vector<ValueSetID, 4> parts;
+        bool isFollowed = true;
+        m_stores.m_inputs.sets().forEachMember(objects, [&](ValueFlowObjectID object) {
+            if (!isFollowed)
+                return;
+            if (std::optional<ValueSetID> copied = onto(object))
+                parts.append(*copied);
+            else
+                isFollowed = false;
+        });
+        if (!isFollowed)
+            return std::nullopt;
+        return uniteAll(parts);
+    }
+
+private:
+    static constexpr uint32_t notFinished = UINT32_MAX;
+    struct Node {
+        ValueSetID copiedFrom;
+        uint32_t lowest { 0 };
+        uint32_t component { notFinished };
+        bool isFollowed { true };
+    };
+    struct Frame {
+        uint32_t node;
+        Vector<uint32_t> sources;
+        size_t next { 0 };
+    };
+
+    ValueSetID uniteAll(Vector<ValueSetID, 4>& parts)
+    {
+        AOT::sort(parts);
+        removeRepeatedElements(parts);
+        return m_maker.uniteAll(parts.span());
+    }
+
+    uint32_t visit(ValueFlowObjectID object)
+    {
+        uint32_t number = m_nodes.size();
+        m_numberOfObject.add(object.index(), number);
+        ValueSetID found = m_stores.m_heap.writtenUnder(m_maker, m_maker.of(object), ValueFlowName::of(ValueFlowNameKind::CopiedFrom));
+        bool isFollowed = !ValueSets::isComplement(found) && !m_stores.m_inputs.sets().meet(found, m_objectsNotFollowed);
+        m_nodes.append({ found, number, notFinished, isFollowed });
+        m_open.append(number);
+        Frame frame { number, { }, 0 };
+        if (isFollowed) {
+            m_stores.m_inputs.sets().forEachMember(found, [&](ValueFlowObjectID source) {
+                frame.sources.append(source.index());
+            });
+        }
+        m_frames.append(WTF::move(frame));
+        return number;
+    }
+
+    std::optional<ValueSetID> onto(ValueFlowObjectID object)
+    {
+        if (auto known = m_numberOfObject.find(object.index()); known != m_numberOfObject.end())
+            return m_components[m_nodes[known->value].component];
+        uint32_t first = visit(object);
+        while (!m_frames.isEmpty()) {
+            Frame& frame = m_frames.last();
+            uint32_t number = frame.node;
+            if (frame.next < frame.sources.size()) {
+                uint32_t source = frame.sources[frame.next++];
+                auto known = m_numberOfObject.find(source);
+                if (known == m_numberOfObject.end()) {
+                    visit(ValueFlowObjectID(source));
+                    continue;
+                }
+                if (m_nodes[known->value].component == notFinished)
+                    m_nodes[number].lowest = std::min(m_nodes[number].lowest, known->value);
+                continue;
+            }
+            if (m_nodes[number].lowest == number) {
+                uint32_t component = m_components.size();
+                size_t firstOfComponent = m_open.size();
+                while (m_open[--firstOfComponent] != number) { }
+                for (size_t index = firstOfComponent; index < m_open.size(); ++index)
+                    m_nodes[m_open[index]].component = component;
+                Vector<ValueSetID, 4> parts;
+                bool isFollowed = true;
+                for (size_t index = firstOfComponent; index < m_open.size() && isFollowed; ++index) {
+                    const Node& member = m_nodes[m_open[index]];
+                    isFollowed = member.isFollowed;
+                    if (!isFollowed)
+                        break;
+                    parts.append(member.copiedFrom);
+                    m_stores.m_inputs.sets().forEachMember(member.copiedFrom, [&](ValueFlowObjectID source) {
+                        uint32_t other = m_nodes[m_numberOfObject.get(source.index())].component;
+                        if (other == component || !isFollowed)
+                            return;
+                        if (m_components[other])
+                            parts.append(*m_components[other]);
+                        else
+                            isFollowed = false;
+                    });
+                }
+                m_open.shrink(firstOfComponent);
+                m_components.append(isFollowed ? std::optional(uniteAll(parts)) : std::nullopt);
+            }
+            uint32_t lowest = m_nodes[number].lowest;
+            m_frames.removeLast();
+            if (!m_frames.isEmpty())
+                m_nodes[m_frames.last().node].lowest = std::min(m_nodes[m_frames.last().node].lowest, lowest);
+        }
+        return m_components[m_nodes[first].component];
+    }
+
+    const StoresByLayout& m_stores;
+    ValueSetMaker& m_maker;
+    ValueSetID m_objectsNotFollowed;
+    HashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_numberOfObject;
+    Vector<Node> m_nodes;
+    Vector<uint32_t> m_open;
+    Vector<Frame> m_frames;
+    Vector<std::optional<ValueSetID>> m_components;
+};
 
 auto StoresByLayout::withLayoutsIfFollowed(ValueSetMaker& maker, ValueSetID sources) const -> std::optional<CopiedObjects>
 {
@@ -306,8 +419,12 @@ auto StoresByLayout::withLayoutsIfFollowed(ValueSetMaker& maker, ValueSetID sour
     constexpr std::array namesNobodyLists { ValueFlowNameKind::UnknownKey, ValueFlowNameKind::Elements, ValueFlowNameKind::GetterUnderUnknownKey, ValueFlowNameKind::GetterUnderNameOfEnumeration, ValueFlowNameKind::SetterUnderUnknownKey };
     if (std::ranges::any_of(namesNobodyLists, [&](ValueFlowNameKind kind) { return isStoredUnder(ValueFlowName::of(kind)); }))
         return std::nullopt;
+    // A thousand layouts may have six keys between them: the question is about the objects and the key.
+    UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> keysAsked;
     for (LayoutID layout : layouts) {
         for (PropertyKeyID key : keysStoredInto(layout, ObjectsOfLayout::Followed)) {
+            if (!keysAsked.add(key.index()).isNewEntry)
+                continue;
             if (isStoredUnder(ValueFlowName::getter(m_inputs.program, key)) || isStoredUnder(ValueFlowName::setter(m_inputs.program, key)))
                 return std::nullopt;
         }
@@ -322,39 +439,83 @@ void StoresByLayout::followCopiedProperties()
         if (m_storesOfLayout[index].getsCopiedProperties)
             targets.append(LayoutID(index));
     }
-    ValueSetMakers makers(m_inputs);
-    Vector<std::optional<CopiedObjects>> sourcesOfTargets(targets.size());
-    forEachIndexInParallel(m_inputs.loops(), targets.size(), [&](unsigned position, unsigned worker) {
-        sourcesOfTargets[position] = objectsCopiedOnto(makers.of(worker), targets[position]);
-    });
+    // A thousand literals may copy from one set of objects. What such a set holds under each key is asked once, in the order in which its layouts list the keys.
+    struct CopiedUnderKey {
+        PropertyKeyID key;
+        ValueSetID value;
+        ValueFlowNumbers numbers;
+    };
+    struct CopiedFromSet {
+        ValueSetID objects;
+        bool isFollowed { false };
+        Vector<CopiedUnderKey> underKeys;
+    };
+    ObjectsCopiedOnto copiedOnto(*this, m_heap.maker());
+    Vector<CopiedFromSet> sets;
+    HashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> indexOfSet;
+    constexpr uint32_t notFollowed = UINT32_MAX;
+    Vector<uint32_t> setOfTarget;
+    setOfTarget.fill(notFollowed, targets.size());
     for (size_t position = 0; position < targets.size(); ++position) {
-        if (!sourcesOfTargets[position])
+        std::optional<ValueSetID> objects = copiedOnto.ontoAnyOf(m_layoutsOfObjects.objectsWith(targets[position]));
+        if (!objects)
             continue;
-        const CopiedObjects& sources = *sourcesOfTargets[position];
-        StoresIntoObjects& stores = m_storesOfLayout[targets[position].index()];
-        stores.getsCopiedProperties = false;
-        stores.getsCopyThatDefines = false;
-        for (LayoutID source : sources.layouts) {
+        auto added = indexOfSet.add(objects->index(), sets.size());
+        if (added.isNewEntry)
+            sets.append({ *objects, false, { } });
+        setOfTarget[position] = added.iterator->value;
+    }
+    ValueSetMakers makers(m_inputs);
+    Vector<std::optional<CopiedObjects>> sourcesOfSets(sets.size());
+    forEachIndexInParallel(m_inputs.loops(), sets.size(), [&](unsigned index, unsigned worker) {
+        sourcesOfSets[index] = withLayoutsIfFollowed(makers.of(worker), sets[index].objects);
+    });
+    for (size_t index = 0; index < sets.size(); ++index) {
+        CopiedFromSet& set = sets[index];
+        const std::optional<CopiedObjects>& sources = sourcesOfSets[index];
+        if (!sources)
+            continue;
+        set.isFollowed = true;
+        HashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> placeOfKey;
+        constexpr uint32_t holdsNothing = UINT32_MAX;
+        for (LayoutID source : sources->layouts) {
             for (PropertyKeyID key : keysStoredInto(source, ObjectsOfLayout::Followed)) {
-                if (stores.keysLeftOutOfEveryCopy && stores.keysLeftOutOfEveryCopy->contains(key))
-                    continue;
-                ValueSetID value = m_heap.writtenUnder(sources.objects, ValueFlowName::property(m_inputs.program, key));
-                if (value == ValueSets::nothing)
+                auto place = placeOfKey.add(key.index(), holdsNothing);
+                if (place.isNewEntry) {
+                    ValueSetID value = m_heap.writtenUnder(set.objects, ValueFlowName::property(m_inputs.program, key));
+                    if (value != ValueSets::nothing) {
+                        place.iterator->value = set.underKeys.size();
+                        set.underKeys.append({ key, value, { } });
+                    }
+                }
+                if (place.iterator->value == holdsNothing)
                     continue;
                 ValueFlowNumbers numbers = numbersStoredUnder(source, key, ObjectsOfLayout::Followed);
                 // A copy reads the field, and a read of an int32 slot says no more than that: what it delivers goes into the target without a test.
                 constexpr Range integersOfSlots { minInlineInt32, INT32_MAX };
                 if (!numbers.integers.isEmpty() && numbers.integers.isSubsetOf(integersOfSlots))
                     numbers.integers = integersOfSlots;
-                StoredUnderKey& stored = stores.underKey.add(key.index(), StoredUnderKey { }).iterator->value;
-                unite(stored.value, value);
-                stored.uniteNumbers(numbers);
-                stored.isStoredAfterCreation = true;
-                stored.isNamedByOperation |= !stores.getsCopyWithoutComputedKey;
-                stored.isGivenValueByOperation = true;
-                stored.isGivenValueByDefinition = true;
-                stored.writers.add(Actor::KeysNobodyKnows);
+                set.underKeys[place.iterator->value].numbers.unite(numbers);
             }
+        }
+    }
+    for (size_t position = 0; position < targets.size(); ++position) {
+        if (setOfTarget[position] == notFollowed || !sets[setOfTarget[position]].isFollowed)
+            continue;
+        StoresIntoObjects& stores = m_storesOfLayout[targets[position].index()];
+        stores.getsCopiedProperties = false;
+        stores.getsCopyThatDefines = false;
+        for (const CopiedUnderKey& copied : sets[setOfTarget[position]].underKeys) {
+            if (stores.keysLeftOutOfEveryCopy && stores.keysLeftOutOfEveryCopy->contains(copied.key))
+                continue;
+            StoredUnderKey& stored = stores.underKey.add(copied.key.index(), StoredUnderKey { }).iterator->value;
+            unite(stored.value, copied.value);
+            stored.uniteNumbers(copied.numbers);
+            stored.isStoredAfterCreation = true;
+            stored.isNamedByOperation |= !stores.getsCopyWithoutComputedKey;
+            stored.isGivenValueByOperation = true;
+            stored.isGivenValueByDefinition = true;
+            stored.writers.add(Actor::KeysNobodyKnows);
         }
     }
 }
@@ -2294,35 +2455,52 @@ void StoresByLayout::setReceiversOfReads(ListsOfSetsByNumber&& receivers)
     for (const auto& receiversUnderKey : m_receiversOfReads)
         receiversUnderKeys.append(&receiversUnderKey);
     ValueSetMakers makers(m_inputs);
+    constexpr uint32_t noGroup = UINT32_MAX;
     struct GroupsOfWorker {
         HashMap<Vector<uint32_t>, uint32_t> groupOfLayouts;
+        // By the number of a set of receivers. Many keys are read off one and the same objects.
+        HashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> groupOfReceivers;
         Vector<Vector<PropertyKeyID>> keys;
         Vector<uint32_t> layoutsOfKey;
+        Vector<ValueSetID> receiversOfKey;
+        uint64_t numberOfLayoutsFound { 0 };
     };
     Vector<GroupsOfWorker> groupsFoundBy(loops.width());
     forEachIndexInParallel(loops, receiversUnderKeys.size(), [&](unsigned index, unsigned worker) {
         GroupsOfWorker& groups = groupsFoundBy[worker];
-        groups.layoutsOfKey.shrink(0);
+        ValueSetMaker& makerOfWorker = makers.of(worker);
+        groups.receiversOfKey.shrink(0);
         for (ValueSetID listed : receiversUnderKeys[index]->value) {
-            if (!sets.meet(listed, objects))
-                continue;
-            m_layoutsOfObjects.forEachLayoutOfMembers(makers.of(worker).intersect(listed, objects), [&](LayoutID layout) {
+            if (sets.meet(listed, objects))
+                groups.receiversOfKey.append(makerOfWorker.intersect(listed, objects));
+        }
+        if (groups.receiversOfKey.isEmpty())
+            return;
+        ValueSetID receivers = makerOfWorker.uniteAll(groups.receiversOfKey.span());
+        uint32_t group = groups.groupOfReceivers.ensure(receivers.index(), [&]() -> uint32_t {
+            groups.layoutsOfKey.shrink(0);
+            m_layoutsOfObjects.forEachLayoutOfMembers(receivers, [&](LayoutID layout) {
                 if (asks.quickGet(layout.index()))
                     groups.layoutsOfKey.append(layout.index());
             });
-        }
-        if (groups.layoutsOfKey.isEmpty())
-            return;
-        // A key is read from a layout at many places: most of what was found is a repeat.
-        AOT::sort(groups.layoutsOfKey);
-        removeRepeatedElements(groups.layoutsOfKey);
-        uint32_t group = groups.groupOfLayouts.ensure(groups.layoutsOfKey, [&] {
-            groups.keys.append(Vector<PropertyKeyID>());
-            return static_cast<uint32_t>(groups.keys.size() - 1);
+            if (groups.layoutsOfKey.isEmpty())
+                return noGroup;
+            groups.numberOfLayoutsFound += groups.layoutsOfKey.size();
+            AOT::sort(groups.layoutsOfKey);
+            removeRepeatedElements(groups.layoutsOfKey);
+            return groups.groupOfLayouts.ensure(groups.layoutsOfKey, [&] {
+                groups.keys.append(Vector<PropertyKeyID>());
+                return static_cast<uint32_t>(groups.keys.size() - 1);
+            }).iterator->value;
         }).iterator->value;
-        groups.keys[group].append(PropertyKeyID(receiversUnderKeys[index]->key));
+        if (group != noGroup)
+            groups.keys[group].append(PropertyKeyID(receiversUnderKeys[index]->key));
     });
     HashMap<Vector<uint32_t>, uint32_t> groupOfLayouts;
+    uint64_t numberOfLayoutsFound = 0;
+    for (GroupsOfWorker& groups : groupsFoundBy)
+        numberOfLayoutsFound += groups.numberOfLayoutsFound;
+    m_inputs.build.statistics().count(StatisticID::LayoutsFoundForKeysRead, numberOfLayoutsFound);
     for (GroupsOfWorker& groups : groupsFoundBy) {
         for (auto& entry : groups.groupOfLayouts) {
             uint32_t group = groupOfLayouts.ensure(entry.key, [&] {

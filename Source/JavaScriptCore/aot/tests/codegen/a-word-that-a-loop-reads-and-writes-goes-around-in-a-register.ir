@@ -13,7 +13,7 @@
 # REQUIRES: unsanitized-code
 # Every turn reads one element and stores to it, at an address that stays the same, and nothing else in the loop writes an element. What a turn would read there is what the turn
 # before has stored: it is read once ahead of the loop and goes around in a register. The store stays: the other array may be the same one, and its elements are read out of memory.
-# STATISTIC: WordsCarriedAroundLoops = 1
+# STATISTIC: LocationsPromotedInLoops = 1
 # CHECK-LABEL: name="addUp" role=Source
 # CHECK-LABEL: steps by 1
 # CHECK: Int32 b@[[sum]] = Phi(

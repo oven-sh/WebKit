@@ -15,8 +15,8 @@
 #include "JSCInlines.h"
 #include "JSNativeStdFunction.h"
 #include "ObjectConstructor.h"
-#include "StrongInlines.h"
 #include "TopExceptionScope.h"
+#include "WeakInlines.h"
 #include <wtf/HashMap.h>
 #include <wtf/Lock.h>
 #include <wtf/NeverDestroyed.h>
@@ -26,19 +26,20 @@ namespace JSC { namespace AOT {
 
 namespace {
 
+// The table lasts as long as the VM, and a realm may end long before. So it holds nothing: whoever has read a stand-in holds it, and one that nobody holds is made anew.
 struct StandIn {
-    Strong<JSObject> function;
+    Weak<JSObject> function;
     // What a call of it throws.
     String message;
     // Of a member without a slot: the getter, or the object on which native code answers for the name. It answers the same function each time, as it would answer the same object.
-    Strong<JSObject> answeredBy;
+    Weak<JSObject> answeredBy;
     String name;
     bool isKnownToBeFunction { false };
 };
 
 struct MembersLeftOut {
-    // The newest. It is held so that no other object can take its address while it is asked for.
-    Strong<JSObject> error;
+    // The newest. Once it is dead the handle answers null, so no other object that takes its address is taken for it.
+    Weak<JSObject> error;
     String message;
     // One for each member that was left out and read.
     Vector<StandIn> standIns;
@@ -89,7 +90,7 @@ void noteErrorOfCodeLeftOut(JSGlobalObject* realm, JSObject* error)
     MembersLeftOut& members = membersByVM().ensure(&vm, [] {
         return MembersLeftOut { };
     }).iterator->value;
-    members.error.set(vm, error);
+    members.error = Weak<JSObject>(error);
     members.message = WTF::move(text);
 }
 
@@ -121,7 +122,7 @@ static JSValue standInThatThrows(JSGlobalObject* realm, String&& message, const 
     if (answeredBy) {
         Locker locker { membersLock };
         for (const StandIn& known : membersByVM().find(&vm)->value.standIns) {
-            if (known.answeredBy.get() == answeredBy && known.name == nameOfMember)
+            if (known.function && known.answeredBy.get() == answeredBy && known.name == nameOfMember)
                 return known.function.get();
         }
     }
@@ -135,7 +136,11 @@ static JSValue standInThatThrows(JSGlobalObject* realm, String&& message, const 
         standIn->putDirect(vm, vm.propertyNames->prototype, constructEmptyObject(realm), PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
 
     Locker locker { membersLock };
-    membersByVM().find(&vm)->value.standIns.append(StandIn { Strong<JSObject>(vm, standIn), WTF::move(message), answeredBy ? Strong<JSObject>(vm, answeredBy) : Strong<JSObject>(), nameOfMember, !!function });
+    Vector<StandIn>& standIns = membersByVM().find(&vm)->value.standIns;
+    standIns.removeAllMatching([](const StandIn& known) {
+        return !known.function;
+    });
+    standIns.append(StandIn { Weak<JSObject>(standIn), WTF::move(message), answeredBy ? Weak<JSObject>(answeredBy) : Weak<JSObject>(), nameOfMember, !!function });
     return standIn;
 }
 

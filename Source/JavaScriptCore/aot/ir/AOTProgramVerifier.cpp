@@ -636,6 +636,8 @@ void ProgramVerifier::verifyVariables()
                 || !m_program.at(variable.module).flags.contains(ModuleFlags::MayBeMocked) || hasVariableThatHoldsMock.quickSet(variable.module.index()))
                 return false;
         }
+        if (variable.flags.contains(VariableFlags::OriginalMayRun) && !variable.flags.contains(VariableFlags::HoldsMock))
+            return false;
         return !variable.owner || (m_program.at(variable.owner).kind == LayoutKind::Instance && isStaticField.quickGet(index));
     };
     for (unsigned index = 0; index < m_program.variables.size(); ++index) {

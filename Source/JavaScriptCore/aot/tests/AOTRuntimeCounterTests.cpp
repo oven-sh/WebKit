@@ -271,6 +271,7 @@ static void testCountsSurviveTheInstance(LoadedProgram& program)
     }
     AOT_TEST_CHECK(valueOf(vm, counter) == 5 && valueOf(vm, exit) == 1);
     AOT_TEST_CHECK(state.counters->values[static_cast<size_t>(counter)] == 1);
+    AOT_TEST_CHECK(dumpedCount(vm, "counter"_s, "MemberGuardsCleared"_s) == 5);
 
     program.realm()->setAOTInstance(nullptr);
     Instance::destroyDeadInstances(vm);

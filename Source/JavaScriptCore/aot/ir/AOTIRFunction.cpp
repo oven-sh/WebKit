@@ -47,6 +47,41 @@ void Function::willEditEdgesOf(const Block& block)
     });
 }
 
+#if AOT_STAMPS_VALUE_IDS
+void Function::didMeetNumberFromBefore(ValueID id) const
+{
+    static Lock oneReportAtATime;
+    Locker locker { oneReportAtATime };
+    dataLogLn("A number of a value from before a renumbering: v", id.index(), " was handed out at renumbering ", id.stamp(), ", the function stands at ", stampOfValues, " and has ", values.size(), " values");
+    WTFReportBacktrace();
+    static const bool onlyReports = [] {
+        const char* wanted = getenv("AOT_STALE_NUMBERS");
+        return wanted && !strcmp(wanted, "report");
+    }();
+    if (!onlyReports)
+        CRASH();
+}
+
+void Function::stampNumbersInPlace()
+{
+    auto stamp = [&](ValueID& id) {
+        if (id)
+            id = idOfValueAt(id.index());
+    };
+    for (Block& block : blocks.m_storage) {
+        for (ValueID& parameter : block.parameters)
+            stamp(parameter);
+        for (ValueID& value : block.values)
+            stamp(value);
+        block.forEachChildOutsideValues(stamp);
+    }
+    for (Value& value : values.m_storage)
+        value.forEachChild(stamp);
+    for (WrittenPosition& written : writtenPositions)
+        stamp(written.value);
+}
+#endif
+
 void Function::releaseBody()
 {
     RELEASE_ASSERT(bodyIsReleased && !blocks.isEmpty());
@@ -617,10 +652,13 @@ static Vector<ValueID> renumberValues(Function& function, size_t numberOfListedV
     Function::Values::Storage& formerValues = function.editAllValues();
     Function::Blocks::Storage& blocks = function.editAllBlocks();
     values.reserveInitialCapacity(numberOfListedValues);
+#if AOT_STAMPS_VALUE_IDS
+    function.stampOfValues = function.stampOfValues % ValueID::numberOfStamps + 1;
+#endif
     auto moveListedValue = [&](ValueID& id) {
         unsigned oldIndex = id.index();
         RELEASE_ASSERT(!newID[oldIndex]);
-        id = ValueID(values.size());
+        id = function.idOfValueAt(values.size());
         newID[oldIndex] = id;
         values.append(WTF::move(formerValues[oldIndex]));
     };
@@ -680,8 +718,12 @@ bool compactFunction(Function& function, Renumbering* renumbering)
     }
 
     size_t numberOfListedValues = countListedValues(function);
-    if (wasOrdered && numberOfListedValues == function.values.size())
+    if (wasOrdered && numberOfListedValues == function.values.size()) {
+#if AOT_STAMPS_VALUE_IDS
+        function.stampNumbersInPlace();
+#endif
         return false;
+    }
 
     Vector<ValueID> movedValues = renumberValues(function, numberOfListedValues);
     if (ReasonsForOperationsThatWent* listener = function.listenerForOperationsThatGo()) [[unlikely]]

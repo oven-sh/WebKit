@@ -716,7 +716,7 @@ struct ValueFlowBody {
     std::span<const Operand> operandsOf(const Statement& statement) const LIFETIME_BOUND { return operands.subspan(statement.firstOperand, statement.operandCount); }
 };
 
-ValueFlowBody reduceBody(const Program&, const ValueFlowBuiltinTables&, FunctionID, const UnobservedFieldDefinitions* = nullptr);
+ValueFlowBody reduceBody(const Program&, const ValueFlowBuiltinTables&, FunctionID, const UnobservedFieldDefinitions* = nullptr, uint64_t* numberOfBlocksReadForDefinitions = nullptr);
 ValueFlowBody makeHostBody(const Program&, const ValueFlowBuiltinTables&, std::span<const uint64_t> notedOperations = { }, const UnobservedFieldDefinitions* = nullptr);
 bool startsWithoutValueInSolve(const Program&, const Variable&);
 
@@ -772,6 +772,7 @@ enum class ValueFlowNotedOperation : uint8_t {
     StoreToLocation,
     Builtin,
     ModuleOperation,
+    ReceiverHandedOn,
 };
 
 using ValueFlowNotedOperations = uint64_t;
@@ -862,6 +863,7 @@ public:
     const ValueFlowBodiesTimes& times() const { return m_times; }
     const BitVector* valuesBehindChecks(FunctionID function) const LIFETIME_BOUND { return m_knowsValuesBehindChecks[function.index()] ? &m_valuesBehindChecks[function.index()] : nullptr; }
     bool holdsAnyOf(FunctionID function, ValueFlowNotedOperations operations) const { return m_notedOperations[function.index()] & operations; }
+    std::span<const ValueFlowNotedOperations> notedOperationsOfFunctions() const LIFETIME_BOUND { return m_notedOperations.span(); }
     void addBytesTo(ValueFlowBytesByTable&) const;
 
     uint32_t numberOfBodies() const { return m_ranges.size() - 1; }
@@ -924,7 +926,7 @@ public:
         StringID text;
     };
     static constexpr uint32_t mostArgumentsLookedAtForTexts = 64;
-    static Vector<uint32_t> findParametersThatAreKeys(const Program&, const ParallelLoops&, Vector<TextPassed>& textsPassed, Vector<StringID>& relativePaths, Vector<ValueFlowNotedOperations>& notedOperations);
+    static Vector<uint32_t> findParametersThatAreKeys(const Program&, BuildContext&, Vector<TextPassed>& textsPassed, Vector<StringID>& relativePaths, Vector<ValueFlowNotedOperations>& notedOperations);
 
     ValueFlowInstancedFunctions(const Program&, const ValueFlowBodies&, std::span<const uint32_t> positionOfKey, ValueSetMaker&, const ParallelLoops&);
 

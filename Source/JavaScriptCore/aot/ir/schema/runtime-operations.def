@@ -150,7 +150,7 @@ runtime GetPropertyEnumerator : JSCell* (EncodedJSValue object) ; unknownCode
 runtime EnumeratorNext : UGPRPair (JSCell* enumerator, EncodedJSValue object, uint64_t position) ; unknownCode
 runtime EnumeratorGetByVal : EncodedJSValue (EncodedJSValue object, EncodedJSValue property, JSCell* enumerator) ; RuntimeCreatesConstant throws
 runtime CreateAsyncFromSyncIterator : JSCell* (JSCell* iterator, EncodedJSValue next) ; RuntimeAllocates
-runtime ThrowNotIterable : void (EncodedJSValue iterable, uint32_t isSpread) ; reads(all) throws collects
+runtime ThrowNotIterable : void (EncodedJSValue iterable, uint32_t isSpread) ; RuntimeAllocates throws
 runtime ThrowIfTooLongForList : void (JSCell* source) ; RuntimeCreatesString
 
 runtime NewPromise : JSCell* () ; RuntimeAllocates
@@ -176,7 +176,7 @@ runtime ThrowAfterCleanup : void (EncodedJSValue value, uint64_t kept) ; reads(a
 runtime AddressOfThrow : uint64_t () ; reads(RuntimeState)
 runtime Catch, CatchException : EncodedJSValue () ; RuntimeAllocates
 runtime CatchValueAndException : UGPRPair () ; RuntimeAllocates
-runtime ThrowAtSite : void (const uint64_t* registers, const uint32_t* site, uint32_t source) ; reads(all) throws collects
+runtime ThrowAtSite : void (const uint64_t* registers, const uint32_t* site, uint32_t source) ; RuntimeAllocates throws
 runtime ThrowStackOverflowError : void () ; reads(all) throws
 runtime NewRuntimeError : JSCell* (uint32_t errorKind) ; RuntimeAllocates
 runtime NewRuntimeErrorWithName : JSCell* (uint32_t errorKind, uint32_t name) ; RuntimeAllocates
@@ -221,6 +221,7 @@ runtime GetMappedArgument : EncodedJSValue (JSCell* arguments, uint32_t index) ;
 runtime SetMappedArgument : void (JSCell* arguments, uint32_t index, EncodedJSValue value) ; reads(all) writes(Elements, RuntimeState)
 
 runtime GetModuleNamespace : JSCell* (uint32_t module, uint32_t phase) ; unknownCode
+runtime GetNamespaceOfModuleItself : JSCell* (uint32_t module) ; unknownCode
 runtime IsNamespaceOfModule : size_t (JSCell* cell, uint32_t module) ; none ; leaf
 # For the adapters of images that share realms with others.
 runtime RunImageOfAdapter : void (void* instance, void* adapterFrame) ; none ; leaf
@@ -229,6 +230,7 @@ runtime RequireModule : EncodedJSValue (uint32_t module, uint32_t referrer) ; un
 runtime RecordRequire : void (uint32_t module, uint32_t referrer) ; unknownCode
 runtime RequireIfHeldForImport : EncodedJSValue (uint32_t module, uint32_t referrer) ; unknownCode
 runtime WasLoadedSynchronously : size_t (uint32_t module) ; reads(ExternalState) writes(ExternalState)
+runtime SeesMockOf : size_t (uint32_t module, uint32_t referrer) ; reads(ExternalState) writes(ExternalState)
 runtime AreLoaderFunctionsStored : size_t () ; reads(ExternalState)
 runtime CountExecution : void (uint32_t module, uint32_t description, uint32_t counter) ; reads(ExternalState) writes(ExternalState)
 runtime ResolveModule : EncodedJSValue (uint32_t module, uint32_t referrer, uint32_t specifier, uint32_t isURL) ; unknownCode

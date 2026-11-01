@@ -1233,6 +1233,10 @@ void computeFunctionResults(const ValueFlowResultInputs& inputs, ValueFlowStampe
     calls.functionsNamedByUnsolvedCode = findFunctionsNamedByUnsolvedCode(inputs, tables);
     times.didFinish("functions: unreached, named by unsolved code"_s);
     inputs.build.statistics().count(StatisticID::FlowUnreachedFunctions, std::ranges::count(tables.functions.functions, FunctionReachability::Unreached, &FunctionFlow::reachability));
+    uint32_t numberWhoseReceiverLeaves = 0;
+    for (uint32_t index = 0; index < numberOfFunctions; ++index)
+        numberWhoseReceiverLeaves += inputs.isReached(FunctionID(index)) && inputs.bodies().holdsAnyOf(FunctionID(index), notedOperations({ ValueFlowNotedOperation::ReceiverHandedOn }));
+    inputs.build.statistics().count(StatisticID::FlowFunctionsWhoseReceiverLeaves, numberWhoseReceiverLeaves);
 
     tables.functions.boundFunctionUses = findBoundFunctionsOnlyCalled(inputs);
     tables.sites.boundFunctionsAtSites = findBoundFunctionsAtSites(inputs, application.accessSites);
@@ -1453,6 +1457,27 @@ ValueSetID computeClosuresNeverCompared(const ValueFlowResultInputs& inputs, Val
             }
         }
     });
+
+    const ValueFlowBuiltinTables& behaviors = universe.builtinTables();
+    Vector<BuiltinID> builtinThatLooksThrough(FillWith { }, behaviors.numberOfBehaviors(), BuiltinID());
+    for (uint32_t index = 0; index < builtins.overloadCount(); ++index) {
+        const BuiltinOverload& overload = builtins.at(BuiltinOverloadID(index));
+        auto noteBehaviorOf = [&](const BuiltinParameter& parameter) {
+            if (!mayTellClosuresApart(parameter) || !parameter.uses.containsAny({ OperandUse::AppliesTransitively, OperandUse::AppliesToContents }))
+                return;
+            if (ValueFlowBehaviorID behavior = behaviors.behaviorOf(parameter); behavior && !builtinThatLooksThrough[behavior.index()])
+                builtinThatLooksThrough[behavior.index()] = overload.builtin;
+        };
+        if (overload.receiver)
+            noteBehaviorOf(*overload.receiver);
+        std::ranges::for_each(overload.parameters, noteBehaviorOf);
+    }
+    for (uint32_t index = 0; index < builtinThatLooksThrough.size(); ++index) {
+        if (!builtinThatLooksThrough[index] || inputs.build.isSabotaged(Sabotage::BuiltinsLookAtTheirOperandsAlone))
+            continue;
+        if (ValueSetID reached = inputs.solver().possibleValuesOf(inputs.bodies().nodes().hub(ValueFlowBehaviorID(index))); reached != ValueSets::anything)
+            keep(0, closuresIn(0, reached), { { }, builtinThatLooksThrough[index], { } });
+    }
 
     keep(0, inputs.solver().possibleValuesOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::ClosuresThatDefinitionsCompare)), { { }, builtins.canonicalID(Builtins::ObjectDefineProperty), { } });
 

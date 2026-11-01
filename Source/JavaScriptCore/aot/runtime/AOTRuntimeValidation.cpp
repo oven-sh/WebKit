@@ -879,11 +879,19 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReportBrokenClaim, void, (uint32_t
 {
     static constexpr ASCIILiteral names[] { "StackSlotIsWrittenBeforeRead"_s, "WordNeverChanges"_s, "LoadMayMove"_s, "ValueIsInRange"_s, "ComparisonIsDecided"_s, "CounterStepsAsTold"_s };
     static_assert(std::size(names) == static_cast<size_t>(BrokenClaim::CounterStepsAsTold) + 1);
-    uint32_t number = claimAndOffset & 0xff;
+    uint32_t number = claimAndOffset & 0xff & ~reportOfBrokenClaimComesBack;
+    bool comesBack = claimAndOffset & reportOfBrokenClaimComesBack;
     RELEASE_ASSERT(number < std::size(names));
     auto claim = static_cast<BrokenClaim>(number);
     static Lock lock;
     lock.lock();
+    if (comesBack) {
+        static NeverDestroyed<HashSet<std::tuple<uint32_t, uint32_t, uint32_t>>> placesReported;
+        if (!placesReported->add({ claimAndOffset, function, valueIndex }).isNewEntry) {
+            lock.unlock();
+            return;
+        }
+    }
     dataLog("AOT claim check: ", names[number], " f", function, " v", static_cast<int32_t>(valueIndex));
     if (claim == BrokenClaim::ComparisonIsDecided)
         dataLog(" of 0x", hex(foundAndGiven[0], Lowercase), " and 0x", hex(foundAndGiven[1], Lowercase));
@@ -892,6 +900,10 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReportBrokenClaim, void, (uint32_t
     if (claim == BrokenClaim::WordNeverChanges || claim == BrokenClaim::LoadMayMove)
         dataLog(" holds 0x", hex(foundAndGiven[0], Lowercase), ", not 0x", hex(foundAndGiven[1], Lowercase));
     dataLogLn();
+    if (comesBack) {
+        lock.unlock();
+        return;
+    }
     CRASH_WITH_INFO(number, function, valueIndex);
 }
 

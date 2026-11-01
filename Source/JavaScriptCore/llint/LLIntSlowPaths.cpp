@@ -2402,7 +2402,8 @@ static UGPRPair handleHostCall(CallFrame* calleeFrame, JSValue callee, CodeSpeci
         ASSERT(callData.type == CallData::Type::None);
 #if ENABLE(AOT)
         JSObject* error = createNotAFunctionError(globalObject, callee);
-        AOT::explainErrorBehindMemberLeftOut(globalObject, error, calleeFrame->thisValue());
+        if (globalObject->vm().hasCompiledCode()) [[unlikely]]
+            AOT::explainErrorBehindMemberLeftOut(globalObject, error, calleeFrame->thisValue());
         LLINT_CALL_THROW(globalObject, error);
 #else
         LLINT_CALL_THROW(globalObject, createNotAFunctionError(globalObject, callee));

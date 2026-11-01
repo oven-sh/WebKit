@@ -182,6 +182,7 @@ public:
         , m_unobservedDefinitions(unobservedDefinitions)
         , m_id(id)
         , m_function(program.at(id))
+        , m_definitions(m_function)
         , m_cfg(m_function)
         , m_constants(m_body.constants)
         , m_masks(m_body.masks)
@@ -190,6 +191,8 @@ public:
         , m_targetsWithHostError(0)
     {
     }
+
+    uint64_t numberOfBlocksReadForDefinitions() const { return m_definitions.numberOfBlocksRead(); }
 
     Body reduce()
     {
@@ -1213,7 +1216,7 @@ private:
 
         if (value.opcode == Opcode::PropGet) {
             const BuiltinTable& builtins = m_program.builtins();
-            BuiltinID named = entryNamedByOperations(m_program, m_function, id);
+            BuiltinID named = entryNamedByOperations(m_program, m_definitions, id);
             if (const Value& holder = m_function.at(definitionThroughSameValues(m_function, value.objectOperand())); !named && holder.opcode == Opcode::ModuleBuiltin)
                 named = findOwnMember(m_program, builtins.canonicalID(holder.builtin()), value.key());
             if (named && builtins.letsInUnseenCode(builtins.canonicalID(named)) && isWrittenInProgram())
@@ -2370,7 +2373,7 @@ private:
             statement.factsOfText.add(ValueFlowFactOfText::HasCopyOfOperation);
             m_body.copiesOfOperations.append(ValueFlowCopyOfOperation { m_body.function, site, value });
         }
-        if (value.opcode == Opcode::ElemGet && readsUnderNameOfEnumerationOfSameObject(m_function, value))
+        if (value.opcode == Opcode::ElemGet && readsUnderNameOfEnumerationOfSameObject(m_definitions, value))
             statement.factsOfText.add(ValueFlowFactOfText::ReadsUnderNameOfEnumerationOfSameObject);
         if (value.opcode == Opcode::IteratorResume && stepFillsNoOnePlace(value))
             statement.factsOfText.add(ValueFlowFactOfText::StepFillsNoOnePlace);
@@ -2379,14 +2382,14 @@ private:
             if (value.operand(1))
                 statement.factsOfText.add(ValueFlowFactOfText::HasSecondOperand);
             if (ValueID callee = value.operand(0))
-                rare.entryNamed = entryNamedByOperations(m_program, m_function, callee);
+                rare.entryNamed = entryNamedByOperations(m_program, m_definitions, callee);
             if (!statement.key)
-                rare.keyOfMemberCalledOnItsHolder = keyOfMemberCalledOnItsHolderByText(m_program, m_function, value);
+                rare.keyOfMemberCalledOnItsHolder = keyOfMemberCalledOnItsHolderByText(m_program, m_definitions, value);
         } else if (value.opcode == Opcode::PropGet || value.opcode == Opcode::PropSet || value.opcode == Opcode::PropDelete) {
             if (value.isFreeName())
                 statement.factsOfText.add(ValueFlowFactOfText::IsFreeName);
             if (value.opcode == Opcode::PropGet)
-                rare.entryNamed = entryNamedByOperations(m_program, m_function, site);
+                rare.entryNamed = entryNamedByOperations(m_program, m_definitions, site);
         }
         if (value.opcode == Opcode::ElemGet || value.opcode == Opcode::ElemSet) {
             static_assert(OperandIndex::ElemGet::property == OperandIndex::ElemSet::property);
@@ -2513,6 +2516,7 @@ private:
     bool m_hasFoundReadsHandedOn { false };
     FunctionID m_id;
     const Function& m_function;
+    DefinitionsThroughTests m_definitions;
     CFG m_cfg;
     mutable std::optional<BitVector> m_leadsToLoadOfModule;
     std::optional<UseLists> m_uses;
@@ -2646,7 +2650,7 @@ bool isUsedOnlyAsInstanceOfOwnFunction(const Program& program, FunctionID functi
     return true;
 }
 
-ValueFlowBody reduceBody(const Program& program, const ValueFlowBuiltinTables& tables, FunctionID id, const UnobservedFieldDefinitions* unobservedDefinitions)
+ValueFlowBody reduceBody(const Program& program, const ValueFlowBuiltinTables& tables, FunctionID id, const UnobservedFieldDefinitions* unobservedDefinitions, uint64_t* numberOfBlocksReadForDefinitions)
 {
     const Function& function = program.at(id);
     // A list takes room for sixteen elements with its first. Most functions are short, there are hundreds of thousands of them, and all bodies stand side by side until they are linked.
@@ -2659,7 +2663,11 @@ ValueFlowBody reduceBody(const Program& program, const ValueFlowBuiltinTables& t
     };
     if (!function.hasBody())
         return withoutSpareRoom(makeBodyWithoutOperations(id, function.numberOfEntryParameters(), function.results.size(), function.isUnsplitCoroutine() && function.has(FunctionFlags::IsGenerator)));
-    return withoutSpareRoom(BodyReducer(program, tables, id, unobservedDefinitions).reduce());
+    BodyReducer reducer(program, tables, id, unobservedDefinitions);
+    ValueFlowBody body = reducer.reduce();
+    if (numberOfBlocksReadForDefinitions)
+        *numberOfBlocksReadForDefinitions = reducer.numberOfBlocksReadForDefinitions();
+    return withoutSpareRoom(WTF::move(body));
 }
 
 bool startsWithoutValueInSolve(const Program& program, const Variable& variable)
@@ -2685,7 +2693,8 @@ ValueFlowBody makeHostBody(const Program& program, const ValueFlowBuiltinTables&
             if (variable.flags.contains(VariableFlags::HoldsMock)) {
                 body.seedsOnceReached.append({ node, static_cast<uint32_t>(body.constants.size()), 0 });
                 // The original beside the mock of a file is the file once more, from disk: `vi.importActual()`, the parameter of a factory, a mock without a factory.
-                if (!program.at(variable.module).runtimeModule)
+                // The front end says whether anything in the run may ask for one.
+                if (variable.flags.contains(VariableFlags::OriginalMayRun) && !program.at(variable.module).runtimeModule)
                     body.seedsOnceReached.append({ ValueFlowNodeName::ofHost(ValueFlowHostNode::UnseenCopiesOfFilesMayRun), static_cast<uint32_t>(body.constants.size()), 0 });
                 body.constants.append({ 0, { ValueFlowObjectName { ValueFlowObjectKind::UnknownObject, 0, { } } } });
             }

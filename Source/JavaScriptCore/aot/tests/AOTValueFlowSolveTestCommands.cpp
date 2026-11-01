@@ -9,6 +9,8 @@
 #if ENABLE(AOT)
 
 #include "AOTAddGenericVersion.h"
+#include "AOTFlowApply.h"
+#include "AOTIRPrinter.h"
 #include "AOTSupportTestCommands.h"
 #include "AOTValueFlowAnalysis.h"
 #include "AOTValueFlowResults.h"
@@ -189,6 +191,147 @@ static void printFeaturesInEveryOrder(TestCommandContext& context)
         context.out.println(flip);
 }
 
+static String withoutExpectationsAndNumbering(StringView line)
+{
+    String text = line.toString();
+    for (size_t at = text.find("IsExpected"_s); at != notFound; at = text.find("IsExpected"_s)) {
+        size_t start = text.reverseFind('{', at);
+        size_t end = text.find('}', at);
+        if (start == notFound || end == notFound)
+            break;
+        text = makeString(StringView(text).left(start), "expected"_s, StringView(text).substring(end + 1));
+    }
+    constexpr ASCIILiteral classes = " allocationClasses=["_s;
+    if (size_t at = text.find(classes); at != notFound) {
+        if (size_t end = text.find(']', at); end != notFound) {
+            StringView listed = StringView(text).substring(at + classes.length(), end - at - classes.length());
+            unsigned count = listed.isEmpty() ? 0 : 1;
+            for (unsigned index = 0; index < listed.length(); ++index)
+                count += listed[index] == ',';
+            text = makeString(StringView(text).left(at), " allocationClasses=#"_s, count, StringView(text).substring(end + 1));
+        }
+    }
+    return text;
+}
+
+static void appendStatedProofs(StringView text, Vector<String>& proofs)
+{
+    String function;
+    bool isInBody = false;
+    for (StringView line : text.split('\n')) {
+        if (line.startsWith("function "_s)) {
+            size_t end = line.find(' ', 9);
+            function = line.substring(9, end == notFound ? line.length() - 9 : end - 9).toString();
+            isInBody = line.endsWith('{');
+            proofs.append(withoutExpectationsAndNumbering(line));
+            continue;
+        }
+        if (!isInBody) {
+            proofs.append(withoutExpectationsAndNumbering(line));
+            continue;
+        }
+        if (line == "}"_s) {
+            isInBody = false;
+            continue;
+        }
+        size_t startOfPosition = line.reverseFind('@');
+        StringView position = startOfPosition == notFound ? StringView() : line.substring(startOfPosition);
+        if (size_t at = line.find("provenType="_s); at != notFound)
+            proofs.append(makeString(function, ' ', line.substring(at)));
+        for (ASCIILiteral list : { " receivers=["_s, " callees=["_s }) {
+            size_t at = line.find(list);
+            size_t end = at == notFound ? notFound : line.find(']', at);
+            if (end != notFound && !line.substring(at, end - at).endsWith(".."_s))
+                proofs.append(makeString(function, line.substring(at, end + 1 - at), ' ', position));
+        }
+        if (line.contains(": never = "_s) || line.contains("Unreachable"_s))
+            proofs.append(makeString(function, " never "_s, position));
+    }
+    std::ranges::sort(proofs, codePointCompareLessThan);
+}
+
+static String programBehindFlow(TestCommandContext& context, const Wire::CompileOptions& options)
+{
+    BuildContext build(options);
+    std::unique_ptr<Program> program = context.readProgramAgain(build);
+    RELEASE_ASSERT(program);
+    if (program->form() == IRForm::AsRead)
+        guardTaintedPositions(*program, build, TaintedPositionsRun::BeforeFlow);
+    FlowResults results = analyzeValueFlow(*program, program->types, build);
+    applyFlowResults(*program, results, build);
+    program->setForm(IRForm::Prepared);
+    StringPrintStream applied;
+    printProgram(applied, *program);
+    return applied.toString();
+}
+
+static void printAnswersAtEveryNumberOfThreads(TestCommandContext& context)
+{
+    Vector<String> programs;
+    for (unsigned threads : { 1u, 2u, 4u, 16u }) {
+        Wire::CompileOptions options = *context.options;
+        options.threadCount = threads;
+        String answer = programBehindFlow(context, options);
+        if (!programs.contains(answer))
+            programs.append(WTF::move(answer));
+    }
+    context.out.println("threads 1 2 4 16 | answers ", programs.size());
+}
+
+static void printProofsAndPredictionsInEveryOrder(TestCommandContext& context)
+{
+    constexpr unsigned numberOfOrders = 128;
+    constexpr unsigned longestFactPrinted = 240;
+    struct Answer {
+        String program;
+        Vector<String> proofs;
+        unsigned firstOrder;
+    };
+    Vector<Answer> programs;
+    Vector<unsigned> answersWithOtherProofs;
+    for (unsigned order = 0; order < numberOfOrders; ++order) {
+        Wire::CompileOptions options = *context.options;
+        options.testing = static_cast<Wire::TestingSwitch>(static_cast<uint32_t>(options.testing) | static_cast<uint32_t>(Wire::TestingSwitch::DelayFlowRules));
+        options.bisection.flowSchedule.number = order;
+        options.threadCount = 1;
+        String answer = programBehindFlow(context, options);
+        if (programs.containsIf([&](const Answer& known) { return known.program == answer; }))
+            continue;
+        Vector<String> proofs;
+        appendStatedProofs(answer, proofs);
+        if (!std::ranges::any_of(answersWithOtherProofs, [&](unsigned known) { return programs[known].proofs == proofs; }))
+            answersWithOtherProofs.append(programs.size());
+        programs.append({ WTF::move(answer), WTF::move(proofs), order });
+    }
+    context.out.println("orders ", numberOfOrders, " | proofs: answers ", answersWithOtherProofs.size(), " | predictions: answers ", programs.size());
+    auto shortened = [&](StringView fact) {
+        return fact.left(longestFactPrinted);
+    };
+    if (answersWithOtherProofs.size() > 1) {
+        const Answer& first = programs[answersWithOtherProofs[0]];
+        const Answer& second = programs[answersWithOtherProofs[1]];
+        for (auto [stating, lacking] : { std::pair { &first, &second }, std::pair { &second, &first } }) {
+            for (const String& proof : stating->proofs) {
+                if (std::ranges::binary_search(lacking->proofs, proof, codePointCompareLessThan))
+                    continue;
+                context.out.println("proof under order ", stating->firstOrder, " and not under ", lacking->firstOrder, ": ", shortened(proof));
+                break;
+            }
+        }
+    }
+    if (programs.size() > 1) {
+        auto lines = programs[0].program.splitAllowingEmptyEntries('\n');
+        auto otherLines = programs[1].program.splitAllowingEmptyEntries('\n');
+        for (size_t index = 0; index < std::min(lines.size(), otherLines.size()); ++index) {
+            if (lines[index] == otherLines[index])
+                continue;
+            context.out.println("line ", index + 1, " under order ", programs[0].firstOrder, ": ", shortened(lines[index]));
+            context.out.println("line ", index + 1, " under order ", programs[1].firstOrder, ": ", shortened(otherLines[index]));
+            break;
+        }
+    }
+}
+
 static void printLostWithEdgesLetGo(PrintStream& out, ValueFlowSolution& solution)
 {
     const ValueFlowSolver& solver = solution.solver();
@@ -238,8 +381,16 @@ void runValueFlowSolveTestCommand(TestCommandContext& context)
     for (const String& word : context.arguments) {
         if (word == "every-order"_s) {
             printUnseenCodeInEveryOrder(context);
-            if (context.options)
+            if (context.options) {
                 printFeaturesInEveryOrder(context);
+                printProofsAndPredictionsInEveryOrder(context);
+                printAnswersAtEveryNumberOfThreads(context);
+            }
+            return;
+        }
+        if (word == "stated-in-every-order"_s && context.options) {
+            printProofsAndPredictionsInEveryOrder(context);
+            printAnswersAtEveryNumberOfThreads(context);
             return;
         }
         if (word == "let-go"_s)

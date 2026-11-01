@@ -391,7 +391,7 @@ PropertyAnswer classifyNamespaceRead(const ReadQuery& query)
             return uncacheableOnce(SlotAccess::Read);
         return { .kind = PropertyAnswerKind::Constant, .isOwn = true, .constant = inner };
     }
-    if (moduleExport.kind() != ModuleExportKind::Variable || state.modules->mockThatAnswersFor(moduleExport))
+    if (moduleExport.kind() != ModuleExportKind::Variable || state.modules->mockThatAnswersFor(moduleNamespace->module(), moduleExport))
         return PropertyAnswer::uncacheable(SlotAccess::Read);
     SlotValueKind valueKind = traitsOf(moduleExport.variable.representation()).valueKind;
     if (valueKind == SlotValueKind::DeferredClosure) {

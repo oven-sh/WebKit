@@ -38,6 +38,8 @@ enum class BrokenClaim : uint32_t {
     ComparisonIsDecided,
     CounterStepsAsTold,
 };
+// Beside the claim in its byte: the report prints a place once and returns.
+static constexpr uint32_t reportOfBrokenClaimComesBack = 0x80;
 
 // What a build under Sabotage::MemoryRunsOutWhenCounted counts.
 enum class CountedLackOfMemory : uint32_t {

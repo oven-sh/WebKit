@@ -518,6 +518,8 @@ struct Builtin {
     bool isNamedByText { false };
     bool isAddedAtFirstRead { false };
     bool isAddedAsEnumerable { false };
+    // A data property of which the table says that it is there and no more: each overload that reads it answers with any type. The run time asks, which holds no overloads.
+    bool isReadWithoutType { false };
 };
 
 struct BuiltinSlot {
@@ -765,6 +767,7 @@ enum class BuiltinMark : uint8_t {
     IsResolverThatLoaderCalls,
     IsRequireThatLoaderCalls,
     InstancesArePrintedWithoutTheirGetters,
+    MayTerminateProcess,
 };
 
 struct BuiltinMarkedEntry {

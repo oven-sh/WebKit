@@ -751,7 +751,7 @@ private:
         ValueSetID objects;
         Vector<LayoutID, 4> layouts;
     };
-    std::optional<CopiedObjects> objectsCopiedOnto(ValueSetMaker&, LayoutID) const;
+    class ObjectsCopiedOnto;
     std::optional<CopiedObjects> withLayoutsIfFollowed(ValueSetMaker&, ValueSetID objects) const;
     void followCopiedProperties();
     std::optional<ReadOfFields> readOfFieldsStoredBy(ValueSetMaker&, const Writer&, ValueFlowName, ValueFlowNumbers& numbersBesideReads) const;

@@ -343,6 +343,7 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTObjectSlotExitTests.cpp
     aot/tests/AOTOperationScopeTests.cpp
     aot/tests/AOTOptionWordTests.cpp
+    aot/tests/AOTOriginalBesideMockTests.cpp
     aot/tests/AOTParsedOptionalMemberTests.cpp
     aot/tests/AOTPassTestCommands.cpp
     aot/tests/AOTPipelineTestCommands.cpp

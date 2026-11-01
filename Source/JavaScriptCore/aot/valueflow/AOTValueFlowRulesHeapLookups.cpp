@@ -1083,6 +1083,7 @@ void HeapRule::callAccessors(ClimbingSet functions, ValueFlowCallKind kind, cons
     if (kind != ValueFlowCallKind::Set || receiver.operand || !receiver.keyLookedUp || !mayBeUnknownObject(functions))
         return;
     ClimbingSet notCovered = m_context.membersMissingNowFrom(ValueFlowProgramNodes::escaped(), known(receiver.set));
+    notCovered = m_context.membersMissingNowFrom(m_context.nodes().ofHost(ValueFlowHostNode::HeldByNativeCode), notCovered);
     if (!holdsAnything(notCovered))
         return;
     ValueFlowObjectsToldApart receivers = tellObjectsApart(m_context, notCovered);
@@ -1248,14 +1249,15 @@ void HeapRule::noteAnswersThatNoReadLists(const Members& answers)
         add(node, set);
 }
 
-void HeapRule::noteAnswersOfReadUnderUnknownKey(ValueFlowObjectID holder)
+void HeapRule::noteAnswersOfReadUnderUnknownKey(ValueFlowObjectID holder, bool isReceiver)
 {
     Members answers;
     if (answersUnknownObjectUnderUnknownKeys(holder))
         answers.append(holder);
     ModuleID module = m_universe.moduleOf(holder);
     for (BuiltinID member : m_builtins.membersOf(m_universe.builtinOf(holder))) {
-        if (mayBeAnsweredWithoutBeingListed(member) && m_builtins.at(member).origin == BuiltinOrigin::Host)
+        // Every read under such a key climbs to Object.prototype. What the engine has there is locked.
+        if (mayBeAnsweredWithoutBeingListed(member) && (isReceiver || m_builtins.at(member).origin == BuiltinOrigin::Host))
             answers.append(objectOfMember(member, module));
     }
     noteAnswersThatNoReadLists(answers);
@@ -1293,8 +1295,8 @@ void HeapRule::readMembers(ClimbingSet objects, ClimbingSet start, const HeapKey
     m_context.forEachMember(holders, [&](ValueFlowObjectID holder) {
         if (key.namesEnumerableProperty && !hasMemberOfHost(holder))
             return;
-        noteAnswersOfReadUnderUnknownKey(holder);
         bool isReceiver = m_context.contains(start, holder);
+        noteAnswersOfReadUnderUnknownKey(holder, isReceiver);
         if (m_builtins.at(m_universe.builtinOf(holder)).scope == BuiltinScope::Module || (isReceiver && m_tables.standsRightAboveObjectOfModule(m_universe.builtinOf(holder)))) {
             for (BuiltinID member : m_builtins.membersOf(m_universe.builtinOf(holder))) {
                 if (isReceiver || !isFoundByNameAlone(m_builtins.canonicalID(member)))
@@ -1882,6 +1884,9 @@ void HeapRule::readThroughChain(ClimbingSet start, const HeapKey& keyOfRead, con
             bool holdsMembers = kind == BuiltinKind::Constructor || kind == BuiltinKind::Prototype || kind == BuiltinKind::Namespace;
             if (key.keyClass == HeapKeyClass::Name && !holdsMembers) {
                 readMember(member, module, result, builtinGetters);
+                bool isWrittenInLibrary = std::ranges::any_of(m_builtins.overloadsOf(member), [](const BuiltinOverload& overload) { return !!overload.libraryFunction(); });
+                if (isWrittenInLibrary && m_builtins.at(member).origin == BuiltinOrigin::Host)
+                    add(m_context.nodes().ofHost(ValueFlowHostNode::FunctionsOfHostTakenFromKnownHolders), only(objectOfMember(member, module)));
                 return;
             }
             if (!isObjectKind(m_builtins.at(member).kind)) {

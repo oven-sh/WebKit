@@ -1243,16 +1243,17 @@ bool HeapRule::readsKeyOrValueOfPair()
     return true;
 }
 
-bool readsUnderNameOfEnumerationOfSameObject(const Function& function, const Value& read)
+bool readsUnderNameOfEnumerationOfSameObject(DefinitionsThroughTests& definitions, const Value& read)
 {
+    const Function& function = definitions.function();
     namespace At = OperandIndex;
-    const Value& name = function.at(definitionThroughTests(function, read.operand(At::ElemGet::property)));
+    const Value& name = function.at(definitions.of(read.operand(At::ElemGet::property)));
     if (name.opcode != Opcode::ResultAt || name.index() != 1)
         return false;
     const Value& step = function.at(name.operand(At::ResultAt::results));
     if (step.opcode != Opcode::ForInStep)
         return false;
-    return definitionThroughTests(function, step.operand(At::ForInStep::object)) == definitionThroughTests(function, read.operand(At::ElemGet::object));
+    return definitions.of(step.operand(At::ForInStep::object)) == definitions.of(read.operand(At::ElemGet::object));
 }
 
 StringID textThatSumBeginsWith(const Program& program, const Function& function, ValueID id)

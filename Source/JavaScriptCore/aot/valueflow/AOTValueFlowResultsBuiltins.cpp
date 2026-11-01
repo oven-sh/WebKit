@@ -409,10 +409,21 @@ static void warnAboutLoadsUnderComputedNames(const ValueFlowResultInputs& inputs
     const Program& program = inputs.program;
     BuildContext& build = inputs.build;
     Vector<SourceLocation> reportedLocations;
+    bool isLoaderHeldByUnseenCode = false;
+    // `names.map(require)`: native code calls the loader too, and runs nothing that nobody has read.
+    bool runsUnseenJavaScript = std::ranges::any_of(records, [](const UnseenCodeRecord& record) {
+        return admitsUnknownJavaScript(record.cause);
+    });
     for (const UnseenCodeRecord& record : records) {
-        if (record.cause != UnseenCodeCause::LoadsModuleByName || record.witness.value == Wire::none)
+        if (record.cause != UnseenCodeCause::LoadsModuleByName)
             continue;
         bool isCallOfLoader = record.builtin != Wire::none;
+        // `vm.runInNewContext("require('./a.js')", { require })`: the text names the file, and nobody has read the text.
+        if (record.witness.value == Wire::none) {
+            if (isCallOfLoader && runsUnseenJavaScript && !std::exchange(isLoaderHeldByUnseenCode, true))
+                build.diagnostics().add(UserDiagnostic { .kind = UserDiagnosticKind::LoaderIsHeldByUnseenCode });
+            continue;
+        }
         if (isCallOfLoader ? !isCallOfProgramUnderComputedName(program, record.witness) : isLoadUnderConstantName(program, record.witness))
             continue;
         if (findsModuleUnderEveryName(inputs, record.witness, isCallOfLoader))
@@ -806,6 +817,16 @@ static Vector<ValueFlowWriteUnderNewName> collectWritesOfLockedLocations(const V
                             ValueFlowObjectID objectOfMember = universe.objectOf(builtins.canonicalID(member));
                             bool mayChangeMember = action.kind == BuiltinPropertyActionKind::TakesDescriptorMap ? mayDescribeOtherValue(notes.maker, copied) : !objectOfMember || !sets.isSubset(copied, notes.maker.of(objectOfMember));
                             if (mayChangeMember)
+                                notes.writes.append({ holder, key, { }, witness });
+                        });
+                        // `Object.assign(Response.prototype, makeMixin())`: a holder that takes no other names refuses what the objects have and it lacks.
+                        if (!builtins.at(holder).flags.containsAny({ BuiltinFlag::IsLockedObject, BuiltinFlag::IsClosedToOtherNames }))
+                            continue;
+                        heap.index().forEachNameWritten([&](ValueFlowName name) {
+                            if (name.kind != ValueFlowNameKind::Property || heap.writtenUnder(notes.maker, sources, name) == ValueSets::nothing)
+                                return;
+                            PropertyKeyID key(name.payload);
+                            if (!findOwnMember(program, holder, key) && isLockedLocation(program, holder, key))
                                 notes.writes.append({ holder, key, { }, witness });
                         });
                     }
@@ -1275,7 +1296,7 @@ static void collectWhatTestsReplace(const ValueFlowResultInputs& inputs, ValueFl
     for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
         if (builtins.canBeReplacedInTestRuns(BuiltinID(index)))
             addHolder(builtins.at(BuiltinID(index)).holder);
-        if (builtins.canTakeNameInTestRuns(BuiltinID(index), { }))
+        if (builtins.canTakeNameInTestRuns(BuiltinID(index), { }) || !builtins.closedKeysOf(BuiltinID(index)).empty())
             addHolder(BuiltinID(index));
     }
     ValueSetID holders = heap.maker().of(objectsOfHolders.span());
@@ -1365,6 +1386,13 @@ static void collectWhatTestsReplace(const ValueFlowResultInputs& inputs, ValueFl
                         if (builtins.canBeReplacedInTestRuns(member))
                             writes.append({ member, { }, { } });
                     });
+                });
+                // `Object.assign(Response.prototype, makeMixin())`: what the objects have and the holder lacks is added.
+                if (ValueSets::isComplement(sources) || sets.meet(sources, universe.objectsThatMayBeAnything()))
+                    continue;
+                heap.index().forEachNameWritten([&](ValueFlowName name) {
+                    if (name.kind == ValueFlowNameKind::Property && heap.writtenUnder(heap.maker(), sources, name) != ValueSets::nothing)
+                        note(heap.maker(), receivers, PropertyKeyID(name.payload), writes);
                 });
             }
         }

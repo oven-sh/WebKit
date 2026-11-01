@@ -43,7 +43,7 @@ public:
         if (!m_watchedPlaces.isEmpty())
             solveBackward();
         rewrite();
-        m_code.proc().count(Counter::StepsToReleaseDeadValues, static_cast<uint32_t>(std::min<uint64_t>(m_steps, std::numeric_limits<uint32_t>::max())));
+        m_code.proc().count(Counter::DeadValueReleaseSteps, static_cast<uint32_t>(std::min<uint64_t>(m_steps, std::numeric_limits<uint32_t>::max())));
     }
 
 private:
@@ -364,6 +364,10 @@ private:
                 if (joins.empty())
                     continue;
                 unsigned numberSeen = std::exchange(numberSeenFor[successor->index()], m_placesWithOtherNames.size());
+#if ENABLE(AOT)
+                if (numberSeen != UINT_MAX && m_placesWithOtherNames.size() - numberSeen >= joins.size())
+                    numberSeen = UINT_MAX;
+#endif
                 if (numberSeen == UINT_MAX) {
                     m_steps += joins.size();
                     for (unsigned join : joins)

@@ -286,10 +286,22 @@ export interface DumpedLayout {
   fields: { name: string | null; isOptional: boolean; type: DumpedType }[];
 }
 
+/** `name` null: every other name and index. Several fields of one name: the object holds one of them. */
+export interface DumpedHostObject {
+  cell: string;
+  function: string | null;
+  prototype: string | null;
+  fields: { name: string | null; value: DumpedPlace }[];
+  keepsStringsOfStoredValues: boolean;
+  nativeAccessors: string[];
+  platforms: TargetPlatform[];
+}
+
 export interface TableDump {
   entries: DumpedEntry[];
   classes: DumpedClass[];
   layouts: DumpedLayout[];
+  hostObjects: DumpedHostObject[];
 }
 
 export function canonicalTextOf(value: unknown): string {

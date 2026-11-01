@@ -510,7 +510,7 @@ constexpr ptrdiff_t Instance::offsetOfSlotHandlers(SlotHandlerTable table)
 
 constexpr ptrdiff_t Instance::offsetOfBoxedCalls()
 {
-#if AOT_BOXED_CALLS_LIE_BELOW_INSTANCE
+#if AOT_BOXED_CALLS_LIE_OUTSIDE_INSTANCE
     return InstanceLayout::offsetOfBoxedCalls;
 #else
     return AOT_INSTANCE_OFFSET(stubs.boxedCalls);
@@ -529,9 +529,11 @@ static_assert(AOT_INSTANCE_OFFSET(runtimeTable) == InstanceLayout::offsetOfWords
 #else
 static_assert(!OBJECT_OFFSETOF(InstanceHeader, runtimeTable));
 #endif
-#if AOT_BOXED_CALLS_LIE_BELOW_INSTANCE
+#if AOT_BOXED_CALLS_LIE_OUTSIDE_INSTANCE
 static_assert(UINT8_MAX * sizeof(BoxedCallEntry) <= InstanceLayout::bytesReservedForBoxedCalls);
-static_assert(InstanceLayout::offsetOfBoxedCalls + static_cast<ptrdiff_t>(InstanceLayout::bytesReservedForBoxedCalls + sizeof(InstancePrefix)) <= 0);
+static_assert(InstanceLayout::offsetOfBoxedCalls < 0
+    ? InstanceLayout::offsetOfBoxedCalls + static_cast<ptrdiff_t>(InstanceLayout::bytesReservedForBoxedCalls + sizeof(InstancePrefix)) <= 0
+    : static_cast<ptrdiff_t>(sizeof(Instance)) <= InstanceLayout::offsetOfBoxedCalls);
 #endif
 static_assert(OBJECT_OFFSETOF(InstanceHeader, globalObject) <= 128);
 static_assert(AOT_INSTANCE_PREFIX_OFFSET(newArrayWithContiguousHeader) == -128);

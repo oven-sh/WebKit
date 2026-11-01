@@ -50,6 +50,7 @@ struct FlowModuleLoad {
     FunctionID function;
     ModuleID target;
     FlowWayIntoFile way { FlowWayIntoFile::NameMadeAtRunTime };
+    bool isAwaitedAtOnceInBodyOfFile { false };
 };
 
 struct FlowCall {

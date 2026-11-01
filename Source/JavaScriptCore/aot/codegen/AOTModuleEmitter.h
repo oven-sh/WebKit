@@ -21,6 +21,7 @@ public:
     void generateRecordRequire(const ValueContext&);
     void generateAreLoaderFunctionsStored(const ValueContext&);
     void generateWasLoadedSynchronously(const ValueContext&);
+    void generateSeesMockOf(const ValueContext&);
     void generateCountExecution(const ValueContext&);
     void generateResolveModule(const ValueContext&);
     void generateThrowModuleFailure(const ValueContext&);

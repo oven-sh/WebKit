@@ -228,7 +228,7 @@ private:
             Inst* access = findAccessTakingTrap(block, index);
             if (!access)
                 continue;
-            if (m_code.proc().policy().validation.keepsOriginsOfAccessesThatTakeTraps)
+            if (m_code.proc().policy().validation.keepsOriginsOfTrappingAccesses)
                 m_code.keepOriginOfAccessThatTakesTrap(trap.origin, access->origin);
             access->kind.effects = true;
             access->origin = trap.origin;

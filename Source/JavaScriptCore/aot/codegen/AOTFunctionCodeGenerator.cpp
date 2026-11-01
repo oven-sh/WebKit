@@ -280,7 +280,7 @@ static void appendClientPhases(B3::Policy& policy, const Program& program, const
     policy.clientPhases.append(carryWholeNumbersAsIntegersBeforeOptimization());
     policy.clientPhases.append(mergeImpliedBranchesAfterOptimization(program, function));
     policy.clientPhases.append(keepListLengthsInRegistersAfterOptimization());
-    policy.loops.isTakenOutOfLoopsByClient = isLengthOfList;
+    policy.loops.clientHoistsOutOfLoops = isLengthOfList;
     policy.clientPhases.append(narrowTruncatedPhisAfterOptimization());
     policy.clientPhases.append(updateIntegersInMemoryAfterOptimization(program, function));
     if (traits.savesFrameOnSuspend)
@@ -337,7 +337,7 @@ bool FunctionCodeGenerator::generateB3()
         }
         policy.clientPhases.append(guardNarrowReferences(m_numberOfLateReferenceGuards, WTF::move(origins)));
     }
-    policy.validation.keepsOriginsOfAccessesThatTakeTraps = options.validatesReferences;
+    policy.validation.keepsOriginsOfTrappingAccesses = options.validatesReferences;
     if (options.validatesReferences && !options.recorded.useWideReferences())
         policy.clientPhases.append(validateNarrowReferences(m_narrowReferenceFindings, { findNarrowReferences(m_function), &m_records.operationsWithCompressedOperand }));
     if (options.checksClaimsToBackEnd) {
@@ -345,7 +345,7 @@ bool FunctionCodeGenerator::generateB3()
         m_records.totals.entriesUsed.set(static_cast<size_t>(AOT::Entry::operationAOTReportBrokenClaim));
     }
     if (options.checksMovedLoads || options.checksDecidedComparisons) {
-        checkMovedLoadsAtRunTime(policy, m_id, m_procedure, m_records.guardTests, { .loads = options.checksMovedLoads, .decidedComparisons = options.checksDecidedComparisons });
+        checkMovedLoadsAtRunTime(policy, m_id, m_procedure, m_records.guardTests, { .loads = options.checksMovedLoads, .decidedComparisons = options.checksDecidedComparisons, .reportsComeBack = options.keepsGoingBehindFailedVerifications });
         m_records.totals.entriesUsed.set(static_cast<size_t>(AOT::Entry::operationAOTReportBrokenClaim));
     }
 #if AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE

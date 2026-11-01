@@ -224,6 +224,9 @@ MemberAnswer findNamespaceExport(const PropertyAccessContext& context, const Mem
     case ModuleExportKind::Namespace:
         if (entry.phase != ImportPhase::Evaluation)
             return MemberAnswer::unknown(UnprovenCause::Unknown);
+        // Under a mock that module may have two objects. Which of them this one hands on goes by when it was linked, and the run time knows that.
+        if (mayBeMocked(program, entry.module))
+            return MemberAnswer::unknown(UnprovenCause::UnknownObject);
         return { .kind = MemberKind::Namespace, .level = KnowledgeLevel::Proven, .module = entry.module };
     case ModuleExportKind::Indirect:
         return MemberAnswer::unknown(UnprovenCause::UnknownObject);

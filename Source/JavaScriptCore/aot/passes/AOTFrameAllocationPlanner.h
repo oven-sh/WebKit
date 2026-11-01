@@ -42,7 +42,7 @@ struct FrameDecision {
 
 inline constexpr std::array statisticsOfFramePlans {
     StatisticID::ClosuresInFrames, StatisticID::ClosuresLent, StatisticID::EnvironmentsInFrames, StatisticID::EnvironmentsOnHeap, StatisticID::EnvironmentsMaterializedLate,
-    StatisticID::ObjectsInFrames, StatisticID::EmptyArgumentListsShared, StatisticID::ArraysInFrames, StatisticID::RestArraysInFrames,
+    StatisticID::ObjectsInFrames, StatisticID::EmptyArgumentListsShared, StatisticID::ArraysInFrames, StatisticID::RestArraysInFrames, StatisticID::CellsWithoutRoomInFrames,
 };
 
 struct FramePlan {

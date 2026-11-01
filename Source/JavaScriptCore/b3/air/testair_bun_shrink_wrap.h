@@ -997,7 +997,7 @@ void testNothingIsWrittenAheadOfTestedFrame()
 
     {
         B3::Policy policy = policyThatTestsFrames();
-        policy.validation.setsUpFrameBehindWrites = true;
+        policy.validation.setsUpFrameAfterWrites = true;
         FrameGraph graph(policy);
         BasicBlock* early = graph.addReturn(1);
         BasicBlock* caller = graph.addReturn(2, Calls::Yes);

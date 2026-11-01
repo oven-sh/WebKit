@@ -711,6 +711,19 @@ TypeID GenericCopy::typeAssumedInTypedCode(ValueID value, TypeID type, const Bit
     return type;
 }
 
+bool GenericCopy::isTestOfBranchInOtherBlockThatPassesProofs(ValueID value) const
+{
+    const UseLists& useLists = m_analyses.useLists();
+    return std::ranges::any_of(useLists.usesOf(value), [&](const Use& use) {
+        if (use.kind != Use::Kind::TerminatorOperand || use.block == useLists.blockOf(value))
+            return false;
+        const Terminator& terminator = m_function.at(use.block).terminator;
+        return terminator.isConditionalBranch() && std::ranges::any_of(terminator.targets, [](const Target& target) {
+            return !target.proofs.isEmpty();
+        });
+    });
+}
+
 auto GenericCopy::planRejoin(const TestedRejoin& rejoin, const RejoinTypes& rejoinTypes, const BitVector& isCopy) -> std::optional<RejoinPlan>
 {
     TypeArena& types = m_context.types;
@@ -766,6 +779,8 @@ auto GenericCopy::planRejoin(const TestedRejoin& rejoin, const RejoinTypes& rejo
             return false;
         Type passing = given.castTo(testable, types);
         if (passing.isNever() || !passing.isSubsetOf(wanted, program))
+            return false;
+        if (!parameterIndex && isTestOfBranchInOtherBlockThatPassesProofs(inTypedCode))
             return false;
         plan.tests.append(RejoinTest { parameterIndex, inTypedCode, types.intern(testable) });
         return true;

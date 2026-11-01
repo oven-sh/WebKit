@@ -3547,8 +3547,13 @@ struct VariableCarrier : LoopEditor {
                     leavingEdges.append(Edge { id, targetIndex });
             }
         }
-        delayed.removeAllMatching([](const DelayedVariable& candidate) {
-            return candidate.isSeenByOthers || candidate.stores.isEmpty();
+        bool overlooksOthers = m_context.build.isSabotaged(Sabotage::DelayedStoresAreSeenByOthers);
+        delayed.removeAllMatching([&](const DelayedVariable& candidate) {
+            if (candidate.stores.isEmpty())
+                return true;
+            if (candidate.isSeenByOthers)
+                m_context.build.statistics().count(StatisticID::StoresLeftInLoopsForOthers);
+            return candidate.isSeenByOthers && !overlooksOthers;
         });
 
         auto storeAt = [&](ProgramPoint point) -> const Value& {
@@ -3701,6 +3706,70 @@ struct LoopPathSeparator : LoopEditor {
         bool widensLoopTypes { false };
     };
 
+    // What is asked about the values of one loop lies in tables of one entry a value of the function. They live as long as the pass and are empty between two loops:
+    // a loop fills the entries of its own values and empties them again, so a function of a thousand loops is not walked a thousand times.
+    struct TypesOfParameters {
+        WTF_MAKE_NONCOPYABLE(TypesOfParameters);
+        explicit TypesOfParameters(Vector<std::optional<Type>>& table)
+            : m_table(table)
+        {
+        }
+        TypesOfParameters(TypesOfParameters&& other)
+            : parameters(WTF::move(other.parameters))
+            , m_table(other.m_table)
+        {
+        }
+        ~TypesOfParameters()
+        {
+            for (ValueID parameter : parameters)
+                m_table[parameter.index()] = std::nullopt;
+        }
+        const std::optional<Type>& operator[](size_t index) const LIFETIME_BOUND { return m_table[index]; }
+        Type& add(ValueID parameter, Type&& type) LIFETIME_BOUND
+        {
+            parameters.append(parameter);
+            return m_table[parameter.index()].emplace(WTF::move(type));
+        }
+        Type& at(ValueID parameter) LIFETIME_BOUND { return *m_table[parameter.index()]; }
+
+        Vector<ValueID, 16> parameters { };
+
+    private:
+        Vector<std::optional<Type>>& m_table;
+    };
+    struct MarkedValues {
+        WTF_MAKE_NONCOPYABLE(MarkedValues);
+        explicit MarkedValues(BitVector& table)
+            : m_table(table)
+        {
+        }
+        MarkedValues(MarkedValues&& other)
+            : m_marked(WTF::move(other.m_marked))
+            , m_table(other.m_table)
+        {
+        }
+        ~MarkedValues()
+        {
+            for (uint32_t index : m_marked)
+                m_table.quickClear(index);
+        }
+        bool get(size_t index) const { return m_table.get(index); }
+        bool set(size_t index)
+        {
+            if (m_table.set(index))
+                return true;
+            m_marked.append(static_cast<uint32_t>(index));
+            return false;
+        }
+
+    private:
+        Vector<uint32_t, 16> m_marked { };
+        BitVector& m_table;
+    };
+
+    Vector<std::optional<Type>> m_typesOfParameters { };
+    BitVector m_markedValues { };
+    uint64_t m_entriesRead { 0 };
     Vector<TypeID> m_rememberedTypes { };
     BitVector m_isFinishedHeader { };
     BitVector m_isSeparatedHeader { };
@@ -3851,17 +3920,20 @@ struct LoopPathSeparator : LoopEditor {
     }
 
     // The types that the parameters of the staying blocks have once the leaving paths pass them nothing.
-    Vector<std::optional<Type>> typeParametersWithout(const BitVector& isInLoop, const BitVector& leaves)
+    TypesOfParameters typeParametersWithout(const BitVector& isInLoop, const BitVector& leaves)
     {
         Vector<BlockID, 16> blocksWithParameters;
-        Vector<std::optional<Type>> typeWithoutLeavingPaths(m_function.values.size());
+        if (m_typesOfParameters.size() < m_function.values.size())
+            m_typesOfParameters.grow(m_function.values.size());
+        TypesOfParameters typeWithoutLeavingPaths(m_typesOfParameters);
         for (size_t index : isInLoop) {
             if (leaves.get(index) || m_function.blocks[index].parameters.isEmpty())
                 continue;
             blocksWithParameters.append(BlockID(index));
             for (ValueID parameter : m_function.blocks[index].parameters)
-                typeWithoutLeavingPaths[parameter.index()] = Type::never();
+                typeWithoutLeavingPaths.add(parameter, Type::never());
         }
+        m_entriesRead += typeWithoutLeavingPaths.parameters.size();
 
         auto typeOnStayingEdge = [&](ValueID value) -> const Type& {
             const std::optional<Type>& narrowed = typeWithoutLeavingPaths[value.index()];
@@ -3879,7 +3951,7 @@ struct LoopPathSeparator : LoopEditor {
                         ValueID parameter = contents.parameters[position];
                         // An edge result has the type of its parameter.
                         const Type& incoming = !edge.isHandlerEdge() && position < arguments.size() ? typeOnStayingEdge(arguments[position]) : typeOf(parameter);
-                        Type& known = *typeWithoutLeavingPaths[parameter.index()];
+                        Type& known = typeWithoutLeavingPaths.at(parameter);
                         if (incoming.isSubsetOf(known, m_program))
                             continue;
                         known = known.unionWith(incoming, m_context.types);
@@ -4024,12 +4096,13 @@ struct LoopPathSeparator : LoopEditor {
     // The copy pays where an operation reads a parameter that is wider only for what a leaving path passes.
     bool narrowsParameter(const BitVector& isInLoop, const BitVector& leaves)
     {
-        Vector<std::optional<Type>> typeWithoutLeavingPaths = typeParametersWithout(isInLoop, leaves);
+        TypesOfParameters typeWithoutLeavingPaths = typeParametersWithout(isInLoop, leaves);
         const UseLists& uses = m_analyses.useLists();
-        for (size_t index = 0; index < typeWithoutLeavingPaths.size(); ++index) {
-            if (!typeWithoutLeavingPaths[index] || typeOf(ValueID(index)).isSubsetOf(*typeWithoutLeavingPaths[index], m_program))
+        m_entriesRead += typeWithoutLeavingPaths.parameters.size();
+        for (ValueID parameter : typeWithoutLeavingPaths.parameters) {
+            if (typeOf(parameter).isSubsetOf(typeWithoutLeavingPaths.at(parameter), m_program))
                 continue;
-            bool isRead = std::ranges::any_of(uses.usesOf(ValueID(index)), [](const Use& use) {
+            bool isRead = std::ranges::any_of(uses.usesOf(parameter), [](const Use& use) {
                 return use.kind != Use::Kind::EdgeArgument;
             });
             if (isRead)
@@ -4079,10 +4152,17 @@ struct LoopPathSeparator : LoopEditor {
         if (runsOtherCode)
             return false;
 
-        BitVector changesBetweenTurns(m_function.values.size());
-        for (BlockID block : m_analyses.cfg().reversePostOrder()) {
-            if (!stays(block))
-                continue;
+        MarkedValues changesBetweenTurns(m_markedValues);
+        Vector<BlockID, 16> stayingBlocks;
+        for (size_t index : isInLoop) {
+            if (!leaves.get(index) && m_analyses.cfg().isReachable(BlockID(index)))
+                stayingBlocks.append(BlockID(index));
+        }
+        std::ranges::sort(stayingBlocks, { }, [&](BlockID block) {
+            return m_analyses.cfg().reversePostOrderIndex(block);
+        });
+        m_entriesRead += stayingBlocks.size();
+        for (BlockID block : stayingBlocks) {
             const Block& contents = m_function.at(block);
             // What a test with one answer has proven is what it tested: `queue` as an object with a layout, behind the test that tells such an object from an array.
             std::optional<Edge> onlyWayIn = m_analyses.cfg().singleIncomingEdge(block);
@@ -4118,13 +4198,14 @@ struct LoopPathSeparator : LoopEditor {
     }
 
     // What the likely paths make of a parameter that gets narrower may get narrower with it.
-    BitVector findValuesMadeOfNarrowedParameters(const BitVector& isInLoop, const BitVector& leaves, const Vector<std::optional<Type>>& typeWithoutLeavingPaths)
+    MarkedValues findValuesMadeOfNarrowedParameters(const BitVector& isInLoop, const BitVector& leaves, const TypesOfParameters& typeWithoutLeavingPaths)
     {
-        BitVector isMadeOfNarrowedParameter(m_function.values.size());
+        MarkedValues isMadeOfNarrowedParameter(m_markedValues);
         Vector<ValueID, 16> worklist;
-        for (size_t index = 0; index < typeWithoutLeavingPaths.size(); ++index) {
-            if (typeWithoutLeavingPaths[index] && !typeOf(ValueID(index)).isSubsetOf(*typeWithoutLeavingPaths[index], m_program))
-                worklist.append(ValueID(index));
+        m_entriesRead += typeWithoutLeavingPaths.parameters.size();
+        for (ValueID parameter : typeWithoutLeavingPaths.parameters) {
+            if (!typeOf(parameter).isSubsetOf(*typeWithoutLeavingPaths[parameter.index()], m_program))
+                worklist.append(parameter);
         }
         auto stays = [&](BlockID block) {
             return isInLoop.get(block.index()) && !leaves.get(block.index());
@@ -4225,8 +4306,8 @@ struct LoopPathSeparator : LoopEditor {
         });
         if (pathsThatOnlyCompute == PathsThatOnlyCompute::Stay || leaves == isUnlikely)
             return leaves;
-        Vector<std::optional<Type>> typeOnLikelyPaths = typeParametersWithout(isInLoop, isUnlikely);
-        BitVector mayGetNarrower = findValuesMadeOfNarrowedParameters(isInLoop, isUnlikely, typeOnLikelyPaths);
+        TypesOfParameters typeOnLikelyPaths = typeParametersWithout(isInLoop, isUnlikely);
+        MarkedValues mayGetNarrower = findValuesMadeOfNarrowedParameters(isInLoop, isUnlikely, typeOnLikelyPaths);
         auto mayWidenParameter = [&](BlockID block) {
             return std::ranges::any_of(m_function.at(block).terminator.targets, [&](const Target& target) {
                 const CompactList<ValueID>& parameters = m_function.at(target.block).parameters;
@@ -4344,13 +4425,34 @@ struct LoopPathSeparator : LoopEditor {
         if (onlyLeavesObjectUnderOneName)
             plan.emptyPathsThatStay.clearAll();
 
+        // Many tests may fail into one block that holds nothing and goes on into a path that leaves. Entered from the loop and from its copy, the copy of that block would join every value that is
+        // alive there, and each of its edges would carry them all: tests times values. The block stays, and the one edge behind it leaves in place of theirs.
+        AOT_THRESHOLD(size_t, fewestEdgesGathered, 16);
+        BitVector staysToGatherEdges(m_function.blocks.size());
+        for (size_t index : leaves) {
+            const Block& block = m_function.blocks[index];
+            std::span<const Edge> incoming = m_analyses.cfg().incomingEdges(BlockID(index));
+            if (incoming.size() < fewestEdgesGathered || !block.values.isEmpty() || !block.parameters.isEmpty() || block.isHandlerBlock() || block.handler || block.terminator.kind != TerminatorKind::Jump)
+                continue;
+            const Target& next = block.terminator.next();
+            if (!next.proofs.isEmpty() || !leaves.get(next.block.index()))
+                continue;
+            bool isEnteredOnlyFromPathsThatStay = std::ranges::all_of(incoming, [&](Edge edge) {
+                return !edge.isHandlerEdge() && !leaves.get(edge.from.index()) && targetOf(m_function, edge).proofs.isEmpty();
+            });
+            if (isEnteredOnlyFromPathsThatStay)
+                staysToGatherEdges.set(index);
+        }
+
         BitVector isEntryOfCopy(m_function.blocks.size());
         for (size_t index : leaves) {
             BlockID block(index);
+            if (staysToGatherEdges.get(index))
+                continue;
             for (Edge edge : m_analyses.cfg().incomingEdges(block)) {
                 if (edge.isHandlerEdge())
                     return std::nullopt;
-                if (leaves.get(edge.from.index()))
+                if (leaves.get(edge.from.index()) && !staysToGatherEdges.get(edge.from.index()))
                     continue;
                 // The copy is entered here from the loop and from its own blocks. A guard speaks of the operands of one test, so two of them do not join.
                 uint32_t numberOfResults = numberOfEdgeResults(m_function, edge.from, edge.targetIndex);
@@ -4749,6 +4851,7 @@ struct LoopPathSeparator : LoopEditor {
         // Everything that enters the loop comes through one block, which is the header of the cycle through the copy. So the loop stays a loop of its own, with one entering edge.
         BlockID entry = builder.addBlock(frequencyOfLoop);
         BlockID tests = builder.addBlock(m_function.at(headerOfCopy).frequency);
+        constexpr uint32_t parametersForEdgeResultsWhileNothingEnters = 0;
         Arguments parametersOfEntry;
         Arguments carried;
         for (size_t index = 0; index < numberOfParameters; ++index) {
@@ -4759,8 +4862,8 @@ struct LoopPathSeparator : LoopEditor {
                 typeInLoop = types.unionOf(typeInLoop, plan.typesOfCarriedValues[index]);
             else if (TypeID taken = typesTakenFromCopy[index])
                 typeInLoop = taken;
-            parametersOfEntry.append(builder.addParameter(entry, typeInLoop));
-            carried.append(builder.addParameter(tests, plan.typesOfCarriedValues[index]));
+            parametersOfEntry.append(builder.addParameter(entry, typeInLoop, parametersForEdgeResultsWhileNothingEnters));
+            carried.append(builder.addParameter(tests, plan.typesOfCarriedValues[index], parametersForEdgeResultsWhileNothingEnters));
         }
         bool entersThroughTests = false;
         for (Edge edge : enteringEdges) {
@@ -5564,7 +5667,9 @@ PassOutcome separateUnlikelyLoopPaths(FunctionPassContext& context)
         return PassOutcome::Unchanged;
     PassOutcome outcome = testNumbersThatBoundLoopsAroundLoops(context);
     outcome |= ReaderFromTables { { context } }.run();
-    outcome |= LoopPathSeparator { { context } }.run();
+    LoopPathSeparator separator { { context } };
+    outcome |= separator.run();
+    context.build.statistics().count(StatisticID::EntriesReadToSeparateLoops, separator.m_entriesRead);
     outcome |= dropRepeatedReadsFromTables(context);
     outcome |= LoopVersioner { { context } }.run();
     outcome |= VariableCarrier { { context } }.run();

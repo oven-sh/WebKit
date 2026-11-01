@@ -459,6 +459,7 @@ private:
     {
         CheckSet checks = m_wire.checks;
         options.verifiesAfterEveryPass = hasFlag(checks, CheckSet::VerifyEachPass);
+        options.keepsGoingBehindFailedVerifications = hasFlag(checks, CheckSet::KeepGoing);
         options.verifiesAfterEveryStage = options.verifiesAfterEveryPass || hasFlag(checks, CheckSet::VerifyEachStage);
         options.recorded.validates = hasFlag(checks, CheckSet::Validate);
         options.verifiesProgram = options.verifiesAfterEveryStage || options.recorded.validates || Options::verifyAOTProgram();

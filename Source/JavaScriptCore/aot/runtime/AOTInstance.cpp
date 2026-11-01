@@ -458,6 +458,7 @@ Instance* reserveInstance(JSGlobalObject* realm)
     RELEASE_ASSERT(static_cast<ptrdiff_t>(AOT_INSTANCE_OFFSET(vm)) == JSWebAssemblyInstance::offsetOfVM());
 #endif
     Instance::destroyDeadInstances(vm);
+    forgetUnfinishedLoadsOfRetiredRealms(vm);
     VMState& vmState = vm.aotState();
     RunningImageScope firstImage(vmState, &vmState.image->first());
     if (!(vmState.image->programTables().flags & ProgramTables::mayRunInMultipleInstances) && numberOfRunningInstances(vmState))
@@ -689,7 +690,8 @@ Instance* Instance::create(JSGlobalObject* realm)
     RuntimeHooks::didChangeMicrotaskQueueing(vm);
 #if defined(BUN_HARDENED)
     OSAllocator::protect(instance->tableAt<uint8_t>(InstanceLayout::offsetOfWordsWrittenOnce), InstanceLayout::offsetOfKeyOrderSteps - InstanceLayout::offsetOfWordsWrittenOnce, true, false);
-    OSAllocator::protect(instance->boxedCalls().data(), InstanceLayout::bytesReservedForBoxedCalls, true, false);
+    if constexpr (InstanceLayout::offsetOfBoxedCalls < 0)
+        OSAllocator::protect(instance->boxedCalls().data(), InstanceLayout::bytesReservedForBoxedCalls, true, false);
 #endif
     releaseUnusedPagesOfThread();
     return instance;
