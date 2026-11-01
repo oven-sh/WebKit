@@ -1,10 +1,10 @@
 Prototype is new Error()
-runtest@ErrorPrototype.js:46:38
-global code@ErrorPrototype.js:62:8
+runtest@ErrorPrototype.js:46:29
+global code@ErrorPrototype.js:62:1
 
 Prototype has new Error()
-runtest@ErrorPrototype.js:46:38
-global code@ErrorPrototype.js:62:8
+runtest@ErrorPrototype.js:46:29
+global code@ErrorPrototype.js:62:1
 
 Prototype is Error.prototype
 undefined
@@ -13,12 +13,12 @@ Prototype has Error.prototype
 undefined
 
 Prototype is new RangeError()
-runtest@ErrorPrototype.js:48:43
-global code@ErrorPrototype.js:62:8
+runtest@ErrorPrototype.js:48:29
+global code@ErrorPrototype.js:62:1
 
 Prototype has new RangeError()
-runtest@ErrorPrototype.js:48:43
-global code@ErrorPrototype.js:62:8
+runtest@ErrorPrototype.js:48:29
+global code@ErrorPrototype.js:62:1
 
 Prototype is RangeError.prototype
 undefined
