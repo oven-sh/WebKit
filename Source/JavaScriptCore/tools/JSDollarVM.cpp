@@ -67,6 +67,7 @@
 #include "JSString.h"
 #include "LinkBuffer.h"
 #include "MarkedSpaceInlines.h"
+#include "ModuleRegistryEntry.h"
 #include "NativeCallee.h"
 #include "ObjectConstructor.h"
 #include "ObjectPropertyCondition.h"
@@ -2291,6 +2292,9 @@ static JSC_DECLARE_HOST_FUNCTION(functionEvacuateAuxiliaryBlocks);
 static JSC_DECLARE_HOST_FUNCTION(functionGlobalObjectCount);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateModuleLoader);
 static JSC_DECLARE_HOST_FUNCTION(functionModuleLoaderImport);
+#if USE(BUN_JSC_ADDITIONS)
+static JSC_DECLARE_HOST_FUNCTION(functionModuleLoaderLoadSync);
+#endif
 static JSC_DECLARE_HOST_FUNCTION(functionGlobalObjectForObject);
 static JSC_DECLARE_HOST_FUNCTION(functionGetGetterSetter);
 static JSC_DECLARE_HOST_FUNCTION(functionLoadGetterFromGetterSetter);
@@ -4456,6 +4460,42 @@ JSC_DEFINE_HOST_FUNCTION(functionModuleLoaderImport, (JSGlobalObject* globalObje
     RELEASE_AND_RETURN(scope, JSValue::encode(loader->importModule(globalObject, specifier, jsUndefined(), callFrame->callerSourceOrigin(vm), false)));
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// $vm.moduleLoaderLoadSync({ loader }, specifier): loads, links and evaluates the module through that loader before it
+// returns, relative to the caller, as `require()` of an ES module does in Bun (JSModuleLoader::loadModuleSync()).
+// Returns the namespace object. Throws what the load failed with, and a TypeError for a load that did not finish.
+JSC_DEFINE_HOST_FUNCTION(functionModuleLoaderLoadSync, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSModuleLoader* loader = moduleLoaderFromHolder(vm, callFrame->argument(0));
+    if (!loader)
+        return throwVMTypeError(globalObject, scope, "expected the result of $vm.createModuleLoader()"_s);
+    JSString* specifier = callFrame->argument(1).toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSValue referrer = jsString(vm, callFrame->callerSourceOrigin(vm).url().string());
+    Identifier key = loader->resolve(globalObject, specifier, referrer, nullptr, /* useImportMap */ true);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSPromise* promise = loader->loadModuleSync(globalObject, key, nullptr, nullptr);
+    RETURN_IF_EXCEPTION(scope, {});
+    promise->markAsHandled();
+    switch (promise->status()) {
+    case JSPromise::Status::Pending:
+        return throwVMTypeError(globalObject, scope, "the load of the module did not finish"_s);
+    case JSPromise::Status::Rejected:
+        throwException(globalObject, scope, promise->result());
+        return {};
+    case JSPromise::Status::Fulfilled:
+        break;
+    }
+    ModuleRegistryEntry* entry = loader->registryEntry(key);
+    if (!entry || !entry->record())
+        return throwVMTypeError(globalObject, scope, "the module has no record"_s);
+    RELEASE_AND_RETURN(scope, JSValue::encode(entry->record()->getModuleNamespace(globalObject)));
+}
+#endif
+
 JSC_DEFINE_HOST_FUNCTION(functionGlobalObjectForObject, (JSGlobalObject*, CallFrame* callFrame))
 {
     DollarVMAssertScope assertScope;
@@ -6284,6 +6324,9 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "globalObjectCount"_s, functionGlobalObjectCount, 0);
     addFunction(vm, allowIfNotFuzz, "createModuleLoader"_s, functionCreateModuleLoader, 2);
     addFunction(vm, allowIfNotFuzz, "moduleLoaderImport"_s, functionModuleLoaderImport, 2);
+#if USE(BUN_JSC_ADDITIONS)
+    addFunction(vm, allowIfNotFuzz, "moduleLoaderLoadSync"_s, functionModuleLoaderLoadSync, 2);
+#endif
     addFunction(vm, allowIfNotFuzz, "globalObjectForObject"_s, functionGlobalObjectForObject, 1);
 
     addFunction(vm, allowIfNotFuzz, "getGetterSetter"_s, functionGetGetterSetter, 2);
