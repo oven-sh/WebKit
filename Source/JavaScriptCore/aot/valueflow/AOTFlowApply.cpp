@@ -23,8 +23,12 @@
 #include "AOTThreshold.h"
 #include "AOTTypeClosure.h"
 #include "AOTValueIdentity.h"
+#include "Options.h"
 #include <array>
+#include <wtf/FilePrintStream.h>
 #include <wtf/HashMap.h>
+#include <wtf/HexNumber.h>
+#include <wtf/ProcessID.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -1277,6 +1281,85 @@ static void expectAccessorsDefinedBeforeInstances(Program& program, const FlowRe
     }
 }
 
+// BUN_JSC_dumpAOTIR=FlowFacts=<path>. What flow hands this pass, a line a fact, each thing named by its place in the source, so that two builds can be compared:
+// a program and the same with more code, or one program under two orders of the rules. test/aot/harness/flow-facts.ts in Bun reads it.
+// "%p" stands for the process. The second compile of a process writes <path>.1.
+static std::unique_ptr<FilePrintStream> openFileOfFlowFacts()
+{
+    StringView points = StringView::fromLatin1(byteCast<char>(Options::dumpAOTIR()));
+    if (!points.startsWith("FlowFacts="_s)) [[likely]]
+        return nullptr;
+    String name = makeStringByReplacingAll(points.substring(10).toString(), "%p"_s, String::number(getCurrentProcessID()));
+    static std::atomic<unsigned> filesWritten;
+    unsigned number = filesWritten++;
+    return FilePrintStream::open((number ? makeString(name, '.', number) : name).utf8(), "wb"_s);
+}
+
+static void writeFlowFacts(const Program& program, const FlowResults& results, const FlowApplication& application)
+{
+    std::unique_ptr<FilePrintStream> file = openFileOfFlowFacts();
+    if (!file)
+        return;
+    PrintStream& out = *file;
+    auto pathOf = [&](ModuleID module) { return String::fromUTF8(program.string(program.at(module).path)); };
+    auto placeOf = [&](FunctionID id) {
+        const Function& function = program.at(id);
+        Wire::SourceLocation location = function.declarationLocation();
+        return makeString(hasModule(location) ? pathOf(ModuleID(location.module)) : String(), ':', location.position, '/', static_cast<unsigned>(function.kind), '/', static_cast<unsigned>(function.role));
+    };
+    out.println("B\t", program.functions.size(), " functions");
+    for (uint32_t index = 0; index < application.bodies.size(); ++index) {
+        FunctionID id(index);
+        const Function& function = program.at(id);
+        String self = placeOf(id);
+        bool isReached = results.mayBeReached(id);
+        out.println("F\t", self, "\t", isReached ? "reached" : "unreached", "\t", function.values.size(), "\tf", index);
+        if (!isReached)
+            continue;
+        // An operation is the nth of its opcode at its position.
+        HashMap<uint64_t, unsigned, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> seen;
+        Vector<unsigned> ordinals(FillWith { }, function.values.size(), 0u);
+        for (uint32_t value = 0; value < function.values.size(); ++value)
+            ordinals[value] = seen.add((static_cast<uint64_t>(function.locationOf(ValueID(value)).position) << 16) | static_cast<uint64_t>(function.values[value].opcode), 0).iterator->value++;
+        auto siteOf = [&](ValueID value) {
+            return makeString(function.locationOf(value).position, '.', static_cast<unsigned>(function.at(value).opcode), '.', ordinals[value.index()]);
+        };
+        const FlowBodyUpdate& body = application.bodies[index];
+        for (const FlowCallStamp& stamp : body.calls) {
+            const CalleeSet& set = program.at(stamp.callees);
+            Vector<String> callees;
+            for (FunctionID callee : set.written().functions)
+                callees.append(placeOf(callee));
+            for (BuiltinID builtin : set.written().builtins)
+                callees.append(makeString('@', program.builtins().tokenOf(builtin)));
+            std::ranges::sort(callees, codePointCompareLessThan);
+            out.print(set.listsEveryCallee() ? "C" : "c", "\t", self, "\t", siteOf(stamp.value), "\t");
+            for (const String& callee : callees)
+                out.print(callee, " ");
+            out.println();
+        }
+        for (const FlowClaimUpdate& claim : body.claims)
+            out.println(claim.isRedundant ? "K" : "k", "\t", self, "\t", siteOf(claim.claim), "\t");
+    }
+    for (uint32_t index = 0; index < application.layouts.size(); ++index) {
+        const Layout& layout = program.at(LayoutID(index));
+        if (!layout.module)
+            continue;
+        const LayoutFlow& flow = application.layouts[index].flow;
+        out.print("L\t", pathOf(layout.module), ":", layout.position, "/", static_cast<unsigned>(layout.kind), "\t", flow.allocation == AllocationState::NeverAllocated ? "never" : "made", "\t", hex(flow.impossibleMutations.toRaw(), Lowercase), "\t");
+        for (const FlowAppendedField& field : application.layouts[index].appendedFields) {
+            const PropertyKey& key = program.at(field.key);
+            String name = key.text ? String::fromUTF8(program.string(key.text)) : String();
+            if (key.symbol)
+                name = makeString(name, "~w"_s, static_cast<unsigned>(*key.symbol));
+            if (key.module)
+                name = makeString(name, '~', pathOf(key.module), '~', key.callNumber.value_or(0));
+            out.print(static_cast<unsigned>(key.kind), ":", makeStringByReplacingAll(name, ' ', '_'), " ");
+        }
+        out.println();
+    }
+}
+
 void applyFlowResults(Program& program, FlowResults& results, BuildContext& build)
 {
     RELEASE_ASSERT(program.form() == IRForm::AsRead);
@@ -1294,6 +1377,8 @@ void applyFlowResults(Program& program, FlowResults& results, BuildContext& buil
     const FlowApplication* application = FlowApplyAccess::applicationOf(results);
     RELEASE_ASSERT(application);
     RELEASE_ASSERT(application->functionCountAsRead == program.functions.size());
+
+    writeFlowFacts(program, results, *application);
 
     FlowApplyContext context { program, results, *application, build };
     ProgramEditor editor(program);

@@ -185,9 +185,14 @@ static LoggingOptions readLoggingOptions()
     logging.functionToDump = UTF8CString { Options::aotFunctionToDump() };
     logging.mapFilePath = UTF8CString { Options::aotMapFilePath() };
 
-    if (Options::dumpAOTIR())
+    StringView points = StringView::fromLatin1(byteCast<char>(Options::dumpAOTIR()));
+    // valueflow/AOTFlowApply.cpp reads it.
+    bool asksForFlowFactsAlone = points.startsWith("FlowFacts="_s);
+    if (Options::dumpAOTIR() && !asksForFlowFactsAlone)
         dataLogLn("dumpAOTIR: only testaot prints IR. `bun build --compile --aot --aot-out=<file>` writes the program, and `testaot print <file> --until=<pass>` prints it");
-    for (StringView point : StringView::fromLatin1(byteCast<char>(Options::dumpAOTIR())).split(',')) {
+    for (StringView point : points.split(',')) {
+        if (asksForFlowFactsAlone)
+            break;
         if (auto pass = passNamed(point))
             logging.dumpedPass = pass;
         else
