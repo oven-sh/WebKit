@@ -1356,7 +1356,7 @@ static void writeFlowFacts(const Program& program, const FlowResults& results, c
                 name = makeString(name, '~', pathOf(key.module), '~', key.callNumber.value_or(0));
             out.print(static_cast<unsigned>(key.kind), ":", makeStringByReplacingAll(name, ' ', '_'), " ");
         }
-        out.println();
+        out.println("\t", static_cast<unsigned>(flow.cause));
     }
 }
 
