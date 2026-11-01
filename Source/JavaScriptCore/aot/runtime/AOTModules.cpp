@@ -2317,7 +2317,8 @@ void Modules::runMocksBelow(ModuleID root, RootOfLoad rootOfLoad)
         }
         if (isMocked(module))
             continue;
-        for (const ModuleRequestData& request : m_table.requests(module)) {
+        // Depth first, in the order of the text: what is taken first is appended last.
+        for (const ModuleRequestData& request : m_table.requests(module) | std::views::reverse) {
             // The load of a module that keeps the module itself does not come to the mock.
             if (!request.isHoisted && seesMockOf(request.targetModule(), module))
                 work.append(request.targetModule());
@@ -3432,6 +3433,39 @@ void deliverTextThatWaits(VM& vm)
 
 static JSC_DECLARE_HOST_FUNCTION(importBehindFactories);
 
+// Another load may have come to the mock first: `await Promise.all([import("./a"), import("./b")])`.
+JSPromise* Modules::factoryThatWaitsBelow(ModuleID root, FactoryAskedForBy askedBy, JSValue& state)
+{
+    if (!host().factoryThatWaits)
+        return nullptr;
+    std::optional<BitVector> reached;
+    return host().factoryThatWaits(m_instance.globalObject, [&](ModuleID moduleOfHost) {
+        std::optional<ModuleID> module = moduleOfImage(*m_instance.program, moduleOfHost);
+        if (!module)
+            return false;
+        if (!reached) {
+            reached.emplace(m_table.size());
+            Vector<ModuleID, 32> work { root };
+            while (!work.isEmpty()) {
+                ModuleID next = work.takeLast();
+                if (reached->quickSet(next.index()) || isMocked(next))
+                    continue;
+                for (const ModuleRequestData& request : m_table.requests(next)) {
+                    if (!request.isHoisted)
+                        work.append(request.targetModule());
+                }
+            }
+        }
+        return reached->quickGet(module->index());
+    }, askedBy, state);
+}
+
+JSPromise* Modules::goOnWithHeldImport(ModuleID module, std::optional<int64_t> referrerAsyncOrder, ImportCaller caller, TextOfImport text, JSValue stateOfWait)
+{
+    m_stateOfHeldImport = stateOfWait;
+    return startImport(module, referrerAsyncOrder, caller, text);
+}
+
 JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrerAsyncOrder, ImportCaller caller, TextOfImport text, JSPromise* promiseOfCaller)
 {
     JSGlobalObject* realm = m_instance.globalObject;
@@ -3451,7 +3485,8 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
         }
     }
     // The loader of `bun run` waits for a factory before it goes on with the graph.
-    if (JSPromise* factories = host().factoriesThatWait ? host().factoriesThatWait(realm) : nullptr) [[unlikely]] {
+    JSValue stateOfWait = std::exchange(m_stateOfHeldImport, JSValue());
+    if (JSPromise* factories = factoryThatWaitsBelow(module, text == TextOfImport::MayComeLater || stateOfWait ? FactoryAskedForBy::ImportCall : FactoryAskedForBy::ImportCallBehindItsText, stateOfWait)) [[unlikely]] {
         VM& vm = *m_instance.vm;
         JSPromise* promise = promiseForCaller();
         JSFunction* goOn = JSFunction::create(vm, realm, 2, String(), importBehindFactories, ImplementationVisibility::Private);
@@ -3460,6 +3495,7 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
         call.append(referrerAsyncOrder ? jsNumber(static_cast<double>(*referrerAsyncOrder)) : jsUndefined());
         call.append(jsBoolean(caller == ImportCaller::Host));
         call.append(jsNumber(static_cast<uint32_t>(text)));
+        call.append(stateOfWait);
         JSArray* heldCall = constructArray(realm, static_cast<ArrayAllocationProfile*>(nullptr), call);
         RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
         factories->performPromiseThenWithContext(vm, realm, goOn, jsUndefined(), promise, heldCall);
@@ -5993,7 +6029,7 @@ JSC_DEFINE_HOST_FUNCTION(importBehindFactories, (JSGlobalObject* realm, CallFram
     JSValue order = heldCall->getIndexQuickly(1);
     std::optional<int64_t> referrerAsyncOrder = order.isUndefined() ? std::nullopt : std::optional(static_cast<int64_t>(order.asNumber()));
     auto caller = heldCall->getIndexQuickly(2).asBoolean() ? Modules::ImportCaller::Host : Modules::ImportCaller::CompiledCode;
-    return JSValue::encode(modulesOf(realm)->startImport(module, referrerAsyncOrder, caller, static_cast<Modules::TextOfImport>(heldCall->getIndexQuickly(3).asUInt32())));
+    return JSValue::encode(modulesOf(realm)->goOnWithHeldImport(module, referrerAsyncOrder, caller, static_cast<Modules::TextOfImport>(heldCall->getIndexQuickly(3).asUInt32()), heldCall->getIndexQuickly(4)));
 }
 
 JSPromise* importModule(JSGlobalObject* realm, ModuleID moduleOfHost, std::optional<int64_t> referrerAsyncOrder)
@@ -6320,6 +6356,13 @@ void didChangePlugins(JSGlobalObject* realm)
         if (Modules* modules = instance->state->modules.get())
             modules->forgetWhatNamesResolvedTo();
     }
+}
+
+JSPromise* factoryThatWaitsBelow(JSGlobalObject* realm, ModuleID moduleOfHost, JSValue& state)
+{
+    ModuleFromHost module(realm, moduleOfHost);
+    Modules* modules = modulesOf(realm);
+    return modules ? modules->factoryThatWaitsBelow(module, FactoryAskedForBy::Loader, state) : nullptr;
 }
 
 void runMocksBelow(JSGlobalObject* realm, ModuleID moduleOfHost)

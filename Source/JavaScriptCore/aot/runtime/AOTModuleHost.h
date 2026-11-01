@@ -58,6 +58,9 @@ enum class RequireOverride : uint8_t {
 };
 
 // A host without the thing that a member is for leaves the member null.
+// An import() whose text came in a later turn asks anew there, where nothing says any more who called it: it waits for what it starts alone.
+enum class FactoryAskedForBy : uint8_t { ImportCall, ImportCallBehindItsText, Loader };
+
 struct ModuleHost {
     void (*createModuleObject)(JSGlobalObject*, JSString* path, ModuleID, OptionSet<ModuleObjectTrait>, ModuleObjects&);
     // For a file that is no CommonJS file, where only `require` has a name.
@@ -106,9 +109,11 @@ struct ModuleHost {
     bool (*loadsFileItself)(JSGlobalObject*, const String& path);
     // An import() in compiled code has begun. The promise is the loader's own where the loader is asked, or else the one that the program gets. The path is null for a file that nothing may mock. Null in a host where nothing waits for imports.
     void (*didStartImport)(JSGlobalObject*, JSPromise*, const String& path);
-    // Factories that runMock() has called have answered promises that have not settled: a promise that is fulfilled once each has settled and its mock is laid, and rejected with what one has thrown.
-    // Null where none waits, and in a host without mocks.
-    JSPromise* (*factoriesThatWait)(JSGlobalObject*);
+    // A factory that runMock() has called for one of the modules asked about has answered a promise that has not settled: a promise that is fulfilled once it has and its mock is laid, and
+    // rejected with what it has thrown. Null where none waits, and in a host without mocks.
+    // Whoever asks does so behind runMock(), and again each time the promise that it was given has settled. `state` is empty at first; the host keeps there what it knows of the one who asks:
+    // which factories it has started itself, for which it waits whatever becomes of their mocks, and which factories it was called from, for which an import() does not wait.
+    JSPromise* (*factoryThatWaits)(JSGlobalObject*, const ScopedLambda<bool(ModuleID)>& isAskedAbout, FactoryAskedForBy, JSValue& state);
     // Whether what loads now is loaded by a file that runs ahead of the test files. Nothing: the run is no test run. Null in a host without test runs.
     std::optional<bool> (*isInPreload)(JSGlobalObject*);
 };
@@ -293,6 +298,8 @@ JS_EXPORT_PRIVATE void didEndMock(JSGlobalObject*, ModuleID);
 // So too while the factory runs and nothing is laid yet. Empty for a file that never ran: the mock stands in its place.
 JS_EXPORT_PRIVATE JSValue exportsBeforeMock(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void runMocksBelow(JSGlobalObject*, ModuleID);
+// ModuleHost::factoryThatWaits, asked about the modules that a load of this one comes to.
+JS_EXPORT_PRIVATE JSPromise* factoryThatWaitsBelow(JSGlobalObject*, ModuleID, JSValue& state);
 // Behind runMocksBelow() that threw: it was the factory of the module itself, and an import statement asks for the module.
 JS_EXPORT_PRIVATE bool mockFailedBehindImportStatement(JSGlobalObject*, ModuleID);
 // The loader may answer for a name with another module than before: the next import() of a name that is left to it asks again.
