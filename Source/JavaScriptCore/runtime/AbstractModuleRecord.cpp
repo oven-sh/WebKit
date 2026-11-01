@@ -547,14 +547,10 @@ bool AbstractModuleRecord::collectPrelinkedNamespaceResolutions(JSGlobalObject* 
             RETURN_IF_EXCEPTION(scope, false);
         }
         switch (resolution->type) {
+        // GetModuleNamespace leaves out a name that does not resolve. The module that has it in an `export { name } from`
+        // throws when it is linked (InitializeEnvironment), and that error says which statement it is.
         case Resolution::Type::NotFound:
-            if (m_isTypeScript)
-                break;
-            throwSyntaxError(globalObject, scope, makeString("Exported binding name '"_s, StringView(exportName.impl()), "' is not found."_s));
-            return false;
         case Resolution::Type::Error:
-            throwSyntaxError(globalObject, scope, "Exported binding name 'default' cannot be resolved by star export entries."_s);
-            return false;
         case Resolution::Type::Ambiguous:
             break;
         case Resolution::Type::Resolved:
@@ -1509,16 +1505,20 @@ JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject
         const Resolution resolution = resolveExport(globalObject, ident);
         RETURN_IF_EXCEPTION(scope, nullptr);
         switch (resolution.type) {
-        case Resolution::Type::NotFound:
 #if USE(BUN_JSC_ADDITIONS)
-            if(m_isTypeScript) break;
-#endif
+        // As in collectPrelinkedNamespaceResolutions(): a name that does not resolve is left out.
+        case Resolution::Type::NotFound:
+        case Resolution::Type::Error:
+            break;
+#else
+        case Resolution::Type::NotFound:
             throwSyntaxError(globalObject, scope, makeString("Exported binding name '"_s, StringView(name.get()), "' is not found."_s));
             return nullptr;
 
         case Resolution::Type::Error:
             throwSyntaxError(globalObject, scope, "Exported binding name 'default' cannot be resolved by star export entries."_s);
             return nullptr;
+#endif
 
         case Resolution::Type::Ambiguous:
             break;
