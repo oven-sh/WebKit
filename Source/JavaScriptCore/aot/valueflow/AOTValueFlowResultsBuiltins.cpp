@@ -1286,7 +1286,7 @@ static void collectWhatTestsReplace(const ValueFlowResultInputs& inputs, ValueFl
     for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
         if (builtins.canBeReplacedInTestRuns(BuiltinID(index)))
             addHolder(builtins.at(BuiltinID(index)).holder);
-        if (builtins.canTakeNameInTestRuns(BuiltinID(index), { }))
+        if (builtins.canTakeNameInTestRuns(BuiltinID(index), { }) || !builtins.closedKeysOf(BuiltinID(index)).empty())
             addHolder(BuiltinID(index));
     }
     ValueSetID holders = heap.maker().of(objectsOfHolders.span());
