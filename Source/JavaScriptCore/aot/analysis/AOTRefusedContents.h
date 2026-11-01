@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTIR.h"
+#include "AOTOutgrownTable.h"
 #include "AOTVector.h"
 #include <array>
 #include <atomic>
@@ -137,6 +138,8 @@ private:
             }
             tables.append(WTF::move(larger));
             table.store(tables.last().get(), std::memory_order_release);
+            if (tables.size() > 1)
+                letGoOfPagesOfOutgrownTable(tables[tables.size() - 2]->mutableSpan());
             return *tables.last();
         }
 

@@ -1,0 +1,15 @@
+# bun test --aot --coverage: the body of main.js counts that it ran
+# The operation gets the number of the module, the text that says what the counters of the file count, and the number of the counter.
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot
+# RUN: lower-to-b3 f0
+# CHECK-LABEL: name="main" role=Source
+# CHECK: Patchpoint($0({{*}}, $0({{*}}, $7({{*}}v0:CountExecution)
+# CHECK-LABEL: end of function
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    CountExecution module=m0 description="/main.js" counter=7
+    Return
+}

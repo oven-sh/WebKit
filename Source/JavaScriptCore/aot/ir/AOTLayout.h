@@ -19,6 +19,7 @@
 namespace JSC { namespace AOT {
 
 class BuildContext;
+class ParallelLoops;
 
 namespace Typed {
 
@@ -41,6 +42,9 @@ struct Layout : LayoutRecord {
     void indexFields();
 
     uint32_t appendField(Field&&);
+
+    // `function F() {}` whose prototype object inherits from the one of `class A extends Array`, and every class below F: `new F()` makes an ordinary object, `Reflect.construct(A, [], F)` an array.
+    bool mayBeOrdinaryObject { false };
 
 private:
     struct IndexedField {
@@ -113,8 +117,17 @@ bool hasFieldsFilledAtBirth(const Program&, LayoutID);
 bool isNeverStored(const Program&, FieldReference);
 std::optional<FieldReference> findField(const Program&, LayoutID, PropertyKeyID, BaseChain);
 LayoutID expectedBaseOf(const Layout&);
+LayoutID nearestLayoutAlwaysAbove(const LayoutFlow&);
 LayoutID predictedHeritageOf(const Layout&);
 BuiltinClassID builtinBaseClassOf(const Program&, LayoutID);
+// `class A extends Map`, and every subclass of A: Layout::writtenBuiltinBase is Map. It reflects the source, so it never changes during the build.
+void noteSubclassesOfBuiltinClasses(Program&, const ParallelLoops&);
+// Objects of the class are cells that a built-in class's constructor creates for `super(..)`. Their Structures carry the class's brand from creation, whatever happens to the object later.
+bool carriesBrandOfClass(const Program&, LayoutID);
+// Objects of a subclass of a built-in class have properties from construction on: the class's fields, or those the built-in constructor adds.
+bool isCreatedWithProperties(const Program&, LayoutID, BuiltinClassID builtinBase);
+// HasNoExtraProperties can distinguish such an object that has only those properties from one that has gained others.
+bool hasTestForOtherNames(const Program&, LayoutID);
 bool hasOnlyCompiledBases(const Program&, LayoutID);
 bool isEvaluatedOnce(const Program&, const Layout&);
 bool guardsAreNeverSet(const Program&, const Layout&);

@@ -1,0 +1,95 @@
+# A slot that a loop reads and stores goes around in a variable, and its store waits for the edges that leave.
+# f0: the object is stored into itself. Only the stored operand of the delayed store becomes the variable.
+# f1: the read allows a layout that the store does not name, so the variable is typed wider than the field. The object has the layout of the store, so the variable holds the type of the field.
+# f2: the store names two layouts whose fields differ in type. The variable may hold what only one of them takes, so the store stays in the loop.
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot check=VerifyEachPass
+# RUN: pass SeparateUnlikelyLoopPaths VerifyProgram
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Node" fields=[{key="self" declared={type=null|L0} flags=[IsRequired, IsEnforced] flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+layout L1 name="Fractions" fields=[{key="a" declared={type=fractional} flags=[IsRequired, IsEnforced] flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+layout L2 name="Numbers" fields=[{key="a" declared={type=int|fractional} flags=[IsRequired, IsEnforced] flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+function f0 name="storesItself" parameters=[{type=L0}, {type=i32}] results=[{type=i32}] {
+  b0(v0: L0, v1: i32):
+    v2 = Integer
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v1
+    Branch v5 -> taken b2(| 0), notTaken b5()
+  b2(v6):
+    v7 = GetSlot v0 key="self" receivers=[L0] level=Proven
+    v8 = TypeTest v7 testedType=null
+    Branch v8 -> taken b3(), notTaken b4()
+  b3():
+    PutSlot v0, -, v0 key="self" receivers=[L0] level=Proven
+    Jump -> next b4()
+  b4():
+    v10 = Increment v6
+    Jump -> next b1(v10)
+  b5():
+    Return v3
+}
+function f1 name="readAllowsMore" parameters=[{type=L1}, {type=i32}] results=[{type=number}] {
+  b0(v0: L1, v1: i32):
+    v2 = Integer
+    v3 = Double number=0.5
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v4, v1
+    Branch v7 -> taken b2(| 0), notTaken b5()
+  b2(v8):
+    v9 = GetSlot v0 key="a" receivers=[L1, L2] level=Proven
+    v10 = Add v5, v9
+    v11 = Integer integer=20
+    v12 = StrictEq v8, v11
+    Branch v12 -> taken b3(), notTaken b4()
+  b3():
+    v13 = Double number=2.5
+    PutSlot v0, -, v13 key="a" receivers=[L1] level=Proven
+    Jump -> next b4()
+  b4():
+    v15 = Increment v8
+    Jump -> next b1(v15, v10)
+  b5():
+    Return v5
+}
+function f2 name="storeNamesTwoLayouts" parameters=[{type=L1|L2}, {type=i32}] results=[{type=number}] {
+  b0(v0: L1|L2, v1: i32):
+    v2 = Integer
+    v3 = Double number=0.5
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v4, v1
+    Branch v7 -> taken b2(| 0), notTaken b5()
+  b2(v8):
+    v9 = GetSlot v0 key="a" receivers=[L1, L2] level=Proven
+    v10 = Add v5, v9
+    v11 = Integer integer=20
+    v12 = StrictEq v8, v11
+    Branch v12 -> taken b3(), notTaken b4()
+  b3():
+    v13 = Double number=2.5
+    PutSlot v0, -, v13 key="a" receivers=[L1, L2] level=Proven
+    Jump -> next b4()
+  b4():
+    v15 = Increment v8
+    Jump -> next b1(v15, v10)
+  b5():
+    Return v5
+}
+# CHECK: function f0
+# CHECK: ([[object]]: L0,
+# CHECK: [[variable]]: null|L0):
+# CHECK-NEXT: LoopHint
+# CHECK: PutSlot [[object]], -, [[variable]] key="self" receivers=[L0] level=Proven
+# CHECK: function f1
+# CHECK: [[wide]]: int|fractional):
+# CHECK-NEXT: [[narrow]]: fractional = AssumeType [[wide]] provenType=fractional
+# CHECK: PutSlot {{*}}, -, [[narrow]] key="a" receivers=[L1] level=Proven
+# CHECK: function f2
+# CHECK: [[stored]]: fractional = Double number=2.5
+# CHECK-NEXT: PutSlot {{*}}, -, [[stored]] key="a" receivers=[L1, L2] level=Proven

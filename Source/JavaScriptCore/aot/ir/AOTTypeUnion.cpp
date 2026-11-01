@@ -14,6 +14,7 @@
 #include "AOTTypeArena.h"
 #include "AOTVector.h"
 #include <algorithm>
+#include <wtf/BitVector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -106,6 +107,22 @@ Type Type::unionWith(const Type& other, TypeArena& arena) const
     return result;
 }
 
+static bool includesAll(std::span<const LayoutID> family, std::span<const LayoutID> members)
+{
+    if (family.size() < members.size() || members.front() < family.front() || family.back() < members.back())
+        return false;
+    if (family.size() / 16 < members.size())
+        return std::ranges::includes(family, members);
+    auto position = family.begin();
+    for (LayoutID member : members) {
+        position = std::lower_bound(position, family.end(), member);
+        if (position == family.end() || *position != member)
+            return false;
+        ++position;
+    }
+    return true;
+}
+
 static bool liesInsideDeclaredFamily(const WideningContext& context, const Type& type)
 {
     const Program& program = context.program;
@@ -113,14 +130,17 @@ static bool liesInsideDeclaredFamily(const WideningContext& context, const Type&
     if (members.empty())
         return false;
 
-    Vector<LayoutID, 16> visited { declaredLayoutOf(program, members[0]) };
+    // A layout of a large program has thousands of layouts above it: a search of the list for each of them is quadratic.
+    Vector<LayoutID, 16> visited;
+    BitVector isVisited(program.layouts.size());
     auto visit = [&](LayoutID above) {
-        if (above && !visited.contains(above))
+        if (above && !isVisited.quickSet(above.index()))
             visited.append(above);
     };
+    visit(declaredLayoutOf(program, members[0]));
     for (size_t index = 0; index < visited.size(); ++index) {
         std::span<const LayoutID> family = program.at(program.declaredMembersOf(visited[index])).completeMembers();
-        if (family.size() >= members.size() && std::ranges::includes(family, members))
+        if (includesAll(family, members))
             return true;
         const Layout& layout = program.at(visited[index]);
         visit(layout.base);
@@ -133,10 +153,14 @@ static bool liesInsideDeclaredFamily(const WideningContext& context, const Type&
 static bool widenGrownLists(Type& type, const Type& first, const Type& second, const WideningContext& context)
 {
     std::optional<bool> liesInsideTypeBefore;
-    auto exceeds = [&](LimitID limit, const Invocable<size_t(const Type&)> auto& sizeIn) {
+    auto hasGrownPast = [&](LimitID limit, const Invocable<size_t(const Type&)> auto& sizeIn) {
         size_t size = sizeIn(type);
-        if (size <= std::max(sizeIn(first), sizeIn(second)) || size <= context.build.limit(limit))
+        return size > std::max(sizeIn(first), sizeIn(second)) && size > context.build.limit(limit);
+    };
+    auto exceeds = [&](LimitID limit, const Invocable<size_t(const Type&)> auto& sizeIn) {
+        if (!hasGrownPast(limit, sizeIn))
             return false;
+        size_t size = sizeIn(type);
         if (context.typeBefore && size <= sizeIn(*context.typeBefore)) {
             if (!liesInsideTypeBefore)
                 liesInsideTypeBefore = type.isSubsetOf(*context.typeBefore, context.program);
@@ -158,17 +182,15 @@ static bool widenGrownLists(Type& type, const Type& first, const Type& second, c
     auto numberOfLayouts = [&](const Type& listed) -> size_t {
         return membersOf(context.types.table(), listed).size();
     };
-    bool widensLayouts = numberOfLayouts(type) > context.build.limit(LimitID::MaxLayoutsInType) && !liesInsideDeclaredFamily(context, type) && exceeds(LimitID::MaxLayoutsInType, numberOfLayouts);
-    bool widensClasses = exceeds(LimitID::MaxClassesInType, sizeOf(&Type::classes));
+    bool widensLayouts = hasGrownPast(LimitID::MaxLayoutsInType, numberOfLayouts) && !liesInsideDeclaredFamily(context, type) && exceeds(LimitID::MaxLayoutsInType, numberOfLayouts);
     bool widensFunctions = exceeds(LimitID::MaxFunctionsInType, sizeOf(&Type::functions));
-    bool widensBuiltins = exceeds(LimitID::MaxBuiltinsInType, sizeOf(&Type::builtins));
     bool widensRegExpLiterals = exceeds(LimitID::MaxRegExpLiteralsInType, sizeOf(&Type::regExpLiteralSet));
 
     if (widensStrings)
         type.primitives |= Primitive::String;
     if (widensSymbols)
         type.primitives |= Primitive::Symbol;
-    if (widensLayouts || widensClasses || widensBuiltins)
+    if (widensLayouts)
         type.anyObject = true;
     if (widensFunctions) {
         type.anyFunction = true;
@@ -176,7 +198,7 @@ static bool widenGrownLists(Type& type, const Type& first, const Type& second, c
     }
     if (widensRegExpLiterals)
         type.regExpLiteralSet.clear();
-    return widensStrings || widensSymbols || widensLayouts || widensClasses || widensFunctions || widensBuiltins || widensRegExpLiterals;
+    return widensStrings || widensSymbols || widensLayouts || widensFunctions || widensRegExpLiterals;
 }
 
 Type Type::unionWideningWith(const Type& other, const WideningContext& context) const

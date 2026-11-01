@@ -19,7 +19,7 @@
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
-runtimefunction id=34 function=f1
+runtimefunction id=ArrayPrototypeFind function=f1
 function f0 name="main" kind=Module results=[{type=anything}] {
     v0 = Integer integer=1
     v1 = NewArray v0 contents=anything
@@ -28,7 +28,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v4 = Call v3, v1, v2 calleeKey="find"
     Return
 }
-function f1 name="find" role=Library flags=[HasThis] enclosingRuntimeFunction=34 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+function f1 name="find" role=Library flags=[HasThis] enclosingRuntimeFunction=ArrayPrototypeFind parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
     v3 = PropGet v0 key="length"
     v4 = Integer integer=0
     v5 = ElemGet v0, v4

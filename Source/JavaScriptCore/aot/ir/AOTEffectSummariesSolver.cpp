@@ -30,12 +30,15 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static bool isBodyThatOnlyStartOfProgramEnters(const Program& program, const FlowResults& flow, FunctionID id)
 {
-    return program.entries.size() == 1 && program.at(program.entries[0].module).body == id && runsAtMostOnce(flow, id);
+    const Function& function = program.at(id);
+    FunctionID body = function.role == FunctionRole::GenericEntrypoint ? function.derivation.source : id;
+    return program.entries.size() == 1 && program.at(program.entries[0].module).body == body && runsAtMostOnce(flow, body);
 }
 
 static bool mayBeEnteredByUnknownCode(const Program& program, const FlowResults& flow, FunctionID id, const Function& function, const StoredBodySummary& body)
 {
-    bool mayBeResumed = body.onReturn().maySuspend();
+    // The function that resumes a generator with a heap frame suspends nowhere: it returns, and a step enters it again.
+    bool mayBeResumed = body.onReturn().maySuspend() || function.role == FunctionRole::CoroutineBody;
     if (mayBeResumed)
         return true;
     if (callerStateOf(flow, id) == CallerState::AllKnown || isBodyThatOnlyStartOfProgramEnters(program, flow, id))
@@ -227,6 +230,7 @@ void EffectSummarizer::bringSeedUpToDate(EffectSummaries& summaries)
     if (!summaries.m_masks)
         summaries = EffectSummaries(Ref { m_kept.m_masks }, EffectSummaries::Contents::Any);
     RELEASE_ASSERT(summaries.m_masks == m_kept.m_masks.ptr());
+    summaries.forgetAnswersForCalleeLists();
     m_kept.countLoweredBodiesWithNewStorageAsChanged();
     findRecordsThatLookDifferent();
     BorrowedParameters borrowed = m_kept.computeBorrowedParametersFromLatestTable(m_program, m_build, m_kept.m_stampsOfRecords.span(), m_recordLooksDifferent.span());
@@ -252,6 +256,7 @@ void EffectSummarizer::finishUpdate(EffectSummaries& summaries)
         times.didFinish("solveAgain"_s);
     else
         solveAll(summaries, times);
+    summaries.forgetAnswersForCalleeLists();
     if (m_build.options().logging.logsPhaseTimes && !m_isOnlyCheck) [[unlikely]]
         dataLogLn("AOT effect summaries: ", m_program.functions.size(), " functions | ", m_kept.m_numberOfNodes, " nodes | ", m_kept.m_masks->size(), " distinct location masks");
     if (!m_build.options().verifiesAfterEveryPass || m_isOnlyCheck || !m_numberOfFunctionsBefore)
@@ -278,7 +283,8 @@ public:
         add(declared.writtenFlags().toRaw());
     }
 
-    void add(const Vector<DeclaredType>& types)
+    template<typename Position>
+    void add(const Vector<Position>& types)
     {
         add(types.size());
         for (const DeclaredType& declared : types)
@@ -422,6 +428,7 @@ void EffectSummarizer::updateSeed(BorrowedParameters&& borrowed)
     m_kept.m_parametersWhoseContentsAreCalled = WTF::move(contentsAreCalled);
 
     EffectSummaries& seed = m_kept.m_seed.write();
+    seed.forgetAnswersForCalleeLists();
     seed.grow(numberOfFunctions, &loops);
     Vector<uint32_t> functionsToSeed = findIndicesInParallel(loops, numberOfFunctions, [&](unsigned index) {
         return index >= m_numberOfFunctionsBefore || m_recordLooksDifferent[index] || (!m_hasNewSeed.isEmpty() && m_hasNewSeed[index]);
@@ -442,6 +449,24 @@ void EffectSummarizer::updateSeed(BorrowedParameters&& borrowed)
             RELEASE_ASSERT(seed.of(FunctionID(index)) == createSummaryFromFlow(m_program, m_flow, m_kept.m_borrowed, m_build, FunctionID(index)));
         });
     }
+    seed.forgetAnswersForCalleeLists();
+    if (!m_rowsOfBodies)
+        return;
+    RELEASE_ASSERT(!m_numberOfFunctionsBefore && m_rowsOfBodies->size() == numberOfFunctions);
+    forEachIndexInParallel(loops, numberOfFunctions, [&](unsigned index) {
+        std::span<StoredParameterSummary> seeded = seed.parametersOf(index);
+        StoredParameterRange range = m_rowsOfBodies->m_parameterRanges[index];
+        std::span<const StoredParameterSummary> read = m_rowsOfBodies->m_parameters.subspan(range.first, range.size);
+        RELEASE_ASSERT(seeded.size() == read.size());
+        for (uint32_t parameter = 0; parameter < seeded.size(); ++parameter) {
+            bool saysLess = read[parameter].uses != seeded[parameter].uses && !(read[parameter].uses & ~seeded[parameter].uses);
+            if (!saysLess)
+                continue;
+            seeded[parameter].uses = read[parameter].uses;
+            seeded[parameter].retainedIn = read[parameter].retainedIn;
+        }
+    });
+    seed.forgetAnswersForCalleeLists();
 }
 
 Vector<ReasonToSummarize> EffectSummarizer::findReasonsToSummarize() const
@@ -501,6 +526,7 @@ static Vector<FunctionID> functionsOfClosuresMadeBy(const Function& function)
 void EffectSummarizer::summarizeBodies()
 {
     AOT_THRESHOLD(size_t, fewestValuesOfLongFunction, 4096);
+    RELEASE_ASSERT(m_calleesAreRead == CalleesAreRead::AsTheyAre || !m_numberOfFunctionsBefore);
     const ParallelLoops& loops = m_build.parallelLoops();
     unsigned numberOfFunctions = m_program.functions.size();
 
@@ -508,7 +534,7 @@ void EffectSummarizer::summarizeBodies()
         FunctionID id(index);
         EffectContext context { m_program, seed };
         std::unique_ptr<FunctionAnalyses> analyses = createAnalysesForSummary(m_build, context, m_flow, id, m_program.functions[index]);
-        return summarizeBodyLocally(context, id, *analyses, references);
+        return summarizeBodyLocally(context, id, *analyses, references, m_calleesAreRead);
     };
     auto summarizeAndGiveReferences = [&](const EffectSummaries& seed, unsigned index) {
         if (!m_references)
@@ -587,12 +613,11 @@ void EffectSummarizer::summarizeBodies()
         doesSomethingElse.insertFill(firstPosition, 0, numberToSummarize);
         usesOperandsOtherwise.insertFill(firstPosition, 0, numberToSummarize);
         functionsNamedForTheFirstTime.grow(functionsToSummarize.size());
-        Vector<uint64_t> longFunctions;
-        for (uint32_t position = 0; position < numberToSummarize; ++position) {
+        Vector<uint64_t> longFunctions = collectInParallel<uint64_t>(loops, numberToSummarize, [&](unsigned position, Vector<uint64_t>& found) {
             size_t numberOfValues = m_program.functions[functionsToSummarize[firstPosition + position]].values.size();
             if (numberOfValues >= fewestValuesOfLongFunction)
-                longFunctions.append((UINT32_MAX - static_cast<uint64_t>(numberOfValues)) << 32 | position);
-        }
+                found.append((UINT32_MAX - static_cast<uint64_t>(numberOfValues)) << 32 | position);
+        });
         AOT::sort(longFunctions);
         Vector<uint32_t> longestFirst = longFunctions.map([](uint64_t key) {
             return static_cast<uint32_t>(key);
@@ -648,6 +673,8 @@ void EffectSummarizer::summarizeBodies()
                 row.retainedIn = read[parameter].retainedIn;
             }
         }
+        if (seedWithRowsOfBodies)
+            seedWithRowsOfBodies->forgetAnswersForCalleeLists();
     };
     for (Turn turn : { Turn::GenericVersions, Turn::ResultWorkers }) {
         uint32_t firstPosition = summarizeBodiesOf(turn);
@@ -886,7 +913,7 @@ CompactEffects EffectSummarizer::compactSolvedEffectsOf(uint32_t node)
 
 void EffectSummarizer::assemble(EffectSummaries& summaries, FunctionID id)
 {
-    constexpr uint8_t flagsOfBothEdges = CompactEffects::MayThrow | CompactEffects::MayThrowByRule | CompactEffects::MayCollect | CompactEffects::MayBeTerminated;
+    constexpr uint8_t flagsOfBothEdges = CompactEffects::MayThrow | CompactEffects::MayThrowOtherThanStackOverflow | CompactEffects::MayThrowByRule | CompactEffects::MayCollect | CompactEffects::MayBeTerminated;
     InternedLocationMasks& masks = m_kept.m_masks;
     auto restrictedToPerObjectHeaps = [&](uint32_t masksOfNode) {
         return m_masksOfPerObjectHeaps.get(masksOfNode, [&] {
@@ -1337,12 +1364,13 @@ void EffectSummarizer::numberAllNodes()
     unsigned numberOfFunctions = m_program.functions.size();
     m_kept.m_firstNode.grow(numberOfFunctions);
     m_kept.m_numberOfNodesOf.grow(numberOfFunctions);
+    forEachIndexInParallel(m_build.parallelLoops(), numberOfFunctions, [&](unsigned index) {
+        m_kept.m_numberOfNodesOf[index] = 2 + m_kept.m_bodies[index].numberOfParameters();
+    });
     uint32_t firstNode = 0;
     for (unsigned index = 0; index < numberOfFunctions; ++index) {
-        uint32_t numberOfOwnNodes = 2 + m_kept.m_bodies[index].numberOfParameters();
         m_kept.m_firstNode[index] = firstNode;
-        m_kept.m_numberOfNodesOf[index] = numberOfOwnNodes;
-        firstNode += numberOfOwnNodes;
+        firstNode += m_kept.m_numberOfNodesOf[index];
     }
     m_kept.m_numberOfNodes = firstNode;
 }
@@ -1394,12 +1422,14 @@ void EffectSummarizer::createNodes()
 
     Vector<uint32_t> firstSourceIn(numberOfFunctions);
     Vector<uint32_t> firstNodeEntered(numberOfFunctions);
+    forEachIndexInParallel(loops, numberOfFunctions, [&](unsigned index) {
+        firstSourceIn[index] = m_kept.m_bodies[index].numberOfDependencies();
+    });
     uint64_t numberOfDependencies = 0;
     uint64_t numberOfNodesEntered = 0;
     for (unsigned index = 0; index < numberOfFunctions; ++index) {
-        firstSourceIn[index] = static_cast<uint32_t>(numberOfDependencies);
+        numberOfDependencies += std::exchange(firstSourceIn[index], static_cast<uint32_t>(numberOfDependencies));
         firstNodeEntered[index] = static_cast<uint32_t>(numberOfNodesEntered);
-        numberOfDependencies += m_kept.m_bodies[index].numberOfDependencies();
         numberOfNodesEntered += isEnteredByUnknownCode[index] ? m_kept.m_numberOfNodesOf[index] : 0;
     }
     RELEASE_ASSERT(numberOfDependencies + numberOfNodesEntered <= UINT32_MAX);
@@ -1620,13 +1650,23 @@ void EffectSummarizer::resolveNodesInAndAboveCycles(std::span<const uint32_t> no
         Effects united = Effects::none();
         uint8_t takesInUnknownCode = 0;
         std::span<const uint32_t> members = components.membersOf(component);
+        // Many nodes have the same effects, and the union only grows.
+        std::array<CompactEffects, 16> lastMerged { };
+        auto mergeEffectsOf = [&](uint32_t node) {
+            CompactEffects effects = m_kept.m_effects[node];
+            CompactEffects& last = lastMerged[(effects.reads() ^ effects.writes()) % lastMerged.size()];
+            if (last == effects)
+                return;
+            last = effects;
+            masks.mergeInto(united, effects);
+        };
         for (uint32_t member : members) {
-            masks.mergeInto(united, m_kept.m_effects[nodes[member]]);
+            mergeEffectsOf(nodes[member]);
             takesInUnknownCode |= m_kept.m_takesInUnknownCode[nodes[member]];
             for (uint32_t source : sourcesAt(member)) {
                 if (components.componentOf[source] == component)
                     continue;
-                masks.mergeInto(united, m_kept.m_effects[nodes[source]]);
+                mergeEffectsOf(nodes[source]);
                 takesInUnknownCode |= m_kept.m_takesInUnknownCode[nodes[source]];
             }
         }

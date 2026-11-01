@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCompactList.h"
 #include "AOTFlowResults.h"
 #include "AOTTypeArena.h"
 #include <wtf/FastMalloc.h>
@@ -26,8 +27,8 @@ struct FlowPositionUpdate {
 
 struct FlowAccessorField {
     OptionSet<FieldForm> form;
-    Vector<FunctionID, 1> getters;
-    Vector<FunctionID, 1> setters;
+    CompactList<FunctionID> getters;
+    CompactList<FunctionID> setters;
 
     bool isAccessor() const { return form.contains(FieldForm::IsAccessor); }
 };
@@ -52,6 +53,9 @@ struct FlowAppendedField {
     FlowPositionUpdate position;
     FieldFlow flow;
     FlowAccessorField accessor;
+    bool isFilledByCreators { false };
+    // For a field that holds a value: the form in which every definition creates the property.
+    OptionSet<FieldForm> formOfValue;
 };
 
 struct FlowLayoutUpdate {
@@ -64,6 +68,7 @@ struct FlowLayoutUpdate {
     bool objectsAreDictionaries { false };
     bool objectsArePrototypesOfCreatedObjects { false };
     bool isHandedToObjectCreateAlone { false };
+    bool createsFieldsOnlyInLiterals { false };
 };
 
 struct FlowVariableUpdate {
@@ -83,6 +88,13 @@ struct FlowValueProof {
     TypeID type;
     // The type is what flow holds of the value, and flow follows what a check turns away. Otherwise it was cut out of the type of the value as read, which may be owed to a check.
     bool holdsInEveryVersion { false };
+    TypeID typeByLayoutsOfClassesBelowBuiltinClasses { };
+};
+
+// A prediction, not a proof: a test guards whatever is made of it.
+struct FlowValueExpectation {
+    ValueID value;
+    TypeID type;
 };
 
 struct FlowClaimUpdate {
@@ -134,19 +146,21 @@ struct FlowMemberKey {
 };
 
 struct FlowBodyUpdate {
-    Vector<FlowValueProof> proofs;
-    Vector<ValueID> readsAfterInitialization;
-    Vector<ValueID> opensOfUndecidedStorage;
-    Vector<FlowClaimUpdate> claims;
-    Vector<FlowAccessStamp> accesses;
-    Vector<FlowCallStamp> calls;
-    Vector<FlowTailCallUpdate> tailCalls;
-    Vector<FlowAllocationStamp> allocations;
-    Vector<FlowSymbolConstant> symbolConstants;
+    CompactList<FlowValueProof> proofs;
+    CompactList<FlowValueExpectation> expectations;
+    CompactList<ValueID> readsAfterInitialization;
+    CompactList<ValueID> opensOfUndecidedStorage;
+    CompactList<FlowClaimUpdate> claims;
+    CompactList<FlowAccessStamp> accesses;
+    CompactList<FlowCallStamp> calls;
+    CompactList<FlowTailCallUpdate> tailCalls;
+    CompactList<FlowAllocationStamp> allocations;
+    CompactList<FlowSymbolConstant> symbolConstants;
+    CompactList<FlowMemberKey> keysOfMembers;
+    CompactList<ValueID> namesTakenFromOneKey;
     Vector<FlowDefinedValue> definedValues;
-    Vector<FlowMemberKey> keysOfMembers;
-    Vector<ValueID> namesTakenFromOneKey;
 };
+static_assert(sizeof(FlowBodyUpdate) <= 112);
 
 template<typename Entry, typename Member>
 const Entry* findByValue(std::span<const Entry> ascendingEntries, ValueID value, Member Entry::* member)
@@ -184,6 +198,12 @@ void forEachAccessSiteValue(const Function& function, NOESCAPE const Invocable<v
     }
 }
 
+// `class B extends either {}`: an object of B has room for the private names of each parent that it may have. Whoever brings an object to an access under such a name, it has the name in the field for it.
+struct FlowLayoutsWithPrivateName {
+    PropertyKeyID key;
+    Vector<LayoutID> layouts;
+};
+
 struct FlowApplication {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(FlowApplication);
 
@@ -193,6 +213,8 @@ struct FlowApplication {
     Vector<FlowVariableUpdate> variables;
     Vector<FlowSignatureUpdate> signatures;
     Vector<FlowBodyUpdate> bodies;
+    // In the order of the keys. Only names for which a field was appended.
+    Vector<FlowLayoutsWithPrivateName> layoutsWithPrivateNames;
     bool hasDictionaries { false };
     Vector<std::pair<TypeID, TypeID>> typesBehindDictionaries;
     Vector<std::pair<TypeID, TypeID>> typesTestedBehindDictionaries;

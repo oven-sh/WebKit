@@ -58,6 +58,7 @@ static std::optional<DerivedSignature> signatureOfProvisionalCallee(Emission& em
     case FunctionRole::ResultWorker:
     case FunctionRole::ParameterWrapper:
     case FunctionRole::EntryChecks:
+    case FunctionRole::ChecksThatGiveUp:
     case FunctionRole::OutlinedBody:
     case FunctionRole::ChainStep:
     case FunctionRole::StubBody:

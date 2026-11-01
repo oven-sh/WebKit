@@ -6,7 +6,7 @@
 # FORM: Prepared optimizing
 # OPTIONS: heat=EverythingIsCold
 # RUN: pass ExpandOwnKeys
-# STATISTIC: OwnKeyWalksExpanded = 6
+# STATISTIC: OwnKeyWalksExpanded = 9
 
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Made" fields=[{key="a" declared={type=number}}, {key="b" declared={type=number}}, {key="c" declared={type=number}}]

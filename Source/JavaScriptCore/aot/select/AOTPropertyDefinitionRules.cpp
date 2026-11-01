@@ -161,12 +161,19 @@ static void setDefinitionOperands(Value& definition, const DescriptorMatch& matc
     definition.setDescriptorFlags(match.descriptor.flags);
 }
 
+static bool isPropertyKey(SelectionContext& context, ValueID key)
+{
+    return context.typeOf(key).hasOnlyPrimitives(Primitive::AnyString | Primitive::AnySymbol);
+}
+
 static bool hasEffectsOfDefinition(SelectionContext& context, ValueID call, const DescriptorMatch& match)
 {
     FunctionAnalyses& analyses = context.analyses();
     Value definition = IRBuilder::make(Opcode::DefineOwnProperty);
     setDefinitionOperands(definition, match);
-    return effectsOf(analyses.effectContext(), context.function(), definition).isSubsetOf(analyses.effectsOf(call));
+    if (!effectsOf(analyses.effectContext(), context.function(), definition).isSubsetOf(analyses.effectsOf(call)))
+        return false;
+    return isPropertyKey(context, match.key) || effectsOf(analyses.effectContext(), context.function(), IRBuilder::make(Opcode::ToPropertyKey, { match.key })).isSubsetOf(analyses.effectsOf(call));
 }
 
 // `__proto__: null` in the literal: nothing is looked for above it, so its own members are all that the built-in reads.
@@ -197,11 +204,12 @@ static std::optional<DescriptorMatch> matchDescriptorCall(SelectionContext& cont
         return std::nullopt;
 
     std::optional<DescriptorCallOperands> operands = descriptorCallOperandsOf(program, call);
-    if (!operands || !context.typeOf(operands->key).hasOnlyPrimitives(Primitive::AnyString | Primitive::AnySymbol))
+    // A key that is no object becomes a name without running anybody's code.
+    if (!operands || !context.typeOf(operands->key).isJavaScriptValue() || context.typeOf(operands->key).hasObjects())
         return std::nullopt;
     // The operation hands what is no object to the built-in, which refuses it.
     const Type& typeOfObject = context.typeOf(operands->object);
-    if (!typeOfObject.hasObjects() || !typeOfObject.isJavaScriptValue() || (!typeOfObject.isObject() && context.analyses().useLists().useCount(id)))
+    if (!typeOfObject.hasObjects() || !typeOfObject.isJavaScriptValue())
         return std::nullopt;
 
     ValueID finishID = operands->descriptor;
@@ -374,7 +382,10 @@ void selectDescriptorLiteral(SelectionContext& context)
 
     context.rewriteGroups(SelectionRuleID::DescriptorLiteral, matches, [&](GroupRewriter& rewriter, const DescriptorMatch& match) {
         createClosuresAtDefinition(context.program(), rewriter.function(), match);
-        setDefinitionOperands(rewriter.replaceRoot(Opcode::DefineOwnProperty), match);
+        ValueID key = isPropertyKey(context, match.key) ? match.key : rewriter.insert(IRBuilder::make(Opcode::ToPropertyKey, { match.key }));
+        Value& definition = rewriter.replaceRoot(Opcode::DefineOwnProperty);
+        setDefinitionOperands(definition, match);
+        definition.setOperand(OperandIndex::DefineOwnProperty::computedKey, key);
     });
 }
 

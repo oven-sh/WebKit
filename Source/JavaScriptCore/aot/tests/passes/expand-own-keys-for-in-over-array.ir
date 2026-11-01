@@ -1,0 +1,141 @@
+# A for-in loop over a list has a copy of its body for the indexed part of the enumerator. There the key is an integer: an access under it is an access under the index, whatever the object is, and the text
+# is made for whoever else takes the key. A position past the indexed part and an element that is not in the storage go on in the loop as written, from the same position
+# FORM: Prepared optimizing
+# OPTIONS: heat=EverythingIsHot check=VerifyEachPass
+# RUN: pass ExpandOwnKeys
+# STATISTIC: OwnKeyWalksExpanded = 3
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="sums" parameters=[{type=Array<number>}] results=[{type=number}] {
+  b0(v0: Array<number>):
+    v1 = Integer integer=0
+    v2 = ForInOpen v0
+    v3 = Integer integer=0
+    Jump -> next b1(v1, v3)
+  b1(v4: number, v5: int[0, 8589934591]):
+    LoopHint
+    v7 = ForInStep v2, v0 position=v5
+    v8 = ResultAt v7 index=0
+    v9 = ResultAt v7 index=1
+    v10 = ResultAt v7 index=2
+    Branch v8 -> taken b3(), notTaken b2()
+  b2():
+    v11 = ElemGet v0, v9
+    v12 = ToNumber v11
+    v13 = Add v4, v12
+    v14 = Integer integer=1
+    v15 = Add v10, v14
+    Jump -> next b1(v13, v15)
+  b3():
+    Return v4
+# An enumerator without an indexed part never enters the copy.
+# CHECK: v2:{{*}}= ForInOpen v0
+# CHECK: [[length0]]: int[0, 4294967295] = GetEnumeratorIndexedLength v2
+# CHECK-NEXT: [[hasIndexes0]]: boolean = Less v3, [[length0]]
+# CHECK-NEXT: Branch [[hasIndexes0]] -> taken [[copy0]](v1, v3), notTaken b1(v1, v3)
+# The loop as written is as it was.
+# CHECK: v7:{{*}}= ForInStep v2, v0 position=v5
+# CHECK: = ElemGet v0, v9
+# What is returned comes from either loop.
+# CHECK: b3([[sum0]]: number):
+# CHECK-NEXT: Return [[sum0]]
+# CHECK: = ElemGet v0, [[index0]]
+# CHECK: Jump -> next [[copy0]](
+# CHECK: [[copy0]]([[carried0]]: number, [[position0]]: int[0, 8589934591]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: [[isIndex0]]: boolean = Less [[position0]], [[length0]]
+# CHECK-NEXT: Branch [[isIndex0]] -> taken [[inside0]](| 0), notTaken [[past0]](| 0)
+# CHECK: [[inside0]]([[index0]]: int[0, 4294967294]):
+# CHECK-NEXT: [[isThere0]]: boolean = IsElementInStorage v0, [[index0]]
+# CHECK-NEXT: Branch [[isThere0]] -> taken [[there0]](), notTaken [[absent0]]()
+# CHECK: [[past0]]({{*}}) frequency=Unlikely:
+# CHECK-NEXT: [[end0]]: int[0, 4294967295] = ToEnumeratorPosition [[position0]]
+# CHECK-NEXT: Jump -> next b1([[carried0]], [[end0]])
+# CHECK: [[there0]]():
+# CHECK-NEXT: = ToString [[index0]]
+# CHECK: [[absent0]]() frequency=Unlikely:
+# CHECK-NEXT: [[same0]]: int[0, 4294967295] = ToEnumeratorPosition [[position0]]
+# CHECK-NEXT: Jump -> next b1([[carried0]], [[same0]])
+}
+
+function f1 name="everyKindOfAccess" parameters=[{type=Array}, {type=object}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: Array, v1: object, v2: anything):
+    v3 = ForInOpen v0
+    v4 = Integer integer=0
+    Jump -> next b1(v4)
+  b1(v5: int[0, 8589934591]):
+    LoopHint
+    v7 = ForInStep v3, v0 position=v5
+    v8 = ResultAt v7 index=0
+    v9 = ResultAt v7 index=1
+    v10 = ResultAt v7 index=2
+    Branch v8 -> taken b3(), notTaken b2()
+  b2():
+    v11 = ElemGet v0, v9
+    ElemSet v1, v9, v11
+    v13 = ElemHas v1, v9
+    v14 = ElemDelete v0, v9
+    v15 = Call v2, -, v9
+    v16 = Integer integer=1
+    v17 = Add v10, v16
+    Jump -> next b1(v17)
+  b3():
+    Return
+# CHECK: = Call v2, -, v9
+# CHECK: [[read1]]: anything = ElemGet v0, [[index1]]
+# CHECK-NEXT: ElemSet v1, [[index1]], [[read1]]
+# CHECK-NEXT: = ElemHas v1, [[index1]]
+# A removal and the callee get the text.
+# CHECK-NEXT: = ElemDelete v0, [[key1]]
+# CHECK-NEXT: = Call v2, -, [[key1]]
+# CHECK: ({{*}}, [[key1]]: string, {{*}}):
+# CHECK: ([[index1]]: int[0, 4294967294]):
+}
+
+function f2 name="expectedList" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything ~ undefined|null|Array<string>):
+    v1 = ForInOpen v0
+    v2 = Integer integer=0
+    Jump -> next b1(v2)
+  b1(v3: int[0, 8589934591]):
+    LoopHint
+    v5 = ForInStep v1, v0 position=v3
+    v6 = ResultAt v5 index=0
+    v7 = ResultAt v5 index=1
+    v8 = ResultAt v5 index=2
+    Branch v6 -> taken b3(), notTaken b2()
+  b2():
+    v9 = ElemGet v0, v7
+    v10 = Integer integer=1
+    v11 = Add v8, v10
+    Jump -> next b1(v11)
+  b3():
+    Return
+# No type is tested: what has no element in its storage fails the test of the first turn.
+# CHECK-NOT: TypeTest
+# CHECK: = IsElementInStorage v0,
+# CHECK-NOT: TypeTest
+}
+
+function f3 name="nothingExpected" parameters=[{type=anything}, {type=Map<string, number>}] results=[{type=undefined}] {
+  b0(v0: anything, v1: Map<string, number>):
+    v2 = ForInOpen v0
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4: int[0, 8589934591]):
+    LoopHint
+    v6 = ForInStep v2, v0 position=v4
+    v7 = ResultAt v6 index=0
+    v8 = ResultAt v6 index=1
+    v9 = ResultAt v6 index=2
+    Branch v7 -> taken b3(), notTaken b2()
+  b2():
+    v10 = ElemGet v0, v8
+    v11 = Integer integer=1
+    v12 = Add v9, v11
+    Jump -> next b1(v12)
+  b3():
+    Return
+# CHECK-NOT: IsElementInStorage
+}

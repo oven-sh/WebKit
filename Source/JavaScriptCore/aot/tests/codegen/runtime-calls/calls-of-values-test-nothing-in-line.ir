@@ -13,29 +13,29 @@ function f0 name="callsUnderName" parameters=[{type=anything}] results=[{type=an
     Return v3
 }
 # CHECK: f0: size=
-# CHECK-NEXT: stub CallValue.n1 x1
-# CHECK-NEXT: stub CallValueWithCount x1
-# CHECK-NEXT: stub CallValueWithoutThis.n1 x1
+# CHECK-NEXT: stub CallValue.Ordinary.n1 x1
+# CHECK-NEXT: stub CallValueWithCount.Ordinary x1
+# CHECK-NEXT: stub CallValueWithoutThis.Ordinary.n1 x1
 # CHECK-NEXT: f1: size=[[tail]] frame=
 function f1 name="tailCallUnderName" parameters=[{type=anything}] results=[{type=anything}] {
     v1 = Call v0, -, v0 calleeName="input" @30
     ReturnCall v1
 }
-# CHECK-NEXT: stub CallValueWithoutThis.n1 x1
+# CHECK-NEXT: stub CallValueWithoutThis.InTailPosition.n1 x1
 # CHECK-NEXT: stub ThrowUnlessCallable x1
 # CHECK-NEXT: f2: size=[[tail]] frame=
 function f2 name="tailCallWithoutName" parameters=[{type=anything}] results=[{type=anything}] {
     v1 = Call v0, -, v0 @30
     ReturnCall v1
 }
-# CHECK-NEXT: stub CallValueWithoutThis.n1 x1
+# CHECK-NEXT: stub CallValueWithoutThis.InTailPosition.n1 x1
 # CHECK-NEXT: stub ThrowUnlessCallable x1
 # CHECK-NEXT: f3: size=
 function f3 name="tailCallOfFunction" parameters=[{type=function}] results=[{type=anything}] {
     v1 = Call v0, -, v0 calleeName="input" @30
     ReturnCall v1
 }
-# CHECK-NEXT: stub CallValueCellWithoutThis.n1 x1
+# CHECK-NEXT: stub CallValueCellWithoutThis.InTailPosition.n1 x1
 # CHECK-NEXT: f4: size=
 function f4 name="callsObject" parameters=[{type=object}] results=[{type=anything}] {
     v1 = Call v0, -, v0 @30
@@ -43,7 +43,7 @@ function f4 name="callsObject" parameters=[{type=object}] results=[{type=anythin
     v3 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v2 @50
     Return v3
 }
-# CHECK-NEXT: stub CallCellWithCount x1
-# CHECK-NEXT: stub CallValueCell.n1 x1
-# CHECK-NEXT: stub CallValueCellWithoutThis.n1 x1
+# CHECK-NEXT: stub CallCellWithCount.Ordinary x1
+# CHECK-NEXT: stub CallValueCell.Ordinary.n1 x1
+# CHECK-NEXT: stub CallValueCellWithoutThis.Ordinary.n1 x1
 # CHECK-NEXT: statistic ThrowSites 0

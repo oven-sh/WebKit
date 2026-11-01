@@ -16,10 +16,10 @@ public:
     explicit HintEmitter(CodeGenerator&);
 
     void generateLoopHint(const ValueContext&);
+    void generateReleaseHint(const ValueContext&);
     void pollWhereNoFrameIsSetUp(const OperationContext&);
 
 private:
-    bool allocatesWhereErrorsAreCaught(BlockID);
     void emitPoll(const ValueContext&);
 };
 

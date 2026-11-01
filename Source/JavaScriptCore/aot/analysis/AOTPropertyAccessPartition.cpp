@@ -9,7 +9,9 @@
 #if ENABLE(AOT)
 
 #include "AOTPropertyAccessCache.h"
+#include "AOTThreshold.h"
 #include <wtf/CommaPrinter.h>
+#include <wtf/HashMap.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -92,23 +94,76 @@ static bool mayAnswerLikeOtherLayouts(const Layout& layout)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+// The same for answers that belong to one arm. Merging an answer into an arm leaves it as it is.
+static uint64_t hashOfArm(const MemberAnswer& answer)
+{
+    uint64_t member = 0;
+    switch (answer.kind) {
+    case MemberKind::Unknown:
+    case MemberKind::Absent:
+    case MemberKind::Field:
+        break;
+    case MemberKind::Method:
+        member = answer.method.index();
+        break;
+    case MemberKind::Accessor:
+        member = static_cast<uint64_t>(answer.getter.index()) << 32 | answer.setter.index();
+        break;
+    case MemberKind::Variable:
+        member = answer.variable.index();
+        break;
+    case MemberKind::Namespace:
+        member = answer.module.index();
+        break;
+    case MemberKind::Builtin:
+        member = answer.builtin.index();
+        break;
+    }
+    return (member * 0x9e3779b97f4a7c15ull ^ static_cast<uint64_t>(answer.kind) << 1 ^ static_cast<uint64_t>(answer.needsNoTest())) * 0x9e3779b97f4a7c15ull;
+}
+
 static MemberPartition partitionByAnswer(std::span<const LayoutID> candidates, NOESCAPE const Invocable<MemberAnswer(LayoutID)> auto& answerFor)
 {
     MemberPartition result;
+    // A thousand classes with a method each are a thousand arms: each layout would be held against all of them.
+    AOT_THRESHOLD(size_t, mostArmsSearchedOneByOne, 16);
+    UncheckedKeyHashMap<uint64_t, Vector<uint32_t, 1>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> armsByHash;
+    auto noteArm = [&](size_t index) {
+        armsByHash.add(hashOfArm(result.arms[index].answer), Vector<uint32_t, 1> { }).iterator->value.append(static_cast<uint32_t>(index));
+    };
+    auto findArmFor = [&](const MemberAnswer& answer) -> size_t {
+        if (result.arms.size() <= mostArmsSearchedOneByOne) {
+            return result.arms.findIf([&](const MemberArm& arm) {
+                return belongToOneArm(arm.answer, answer);
+            });
+        }
+        if (armsByHash.isEmpty()) {
+            for (size_t index = 0; index < result.arms.size(); ++index)
+                noteArm(index);
+        }
+        auto found = armsByHash.find(hashOfArm(answer));
+        if (found == armsByHash.end())
+            return notFound;
+        for (uint32_t index : found->value) {
+            if (belongToOneArm(result.arms[index].answer, answer))
+                return index;
+        }
+        return notFound;
+    };
     for (LayoutID layout : candidates) {
         MemberAnswer answer = answerFor(layout);
         if (!answer.isKnown()) {
             result.rest.add(layout);
             continue;
         }
-        size_t armIndex = result.arms.findIf([&](const MemberArm& arm) {
-            return belongToOneArm(arm.answer, answer);
-        });
+        size_t armIndex = findArmFor(answer);
         if (armIndex != notFound) {
             mergeIntoArm(result.arms[armIndex], layout, answer);
             continue;
         }
         result.arms.append(MemberArm { WTF::move(answer), LayoutList { layout } });
+        if (!armsByHash.isEmpty())
+            noteArm(result.arms.size() - 1);
     }
     return result;
 }
@@ -157,7 +212,7 @@ static MemberPartition computePartition(const PropertyAccessContext& context, st
                 likelyPosition = field->field;
         }
 
-        if (field && fieldAnswer && fieldAnswer->first == builtinBase && !(storesValue && isNeverStored(program, *field))) {
+        if (field && fieldAnswer && fieldAnswer->first == builtinBase && !(storesValue && isNeverStored(program, *field)) && !mayBeEmptyBelowAccessor(program, id, *field)) {
             MemberAnswer answer = fieldAnswer->second;
             answer.holder = field->layout;
             answer.field = field->field;

@@ -4,6 +4,7 @@ import type {
   ModelCondition,
   ModelFlow,
   ModelFunction,
+  ModelHostCall,
   ModelModule,
   ModelName,
   ModelOperand,
@@ -97,7 +98,9 @@ function textsDecidingCall(condition: ModelCondition): Pick<CallsForTexts, "argu
     hasProperty !== null ||
     condition.buildAdmitsRuntimeCode ||
     condition.callRunsOtherCode ||
-    condition.objectNobodyKnowsIsWritten;
+    condition.objectNobodyKnowsIsWritten ||
+    condition.testsReplaceBuiltins ||
+    condition.programStores !== null;
   if (operand === null || operand.operand !== "Argument" || isOneOf.length === 0 || asksMore) return null;
   return { argument: operand.index, texts: isOneOf };
 }
@@ -206,6 +209,13 @@ class HandedOutValueCollector {
     }
     if ((receiver !== null && claimsEveryUse(receiver)) || parameters.some(claimsEveryUse)) {
       this.#addUndescribedValue(`${mode} has an operand with every use`);
+    }
+  }
+
+  /** What native code passes to a function of the library that it calls for the entry is in the hands of that function. */
+  addCallByHost({ thisValue, arguments: passed, otherArguments }: ModelHostCall): void {
+    for (const place of [thisValue, ...(passed ?? []), otherArguments]) {
+      if (place.place === "NativeCell") this.#addPlace(place, "a value native code passes on");
     }
   }
 
@@ -440,6 +450,9 @@ export class DependencyClosure {
   #collectHandedOutValues(builtin: ModelBuiltin): HandedOutValues {
     const collector = new HandedOutValueCollector(this.#classObjects, this.#functionsInCells, receiverObjectOf(builtin));
     for (const overload of builtin.overloads) collector.addOverload(overload);
+    for (const { uses } of builtin.attachments.calledFunctions) {
+      for (const use of uses ?? []) if (use.read === "Called" && use.call !== null) collector.addCallByHost(use.call);
+    }
     return {
       objects: [...collector.objects].sort((left, right) => left.id - right.id),
       undescribedValue: collector.undescribedValue,

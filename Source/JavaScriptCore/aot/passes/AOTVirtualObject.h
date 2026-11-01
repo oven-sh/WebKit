@@ -48,6 +48,8 @@ enum class VirtualObjectKind : uint8_t {
     StringRange,
     ViewRange,
     BuiltinFields,
+    ArrayIterator,
+    CollectionIterator,
     BuiltinPrefix,
 };
 
@@ -68,6 +70,10 @@ enum class VirtualFieldKind : uint8_t {
     RangeStart,
     RangeEnd,
     Operand,
+    // Where an iterator stands in its list or table.
+    Position,
+    // The table a Set or Map iterator stands in.
+    Table,
 };
 
 struct VirtualField {
@@ -133,10 +139,12 @@ struct VirtualObjectContext {
     const Program& program;
     const Function& function;
     const FlowResults* flow { nullptr };
+    // The arena of a pass that rewrites the function. An analysis has none and can only name types that the whole program shares.
+    TypeArena* types { nullptr };
 };
 
 enum class ListedValues : bool { HaveTypesOfFields, MayAlsoBeUndefinedOrNull };
-DescribedObject describeVirtualObject(FunctionAnalyses&, ValueID allocation, ListedValues = ListedValues::HaveTypesOfFields);
+DescribedObject describeVirtualObject(FunctionAnalyses&, ValueID allocation, ListedValues = ListedValues::HaveTypesOfFields, TypeArena* = nullptr);
 
 using InitialFieldFunctor = ScopedLambda<void(const VirtualField&, ValueID)>;
 void forEachInitialField(const VirtualObjectContext&, const VirtualObjectDescription&, NOESCAPE const InitialFieldFunctor&);
@@ -192,6 +200,9 @@ Value makeFieldStore(const Program&, const VirtualObjectDescription&, const Fiel
 bool canHoldUnprovenValue(const Program&, const VirtualObjectDescription&, const VirtualField& named);
 Value makeFiller(const Program&, const VirtualObjectDescription&, const VirtualField& unprovenNamed);
 Value makeStoreByName(const FieldValue& unprovenNamed, ValueID cell);
+// `list.keys()`, `list.values()`, `list.entries()` and `list[Symbol.iterator]()` of what is proven to be a list.
+bool makesArrayIterator(const Program&, const Function&, const Value& call);
+bool makesCollectionIterator(const Program&, const Function&, const Value& call);
 void setExactReceivers(Value& slotOperation, LayoutID, TypeArena&);
 
 enum class SpeculativeLoad : uint8_t { Unknown, Safe };

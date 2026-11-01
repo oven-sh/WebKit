@@ -26,9 +26,13 @@ JS_EXPORT_PRIVATE Ref<Thread> startBuildThread(ASCIILiteral name, Function<void(
 // The pages are zero-filled. `bytes` is a multiple of the page size.
 void* allocatePages(size_t bytes);
 void* reservePages(size_t bytes);
+// Null where the address space has no room for them.
+void* tryReservePages(size_t bytes);
 // The most that one reservation takes of the address space: `wanted`, or less where the process has a limit on its address space.
 size_t bytesToReserve(size_t wanted);
 [[noreturn]] void exitOutOfMemory();
+// For a table of the compiler that has run out of indexes.
+[[noreturn]] void exitProgramTooLarge();
 void commitPages(void* pages, size_t bytes);
 // Takes everything that one call of allocatePages or reservePages returned.
 void releasePages(void* pages, size_t bytes);

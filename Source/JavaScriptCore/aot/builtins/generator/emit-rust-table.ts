@@ -301,7 +301,7 @@ function findNamesStoredByNativeCode(model: TableModel): Set<ModelName> {
   add(model.builtins.filter(builtin => builtin.holder !== null).map(builtin => builtin.name));
   for (const builtinClass of model.classes) add(builtinClass.namesDefinedOnNewInstances ?? []);
   for (const layout of model.layouts) add(layout.fields.map(field => field.name));
-  for (const hostObject of model.hostObjects) add(hostObject.fields.map(field => field.name));
+  for (const hostObject of model.hostObjects) add([...hostObject.fields.map(field => field.name), ...hostObject.nativeAccessors]);
   for (const { result, flow } of model.overloads) {
     add(result.properties.map(property => property.name));
     for (const { action, key } of flow.propertyActions) {
@@ -364,6 +364,7 @@ function formatModuleData(module: ModelModule): string {
     `namespace: ${formatBuiltinId(module.namespace)}`,
     `specifier: ${formatString(module.specifier)}`,
     `flags: ${formatBits("ModuleFlags", moduleFlags, flagsOfModule(module))}`,
+    `exports_holding_module_object: &[${module.exportsHoldingModuleObject.map(name => formatBuiltinName(name.number)).join(", ")}]`,
     `exports_held_by_namespace: &[${module.exportsHeldByNamespace.map(name => formatBuiltinName(name.number)).join(", ")}]`,
   ]);
 }

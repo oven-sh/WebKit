@@ -271,7 +271,8 @@ void generateGetByIdAtSite(StubAssembler& jit)
 
     isEmpty.link(&jit);
     JumpList isNotInFieldTable;
-    returnFieldByTable(jit, { registers.receiver, registers.identifierNumber, registers.structureID, registers.header, std::nullopt, false, true }, isNotInFieldTable);
+    // The probe shifts by its index, which x86-64 does by this register alone.
+    returnFieldByTable(jit, { registers.receiver, registers.identifierNumber, jit.allocateScratch(StubRegister::T14), registers.header, std::nullopt, nameHasColumn, true }, isNotInFieldTable);
     isNotInFieldTable.link(&jit);
     countMissOfEmptySite(jit, registers.site, registers.scratch, isDue);
     jit.jumpToStub(nameHasColumn ? getByIdBehindFieldTable() : tables);

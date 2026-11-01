@@ -33,6 +33,9 @@ using GuardTests = Vector<GuardTest>;
 
 void emitReportOfBrokenClaim(CCallHelpers&, BrokenClaim, Typed::FunctionID, Typed::ValueID, int32_t offset = 0, GPRReg found = InvalidGPRReg, GPRReg given = InvalidGPRReg);
 
+// A validating build has the back end test what it is told about a value right behind the value. A test that fails names the value, where it would only trap.
+void reportBrokenKnownProperties(B3::Policy&, Typed::FunctionID);
+
 // The back end is told what an ordinary build tells it. All the checks go in behind the last phase that moves a value, so up to there the code is that of an ordinary build.
 JS_EXPORT_PRIVATE void checkClaimsAtRunTime(B3::Policy&, Typed::FunctionID, const SlotsOfCells&);
 

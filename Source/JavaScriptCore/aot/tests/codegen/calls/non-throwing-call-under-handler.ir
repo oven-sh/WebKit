@@ -1,0 +1,57 @@
+# The frame of a function that is called may find no room on the stack, and that is an error at the call. So a call under a handler lands in the handler whatever its callee does,
+# also where the frame is that of a function further down. A call that no handler of the function covers is to B3 what its callee does and nothing more.
+# FORM: Selected
+# OPTIONS: heat=EverythingIsHot
+# RUN: generate-code calls
+# RUN(B3): lower-to-b3 f2 f4
+# REQUIRES(B3): unsanitized-code
+# RUN(EFFECTS): effects summaries
+
+module m0 path="main.ts" displayPath="main.ts"
+
+function f0 name="returnsWhatItGets" parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame] {
+    Return v0
+}
+function f1 name="callsIt" parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame] {
+    v1 = CallDirect v0 function=f0
+    Return v1
+}
+# EFFECTS: f0 return: throwsForLackOfStack throw: throwsForLackOfStack
+# EFFECTS: f1 return: throwsForLackOfStack throw: throwsForLackOfStack
+
+function f2 name="callsUnderHandler" parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame] {
+  b0(v0: anything) handler=b2():
+    v1 = CallDirect v0 function=f0
+    Jump -> next b1()
+  b1():
+    Return v1
+  b2() role=CatchHandler:
+    v2 = CatchValue
+    Return v2
+}
+# CHECK: f2: size={{*}} handlers=1 {{*}}
+# B3-LABEL: name="callsUnderHandler"
+# B3: = Patchpoint({{*}}ExitsSideways{{*}}:CallDirect)
+# B3-LABEL: end of function
+
+function f3 name="callsUnderHandlerWhatCallsIt" parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame] {
+  b0(v0: anything) handler=b2():
+    v1 = CallDirect v0 function=f1
+    Jump -> next b1()
+  b1():
+    Return v1
+  b2() role=CleanupHandler:
+    v2 = CatchValue
+    Throw v2
+}
+# CHECK: f3: size={{*}} handlers=1 {{*}}
+
+function f4 name="callsWithoutHandler" parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame] {
+    v1 = CallDirect v0 function=f0
+    v2 = CallDirect v1 function=f0
+    Return v2
+}
+# CHECK: f4: size={{*}} handlers=0 {{*}}
+# B3-LABEL: name="callsWithoutHandler"
+# B3-NOT: ExitsSideways
+# B3-LABEL: end of function

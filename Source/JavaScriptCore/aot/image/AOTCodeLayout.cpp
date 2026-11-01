@@ -310,16 +310,23 @@ struct SmallLoops {
 
 } // anonymous namespace
 
-static SmallLoops collectSmallLoops(const LinkedFunctions& functions)
+static SmallLoops collectSmallLoops(const LinkedFunctions& functions, const ParallelLoops& parallelLoops)
 {
     SmallLoops loops;
-    loops.firstRangeByBody.reserveInitialCapacity(functions.size() + 1);
-    for (size_t position = 0; position < functions.size(); ++position) {
-        loops.firstRangeByBody.append(safeCast<uint32_t>(loops.ranges.size()));
+    loops.firstRangeByBody.fill(0, functions.size() + 1);
+    forEachIndexInParallel(parallelLoops, functions.size(), [&](unsigned position) {
+        loops.firstRangeByBody[position + 1] = safeCast<uint32_t>(functions[position].body.smallLoops.size());
+    });
+    for (size_t position = 0; position < functions.size(); ++position)
+        loops.firstRangeByBody[position + 1] = safeCast<uint32_t>(static_cast<uint64_t>(loops.firstRangeByBody[position]) + loops.firstRangeByBody[position + 1]);
+    loops.ranges.grow(loops.firstRangeByBody.last());
+    forEachIndexInParallel(parallelLoops, functions.size(), [&](unsigned position) {
+        if (loops.firstRangeByBody[position] == loops.firstRangeByBody[position + 1])
+            return;
+        uint32_t next = loops.firstRangeByBody[position];
         for (const CodeRange& loop : functions[position].body.smallLoops)
-            loops.ranges.append({ loop.begin, loop.end });
-    }
-    loops.firstRangeByBody.append(safeCast<uint32_t>(loops.ranges.size()));
+            loops.ranges[next++] = { loop.begin, loop.end };
+    });
     return loops;
 }
 
@@ -379,7 +386,7 @@ static UnitPlacement placeBodies(std::span<const size_t> unitSizes, std::span<co
 unsigned countSharedCodeCopies(const LinkedFunctions& functions, BuildContext& context)
 {
     auto [sizes, alignedOffsets] = collectSizesAndAlignedOffsets(functions, context);
-    return placeBodies(sizes.span(), alignedOffsets.span(), collectSmallLoops(functions), BitVector(functions.size()), 0, maxCodeGranuleShift, context).copies.size();
+    return placeBodies(sizes.span(), alignedOffsets.span(), collectSmallLoops(functions, context.parallelLoops()), BitVector(functions.size()), 0, maxCodeGranuleShift, context).copies.size();
 }
 
 // Nothing for a relocation that names nothing, which the linker reports.
@@ -566,7 +573,7 @@ CodeLayout layOutCode(const CodeLayoutInputs& inputs, BuildContext& context)
     const uint64_t codeSizeLimit = std::min<uint64_t>(context.limit(LimitID::CodeBytes), std::numeric_limits<uint32_t>::max());
     const int64_t functionReach = callReach(LimitID::FunctionCallReach, context);
     const auto [bodySizes, alignedOffsets] = collectSizesAndAlignedOffsets(inputs.functions, context);
-    const SmallLoops smallLoops = collectSmallLoops(inputs.functions);
+    const SmallLoops smallLoops = collectSmallLoops(inputs.functions, context.parallelLoops());
 
     CodeLayout layout;
     layout.codeGranuleShift = inputs.codeGranuleShift;

@@ -489,7 +489,7 @@ std::optional<CallSiteIndex> OptimizingJITCallee::tryGetCallSiteIndex(const void
     constexpr bool verbose = false;
     if (m_callSiteIndexMap) {
         dataLogLnIf(verbose, "Querying ", RawPointer(pc));
-        if (std::optional<CodeOrigin> codeOrigin = m_callSiteIndexMap->findPC(removeCodePtrTag<void*>(pc))) {
+        if (std::optional<CodeOrigin> codeOrigin = m_callSiteIndexMap->findPC(removeReturnAddressSignature<void*>(pc))) {
             dataLogLnIf(verbose, "Found ", *codeOrigin);
             return CallSiteIndex { codeOrigin->bytecodeIndex().offset() };
         }

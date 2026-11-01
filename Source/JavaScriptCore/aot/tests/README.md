@@ -33,6 +33,7 @@ Bun's `test/aot/programs`, and the tests of lowering are in Bun's `test/aot/ir`.
 | `represent/` | the representations of values |
 | `codegen/` | code generation, type test plans, barriers, frame maps, validation |
 | `runtime/` | programs that run in the shell and count their calls into the run time: the caches, tables and Structures that fill while a program runs |
+| `answers/` | programs that run in the shell and hold what they answer, and nothing else: no count, no shape of code. The shell runs the same text itself and compares. Bun's `test/aot/tools/answers-test-from-source.ts` makes such a file from a program, its `test/aot/engine/answers-in-other-ways.test.ts` runs the folder again under ten option words, and its `test/aot/engine/answers-under-a-sabotage.test.ts` builds programs of the folder with one thing in the compiler broken on purpose: then they fail |
 | `validation/` | a lie per producer: a program in which one thing that typed code relies on is false. The validating build ends the process with the kind that names the lie, or fails at build time |
 | `cliffs/` | the cliffs that no program can cause |
 
@@ -42,7 +43,7 @@ Bun's `test/aot/programs`, and the tests of lowering are in Bun's `test/aot/ir`.
 testaot all <folder>                                              native tests, then every *.ir under the folder, in parallel
 testaot run <file or folder>.. [--filter=<text>] [--jobs=<n>] [--show-output] [--option=<option word>].. [--only-diagnostic=<kind>]
 testaot native [<filter>] [--after=<name>] [--single-process]
-testaot list commands|passes|options|limits|statistics|diagnostics
+testaot list commands|passes|options|limits|statistics|diagnostics|image-format
 testaot print <program> [--until=<PassID>] [--function=f<n>].. [--wire] [--command="<command> { argument }"] { option word }
 testaot compile <program> --output=<image> { option word }        prints "entry <i> <id>" for each entry point
 testaot write-out <file>                                          prints IR text with REPEAT, PROGRAM-OF and the labels of check lines inside functions written out
@@ -67,7 +68,8 @@ diagnostic itself is left out. Together they run a folder in another way than it
 A test that crashes fails alone, because tests run in child processes. `run` starts one child per file. `native` starts one
 child for all its tests, and after a crash another one for the tests that are left. The failure is
 `FAIL <file>:1: crashed with <signal>` or `FAIL <name>: crashed with <signal>`, below the last lines the child printed. A child that
-prints nothing for 100 seconds (300 with ASan or assertions) is killed, and its test fails.
+prints nothing for 100 seconds (300 with ASan or assertions) is killed, and its test fails. On Linux and Windows a child ends with
+the process that started it, however that ends. Elsewhere a child that is killed takes what it has started with it.
 
 Under a debugger, run the test in `testaot` itself: `run` with a single file starts no child, and neither does
 `native --single-process`. `--after=<name>` runs only the native tests listed after that one.
@@ -137,6 +139,7 @@ REQUIRES: [ x86_64 | arm64 ] { word }
 REQUIRES(<prefix>): [ x86_64 | arm64 ] { word }
 FORM: ( AsRead | Prepared | Selected | Placed ) [ optimizing ]
 OPTIONS: <option word> { option word }
+JSC-OPTIONS: --<name>=<value> { --<name>=<value> }
 <P>: p
 <P>-NEXT: p
 <P>-NOT: p
@@ -152,8 +155,29 @@ END REPEAT
 PROGRAM-OF: <file>
 ```
 
-A directive is a whole comment line: `#`, a name in capitals, then `:`. A comment after IR tokens on the same line is never a
-directive.
+A directive is a whole comment line: `# NAME: value`, with one blank after the `#`, the name in capitals and the colon right after it. A
+comment after IR tokens on the same line is never a directive.
+
+A comment that was meant as a directive is an error, not a comment:
+
+- Its first word is the name of a directive or a check prefix of the file, in capitals, and the line is not written as above
+  (`# CHECK-NEXT v0 = Add`, `#CHECK: x`, `# CHECK : x`).
+- Its first word has a colon after it or a suffix (`-NEXT`), and is such a name in another case (`# check: x`) or in capitals and within two
+  edits of one (`# CHEKC: x`, `# CHECK-NXT x`).
+
+Any other comment is prose. So prose does not begin with `RUN`, `CHECK` or a prefix of the file in capitals.
+
+Three markers say what Bun's `test/aot/tools/update-ir-tests.ts` writes anew. Any other line that begins with `# --` is an error.
+
+```
+# -- source: <file>            the lines down to `# -- end of source` are a program, each behind `# `, and no directives. A further such line begins a further file
+# -- end of source             there is one such block at most, and it ends
+# -- generated: <function> ..  once. Each name (or `f<n>`, or `*`) is a function of the program and has its -LABEL line below. Only check lines follow
+```
+
+List the functions the test is about. A library function (`role=Library`) belongs in the list only if the test is about it: `next` listed in a hundred
+files is a hundred files to regenerate when an iterator compiles differently. In a source, print strings: `console.log` of a value of unknown type keeps
+about 500 library functions reachable, which is 1.6 MB of IR text.
 
 Each `RUN` parses the file again (directives are comments to the parser), sends the wire records through the reader in the form and
 applies the engine-only fields. In form `AsRead` that is all for `print`, `round-trip`, `verify`, `result-types`, `pass`, `pipeline`, `compile` and the commands that run
@@ -172,7 +196,10 @@ built-in, or asks what flow knows about one, writes `# LIBRARY: own` or the `run
 
 `FORM` overrides the command's default form. `FORM: Prepared optimizing` reads and verifies the program as it is in the middle of the
 optimization stage: operations of `AsRead` and of `Prepared` are legal together, and a stored type may be wider than its rule gives.
-`OPTIONS`, `DIAGNOSTIC`, `STATISTIC` and `LOSS` apply to every `RUN` in the file.
+`OPTIONS`, `JSC-OPTIONS`, `DIAGNOSTIC`, `STATISTIC` and `LOSS` apply to every `RUN` in the file.
+
+`JSC-OPTIONS` sets JSC options in the process that runs the commands, as `--<name>=<value>` on the command line of `testaot` does, and only while the
+file runs. It is for a build that must not depend on an option of the process. The shell of `run-in-shell` is another process and takes its own options.
 
 `REQUIRES` is for output that depends on the target architecture, which is the CPU `testaot` was built for. The `RUN` lines with
 its prefix (`REQUIRES:` goes with `RUN:`) run only on that architecture. Their check lines are parsed on every architecture, so a
@@ -383,8 +410,8 @@ A command is registered by the owner of the code it runs, in `aot/**/AOT*TestCom
 - `function-passes <PassID> { <PassID> }` runs the named function passes on one function after the other, all of them with one
   `FunctionPassContext` per function, as a schedule does: what a pass remembers in the context about a function is there for the next.
   It prints `f<n> <PassID>: Changed` or `Unchanged` per run, then the program. Passes that derive functions are refused.
-- `pipeline <PassID>` runs the pipeline from `AsRead` through the first run of that pass, then prints that pass's results, under
-  `OPTIONS: report=Declines` the `decline` lines of all passes that ran, and the program.
+- `pipeline <PassID> [heat]` runs the pipeline from `AsRead` through the first run of that pass, then prints that pass's results, with
+  `heat` the heat as it is then, under `OPTIONS: report=Declines` the `decline` lines of all passes that ran, and the program.
 - `compile` runs the whole build and prints `diagnostic <kind>`, `loss <limit> x<count>`, `image <empty|not empty>` and
   `statistic <name> <value>` lines.
 - `run-in-shell { --<option> } { word }` runs the whole build, then the entry module in `jsc` from the folder of `testaot`. The leading words
@@ -477,8 +504,8 @@ Every optional pass but the named ones and `AnalyzeFlow` is off.
 
 A program has one built-ins table, and whoever links `testaot` compiles it: the engine's entries (`aot/builtins/*.builtins.ts`) and a
 host's. WebKit's own build links the stand-in host's (`aot/tests/host`), which has few entries. Bun's build links Bun's. IR text names an
-entry, a class, a slot, a result layout, a runtime module and an overload by its token (`builtin=MathMax`, `Array<number>`,
-`overload=MathMax/0`). A test that needs a built-in with some attribute (starts an instance, loads a module, runs unseen code, reads
+entry, a class, a slot, a result layout, a runtime module, a runtime function and an overload by its token (`builtin=MathMax`,
+`Array<number>`, `runtimefunction id=ArrayPrototypeMap`, `overload=MathMax/0`). A test that needs a built-in with some attribute (starts an instance, loads a module, runs unseen code, reads
 `this`) names a real entry that has it.
 
 A test in this folder says the same under both tables:

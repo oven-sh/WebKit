@@ -16,8 +16,10 @@
 #include "AOTFlowResults.h"
 #include "AOTFunctionDescription.h"
 #include "AOTIRProgram.h"
+#include "AOTImagesBelow.h"
 #include "AOTPlacementSteps.h"
 #include "AOTRepresentation.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -89,6 +91,7 @@ ClosureForm closureFormOf(const Program& program, const FlowResults& flow, Funct
     case FunctionRole::ResultWrapper:
     case FunctionRole::ParameterWrapper:
     case FunctionRole::EntryChecks:
+    case FunctionRole::ChecksThatGiveUp:
         break;
     case FunctionRole::CoroutineRamp:
         if (kindOfCoroutine(function) != CoroutineKind::AsyncFunction)
@@ -306,6 +309,37 @@ static ClosureFunctionRange closureFunctionRangeOf(const Program& program)
     return { FunctionID(firstClosureFunction), FunctionID(endOfClosureFunctions), firstClosureFunction };
 }
 
+static Vector<FunctionID> closureFormsBySourceOf(const Program& program)
+{
+    // The word of a closure names the entrypoint for calls.
+    BitVector isConstructEntrypoint(program.functions.size());
+    for (const Function& function : program.functions) {
+        const auto* entrypoint = function.creator.tryAs<CreatorRecord::Entrypoint>();
+        if (entrypoint && entrypoint->constructEntrypoint)
+            isConstructEntrypoint.quickSet(entrypoint->constructEntrypoint.index());
+    }
+    struct Form {
+        FunctionID source;
+        FunctionID function;
+    };
+    Vector<Form> forms;
+    for (uint32_t index = 0; index < program.functions.size(); ++index) {
+        if (!hasClosureWordOf(program.functions[index].role) || isConstructEntrypoint.quickGet(index))
+            continue;
+        FunctionID source = firstSourceOf(program, FunctionID(index));
+        if (program.at(source).has(FunctionCapabilities::RecordsCalleeOnceRenamed))
+            forms.append({ source, FunctionID(index) });
+    }
+    AOT::stableSort(forms, { }, [](const Form& form) { return form.source.index(); });
+    Vector<FunctionID> result;
+    for (size_t index = 0; index < forms.size(); ++index) {
+        bool isOneOfSeveral = (index && forms[index - 1].source == forms[index].source) || (index + 1 < forms.size() && forms[index + 1].source == forms[index].source);
+        if (isOneOfSeveral)
+            result.append(forms[index].function);
+    }
+    return result;
+}
+
 static bool hasClosureCell(const Program& program, const BitVector& layoutConstructors, const Function& function)
 {
     if (function.role != FunctionRole::GenericEntrypoint || function.derivation.parameter != callEntrypointParameter || !function.hasBody())
@@ -372,6 +406,9 @@ FunctionNumbering numberFunctions(const PlacementContext& context, const PlacedS
     });
     numbering.closureCellNumbers = numberClosureCells(program, loops, declaredByVariables);
     numbering.closureFunctions = closureFunctionRangeOf(program);
+    if (const ImagesBelow* below = context.build.imagesBelow())
+        numbering.closureFunctions.numbersBelow = below->numbersOfLast().endOfClosureNumbers;
+    numbering.closureFormsBySource = closureFormsBySourceOf(program);
     return numbering;
 }
 
@@ -404,9 +441,13 @@ static TraceVisibility visibilityOf(const Function& function, bool implementsBui
     case FunctionRole::ResultWorker:
     case FunctionRole::ParameterWrapper:
     case FunctionRole::EntryChecks:
+    case FunctionRole::ChecksThatGiveUp:
         // What the front end hides is a function of its own that no trace lists, unless it is a built-in that programs can call. What its role hides is a part of a function that traces list.
         if (function.has(FunctionFlags::IsHiddenInStackTraces) && !implementsBuiltin)
             return TraceVisibility::Hidden;
+        // The function that holds another function's entry tests is shown as the function whose id it took.
+        if (capabilitiesOf(function.role).contains(FunctionCapabilities::IsHiddenInStackTraces))
+            return TraceVisibility::VisibleOnlyOnTop;
         return function.isHiddenInStackTraces() ? TraceVisibility::VisibleOnlyOnTop : TraceVisibility::Visible;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -471,9 +512,11 @@ static bool callsHostFunction(const BuiltinOverload& overload)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// In the engine a function written inside a built-in function is built-in code too.
+// In the engine a function written inside a built-in function is built-in code too. A module of the library marks the function that it holds in place of such a one.
 static bool isInsideBuiltinFunction(const BuiltinTable& builtins, const Function& source)
 {
+    if (source.syntax.contains(FunctionSyntax::IsShownAsNativeCode))
+        return true;
     if (!source.enclosingRuntimeFunction)
         return false;
     switch (builtins.at(source.enclosingRuntimeFunction).role) {
@@ -492,10 +535,19 @@ static bool isCompilerFunction(const BuiltinTable& builtins, const Function& sou
     return source.enclosingRuntimeFunction && builtins.at(source.enclosingRuntimeFunction).role == RuntimeFunctionRole::CompilerFunction;
 }
 
+// Only compiled code calls a compiler helper, even one that is implemented in the engine.
+static bool isCalledByPrograms(const BuiltinTable& builtins, const Function& source, std::optional<BuiltinID> builtin)
+{
+    return builtin && !isCompilerFunction(builtins, source) && builtins.at(*builtin).holder != Builtins::CompilerHelpers;
+}
+
 static StackTraceBuiltinKind builtinKindOf(const BuiltinTable& builtins, const Function& source, std::optional<BuiltinID> builtin)
 {
     if (!builtin)
         return isInsideBuiltinFunction(builtins, source) ? StackTraceBuiltinKind::JSBuiltin : StackTraceBuiltinKind::None;
+    // The host has what it does as a function of a module of its own, and a stack trace lists that like any other function: FunctionDescription::isHelperOfCompiler().
+    if (source.syntax.contains(FunctionSyntax::IsShownInModuleOfHelpers))
+        return StackTraceBuiltinKind::None;
     if (std::ranges::any_of(builtins.overloadsOf(*builtin), callsHostFunction))
         return StackTraceBuiltinKind::HostFunction;
     return builtins.at(*builtin).kind == BuiltinKind::Constructor ? StackTraceBuiltinKind::JSBuiltinConstructor : StackTraceBuiltinKind::JSBuiltin;
@@ -511,7 +563,7 @@ FunctionTraceRecord functionTraceOf(const Program& program, FunctionID id)
     record.sourceFunctionIndex = sourceID.index();
     record.implementedBuiltinPlusOne = builtin ? builtin->index() + 1 : 0;
     record.implementsBuiltin = builtin.has_value();
-    record.visibilityBits = static_cast<uint32_t>(visibilityOf(function, builtin && !isCompilerFunction(program.builtins(), source)));
+    record.visibilityBits = static_cast<uint32_t>(visibilityOf(function, isCalledByPrograms(program.builtins(), source, builtin)));
     record.builtinKindBits = static_cast<uint32_t>(builtinKindOf(program.builtins(), source, builtin));
     record.codeTypeBits = static_cast<uint32_t>(source.kind == FunctionKind::Module ? ModuleCode : source.syntax.contains(FunctionSyntax::IsEvaluatedScript) ? EvalCode : FunctionCode);
     record.rejectsOnThrow = rejectsOnThrow(program, function);

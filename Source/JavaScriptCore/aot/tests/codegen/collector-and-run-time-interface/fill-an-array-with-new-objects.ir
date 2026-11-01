@@ -12,7 +12,7 @@
 # RUN: lower-to-b3 optimized loops f1
 # REQUIRES: unsanitized-code
 # RUN(POLLS): lower-to-b3 optimized loops f1
-# REQUIRES(POLLS): unsanitized-code
+# REQUIRES(POLLS): x86_64 unsanitized-code
 # RUN(X64): lower-to-air loops f1
 # REQUIRES(X64): x86_64 unsanitized-code not-windows
 # RUN(ARM64): lower-to-air loops f1
@@ -100,28 +100,31 @@ function f1 name="fill" module=m0 position=33 flags=[IsChecked, HasExplicitName]
 
 # The loop ends within the array and an allocation always comes back, so the loop does not poll: the allocation is where a collection can start.
 # The array may be old and every object is new, so each turn has the barrier of the array in line. The new object itself is filled without one.
-# An allocation is taken to replace the storage of arrays, so each turn loads the storage and its length again and checks the index.
+# An allocation gives no array other storage, so the storage and its length are loaded ahead of the loop. The loop's own test has said that the index lies inside the array: nothing asks again.
+# So no turn leaves for the store that may give the array other storage. The loop around that store, for an array that holds its elements in another way, stands apart and comes first.
+# CHECK-LABEL: end of loop
 # CHECK-LABEL: steps by 1
 # CHECK-NOT: Patchpoint(
 # CHECK: Int64 b@[[entry]] = Patchpoint({{*}}Writes:{collectorState, {{*}}:NewObject)
 # CHECK-NEXT: Store(b@{{*}}, b@[[entry]], offset = 16, ControlDependent|Writes:ObjectFields{{*}}:NewObject)
 # CHECK-NOT: Patchpoint(
-# CHECK: Int64 b@[[storage]] = Load(b@[[list]], offset = 8, ControlDependent|Reads:JSObject_butterfly, {{*}}:IsInBounds)
-# CHECK-NEXT: Int32 b@{{*}} = Load(b@[[storage]], offset = -8, ControlDependent|Reads:Butterfly_publicLength, {{*}}:IsInBounds)
-# CHECK-NOT: Patchpoint(
+# CHECK-NOT: Reads:JSArray_butterfly
+# CHECK-NOT: Reads:Butterfly_publicLength
+# CHECK-NOT: :IsInBounds)
 # CHECK: Store(b@[[entry]], b@{{*}}, ControlDependent|Writes:indexedContiguousProperties, {{*}}:PutArrayElement)
 # CHECK-NEXT: Int32 b@[[threshold]] = Load(b@{{*}}, offset = {{*}}, ControlDependent|Reads:collectorState, {{*}}:PutArrayElement)
-# CHECK-NEXT: Int32 b@[[state]] = Load8Z(b@[[list]], offset = 7, ControlDependent|Reads:collectorState, {{*}}:PutArrayElement)
+# CHECK-NEXT: Int32 b@[[state]] = Load8Z(b@{{*}}, offset = 7, ControlDependent|Reads:collectorState, {{*}}:PutArrayElement)
 # CHECK-NEXT: Int32 b@[[isUnmarked]] = Below(b@[[threshold]], b@[[state]], {{*}}:PutArrayElement)
 # CHECK-NEXT: Branch(b@[[isUnmarked]], Terminal, {{*}}:PutArrayElement)
 # CHECK-NEXT: Successors: Then:#[[next]], Else:Rare:#
 # CHECK-NEXT: BB#[[next]]:
 # CHECK: Branch(b@{{*}}, Terminal, {{*}}:Less)
 # CHECK-LABEL: end of loop
-# A turn allocates, and the way round the allocator comes back into the loop: the loop polls on every turn.
+# A turn allocates, and the way round the allocator comes back into the loop: the loop polls on every turn. On ARM64 the rare way round the barrier has a copy of the poll.
+# POLLS-LABEL: end of loop
 # POLLS-LABEL: steps by 1
 # POLLS-COUNT-1: isLoopPoll
 # POLLS-NOT: isLoopPoll
 # POLLS-LABEL: end of loop
-# X64: loop #{{*}}, instructions: 15, patchpoints: 2
-# ARM64: loop #{{*}}, instructions: 16, patchpoints: 2
+# X64: loop #{{*}}, instructions: 11, patchpoints: 2
+# ARM64: loop #{{*}}, instructions: 12, patchpoints: 2

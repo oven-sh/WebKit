@@ -179,6 +179,9 @@ public:
     enum class SortMode { Default, Ascending };
     template<SortMode mode = SortMode::Default, typename Functor>
     void forEachOwnIndexedProperty(NOESCAPE const Functor&);
+    // For a caller that reads the named properties another way: what they are does not matter here.
+    template<SortMode = SortMode::Default, typename Functor>
+    void forEachOwnElement(NOESCAPE const Functor&);
 
 private:
     static bool getOwnPropertySlotImpl(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
@@ -851,7 +854,6 @@ private:
     template<PutMode>
     ASCIILiteral putDirectInternal(VM&, PropertyName, JSValue, unsigned attr, PutPropertySlot&);
     void setStructureForAddedProperty(VM&, Structure* previous, Structure* next, PropertyOffset, PutPropertySlot&);
-    JS_EXPORT_PRIVATE NEVER_INLINE void setStructureForAddedPropertySlow(VM&, Structure* previous, Structure* next, PropertyOffset, PutPropertySlot&);
 #if ENABLE(AOT)
     bool hasPrivateBrandAsField(VM&, JSValue brand) const;
     JS_EXPORT_PRIVATE JSValue getDirectFromCompiledObject(VM&, PropertyName, unsigned* attributesOrNull) const;

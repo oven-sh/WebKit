@@ -104,20 +104,24 @@ function f1 name="scale" module=m0 position=121 flags=[IsChecked, HasExplicitNam
 }
 
 # An optional field of numbers is a double in its slot, with one pattern of bits for a field that is absent and one for undefined. Both patterns are NaNs.
-# The read first asks whether the double is a NaN, and only then whether it is the pattern for absent. The default then asks again, for every value, whether the bits are those of undefined.
+# The read asks whether the double is a NaN. What is none is neither pattern: it is the factor without a further test. Only a NaN has its bits compared with those of undefined.
 # CHECK-LABEL: name="scale" role=Source
 # CHECK-NEXT: BB#0:
 # CHECK: Double b@[[slot]] = Load(b@[[options]], offset = 24, ControlDependent|Reads:ObjectFields{{*}}:GetSlotOrUndefined)
 # CHECK-NEXT: Int32 b@[[isOrdinary]] = Equal(b@[[slot]], b@[[slot]], {{*}}:GetSlotOrUndefined)
-# CHECK: Branch(b@[[isOrdinary]], Terminal, {{*}}:GetSlotOrUndefined)
-# CHECK-NEXT: Successors: Then:#{{*}}, Else:Unlikely:#
-# CHECK: Double b@[[factor]] = Phi(
-# CHECK-NEXT: Int64 b@[[bits]] = BitwiseCast(b@[[factor]], {{*}}:TypeTest)
-# CHECK: Int32 b@[[isUndefined]] = GreaterEqual(b@[[bits]], 
-# CHECK-NEXT: Branch(b@[[isUndefined]], Terminal, {{*}}:TypeTest)
+# CHECK-NEXT: Branch(b@[[isOrdinary]], Terminal, {{*}}:GetSlotOrUndefined)
+# CHECK-NEXT: Successors: Then:#[[ordinary]], Else:Unlikely:#[[isNaN]]
+# CHECK-NEXT: BB#[[ordinary]]:
+# CHECK-NOT: Branch(
 # CHECK: Double b@[[amount]] = Load(b@[[options]], offset = 16, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
 # CHECK-NEXT: Double b@{{*}} = Mul(b@{{*}}, b@[[amount]], {{*}}:Mul)
+# CHECK: BB#[[isNaN]]:
+# CHECK-NEXT: Predecessors: #0
+# CHECK-NEXT: Int64 b@[[bits]] = BitwiseCast(b@[[slot]], 
+# CHECK: Int32 b@[[isUndefined]] = GreaterEqual(b@[[bits]], 
+# CHECK-NEXT: Branch(b@[[isUndefined]], Terminal, {{*}}:TypeTest)
+# CHECK-NOT: Select(
 # CHECK-LABEL: end of function
 # Nothing is boxed and nothing is called.
-# X64: instructions: 12, patchpoints: 0
-# ARM64: instructions: 15, patchpoints: 1
+# X64: instructions: 8, patchpoints: 0
+# ARM64: instructions: 10, patchpoints: 0

@@ -28,6 +28,8 @@
 # REQUIRES: unsanitized-code
 # RUN(NONE): lower-to-b3 optimized f7
 # REQUIRES(NONE): unsanitized-code
+# RUN(CALLS): lower-to-b3 optimized f7
+# REQUIRES(CALLS): unsanitized-code
 # RUN(X64): lower-to-air size f7
 # REQUIRES(X64): x86_64 unsanitized-code not-windows
 # RUN(ARM64): lower-to-air size f7
@@ -166,24 +168,21 @@ function f12 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f13 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f8]
 function f14 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 
-# Six functions are ever handed in, which is too many to tell apart by comparisons. The call goes by value through the entry that takes any value: the number is boxed
-# for it, as an integer where it is one, and what comes back is unboxed again.
+# Six functions are ever handed in, and each takes and returns a number in a register. A call by value would box the number, the entry of the callee would take it out of its box, and so again for the result:
+# the word of the closure is loaded once and compared five times, and each arm is a direct call with the double in its register on the way in and on the way out.
 # CHECK-LABEL: name="apply" role=Source
-# CHECK: Double b@[[value]] = ArgumentReg(
-# CHECK: Int64 b@[[result]] = Patchpoint(b@[[operation]]:Register({{*}}), b@[[boxed]]:Register({{*}}), resultConstraints = Register({{*}}), {{*}}:Call)
-# CHECK: Int32 b@[[isInteger]] = AboveEqual(b@[[result]],
-# CHECK-NEXT: Branch(b@[[isInteger]], Terminal,
-# CHECK: IToD(
-# CHECK: Double b@[[number]] = Phi(
-# CHECK: Double b@[[sum]] = Add(b@[[number]],
-# CHECK-NEXT: Return(b@[[sum]], Terminal)
-# CHECK: BitwiseCast(
+# CHECK: Int32 b@[[word]] = Load(b@[[operation]], offset = 12, ControlDependent|Reads:AOTSlimClosure_word,
+# CHECK-COUNT-5: = Equal(b@[[word]],
 # CHECK-LABEL: end of function
-# There is one call, no comparison of the callee, and no test that the result is a number.
+# CALLS-LABEL: name="apply" role=Source
+# CALLS-COUNT-6: Double b@{{*}} = Patchpoint(b@{{*}}:Register({{*}}), resultConstraints = Register({{*}}), ControlDependent, {{*}}:CallDirect)
+# CALLS-LABEL: end of function
+# The word is loaded once. Nothing is boxed, nothing that comes back is tested or converted.
 # NONE-LABEL: name="apply" role=Source
-# NONE-NOT: Reads:AOTSlimClosure_word
-# NONE-NOT: :CallDirect)
-# NONE-NOT: BitAnd(
+# NONE-NOT: pureFunction
+# NONE-NOT: IToD(
+# NONE-NOT: BitwiseCast(
+# NONE-NOT: AboveEqual(
 # NONE-LABEL: end of function
-# X64: instructions: 12, patchpoints: 2
-# ARM64: instructions: 22, patchpoints: 2
+# X64: instructions: 17, patchpoints: 6, rare instructions: 1
+# ARM64: instructions: 23, patchpoints: 6, rare instructions: 1

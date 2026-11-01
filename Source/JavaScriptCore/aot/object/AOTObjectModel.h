@@ -25,6 +25,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <wtf/BitVector.h>
 #include <wtf/FastMalloc.h>
 #include <wtf/HashMap.h>
 #include <wtf/Noncopyable.h>
@@ -180,12 +181,15 @@ private:
     std::span<AllocationSiteRecord> allocationSiteRecords() const;
 
     CompiledStructure* usualStructureIfExists(uint32_t shape) const;
+    CompiledStructure* usualStructure(VM&, uint32_t shape);
     Variant usualVariantOf(VM&, const LayoutData&);
     CompiledStructure* createUsual(VM&, const LayoutData&, const Variant&);
     CompiledStructure* create(VM&, const LayoutData&, const Variant&);
     CompiledStructure* find(const Variant&) const;
     CompiledStructure* findOrCreate(VM&, const Variant&);
     static Variant variantOf(const CompiledStructure&);
+    // For a Structure that differs in something else than the key order.
+    static Variant variantWithKeyOrderOf(const CompiledStructure&);
     // No table lists such a Structure.
     static bool belongsToOneObject(const Variant& variant) { return variant.heldExtraProperties || variant.keysNamedByOrder; }
 
@@ -194,12 +198,16 @@ private:
 
     AllocationSiteRecord* recordOfSameAllocation(uint32_t allocation) const;
     AllocationSiteRecord& ensureRecord(uint32_t allocation);
+    AllocationSiteRecord& ensureRecord(uint32_t allocation, uint32_t shape);
     AllocationSiteRecord& filledRecord(VM&, uint32_t allocation);
 
     State& m_state;
     const ProgramTables& m_tables;
     EnvironmentShapes m_environmentShapes;
     uint32_t* m_structures { nullptr };
+    // Each shape once, whether or not its entry in m_structures is still set.
+    Vector<uint32_t> m_shapesWithStructure;
+    BitVector m_shapeHasStructure;
     uint32_t m_numberOfAllocationSiteRecords { 0 };
     AllocatorWithoutRoom m_allocatorWithoutRoom { };
     // No cell has them. Every other Structure of a compiled object starts as a copy of one: the second is for objects with another prototype than their layout's.
@@ -207,7 +215,6 @@ private:
     std::unique_ptr<VariantMaps> m_variants;
     // In a run with --aotCountsPath.
     std::unique_ptr<MadeStructures> m_made;
-    Vector<StructureID> m_variantsMadeSinceCollection;
     RememberedSlotSet m_writtenStructures;
     RememberedSlotSet m_writtenRecords;
 };
@@ -229,6 +236,9 @@ struct ObjectModel {
 
 inline const FieldData* Object::fieldNamed(State& state, PropertyName name) const
 {
+    // Whoever has a state at hand passes it to save the way to it. It may be the caller's, and the object of another image.
+    if (state.sharesRealm) [[unlikely]]
+        return this->state().objects->layouts.field(*state.instance.vm, layout(), name.uid());
     return state.objects->layouts.field(*state.instance.vm, layout(), name.uid());
 }
 

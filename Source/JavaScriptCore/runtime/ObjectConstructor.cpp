@@ -293,7 +293,9 @@ void objectAssignGeneric(JSGlobalObject* globalObject, VM& vm, JSObject* target,
             source->reifyAllStaticProperties(globalObject);
             RETURN_IF_EXCEPTION(scope, void());
         }
-        if (AOT::PropertyWalk::tryAssign(vm, target, source))
+        bool didAssign = AOT::PropertyWalk::tryAssign(vm, target, source);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (didAssign)
             return;
     }
 #endif
@@ -812,27 +814,11 @@ inline bool toPropertyDescriptor(JSGlobalObject* globalObject, JSValue in, Prope
             });
         }
 #if ENABLE(AOT)
-        // The walk takes the names it knows and shows nobody the others or their order. A validating image, which fails where keys are listed that nobody may list, reads the names one by one below.
-        else if (descriptionStructure->isCompiledStructure() && !vm.aotState().validatesRuntime) {
-            EnsureStillAliveScope descriptionScope(description);
-            canUseFastPath = AOT::PropertyWalk::forEachOwnPropertyInline(vm, description, AOT::PropertyWalk::Filter::Strings, [&](const AOT::PropertyWalk::OwnProperty& property) {
-                if (property.attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue)
-                    return IterationStatus::Done;
-                PropertyName propertyName(property.name);
-                if (propertyName == vm.propertyNames->enumerable)
-                    enumerable = property.value;
-                else if (propertyName == vm.propertyNames->configurable)
-                    configurable = property.value;
-                else if (propertyName == vm.propertyNames->value)
-                    value = property.value;
-                else if (propertyName == vm.propertyNames->writable)
-                    writable = property.value;
-                else if (propertyName == vm.propertyNames->get)
-                    get = property.value;
-                else if (propertyName == vm.propertyNames->set)
-                    set = property.value;
-                return IterationStatus::Continue;
-            }) == AOT::PropertyWalk::Result::Completed;
+        else if (AOT::PropertyWalk::isCompiledObject(description)) {
+            AOT::PropertyWalk::DescriptorMembers members;
+            canUseFastPath = AOT::PropertyWalk::tryReadDescriptorMembers(description, members);
+            if (canUseFastPath)
+                std::tie(enumerable, configurable, value, writable, get, set) = std::tuple_cat(members);
         }
 #endif
 

@@ -11,6 +11,7 @@
 #include "AOTArrayStorageForms.h"
 #include "AOTBlockFrequencies.h"
 #include "AOTBuiltinCallPlan.h"
+#include "AOTBuiltinMembers.h"
 #include "AOTBuiltinPristine.h"
 #include "AOTEffectsDescription.h"
 #include "AOTExpandOwnKeysOrders.h"
@@ -39,6 +40,10 @@ namespace JSC { namespace AOT { namespace Typed {
 static constexpr uint16_t primitivesWithJSONText = Primitive::String | Primitive::Number | Primitive::Boolean | Primitive::Null;
 static constexpr uint16_t primitivesWithoutJSONText = Primitive::Undefined | Primitive::Absent | Primitive::AnySymbol;
 static constexpr uint32_t cursorResultOfJSONAppendValue = 1;
+// maximumSideStackRecursion of runtime/JSONObject.cpp: JSON.stringify throws at one more object or list inside one another, on every machine.
+static constexpr int64_t maxJSONLevels = 40000;
+// A function opens fewer than this by itself: each is written in its text.
+static constexpr int64_t maxJSONLevelsOpenedByOneFunction = 1 << 16;
 static constexpr ProofSet proofsTestedBySerializers { Proof::NoExtraProperties, Proof::PrototypeLinkUnchanged };
 static constexpr OptionSet<PristineAspects> serializedArrayAspects { PristineAspects::Storage, PristineAspects::Names };
 
@@ -78,6 +83,7 @@ struct JSONTextWriter final : Emission {
         Cursor cursor { { }, UINT_MAX };
         // Set where each arm brings the guard that the code behind the merge relies on.
         ValueID guard;
+        bool endsText { false };
     };
 
     struct TypeArm {
@@ -186,6 +192,9 @@ struct JSONTextWriter final : Emission {
         const Field& field = program().at(id).fields[fieldIndex];
         if (!isEnumerableStringField(program(), field))
             return MemberSupport::NotSerialized;
+        // An accessor's slot holds its functions. The getter's result is what gets written.
+        if (field.form.contains(FieldForm::IsAccessor))
+            return MemberSupport::ByName;
         if (hasNoJSONText(slotContentsTypeOf(program(), { id, fieldIndex })))
             return MemberSupport::WithoutText;
 
@@ -221,6 +230,17 @@ struct JSONTextWriter final : Emission {
         bool isOfLibrary = layout.module && program().at(layout.module).flags.contains(ModuleFlags::IsLibrary);
         uint32_t module = layout.module ? layout.module.index() + 1 : 0;
         return std::tuple { isOfLibrary, layout.kind == LayoutKind::Instance, membersWithoutText, members, module, layout.position, id };
+    }
+
+    // toJSON converts the date to a primitive and calls toISOString, each by name. A test run may replace any of them.
+    bool findsMembersOfDateAsBuilt() const
+    {
+        const BuiltinTable& builtins = program().builtins();
+        auto isAsBuilt = [&](BuiltinName name) {
+            MemberAnswer found = findBuiltinObjectMember({ program(), &inputs().flow }, builtins.at(BuiltinClasses::Date).prototype, program().keyOf(name), Access::Read);
+            return found.kind == MemberKind::Builtin && found.needsNoTest();
+        };
+        return isAsBuilt(BuiltinNames::toJSON) && isAsBuilt(BuiltinNames::toISOString) && std::ranges::all_of(builtins.keysReadBy(Protocol::ToPrimitive), isAsBuilt);
     }
 
     BuiltinOverloadID findGetTimeOfDate() const
@@ -321,7 +341,7 @@ struct JSONTextWriter final : Emission {
         RELEASE_ASSERT(part);
         if (pristineTestOf(builtins, part->builtinClass) == PristineTest::NeverPasses)
             return { };
-        if (part->builtinClass == BuiltinClasses::Date && findGetTimeOfDate())
+        if (part->builtinClass == BuiltinClasses::Date && findsMembersOfDateAsBuilt() && findGetTimeOfDate())
             return { .kind = ValueKind::Scalar, .row = Opcode::JSONAppendDate, .tested = types.intern(instances.withoutClassProofs()) };
         if (part->builtinClass == BuiltinClasses::Array)
             return { .kind = ValueKind::Array, .tested = types.intern(instances.withoutClassProofs()), .element = part->expectedContentsAt(builtins, ContentsSlot::Element).predicted() };
@@ -400,11 +420,20 @@ struct JSONTextWriter final : Emission {
     // An arm that has left for another merge point leaves the builder in no block. From there a jump is nothing, and so is going on at a merge point that no arm has reached.
     bool isInBlock() { return !!builder().currentBlock(); }
     MergePoint createMergePoint() { return { .frequency = currentFrequency() }; }
+    MergePoint createMergePointBehind(const Position& position) { return { .frequency = currentFrequency(), .endsText = position.kind == JSONPosition::Root }; }
 
     void jumpTo(MergePoint& merge, ValueID guard = { })
     {
         if (!isInBlock())
             return;
+        if (merge.endsText) {
+            RELEASE_ASSERT(!guard);
+            commit();
+            if (!merge.block)
+                merge.block = builder().addBlock(merge.frequency);
+            builder().emitJump(merge.block);
+            return;
+        }
         ensureCursor(0);
         if (!merge.block) {
             merge.block = builder().addBlock(merge.frequency);
@@ -424,7 +453,7 @@ struct JSONTextWriter final : Emission {
             RELEASE_ASSERT(!isInBlock());
             return;
         }
-        continueAt(merge.block, merge.cursor);
+        continueAt(merge.block, merge.endsText ? Cursor { } : merge.cursor);
     }
 
     void continueAt(BlockID block, Cursor cursor)
@@ -439,6 +468,15 @@ struct JSONTextWriter final : Emission {
             return;
         jumpTo(merge);
         continueAt(merge);
+    }
+
+    void leaveWithoutText()
+    {
+        RELEASE_ASSERT(m_whenThereIsNoText);
+        if (!isInBlock())
+            return;
+        m_cursor = { };
+        builder().emitJump(m_whenThereIsNoText);
     }
 
     void leaveAfterUnknownCode()
@@ -624,13 +662,13 @@ struct JSONTextWriter final : Emission {
         return builder().append(Opcode::JSONListedHolders, { m_stringBuilder });
     }
 
-    TypeArm beginTypeArm(ValueID value, TypeID tested, Expected<BlockFrequency> otherwise)
+    TypeArm beginTypeArm(ValueID value, TypeID tested, Expected<BlockFrequency> otherwise, Expected<BlockFrequency> ofArm = BlockFrequency::Normal)
     {
         TypeArm arm { evaluateTypeTest(program(), typeOf(value), program().at(tested)), value, value, { } };
         if (arm.matches != KnownBoolean::Unknown)
             return arm;
 
-        IRBuilder::ProvenBranch branch = builder().emitBranchWithProof(builder().appendTypeTest(value, tested), testedOperandIndex, BlockFrequency::Normal, otherwise);
+        IRBuilder::ProvenBranch branch = builder().emitBranchWithProof(builder().appendTypeTest(value, tested), testedOperandIndex, ofArm, otherwise);
         return { KnownBoolean::Unknown, branch.provenOnTaken, branch.provenOnNotTaken, branch.notTaken };
     }
 
@@ -655,12 +693,12 @@ struct JSONTextWriter final : Emission {
             return;
         }
 
-        ValueID start = builder().append(Opcode::StringBuilderCheckpoint, { m_stringBuilder });
+        m_whenThereIsNoText = whenThereIsNoText;
         m_codeMayRunAroundValues = writingRunsCode(typeOf(value));
         appendValue(value, plan, Position { });
+        if (!isInBlock())
+            builder().moveToEndOf(builder().addBlock(BlockFrequency::Rare));
         commit();
-        ValueID end = builder().append(Opcode::StringBuilderCheckpoint, { m_stringBuilder });
-        emitJumpIf(builder().append(Opcode::StrictEq, { start, end }), whenThereIsNoText);
     }
 
     void appendValue(ValueID value, const ValuePlan& plan, const Position& position)
@@ -670,10 +708,11 @@ struct JSONTextWriter final : Emission {
             return;
         }
 
-        MergePoint done = createMergePoint();
+        MergePoint done = createMergePointBehind(position);
         Cursor start = m_cursor;
         for (TypeID nullish : { TypeTable::undefined, TypeTable::null }) {
-            TypeArm arm = beginTypeArm(value, nullish, BlockFrequency::Normal);
+            // Every type of a parameter holds null and undefined by here, whatever was written. Nobody serializes null by itself to speak of; in a field it is an ordinary value.
+            TypeArm arm = beginTypeArm(value, nullish, BlockFrequency::Normal, position.kind == JSONPosition::Root ? BlockFrequency::Unlikely : BlockFrequency::Normal);
             if (arm.matches == KnownBoolean::False)
                 continue;
 
@@ -681,7 +720,8 @@ struct JSONTextWriter final : Emission {
                 appendKeyOf(position);
                 appendToken(JSONToken::Null);
                 appendCommaOf(position);
-            }
+            } else if (position.kind == JSONPosition::Root)
+                leaveWithoutText();
             if (!endTypeArm(arm, done, start))
                 return;
             value = arm.remaining;
@@ -716,7 +756,7 @@ struct JSONTextWriter final : Emission {
             return;
         }
 
-        MergePoint done = createMergePoint();
+        MergePoint done = createMergePointBehind(position);
         Cursor start = m_cursor;
         BlockID generic;
         auto ensureGenericBlock = [&] {
@@ -740,6 +780,7 @@ struct JSONTextWriter final : Emission {
                 BuiltinOverloadID getTime = findGetTimeOfDate();
                 RELEASE_ASSERT(getTime);
                 narrowed = builder().append(makeBuiltinCall(getTime, BuiltinCallForm::Whole, { narrowed, { } }, { }));
+                appendFirstReadsOfMembersOfDate(narrowed);
             }
             append(make<&Value::setValueOperand>(plan.row, { }, narrowed));
             appendCommaOf(position);
@@ -750,6 +791,30 @@ struct JSONTextWriter final : Emission {
 
         continueAt(generic, start);
         appendGeneric(value, position);
+        jumpTo(done);
+        continueAt(done);
+    }
+
+    // The host reads toJSON and valueOf by name and, for a valid date alone, toISOString. Each first read adds its member to Date.prototype.
+    void appendFirstReadsOfMembersOfDate(ValueID time)
+    {
+        auto tryMakeFirstReadOf = [&](BuiltinID member) {
+            return tryMakeInitializeBuiltin(program().builtins(), inputs().flow, member);
+        };
+        for (BuiltinID member : { BuiltinID(Builtins::DatePrototypeToJSON), BuiltinID(Builtins::DatePrototypeValueOf) }) {
+            if (std::optional<Value> read = tryMakeFirstReadOf(member))
+                builder().append(WTF::move(*read));
+        }
+        std::optional<Value> readOfValidDate = tryMakeFirstReadOf(Builtins::DatePrototypeToISOString);
+        if (!readOfValidDate)
+            return;
+        MergePoint done = createMergePoint();
+        ensureCursor(0);
+        Cursor start = m_cursor;
+        BlockID isInvalid = builder().emitBranch(builder().append(Opcode::StrictEq, { time, time }), currentFrequency(), BlockFrequency::Rare).notTaken;
+        builder().append(WTF::move(*readOfValidDate));
+        jumpTo(done);
+        continueAt(isInvalid, start);
         jumpTo(done);
         continueAt(done);
     }
@@ -782,7 +847,7 @@ struct JSONTextWriter final : Emission {
 
     void appendObjectParts(ValueID value, const ValuePlan& plan, const Position& position)
     {
-        MergePoint done = createMergePoint();
+        MergePoint done = createMergePointBehind(position);
         Cursor start = m_cursor;
         auto appendParts = [&] {
             for (const ValuePlan& part : plan.parts) {
@@ -809,8 +874,10 @@ struct JSONTextWriter final : Emission {
 
     void appendGeneric(ValueID value, const Position& position)
     {
-        if (position.kind == JSONPosition::Root)
+        if (position.kind == JSONPosition::Root) {
+            leaveWithoutText();
             return;
+        }
 
         MergePoint done = createMergePoint();
         Cursor start = m_cursor;
@@ -840,9 +907,37 @@ struct JSONTextWriter final : Emission {
         mergeIfAnyArmLeftFor(done);
     }
 
+    void noteLevels(size_t numberOfLevels)
+    {
+        RELEASE_ASSERT(numberOfLevels < maxJSONLevelsOpenedByOneFunction);
+        m_mostLevelsOpened = std::max<int64_t>(m_mostLevelsOpened, numberOfLevels);
+    }
+
+    // The objects and lists that are open around what is written here.
+    ValueID appendLevelsAround()
+    {
+        ValueID openedHere = builder().appendInteger(m_holders.size());
+        return m_levelsAroundFunction ? builder().append(Opcode::Add, { m_levelsAroundFunction, openedHere }) : openedHere;
+    }
+
+    // A serializer around which no code runs lists no holders, so the host would count only those of this function. It is told the number of the others, in the
+    // place of the outermost holder.
+    ValueID tellHostLevelsAroundFunction()
+    {
+        if (!m_levelsAroundFunction || m_codeMayRunAroundValues)
+            return { };
+        return builder().append(Opcode::JSONEnterHolder, { m_stringBuilder, m_levelsAroundFunction });
+    }
+
+    void takeBackLevelsAroundFunction(ValueID told)
+    {
+        if (told)
+            builder().append(Opcode::JSONLeaveHolder, { m_stringBuilder, told });
+    }
+
     ValueID appendCallOfSerializer(FunctionID serializer, ValueID object)
     {
-        ValueID outcome = appendCallOf(serializer, { object, m_stringBuilder });
+        ValueID outcome = appendCallOf(serializer, { object, m_stringBuilder, appendLevelsAround() });
         builder().function().edit(outcome).setCalledBuiltin(m_calledBuiltin);
         return outcome;
     }
@@ -862,10 +957,12 @@ struct JSONTextWriter final : Emission {
         }
         commit();
         RELEASE_ASSERT(!m_holders.isEmpty());
+        ValueID levelsAround = tellHostLevelsAroundFunction();
         ListedHolders listed = listHolders(m_holders.size() - 1);
         ValueID innermostHolder = m_holders.last().listed ? builder().append(Opcode::Undefined, { }) : m_holders.last().value;
         ValueID hasText = builder().append(make<&Value::setCalledBuiltin>(Opcode::StringBuilderAppendJSON, { m_stringBuilder, value, property, innermostHolder }, m_calledBuiltin));
         unlistHolders(listed);
+        takeBackLevelsAroundFunction(levelsAround);
         BlockID hasNoText = builder().emitBranch(hasText).notTaken;
         appendCommaOf(position);
         jumpTo(done);
@@ -886,7 +983,7 @@ struct JSONTextWriter final : Emission {
 
         bool isProperty = position.kind == JSONPosition::Property;
         Expected<BlockFrequency> frequency = currentFrequency();
-        MergePoint done = createMergePoint();
+        MergePoint done = createMergePointBehind(position);
         BlockID generic = builder().addBlock(BlockFrequency::Rare);
         // A serializer that gives up has been called all the same, so what comes behind it has run unknown code.
         BlockID afterSerializerGaveUp = position.kind == JSONPosition::Root ? generic : builder().addBlock(BlockFrequency::Rare);
@@ -969,7 +1066,6 @@ struct JSONTextWriter final : Emission {
         if (!receiverStateOf(program(), layout).cannot(ObjectMutation::ChangePrototype))
             emitJumpUnless(builder().append(Opcode::HasLayoutPrototype, { tested.object, tested.guard }), whenShapeDiffers);
         BlockID done = builder().addBlock();
-        BlockID noOrder = builder().addBlock(BlockFrequency::Rare);
 
         // An order that is a prefix of another order shares its arm and costs one test, and an order of n fields has n + 1 prefixes.
         BuildContext& build = inputs().build;
@@ -977,17 +1073,27 @@ struct JSONTextWriter final : Emission {
         uint64_t maxFields = build.limit(LimitID::MaxExpandedKeyFields);
         ExpectedKeyOrders expectedOrders = expectedKeyOrdersOf(program(), layout, KeyOrderLimits { maxArms * (maxFields + 1), maxFields });
         Vector<KeyOrderFamily, 4> families = groupKeyOrders(layout, expectedOrders.orders.span(), maxArms);
+        // Stores after an object's creation give it keys in an unlisted order.
+        bool writesAnyOrder = !expectedOrders.coversEveryObject && !families.isEmpty() && tested.guard && hasObservedKeyAdditions(layout);
+        Expected<BlockFrequency> frequencyOfOtherOrders = writesAnyOrder ? BlockFrequency::Normal : BlockFrequency::Rare;
+        BlockID noOrder = builder().addBlock(frequencyOfOtherOrders);
+        // A dedicated arm is the fastest code for an order. Among the creation orders, the longest is the most likely to stay unchanged.
+        if (writesAnyOrder) {
+            auto longest = std::ranges::max_element(families, { }, [](const KeyOrderFamily& family) { return family.longestOrder.size(); });
+            std::swap(families.first(), *longest);
+            maxArms = 1;
+        }
 
         uint64_t numberOfArmsLeftOut = expectedOrders.numberOfOrdersLeftOut;
         if (families.size() > maxArms) {
             numberOfArmsLeftOut += families.size() - maxArms;
             families.shrink(static_cast<size_t>(maxArms));
         }
-        if (numberOfArmsLeftOut)
+        if (numberOfArmsLeftOut && !writesAnyOrder)
             build.exceeds(LimitID::MaxExpandedKeyOrders, maxArms + numberOfArmsLeftOut, Subject { .function = inputs().functionAsRead, .layout = layout });
 
         for (const KeyOrderFamily& family : families) {
-            BlockID next = builder().addBlock(&family == &families.last() ? BlockFrequency::Rare : BlockFrequency::Normal);
+            BlockID next = builder().addBlock(&family == &families.last() ? frequencyOfOtherOrders : BlockFrequency::Normal);
 
             ObjectArm arm { { tested.object, { } }, layout, family, { }, { }, { }, done };
             for (uint32_t position = 0; position < family.longestOrder.size(); ++position) {
@@ -1002,6 +1108,7 @@ struct JSONTextWriter final : Emission {
             arm.numberOfOwnMembers = order.numberOfOwnMembers;
 
             m_holders.append(Holder { tested.object });
+            noteLevels(m_holders.size());
             if (std::ranges::any_of(arm.members, [&](const Member& member) { return callsSerializerThatRunsCode(member.plan); }))
                 arm.listedHolders = listHolders(m_holders.size());
 
@@ -1021,8 +1128,161 @@ struct JSONTextWriter final : Emission {
         builder().emitJump(noOrder);
 
         builder().moveToEndOf(noOrder);
-        builder().emitJump(whenShapeDiffers);
+        if (writesAnyOrder)
+            appendObjectInAnyOrder(tested, layout, whenShapeDiffers, done);
+        else
+            builder().emitJump(whenShapeDiffers);
         builder().moveToEndOf(done);
+    }
+
+    // Every store to some member is visible, and not all of them are part of a creation: the program itself gives objects of the layout a key later.
+    bool hasObservedKeyAdditions(LayoutID layout) const
+    {
+        // Whether a key computed at class evaluation is a string or a symbol is unknown here.
+        if (std::ranges::any_of(program().at(layout).fields, [](const Field& field) { return !!field.computedKey; }))
+            return false;
+        // A serializer runs no program code itself: the host does, after checking whether a holder is being written twice.
+        for (uint32_t field = 0; field < program().at(layout).fields.size(); ++field) {
+            if (memberSupportOf(layout, field) == MemberSupport::ByName)
+                return false;
+        }
+        for (uint32_t field = 0; field < program().at(layout).fields.size(); ++field) {
+            if (!isEnumerableStringField(program(), program().at(layout).fields[field]))
+                continue;
+            const FieldFlow& flow = flowOf(program(), { layout, field });
+            if (flow.location.writers == WriterState::AllKnown && flow.location.stores != StoreCount::Never && flow.location.initialization != InitializationState::SetAtCreation && flow.occupancy != Occupancy::AlwaysFilled)
+                return true;
+        }
+        return false;
+    }
+
+    ValueID appendFieldInKeyOrder(ValueID order, ValueID position, LayoutID layout)
+    {
+        return builder().append(make<&Value::setLayout>(Opcode::GetFieldInKeyOrder, { order, position }, layout));
+    }
+
+    // A loop over the object's keys, in order. Each key dispatches to the code that writes its field's member.
+    void appendObjectInAnyOrder(const TestedObject& tested, LayoutID layout, BlockID ifOrderIsNotListed, BlockID done)
+    {
+        static constexpr int64_t orderIsNotListed = -2;
+        Expected<BlockFrequency> frequency = currentFrequency();
+        ValueID object = tested.object;
+
+        ValueID order = builder().append(make<&Value::setLayout>(Opcode::GetOrderWord, { object, tested.guard }, layout));
+        ValueID firstField = appendFieldInKeyOrder(order, builder().appendInteger(0), layout);
+        emitJumpIf(builder().append(Opcode::StrictEq, { firstField, builder().appendInteger(orderIsNotListed) }), ifOrderIsNotListed);
+        ValueID count = builder().append(Opcode::BitAnd, { builder().append(Opcode::URShift, { order, builder().appendInteger(orderWordCountShift) }), builder().appendInteger(maxFieldsInOrder) });
+
+        Vector<Member, 8> members;
+        for (uint32_t field = 0; field < program().at(layout).fields.size(); ++field) {
+            if (memberSupportOf(layout, field) == MemberSupport::NotSerialized)
+                continue;
+            members.append(Member { program().at(layout).fields[field].key, field, 0, planField(layout, field) });
+            // The read does not rely on the key being listed.
+            members.last().plan.mayBeNullish = true;
+        }
+
+        m_holders.append(Holder { object });
+        noteLevels(m_holders.size());
+        ListedHolders listed;
+        if (std::ranges::any_of(members, [&](const Member& member) { return callsSerializerThatRunsCode(member.plan); }))
+            listed = listHolders(m_holders.size());
+        appendToken(JSONToken::OpenObject);
+
+        BlockID head = builder().addBlock(frequency);
+        ValueID position = builder().addParameter(head, inputs().types.intern(Type::integer({ 0, typeOf(count).integers.maximum })));
+        ValueID cursor = builder().addParameter(head, cursorType());
+        ValueID guard = builder().addParameter(head, TypeTable::guard);
+        builder().emitJump(head, { builder().appendInteger(0), m_cursor.value, tested.guard });
+
+        // One reservation covers whichever member comes next.
+        continueAt(head, { cursor, 0 });
+        builder().append(Opcode::LoopHint, { });
+        ensureCursor(1);
+        Cursor atKey = m_cursor;
+        IRBuilder::ProvenBranch hasKey = builder().emitBranchWithProof(builder().append(Opcode::Less, { position, count }));
+        ValueID field = appendFieldInKeyOrder(order, hasKey.provenOnTaken, layout);
+        Vector<std::pair<int64_t, Target>> cases;
+        for (const Member& member : members)
+            cases.append({ static_cast<int64_t>(member.field), Target { builder().addBlock(frequency), { }, { } } });
+        Vector<BlockID, 8> blocksOfMembers = cases.map<Vector<BlockID, 8>>([](auto& entry) { return entry.second.block; });
+        BlockID isNotWritten = builder().addBlock(frequency);
+        builder().emitSwitch(field, WTF::move(cases), Target { isNotWritten, { }, { } });
+
+        MergePoint next { .frequency = frequency };
+        BlockID remainder;
+        continueAt(isNotWritten, atKey);
+        jumpTo(next, guard);
+
+        for (size_t index = 0; index < members.size(); ++index) {
+            const Member& member = members[index];
+            continueAt(blocksOfMembers[index], atKey);
+            ValueID value;
+            switch (memberSupportOf(layout, member.field)) {
+            case MemberSupport::WithoutText:
+                jumpTo(next, guard);
+                continue;
+            case MemberSupport::Slot:
+                value = appendFieldRead({ object, guard }, layout, member.field, Opcode::GetSlotOrUndefined);
+                break;
+            case MemberSupport::ByName:
+            case MemberSupport::NotSerialized:
+                RELEASE_ASSERT_NOT_REACHED();
+            }
+
+            MergePoint afterUnknownCode { .frequency = BlockFrequency::Rare };
+            MergePoint* outer = std::exchange(m_afterUnknownCode, &afterUnknownCode);
+            appendValue(value, member.plan, Position { JSONPosition::Property, member.key, { }, afterSeparator });
+            m_afterUnknownCode = outer;
+            jumpTo(next, guard);
+            if (!afterUnknownCode.block)
+                continue;
+
+            // The keys written are those the object had at the start.
+            continueAt(afterUnknownCode);
+            commit();
+            BlockID stale = builder().addBlock(BlockFrequency::Rare);
+            TestedObject renewed = emitShapeTest(object, singleElementSpan(layout), stale);
+            emitJumpUnless(builder().append(Opcode::StrictEq, { builder().append(make<&Value::setLayout>(Opcode::GetOrderWord, { object, renewed.guard }, layout)), order }), stale);
+            jumpTo(next, renewed.guard ? renewed.guard : guard);
+
+            builder().moveToEndOf(stale);
+            if (!remainder)
+                remainder = builder().addBlock(BlockFrequency::Rare);
+            builder().emitJump(remainder);
+        }
+
+        continueAt(next);
+        builder().emitJump(head, { builder().append(Opcode::Add, { hasKey.provenOnTaken, builder().appendInteger(1) }), m_cursor.value, next.guard });
+
+        continueAt(hasKey.notTaken, atKey);
+        appendToken(JSONToken::CloseObjectOverComma);
+        commit();
+        appendLeaveHolders(listed);
+        builder().emitJump(done);
+
+        if (remainder) {
+            builder().moveToEndOf(remainder);
+            ValueID names = builder().append(make<&Value::setLayout>(Opcode::GetKeyNamesInOrder, { order, builder().append(Opcode::Add, { hasKey.provenOnTaken, builder().appendInteger(1) }) }, layout));
+            ValueID levelsAround = tellHostLevelsAroundFunction();
+            ListedHolders listedForHost = listHolders(m_holders.size() - 1);
+            ValueID innermostHolder = m_holders.last().listed ? builder().append(Opcode::Undefined, { }) : object;
+            ValueID hasText = builder().append(make<&Value::setCalledBuiltin>(Opcode::StringBuilderAppendJSONMembers, { m_stringBuilder, object, names, builder().appendInteger(0), innermostHolder }, m_calledBuiltin));
+            unlistHolders(listedForHost);
+            takeBackLevelsAroundFunction(levelsAround);
+            BlockID hasNoText = builder().emitBranch(hasText).notTaken;
+            appendText(appendString("}"_s));
+            appendLeaveHolders(listed);
+            builder().emitJump(done);
+
+            builder().moveToEndOf(hasNoText);
+            appendToken(JSONToken::CloseObjectOverComma);
+            commit();
+            appendLeaveHolders(listed);
+            builder().emitJump(done);
+        }
+        markHoldersAsNotListed(listed);
+        m_holders.removeLast();
     }
 
     // An arm of its own is the fastest code for an order, so orders share an arm only where there are more of them than arms, and those first that differ least.
@@ -1195,10 +1455,12 @@ struct JSONTextWriter final : Emission {
             builder().append(make<&Value::setKey, &Value::setMode>(Opcode::PropSet, { keys, arm.numberOfOwnMembers }, program().keyOf(BuiltinNames::length), ECMAMode::Strict));
 
         RELEASE_ASSERT(m_holders.last().value == arm.object.object);
+        ValueID levelsAround = tellHostLevelsAroundFunction();
         ListedHolders listed = listHolders(m_holders.size() - 1);
         ValueID innermostHolder = m_holders.last().listed ? builder().append(Opcode::Undefined, { }) : arm.object.object;
         ValueID hasText = builder().append(make<&Value::setCalledBuiltin>(Opcode::StringBuilderAppendJSONMembers, { m_stringBuilder, arm.object.object, keys, firstMember, innermostHolder }, m_calledBuiltin));
         unlistHolders(listed);
+        takeBackLevelsAroundFunction(levelsAround);
         BlockID hasNoText = builder().emitBranch(hasText).notTaken;
         appendText(appendString("}"_s));
         appendLeaveHolders(arm.listedHolders);
@@ -1217,6 +1479,13 @@ struct JSONTextWriter final : Emission {
         return builder().emitBranchWithProof(builder().append(Opcode::Less, { next, length }));
     }
 
+    bool objectsAmongElementsGoToHost(ArrayStorage storage, TypeID elementType) const
+    {
+        SetForScope planOnlyToAsk(m_reportsLimits, false);
+        Type read = typeOfElementRead(storage);
+        return read.hasObjects() && planType(read, &program().at(elementType)).kind == ValueKind::Generic;
+    }
+
     void appendArray(ValueID array, const ValuePlan& plan, const Position& position)
     {
         MergePoint done = createMergePoint();
@@ -1227,6 +1496,8 @@ struct JSONTextWriter final : Emission {
 
         ValueID pristine = emitProvenBranch(builder().append(makePristineTest(array, BuiltinClasses::Array, serializedArrayAspects)), generic);
         ValueID length = builder().append(Opcode::GetArrayLength, { array, pristine });
+        // A list without elements is a level too.
+        noteLevels(m_holders.size() + 1);
         ValueID isEmpty = builder().append(Opcode::StrictEq, { length, builder().appendInteger(0) });
         BlockID hasElements = builder().emitBranch(isEmpty).notTaken;
         appendKeyOf(position);
@@ -1242,8 +1513,21 @@ struct JSONTextWriter final : Emission {
                 continue;
             IRBuilder::ProvenBranch hasStorage = builder().emitBranchWithProof(builder().append(makeArrayStorageTest(array, form.kind)));
             ValueID guards[] { pristine, hasStorage.provenOnTaken };
+            // Each object among elements of unknown type is a host call. A list that starts with one is passed to the host whole, in one call.
+            if (!listed.number && objectsAmongElementsGoToHost(form.kind, plan.element)) {
+                Value first = make<&Value::setArrayStorage, &Value::setKeyIsIntegral>(Opcode::GetArrayElement, { array, builder().appendInteger(0), builder().appendAllGuards(guards) }, form.kind, true);
+                emitJumpIf(builder().appendTypeTest(builder().append(WTF::move(first)), TypeTable::object), generic);
+            }
             m_cursor = start;
             appendKeyOf(position);
+            if (!form.holdsCells) {
+                // Nothing but numbers and holes: the run time writes the list in one call, in fewer instructions a number than a loop here takes.
+                append(make<&Value::setJsonPosition, &Value::setValueOperand>(Opcode::JSONAppendValue, { }, JSONPosition::Element, array));
+                appendLeaveHolders(listed);
+                jumpTo(written);
+                builder().moveToEndOf(hasStorage.notTaken);
+                continue;
+            }
             appendToken(JSONToken::OpenArray);
             elementsMayRunUnknownCode |= appendArrayLoop({ array, builder().appendAllGuards(guards), length, plan.element, closing }, form.kind) == ElementCode::MayRunUnknownCode;
             builder().moveToEndOf(hasStorage.notTaken);
@@ -1367,8 +1651,12 @@ struct JSONTextWriter final : Emission {
     ValueID m_stringBuilder;
     BuiltinID m_calledBuiltin { };
     Cursor m_cursor { };
+    BlockID m_whenThereIsNoText;
     // The outermost first.
     Vector<Holder, 4> m_holders;
+    // In a serializer: how many objects and lists its callers have open around its object. None around the value that the program hands to JSON.stringify.
+    ValueID m_levelsAroundFunction;
+    int64_t m_mostLevelsOpened { 0 };
     bool m_codeMayRunAroundValues { false };
     // False while a plan is made only to ask something about it: the plan that is written reports what it leaves out.
     mutable bool m_reportsLimits { true };
@@ -1421,7 +1709,8 @@ void JSONSerializerBuilder::appendRoot(ValueID value, BlockID whenThereIsNoText)
 
 DerivedSignature signatureOfSerializer(const EmissionInputs& inputs)
 {
-    return { { TypeTable::object, inputs.opaqueType(OpaqueKind::StringBuilder) }, { inputs.outcomeType() } };
+    TypeID levelsAround = inputs.types.intern(Type::integer({ 0, maxJSONLevels + maxJSONLevelsOpenedByOneFunction }));
+    return { { TypeTable::object, inputs.opaqueType(OpaqueKind::StringBuilder), levelsAround }, { inputs.outcomeType() } };
 }
 
 Function buildSerializer(const DerivedFunctionKey& key, DerivedFunctionInputs& derived)
@@ -1436,7 +1725,18 @@ Function buildSerializer(const DerivedFunctionKey& key, DerivedFunctionInputs& d
 
     BlockID differs = builder.addBlock(BlockFrequency::Rare);
     builder.emitFailureOfPredictions(Target { differs, { }, { } });
+    // Not the entry where predictions are made to fail: that has ended it with a branch.
+    BlockID tests = builder.currentBlock();
     writer.m_codeMayRunAroundValues = writer.writingRunsCode(Type::forLayout(layout, inputs.types));
+
+    // The body comes first: what it opens says how many levels may be open around it. With more the general serializer is asked, which counts them one by one and throws.
+    BlockID body = builder.addBlock(BlockFrequency::Normal);
+    writer.m_levelsAroundFunction = builder.addParameter(body, inputs.types.intern(Type::integer({ 0, maxJSONLevels })));
+    builder.moveToEndOf(body);
+    writer.appendObjectOfLayout(head.parameters[0], layout, differs);
+    builder.emitReturn(writer.appendOutcome(JSONOutcome::Parsed));
+
+    builder.moveToEndOf(tests);
     // Where code may run, the holders are listed. Where none runs, nothing is kept about them until the text has grown long: then the run time asks for those that follow.
     if (!writer.m_codeMayRunAroundValues && writer.mayHoldItself(layout)) {
         IRBuilder::BranchBlocks atEntry = builder.emitBranch(builder.append(Emission::make<&Value::setFailsAtWatchedLevels>(Opcode::JSONHasStackSpace, { }, true)), BlockFrequency::Normal, BlockFrequency::Rare);
@@ -1449,8 +1749,11 @@ Function buildSerializer(const DerivedFunctionKey& key, DerivedFunctionInputs& d
         builder.moveToEndOf(atEntry.taken);
     } else
         writer.emitJumpUnless(builder.append(Opcode::JSONHasStackSpace, { }), differs);
-    writer.appendObjectOfLayout(head.parameters[0], layout, differs);
-    builder.emitReturn(writer.appendOutcome(JSONOutcome::Parsed));
+    ValueID hasRoom = builder.append(Opcode::Less, { head.parameters[2], builder.appendInteger(maxJSONLevels - writer.m_mostLevelsOpened + 1) });
+    IRBuilder::ProvenBranch whenThereIsRoom = builder.emitBranchWithProof(hasRoom, 0, BlockFrequency::Normal, BlockFrequency::Rare);
+    builder.emitJump(body, { whenThereIsRoom.provenOnTaken });
+    builder.moveToEndOf(whenThereIsRoom.notTaken);
+    builder.emitJump(differs);
 
     builder.moveToEndOf(differs);
     builder.emitReturn(writer.appendOutcome(JSONOutcome::Unknown));

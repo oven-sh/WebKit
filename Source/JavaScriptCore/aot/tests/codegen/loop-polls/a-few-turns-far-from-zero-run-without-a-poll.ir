@@ -1,5 +1,5 @@
 # A loop goes without its poll where few enough turns lie in front of it. Where it starts at zero or above, that it ends within so many turns of zero says so without a subtraction.
-# A window of a few elements far into a long text, list or view ends farther out than that: there, on a rare path, the two ends are held against each other, and the few turns run in
+# A window of a few elements far into a long text, list or view ends farther out than that: there, on a rare path, the place a whole stretch behind the start is held against the end, and the few turns run in
 # the same loop as they do near zero. Only a loop with many turns in front of it runs in the copy that polls, or in more than one stretch.
 #
 # function mix(offset: number, width: number): number {
@@ -168,9 +168,10 @@ entry module=m0
 # CHECK: Successors: #[[loop]]
 # CHECK-NOT: isLoopPoll
 # CHECK: BB#[[far]]:
-# CHECK: Int32 b@[[isShort]] = BelowEqual(b@{{*}}, $1048576(
-# CHECK: Branch(b@[[isShort]], Terminal,
-# CHECK-NEXT: Successors: Then:#[[short]], Else:Rare:#[[long]]
+# CHECK: Int32 b@[[endOfStretch]] = Add(b@{{*}}, $1048576(
+# CHECK: Int32 b@[[isLong]] = Above(b@{{*}}, b@[[endOfStretch]],
+# CHECK: Branch(b@[[isLong]], Terminal,
+# CHECK-NEXT: Successors: Then:Rare:#[[long]], Else:#[[short]]
 # CHECK: BB#[[short]]:
 # CHECK: Successors: #[[loop]]
 # CHECK: BB#[[long]]:

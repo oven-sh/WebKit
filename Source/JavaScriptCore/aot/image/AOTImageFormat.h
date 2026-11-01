@@ -11,6 +11,7 @@
 #include "AOTCompileOptions.h"
 #include "AOTLimits.h"
 #include "AOTRuntimeTable.h"
+#include "AOTStubFrames.h"
 #include "AOTVarint.h"
 #include "AOTVector.h"
 #include "CPU.h"
@@ -124,6 +125,7 @@ struct ImageCodeRanges {
 // Without AdmitsUnknownJavaScript the proofs in the code hold only while nothing but the code of the image runs, and without LoadsModulesByName only while no module is found by a name.
 // Without LoadsCodeOutsideImage they hold only while no file with code is loaded but those that the build lists as staying outside.
 // Without FindsDataFilesByName they hold only while no data file of the image is found by a name.
+// Without StoresPathOfMainModule they hold only while `require.main` answers the module object of no file but an entry point.
 enum class ImageFlag : uint32_t {
     IsObfuscated = 1 << 0,
     AdmitsUnknownJavaScript = 1 << 1,
@@ -132,7 +134,33 @@ enum class ImageFlag : uint32_t {
     ShowsWaysBetweenModuleObjects = 1 << 4,
     LoadsCodeOutsideImage = 1 << 5,
     FindsDataFilesByName = 1 << 6,
+    // A realm that runs the image may run others: CompileOptions::sharesRealms().
+    SharesRealms = 1 << 7,
+    // The host may start an ES module that is an entry point once more in the same realm: ModuleFlags::RunsAgain.
+    RunsEntryPointsAgain = 1 << 8,
+    // CompileOptions::holdsLibraryAlone(). It knows nothing of the run: the image above it is the first that does, and says what the realm locks.
+    HoldsLibraryAlone = 1 << 9,
+    StoresPathOfMainModule = 1 << 10,
+    // FlowResults::reachedFunctionsCountUnreadCode(). Without it whatever runs beside the code of the image is a copy of a file of the image.
+    RunsUnreadCode = 1 << 11,
 };
+
+// The numbers of an image that cells, or code of another image, may hold. The images of a realm were built one after the other, and none takes a number of those before it.
+// An image that shares no realm begins each range at zero.
+struct ImageNumberRanges {
+    // The shapes are the numbers above the first up to the second.
+    uint32_t shapesBelow;
+    uint32_t lastShape;
+    uint32_t firstClosureNumber;
+    uint32_t endOfClosureNumbers;
+    // ImageSection::StringHeaders begins with this number. A smaller number names what an image before this one holds under it.
+    uint32_t firstStringHeader;
+    uint32_t endOfIdentifiers;
+    uint32_t endOfStringHeaders;
+    // Of the first image of a realm: its section has room for the headers of the others, which the run time copies there, so that one address and a number find every header.
+    uint32_t capacityOfStringHeaders;
+};
+static_assert(sizeof(ImageNumberRanges) == 32);
 
 // codeOffset and sections[].offset count from the header.
 struct ImageHeader {
@@ -156,6 +184,10 @@ struct ImageHeader {
     ImageCodeRanges code;
     uint32_t flags;
     uint32_t entriesUsed[(numberOfEntries + 31) / 32];
+    // The offset into the shared code of the return site of each kind that has only one. 0 for every other kind, and for a kind whose stub is not in the image.
+    uint32_t singleReturnSites[numberOfStubFrameKinds];
+    uint32_t numberOfStubsFoundByKey;
+    ImageNumberRanges numbers;
 };
 static_assert(std::is_trivially_copyable_v<ImageHeader> && std::is_standard_layout_v<ImageHeader>);
 static_assert(!(offsetof(ImageHeader, sections) % 4));
@@ -176,7 +208,7 @@ enum class ImageFunctionFlag : uint8_t {
     HasPositions = 1 << 4,
     // At its entry, in front of the stack words of its caller and above its return address.
     SpillsArgumentRegisters = 1 << 5,
-    HasCallsOfOwnFunctionObjects = 1 << 6,
+    HasCalleesOfSites = 1 << 6,
     HasConstructedCallees = 1 << 7,
 };
 
@@ -201,7 +233,8 @@ struct ImageFunction {
 };
 static_assert(sizeof(ImageFunction) == 8 && std::has_unique_object_representations_v<ImageFunction>);
 static_assert(defaultLimitValue(LimitID::ImageFunctions, hostArchitecture()) <= 1ull << ImageFunction::numberOfFunctionBits);
-static_assert(defaultLimitValue(LimitID::ImageFunctions, hostArchitecture()) == ClosureWord::firstReservedFunction);
+static_assert(defaultLimitValue(LimitID::ImageClosureFunctions, hostArchitecture()) == ClosureWord::firstReservedFunction);
+static_assert(defaultLimitValue(LimitID::CodeBytes, hostArchitecture()) / ClosureWord::offsetUnit <= 1ull << ClosureWord::isRenamedBit);
 
 // A frame is named by the place of its frame record: the word below its return address.
 struct ImageFrame {
@@ -247,15 +280,53 @@ struct ImageInnerEntry {
 };
 static_assert(sizeof(ImageInnerEntry) == 8);
 
+// StubAddresses begins with ImageHeader::numberOfStubsFoundByKey stubs that the run time finds by key, most of them while it starts. They are few, so a start reads one page of the section. Each of the two parts is sorted by key.
 struct StubAddressInImage {
     uint64_t key;
     uint32_t offset;
-    uint32_t reserved;
+    // Code calls the stub like a function, and the stub jumps to the callee.
+    uint32_t usesCallConvention;
 };
 static_assert(sizeof(StubAddressInImage) == 16);
 
 // SlotHandlers has an offset into the shared code for each member of PropertyCacheWords::handlers, in the order of that array.
 static constexpr uint32_t offsetOfAbsentStub = 0xffffffffu;
+
+// What a call site records about the function object it calls.
+class CalleeOfSite {
+public:
+    // The caller created it and has not passed it to anything.
+    static constexpr CalleeOfSite ownFunctionObject() { return CalleeOfSite(0, 0); }
+    // It is in the caller's frame, at this word offset from the frame record.
+    static constexpr CalleeOfSite inFrame(int32_t word) { return CalleeOfSite(1 + 2 * (word < 0 ? 2 * static_cast<uint32_t>(-(word + 1)) + 1 : 2 * static_cast<uint32_t>(word)), 0); }
+    // The word holds it, or the environment whose field holds it once it is created: SlotData::encoded().
+    static constexpr CalleeOfSite inEnvironmentInFrame(int32_t word, uint32_t field) { return CalleeOfSite(inFrame(word).m_bits + 1, field); }
+    static constexpr CalleeOfSite fromBits(uint32_t bits, uint32_t field) { return CalleeOfSite(bits, field); }
+    static constexpr bool bitsEncodeField(uint32_t bits) { return bits && !(bits & 1); }
+
+    constexpr bool isOwnFunctionObject() const { return !m_bits; }
+    constexpr int32_t wordInFrame() const
+    {
+        ASSERT_UNDER_CONSTEXPR_CONTEXT(m_bits);
+        uint32_t word = (m_bits - 1) / 2;
+        return word & 1 ? -static_cast<int32_t>(word / 2) - 1 : static_cast<int32_t>(word / 2);
+    }
+    constexpr std::optional<uint32_t> fieldInEnvironment() const { return bitsEncodeField(m_bits) ? std::optional(m_field) : std::nullopt; }
+    constexpr uint32_t bits() const { return m_bits; }
+    friend constexpr bool operator==(CalleeOfSite, CalleeOfSite) = default;
+
+private:
+    constexpr CalleeOfSite(uint32_t bits, uint32_t field)
+        : m_bits(bits)
+        , m_field(field)
+    {
+    }
+
+    uint32_t m_bits;
+    uint32_t m_field;
+};
+static_assert(CalleeOfSite::inFrame(0).wordInFrame() == 0 && CalleeOfSite::inFrame(-1).wordInFrame() == -1 && CalleeOfSite::inFrame(7).wordInFrame() == 7 && !CalleeOfSite::inFrame(0).isOwnFunctionObject() && !CalleeOfSite::inFrame(-3).fieldInEnvironment());
+static_assert(CalleeOfSite::inEnvironmentInFrame(-3, 0).wordInFrame() == -3 && CalleeOfSite::inEnvironmentInFrame(0, 9).fieldInEnvironment() == 9u && !CalleeOfSite::inEnvironmentInFrame(0, 0).isOwnFunctionObject());
 
 // frameRanges says whether the function has its frame at a return address, and at nothing else: it holds the distances between the offsets at which the answer changes, in units of codeOffsetUnit.
 struct SideTableInputs {
@@ -266,7 +337,7 @@ struct SideTableInputs {
     uint32_t frame { 0 };
     std::optional<std::pair<uint32_t, uint32_t>> frameMapRange;
     std::span<const uint8_t> handlers;
-    std::span<const uint32_t> callsOfOwnFunctionObjects;
+    std::span<const std::pair<uint32_t, CalleeOfSite>> calleesOfSites;
     // A site and a FunctionID index.
     std::span<const std::pair<uint32_t, uint32_t>> constructedCallees;
     std::span<const uint8_t> callSites;
@@ -278,7 +349,7 @@ struct SideTableParts {
     static void appendFrameChange(Vector<uint8_t>& bytes, uint32_t previousChange, uint32_t change);
 
     bool hasFrameAt(uint32_t offset) const;
-    bool callsOwnFunctionObjectAt(uint32_t site) const;
+    std::optional<CalleeOfSite> calleeOfSiteAt(uint32_t site) const;
     std::optional<uint32_t> constructedCalleeAt(uint32_t site) const;
 
     std::span<const uint8_t> frameRanges;
@@ -286,8 +357,8 @@ struct SideTableParts {
     uint32_t firstFrameMapWord { 0 };
     uint32_t numberOfFrameMapWords { 0 };
     std::span<const uint8_t> handlers;
-    // Each site as its distance from the one in front.
-    std::span<const uint8_t> callsOfOwnFunctionObjects;
+    // Each site is encoded as its distance from the previous site, CalleeOfSite::bits(), and the field if the bits encode one.
+    std::span<const uint8_t> calleesOfSites;
     // Each site as its distance from the one in front, and its function.
     std::span<const uint8_t> constructedCallees;
     const uint8_t* callSites { nullptr };
@@ -317,9 +388,9 @@ inline SideTableParts SideTableParts::read(const ImageFunction& function, const 
         parts.handlers = unsafeMakeSpan(cursor, size);
         cursor += size;
     }
-    if (function.has(ImageFunctionFlag::HasCallsOfOwnFunctionObjects)) {
+    if (function.has(ImageFunctionFlag::HasCalleesOfSites)) {
         size_t size = static_cast<size_t>(readVarint(cursor));
-        parts.callsOfOwnFunctionObjects = unsafeMakeSpan(cursor, size);
+        parts.calleesOfSites = unsafeMakeSpan(cursor, size);
         cursor += size;
     }
     if (function.has(ImageFunctionFlag::HasConstructedCallees)) {
@@ -337,7 +408,7 @@ inline OptionSet<ImageFunctionFlag> SideTableInputs::flags() const
     OptionSet<ImageFunctionFlag> flags;
     flags.set(ImageFunctionFlag::HasFrameMaps, frameMapRange && frameMapRange->second);
     flags.set(ImageFunctionFlag::HasHandlers, !handlers.empty());
-    flags.set(ImageFunctionFlag::HasCallsOfOwnFunctionObjects, !callsOfOwnFunctionObjects.empty());
+    flags.set(ImageFunctionFlag::HasCalleesOfSites, !calleesOfSites.empty());
     flags.set(ImageFunctionFlag::HasConstructedCallees, !constructedCallees.empty());
     flags.set(ImageFunctionFlag::HasCallSites, !callSites.empty());
     return flags;
@@ -358,15 +429,18 @@ inline void SideTableParts::append(Vector<uint8_t>& stream, const SideTableInput
         appendVarint(stream, inputs.handlers.size());
         stream.append(inputs.handlers);
     }
-    if (flags.contains(ImageFunctionFlag::HasCallsOfOwnFunctionObjects)) {
-        Vector<uint8_t> distances;
+    if (flags.contains(ImageFunctionFlag::HasCalleesOfSites)) {
+        Vector<uint8_t> rows;
         uint32_t previous = 0;
-        for (uint32_t site : inputs.callsOfOwnFunctionObjects) {
+        for (auto [site, callee] : inputs.calleesOfSites) {
             RELEASE_ASSERT(site > previous);
-            appendVarint(distances, site - std::exchange(previous, site));
+            appendVarint(rows, site - std::exchange(previous, site));
+            appendVarint(rows, callee.bits());
+            if (std::optional<uint32_t> field = callee.fieldInEnvironment())
+                appendVarint(rows, *field);
         }
-        appendVarint(stream, distances.size());
-        stream.appendVector(distances);
+        appendVarint(stream, rows.size());
+        stream.appendVector(rows);
     }
     if (flags.contains(ImageFunctionFlag::HasConstructedCallees)) {
         Vector<uint8_t> rows;
@@ -382,14 +456,19 @@ inline void SideTableParts::append(Vector<uint8_t>& stream, const SideTableInput
     stream.append(inputs.callSites);
 }
 
-inline bool SideTableParts::callsOwnFunctionObjectAt(uint32_t site) const
+inline std::optional<CalleeOfSite> SideTableParts::calleeOfSiteAt(uint32_t site) const
 {
-    const uint8_t* cursor = callsOfOwnFunctionObjects.data();
-    const uint8_t* end = cursor + callsOfOwnFunctionObjects.size();
+    const uint8_t* cursor = calleesOfSites.data();
+    const uint8_t* end = cursor + calleesOfSites.size();
     uint64_t listed = 0;
-    while (cursor < end && listed < site)
+    while (cursor < end && listed < site) {
         listed += readVarint(cursor);
-    return site && listed == site;
+        uint32_t bits = static_cast<uint32_t>(readVarint(cursor));
+        uint32_t field = CalleeOfSite::bitsEncodeField(bits) ? static_cast<uint32_t>(readVarint(cursor)) : 0;
+        if (listed == site)
+            return CalleeOfSite::fromBits(bits, field);
+    }
+    return std::nullopt;
 }
 
 inline std::optional<uint32_t> SideTableParts::constructedCalleeAt(uint32_t site) const

@@ -9,6 +9,8 @@
 #if ENABLE(AOT)
 
 #include "AOTAsyncAwaitConditions.h"
+#include "AOTBarrierEmitter.h"
+#include "AOTConstantEmitter.h"
 #include "AOTModuleWords.h"
 #include "AOTPlacement.h"
 #include "AOTStaticsEmitter.h"
@@ -70,6 +72,12 @@ Boxed ModuleEmitter::loadModuleValue(ModuleID module)
     return Boxed(m_out.load64(emitter<StaticsEmitter>().inStatics(heap, m_placement.moduleValueOffset(module))));
 }
 
+Boxed ModuleEmitter::loadRequireCacheValue(ModuleID module)
+{
+    const B3::AbstractHeap& heap = m_heaps.entire(AbstractHeap::RuntimeState);
+    return Boxed(m_out.load64(emitter<StaticsEmitter>().inStatics(heap, m_placement.requireCacheValueOffset(module))));
+}
+
 void ModuleEmitter::generateModuleNamespace(const ValueContext& value)
 {
     ModuleID module = value->module();
@@ -78,7 +86,19 @@ void ModuleEmitter::generateModuleNamespace(const ValueContext& value)
         return callOperation<CellPointer>(value, RuntimeOperation::GetModuleNamespace, { moduleIndex(module), word32(static_cast<int32_t>(phase)) }, options);
     };
     if (!keepsNamespaceInValueWord(m_program.at(module), phase) || !m_placement.hasModuleValue(module)) {
-        define(value, getInSlowPath({ }));
+        std::optional<uint32_t> offset = phase == ImportPhase::Evaluation ? m_placement.moduleNamespaceOffset(module) : std::nullopt;
+        if (!offset) {
+            define(value, getInSlowPath({ }));
+            return;
+        }
+        // `fs.existsSync(path)` behind `import * as fs` hands the object on as `this`, at every call. It is made once.
+        TypedPointer cellWord = emitter<StaticsEmitter>().inStatics(m_heaps.entire(AbstractHeap::AllocatorState), *offset);
+        define(value, emitter<ConstantEmitter>().permanentCell(cellWord, false, [&] {
+            CellPointer cell = getInSlowPath({ .isOnRarePath = true });
+            m_out.store64(cell.value(), cellWord);
+            emitter<BarrierEmitter>().markCardOfStatics(*offset);
+            return cell;
+        }));
         return;
     }
 
@@ -100,17 +120,22 @@ void ModuleEmitter::generateRequireModule(const ValueContext& value)
 {
     ModuleID module = value->module();
     const Module& target = m_program.at(module);
+    if (value->ifHeldForImport()) {
+        define(value, callOperation<Boxed>(value, RuntimeOperation::RequireIfHeldForImport, { moduleIndex(module), moduleIndex(value->referrer()) }));
+        return;
+    }
     auto requireInSlowPath = [&](CallOptions options) {
         options.calledBuiltin = functionOfHostThatRequireCallsFor(target);
         return callOperation<Boxed>(value, RuntimeOperation::RequireModule, { moduleIndex(module), moduleIndex(value->referrer()) }, options);
     };
-    bool isAnsweredByValueWord = (target.kind == ModuleKind::RuntimeSource || target.kind == ModuleKind::Runtime) && !target.exportsVariable && m_placement.hasModuleValue(module);
+    bool addsToRequireCache = requireAddsToRequireCache(m_program, value->referrer(), module);
+    bool isAnsweredByValueWord = requireReadsModuleValue(m_program, target) && (addsToRequireCache ? m_placement.hasRequireCacheValue(module) : m_placement.hasModuleValue(module));
     if (!isAnsweredByValueWord || value.shape() == CodeShape::Compact) {
         define(value, requireInSlowPath({ }));
         return;
     }
 
-    Boxed stored = loadModuleValue(module);
+    Boxed stored = addsToRequireCache ? loadRequireCacheValue(module) : loadModuleValue(module);
     define(value, either<Boxed>(isNotEmpty(stored), [&] {
         return stored;
     }, [&] {
@@ -121,6 +146,22 @@ void ModuleEmitter::generateRequireModule(const ValueContext& value)
 void ModuleEmitter::generateRecordRequire(const ValueContext& value)
 {
     callVoidOperation(value, RuntimeOperation::RecordRequire, { moduleIndex(value->module()), moduleIndex(value->referrer()) });
+}
+
+void ModuleEmitter::generateAreLoaderFunctionsStored(const ValueContext& value)
+{
+    defineTest(value, callWithoutSite<Condition>(RuntimeOperation::AreLoaderFunctionsStored, { }));
+}
+
+void ModuleEmitter::generateWasLoadedSynchronously(const ValueContext& value)
+{
+    defineTest(value, callWithoutSite<Condition>(RuntimeOperation::WasLoadedSynchronously, { moduleIndex(value->module()) }));
+}
+
+void ModuleEmitter::generateCountExecution(const ValueContext& value)
+{
+    Operand arguments[] { moduleIndex(value->module()), word32(static_cast<int32_t>(value->description().index())), word32(static_cast<int32_t>(value->counter())) };
+    callWithoutSite(RuntimeOperation::CountExecution, arguments, Representation::Void, { });
 }
 
 void ModuleEmitter::generateResolveModule(const ValueContext& value)
@@ -181,8 +222,20 @@ void ModuleEmitter::generateBeginModuleEvaluation(const ValueContext& value)
 
 void ModuleEmitter::generateFinishModuleEvaluation(const ValueContext& value)
 {
+    ModuleID module = value->module();
     LValue evaluated = m_out.constInt32(static_cast<int32_t>(StoredModuleStatus::Evaluated));
-    m_out.store32As8(evaluated, statusOf(value->module()));
+    OptionSet<ModuleFlags> flags = m_program.at(module).flags;
+    // A module without a start of its own is marked behind the site that requires it, whatever BeginModuleEvaluation has answered there: the loader may hold its status in a record.
+    bool isMarkedWhereRequired = flags.contains(ModuleFlags::IsListedInCache) && !flags.contains(ModuleFlags::EvaluatesItself);
+    if (!flags.contains(ModuleFlags::MayBeEvicted) && !isMarkedWhereRequired) {
+        m_out.store32As8(evaluated, statusOf(module));
+        return;
+    }
+    // The file may have taken itself out of require.cache while it ran. The mark of that stays, and the next require() asks the run time.
+    Word32 status(m_out.load8ZeroExt32(statusOf(module)));
+    ifElse(equal(status, word32(static_cast<int32_t>(StoredModuleStatus::InRecord))), [] { }, [&] {
+        m_out.store32As8(evaluated, statusOf(module));
+    });
 }
 
 // Whatever queues a job calls the run time, so the words of the queue are run-time state.

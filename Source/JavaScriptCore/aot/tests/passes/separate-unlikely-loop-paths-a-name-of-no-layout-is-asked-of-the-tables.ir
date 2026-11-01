@@ -1,0 +1,60 @@
+# for (..) { item = list[i]; last = [item.girth === item.girth, item.stored, list.girth] }, where no layout of the program has the name girth and the program stores nothing under it: whatever has it was made elsewhere.
+# The read asks only the tables of the run time, which runs no code. The read that runs code stands behind the test whether they answered, and leaves for the copy of the loop.
+# The second read of the name takes what the first one found. A name that the program stores through a receiver nobody knows, a read off an object that is the same in every turn and a read outside a loop are read as before.
+# OPTIONS: heat=OnlyLoopsAreHot disable=pass:InlineCalls
+# RUN: pipeline SeparateUnlikelyLoopPaths
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="input" [isFreeName]
+    v3 = Integer integer=10
+    PropSet v2, v3 key="stored" mode=Strict
+    v5 = Call v0, -, v2, v3
+    Return v5
+}
+function f1 name="read" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer integer=0
+    v3 = PropGet v0 key="heft"
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v4, v1
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = ElemGet v0, v4
+    v9 = PropGet v8 key="girth"
+    v10 = PropGet v8 key="girth"
+    v11 = StrictEq v9, v10
+    v12 = PropGet v8 key="stored"
+    v13 = StrictEq v11, v12
+    v14 = PropGet v0 key="girth"
+    v15 = StrictEq v13, v14
+    v16 = Increment v4
+    Jump -> next b1(v16, v15)
+  b3():
+    Return v5
+}
+# CHECK-LABEL: name="read"
+# CHECK: = PropGet v0 key="heft" accessSite=[[outside]]
+# CHECK-NEXT: Jump
+# CHECK: [[item]]: anything = ElemGet v0,
+# CHECK-NEXT: [[read]]: anything = PropGet [[item]] key="girth" accessSite=[[first]] [asksOnlyTables]
+# CHECK-NEXT: [[answered]]: boolean = DidReadAbove [[read]]
+# CHECK-NEXT: Branch [[answered]] -> taken [[found]](), notTaken [[missed]]()
+# CHECK-NOT: [asksOnlyTables]
+# CHECK: = PropGet [[item]] key="stored" accessSite=[[stored]]
+# CHECK-NEXT: = StrictEq
+# CHECK-NEXT: = PropGet v0 key="girth" accessSite=[[ofList]]
+# CHECK-NEXT: = StrictEq
+# CHECK-NOT: [asksOnlyTables]
+# CHECK: Branch [[answered]] -> taken
+# CHECK-NOT: [asksOnlyTables]
+# CHECK: frequency=Unlikely
+# CHECK: [[missed]]() frequency=Rare:
+# CHECK-NEXT: = PropGet [[item]] key="girth" accessSite=[[first]]
+# CHECK-NEXT: Jump

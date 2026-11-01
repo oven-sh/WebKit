@@ -73,6 +73,7 @@ StackVisitor::StackVisitor(CallFrame* startFrame, VM& vm, bool skipFirstFrame)
 #if ENABLE(AOT)
 StackVisitor::WithCompiledFrames::WithCompiledFrames(CallFrame* startFrame, VM& vm, bool skipFirstFrame, CompiledFrameVisit compiledFrameVisit)
     : m_vm(vm)
+    , m_compiledCode(AOT::compiledCodeOf(vm))
     , m_compiledFrameVisit(compiledFrameVisit)
 {
     bool startsAtTop = startFrame == vm.topCallFrame;
@@ -110,6 +111,7 @@ StackVisitor::WithCompiledFrames::WithCompiledFrames(CallFrame* startFrame, VM& 
 
 StackVisitor::WithCompiledFrames::WithCompiledFrames(VM& vm, const AOT::CompiledFrameExit& exit, CompiledFrameVisit compiledFrameVisit)
     : m_vm(vm)
+    , m_compiledCode(AOT::compiledCodeOf(vm))
     , m_shownFrameFilter(true)
     , m_compiledFrameVisit(compiledFrameVisit)
 {
@@ -142,9 +144,20 @@ void StackVisitor::WithCompiledFrames::startInCompiledFrames(CallFrame* startFra
         gotoNextFrame();
 }
 
+// Most frames of the interpreter were called by the interpreter.
+ALWAYS_INLINE bool StackVisitor::WithCompiledFrames::isCalledByCompiledCode(CallFrame* callFrame) const
+{
+    CallFrame* callee = m_frame.m_callFrame;
+    bool isPublished = callee ? m_frame.m_callerIsEntryFrame : m_nextFrameIsPublished;
+    void* returnPC = isPublished ? std::bit_cast<CallerFrameAndPC*>(callFrame)->returnPC : callee ? callee->rawReturnPC() : m_previousReturnPC;
+    return std::bit_cast<uintptr_t>(removeCodePtrTag(returnPC)) - std::bit_cast<uintptr_t>(m_compiledCode.data()) < m_compiledCode.size();
+}
+
 bool StackVisitor::WithCompiledFrames::tryEnterCompiledFrames(CallFrame* callFrame)
 {
     using OperationState = AOT::CompiledFrameIterator::OperationState;
+    if (!isCalledByCompiledCode(callFrame))
+        return false;
     CallFrame* callee = m_frame.m_callFrame;
     if (callee == callFrame)
         return false;
@@ -282,7 +295,7 @@ void StackVisitor::WithCompiledFrames::gotoNextFrame()
 
 void StackVisitor::WithCompiledFrames::readFrame(CallFrame* callFrame)
 {
-    while (callFrame && tryEnterCompiledFrames(callFrame)) {
+    while (callFrame && isCalledByCompiledCode(callFrame) && tryEnterCompiledFrames(callFrame)) {
         if (showFirstCompiledFrame())
             return;
         callFrame = leaveCompiledFrames();
@@ -454,7 +467,7 @@ void StackVisitor::readInlinableNativeCalleeFrame(CallFrame* callFrame)
 
         // Because PC is just after the call instruction, to query to the origin for the call instruction, we decrease it by 1.
         // While it can be pointing at the broken offset (e.g. all ARM64 instructions are 4-byte aligned), it is still fine since map is controlling pc with range.
-        auto callSiteIndexFromPC = omgCallee.tryGetCallSiteIndex(std::bit_cast<void*>(std::bit_cast<uintptr_t>(removeCodePtrTag<void*>(m_frame.m_returnPC)) - 1));
+        auto callSiteIndexFromPC = omgCallee.tryGetCallSiteIndex(std::bit_cast<void*>(std::bit_cast<uintptr_t>(removeReturnAddressSignature(m_frame.m_returnPC)) - 1));
         RELEASE_ASSERT(callSiteIndexFromPC);
         CallSiteIndex callSiteIndex = callSiteIndexFromPC.value();
         m_frame.m_wasmCallSiteIndexBits = callSiteIndex.bits();

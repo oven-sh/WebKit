@@ -66,8 +66,8 @@ inline constexpr OpcodeSet opcodesReadingAccessedHeaps = [] {
     return opcodes;
 }();
 
-// EliminateRedundantReads replaces such reads and drops a call of a built-in that repeats the call in front of it and a test for a brand that the object has taken. A body that holds none of these gives it nothing to do.
-inline constexpr OpcodeSet opcodesOfRedundantReadElimination = opcodesReadingAccessedHeaps | OpcodeSet { Opcode::CallBuiltin, Opcode::InitializeBuiltin, Opcode::PrivateGet };
+// EliminateRedundantReads replaces such reads and drops a call of a built-in that repeats the call in front of it, a test for a brand that the object has taken and a comparison of two values that were compared before, and it reads the captures of closures just made and removes those that nothing reads. A body that holds none of these gives it nothing to do.
+inline constexpr OpcodeSet opcodesOfRedundantReadElimination = opcodesReadingAccessedHeaps | OpcodeSet { Opcode::Add, Opcode::CallBuiltin, Opcode::GetArrayElement, Opcode::GetCapture, Opcode::InitializeBuiltin, Opcode::NewClosure, Opcode::PrivateGet, Opcode::StrictEq, Opcode::GetStringLength };
 
 enum class ExpansionStep : uint8_t {
     ForInPositions = 1 << 0,
@@ -82,6 +82,8 @@ constexpr OptionSet<ExpansionStep> stepThatExpands(Opcode opcode)
     case Opcode::ForInStep:
         return ExpansionStep::ForInPositions;
     case Opcode::StepArrayIterator:
+    case Opcode::StepMapIterator:
+    case Opcode::StepSetIterator:
         return ExpansionStep::ArrayIteratorSteps;
     case Opcode::AppendSpread:
         return ExpansionStep::Spreads;
@@ -108,9 +110,21 @@ constexpr OpcodeSet opcodesExpandedIn(OptionSet<ExpansionStep> steps)
 inline constexpr OpcodeSet expandedOpcodes = opcodesExpandedIn({ ExpansionStep::ForInPositions, ExpansionStep::ArrayIteratorSteps, ExpansionStep::Spreads, ExpansionStep::Iterations });
 inline constexpr OpcodeSet iterationOpcodes = opcodesExpandedIn(ExpansionStep::Iterations);
 
-enum class OutlinedIteration : uint32_t { AppendIterable = 1, OpenIterator, CloseIterator, CloseIteratorAfterThrow, OpenWrappedIterator, OpenStringOrIterator, StepString, CloseStringOrIterator, CloseStringOrIteratorAfterThrow };
+enum class OutlinedIteration : uint32_t { AppendIterable = 1, OpenIterator, CloseIterator, CloseIteratorAfterThrow, OpenWrappedIterator, OpenStringOrIterator, StepString, CloseStringOrIterator, CloseStringOrIteratorAfterThrow, CallWithElements, CallWithSharedArms, StepIterator };
 
 bool isOutlinedIteration(const Function&);
+// Calls the declared function of a variable with the elements of an unchanged array. One for all the places that spread a list into a call of that function.
+struct DerivedFunctionKey;
+struct DerivedFunctionInputs;
+DerivedFunctionKey keyOfCallWithElements(VariableID);
+Function buildCallWithElements(const DerivedFunctionKey&, DerivedFunctionInputs&);
+// Calls a value that is one of the functions its type lists. It has an arm for each of them, for all the places that call a value of the type with arguments of these kinds.
+Function buildCallWithSharedArms(const DerivedFunctionKey&, DerivedFunctionInputs&);
+bool isCallWithSharedArms(const Function&);
+// All that it enters.
+std::span<const FunctionID> calleesOfCallWithSharedArms(const Program& program LIFETIME_BOUND, const Function&);
+// The lowest byte of the node of a key. What is above it belongs to the kind.
+constexpr OutlinedIteration kindOfOutlinedBody(uint32_t node) { return static_cast<OutlinedIteration>(node & 0xff); }
 
 // A parameter, a constant and a cast stay what they are, and so does a test whose proof lasts for a stretch.
 inline constexpr OpcodeSet foldableOpcodes = [] {
@@ -124,10 +138,16 @@ inline constexpr OpcodeSet foldableOpcodes = [] {
 
 inline constexpr OpcodeSet hoistableReadOpcodes { Opcode::GetModuleVariable, Opcode::GetEncodedModuleVariable, Opcode::GetEnvironmentField };
 inline constexpr OpcodeSet lookupsHoistedWhereTheyRunNoCode { Opcode::PropGet };
-// Whether a value is truthy never changes.
-inline constexpr OpcodeSet hoistableOpcodes = hoistableReadOpcodes | lookupsHoistedWhereTheyRunNoCode | OpcodeSet { Opcode::ToBoolean };
+// Whether a value is truthy and whether two values are strictly equal never changes, and neither test runs code of the program.
+inline constexpr OpcodeSet testsOfValuesThemselves { Opcode::ToBoolean, Opcode::StrictEq };
+// A string has no identity, so one that is joined from the same parts again may as well be the same string.
+inline constexpr OpcodeSet joinsOfStrings { Opcode::Add, Opcode::Strcat };
+inline constexpr OpcodeSet hoistableOpcodes = hoistableReadOpcodes | lookupsHoistedWhereTheyRunNoCode | testsOfValuesThemselves | OpcodeSet { Opcode::ForInStep, Opcode::CallBuiltin, Opcode::GetArrayLength };
 
 inline constexpr AbstractHeapSet heapsOfVariables { AbstractHeap::ModuleVariables, AbstractHeap::EnvironmentFields };
+
+// `if (n % d === 0) n /= d`: the quotient, which stands in the block, comes behind a test that the same two numbers leave no remainder.
+bool followsTestForNoRemainder(const Program&, const Function&, const CFG&, BlockID, const Value& quotient);
 
 // Up to the first operation of this kind, the first turn of a loop is sure to go on, and it finds in every variable what was there ahead of the loop.
 constexpr bool mayLeaveOrStoreToVariable(const Effects& effects)
@@ -152,6 +172,8 @@ void removeUnusedParameters(ProgramEditor&, const OptimizationInputs&, const Pas
 void removeEntryParameters(Function&, const BitVector& removedEntryParameters);
 
 void removeUnusedResults(ProgramEditor&, const OptimizationInputs&, const PassRunner&);
+
+void removeUnusedCalls(ProgramEditor&, const OptimizationInputs&, const PassRunner&);
 
 void proveResults(ProgramEditor&, const OptimizationInputs&, const PassRunner&);
 
@@ -191,6 +213,9 @@ struct MemberRead {
 };
 
 MemberRead findMemberRead(FunctionPassContext&, const ValueSite& call);
+
+// AOTLoopPasses.cpp. For SeparateUnlikelyLoopPaths, which is the first to copy loops behind the rounds: by then a loop that still holds a loop keeps it.
+PassOutcome testNumbersThatBoundLoopsAroundLoops(FunctionPassContext&);
 
 // SimplifyCasts has nothing to do in a function without any of these.
 inline constexpr OpcodeSet simplifiableCasts = [] {

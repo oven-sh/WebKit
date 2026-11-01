@@ -39,6 +39,7 @@ struct ElementReceiver {
     ElementReceiverKind kind { ElementReceiverKind::Unknown };
     const ClassPart* part { nullptr };
     bool isExpected { false };
+    bool isNeverPristine { false };
 };
 
 } // anonymous namespace
@@ -275,10 +276,21 @@ static const ClassPart* findOnlyClassWithElements(const BuiltinTable& builtins, 
     return found;
 }
 
+static bool hasOnlyArraySubclassInstances(const Program& program, const Type& type)
+{
+    return type.hasOnlyLayouts() && std::ranges::all_of(membersOf(program, type), [&](LayoutID member) {
+        return program.at(member).writtenBuiltinBase == BuiltinClasses::Array && !program.at(member).mayBeOrdinaryObject;
+    });
+}
+
 static ElementReceiver elementReceiverOf(const Program& program, const ElementAccessQuery& query)
 {
     if (const ClassPart* part = query.receiver.singleBuiltinClass())
-        return { ElementReceiverKind::Class, part, false };
+        return { ElementReceiverKind::Class, part, false, part->builtinClass == BuiltinClasses::Array && query.receiverExpected && hasOnlyArraySubclassInstances(program, *query.receiverExpected) };
+    if (hasOnlyArraySubclassInstances(program, query.receiver)) {
+        static const NeverDestroyed<ClassPart> anyArray { ClassPart { .builtinClass = BuiltinClasses::Array } };
+        return { ElementReceiverKind::Class, &anyArray.get(), false, true };
+    }
     if (query.receiver.isAnyString())
         return { ElementReceiverKind::String };
     if (canSplitReceiver(query.receiver))
@@ -323,6 +335,10 @@ static ArrayStorage expectedArrayStorageOf(const Program& program, const Element
 static ElementAccessPlan planArrayAccess(const Program& program, const ElementAccessQuery& query, NumberKey key, const ElementReceiver& receiver, ElementAccessPlan plan)
 {
     const ClassPart& part = *receiver.part;
+    bool storesIndexIntoArraySubclass = query.access == Access::Store && key.isArrayIndex && hasOnlyArraySubclassInstances(program, query.receiver);
+    if (receiver.isNeverPristine && query.access != Access::Read && !storesIndexIntoArraySubclass)
+        return planByKey(query);
+    plan.receiverIsNeverPristine = receiver.isNeverPristine;
     plan.requiredAspects = PristineAspects::Storage;
     if (!key.isArrayIndex)
         plan.requiredAspects.add(PristineAspects::Names);
@@ -330,6 +346,8 @@ static ElementAccessPlan planArrayAccess(const Program& program, const ElementAc
         plan.requiredAspects = plan.requiredAspects - part.provenPristine;
 
     ArrayStorage expected = expectedArrayStorageOf(program, query, part);
+    if (receiver.isNeverPristine && expected == ArrayStorage::Other && query.stored && !query.stored->isAnything())
+        expected = query.stored->isNumber() ? ArrayStorage::Double : arrayStorageHolding(*query.stored);
     if (hasArrayStorageForm(expected)) {
         bool isProven = !receiver.isExpected && part.contentsAreProven && part.arrayStorage == expected;
         plan.arrayStorage = expected;
@@ -342,7 +360,9 @@ static bool fitsContentType(const Type& stored, TypedArrayContentType contentTyp
 {
     switch (contentType) {
     case TypedArrayContentType::Number:
-        return stored.isNumber();
+        // undefined, null and booleans convert to a number without running code, before the store: AccessRewriter::rewrite().
+        // A value that may also be a number is tested for that first: planSplitOfStoredNumber().
+        return stored.isNumber() || (!stored.isNever() && stored.isNumberLike() && !(stored.primitives & Primitive::Number));
     case TypedArrayContentType::BigInt:
         return !stored.isNever() && stored.hasOnlyPrimitives(Primitive::BigInt);
     case TypedArrayContentType::None:

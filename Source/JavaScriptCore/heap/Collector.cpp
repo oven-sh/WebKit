@@ -566,6 +566,8 @@ bool Collector::canSkipMarking()
 
 void Collector::startHelpers()
 {
+    if (startsHelpersLazily() && m_collectionsWithoutHelpers.load(std::memory_order_relaxed))
+        return;
     if (m_hasStartedHelpers.exchange(true))
         return;
     RELEASE_ASSERT(!m_parallelMarkersShouldExit);
@@ -739,6 +741,11 @@ NEVER_INLINE bool Collector::runEndPhase(GCConductor conn)
         m_markingConditionVariable.notifyAll();
     }
     m_helperClient.finish();
+#if ENABLE(AOT)
+    // Let the threads this collection started finish their first-time allocations before it ends.
+    if (startsHelpersLazily() && hasStartedHelpers())
+        m_helperClient.pool().waitUntilThreadsAreUp();
+#endif
 
     assertMarkStacksEmpty();
     RELEASE_ASSERT(m_raceMarkStack->isEmpty());
@@ -1227,6 +1234,12 @@ void Collector::startCollectingContinuously()
         [this] () {
             MonotonicTime initialTime = MonotonicTime::now();
             Seconds period = Seconds::fromMilliseconds(Options::collectContinuouslyPeriodMS());
+#if OS(WINDOWS)
+            // ThreadCondition::timedWait() rounds its timeout down to whole milliseconds and returns at once for zero, so no wait is shorter than 1 ms.
+            constexpr Seconds shortestWait = 1_ms;
+#else
+            constexpr Seconds shortestWait = 0_s;
+#endif
             while (true) {
                 Locker locker { m_collectContinuouslyLock };
                 {
@@ -1241,9 +1254,10 @@ void Collector::startCollectingContinuously()
 
                 Seconds elapsed = MonotonicTime::now() - initialTime;
                 Seconds elapsedInPeriod = elapsed % period;
-                MonotonicTime timeToWakeUp =
-                    initialTime + elapsed - elapsedInPeriod + period;
-                while (!hasElapsed(timeToWakeUp) && !m_shouldStopCollectingContinuously) {
+                MonotonicTime timeToWakeUp = std::max(
+                    initialTime + elapsed - elapsedInPeriod + period,
+                    initialTime + elapsed + 2 * shortestWait);
+                while (!hasElapsed(timeToWakeUp - shortestWait) && !m_shouldStopCollectingContinuously) {
                     m_collectContinuouslyCondition.waitUntil(
                         m_collectContinuouslyLock, timeToWakeUp);
                 }

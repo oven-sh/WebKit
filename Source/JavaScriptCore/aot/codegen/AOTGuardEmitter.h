@@ -36,6 +36,7 @@ public:
     void generateHasKeyOrder(const ValueContext&);
     void generateIsClosureOf(const ValueContext&);
     void generateIsEnumeratorCurrent(const ValueContext&);
+    void generateIsPrototypeOfClass(const ValueContext&);
 
     Condition holds(GuardBitID);
     Condition belongsToInstance(CellPointer cell) { return hasInstanceRealm(loadStructure(cell)); }
@@ -49,6 +50,8 @@ private:
     uint8_t flagsTestedBy(const Value& test);
     void planTestsOfFlags();
     Condition testOfFlags(const ValueContext&);
+    // These tests read words of compiled objects. A cell of a built-in class fails them.
+    void defineTestOfCompiledObject(const ValueContext&, NOESCAPE const Invocable<Condition()> auto& test);
     Condition orderWordHasNoBits(const ValueContext&, uint32_t bits);
     CellPointer untestedCell(const OperationContext&, ValueID);
     CellPointer cellOrElse(const OperationContext&, ValueID, B3::FrequentedBlock isNotCell);

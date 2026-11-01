@@ -15,9 +15,13 @@
 #include "AOTVMState.h"
 #include "AOTVector.h"
 #include "ArrayPrototype.h"
+#include "HeapIterationScope.h"
 #include "JSCInlines.h"
 #include "JSSentinel.h"
+#include "MarkedSpaceInlines.h"
 #include "ObjectPrototype.h"
+#include "RegExpPrototype.h"
+#include "StringPrototype.h"
 #include "VMInlines.h"
 #include <algorithm>
 #include <wtf/BitVector.h>
@@ -596,6 +600,12 @@ static void testPristineArrays()
     checkPristineOnlyInLockedRealm(realms, pristineArrays);
 }
 
+static void testPrototypeGainsNameOfPristineArray()
+{
+    Realms realms;
+    AOT_TEST_CHECK(isPristine(realms.vm(), realms.evaluate(realms.locked(), "(a => (a.late = 1, Array.prototype.late = 2, a))([1, 2])"_s)));
+}
+
 static void testOriginalArrayStructuresArePristine()
 {
     Realms realms;
@@ -920,6 +930,37 @@ static void testStartUpCreatesNoClass(LoadedProgram& program)
     AOT_TEST_CHECK(!findExistingObject(realm, Identifier::fromString(program.realms().vm(), "Math"_s).impl()));
 }
 
+static void testStartUpWatchesNoObjectBeforeItIsLocked(LoadedProgram& program)
+{
+    VM& vm = program.realms().vm();
+    JSGlobalObject* realm = program.realm();
+    for (JSObject* watched : { static_cast<JSObject*>(realm->arrayPrototype()), static_cast<JSObject*>(realm->stringPrototype()) })
+        AOT_TEST_CHECK(watched->structure()->hasListedImmutableProperties() && watched->structure()->transitionWatchpointSet().isBeingWatched());
+    for (JSObject* lockedWhole : { static_cast<JSObject*>(realm->objectPrototype()), static_cast<JSObject*>(realm->regExpPrototype()) })
+        AOT_TEST_CHECK(lockedWhole->structure()->hasImmutableProperties() && !lockedWhole->structure()->transitionWatchpointSet().isBeingWatched());
+    AOT_TEST_CHECK(realm->objectPrototypeChainIsSaneWatchpointSet().isStillValid() && realm->regExpPrimordialPropertiesWatchpointSet().isStillValid() && realm->promiseThenWatchpointSet().isStillValid());
+    Structure* structureOfArrayPrototype = realm->arrayPrototype()->structure();
+    for (const Identifier& watched : { vm.propertyNames->join, vm.propertyNames->iteratorSymbol, vm.propertyNames->constructor }) {
+        WatchpointSet* replacements = structureOfArrayPrototype->propertyReplacementWatchpointSet(structureOfArrayPrototype->get(vm, watched));
+        AOT_TEST_CHECK(replacements && replacements->isBeingWatched());
+    }
+    AOT_TEST_CHECK(realm->arrayJoinWatchpointSet().isStillValid() && realm->arrayIteratorProtocolWatchpointSet().isStillValid() && realm->arraySpeciesWatchpointSet().state() == IsWatched);
+
+    unsigned numberOfStructures = 0;
+    HeapIterationScope iterationScope(vm.heap);
+    vm.heap.objectSpace().forEachLiveCell(iterationScope, [&](HeapCell* cell, HeapCell::Kind kind) {
+        if (!isJSCellKind(kind) || static_cast<JSCell*>(cell)->type() != StructureType)
+            return IterationStatus::Continue;
+        auto* structure = static_cast<Structure*>(cell);
+        if (structure->realm() != realm || structure->typeInfo().type() == GlobalObjectType)
+            return IterationStatus::Continue;
+        ++numberOfStructures;
+        AOT_TEST_CHECK(!structure->transitionWatchpointIsLikelyToBeFired());
+        return IterationStatus::Continue;
+    });
+    AOT_TEST_CHECK(numberOfStructures > 100);
+}
+
 // Native code makes the first instance of many a class, and no name of the global object has been read by then.
 static void testClassCreatedForAnInstanceIsLocked(LoadedProgram& program)
 {
@@ -1050,6 +1091,7 @@ std::span<const NativeTest> lockedRealmTests()
         { "locked-realm/vm-state-without-image"_s, testVMStateWithoutImage },
         { "locked-realm/validators-pass-fresh-realm"_s, testValidatorsPassFreshRealm },
         { "locked-realm/pristine-arrays"_s, testPristineArrays },
+        { "locked-realm/prototype-gains-name-of-pristine-array"_s, testPrototypeGainsNameOfPristineArray },
         { "locked-realm/original-array-structures-are-pristine"_s, testOriginalArrayStructuresArePristine },
         { "locked-realm/pristine-contiguous-arrays"_s, testPristineContiguousArrays },
         { "locked-realm/pristine-regexp-match-arrays"_s, testPristineRegExpMatchArrays },
@@ -1075,6 +1117,7 @@ std::span<const NativeTest> lockedRealmTests()
         { "locked-realm/cached-transitions-of-pristine-arrays"_s, testPristineArrayCachedTransitions },
         { "locked-realm/start-up-locks-objects"_s, withoutBuiltins<testStartUpLocksObjects> },
         { "locked-realm/start-up-creates-no-class"_s, withoutBuiltins<testStartUpCreatesNoClass> },
+        { "locked-realm/start-up-watches-no-object-before-it-is-locked"_s, withoutBuiltins<testStartUpWatchesNoObjectBeforeItIsLocked> },
         { "locked-realm/class-created-for-an-instance-is-locked"_s, withoutBuiltins<testClassCreatedForAnInstanceIsLocked> },
         { "locked-realm/object-created-at-first-read-is-locked"_s, withoutBuiltins<testObjectCreatedAtFirstReadIsLocked> },
         { "locked-realm/class-behind-replaced-name-is-locked"_s, withoutBuiltins<testClassBehindReplacedNameIsLocked> },

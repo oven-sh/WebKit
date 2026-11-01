@@ -11,7 +11,9 @@
 #include "AOTFlowResults.h"
 #include "AOTNarrowFieldTypes.h"
 #include "AOTPropertyAccessCache.h"
+#include "AOTThreshold.h"
 #include "AOTTypeArena.h"
+#include "AOTValueIdentity.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -53,6 +55,7 @@ static FieldArmState computeStateOfFieldArm(const Program& program, std::span<co
             return !order.fields.contains(reference->field);
         });
         state.admitsUndefined |= !!(program.at(program.provenTypeOf(field.declared)).primitives & Primitive::Undefined);
+        state.isWrittenAsOptional &= field.declared.site && !field.flags.contains(FieldFlags::IsRequired);
         state.hasConstructor |= !!program.at(declaredLayoutOf(program, layout)).constructor;
         state.isInContainer |= program.at(layout).kind == LayoutKind::Container;
         state.cannotMoveOut &= staysInSlot(program, *reference);
@@ -194,16 +197,44 @@ static bool isAnsweredByTestOfCell(const PropertyAccessContext& context, const P
     return !mayStoreIntoUnfinishedObject(context, query);
 }
 
+static bool asksRunTimeWhetherStoresPass(const Program& program, LayoutID layout, PropertyKeyID key, MemberAnswer& inherited)
+{
+    LayoutID storingClass = declaredLayoutOf(program, layout);
+    if (inherited.kind != MemberKind::Accessor || program.at(storingClass).classFlow.evaluations != ExecutionCount::AtMostOnce)
+        return false;
+    bool isDefinedAfterObjectsAreMade = std::ranges::any_of(program.at(inherited.holder).classFlow.members, [&](const ClassMember& member) {
+        return member.side == ClassSide::Prototype && member.key == key && member.isDefinedAfterObjectsAreMade;
+    });
+    MemberCondition memberUnchanged { MemberCondition::Kind::MemberUnchanged, storingClass, ClassSide::Prototype, key };
+    if (!isDefinedAfterObjectsAreMade || !inherited.conditions.removeAllMatching([&](const MemberCondition& condition) { return condition == memberUnchanged; }))
+        return false;
+    addCondition(inherited.conditions, { MemberCondition::Kind::MemberPassedByStores, storingClass, ClassSide::Prototype, key });
+    return true;
+}
+
+bool failsOnceAccessorIsDefined(const PropertyAccessContext& context, const MemberCondition& condition)
+{
+    if (condition.kind != MemberCondition::Kind::MemberPassedByStores)
+        return false;
+    MemberAnswer inherited = findMemberOnPrototypes(context, { MemberStart::Instance, condition.layout, condition.key, Access::Store, false });
+    return asksRunTimeWhetherStoresPass(context.program, condition.layout, condition.key, inherited);
+}
+
 static std::optional<TestsOfEmptySlot> computeTestsThatNothingIsInherited(const PropertyAccessContext& context, std::span<const LayoutID> layouts, PropertyKeyID key, Access access)
 {
     TestsOfEmptySlot tests;
     for (LayoutID layout : layouts) {
         MemberAnswer inherited = findMemberOnPrototypes(context, { MemberStart::Instance, layout, key, access, false });
-        if (inherited.kind != MemberKind::Absent)
-            return std::nullopt;
-        // A read has the test of the slot to fall back on. A store that creates the field has only the guards, which hold for the objects of the first closure while it is the only one.
-        bool failsForEver = access != Access::Store && std::ranges::any_of(inherited.conditions, [&](const MemberCondition& condition) {
-            return guardsAreNeverSet(context.program, context.program.at(condition.layout));
+        if (inherited.kind != MemberKind::Absent) {
+            if (access != Access::Store || !asksRunTimeWhetherStoresPass(context.program, layout, key, inherited))
+                return std::nullopt;
+            tests.failOnceAccessorIsDefined = true;
+        }
+        // A read can fall back on the slot test. A store that creates the field only has the guards. The guards of a function that is created once hold for all its objects;
+        // those of a function that may be created again hold for the first closure's objects while it is the only closure, which does not justify a second copy of the store.
+        bool failsForEver = std::ranges::any_of(inherited.conditions, [&](const MemberCondition& condition) {
+            const Layout& guarded = context.program.at(condition.layout);
+            return guardsAreNeverSet(context.program, guarded) && (access != Access::Store || guarded.classFlow.evaluations != ExecutionCount::AtMostOnce);
         });
         if (failsForEver)
             return std::nullopt;
@@ -226,6 +257,7 @@ static bool addTestsThatNothingIsInherited(const PropertyAccessContext& context,
         computed = computeTestsThatNothingIsInherited(context, arm.layouts.span(), query.key, access);
     if (!*inherited)
         return false;
+    tests.failOnceAccessorIsDefined |= (*inherited)->failOnceAccessorIsDefined;
     tests.proofs |= (*inherited)->proofs;
     addConditions(tests.conditions, (*inherited)->conditions.span());
     return true;
@@ -250,6 +282,39 @@ static bool isStoredLateOrNever(const FieldArmState& state)
 static bool isLazilyInitialized(const FieldArmState& state)
 {
     return state.hasConstructor && !state.isRequired && !state.isInContainer && state.admitsUndefined && !state.holdsRawNumberOrBoolean;
+}
+
+bool asksObjectWhereSlotIsEmpty(const Function& function, BlockID block, ValueID testID)
+{
+    const Value& test = function.at(testID);
+    const Terminator& branch = function.at(block).terminator;
+    if (!branch.isConditionalBranch() || branch.conditionOperand() != testID)
+        return false;
+    auto object = sameObjectThroughCasts(function, test.objectOperand());
+    AOT_THRESHOLD(unsigned, maxBlocksOfEmptyArm, 16);
+    BlockID current = branch.notTaken().block;
+    for (unsigned steps = 0; steps < maxBlocksOfEmptyArm; ++steps) {
+        for (ValueID id : function.at(current).values) {
+            const Value& value = function.at(id);
+            if (value.opcode == Opcode::HasNoFieldOutsideSlot && sameObjectThroughCasts(function, value.objectOperand()) == object)
+                return true;
+            if (accessClassOf(value.opcode) == AccessClass::ByName && Value::opcodesWithKey.contains(value.opcode) && value.key() == test.key())
+                return true;
+            // The callee begins with the same test.
+            if (value.opcode == Opcode::CallDirect && value.isAfterInlinedHead())
+                return true;
+            if (provesOf(value.opcode) == Proof::None && !isCast(value.opcode) && !isRematerializable(value))
+                return false;
+        }
+        const Terminator& terminator = function.at(current).terminator;
+        if (terminator.isConditionalBranch())
+            current = terminator.taken().block;
+        else if (terminator.kind == TerminatorKind::Jump && terminator.targets[0].arguments.isEmpty())
+            current = terminator.targets[0].block;
+        else
+            return false;
+    }
+    return false;
 }
 
 std::optional<TestsOfEmptySlot> testsThatOptionLeftOutReadsAsUndefined(const PropertyAccessContext& context, std::span<const LayoutID> receivers, PropertyKeyID key, OptionSet<OptionKind> kinds)
@@ -345,6 +410,34 @@ std::optional<LazyFieldCreation> planLazyFieldCreation(const PropertyAccessConte
         creation.proofs |= inherited->proofs;
         creation.conditions = WTF::move(inherited->conditions);
     }
+    return creation;
+}
+
+std::optional<LazyFieldCreation> planFieldCreationBelowInheritedValue(const PropertyAccessContext& context, std::span<const LayoutID> receivers, PropertyKeyID key)
+{
+    LayoutList layoutsWithEmptySlots;
+    bool inheritsValue = false;
+    for (LayoutID layout : receivers) {
+        FieldArmState state = computeStateOfFieldArm(context.program, singleElementSpan(layout), key, false);
+        if (!state.form.isEmpty() || state.hasImmutableMember || state.hasDeferredMember)
+            return std::nullopt;
+        if (state.isAlwaysFilled)
+            continue;
+        layoutsWithEmptySlots.add(layout);
+        inheritsValue |= !state.isAbsentOnPrototypes && findMemberOnPrototypes(context, { MemberStart::Instance, layout, key, Access::Read, false }).kind != MemberKind::Absent;
+    }
+    if (!inheritsValue)
+        return std::nullopt;
+    // A store passes a value that may be written, and nothing else.
+    std::optional<TestsOfEmptySlot> inherited = computeTestsThatNothingIsInherited(context, layoutsWithEmptySlots.span(), key, Access::Store);
+    if (!inherited || inherited->failOnceAccessorIsDefined)
+        return std::nullopt;
+    FieldArmState state = computeStateOfFieldArm(context.program, receivers, key, false);
+    LazyFieldCreation creation { creatingStoreFor(state), inherited->proofs, WTF::move(inherited->conditions) };
+    if (!state.cannotMoveOut)
+        creation.proofs.add(Proof::NoFieldOutsideSlot);
+    if (!state.receivers.cannot(ObjectMutation::ChangeIntegrity))
+        creation.proofs.add(Proof::NotFrozen);
     return creation;
 }
 
@@ -473,8 +566,13 @@ static void planFieldDefinition(const PropertyAccessContext& context, const Prop
         setSlotOperation(plan, Opcode::PutSlot);
         return;
     }
-    if (query.isPrivate && !state.createdOnlyAtConstruction && context.program.at(query.declaringLayout).has(LayoutFlags::HasHeritage))
-        return;
+    // super() may have answered an object that has the name already: `#name` throws there. Unless flow knows better, an empty slot has to say so, and a name that left its slot lies elsewhere.
+    if (query.isPrivate && !state.createdOnlyAtConstruction && context.program.at(query.declaringLayout).has(LayoutFlags::HasHeritage)) {
+        if (!query.testsThatDefinedNameIsNotTaken)
+            return;
+        if (!state.cannotMoveOut)
+            plan.requiredProofs.add(Proof::NoFieldOutsideSlot);
+    }
     if (!query.isPrivate && !state.cannotMoveOut)
         plan.requiredProofs.add(Proof::NoFieldOutsideSlot);
     setSlotOperation(plan, creatingStoreFor(state));
@@ -503,14 +601,24 @@ void planFieldArm(const PropertyAccessContext& context, const PropertyAccessQuer
             planFieldRead(context, query, arm, state, plan);
             return;
         }
+        PropertyAccessPlan unplanned = plan;
         FieldArmState whileFilled = state;
         whileFilled.isAlwaysFilled = true;
         whileFilled.isAbsentOnPrototypes = true;
         planFieldRead(context, query, arm, whileFilled, plan);
         if (plan.form != AccessForm::ByName)
             plan.requiredProofs.add(Proof::BirthFieldsFilled);
-        if (plan.form == AccessForm::Slot && plan.operation == Opcode::GetSlot)
-            plan.testsDeclaredType = state.holdsRawNumberOrBoolean;
+        if (plan.form != AccessForm::Slot || plan.operation != Opcode::GetSlot)
+            return;
+        plan.testsDeclaredType = state.holdsRawNumberOrBoolean;
+        // `x?: number` says that objects leave the field out, and one that does fails the test of the cell for all its fields.
+        std::optional<TestsOfEmptySlot> tests = state.isWrittenAsOptional && state.admitsUndefined && !query.isPrivate ? testsOfEmptySlotFor(context, query, arm, state, Access::Read) : std::nullopt;
+        if (!tests)
+            return;
+        plan = WTF::move(unplanned);
+        plan.requiredProofs |= tests->proofs;
+        addConditions(plan.conditions, tests->conditions.span());
+        setSlotOperation(plan, Opcode::GetSlotOrUndefined);
         return;
     }
     case Access::Has:
@@ -520,6 +628,8 @@ void planFieldArm(const PropertyAccessContext& context, const PropertyAccessQuer
         planFieldStore(context, query, arm, state, plan);
         return;
     case Access::Define:
+        if (!query.isPrivate && std::ranges::any_of(arm.layouts, [&](LayoutID layout) { return isEmptyBelowAccessor(context, layout, query.key); }))
+            return;
         planFieldDefinition(context, query, state, plan);
         return;
     case Access::None:

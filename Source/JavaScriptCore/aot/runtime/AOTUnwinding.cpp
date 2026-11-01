@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTCallSiteTable.h"
+#include "AOTCheckedFrameCells.h"
 #include "AOTGenerator.h"
 #include "AOTImage.h"
 #include "AOTInstance.h"
@@ -58,6 +59,7 @@ static bool letsThrowPass(StubFrameKind kind)
 {
     switch (kind) {
     case StubFrameKind::Plain:
+    case StubFrameKind::ReturnsAfterOperation:
     case StubFrameKind::EngineCallee:
     case StubFrameKind::HostCall:
     case StubFrameKind::GeneratorBody:
@@ -66,10 +68,12 @@ static bool letsThrowPass(StubFrameKind kind)
     case StubFrameKind::MethodRead:
     case StubFrameKind::BelowSpilledArguments:
     case StubFrameKind::PlainFunctionConstruct:
+    case StubFrameKind::PlainFunctionConstructMakesThis:
     case StubFrameKind::AtStubEntry:
         return true;
     case StubFrameKind::Adapter:
     case StubFrameKind::ConstructAdapter:
+    case StubFrameKind::ConstructAdapterMakesThis:
     case StubFrameKind::SavedFrameAdapter:
     case StubFrameKind::HandlerOfJob:
     case StubFrameKind::AsyncGeneratorBody:
@@ -104,15 +108,23 @@ static void copyStubSavedRegisters(VMEntryRecord& record, const int8_t* bufferSl
     }
 }
 
+static ALWAYS_INLINE void didLeaveFramesOfCheckedCellsBelow(Instance& instance, const void* address)
+{
+    if (!CheckedFrameCells::isInUse()) [[likely]]
+        return;
+    if (CheckedFrameCells* cells = CheckedFrameCells::find(*instance.vm))
+        cells->didLeaveFramesBelow(address);
+}
+
 static ALWAYS_INLINE void finishAtHandler(CompiledUnwindResult& result, Instance& instance, const CompiledHandler& handler, unsigned frameSize)
 {
     char* stackPointer = reinterpret_cast<char*>(handler.callFrame) - frameSize;
     // A parse is one call of the program, so a handler of the frame that opened a source lies behind that parse.
     instance.json.didLeaveFramesUpTo(handler.callFrame);
+    didLeaveFramesOfCheckedCellsBelow(instance, stackPointer);
     instance.runtime.exceptions.stackPointerOfHandler = stackPointer;
     result.status = CompiledUnwindStatus::FoundHandler;
     result.handler = handler;
-    result.instance = &instance;
 }
 
 // The stub takes the thrown value, hands it to whoever waits for the coroutine and returns from the frame.
@@ -123,6 +135,8 @@ static void finishInRejectingStub(CompiledUnwindResult& result, Instance& instan
         return addressOfStubInCurrentImage(rejectInFrame(liesBelowSpilledArguments));
     });
     finishAtHandler(result, instance, { callFrame, code, CompiledHandlerKind::RejectPromise, callFrame }, frame.frameSizeInBytes());
+    // The stub reads nothing that the function has kept in the frame.
+    didLeaveFramesOfCheckedCellsBelow(instance, callFrame);
 }
 
 static CompiledFrameExit leaveRunAt(CallFrame* outermostFrame, EntryFrame* entryFrame)
@@ -137,12 +151,14 @@ static CompiledFrameExit leaveRunAt(CallFrame* outermostFrame, EntryFrame* entry
 
 static NEVER_INLINE Instance* findInstanceOfRun(VM& vm, const ReturnSiteInRun& site, EntryFrame* entryFrame)
 {
+    if (Instance* known = CompiledFrameIterator::knownInstanceOfRun(vm.aotState(), entryFrame, site.framePointer))
+        return known;
     auto frames = CompiledFrameIterator::tryCreate(vm, site.framePointer, removeCodePtrTag(site.rawPC), entryFrame, CompiledFrameIterator::OperationState::MayNotHaveCalled, site.stackPointer);
     return frames && !frames->isAtEnd() ? frames->instance() : nullptr;
 }
 
 // The frame is the outermost of the run, if the walk has left any.
-static void finishAtEndOfRun(CompiledUnwindResult& result, Instance* instance, CallFrame* leftFrame, ImageFrame leftImageFrame, VMEntryRecord& record, const int8_t* bufferSlots, bool isTermination)
+static void finishAtEndOfRun(VM& vm, CompiledUnwindResult& result, Instance* instance, CallFrame* leftFrame, ImageFrame leftImageFrame, VMEntryRecord& record, const int8_t* bufferSlots, bool isTermination)
 {
     if (result.runEnd.resumesSavedFrame && leftFrame && !isTermination) {
         finishInRejectingStub(result, *instance, leftFrame, leftImageFrame);
@@ -150,41 +166,75 @@ static void finishAtEndOfRun(CompiledUnwindResult& result, Instance* instance, C
     }
 
     if (result.runEnd.adapterFrame) {
+        if (VMState& state = vm.aotState(); state.hasSeveralImages) [[unlikely]] {
+            state.didLeaveFramesBelow(result.runEnd.adapterFrame);
+            if (state.adapterFrameThatRestoresImage == result.runEnd.adapterFrame)
+                state.restoreImageBelowAdapter();
+        }
         copyStubSavedRegisters(record, bufferSlots, result.runEnd.adapterFrame, AdapterFrame::savedRegisters);
         // The return label of the adapter, which clears the word, is not run.
         if (leftFrame)
             instance->coroutines.frameThatMayContinue = nullptr;
     }
-    if (leftFrame)
+    if (leftFrame) {
         instance->json.didLeaveFramesUpTo(leftFrame);
+        didLeaveFramesOfCheckedCellsBelow(*instance, leftFrame);
+    }
 
     result.hasLeftRun = true;
     result.status = result.exit.crossedEntryFrame ? CompiledUnwindStatus::ReachedEntryFrame : CompiledUnwindStatus::LeftCompiledCode;
 }
 
+// The adapter made its image the one that runs, and the address that it returns to lies in the code of the image that ran before.
+static bool isCalledByCodeOfOtherImage(const VMState& state, CallFrame* adapterFrame, EntryFrame* entryFrame)
+{
+    if (state.adapterFrameThatRestoresImage != adapterFrame || adapterFrame->callerFrameOrEntryFrame() == entryFrame)
+        return false;
+    std::span<const uint8_t> code = state.endOfImagesBelowAdapters[-1].parts->image->code();
+    return std::bit_cast<uintptr_t>(removeCodePtrTag(adapterFrame->rawReturnPC())) - std::bit_cast<uintptr_t>(code.data()) < code.size();
+}
+
+// Compiled code keeps its instance in a register that its callees save.
+static Instance* instanceOfCompiledCallerOf(CallFrame* adapterFrame)
+{
+    constexpr AdapterFrame::SavedRegister saved = AdapterFrame::savedRegisters[2];
+    static_assert(saved.reg == instanceGPR);
+    return *reinterpret_cast<Instance* const*>(reinterpret_cast<const char*>(adapterFrame) + saved.offset);
+}
+
 // Goes over the machine frames of one run as CompiledFrameIterator does. It reads the frame records and the call site cache, and leaves every frame in front of the handler.
-CompiledUnwindResult unwindRun(VM& vm, const ReturnSiteInRun& start, EntryFrame* entryFrame, VMEntryRecord& record, bool isTermination, CallFrame* asyncGeneratorBodyFrameLeft)
+// A program of one image pays nothing for the other form: what that adds stands under `if constexpr`.
+template<bool goesOnInOtherImages>
+static ALWAYS_INLINE CompiledUnwindResult unwindRunOrRuns(VM& vm, const ReturnSiteInRun& start, EntryFrame* entryFrame, VMEntryRecord& record, bool isTermination, CallFrame* asyncGeneratorBodyFrameLeft, Instance*& instance)
 {
     CompiledUnwindResult result;
     if (static_cast<void*>(start.framePointer) == entryFrame)
         return result;
 
-    const VMState& state = vm.aotState();
-    const Image& image = *state.image;
-    CallSiteCache& cache = *state.callSiteCache;
+    VMState& state = vm.aotState();
+    const Image* imageOfRun = state.image;
+    CallSiteCache* cacheOfRun = state.callSiteCache.get();
     const int8_t* bufferSlots = bufferSlotsByRegisterIndex();
-    Instance* instance = state.onlyInstance;
-    if (!instance) [[unlikely]]
-        instance = findInstanceOfRun(vm, start, entryFrame);
+    if constexpr (!goesOnInOtherImages) {
+        if (!instance) {
+            instance = state.onlyInstance;
+            if (!instance) [[unlikely]]
+                instance = findInstanceOfRun(vm, start, entryFrame);
+        }
+    }
     ReturnSiteInRun place = start;
     CallFrame* leftFrame = nullptr;
     ImageFrame leftImageFrame { };
+    // Whether anything compiled has called it is not known yet.
+    CallFrame* calleeOfRun = start.callee;
 
     for (;;) {
+        const Image& image = *imageOfRun;
+        CallSiteCache& cache = *cacheOfRun;
         const void* pc = removeCodePtrTag(place.rawPC);
         const CallSiteCache::Entry* site = cache.find(pc);
         if (!site) [[unlikely]]
-            site = place.callee == start.callee ? cache.resolve(image, pc) : resolveReturnAddressInRun(cache, image, pc, place.callee);
+            site = place.callee == (goesOnInOtherImages ? calleeOfRun : start.callee) ? cache.resolve(image, pc) : resolveReturnAddressInRun(cache, image, pc, place.callee);
         if (!site || (site->isStubReturnSite() && site->stubFrameKind == StubFrameKind::InHostCallFrame)) [[unlikely]] {
             if (place.callee == start.callee)
                 return result;
@@ -220,12 +270,14 @@ CompiledUnwindResult unwindRun(VM& vm, const ReturnSiteInRun& start, EntryFrame*
             case StubFrameKind::InHostCallFrame:
                 RELEASE_ASSERT_NOT_REACHED();
             case StubFrameKind::Plain:
+            case StubFrameKind::ReturnsAfterOperation:
             case StubFrameKind::ArgumentList:
             case StubFrameKind::HostCall:
             case StubFrameKind::FirstOfTwoReads:
             case StubFrameKind::MethodRead:
             case StubFrameKind::BelowSpilledArguments:
             case StubFrameKind::PlainFunctionConstruct:
+            case StubFrameKind::PlainFunctionConstructMakesThis:
             case StubFrameKind::AtStubEntry:
                 break;
             case StubFrameKind::GeneratorBody:
@@ -238,12 +290,35 @@ CompiledUnwindResult unwindRun(VM& vm, const ReturnSiteInRun& start, EntryFrame*
                 copyStubSavedRegisters(record, bufferSlots, callFrame, EngineCalleeFrame::savedRegisters);
                 break;
             case StubFrameKind::Adapter:
-            case StubFrameKind::HandlerOfJob:
             case StubFrameKind::ConstructAdapter:
+            case StubFrameKind::ConstructAdapterMakesThis:
+                if constexpr (goesOnInOtherImages) {
+                    if (!asyncGeneratorBodyFrameLeft && isCalledByCodeOfOtherImage(state, callFrame, entryFrame)) {
+                        // What finishAtEndOfRun() does for a run that ends at an adapter.
+                        state.restoreImageBelowAdapter();
+                        copyStubSavedRegisters(record, bufferSlots, callFrame, AdapterFrame::savedRegisters);
+                        if (leftFrame) {
+                            instance->coroutines.frameThatMayContinue = nullptr;
+                            instance->json.didLeaveFramesUpTo(leftFrame);
+                            didLeaveFramesOfCheckedCellsBelow(*instance, leftFrame);
+                        }
+                        imageOfRun = state.image;
+                        cacheOfRun = state.callSiteCache.get();
+                        instance = instanceOfCompiledCallerOf(callFrame);
+                        RELEASE_ASSERT(instance->program == imageOfRun);
+                        leftFrame = nullptr;
+                        leftImageFrame = { };
+                        place = { callFrame->rawReturnPC(), stackPointerOfCaller(callFrame), callFrame->callerFrame(), callFrame };
+                        calleeOfRun = callFrame;
+                        continue;
+                    }
+                }
+                [[fallthrough]];
+            case StubFrameKind::HandlerOfJob:
             case StubFrameKind::SavedFrameAdapter:
-                result.runEnd = { callFrame, site->stubFrameKind == StubFrameKind::ConstructAdapter, site->stubFrameKind == StubFrameKind::SavedFrameAdapter, site->stubFrameKind == StubFrameKind::HandlerOfJob };
+                result.runEnd = { callFrame, isConstructAdapterFrame(site->stubFrameKind), site->stubFrameKind == StubFrameKind::SavedFrameAdapter, site->stubFrameKind == StubFrameKind::HandlerOfJob };
                 result.exit = leaveRunAt(callFrame, entryFrame);
-                finishAtEndOfRun(result, instance, leftFrame, leftImageFrame, record, bufferSlots, isTermination);
+                finishAtEndOfRun(vm, result, instance, leftFrame, leftImageFrame, record, bufferSlots, isTermination);
                 return result;
             }
         }
@@ -259,8 +334,25 @@ CompiledUnwindResult unwindRun(VM& vm, const ReturnSiteInRun& start, EntryFrame*
         place.rawPC = callFrame->rawReturnPC();
         place.callee = callFrame;
     }
-    finishAtEndOfRun(result, instance, leftFrame, leftImageFrame, record, bufferSlots, isTermination);
+    finishAtEndOfRun(vm, result, instance, leftFrame, leftImageFrame, record, bufferSlots, isTermination);
     return result;
+}
+
+CompiledUnwindResult unwindRun(VM& vm, const ReturnSiteInRun& start, EntryFrame* entryFrame, VMEntryRecord& record, bool isTermination, CallFrame* asyncGeneratorBodyFrameLeft)
+{
+    Instance* instance = nullptr;
+    return unwindRunOrRuns<false>(vm, start, entryFrame, record, isTermination, asyncGeneratorBodyFrameLeft, instance);
+}
+
+CompiledUnwindResult unwindRunOfThrow(VM& vm, Instance& instanceThatThrows, const ReturnSiteInRun& start, EntryFrame* entryFrame, VMEntryRecord& record)
+{
+    Instance* instance = &instanceThatThrows;
+    return unwindRunOrRuns<false>(vm, start, entryFrame, record, false, nullptr, instance);
+}
+
+CompiledUnwindResult unwindRunsOfImages(VM& vm, const ReturnSiteInRun& start, EntryFrame* entryFrame, VMEntryRecord& record, Instance*& instance)
+{
+    return unwindRunOrRuns<true>(vm, start, entryFrame, record, false, nullptr, instance);
 }
 
 // The iterator has passed the frames of stubs in front of the frame that it is at.
@@ -275,7 +367,7 @@ CompiledUnwindResult unwindCompiledFrames(VM& vm, const CompiledFrameIterator& f
         CompiledUnwindResult result;
         result.runEnd = frames.runEnd();
         result.exit = frames.exit();
-        finishAtEndOfRun(result, nullptr, nullptr, { }, record, bufferSlots, isTermination);
+        finishAtEndOfRun(vm, result, nullptr, nullptr, { }, record, bufferSlots, isTermination);
         return result;
     }
     CallFrame* asyncGeneratorBodyFrameLeft = frames.asyncGeneratorStubFrameLeft() ? frames.asyncGeneratorBodyFrameLeft() : nullptr;
@@ -398,8 +490,8 @@ void JIT_OPERATION_ATTRIBUTES checkThatThrowingCallHasSite(Instance* instance, C
         if (!site)
             return;
         if (!site->isStubReturnSite()) {
-            // findReturnIntoFunctionWithoutHandlers().
-            if (isForLackOfMemory && !catchesExceptions(*state.image, site->code.index()))
+            // throwOwedOutOfMemoryErrorAtReturnOfOperation().
+            if (isForLackOfMemory)
                 return;
             if (std::optional<MarkOfCallWithoutSite> mark = MarkOfCallWithoutSite::read(pc))
                 crashOnValidationFailure(vm, { ValidationFailureKind::CallThrew, state.image->rootFunctionOf(site->code.index()), mark->value, jsNumber(mark->callee) });
@@ -436,11 +528,36 @@ bool beginsInTopCompiledFrame(VM& vm, const ReturnAddressTrace& trace)
     return !frames || frames->isAtEnd() || beginsAt(trace, frames->callSite().address);
 }
 
+const void* returnAddressOfInnermostCompiledCall(VM& vm)
+{
+    EntryFrame* entryFrame = vm.topEntryFrame;
+    for (CallFrame* frame = vm.topCallFrame; frame && entryFrame; frame = frame->callerFrame(entryFrame)) {
+        if (frame->callerFrameOrEntryFrame() == entryFrame)
+            continue;
+        std::optional<CompiledFrameIterator> frames = CompiledFrameIterator::tryCreateAtCallerOf(vm, frame, entryFrame);
+        if (frames && !frames->isAtEnd())
+            return frames->callSite().address;
+    }
+    return nullptr;
+}
+
+static bool isAddressInCompiledCode(uint64_t word)
+{
+    std::span<const uint8_t> code = Image::current()->code();
+    return word - std::bit_cast<uintptr_t>(code.data()) < code.size();
+}
+
 // Native code has called the run that the throw leaves, and hands the exception on to its own caller unless it reports it.
 static bool isCaughtByCallersOfNativeCode(VM& vm, CompiledFrameExit exit)
 {
+    // Code of another image may have called the run, with no native code between. The answer only saves a walk.
+    if (vm.aotState().hasSeveralImages) [[unlikely]]
+        return false;
     for (unsigned remainingRuns = Options::exceptionStackTraceLimit(); remainingRuns && exit.callFrame; --remainingRuns) {
         if (exit.callFrame->callerFrameOrEntryFrame() == exit.entryFrame)
+            return false;
+        // So may code of another realm that runs the image.
+        if (exit.returnPC && isAddressInCompiledCode(std::bit_cast<uintptr_t>(removeCodePtrTag(exit.returnPC))))
             return false;
         if (void* taker = vm.aotState().stackPointerOfExceptionTaker; taker && taker < static_cast<void*>(exit.callFrame))
             return false;
@@ -456,12 +573,6 @@ static bool isCaughtByCallersOfNativeCode(VM& vm, CompiledFrameExit exit)
         exit = frames->exit();
     }
     return false;
-}
-
-static bool isAddressInCompiledCode(uint64_t word)
-{
-    std::span<const uint8_t> code = Image::current()->code();
-    return word - std::bit_cast<uintptr_t>(code.data()) < code.size();
 }
 
 Exception* exceptionKeptByCleanup(uint64_t kept, JSValue thrown)
@@ -493,68 +604,6 @@ NEVER_INLINE Exception::StackCaptureAction stackCaptureActionOfThrow(VM& vm, con
     if (!error || !error->returnAddresses())
         return Action::CaptureStackOfThrow;
     return isCaughtByCallersOfNativeCode(vm, runWithoutHandler->exit) ? Action::CaptureStack : Action::CaptureStackOfThrow;
-}
-
-// A caller that has handlers, and none at its call, plans no error there: the call may stand in a try. Then the error waits for the next poll.
-static bool callersPlanErrors(VM& vm, const Image& image, CallFrame* frameThatReturns)
-{
-    if (frameThatReturns->callerFrameOrEntryFrame() == vm.topEntryFrame)
-        return true;
-    std::optional<CompiledFrameIterator> frames = CompiledFrameIterator::tryCreateAtCallerOf(vm, frameThatReturns, vm.topEntryFrame);
-    if (!frames)
-        return true;
-    for (; !frames->isAtEnd(); frames->advanceToCallerMachineFrame()) {
-        if (frames->asyncGeneratorStubFrameLeft())
-            return true;
-        const auto& site = frames->callSite();
-        if (site.exceptionHandler() || site.rejectsOnThrow)
-            return true;
-        if (catchesExceptions(image, site.code.index()))
-            return false;
-    }
-    return true;
-}
-
-CallFrame* findReturnIntoFunctionWithoutHandlers(VM& vm, CallFrame* operationFrame)
-{
-    const Image& image = *vm.aotState().image;
-    if (vm.exceptionForInspection() || vm.heap.cage().errorWaitsForPoll() || !image.stubAddress(handleException(false)))
-        return nullptr;
-    CallFrame* frame = operationFrame;
-    CodeLocation location = image.locate(removeCodePtrTag(frame->rawReturnPC()));
-    if (location.kind == CodeKind::Stub) {
-        if (location.stubFrameKind != StubFrameKind::Plain)
-            return nullptr;
-        frame = static_cast<CallFrame*>(frame->callerFrameOrEntryFrame());
-        location = image.locate(removeCodePtrTag(frame->rawReturnPC()));
-    }
-    if (location.kind != CodeKind::Function || catchesExceptions(image, location.function) || !callersPlanErrors(vm, image, frame))
-        return nullptr;
-    return frame;
-}
-
-void throwOwedOutOfMemoryErrorAtReturnOfOperation(Instance& instance, CallerFrameAndPC* frameRecordOfOperation)
-{
-    if (CallFrame* frameThatReturns = findReturnIntoFunctionWithoutHandlers(*instance.vm, std::bit_cast<CallFrame*>(frameRecordOfOperation)))
-        throwOutOfMemoryErrorAtReturnOf(instance, frameThatReturns);
-}
-
-void throwOutOfMemoryErrorAtReturnOf(Instance& instance, CallFrame* frameThatReturns)
-{
-    VM& vm = *instance.vm;
-    {
-        DeferGCForAWhile deferGC(vm);
-        auto topScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        {
-            auto scope = DECLARE_THROW_SCOPE(vm);
-            bool hasThrown = throwOutOfMemoryErrorIfOwed(vm, instance.globalObject, scope);
-            RELEASE_ASSERT(hasThrown);
-            scope.release();
-        }
-        EXCEPTION_ASSERT_UNUSED(topScope, topScope.exception());
-    }
-    instance.runtime.exceptions.stackPointerOfHandler = removeCodePtrTag(frameThatReturns->rawReturnPC());
-    frameThatReturns->setReturnPC(reinterpret_cast<char*>(&instance) + InstanceLayout::offsetOfLoopPollPage() + offsetOfDivertedReturnInLoopPollPage);
 }
 
 } // namespace JSC::AOT

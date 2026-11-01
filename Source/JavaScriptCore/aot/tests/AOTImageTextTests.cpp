@@ -246,8 +246,8 @@ static Vector<String> constantsThatAreNoAtoms()
 static void testAtomOfConstantOutlivesWhoeverAskedForIt()
 {
     for (const String& constant : constantsThatAreNoAtoms()) {
-        StringImpl* atom = AtomString(constant).impl();
-        AOT_TEST_CHECK(AtomStringImpl::lookUp(constant.impl()).get() == atom);
+        AtomString atom { constant };
+        AOT_TEST_CHECK(AtomStringImpl::lookUp(constant.impl()).get() == atom.impl());
     }
 }
 

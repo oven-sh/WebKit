@@ -14,6 +14,7 @@
 #include <compare>
 #include <type_traits>
 #include <utility>
+#include <wtf/IterationStatus.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -56,6 +57,13 @@ struct FlowScopeCall {
 
 VariableID variableBehindSubjectOf(const Function&, ValueID operation);
 
+struct FlowScopeCallOfList {
+    FunctionID caller;
+    ValueID site;
+    VariableID subject;
+    uint32_t calleeList { 0 };
+};
+
 struct FlowScopeCalls {
     Vector<uint32_t> numberOfMentions;
     Vector<FlowCallSite> soleCallSites;
@@ -63,10 +71,29 @@ struct FlowScopeCalls {
     Vector<FlowScopeCall> byCallee;
     Vector<uint32_t> firstByCaller;
     Vector<uint32_t> firstByCallee;
+    // The calls with many callees, by caller. A callee finds them through the lists that hold it.
+    Vector<FlowScopeCallOfList> callsOfLists;
+    Vector<uint32_t> firstCallOfListByCaller;
+    Vector<uint32_t> callsOfListsByList;
+    Vector<uint32_t> firstCallOfList;
+    Vector<uint32_t> listsByCallee;
+    Vector<uint32_t> firstListByCallee;
     BitVector functionsEnteredByHost;
 
-    std::span<const FlowScopeCall> callsBy(FunctionID caller) const LIFETIME_BOUND { return entriesOfGroup(firstByCaller, byCaller, caller.index()); }
-    std::span<const FlowScopeCall> callsOf(FunctionID callee) const LIFETIME_BOUND { return entriesOfGroup(firstByCallee, byCallee, callee.index()); }
+    void forEachCallOf(FunctionID callee, NOESCAPE const Invocable<IterationStatus(const FlowScopeCall&)> auto& functor) const
+    {
+        for (const FlowScopeCall& call : entriesOfGroup(firstByCallee, byCallee, callee.index())) {
+            if (functor(call) == IterationStatus::Done)
+                return;
+        }
+        for (uint32_t list : entriesOfGroup(firstListByCallee, listsByCallee, callee.index())) {
+            for (uint32_t position : entriesOfGroup(firstCallOfList, callsOfListsByList, list)) {
+                const FlowScopeCallOfList& call = callsOfLists[position];
+                if (functor(FlowScopeCall { call.caller, callee, call.site, call.subject }) == IterationStatus::Done)
+                    return;
+            }
+        }
+    }
 };
 
 struct FlowExportedVariable {

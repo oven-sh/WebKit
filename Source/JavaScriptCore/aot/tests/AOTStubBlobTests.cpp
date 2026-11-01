@@ -11,6 +11,7 @@
 #include "AOTCompileOptionWords.h"
 #include "AOTImageTestSupport.h"
 #include "AOTInstance.h"
+#include "AOTPropertyCachesFront.h"
 #include "AOTStubRunner.h"
 #include "AOTStubTestSupport.h"
 #include "AOTStubsArrays.h"
@@ -263,6 +264,7 @@ static void checkSingleReturnSites(const StubBlob& blob)
         { StubFrameKind::SavedFrameAdapter, enterSavedFrame() },
         { StubFrameKind::AsyncGeneratorBody, runAsyncGeneratorStep() },
         { StubFrameKind::ArgumentList, callFromArgumentListFrame() },
+        { StubFrameKind::EngineCallee, callEngineCallee() },
     };
     for (auto [kind, body] : singleSiteBodies) {
         AOT_TEST_CHECK(hasSingleReturnSite(kind));
@@ -323,13 +325,22 @@ static void testBodyEntries()
 {
     StubCatalog catalog(StubOptions { }, StubPolicy { });
     checkEntries(catalog, getByVal(false), { getByVal(false), getByVal(true) });
-    checkEntries(catalog, getByValCached(), { getByValCached(), getByValCachedCells() });
+    checkEntries(catalog, getByValCached(), { getByValCached(), getByValCachedCells(), getByValCachedAtPlace(), getByValCachedBehindPlaces() });
+    checkEntries(catalog, getByValKeepingRegisters(), { getByValKeepingRegisters() });
+    checkEntries(catalog, getByValCached(RegistersOfCaller::AreKept), { getByValCached(RegistersOfCaller::AreKept), getByValCachedCells(RegistersOfCaller::AreKept), getByValCachedAtPlace(RegistersOfCaller::AreKept), getByValCachedBehindPlaces(RegistersOfCaller::AreKept) });
+    // `sum += table["on" + kind]`: the sum stays in its register, whatever the read does on its way. A read by a key that is given loses every floating-point register that a call loses.
+    for (BaseOfKeyedRead base : { BaseOfKeyedRead::IsCell, BaseOfKeyedRead::IsAnyValue }) {
+        RegisterSet keptByRead = registersClobberedByOperations();
+        keptByRead.exclude(catalog.summaryOf(getByValOfKeyOfPair(base)).clobbered);
+        AOT_TEST_CHECK(keptByRead.numberOfSetFPRs() >= 2);
+    }
+    AOT_TEST_CHECK(catalog.summaryOf(getByValCachedCells()).clobbered.subsumes(registersClobberedByOperations()));
     checkEntries(catalog, getByIdAtSite(), { getByIdAtSite(), getByIdOfObjectAtSite() });
     checkEntries(catalog, getByIdAtSiteHashed(), { getByIdAtSiteHashed() });
     checkEntries(catalog, enterClosure(), { enterClosure(), enterSlimClosure(), enterModuleBody() });
     checkEntries(catalog, runAsyncGeneratorStep(), { runAsyncGeneratorStep(), stepAsyncIteratorInEngine() });
     for (unsigned count = 0; count <= numberOfArgumentGPRs; ++count) {
-        checkEntries(catalog, callValue(count), { callValue(count), callValueWithoutThis(count), callValueCell(count), callValueCellWithoutThis(count), callValueNotClosure(count) });
+        checkEntries(catalog, callValue(count), { callValue(count), callValueWithoutThis(count), callValueCell(count), callValueCellWithoutThis(count), callValueNotClosure(count), callValueEngineCallee(count) });
         if (exists(callHostFunctionWithoutBoxedCall(count)))
             checkEntries(catalog, callHostFunction(count), { callHostFunction(count), callHostFunctionWithoutBoxedCall(count) });
         else
@@ -375,7 +386,7 @@ static void checkResumptionReferences(const StubCatalog& catalog)
 {
     AOT_TEST_CHECK(refersOnceBy(catalog, enterSavedFrame(), restoreSavedFrameToStack(), StubReference::Kind::Call));
     for (GeneratorStepCheck check : stepChecks)
-        AOT_TEST_CHECK(refersOnceBy(catalog, stepGenerator(check), restoreSavedFrameToStack(), StubReference::Kind::Call));
+        AOT_TEST_CHECK(refersOnceBy(catalog, stepGenerator(check), enterGeneratorFrame(), StubReference::Kind::Call));
     AOT_TEST_CHECK(refersOnceBy(catalog, runAsyncGeneratorStep(), restoreSavedFrameToStack(), StubReference::Kind::Call));
     for (StepConsumer consumer : stepConsumers) {
         AOT_TEST_CHECK(refersOnceBy(catalog, stepAsyncGenerator(consumer), runAsyncGeneratorStep(), StubReference::Kind::Jump));
@@ -396,7 +407,12 @@ static void checkHostCallReferences(const StubCatalog& catalog)
         { BoxedCallForm::MapDelete, StubFamily::MapDelete }, { BoxedCallForm::MapGet, StubFamily::MapGet }, { BoxedCallForm::MapHas, StubFamily::MapHas }, { BoxedCallForm::MapSet, StubFamily::MapSet },
         { BoxedCallForm::SetAdd, StubFamily::SetAdd }, { BoxedCallForm::SetDelete, StubFamily::SetDelete }, { BoxedCallForm::SetHas, StubFamily::SetHas },
         { BoxedCallForm::StringIndexOf, StubFamily::StringIndexOf }, { BoxedCallForm::StringStartsWith, StubFamily::StringStartsWith },
-        { BoxedCallForm::StringSlice, StubFamily::Substring }, { BoxedCallForm::StringToLowerCase, StubFamily::CallOperation },
+        { BoxedCallForm::StringSlice, StubFamily::Substring }, { BoxedCallForm::StringSubstring, StubFamily::Substring }, { BoxedCallForm::StringCharAt, StubFamily::Substring },
+        { BoxedCallForm::StringEndsWith, StubFamily::CallOperation }, { BoxedCallForm::StringIncludes, StubFamily::CallOperation }, { BoxedCallForm::StringSplit, StubFamily::CallOperation },
+        { BoxedCallForm::StringReplace, StubFamily::StringReplaceRegExpMayNotMatch }, { BoxedCallForm::StringReplace, StubFamily::CallOperation }, { BoxedCallForm::StringReplaceAll, StubFamily::CallOperation },
+        { BoxedCallForm::RegExpTest, StubFamily::RegExpMatch },
+        { BoxedCallForm::StringToLowerCase, StubFamily::CallOperation }, { BoxedCallForm::StringToUpperCase, StubFamily::CallOperation },
+        { BoxedCallForm::StringTrimEnd, StubFamily::CallOperation }, { BoxedCallForm::StringTrimStart, StubFamily::CallOperation },
         { BoxedCallForm::WeakMapGet, StubFamily::WeakMapGet }, { BoxedCallForm::WeakMapHas, StubFamily::WeakMapHas }, { BoxedCallForm::WeakMapSet, StubFamily::WeakMapSet },
         { BoxedCallForm::WeakSetHas, StubFamily::WeakSetHas },
     };
@@ -530,6 +546,7 @@ static void checkCallSummaries(const StubCatalog& catalog)
         AOT_TEST_CHECK(!containsArgumentGPR(summary.clobbered));
         AOT_TEST_CHECK(neitherThrowsNorCollects(catalog, resolveCallValue(count)));
         AOT_TEST_CHECK(!referencesOf(catalog, resolveCallValue(count)).isEmpty());
+        AOT_TEST_CHECK(numberOfReferences(catalog, resolveCallValue(count), callValueEngineCallee(count)) == 1);
         for (const StubReference& reference : referencesOf(catalog, resolveCallValue(count))) {
             AOT_TEST_CHECK(reference.kind == StubReference::Kind::ReturnedAddress);
             AOT_TEST_CHECK(catalog.effectsOf(reference.target).mayThrow);
@@ -570,7 +587,6 @@ static void checkWeakMapGetSummary(const StubCatalog& catalog)
     AOT_TEST_CHECK(neitherThrowsNorCollects(catalog, weakMapGet()));
     AOT_TEST_CHECK(withoutMacroScratch(summary.clobbered) == setOf({
         gprOf(plan.hash), gprOf(plan.table), gprOf(plan.cursor), gprOf(plan.keys), gprOf(plan.entry), gprOf(plan.candidate),
-        plan.copyOfOwner ? gprOf(*plan.copyOfOwner) : InvalidGPRReg,
         summary.signature.firstResult.gpr(),
     }));
     AOT_TEST_CHECK(!containsRegister(summary.clobbered, argumentGPR(1)));
@@ -712,6 +728,30 @@ static void testLayoutSeed()
     for (unsigned kind = 0; kind < numberOfStubFrameKinds; ++kind)
         AOT_TEST_CHECK(numberOfSites(blob, static_cast<StubFrameKind>(kind)) == numberOfSites(seededBlob, static_cast<StubFrameKind>(kind)));
     checkDistinctBodyOffsets(seededBlob);
+}
+
+static void testAddressesInLargeBlob()
+{
+    // callMethodById() takes the address of callValueCell().
+    StubPolicy policy;
+    Vector<StubKey> keys { callMethodById(2) };
+    for (uint32_t name = 1; name <= RowDisplacementTable::maxColumn; ++name) {
+        policy.namesWithOwnStubByAccess[static_cast<size_t>(Typed::Access::Read)].set(name);
+        keys.append(getById().withImmediate(name));
+    }
+    for (uint32_t layoutSeed : { 0, 1 }) {
+        StubOptions options;
+        options.layoutSeed = layoutSeed;
+        StubCatalog catalog(options, StubPolicy { policy });
+        StubBlob blob = buildBlob(catalog, keys.span(), { });
+        AOT_TEST_CHECK(blob.code.bytes.size() > 8 * MB);
+        uint32_t furtherOfTheTwo = std::max(*blob.offsetOf(callMethodById(2)), *blob.offsetOf(callValueCell(2)));
+        for (StubKey key : keys.span().subspan(1))
+            AOT_TEST_CHECK(furtherOfTheTwo < *blob.offsetOf(key));
+        // With assertions the bodies in front of them are larger.
+        if (!ASSERT_ENABLED)
+            AOT_TEST_CHECK(furtherOfTheTwo < 1 * MB);
+    }
 }
 
 static unsigned numberOfRegExpCalls(const StubBlob& blob, StubKey thunk, uint16_t entry)
@@ -908,6 +948,7 @@ std::span<const NativeTest> stubBlobTests()
         { "stub-blob/operations-called"_s, testOperationsCalled },
         { "stub-blob/wide-references"_s, testWideReferences },
         { "stub-blob/layout-seed"_s, testLayoutSeed },
+        { "stub-blob/addresses-in-large-blob"_s, testAddressesInLargeBlob },
         { "stub-blob/regexp-relocations"_s, testRegExpRelocations },
         { "stub-blob/push-stubs-preserve-fprs"_s, ImageTests::whenExecutable<testPushStubRegisters> },
         { "stub-blob/instructions-of-pushed-doubles"_s, ImageTests::whenExecutable<testInstructionsOfPushedDoubles> },

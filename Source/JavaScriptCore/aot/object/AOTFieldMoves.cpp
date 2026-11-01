@@ -75,7 +75,7 @@ OptionSet<ValueKind> kindsAlwaysAccepted(const RuntimeType& type)
     return kinds;
 }
 
-static bool acceptsEveryValue(const RuntimeType& type)
+bool acceptsEveryValue(const RuntimeType& type)
 {
     if (!type.primitiveSet().containsAll(allPrimitives) || type.integerRange() || !type.literalStrings().empty())
         return false;
@@ -232,6 +232,7 @@ bool applyMovesToNewObject(VM& vm, const FieldMovePlan& plan, JSFinalObject* tar
 }
 
 FieldMovePlanCache::FieldMovePlanCache(State& state)
+    : m_sets(state.tableArena)
 {
     state.caches->add(CacheKind::WeakByKey, "field move plans"_s, *this);
 }
@@ -270,7 +271,7 @@ const FieldMovePlan& FieldMovePlanCache::add(VM& vm, FieldMovePlanKey&& key, std
 {
     ASSERT(plan);
     if (!m_sets)
-        m_sets = makeUniqueWithoutFastMallocCheck<Sets>();
+        m_sets.make();
     m_lastFound = nullptr;
     Set& set = setFor(key);
     auto way = std::ranges::find_if(set.ways, [](auto& candidate) {
@@ -313,6 +314,8 @@ JSFinalObject* tryCopyAsOrdinaryObject(VM& vm, JSGlobalObject* realm, JSObject* 
         return nullptr;
     State& state = *instance->state;
     Object* compiled = compiledObjectOrNull(source);
+    if (state.sharesRealm && compiled && !compiled->isDescribedBy(state)) [[unlikely]]
+        return nullptr;
     FieldMovePlanKey key { .targetWords = excluded.numberPlusOne };
     if (compiled) {
         if (compiled->hasExtraProperties() || compiled->hasOutOfLineKeyOrder() || compiled->layout().keysAreNeverEnumerated)
@@ -327,8 +330,13 @@ JSFinalObject* tryCopyAsOrdinaryObject(VM& vm, JSGlobalObject* realm, JSObject* 
     DeferGC deferGC(vm);
     FieldMovePlanCache& plans = state.objects->caches->movePlans;
     const FieldMovePlan* plan = plans.find(key);
-    if (!plan)
+    if (!plan) {
+        if (!compiled && !excluded.numberPlusOne && source->structure()->isDictionary() && source->structure()->storedPrototype() == JSValue(realm->objectPrototype())) {
+            if (JSFinalObject* copy = tryCopyDictionary(vm, source))
+                return copy;
+        }
         plan = &plans.add(vm, WTF::move(key), state.objects->caches->assignmentPlans.createPlanForOrdinaryCopy(vm, realm, source, excluded));
+    }
     if (!plan->isUsable())
         return nullptr;
     if (plan->sourceHasDeferredClosures)

@@ -38,6 +38,9 @@ public:
     void runReadStage();
     void runPlacementStage();
     void runRepresentationStage();
+    bool checkNumberOfFunctions();
+    void checkNumberOfClosureFunctions();
+    void logSizeOfProgram() const;
 
     PassOutcome runProgramPass(PassID);
     PassOutcome verify(IRForm);
@@ -62,7 +65,7 @@ private:
     // To bring the effect summaries up to date is to read every body that has changed and to solve the program again.
     static bool readsEffectSummaries(PassID id)
     {
-        return descriptorOf(id).scope == PassScope::Function || id == PassID::AllocateInFrames || id == PassID::OutlineColdOperations;
+        return descriptorOf(id).scope == PassScope::Function || id == PassID::RemoveUnusedCalls || id == PassID::AllocateInFrames || id == PassID::OutlineColdOperations;
     }
     static bool readsEffectSummaries(FunctionSchedule schedule) { return schedule != FunctionSchedule::Resolve && schedule != FunctionSchedule::Represent; }
 

@@ -94,14 +94,14 @@ static_assert(ClosureRequest::canEncode(0, 0, maxClosureAllocation) && !ClosureR
 static_assert(ResumeClosureRequest::canEncode(0, ResumeClosureRequest::maxExecutable, 0, 0) && !ResumeClosureRequest::canEncode(0, ResumeClosureRequest::maxExecutable + 1, 0, 0));
 static_assert(ResumeClosureRequest::canEncode(0, 0, 0, ResumeClosureRequest::maxFrameWord) && !ResumeClosureRequest::canEncode(0, 0, 0, ResumeClosureRequest::maxFrameWord + 1));
 
-static_assert(!static_cast<unsigned>(StubFrameKind::Plain) && numberOfStubFrameKinds == 16);
+static_assert(!static_cast<unsigned>(StubFrameKind::Plain) && numberOfStubFrameKinds == 19);
 static_assert(hasSingleReturnSite(StubFrameKind::Adapter) && hasSingleReturnSite(StubFrameKind::ConstructAdapter));
-static_assert(hasSingleReturnSite(StubFrameKind::SavedFrameAdapter) && hasSingleReturnSite(StubFrameKind::AsyncGeneratorBody) && hasSingleReturnSite(StubFrameKind::ArgumentList));
-static_assert(!hasSingleReturnSite(StubFrameKind::Plain) && !hasSingleReturnSite(StubFrameKind::EngineCallee) && !hasSingleReturnSite(StubFrameKind::HostCall));
+static_assert(hasSingleReturnSite(StubFrameKind::SavedFrameAdapter) && hasSingleReturnSite(StubFrameKind::AsyncGeneratorBody) && hasSingleReturnSite(StubFrameKind::ArgumentList) && hasSingleReturnSite(StubFrameKind::EngineCallee));
+static_assert(!hasSingleReturnSite(StubFrameKind::Plain) && !hasSingleReturnSite(StubFrameKind::HostCall));
 static_assert(!hasSingleReturnSite(StubFrameKind::GeneratorBody) && !hasSingleReturnSite(StubFrameKind::FirstOfTwoReads) && !hasSingleReturnSite(StubFrameKind::MethodRead));
-static_assert(!hasSingleReturnSite(StubFrameKind::BelowSpilledArguments) && !hasSingleReturnSite(StubFrameKind::AtStubEntry) && !hasSingleReturnSite(StubFrameKind::InHostCallFrame) && !hasSingleReturnSite(StubFrameKind::PlainFunctionConstruct));
-static_assert(bytesAboveReturnAddressOf(StubFrameKind::EngineCallee) == sizeOfSpilledArgumentRegisters && bytesAboveReturnAddressOf(StubFrameKind::BelowSpilledArguments) == sizeOfSpilledArgumentRegisters && bytesAboveReturnAddressOf(StubFrameKind::PlainFunctionConstruct) == sizeOfSpilledArgumentRegisters);
-static_assert(!bytesAboveReturnAddressOf(StubFrameKind::Plain) && !bytesAboveReturnAddressOf(StubFrameKind::Adapter) && !bytesAboveReturnAddressOf(StubFrameKind::AtStubEntry));
+static_assert(!hasSingleReturnSite(StubFrameKind::BelowSpilledArguments) && !hasSingleReturnSite(StubFrameKind::AtStubEntry) && !hasSingleReturnSite(StubFrameKind::InHostCallFrame) && !hasSingleReturnSite(StubFrameKind::PlainFunctionConstruct) && !hasSingleReturnSite(StubFrameKind::PlainFunctionConstructMakesThis) && !hasSingleReturnSite(StubFrameKind::ConstructAdapterMakesThis) && !hasSingleReturnSite(StubFrameKind::ReturnsAfterOperation));
+static_assert(bytesAboveReturnAddressOf(StubFrameKind::EngineCallee) == sizeOfSpilledArgumentRegisters && bytesAboveReturnAddressOf(StubFrameKind::BelowSpilledArguments) == sizeOfSpilledArgumentRegisters && bytesAboveReturnAddressOf(StubFrameKind::PlainFunctionConstruct) == sizeOfSpilledArgumentRegisters && bytesAboveReturnAddressOf(StubFrameKind::PlainFunctionConstructMakesThis) == sizeOfSpilledArgumentRegisters);
+static_assert(!bytesAboveReturnAddressOf(StubFrameKind::Plain) && !bytesAboveReturnAddressOf(StubFrameKind::Adapter) && !bytesAboveReturnAddressOf(StubFrameKind::ConstructAdapterMakesThis) && !bytesAboveReturnAddressOf(StubFrameKind::AtStubEntry));
 
 static std::optional<StubKey> keyIfExists(StubKey key)
 {
@@ -225,10 +225,11 @@ static void testDumpedNames()
     AOT_TEST_CHECK(dumpedNameOf(equal(true)) == "Equal.Strict"_s);
     AOT_TEST_CHECK(dumpedNameOf(putById(PutMode::Define)) == "PutById.Define"_s);
     AOT_TEST_CHECK(dumpedNameOf(putById(PutMode::Define).withImmediate(17)) == "PutById.Define#17"_s);
-    AOT_TEST_CHECK(dumpedNameOf(callValue(2)) == "CallValue.n2"_s);
+    AOT_TEST_CHECK(dumpedNameOf(callValue(2)) == "CallValue.Ordinary.n2"_s && dumpedNameOf(callValue(2, CallPosition::Tail)) == "CallValue.InTailPosition.n2"_s);
     AOT_TEST_CHECK(dumpedNameOf(getById().withCallerFrame(CallerFrame::StubFrame)) == "GetById.StubFrame"_s);
     AOT_TEST_CHECK(dumpedNameOf(throwAtSite(ThrowSiteSource::FaultSite, CallerFrame::Frameless)) == "ThrowAtFault.Frameless"_s);
-    AOT_TEST_CHECK(dumpedNameOf(StubKey(StubFamily::ArraySlice).withForm(4)) == "ArraySlice.<no form 4>"_s);
+    AOT_TEST_CHECK(dumpedNameOf(arrayCopyAsDoubles()) == "ArraySlice.WholeAsDoubles"_s);
+    AOT_TEST_CHECK(dumpedNameOf(StubKey(StubFamily::ArraySlice).withForm(6)) == "ArraySlice.<no form 6>"_s);
 }
 
 static void testPackedWords()
@@ -236,19 +237,19 @@ static void testPackedWords()
     constexpr uint64_t offsetInCode = 64;
     constexpr uintptr_t code = 4096;
     uint64_t closureWord = ClosureWord::encode({ offsetInCode, 3 }, 7, { });
-    AOT_TEST_CHECK(ClosureWord::functionOf(closureWord) == 7);
+    AOT_TEST_CHECK(ClosureWord::closureNumberOf(closureWord) == 7);
     AOT_TEST_CHECK(ClosureWord::addressOf(closureWord, code) == code + offsetInCode);
     AOT_TEST_CHECK(ClosureWord::numberOfParametersOf(closureWord) == 3);
     AOT_TEST_CHECK(ClosureWord::isCallable(closureWord) && !ClosureWord::takesNewTarget(closureWord));
 
     uint64_t classWord = ClosureWord::encode({ offsetInCode, ClosureWord::maxNumberOfParameters }, ClosureWord::firstReservedFunction - 1, { .isNotCallable = true, .takesNewTarget = true });
-    AOT_TEST_CHECK(ClosureWord::functionOf(classWord) == ClosureWord::firstReservedFunction - 1);
+    AOT_TEST_CHECK(ClosureWord::closureNumberOf(classWord) == ClosureWord::firstReservedFunction - 1);
     AOT_TEST_CHECK(ClosureWord::addressOf(classWord, code) == code + offsetInCode);
     AOT_TEST_CHECK(ClosureWord::numberOfParametersOf(classWord) == ClosureWord::maxNumberOfParameters);
     AOT_TEST_CHECK(!ClosureWord::isCallable(classWord) && ClosureWord::takesNewTarget(classWord));
 
     uint64_t request = ClosureRequest::encode(5, 2, 9);
-    AOT_TEST_CHECK(ClosureRequest::functionOf(request) == 5);
+    AOT_TEST_CHECK(ClosureRequest::closureNumberOf(request) == 5);
     AOT_TEST_CHECK(ClosureRequest::executableOf(request) == 2);
     AOT_TEST_CHECK(ClosureRequest::allocationOf(request) == 9);
 
@@ -326,7 +327,7 @@ static void checkFrontEnds()
         AOT_TEST_CHECK(!rawOperations.testAndSet(indexOf(frontEnd.raw)));
         stubs.append(frontEnd.stub);
     }
-    AOT_TEST_CHECK(stubs.size() == 9);
+    AOT_TEST_CHECK(stubs.size() == 12);
     operations.filter(rawOperations);
     AOT_TEST_CHECK(operations.isEmpty());
     std::sort(stubs.begin(), stubs.end());
@@ -760,7 +761,7 @@ static void testCallsWithoutValidation()
     AOT_TEST_CHECK(catalog.summaryOf(callValue(0)).signature.usesCallConvention);
 
     size_t bytesBeforeCall = 0;
-    for (StubKey key : { pollAtPrologue(), awaitBySavingFrame(), suspendGenerator(GeneratorSuspension::Yield), throwAtSite(ThrowSiteSource::WordInRegister, CallerFrame::HasFrame), callValue(0) }) {
+    for (StubKey key : { pollAtPrologue(true), pollAtPrologue(false), awaitBySavingFrame(), suspendGenerator(GeneratorSuspension::Yield), throwAtSite(ThrowSiteSource::WordInRegister, CallerFrame::HasFrame), callValue(0) }) {
         AOT_TEST_CHECK(sizeOfCall(catalog, key, bytesBeforeCall) == sizeOfNearCall);
         AOT_TEST_CHECK(!bytesBeforeCall);
     }
@@ -784,7 +785,7 @@ static StubKey findStubPreserving(const StubCatalog& catalog, GPRReg preserved)
             continue;
         if (summary.signature.usesCallConvention || summary.signature.immediate || summary.signature.result != StubResult::GPR)
             continue;
-        if (containsRegister(summary.clobbered, preserved) || body == pollAtPrologue())
+        if (containsRegister(summary.clobbered, preserved) || isPollAtPrologue(body))
             continue;
         found = body;
         break;

@@ -9,6 +9,7 @@
 
 #include "AOTDiagnostics.h"
 #include "AOTEdgeResults.h"
+#include "AOTEntryParameterIndexes.h"
 #include "AOTIR.h"
 #include "AOTRepresentation.h"
 #include "AOTVector.h"
@@ -24,6 +25,7 @@ struct RepresentationInputs {
     const Function& function;
     const Placement& placement;
     const CallingConventions& conventions;
+    mutable EntryParameterIndexes entryParameters { };
 
     const Type& typeOf(ValueID value) const { return program.typeOf(function, value); }
 };
@@ -31,6 +33,10 @@ struct RepresentationInputs {
 inline constexpr RepresentationSet integerRepresentations { Representation::Int32, Representation::Int64 };
 inline constexpr RepresentationSet numberRepresentations { Representation::Int32, Representation::Int64, Representation::Double };
 inline constexpr RepresentationSet optionalRepresentations { Representation::OptionalInt64, Representation::OptionalDouble };
+
+// The length of a string that is one of the written literals is the length that most of them have, unless its number is that of a literal of another length: up to this many are compared.
+inline constexpr size_t maxLiteralsComparedForLength = 3;
+unsigned commonestOf(std::span<const unsigned> lengths);
 
 inline constexpr OpcodeSet constantsInFormOfUses {
     Opcode::Undefined, Opcode::Null, Opcode::Absent, Opcode::Boolean, Opcode::Integer, Opcode::Double, Opcode::String, Opcode::KeyConstant
@@ -62,13 +68,19 @@ inline constexpr OpcodeSet operationsThatMayRunBarrier = [] {
 }();
 
 bool isEqualityOfNumbers(const Program&, const Function&, const Value&);
+// Whether it is an operator on numbers that looks at the tag of a boxed number by itself.
+bool takesNumberAsItIs(const RepresentationInputs&, const Value& user, ValueID operand);
 
-bool picksOwnRepresentation(const Function&, ValueID);
+bool picksOwnRepresentation(const RepresentationInputs&, ValueID);
 bool isForwardedOperand(const Value& user, uint32_t operandIndex);
 bool readsDoubleOutOfBytes(const Value&);
 bool readsDoubleOutOfBytes(const Terminator&);
 // A read that does not keep the bits, and the built-in that an inline read falls back on.
 bool makesTheOneNaNOfBytes(const RepresentationInputs&, const Value&);
+
+enum class NaNUse : uint8_t { Purifies, Ignores, Propagates };
+NaNUse nanUseBeforeSelection(const Program&, const Value& user, uint32_t operandIndex, OperatorForm formOfOperator);
+bool readsDoubleOutOfBytesBeforeSelection(const Program&, const Value&);
 
 Representation wantedRepresentationOf(const RepresentationInputs&, const Value& user, uint32_t operandIndex);
 Representation wantedRepresentationOf(const RepresentationInputs&, const Terminator& user, uint32_t operandIndex);

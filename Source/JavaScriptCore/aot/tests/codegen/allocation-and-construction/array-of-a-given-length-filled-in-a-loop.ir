@@ -79,34 +79,25 @@ function f1 name="squares" module=m0 flags=[IsChecked, HasExplicitName] length=1
     Return v3
 }
 
-# The loop stores doubles, so new Array(count) makes storage for unboxed doubles. A store is a test that the number is not NaN (which marks a hole), a test of the index against the length, and the store.
+# The loop stores doubles, so new Array(count) makes storage for unboxed doubles. A store is a test of the index against the length, and the store. The number is a product of two integers: it is finite, so it is no NaN (which marks a hole), and nothing asks it.
 # CHECK-LABEL: steps by 1
 # CHECK: Int32 b@[[k]] = Phi(
 # CHECK-NEXT: Double b@[[wide]] = IToD(b@[[k]],
 # CHECK-NEXT: Double b@[[square]] = Mul(b@[[wide]], b@[[wide]],
-# CHECK: Int32 b@[[isNumber]] = Equal(b@[[square]], b@[[square]], {{*}}:PutArrayElement)
-# CHECK-NEXT: Branch(b@[[isNumber]], Terminal,
-# CHECK-NEXT: Successors: Then:#[[bounds]], Else:Rare:#
-# CHECK-NEXT: BB#[[bounds]]:
-# CHECK: Int32 b@[[isInside]] = Above(b@[[length]], b@[[k]], {{*}}:PutArrayElement)
-# CHECK-NEXT: Branch(b@[[isInside]], Terminal,
-# CHECK-NEXT: Successors: Then:#[[store]], Else:Unlikely:#
-# CHECK-NEXT: BB#[[store]]:
+# CHECK-NOT: Equal(b@[[square]], b@[[square]]
+# CHECK-NOT: Above(
 # CHECK: Store(b@[[square]], b@{{*}}, ControlDependent|Writes:indexedDoubleProperties, {{*}}:PutArrayElement)
 # CHECK: Branch(b@{{*}}, Terminal, {{*}}:Less)
 # CHECK-LABEL: end of loop
 # The storage and the length are read ahead of the loop, nothing is boxed, and the kind of storage is not tested in it.
 # NONE-LABEL: steps by 1
-# NONE-NOT: Reads:
+# NONE-NOT: Load(
 # NONE-NOT: BitwiseCast(
-# NONE-NOT: Patchpoint(
 # NONE-LABEL: end of loop
 # CALLS: f1: size=
 # CALLS: stub NewArrayWithLength.Double x1
 # CALLS-NOT: stub NewArray
 # CALLS: f{{*}}: size=
-# Four turns are written out. They poll between stretches of many turns, and the few turns that are left behind them do not poll. Each turn keeps both tests.
-# X64: loop #{{*}}, instructions: 29, patchpoints: 0, {{*}} steps by 4
-# X64: loop #{{*}}, instructions: 8, patchpoints: 0, {{*}} steps by 1
-# ARM64: loop #{{*}}, instructions: 7, patchpoints: 0, {{*}} steps by 1
-# ARM64: loop #{{*}}, instructions: 25, patchpoints: 0, {{*}} steps by 4
+# The list has the length it was made with, and the loop goes up to that: its one test is the test of the loop.
+# X64: loop #{{*}}, instructions: 6, patchpoints: 0, {{*}} steps by 1
+# ARM64: loop #{{*}}, patchpoints: 0, {{*}} steps by 1

@@ -60,7 +60,7 @@ public:
     {
         if (m_landingPads.isEmpty())
             return;
-        AOT::stableSort(m_landingPads, { }, &SiteLandingPad::site);
+        AOT::stableSortInLine(m_landingPads, { }, &SiteLandingPad::site);
         m_copies.grow(numberOfSites + 1);
         for (uint32_t index = m_landingPads.size(); index--;) {
             Copies& copies = m_copies[m_landingPads[index].site];
@@ -125,7 +125,7 @@ static Vector<FaultingAccess> collectFaultingAccesses(const DescribedFunction& d
     TrapRecords& traps = records.traps;
     RELEASE_ASSERT(!described.build.validates() || records.units.takeTraps().size() == traps.trappingAccesses.size());
 
-    AOT::sort(traps.trapSites, { }, &TrapSite::value);
+    AOT::sortInLine(traps.trapSites, { }, &TrapSite::value);
     Vector<FaultingAccess> accesses;
     accesses.reserveInitialCapacity(traps.trappingAccesses.size() + traps.callThrowSites.size());
     for (const TrappingAccess& access : traps.trappingAccesses) {
@@ -144,7 +144,7 @@ static Vector<FaultingAccess> collectFaultingAccesses(const DescribedFunction& d
     }
     for (const CallThrowSite& site : traps.callThrowSites)
         accesses.append({ body.returnSites[site.returnSite].offset - static_cast<uint32_t>(sizeOfNearCall), { }, site.words });
-    AOT::sort(accesses, { }, &FaultingAccess::codeOffset);
+    AOT::sortInLine(accesses, { }, &FaultingAccess::codeOffset);
     return accesses;
 }
 
@@ -165,7 +165,7 @@ static Vector<SiteReference, 32> collectSiteReferences(CodeBody& body, SiteDescr
         if (poll.callSite)
             references.append({ poll.returnOffset(), &poll.callSite.bits });
     }
-    AOT::stableSort(references, { }, &SiteReference::returnOffset);
+    AOT::stableSortInLine(references, { }, &SiteReference::returnOffset);
     return references;
 }
 
@@ -196,11 +196,18 @@ static std::optional<LineColumn> positionInBuiltin(const Program& program, Funct
     const Function& owner = program.at(shown);
     if (isDefaultConstructor(program, owner))
         return owner.kind == FunctionKind::DerivedConstructor ? superCallOfDefaultConstructor : startOfBuiltinFunction;
+    if (owner.syntax.contains(FunctionSyntax::IsShownAsNativeCode))
+        return program.lineColumnFor(owner.module, owner.position);
     if (!owner.enclosingRuntimeFunction)
         return std::nullopt;
     switch (program.builtins().at(owner.enclosingRuntimeFunction).role) {
-    case RuntimeFunctionRole::CompilerFunction:
-        return positionOfImplementedBuiltin(functionTraceOf(program, shown).builtinKind());
+    case RuntimeFunctionRole::CompilerFunction: {
+        auto trace = functionTraceOf(program, shown);
+        // The text of the module that its frames name is the host's.
+        if (trace.implementsBuiltin && trace.builtinKind() == StackTraceBuiltinKind::None)
+            return startOfBuiltinFunction;
+        return positionOfImplementedBuiltin(trace.builtinKind());
+    }
     case RuntimeFunctionRole::Model:
         return std::nullopt;
     case RuntimeFunctionRole::EngineBuiltin:
@@ -258,6 +265,13 @@ static void describeConstructionStart(const Program& program, const ShownFunctio
     if (!construction || (construction->isWrittenAsCall && !isConstructOf(site.kind)))
         return;
     LineColumn lineColumn = program.lineColumnFor(module, construction->start);
+    if (construction->isShownAtStart) {
+        position.constructionStartLine = std::exchange(position.line, lineColumn.line);
+        position.constructionStartColumn = std::exchange(position.column, lineColumn.column);
+        position.sourceOffset = construction->start;
+        position.startIsWhereWritten = true;
+        return;
+    }
     position.constructionStartLine = lineColumn.line;
     position.constructionStartColumn = lineColumn.column;
     position.startIsForCallers = construction->isForCallers;
@@ -353,7 +367,7 @@ static Vector<RecordedSite> renumberSites(const DescribedFunction& described, co
             }
         }
         const SiteLandingPad* landingPad = landingPads.takeNext(recordedNumber);
-        bool saysOnlyWhereItIs = !reference.firstRead && !std::exchange(rowHoldsFirstRead, false) && record.kind == CallSiteKind::Plain && !record.callsOwnFunctionObject;
+        bool saysOnlyWhereItIs = !reference.firstRead && !std::exchange(rowHoldsFirstRead, false) && record.kind == CallSiteKind::Plain && !record.callsOwnFunctionObject && !record.keptCalleePlusOne;
         if (saysOnlyWhereItIs && last.record && *last.record == record && leadToSameHandler(last.landingPad, landingPad)) {
             *reference.site = result.size();
             continue;
@@ -393,12 +407,29 @@ static Vector<FlaggedSite> collectFlaggedSites(const Vector<RecordedSite>& renum
     return flaggedSites;
 }
 
-static Vector<uint32_t> collectCallsOfOwnFunctionObjects(const Vector<RecordedSite>& renumbered)
+static Vector<std::pair<uint32_t, CalleeOfSite>> collectCalleesOfSites(const Vector<RecordedSite>& renumbered, const SiteRecords& records)
 {
-    Vector<uint32_t> sites;
+    Vector<std::pair<uint32_t, CalleeOfSite>> sites;
     for (uint32_t i = 0; i < renumbered.size(); ++i) {
-        if (renumbered[i].callsOwnFunctionObject)
-            sites.append(i + 1);
+        if (renumbered[i].callsOwnFunctionObject) {
+            sites.append({ i + 1, CalleeOfSite::ownFunctionObject() });
+            continue;
+        }
+        if (!renumbered[i].keptCalleePlusOne)
+            continue;
+        const KeptCallee& kept = records.keptCallees[renumbered[i].keptCalleePlusOne - 1];
+        auto field = records.fieldsOfCallees.find(kept.call);
+        if (field != records.fieldsOfCallees.end() && !field->value) {
+            sites.append({ i + 1, CalleeOfSite::ownFunctionObject() });
+            continue;
+        }
+        // Nothing writes the word of an unreachable call.
+        if (kept.word >= records.wordsOfCallees.size() || !records.wordsOfCallees[kept.word])
+            continue;
+        intptr_t offset = records.wordsOfCallees[kept.word]->offsetFromFP();
+        RELEASE_ASSERT(!(offset % static_cast<intptr_t>(sizeof(uint64_t))));
+        int32_t word = safeCast<int32_t>(offset / static_cast<intptr_t>(sizeof(uint64_t)));
+        sites.append({ i + 1, field != records.fieldsOfCallees.end() ? CalleeOfSite::inEnvironmentInFrame(word, *field->value) : CalleeOfSite::inFrame(word) });
     }
     return sites;
 }
@@ -445,7 +476,7 @@ static SiteDescription describeSites(const DescribedFunction& described, CodeRec
     sites.frameMapWords = WTF::move(records.frameMaps.words);
     sites.faultingAccesses = collectFaultingAccesses(described, records, linkBuffer, body);
     sites.pollSites = WTF::move(records.traps.pollSites);
-    AOT::sort(sites.pollSites, { }, &PollSite::offset);
+    AOT::sortInLine(sites.pollSites, { }, &PollSite::offset);
 
     ShownFunctions shownFunctions = findShownFunctions(described);
     foldMethodReadSites(described, shownFunctions, records.sites.positions, body, sites);
@@ -462,7 +493,7 @@ static SiteDescription describeSites(const DescribedFunction& described, CodeRec
         return sites;
     }
     sites.inlineFrames = describeInlineFrames(described.function, records.sites, body);
-    sites.callsOfOwnFunctionObjects = collectCallsOfOwnFunctionObjects(renumbered);
+    sites.calleesOfSites = collectCalleesOfSites(renumbered, records.sites);
     return sites;
 }
 

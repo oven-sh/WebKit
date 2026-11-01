@@ -42,6 +42,11 @@ public:
         // Set by whoever has looked at the fields of the layout.
         EveryFieldIsBornConfigurable = 1 << 7,
     };
+    // Why a key order that the Structure holds does not go to a copy of the object along with the Structure.
+    enum class HeldKeyOrder : uint8_t {
+        IsOfOneObject = 1 << 0,
+        IsBesideExtraProperties = 1 << 1,
+    };
 
     template<typename CellType, SubspaceAccess mode>
     static GCClient::IsoSubspace* subspaceFor(VM& vm)
@@ -107,6 +112,9 @@ public:
         return named && !named->isDictionary();
     }
     uint16_t extraPropertiesCellSize() const { return hasExtraProperties() ? m_extraKeysAndCellSize.extraPropertiesCellSize : 0; }
+    // What an object of this Structure went on to when a private name was last put among its extra properties. It names their Structure, which says which name that was.
+    CompiledStructure* successorByPrivateName() const { return m_successorByPrivateName.get(); }
+    void setSuccessorByPrivateName(VM& vm, CompiledStructure* successor) { m_successorByPrivateName.set(vm, this, successor); }
     // Where the layout has no word for the extra properties, an object that gets some gets a Structure of its own, which holds them.
     JSObject* heldExtraProperties() const
     {
@@ -130,8 +138,25 @@ public:
         ASSERT(hasOutOfLineKeyOrder());
         return rareData()->outOfLineKeyOrder.span();
     }
+    // Each object of the Structure says in its order word how many of the entries are its own, so one that has them all adds the next for itself alone. The entries never move: somebody may be walking them.
+    bool tryAppendToOutOfLineKeyOrder(uint16_t entry) const
+    {
+        ASSERT(hasOutOfLineKeyOrder() && !hasKeyOrderOfOneObject());
+        RareData* rareData = const_cast<RareData*>(this->rareData());
+        Vector<uint16_t>& entries = rareData->outOfLineKeyOrder;
+        if (rareData->keyOrderHasEnded || entries.size() == entries.capacity())
+            return false;
+        entries.append(entry);
+        return true;
+    }
+    // Whoever remembers that objects of this Structure go on to another one, which has a copy of the entries, sends them there with whatever count they have.
+    void endOutOfLineKeyOrder() const
+    {
+        if (hasOutOfLineKeyOrder())
+            const_cast<RareData*>(rareData())->keyOrderHasEnded = true;
+    }
     // Such a Structure belongs to one object, which changes the order in place.
-    bool hasKeyOrderOfOneObject() const { return hasOutOfLineKeyOrder() && rareData()->keyOrderBelongsToOneObject; }
+    bool hasKeyOrderOfOneObject() const { return m_heldKeyOrder.contains(HeldKeyOrder::IsOfOneObject); }
     std::span<const RefPtr<UniquedStringImpl>> keysNamedByOrder() const
     {
         ASSERT(hasKeyOrderOfOneObject());
@@ -204,6 +229,9 @@ public:
     static constexpr ptrdiff_t offsetOfExtensionSlot() { return OBJECT_OFFSETOF(CompiledStructure, m_extensionSlot); }
     static constexpr ptrdiff_t offsetOfEnvironmentShapePage() { return OBJECT_OFFSETOF(CompiledStructure, m_environmentShapePage); }
     static constexpr ptrdiff_t offsetOfFlags() { return OBJECT_OFFSETOF(CompiledStructure, m_flags); }
+    // The byte behind the flags: a stub reads both at once.
+    static constexpr ptrdiff_t offsetOfHeldKeyOrder() { return OBJECT_OFFSETOF(CompiledStructure, m_heldKeyOrder); }
+    static constexpr ptrdiff_t offsetOfSuccessorByPrivateName() { return OBJECT_OFFSETOF(CompiledStructure, m_successorByPrivateName); }
 
     template<typename Visitor>
     static void visitAdditionalChildren(JSCell*, Visitor&);
@@ -215,7 +243,7 @@ private:
         Vector<uint16_t> outOfLineKeyOrder;
         Vector<RefPtr<UniquedStringImpl>> keysNamedByOrder;
         WriteBarrier<JSObject> heldExtraProperties;
-        bool keyOrderBelongsToOneObject { false };
+        bool keyOrderHasEnded { false };
     };
 
     struct NamedStructureAndRareData {
@@ -260,15 +288,17 @@ private:
         uint16_t m_environmentShapePage;
     };
     OptionSet<Flag> m_flags;
+    OptionSet<HeldKeyOrder> m_heldKeyOrder;
     union {
         uint32_t m_listedOrderAndCount { ListedFields::noOrderWord };
         ExtraKeysAndCellSize m_extraKeysAndCellSize;
     };
     SlotData m_extraPropertiesSlot { };
     SlotData m_extensionSlot { };
+    WriteBarrier<CompiledStructure> m_successorByPrivateName;
 };
 #if CPU(ADDRESS64) && !HAVE(36BIT_ADDRESS)
-static_assert(sizeof(CompiledStructure) == 144);
+static_assert(sizeof(CompiledStructure) == 152);
 #endif
 
 ALWAYS_INLINE const CompiledStructure* compiledObjectStructureOrNull(const Structure* structure)

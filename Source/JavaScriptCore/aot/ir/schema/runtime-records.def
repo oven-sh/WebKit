@@ -2,7 +2,7 @@ enum SlotRepresentation {
     | engine JSValue Cell Cell32 OptionalCell32 Int32 OptionalInt32 Uint32 Int64 OptionalInt64 Double OptionalDouble Float Boolean OptionalBoolean Uint8 Int8
     Uint16 Int16 LiteralString LiteralString32 DeferredClosure
 }
-enum CellTestKind { | engine IsObject IsCallable CellTypeIs ShapeIn InheritsClassInfo IsPristine IsBuiltinCell IsClosureOf IsSymbol SharingModeIs IsNamespaceOf }
+enum CellTestKind { | engine IsObject IsCallable CellTypeIs ShapeIn InheritsClassInfo IsPristine IsBuiltinCell IsClosureOf IsSymbol SharingModeIs IsNamespaceOf CarriesBrandOfClass }
 enum PutMode { | engine Strict Sloppy Define }
 enum StubExit { | engine Miss Cannot }
 enum CacheLifetime { | engine StrongRoot WeakByKey ClearedEachCollection }
@@ -17,5 +17,5 @@ enum ValidationFailureKind (disable: Text) {
     RemovedFieldNamed("") ReceiverShape("") CallChangedKeptRegister("") UnwindingChangedKeptRegister("") ArrayElementsNotOrdinary("flow:PristineInstances") KeysListed("")
     LegacyRegExpStaticRead("") GuardNoLongerHolds("") BindingReadBeforeStore("") SlotEmpty("") LookupDiffers("") HeapSlotType("") MaskCutKnownValue("")
     FamilyNotClosed("") FunctionCellInFrameGotProperties("") OperationConvertedCell("") OperationWroteHeap("") UnspecifiedValueInspected("") CallCollected("")
-    CallThrew("")
+    CallThrew("") EscapedFrameCell("")
 }

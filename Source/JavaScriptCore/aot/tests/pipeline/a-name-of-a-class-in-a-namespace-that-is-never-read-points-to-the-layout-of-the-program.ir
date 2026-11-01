@@ -1,0 +1,41 @@
+# class Item { value; flag }   register(new Item(), readsValue, makeResult)   function readsValue(item) { return item.value }
+# and in a module of the library: function makeResult() { return { done: false, value: 1 } }
+# `value` is also an accessor of WebAssembly.Global. Nobody could follow the item, so flow counts `item.value` as a read of that accessor, as of the member of every class of the language that has
+# the name. The program never reads WebAssembly, so it has no such object: the name points to a layout. Of those that hold a `value` it is the one that the program makes. The record that the
+# library makes is not tested for: that name alone says too little.
+# RUN: pipeline PlaceTypeTests
+# RUN(RESULTS): valueflow-results
+# RESULTS: builtin-use WebAssemblyGlobalPrototypeValue [Read]
+
+module m0 path="/application.js" displayPath="application.js" body=f0
+module m1 path="/library.js" displayPath="library.js" flags=[IsLibrary]
+entry module=m0
+layout L0 name="Item" module=m0 fields=[{key="value" declared={type=anything}}, {key="flag" declared={type=anything}}]
+layout L1 module=m1 fields=[{key="done" declared={type=anything}}, {key="value" declared={type=anything}}]
+
+function f0 name="" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="register" [isFreeName]
+    v2 = Integer integer=2
+    v3 = Integer integer=3
+    v4 = NewObject -, v2, v3 layout=L0 fields=[0, 1]
+    v5 = NewClosure function=f1
+    v6 = NewClosure function=f2
+    v7 = Call v1, -, v4, v5, v6
+    Return v7
+}
+
+function f1 name="readsValue" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="value"
+    Return v1
+}
+
+function f2 name="makeResult" module=m1 results=[{type=anything}] {
+    v0 = Boolean boolean=false
+    v1 = Integer integer=1
+    v2 = NewObject -, v0, v1 layout=L1 fields=[0, 1]
+    Return v2
+}
+# CHECK-LABEL: name="readsValue"
+# CHECK-NOT: testedType=L0|L1
+# CHECK: = TypeTest {{*}} testedType=L0

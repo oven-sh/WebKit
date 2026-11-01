@@ -8,7 +8,9 @@
 #if ENABLE(AOT)
 
 #include "AOTCompileOptions.h"
+#include "AOTCurrentWork.h"
 #include "AOTDiagnostics.h"
+#include "AOTHostFunctionTexts.h"
 #include "AOTLimits.h"
 #include "AOTLosses.h"
 #include "AOTStatistics.h"
@@ -35,9 +37,11 @@ class CompilationScratch;
 namespace AOT {
 
 class IdentifierNumbering;
+class ImagesBelow;
 class RegExpSummaries;
 
 namespace Typed {
+class FormatPatternPlans;
 class Program;
 class ScratchRealms;
 }
@@ -53,11 +57,18 @@ public:
     const CompileOptions& options() const { return m_options; }
     const RecordedOptions& recordedOptions() const { return m_options.recorded; }
     bool validates() const { return m_options.recorded.validates; }
+    // A build that reports when unreachable code is reached records which pass marked the code unreachable.
+    PassID passToReportForUnreachableCode() const
+    {
+        bool reportsUnreachableCode = validates() || m_options.recorded.has(TestingSwitch::CheckProofsAtRunTime);
+        return reportsUnreachableCode ? currentWork().pass.load(std::memory_order_relaxed) : PassID::None;
+    }
     bool isSabotaged(Sabotage part) const { return m_options.recorded.isSabotaged(part); }
 
     bool isEnabled(FlowResultKind kind, uint32_t subject) const { return m_options.recorded.isEnabled(kind, subject); }
     bool isEnabledForProgram(FlowResultKind kind) const { return m_options.recorded.isEnabledForProgram(kind); }
     bool isEnabledEverywhere(FlowResultKind kind) const { return m_options.recorded.isEnabledEverywhere(kind); }
+    // Flow stopped at its budget. The build continues as with `disable=flow-results`, so there is one such state to test.
     bool isEnabled(PassID pass, Typed::FunctionID function) const { return m_options.recorded.isEnabled(pass, function); }
     bool isEnabled(SelectionRuleID rule, Typed::FunctionID function) const { return m_options.recorded.isEnabled(rule, function); }
     bool isEnabled(B3::PolicySwitch policySwitch, Typed::FunctionID function) const { return m_options.recorded.isEnabled(policySwitch, function); }
@@ -83,8 +94,12 @@ public:
     void addAllocationRemark(const AllocationRemark& remark) { m_losses.addAllocationRemark(remark); }
 
     const IdentifierNumbering& identifierNumbering() const;
+    // Null for the first image of its realms, and for an image that shares none.
+    const ImagesBelow* imagesBelow() const { return m_imagesBelow.get(); }
+    const ImagesBelow* referenceLibraryImage() const { return m_referenceLibraryImage.get(); }
     RegExpSummaries& regExpSummaries() { return *m_regExpSummaries; }
     Typed::ScratchRealms& scratchRealms() { return *m_scratchRealms; }
+    Typed::FormatPatternPlans& formatPatternPlans() { return *m_formatPatternPlans; }
     B3::CompilationScratch& backEndScratch(unsigned worker);
     void destroyBackEndScratches();
     bool shouldDump(Typed::FunctionID function) const { return !m_functionsToDump || m_functionsToDump->get(function.index()); }
@@ -96,7 +111,12 @@ public:
         enqueueDeferredValue(makeUniqueWithoutFastMallocCheck<DeferredValueOf<T>>(WTF::move(value)));
     }
 
+    const HostFunctionTexts& functionTexts() const { return m_functionTexts; }
+    void setFunctionTexts(const HostFunctionTexts& texts) { m_functionTexts = texts; }
+
     void finishDeferredDestruction();
+    // For where much has just died: how much memory the build holds at most does not hang on how soon the destroyer comes to it.
+    void giveFreedMemoryBack();
 
     void resolveFunctionToDump(const Typed::Program&);
     void setIdentifierNumbering(IdentifierNumbering&&);
@@ -137,10 +157,14 @@ private:
     bool m_recordsLimitHits { true };
     ParallelLoops m_parallelLoops;
     Vector<std::unique_ptr<B3::CompilationScratch>> m_backEndScratches;
+    HostFunctionTexts m_functionTexts;
     std::unique_ptr<RegExpSummaries> m_regExpSummaries;
     std::unique_ptr<Typed::ScratchRealms> m_scratchRealms;
+    std::unique_ptr<Typed::FormatPatternPlans> m_formatPatternPlans;
     std::optional<BitVector> m_functionsToDump;
     std::unique_ptr<const IdentifierNumbering> m_identifierNumbering;
+    std::unique_ptr<const ImagesBelow> m_imagesBelow;
+    std::unique_ptr<const ImagesBelow> m_referenceLibraryImage;
     std::unique_ptr<DeferredDestroyer> m_deferredDestroyer;
 };
 

@@ -9,9 +9,9 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 module m1 path="ArrayPrototype.ts" displayPath="ArrayPrototype.ts" flags=[IsLibrary]
 entry module=m0
-runtimefunction id=40 function=f3 visibility=Private
-runtimefunction id=41 function=f1
-runtimefunction id=72 function=f4 visibility=Private
+runtimefunction id=ArrayPrototypeFlatIntoArrayWithCallback function=f3 visibility=Private
+runtimefunction id=ArrayPrototypeFlatMap function=f1
+runtimefunction id=IteratorHelpersPerformIteration function=f4 visibility=Private
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
     v0 = Integer integer=1
     v1 = NewArray v0 contents=anything
@@ -21,20 +21,20 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
     v5 = Call v4, v2, v3 calleeKey="flatMap"
     Return
 }
-function f1 name="flatMap" module=m1 role=Library flags=[HasThis] enclosingRuntimeFunction=41 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+function f1 name="flatMap" module=m1 role=Library flags=[HasThis] enclosingRuntimeFunction=ArrayPrototypeFlatMap parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
     v3 = CallDirect v0, v1, v2 function=f3
     Return v3
 }
 function f2 name="same" module=m0 kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
     Return v0
 }
-function f3 name="flatIntoArrayWithCallback" module=m1 role=Library enclosingRuntimeFunction=40 parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+function f3 name="flatIntoArrayWithCallback" module=m1 role=Library enclosingRuntimeFunction=ArrayPrototypeFlatIntoArrayWithCallback parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
     v3 = Integer integer=0
     v4 = ElemGet v0, v3
     v5 = Call v1, v2, v4, v3, v0
     Return v5
 }
-function f4 name="performIteration" module=m1 role=Library enclosingRuntimeFunction=72 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+function f4 name="performIteration" module=m1 role=Library enclosingRuntimeFunction=IteratorHelpersPerformIteration parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
     v2 = Undefined
     v3 = CallDirect v0, v1, v2 function=f3
     Return v3

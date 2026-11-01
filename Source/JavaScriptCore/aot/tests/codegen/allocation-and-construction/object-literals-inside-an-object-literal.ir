@@ -110,5 +110,5 @@ function f1 name="line" module=m0 position=81 flags=[IsChecked, HasExplicitName]
 # CALLS-NOT: operation
 # CALLS: f{{*}}: size=
 # X64: instructions: 16, patchpoints: 3
-# ARM64 tests behind each allocation whether the collector is marking.
-# ARM64: instructions: 18, patchpoints: 3, rare instructions: 6
+# arm64 tests once, behind the last store, whether the collector is marking.
+# ARM64: instructions: 14, patchpoints: 3, rare instructions: 2

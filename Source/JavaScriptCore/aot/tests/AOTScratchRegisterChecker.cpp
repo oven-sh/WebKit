@@ -57,6 +57,8 @@ struct InstructionEffects {
     bool isTest { false };
     // A pair loaded off the stack pointer.
     bool isRestore { false };
+    // One register loaded off the stack pointer.
+    bool isLoadFromStack { false };
     // It reads no memory, and no general register unless it is a move.
     bool isConstantOrCopy { false };
     ControlFlow controlFlow { ControlFlow::GoesOn };
@@ -166,6 +168,7 @@ static InstructionEffects decodeEffects(uint32_t word)
     effects.isTest = mnemonic == "tst";
     effects.controlFlow = controlFlowOf(mnemonic);
     bool isPairLoad = mnemonic == "ldp";
+    bool isSingleLoad = mnemonic == "ldr" || mnemonic == "ldur";
     auto finish = [&] {
         bool readsGeneralRegister = std::ranges::any_of(effects.numberOfReads, [](uint8_t count) { return !!count; });
         effects.isConstantOrCopy = effects.writtenRegisters && !mnemonic.starts_with("ld") && (mnemonic == "mov" || !readsGeneralRegister);
@@ -191,6 +194,7 @@ static InstructionEffects decodeEffects(uint32_t word)
             break;
         default:
             effects.isRestore |= isPairLoad && operand.reg[0] == Binja::REG_SP;
+            effects.isLoadFromStack |= isSingleLoad && operand.reg[0] == Binja::REG_SP;
             for (Binja::Register name : operand.reg)
                 record(name, RegisterAccess::Read);
             break;
@@ -237,7 +241,9 @@ Vector<ScratchRegisterConflict> findScratchRegisterConflicts(std::span<const uin
                 continue;
             if (offsetOfUnreadWrite)
                 conflicts.append({ Kind::ReplacedUnread, reg, offset, *offsetOfUnreadWrite });
-            if (effects.isRestore)
+            // An odd number of saved registers ends with one that is loaded alone. x18 is reserved on Darwin, so the count differs by platform.
+            bool endsRestore = effects.isLoadFromStack && index && effectsOfWords[index - 1].isRestore;
+            if (effects.isRestore || endsRestore)
                 offsetOfUnreadWrite = std::nullopt;
             else
                 offsetOfUnreadWrite = offset;

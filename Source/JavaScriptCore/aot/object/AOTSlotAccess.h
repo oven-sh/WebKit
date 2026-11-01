@@ -59,6 +59,8 @@ JSValue readSlot(SlotRepresentation, const void* slot, const ProgramStrings&);
 bool tryWriteSlot(ProgramStrings&, SlotRepresentation, void* slot, JSValue);
 bool tryWriteInt32(SlotRepresentation, void* slot, int32_t);
 bool tryWriteDouble(SlotRepresentation, void* slot, double);
+// Whether the slot holds integers in two's complement, among them every one from the first to the second.
+bool holdsIntegersBetween(Typed::SlotRepresentation, int64_t least, int64_t greatest);
 bool tryWriteBoolean(SlotRepresentation, void* slot, bool);
 void clearSlot(SlotRepresentation, void* slot);
 void writeSlotBits(SlotRepresentation, void* slot, uint64_t bits);

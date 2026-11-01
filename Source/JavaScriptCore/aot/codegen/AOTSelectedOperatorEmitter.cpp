@@ -11,6 +11,7 @@
 #include "AOTBarrierEmitter.h"
 #include "AOTConstantEmitter.h"
 #include "AOTConversionEmitter.h"
+#include "AOTHashTableBuiltinEmitter.h"
 #include "AOTInductionVariables.h"
 #include "AOTPromiseIntrinsicEmitter.h"
 
@@ -70,6 +71,11 @@ void SelectedOperatorEmitter::generateIntegerBound(const ValueContext& value)
 void SelectedOperatorEmitter::generateRememberOwner(const ValueContext& value)
 {
     emitter<BarrierEmitter>().barrierBehindStores(value, value->objectOperand());
+}
+
+void SelectedOperatorEmitter::generateMoveTableToHeap(const ValueContext& value)
+{
+    define(value, emitter<HashTableBuiltinEmitter>().moveTableToHeap(value, in<CellPointer>(value->collectionOperand())));
 }
 
 void SelectedOperatorEmitter::generateFulfillFreshPromise(const ValueContext& value)

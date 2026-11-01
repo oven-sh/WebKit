@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinIDTypes.h"
+#include "AOTBuiltinTable.h"
 #include "AOTExpected.h"
 #include "AOTIRForm.h"
 #include "AOTIRFunction.h"
@@ -44,6 +45,10 @@ class SharedFieldTypes;
 class Program final {
     WTF_MAKE_TZONE_ALLOCATED(Program);
     WTF_MAKE_NONCOPYABLE(Program);
+
+    // In front of `types`, which refers to it.
+    BuiltinTableOfBuild m_tableOfBuild;
+
 public:
     explicit Program(const BuiltinTable&);
     ~Program();
@@ -59,11 +64,26 @@ public:
     void setBuiltinsThatMayBeTrimmed(BitVector&& builtins) { m_builtinsThatMayBeTrimmed = WTF::move(builtins); }
     bool isBeingReplaced(FunctionID id) const { return m_functionsBeingReplaced && m_functionsBeingReplaced->get(id.index()); }
     const BuiltinTable& builtins() const { return m_builtins; }
+    // Once, when `replaceableBuiltins` and `openedNames` are whole and nothing has asked the table about a lock.
+    void unlockReplaceableBuiltins();
+    std::span<const BuiltinID> unlockedBuiltins() const LIFETIME_BOUND { return m_tableOfBuild.unlockedMembers(); }
+    bool isUnlocked(BuiltinID member) const { return std::ranges::binary_search(unlockedBuiltins(), member); }
+    // A test run adds a property of this name to the object, which takes no other new name.
+    bool isOpened(BuiltinID canonicalHolder, StringID name) const { return std::ranges::contains(openedNames, OpenedName { canonicalHolder, name }); }
+    bool isOpenedSomewhere(StringID name) const { return m_namesOpenedSomewhere.get(name.index()); }
+    bool testsReplaceBuiltins() const { return m_testsReplaceBuiltins; }
+    // A row for a pristine operand leaves out the members that the general row of the function looks up on it: Array.prototype.toString joins a pristine array by itself.
+    // Where one of those names is unlocked only the general row says what the function does.
+    bool looksUpUnlockedName(BuiltinID function) const { return m_functionsLookingUpUnlockedNames.get(m_builtins.canonicalID(function).index()); }
+    // No row of the function says that it calls the member: `new Map(pairs)` and Map.prototype.set. So no row says what the function does.
+    bool callsUnlockedMemberThatNoRowNames(BuiltinID function) const { return m_functionsCallingUnlockedMembersThatNoRowNames.get(m_builtins.canonicalID(function).index()); }
+    // A lookup on a pristine instance goes along the chain of its class: on an array `toString` finds Array.prototype.toString, whatever a test has put under Object.prototype.toString.
+    bool passesByRowFor(BuiltinID function, BuiltinTypeID tested) const;
     std::span<const uint8_t> buffer() const { return m_bytes.borrowed; }
     void borrowBuffer(std::span<const uint8_t> bytes) { m_bytes.borrowed = bytes; }
     bool ownsBuffer() const { return !m_bytes.owned.isEmpty(); }
     std::span<const uint8_t> copyBorrowedBytes(std::span<const uint8_t>, const ParallelLoops&);
-    void copyBorrowedLineStarts(const ParallelLoops&);
+    void copyBorrowedWordsOfPositions(const ParallelLoops&);
     void collectConstructionStarts();
     void adoptBuffer(Vector<uint8_t>&&);
 
@@ -73,15 +93,30 @@ public:
     Vector<ExpectedResult> expectedResults;
     Vector<Layout> layouts;
     Vector<TaggedFamily> taggedFamilies;
+    // A parameter whose declared type is a function type with known parameter types. Sorted.
+    struct DeclaredCallback {
+        FunctionID function;
+        uint32_t parameter;
+        FunctionID functionType;
+
+        friend auto operator<=>(const DeclaredCallback&, const DeclaredCallback&) = default;
+    };
+    Vector<DeclaredCallback> declaredCallbacks;
     Vector<Variable> variables;
     Vector<Module> modules;
     Vector<ModuleFailure> moduleFailures;
+    Vector<AmbiguousExport> ambiguousExports;
+    Vector<SourceStamp> sourceStamps;
     Vector<EvalScope> evalScopes;
     Vector<Function> functions;
     Vector<Data> data;
     Vector<Entry> entries;
     Vector<RuntimeFunctionEntry> runtimeFunctions;
     Vector<WebAssemblyModule> webAssemblyModules;
+    Vector<ReplaceableBuiltin> replaceableBuiltins;
+    Vector<OpenedName> openedNames;
+    // CompileOptions::holdsLibraryAlone(): a run that nobody knows yet adds whatever names a test run can add.
+    bool takesAnyNameFromTests { false };
 
     Function& at(FunctionID id) { return functions[id.index()]; }
     const Function& at(FunctionID id) const { return ProvisionalFunctions::contains(id) ? m_provisionalFunctions->at(id) : functions[id.index()]; }
@@ -147,6 +182,7 @@ public:
 
     LayoutID layoutOf(BuiltinLayoutID id) const { return m_derivedTables.builtinLayouts[id.index()]; }
     LayoutSetID declaredMembersOf(LayoutID id) const { return m_derivedTables.declaredMembers[id.index()]; }
+    bool hasDeclaredMembers(LayoutID id) const { return id.index() < m_derivedTables.declaredMembers.size() && m_derivedTables.declaredMembers[id.index()]; }
     void setDeclaredMembers(LayoutID, LayoutSetID);
     CalleeSetID familyOf(FunctionID asRead) const { return m_derivedTables.functionFamilies[asRead.index()]; }
     void setFunctionFamilies(Vector<CalleeSetID>&& families) { m_derivedTables.functionFamilies = WTF::move(families); }
@@ -181,7 +217,7 @@ private:
     struct Bytes {
         std::span<const uint8_t> borrowed;
         Vector<uint8_t> owned;
-        Vector<uint32_t> lineStarts;
+        Vector<uint32_t> wordsOfPositions;
     };
 
     struct CountsAsRead {
@@ -210,6 +246,14 @@ private:
     };
 
     const BuiltinTable& m_builtins;
+    BitVector m_namesOpenedSomewhere;
+    bool m_testsReplaceBuiltins { false };
+    BitVector m_functionsLookingUpUnlockedNames;
+    BitVector m_functionsCallingUnlockedMembersThatNoRowNames;
+    // By the class of a pristine part: the functions that look up a name which, on an instance of the class or of one below it, finds what a test may have put there.
+    // A class that is not among the first goes by looksUpUnlockedName() alone.
+    BitVector m_classesWithKnownChains;
+    Vector<BitVector> m_functionsLookingUpUnlockedNamesOnInstances;
     IRForm m_form { IRForm::AsRead };
     bool m_hasGuardedReads { false };
     BitVector m_builtinsThatMayBeTrimmed;
@@ -242,7 +286,11 @@ void forEachFunctionCalledByHost(const Program& program, NOESCAPE const Invocabl
 const RuntimeFunctionEntry* findRuntimeFunction(const Program&, RuntimeFunctionID);
 bool isLibraryCode(const Program&, const Function&);
 bool isBundlerHelperModule(const Program&, const Module&);
+// The ES module through which importers see a CommonJS file. Its first request requires the file.
+bool isFaceOfCommonJSFile(const Program&, const Module&);
 bool isBundlerHelperNamedByProgram(const Program&, ModuleID);
+// The host asks the loader for an entry point. Where the program loads files under names that the build does not follow, it also asks for the files marked IsFoundByName, and for those that a copy from disk may import: MayBeEvicted.
+BitVector modulesThatHostAsksFor(const Program&, bool findsFilesByName, bool beginsModulesOfData = false);
 // A name made at run time finds the module in the image. The image holds no code of a module of the host that has a source and this kind, and what a program writes of a module with an open namespace is the object: the loader answers for both.
 bool answersToPath(const Program&, const Module&);
 ModuleID compiledModuleWithObject(const Program&, BuiltinID);
@@ -252,6 +300,13 @@ Vector<ModuleID, 2> formsInImage(const Program&, ModuleID named);
 bool namesWaysToModuleObjects(const Program&);
 // `require` hands the module to this function of the host, so a stack trace lists it between what the module runs and the code that called `require`.
 BuiltinID functionOfHostThatRequireCallsFor(const Module&);
+// Modules::hostAnswersInPlaceOf(): the loader of the host answers with what the factory of a mock made, and not with an object of the image.
+bool importMayAnswerWithMock(const Module&);
+// `require` takes a name that starts with `node:` to the registry, where no mock stands, and `require("bun")` is the global `Bun`.
+bool requireMayAnswerWithMock(const Program&, const Module&);
+bool requireReadsModuleValue(const Program&, const Module&);
+// overridableRequire() in CommonJS.ts.
+bool requireAddsToRequireCache(const Program&, ModuleID referrer, ModuleID target);
 // From SplitCoroutines on.
 bool isBodyOfModuleEvaluatedByRequire(const Program&, const Function&);
 

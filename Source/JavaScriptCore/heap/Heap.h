@@ -392,7 +392,9 @@ public:
     MarkedSpace& objectSpace() LIFETIME_BOUND { return m_objectSpace; }
     JS_EXPORT_PRIVATE MarkedBlockCage& cage();
     JS_EXPORT_PRIVATE AlignedMemoryAllocator* cellAllocator();
-    bool tryCollectForExhaustedCage(GCDeferralContext*);
+    // The allocator that found no memory, or null for a table of the VM.
+    bool tryCollectForExhaustedCage(GCDeferralContext*, AlignedMemoryAllocator*);
+    bool isOutsideCage(AlignedMemoryAllocator*) const;
     void collectForExhaustedCage();
     bool tryUseReserveOfExhaustedCage(AlignedMemoryAllocator*);
 
@@ -619,6 +621,8 @@ public:
     // buffer adopted storage that reportExtraMemoryAllocated() had reported. The first reference counts only the rest
     // as allocated. The size of the heap (extraMemorySize()) gets the whole buffer either way.
     void addReference(JSCell*, ArrayBuffer*, size_t bytesAlreadyReported = 0);
+    JS_EXPORT_PRIVATE bool tryReserveCapacityForNewArrayBuffer();
+    bool tryGrowListOfArrayBuffersEarly();
     
     bool isDeferred() const { return !!m_deferralDepth; }
 

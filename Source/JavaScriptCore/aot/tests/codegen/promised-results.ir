@@ -76,7 +76,7 @@ function f7 name="testsForItself" parameters=[{type=anything}] results=[{type=an
 }
 # CHECK: f7: size={{*}} handlers=0 {{*}}
 
-# A call under a handler keeps its test: a site has one landing. The callee throws nothing, so this site has none
+# A call under a handler keeps its test: a site has one landing, and this one's is the handler, which takes the error of a frame that finds no room
 function f8 name="callsUnderHandler" parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame] {
   b0(v0: anything) handler=b3():
     v1 = CallDirect v0 function=f1
@@ -91,7 +91,7 @@ function f8 name="callsUnderHandler" parameters=[{type=anything}] results=[{type
     v5 = CatchValue
     Return v5
 }
-# CHECK: f8: size={{*}} handlers=0 {{*}}
+# CHECK: f8: size={{*}} handlers=1 {{*}}
 
 # The result of the callee of its tail call is proven, so nothing that returns for the function breaks the promise
 function f9 name="makesPoint" parameters=[{type=number}] results=[{type=L0}] capabilities=[HasOrdinaryFrame] {

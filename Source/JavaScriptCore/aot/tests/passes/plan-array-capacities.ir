@@ -518,6 +518,8 @@ function f23 name="literalWithHole" parameters=[{type=anything}] results=[{type=
 
 function f24 name="limit" parameters=[{type=anything}] results=[{type=Array<anything>}] {
     v1 = NewArray contents=anything
+    Jump -> next b1()
+  b1():
     v2 = CallBuiltin v1, v0, v0, v0, v0, v0 overload=ArrayPrototypePush/0 builtinCallForm=Whole
     v3 = CallBuiltin v1, v0, v0, v0, v0 overload=ArrayPrototypePush/0 builtinCallForm=Whole
     Return v1
@@ -527,6 +529,8 @@ function f24 name="limit" parameters=[{type=anything}] results=[{type=Array<anyt
 
 function f25 name="atLimit" parameters=[{type=anything}] results=[{type=Array<anything>}] {
     v1 = NewArray contents=anything
+    Jump -> next b1()
+  b1():
     v2 = CallBuiltin v1, v0, v0, v0, v0 overload=ArrayPrototypePush/0 builtinCallForm=Whole
     v3 = CallBuiltin v1, v0, v0, v0, v0 overload=ArrayPrototypePush/0 builtinCallForm=Whole
     Return v1

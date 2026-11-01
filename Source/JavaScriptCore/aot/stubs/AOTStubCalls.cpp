@@ -43,7 +43,7 @@ static bool returnsToItsCallSite(const StubCatalog& catalog, StubKey called)
     if (neverReturns(called))
         return false;
     // It replaces its return address, so no code after the call runs, and the PrologueCheck names the call by the label before it.
-    if (called == pollAtPrologue())
+    if (isPollAtPrologue(called))
         return false;
     // A stub that suspends copies the frame from sp up, and control comes back with the registers of the code that resumes it.
     return !catalog.effectsOf(called).maySuspend;
@@ -223,6 +223,16 @@ void StubCalls::callRegister(CCallHelpers& jit, GPRReg address, OptionalIndex si
 void StubCalls::jumpToFunction(CCallHelpers&, FunctionID callee, uint16_t entry)
 {
     emitJump({ SymbolSpace::Function, indexOf(callee), entry });
+}
+
+void StubCalls::moveAddressOfFunction(FunctionID callee, uint16_t entry, GPRReg destination)
+{
+    m_relocations.moveAddress({ SymbolSpace::Function, indexOf(callee), entry }, destination, PCRelativeReach::Far);
+}
+
+void StubCalls::moveAddressOfStub(CCallHelpers& jit, StubKey key, std::optional<uint32_t> immediate, GPRReg destination)
+{
+    m_relocations.moveAddress({ SymbolSpace::Stub, indexOf(prepare(jit, key, immediate)) }, destination, PCRelativeReach::Far);
 }
 
 void StubCalls::describeCalls(std::span<const Relocation> relocations, CodeBody& body, LinkBuffer* linkBuffer)

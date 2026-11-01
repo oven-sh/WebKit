@@ -10,6 +10,7 @@
 
 #include "AOTRegExpRecord.h"
 #include "AOTStubBlob.h"
+#include "AOTTraceFrame.h"
 #include "JSCellButterfly.h"
 #include "MarkedBlockCage.h"
 #include "Options.h"
@@ -17,6 +18,7 @@
 #include <cstring>
 #include <iterator>
 #include <limits>
+#include <wtf/CheckedArithmetic.h>
 #include <wtf/Lock.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/StdLibExtras.h>
@@ -55,6 +57,11 @@ void Image::setCurrentOfThread(const Image* image)
     t_currentImage = image;
 }
 
+const Image** Image::addressOfCurrentOfThread()
+{
+    return &t_currentImage;
+}
+
 void Image::useNoneOnThisThread()
 {
     t_currentImage = nullptr;
@@ -79,6 +86,17 @@ const Image* Image::findByCodeAddress(const void* address)
             return image;
     }
     return nullptr;
+}
+
+void Image::forEachPublishedImage(const ScopedLambda<IterationStatus(const Image&)>& functor)
+{
+    const Image* previousImage = t_currentImage;
+    for (const Image* image = s_lastPublished.load(std::memory_order_acquire); image; image = image->m_publishedBefore) {
+        t_currentImage = image;
+        if (functor(*image) == IterationStatus::Done)
+            break;
+    }
+    t_currentImage = previousImage;
 }
 
 static_assert(!offsetof(ImageHeader, magic) && offsetof(ImageHeader, stamp) == 8 && offsetof(ImageHeader, identity) == 16 && offsetof(ImageHeader, size) == 32, "check() reads magic, stamp and identity before it knows that the rest of the header has this build's layout");
@@ -171,6 +189,13 @@ static bool hasWellFormedTables(const ImageHeader& header, std::span<const uint8
     if (!hasValidCodeParts || rangeOf(ImageSection::ProgramTables).size < sizeof(ProgramTables))
         return false;
 
+    if (header.numberOfStubsFoundByKey > numberOfElements(ImageSection::StubAddresses))
+        return false;
+    for (uint32_t offset : header.singleReturnSites) {
+        if (offset > code.sharedCodeSize)
+            return false;
+    }
+
     auto& tables = *reinterpret_cast<const ProgramTables*>(bytes.data() + rangeOf(ImageSection::ProgramTables).offset);
     const ClosureFunctionRangeData& closures = tables.closureFunctions;
     return tables.magic == ProgramTables::expectedMagic
@@ -178,7 +203,10 @@ static bool hasWellFormedTables(const ImageHeader& header, std::span<const uint8
         && closures.first <= closures.end
         && numberOfElements(ImageSection::ClosureWords) == closures.end - closures.omittedWordCount
         && numberOfElements(ImageSection::StringConstants) == tables.instanceSizes.numberOfStringCells
-        && numberOfElements(ImageSection::StringHeaders) >= numberOfElements(ImageSection::Identifiers);
+        && header.numbers.firstStringHeader <= header.numbers.endOfIdentifiers
+        && header.numbers.endOfIdentifiers <= header.numbers.endOfStringHeaders
+        && numberOfElements(ImageSection::Identifiers) == header.numbers.endOfIdentifiers
+        && numberOfElements(ImageSection::StringHeaders) >= header.numbers.endOfStringHeaders - header.numbers.firstStringHeader;
 }
 
 Wire::ImageVerdict Image::check(std::span<const uint8_t> bytes, const std::array<uint8_t, 16>& identity)
@@ -276,6 +304,74 @@ void Image::publish(std::unique_ptr<Image>&& unpublishedImage, std::span<const u
     images.append(image.release());
 }
 
+void Image::publishAbove(const Image& first, std::unique_ptr<Image>&& unpublishedImage)
+{
+    std::unique_ptr<Image> image = WTF::move(unpublishedImage);
+    RELEASE_ASSERT(image && &first.first() == &first);
+    Locker locker { s_publishedImagesLock };
+    Vector<const Image*>& images = publishedImages();
+    const Image& below = first.last();
+    image->m_number = images.size();
+    image->m_first = &first;
+    image->m_position = below.m_position + 1;
+    image->m_layoutIndicesBelow = WTF::checkedSum<uint32_t>(below.m_layoutIndicesBelow, below.programTables().numberOfLayoutIndices);
+    // The table of modules ends with a record that is no module.
+    image->m_modulesBelow = WTF::checkedSum<uint32_t>(below.m_modulesBelow, below.programTables().modules().size() - 1);
+    RELEASE_ASSERT(JSCellButterfly::isOutsideHeap(std::bit_cast<const Butterfly*>(image->m_bytes.data())) && JSCellButterfly::isOutsideHeap(std::bit_cast<const Butterfly*>(image->m_bytes.data() + image->m_bytes.size() - 1)));
+    image->m_publishedBefore = s_lastPublished.load(std::memory_order_relaxed);
+    s_lastPublished.store(image.get(), std::memory_order_release);
+    // Which of the images a thread runs changes as calls go from one to the other.
+    g_imagesShareRealms = true;
+    s_current.store(differsByThread(), std::memory_order_release);
+    below.m_above.store(image.get(), std::memory_order_release);
+    images.append(image.release());
+}
+
+const Image& Image::last() const
+{
+    const Image* image = this;
+    while (const Image* above = image->above())
+        image = above;
+    return *image;
+}
+
+const Image* Image::atPosition(unsigned position) const
+{
+    const Image* image = m_first;
+    while (image && image->m_position != position)
+        image = image->above();
+    return image;
+}
+
+const Image* Image::findInListByCodeAddress(const void* address) const
+{
+    for (const Image* image = m_first; image; image = image->above()) {
+        if (std::bit_cast<uintptr_t>(address) - std::bit_cast<uintptr_t>(image->m_code) < image->header().codeSize)
+            return image;
+    }
+    return nullptr;
+}
+
+const Image& Image::holderInListOf(const void* address) const
+{
+    for (const Image* image = m_first; image; image = image->above()) {
+        if (std::bit_cast<uintptr_t>(address) - std::bit_cast<uintptr_t>(image->m_bytes.data()) < image->m_bytes.size())
+            return *image;
+    }
+    // What a build has not put into the bytes of an image belongs to the one that asks.
+    return *this;
+}
+
+const Image& Image::holderOfStringHeader(uint32_t number) const
+{
+    const Image* image = m_first;
+    while (number >= image->header().numbers.endOfStringHeaders) {
+        image = image->above();
+        RELEASE_ASSERT(image);
+    }
+    return *image;
+}
+
 std::span<const uint8_t> Image::ffiDirectory() const
 {
     const ImageCodeRanges& ranges = header().code;
@@ -330,11 +426,18 @@ CodeLocation Image::locate(const void* pc) const
     return { CodeKind::Function, StubFrameKind::Plain, index, offset - starts[index] };
 }
 
+std::span<const StubAddressInImage> Image::stubAddressesSortedWith(StubFamily family) const
+{
+    std::span addresses = section<StubAddressInImage>(ImageSection::StubAddresses);
+    size_t sizeOfFirstPart = header().numberOfStubsFoundByKey;
+    return isFoundByKey(family) ? addresses.first(sizeOfFirstPart) : addresses.subspan(sizeOfFirstPart);
+}
+
 const void* Image::stubAddress(StubKey key) const
 {
     if (sharedCodeCopies().empty())
         return nullptr;
-    std::span addresses = section<StubAddressInImage>(ImageSection::StubAddresses);
+    std::span addresses = stubAddressesSortedWith(key.family());
     auto address = std::ranges::lower_bound(addresses, key.bits(), { }, &StubAddressInImage::key);
     if (address == addresses.end() || address->key != key.bits())
         return nullptr;
@@ -344,10 +447,17 @@ const void* Image::stubAddress(StubKey key) const
 // The family is the most significant part of a key, so the stubs of a family lie side by side, by form and then by count.
 std::span<const StubAddressInImage> Image::stubAddressesOf(StubFamily family) const
 {
-    auto addresses = std::ranges::equal_range(section<StubAddressInImage>(ImageSection::StubAddresses), family, { }, [](const StubAddressInImage& address) {
+    auto addresses = std::ranges::equal_range(stubAddressesSortedWith(family), family, { }, [](const StubAddressInImage& address) {
         return StubKey::fromBits(address.key).family();
     });
     return { addresses.begin(), addresses.end() };
+}
+
+bool Image::usesCallConvention(uint32_t offsetInSharedCode) const
+{
+    return std::ranges::any_of(section<StubAddressInImage>(ImageSection::StubAddresses), [&](const StubAddressInImage& address) {
+        return address.offset == offsetInSharedCode && address.usesCallConvention;
+    });
 }
 
 bool Image::hasFrameAt(uint32_t function, uint32_t offset) const
@@ -389,9 +499,18 @@ bool isCompiledCodePC(const void* pc)
     return !!imageCodeOffset(pc);
 }
 
-std::optional<uint32_t> imageCodeOffset(const void* address)
+// Asked by a process that is crashing too, on any of its threads: where images share realms the word of the thread may name another image, or none.
+static const Image* imageWithCodeAt(const void* address)
 {
     const Image* image = Image::current();
+    if (!image || image->sharesRealms()) [[unlikely]]
+        return Image::findByCodeAddress(address);
+    return image;
+}
+
+std::optional<uint32_t> imageCodeOffset(const void* address)
+{
+    const Image* image = imageWithCodeAt(address);
     if (!image)
         return std::nullopt;
     uintptr_t offset = std::bit_cast<uintptr_t>(address) - std::bit_cast<uintptr_t>(image->code().data());
@@ -400,9 +519,15 @@ std::optional<uint32_t> imageCodeOffset(const void* address)
     return static_cast<uint32_t>(offset);
 }
 
+bool isInStubOfImage(const void* address)
+{
+    const Image* image = imageWithCodeAt(address);
+    return image && image->locate(address).kind == CodeKind::Stub;
+}
+
 std::optional<ImageFrame> imageFrameAtReturnAddress(const void* returnAddress)
 {
-    const Image* image = Image::current();
+    const Image* image = imageWithCodeAt(returnAddress);
     if (!image)
         return std::nullopt;
     CodeLocation code = image->locate(returnAddress);

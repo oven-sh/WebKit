@@ -94,7 +94,7 @@ struct FieldData {
 };
 static_assert(sizeof(FieldData) == 16 && isImageRecord<FieldData>);
 
-// What a store of a value that the slot of a field does not take made of an object. It makes the same of every object in the same state.
+// What a store of a value that the slot of a field does not take, or a definition with attributes that the slot does not have, made of an object. It makes the same of every object in the same state.
 struct alignas(64) FieldExit {
     static constexpr unsigned numberOfPlaces = 64;
     static constexpr unsigned sizeShift = 6;
@@ -117,12 +117,18 @@ struct alignas(64) FieldExit {
     uint16_t extraPropertiesCellSize;
     uint16_t offsetOfExtraPropertiesWord;
     bool wasInSlot;
-    // Four or eight for a slot in the cell. Zero for any other, which the stubs leave to the run time.
+    // Four or eight for a slot in the cell. Zero for any other and for a definition, which the stubs leave to the run time.
     uint8_t widthOfSlot;
+    bool isDefinition;
+    // Bits of PropertyAttribute that the property has outside the slot.
+    uint8_t attributes;
 };
 static_assert(sizeof(FieldExit) == 1u << FieldExit::sizeShift && std::is_trivially_copyable_v<FieldExit>);
 
 struct VariableData {
+    static constexpr uint32_t noName = UINT32_MAX;
+
+    // The string that a heap snapshot shows.
     uint32_t name;
     SlotData slot;
 };
@@ -191,13 +197,17 @@ struct ClassData {
     uint32_t numberOfMethods;
     uint32_t numberOfStaticMethods;
     uint32_t numberOfStaticFields;
-    uint32_t numberOfMemberGuards : 30;
+    uint32_t numberOfMemberGuards : 29;
+    // Objects of the class are cells of a built-in class, and their Structures identify the program class they were created for.
+    uint32_t instancesCarryBrand : 1;
     uint32_t hasMemberGuardAggregates : 1;
     // The first definition can only make what the record says: every member has a constant name, and the same goes for each class above.
     uint32_t guardsHoldWhileClear : 1;
     uint32_t guardWordsOffset[numberOfClassSides];
     // In the program tables: how many classes have this one as their assumed base, then their indexes, ascending. 0 where there is none.
     uint32_t subclassesOffset;
+    // In the program tables, for a class whose objects carry its brand: the number of fields, then their name numbers in ascending order. 0 if a field has no name known at build time.
+    uint32_t namesOfFieldsOffset;
 
     std::optional<uint32_t> guardWordsOffsetFor(ClassSide side) const
     {
@@ -207,7 +217,7 @@ struct ClassData {
         return offset;
     }
 };
-static_assert(sizeof(ClassData) == 48 && isImageRecord<ClassData>);
+static_assert(sizeof(ClassData) == 52 && isImageRecord<ClassData>);
 
 struct ExtensionLayoutData {
     SlotData extension;
@@ -318,11 +328,11 @@ struct LayoutData {
     }
 
     uint16_t indexOf(const FieldData& field) const { return static_cast<uint16_t>(&field - fields().data()); }
-    // Only a field whose slot defers a closure has operands: the function and, where the closure captures an environment, the slot of the hidden field that holds it.
-    FunctionID deferredClosureOf(const FieldData& field) const
+    // Only a field whose slot defers a closure has operands: the closure number of the function and, where the closure captures an environment, the slot of the hidden field that holds it.
+    uint32_t deferredClosureNumberOf(const FieldData& field) const
     {
         ASSERT(field.slot.representation() == SlotRepresentation::DeferredClosure);
-        return FunctionID(fieldOperands()[field.operandIndex]);
+        return fieldOperands()[field.operandIndex];
     }
     SlotData closureEnvironmentSlotOf(const FieldData& field) const
     {

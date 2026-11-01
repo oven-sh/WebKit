@@ -104,6 +104,7 @@ OperandBehavior declaredBehaviorOf(const BuiltinOverload&, BuiltinOperand);
 const BuiltinParameter* findParameterDescribedInMessages(const BuiltinTable&);
 bool mayFailOnOperand(const Program&, const BuiltinParameter&, const Type& operand);
 bool isDescribedByModel(const BuiltinOverload&);
+// Unordered, and may contain duplicates.
 Vector<BuiltinName> namesReadFromOperands(const BuiltinTable&);
 
 void addOperandCode(const EffectContext&, const Type& operand, const OperandBehavior&, EffectsOnEdges&);

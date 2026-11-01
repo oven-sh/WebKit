@@ -81,23 +81,17 @@ function f1 name="isSpace" module=m0 flags=[IsChecked, HasExplicitName] length=1
     Return v21
 }
 
-# Each equality but the last is a branch to the one block that answers true, and the last equality is the answer itself. No boolean is made and tested again.
-# The four constants lie within 64 values of each other, and they are still tested one by one.
+# The four constants lie within 64 values of each other, so they are bits of one mask: 4294977024 has the bits 9, 10, 13 and 32. The answer is the bit that the code selects, where the code is at most 32.
+# Nothing is compared with a constant of the source, and nothing branches.
 # CHECK-LABEL: name="isSpace" role=Source
 # CHECK-NEXT: BB#0:
-# CHECK: Int32 b@[[first]] = Equal(b@[[code]], $9(
-# CHECK-NEXT: Branch(b@[[first]], Terminal
-# CHECK-NEXT: Successors: Then:#[[yes]], Else:#
-# CHECK: Int32 b@[[second]] = Equal(b@[[code]], $10(
-# CHECK-NEXT: Branch(b@[[second]], Terminal
-# CHECK-NEXT: Successors: Then:#[[yes]], Else:#
-# CHECK: Int32 b@[[third]] = Equal(b@[[code]], $32(
-# CHECK-NEXT: Branch(b@[[third]], Terminal
-# CHECK-NEXT: Successors: Then:#[[yes]], Else:#
 # CHECK-NOT: Branch(
-# CHECK: Int32 b@[[fourth]] = Equal(b@[[code]], $13(
-# CHECK-NEXT: Upsilon(b@[[fourth]], 
+# CHECK-NOT:  = Equal(
+# CHECK: Int64 b@[[shifted]] = ZShr($4294977024(b@{{*}}), b@[[code]]
+# CHECK: Int32 b@[[isInRange]] = BelowEqual(b@[[code]], $32(
+# CHECK: Int32 b@[[answer]] = BitAnd(b@{{*}}, b@{{*}}
+# CHECK-NEXT: Return(b@[[answer]], Terminal)
 # CHECK-NOT: Branch(
 # CHECK-LABEL: end of function
-# X64: instructions: 8, patchpoints: 0
-# ARM64: instructions: 8, patchpoints: 0
+# X64: instructions: 6, patchpoints: 0
+# ARM64: instructions: 5, patchpoints: 0

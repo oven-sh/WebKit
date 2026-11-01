@@ -441,6 +441,12 @@ void TextParser::parseItem(const TextItem& item)
     case ProgramList::ModuleFailures:
         parseLine<Wire::ModuleFailure, ModuleFailure>(*this, &Program::moduleFailures);
         break;
+    case ProgramList::AmbiguousExports:
+        parseLine<Wire::AmbiguousExport, AmbiguousExport>(*this, &Program::ambiguousExports);
+        break;
+    case ProgramList::SourceStamps:
+        parseLine<Wire::SourceStamp, SourceStamp>(*this, &Program::sourceStamps);
+        break;
     case ProgramList::EvalScopes:
         parseLine<Wire::EvalScope, EvalScope>(*this, &Program::evalScopes);
         break;
@@ -466,6 +472,12 @@ void TextParser::parseItem(const TextItem& item)
     case ProgramList::WebAssemblyModules:
         parseLine<Wire::WebAssemblyModule, WebAssemblyModule>(*this, &Program::webAssemblyModules);
         break;
+    case ProgramList::ReplaceableBuiltins:
+        parseLine<Wire::ReplaceableBuiltin, ReplaceableBuiltin>(*this, &Program::replaceableBuiltins);
+        break;
+    case ProgramList::OpenedNames:
+        parseLine<Wire::OpenedName, OpenedName>(*this, &Program::openedNames);
+        break;
     case ProgramList::Bytes:
     case ProgramList::Words:
     case ProgramList::Strings:
@@ -473,6 +485,7 @@ void TextParser::parseItem(const TextItem& item)
     case ProgramList::Types:
     case ProgramList::ClassParts:
     case ProgramList::DeclaredTypes:
+    case ProgramList::DeclaredCaptures:
     case ProgramList::Fields:
     case ProgramList::StaticFields:
     case ProgramList::ModuleRequests:

@@ -151,12 +151,12 @@ function f3 module=m0 position=6 kind=Initializer flags=[HasThis, IsChecked, IsH
     Return v6
 }
 
-# A turn of the walk loads the value and the next link, adds, and compares the next link with null. That one comparison is both the end of the loop and the proof for the loads of the next turn: the link is not tested again, and its shape is not looked at.
+# A turn of the walk loads the value, adds, loads the next link, and compares it with null. The next link is loaded last of what is read through the link, so it takes the register of the link. That one comparison is both the end of the loop and the proof for the loads of the next turn: the link is not tested again, and its shape is not looked at.
 # CHECK-LABEL: loop #
 # CHECK: Int64 b@[[link]] = Phi(
 # CHECK-NEXT: Double b@[[value]] = Load(b@[[link]], offset = 16, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
-# CHECK-NEXT: Int64 b@[[next]] = Load(b@[[link]], offset = 24, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
 # CHECK-NEXT: Double b@{{*}} = Add(b@[[value]], b@{{*}}, {{*}}:Add)
+# CHECK-NEXT: Int64 b@[[next]] = Load(b@[[link]], offset = 24, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
 # CHECK: Int32 b@[[isNull]] = Equal(b@[[next]], $2(b@{{*}}), {{*}}:TypeTest)
 # CHECK-NEXT: Branch(b@[[isNull]], Terminal
 # CHECK-LABEL: end of loop
@@ -168,5 +168,5 @@ function f3 module=m0 position=6 kind=Initializer flags=[HasThis, IsChecked, IsH
 # NONE-NOT: Branch(
 # NONE-LABEL: end of loop
 # The patchpoint is the poll of the loop.
-# X64: instructions: 5, patchpoints: 1
+# X64: instructions: 3, patchpoints: 1
 # ARM64: instructions: 4, patchpoints: 1

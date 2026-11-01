@@ -22,13 +22,27 @@ public:
 
     Word32 shapeWordOf(CellPointer);
     Word32 orderWordOf(CellPointer);
+    // Other cells have other things there. The caller masks the word, or compares it with one that only a compiled object has.
+    Word32 orderWordOfAnyCell(CellPointer);
 
     // Passes for compiled objects alone: what stands behind it may read and write the words and the slots of one.
     Condition hasShapeIn(CellPointer, LayoutSetID tested, const Type& known);
+    // Of the shape word of a compiled object. Needs no test that placement has planned.
+    Condition isShapeOf(Word32 shapeWord, LayoutID);
     void branchOnShapeIn(CellPointer, LayoutSetID tested, const Type& known, BranchTargets);
     void switchOnShape(CellPointer, std::span<const LayoutSetID> cases, std::span<const B3::FrequentedBlock> targets, B3::FrequentedBlock otherwise);
     bool hasOnlyCompiledObjects(const Type& known) const;
     Condition hasNoExtraProperties(CellPointer);
+    // False for a class that has no entry in ClassWords.
+    Condition carriesBrandOfClass(CellPointer, LayoutID);
+    // Every object of the type is a cell of a built-in class that carries the brand of one of a few classes.
+    bool hasOnlyCellsWithBrands(const Type&) const;
+    bool mayBeCellWithBrand(const Type&) const;
+    Condition isCompiledObject(CellPointer);
+    Condition hasPrototypeOfItsClass(CellPointer, const Type& cellsWithBrands);
+    Condition hasNoPropertyOfItsOwn(CellPointer);
+    bool hasOnlyCellsCreatedWithoutProperties(const Type& cellsWithBrands) const;
+    Condition hasOnlyClassFieldNames(CellPointer);
 
 private:
     Condition passes(Word32 shapeWord, LayoutSetID tested, const ShapeTest&);

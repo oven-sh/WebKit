@@ -58,16 +58,16 @@ function f1 name="pick" module=m0 flags=[IsChecked, HasExplicitName] length=2 th
 # Math.min of two 32-bit integers compares them as integers and selects one: no branch, no double comparison, no test for NaN or -0.
 # CHECK-LABEL: name="pick" role=Source
 # CHECK: Int32 b@[[isBelow]] = LessThan(b@[[a]], b@[[b]], {{*}}:CallInline)
-# CHECK-NEXT: Int64 b@[[wide]] = Select(b@[[isBelow]], b@{{*}}, b@{{*}}, {{*}}:CallInline)
-# CHECK-NEXT: Int32 b@[[smaller]] = Trunc(b@[[wide]], {{*}}:CallInline)
-# CHECK-NEXT: Double b@[[number]] = IToD(b@[[smaller]])
-# CHECK-NEXT: Return(b@[[number]], Terminal)
+# CHECK-NEXT: Int32 b@[[smaller]] = Select(b@[[isBelow]], b@[[a]], b@[[b]], {{*}}:CallInline)
+# CHECK-NEXT: Return(b@[[smaller]], Terminal)
 # CHECK-LABEL: end of function
 # NONE-LABEL: name="pick" role=Source
 # NONE-NOT: FMin
+# NONE-NOT: IToD
+# NONE-NOT: SExt32
 # NONE-NOT: Patchpoint(
 # NONE-NOT: Branch(
 # NONE-LABEL: end of function
-# Both operands are widened ahead of the select, and the function hands its result back as a double.
-# X64: instructions: 5, patchpoints: 0
-# ARM64: instructions: 5, patchpoints: 0
+# Nothing is widened: a comparison with a conditional move or select, and the return of the integer.
+# X64: instructions: 2, patchpoints: 0
+# ARM64: instructions: 2, patchpoints: 0

@@ -11,6 +11,7 @@
 #include "AOTArrayStorageForms.h"
 #include "AOTBuiltinCalls.h"
 #include "AOTBuiltinTable.h"
+#include "AOTGuardAvailability.h"
 #include "AOTGuardFactDetails.h"
 #include "AOTLayout.h"
 #include "AOTRemoveUnreadFields.h"
@@ -196,6 +197,11 @@ void FunctionVerifier::verifyElementOperation(BlockID block, ValueID id, const V
                 return;
             }
         }
+        // Selection writes accesses in forms of its own.
+        if (value.keepsLength() && (!hasArrayStorageForm(value.arrayStorage()) || (m_form < IRForm::Selected && !isTouchedOnlyBelowLength(m_program, m_function, analyses().useLists(), id, value.holes().size() + value.elementsOperands().size())))) {
+            fail(InternalErrorKind::PayloadOutOfRange, block, id);
+            return;
+        }
     }
     if (value.opcode == Opcode::Data && value.arrayStorage() != ArrayStorage::Other) {
         const auto* array = m_program.at(value.data()).root.tryAs<DataNode::Array>();
@@ -218,12 +224,8 @@ void FunctionVerifier::verifyElementOperation(BlockID block, ValueID id, const V
             return;
         }
     }
-    if (value.opcode == Opcode::IsElementPresent && !hasArrayStorageForm(value.arrayStorage())) {
-        fail(InternalErrorKind::PayloadOutOfRange, block, id);
-        return;
-    }
     if (Value::opcodesWithIsPresent.contains(value.opcode) && value.isPresent()) {
-        if (value.isInBounds() || !hasArrayStorageForm(value.arrayStorage())) {
+        if (value.isInBounds()) {
             fail(InternalErrorKind::PayloadOutOfRange, block, id);
             return;
         }

@@ -15,7 +15,9 @@
 #include <ranges>
 #include <span>
 #include <wtf/BitVector.h>
+#include <wtf/IterationStatus.h>
 #include <wtf/Noncopyable.h>
+#include <wtf/ScopedLambda.h>
 #include <wtf/text/StringView.h>
 #include <wtf/text/UniquedStringImpl.h>
 #include <wtf/text/WTFString.h>
@@ -25,6 +27,9 @@ namespace JSC { namespace AOT {
 class ModuleTable {
 public:
     explicit ModuleTable(const ProgramTables&);
+    // Of an image that does not run, where no image is the current one: the caller finds the text of a string. Only for the paths, and for as long as the lambda lives.
+    using TextOfString = ScopedLambda<StringView(StringID)>;
+    ModuleTable(const ProgramTables&, const TextOfString&);
 
     const ProgramTables& programTables() const { return *m_tables; }
     unsigned size() const { return static_cast<unsigned>(m_modules.size() - 1); }
@@ -52,20 +57,32 @@ public:
         ModuleID memberOfCycle;
     };
     std::optional<LinkPlanOfRoot> linkPlanOfRoot(ModuleID) const;
+    std::span<const ImportOfHeldFileData> importsOfHeldFile(ModuleID) const;
     std::span<const ModuleExportData> exports(ModuleID module) const { return listOf(m_tables->moduleExports(), module, &ModuleData::firstExport); }
     const IndirectExportData& indirectExport(const ModuleExportData&) const;
     std::span<const SyntheticExportData> syntheticExports(ModuleID module) const { return listOf(m_tables->syntheticExports(), module, &ModuleData::firstSyntheticExport); }
     std::span<const RequiredNameData> requiredNames(ModuleID module) const { return listOf(m_tables->requiredNames(), module, &ModuleData::firstRequiredName); }
     // The export statement that asks for the name. An import asks for any other one.
     const ExportStatementData* findExportStatement(const RequiredNameData&) const;
+    // The table of exports has no entry for such a name.
+    std::span<const AmbiguousExportData> ambiguousExports(ModuleID) const;
+    bool isAmbiguousExport(ModuleID, StringView name) const;
+    bool hasSourceStamps() const { return !m_tables->sourceStamps().empty(); }
+    std::optional<uint64_t> sourceStamp(ModuleID) const;
     const ModuleFailureData& failure(ModuleFailureID) const;
+    // Of a module that imports, itself or through what it imports, a name that the build did not find or a file that is no program.
+    std::optional<ModuleFailureID> loadFailure(ModuleID) const;
 
     std::optional<ModuleID> findByPath(StringView publicPath) const;
     // A file that only an attribute asks for stands under its path, a question mark and what the host calls the form.
     bool holdsFormThatAttributeAsksFor(StringView publicPath) const;
+    Vector<ModuleID, 2> formsThatAttributesAskFor(StringView publicPath) const;
+    bool holdsPathStartingWith(StringView start) const;
     // The next search for the path of the module finds it at once.
     void willBeAskedForPath(ModuleID, unsigned hashOfPath) const;
-    std::span<const uint32_t> modulesOfUncompiledCode() const { return m_tables->modulesOfUncompiledCode(); }
+    std::span<const UncompiledModuleData> modulesOfUncompiledCode() const { return m_tables->modulesOfUncompiledCode(); }
+    // Of a module of uncompiled code. Null: the statements that name it say nothing of its type.
+    String typeAttribute(ModuleID) const;
     std::optional<ModuleID> findRuntimeSource(uint32_t registryID) const;
     std::optional<unsigned> findExport(ModuleID, UniquedStringImpl* name) const;
     // ES modules import a CommonJS file through a module that evaluates the file first of all and then takes copies of what it exports. Answers the file for such a module.
@@ -80,7 +97,12 @@ public:
     String displayPathText(ModuleID) const;
     String pathTextForLineColumns(ModuleID) const;
     bool hasFilePath(ModuleID module) const { return data(module).hasExportTable() || data(module).kind == ModuleKind::CommonJs; }
-    bool hasFileWithExtension(StringView) const;
+    // The path of each program file with code that starts with `start`, in sorted order.
+    IterationStatus forEachFilePathStartingWith(StringView start, const ScopedLambda<IterationStatus(const String&)>&) const;
+    // A file with code or with data, as it is loaded where no attribute asks for another form.
+    bool holdsFileAt(StringView path) const;
+    // False: no module that is listed by path has a path that starts so.
+    bool mayHoldPathStartingWith(StringView start) const;
 
 private:
     using PiecesOfPath = Vector<StringView, 16>;
@@ -92,7 +114,10 @@ private:
     ModuleNumbers modulesByPath() const { return { m_tables->modulesByPath(), m_modules.size() }; }
     template<typename List> List listOf(List, ModuleID, Number24 ModuleData::* first) const;
 
+    StringView viewOfPathPiece(StringID) const;
+
     const ProgramTables* m_tables;
+    const TextOfString* m_textWhereNoImageRuns { nullptr };
     std::span<const ModuleData> m_modules;
 };
 

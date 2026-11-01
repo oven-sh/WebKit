@@ -1,0 +1,30 @@
+# A test has put an accessor of its own in place of Object.prototype.__proto__: Map.prototype.__proto__ = null  JSON.__proto__ = {}  Reflect.set(Map.prototype, "__proto__", null) call it.
+# Object.setPrototypeOf(Map.prototype, null) does not ask it.
+# RUN: pipeline CheckLockedBuiltinWrites
+# OPTIONS: admit=ReplacedBuiltins
+# DIAGNOSTIC: LockedBuiltinWriteMayRun 1
+
+module m0 path="main.test.js" displayPath="main.test.js" body=f0
+entry module=m0
+layout L0 name="Empty" fields=[]
+replaceablebuiltin member=ObjectPrototype__proto__
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Undefined
+    v2 = Call v0, v1 @1
+    Return
+}
+function f1 name="stores" results=[{type=anything}] {
+    v0 = Builtin builtin=MapPrototype
+    v1 = Builtin builtin=JSON
+    v2 = Null
+    v3 = NewObject layout=L0 fields=[]
+    PropSet v0, v2 key="__proto__" mode=Strict @10
+    PropSet v1, v3 key="__proto__" mode=Strict @20
+    v6 = Builtin builtin=ReflectSet
+    v7 = String string="__proto__"
+    v8 = Call v6, -, v0, v7, v2 @30
+    v9 = Builtin builtin=ObjectSetPrototypeOf
+    v10 = Call v9, -, v0, v2 @40
+    Return
+}

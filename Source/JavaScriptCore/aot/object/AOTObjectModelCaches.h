@@ -73,6 +73,54 @@ struct AccessorDefinitionPlan {
     bool definesGettersOfEmptySlots { false };
 };
 
+// The fields of a layout that ToPropertyDescriptor reads: enumerable, configurable, value, writable, get, set. Null where the layout has no such field.
+struct DescriptorFields {
+    const LayoutData* layout { nullptr };
+    std::array<const FieldData*, 6> fields { };
+};
+
+// Where the own enumerable properties lie in the objects with one Structure, one order word and one Structure of the second object, some of them getters: in the order in which a copy reads them.
+struct GetterSourceList {
+    struct Property {
+        // The program holds the name of a field, the Structure of the second object every other.
+        UniquedStringImpl* name;
+        const FieldData* field;
+        PropertyOffset offsetInExtraProperties;
+        // In the cell of the copy. None for a property that is not enumerable: it is listed because a getter may change that.
+        PropertyOffset offsetInCopy;
+        bool isGetter;
+    };
+
+    bool isFor(StructureID ofObject, uint32_t word, StructureID ofExtraProperties) const { return structure == ofObject && orderWord == word && extraPropertiesStructure == ofExtraProperties; }
+
+    StructureID structure;
+    uint32_t orderWord { 0 };
+    StructureID extraPropertiesStructure;
+    // Of an ordinary object that was given the enumerable names in this order, all in its cell. Null for objects that are not copied by the list.
+    Structure* structureOfCopy { nullptr };
+    Vector<Property, 8> properties;
+};
+
+class GetterSourceLists {
+    WTF_MAKE_NONCOPYABLE(GetterSourceLists);
+public:
+    explicit GetterSourceLists(State&);
+
+    static constexpr unsigned numberOfLists = 16;
+    GetterSourceList& placeFor(StructureID structure, uint32_t orderWord) { return m_lists[(structure.bits() >> 4 ^ orderWord) % numberOfLists]; }
+    // The collector may run in a thread of its own, so nothing is released here.
+    void clear()
+    {
+        for (GetterSourceList& list : m_lists) {
+            list.structure = StructureID();
+            list.structureOfCopy = nullptr;
+        }
+    }
+
+private:
+    std::array<GetterSourceList, numberOfLists> m_lists;
+};
+
 struct ObjectModelCaches {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(ObjectModelCaches);
     WTF_MAKE_NONCOPYABLE(ObjectModelCaches);
@@ -81,11 +129,14 @@ struct ObjectModelCaches {
     ~ObjectModelCaches();
 
     static constexpr unsigned numberOfAccessorDefinitionPlans = 64;
+    static constexpr unsigned numberOfDescriptorFields = 16;
 
     FieldMovePlanCache movePlans;
     std::array<AccessorDefinitionPlan, numberOfAccessorDefinitionPlans> accessorDefinitionPlans;
+    std::array<DescriptorFields, numberOfDescriptorFields> descriptorFields;
     AssignmentPlanCache assignmentPlans;
     PropertyListCache propertyLists;
+    GetterSourceLists getterSources;
     ClassStructureCache classStructures;
     MemberGuardWatchpoints memberGuardWatchpoints;
     CustomGetterSetter* staticFieldAccessor { nullptr };

@@ -507,6 +507,8 @@ private:
     {
         if (tryReduceWithRanges())
             return;
+        if (tryCompareSelectOfConstants())
+            return;
         if (tryCompareBeforeConstantReplacement())
             return;
         switch (m_value->opcode()) {
@@ -2772,6 +2774,12 @@ private:
                 break;
             }
 
+            // Only NaN compares unequal to itself.
+            if (m_reducesWithRanges && m_value->child(0) == m_value->child(1) && magnitudeBound(m_value->child(0))) {
+                replaceWithNewValue(m_proc.addBoolConstant(m_value->origin(), TriState::True));
+                break;
+            }
+
             // Two distinct freshly-allocated wasm-GC references, or a fresh reference and
             // null, are never the same object.
             if (areDistinctWasmGCReferences(m_value->child(0), m_value->child(1))) {
@@ -2792,6 +2800,11 @@ private:
 
             if (tryFoldSignComparison())
                 break;
+
+            if (m_reducesWithRanges && m_value->child(0) == m_value->child(1) && magnitudeBound(m_value->child(0))) {
+                replaceWithNewValue(m_proc.addBoolConstant(m_value->origin(), TriState::False));
+                break;
+            }
 
             if (m_value->child(0)->returnsBool()) {
                 // Turn this: NotEqual(bool, 0)
@@ -3235,6 +3248,10 @@ private:
             }
             if (m_numbering && m_value->opcode() == Branch && m_block->taken().block() != m_block->notTaken().block()) {
                 TriState known = m_conditions.isNonZero(m_numbering->representativeOf(m_value->child(0)));
+                if (known == TriState::Indeterminate) {
+                    if (Value* opposite = m_numbering->representativeOfOppositeComparison(m_value->child(0)))
+                        known = invert(m_conditions.isNonZero(opposite));
+                }
                 if (known != TriState::Indeterminate)
                     replaceTerminalWithJump(known == TriState::True ? m_block->taken() : m_block->notTaken());
             }
@@ -3264,6 +3281,9 @@ private:
         case Const128:
         case ConstFloat:
         case ConstDouble: {
+            // A vector that may not be held across a patchpoint stays in the block that asks for it.
+            if (m_value->opcode() == Const128 && m_proc.policy().air.registers.patchpointsKeepOnlyLowerHalvesOfVectors)
+                break;
             ValueKey key = m_value->key();
             auto addResult = m_valueForConstant.add(key, m_value);
             if (!addResult.isNewEntry) {
@@ -4470,6 +4490,37 @@ private:
         RELEASE_ASSERT_NOT_REACHED();
     }
 
+    // Turn this: Compare(Select(predicate, a, b), c)
+    // Into this: NotEqual(predicate, 0)
+    //     where Compare(a, c) holds and Compare(b, c) does not. Equal(predicate, 0) the other way round.
+    bool tryCompareSelectOfConstants()
+    {
+        Opcode opcode = m_value->opcode();
+        if (!m_foldsImpliedComparisons || !isIntegerComparison(opcode) || m_value->child(0)->opcode() != Select)
+            return false;
+
+        Value* select = m_value->child(0);
+        Type type = select->type();
+        std::optional<uint64_t> whenTrue = bitsOfConstant(select->child(1));
+        std::optional<uint64_t> whenFalse = bitsOfConstant(select->child(2));
+        std::optional<uint64_t> constant = bitsOfConstant(m_value->child(1));
+        if (!type.isInt() || !whenTrue || !whenFalse || !constant)
+            return false;
+
+        std::optional<bool> holdsWhenTrue = evaluateComparisonOfBits(opcode, type, *whenTrue, *constant);
+        std::optional<bool> holdsWhenFalse = evaluateComparisonOfBits(opcode, type, *whenFalse, *constant);
+        if (!holdsWhenTrue || !holdsWhenFalse)
+            return false;
+        if (*holdsWhenTrue == *holdsWhenFalse) {
+            replaceWithNewValue(m_proc.addBoolConstant(m_value->origin(), triState(*holdsWhenTrue)));
+            return true;
+        }
+        Value* predicate = select->child(0);
+        Value* zero = m_insertionSet.insertIntConstant(m_index, m_value->origin(), predicate->type(), 0);
+        replaceWithNew<Value>(*holdsWhenTrue ? NotEqual : Equal, m_value->origin(), predicate, zero);
+        return true;
+    }
+
     // Turn this: Compare(Select(Equal(x, a), b, x), c)
     // Into this: Compare(x, c)
     //     where Compare(a, c) is Compare(b, c)
@@ -4618,6 +4669,37 @@ private:
     void replaceWithNew(Arguments... arguments)
     {
         replaceWithNewValue(m_proc.add<ValueType>(arguments...));
+    }
+
+    // Returns an upper bound on |value| for a double computed from integers and finite constants with Add, Sub, Mul, Neg and Abs.
+    // The bound stays far below the largest double, so no step overflows to infinity and the value cannot be NaN.
+    std::optional<double> magnitudeBound(Value* value, unsigned depth = 0)
+    {
+        constexpr unsigned maxDepth = 6;
+        constexpr double maxBound = 0x1p1000;
+        if (value->type() != Double || depth > maxDepth)
+            return std::nullopt;
+        switch (value->opcode()) {
+        case ConstDouble:
+            return std::abs(value->asDouble()) <= maxBound ? std::optional(std::abs(value->asDouble())) : std::nullopt;
+        case IToD:
+            return value->child(0)->type() == Int32 ? 0x1p31 : 0x1p63;
+        case Neg:
+        case Abs:
+            return magnitudeBound(value->child(0), depth + 1);
+        case Add:
+        case Sub:
+        case Mul: {
+            std::optional<double> left = magnitudeBound(value->child(0), depth + 1);
+            std::optional<double> right = left ? magnitudeBound(value->child(1), depth + 1) : std::nullopt;
+            if (!right)
+                return std::nullopt;
+            double bound = value->opcode() == Mul ? *left * *right : *left + *right;
+            return bound <= maxBound ? std::optional(bound) : std::nullopt;
+        }
+        default:
+            return std::nullopt;
+        }
     }
 
     bool tryFoldSignComparison()
@@ -4812,8 +4894,15 @@ private:
     Value* insertOrReusePartOfAddress(Opcode opcode, Value* left, Value* right)
     {
         Value* inserted = m_insertionSet.insert<Value>(m_index, opcode, m_value->origin(), left, right);
-        if (!m_numbering || (isX86() && inserted->type() != Int32))
+        if (!m_numbering)
             return inserted;
+        if (isX86() && inserted->type() != Int32) {
+            m_numbering->numberCopyOfPartOfAddress(inserted);
+            return inserted;
+        }
+        // The walk orders the operands of each sum that it comes to. The same sum further down, as the program's code made it, is found to be this one if this one has that order.
+        if (opcode == Add && shouldSwapBinaryOperands(inserted))
+            std::swap(inserted->child(0), inserted->child(1));
         Value* representative = inserted;
         // The first turn has the sum as the program's code made it, which may be the other way round. With two sums the shift has two users and is an instruction of its own.
         if (opcode == Add) {
@@ -4847,6 +4936,8 @@ private:
                 if (value->opcode() != opcode || !value->owner)
                     continue;
                 value->performSubstitution();
+                if (opcode == Add && shouldSwapBinaryOperands(value))
+                    std::swap(value->child(0), value->child(1));
                 valuesByKey.add(value->key(), Vector<Value*, 8>()).iterator->value.append(value);
             }
             for (auto& values : valuesByKey.values()) {

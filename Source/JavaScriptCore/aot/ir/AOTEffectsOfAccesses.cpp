@@ -72,6 +72,7 @@ private:
         case AbstractHeap::AllocatorState:
         case AbstractHeap::RuntimeState:
         case AbstractHeap::ValidationState:
+        case AbstractHeap::CalleesInFrames:
             return heap;
         }
         RELEASE_ASSERT_NOT_REACHED();
@@ -233,6 +234,14 @@ void describeAccess(const Program& program, const Function& function, const Valu
         ASSERT(effects.isSubsetOf(declared));
         describeBound(effects, description);
         describeAccessOperands(program, function, value, description);
+        return;
+    }
+    // It answers or it does not, and runs nothing either way.
+    if (value.opcode == Opcode::PropGet && value.asksOnlyTables()) {
+        Effects lookup = effectsOfChainWalk(program, value.key());
+        lookup.reads.add(AbstractHeap::ShapeWords);
+        lookup.reads.add(AbstractHeap::RuntimeState);
+        description.addOwn(lookup);
         return;
     }
 

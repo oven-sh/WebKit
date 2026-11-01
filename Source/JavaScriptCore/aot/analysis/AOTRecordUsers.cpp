@@ -12,10 +12,12 @@
 #include "AOTEffectsDescription.h"
 #include "AOTEffectsOfOperands.h"
 #include "AOTIR.h"
+#include "AOTLargeVectors.h"
 #include "AOTOpcodesNamingRecords.h"
 #include "AOTSchemaWalkers.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTThreshold.h"
 #include <atomic>
 #include <numeric>
 #include <wtf/Atomics.h>
@@ -65,7 +67,7 @@ Vector<FunctionID> findFunctionsSeeing(const Program& program, const ChangedReco
     const Node firstType = firstLayoutSet + program.types.numberOfLayoutSets();
     const Node firstVariable = firstType + program.types.size();
     const RecordNodes nodes { firstLayoutSet, firstType, firstVariable };
-    Vector<Mark> marks(FillWith { }, firstVariable + program.variables.size(), static_cast<Mark>(0));
+    Vector<Mark> marks = createVectorInParallel<Mark>(loops, firstVariable + program.variables.size(), 0);
     Vector<uint8_t> isKeyOfMarkedField;
     Vector<FieldReference> fieldsOfEnvironments;
 
@@ -103,7 +105,7 @@ Vector<FunctionID> findFunctionsSeeing(const Program& program, const ChangedReco
             isKeyOfMarkedField[key.index()] = 1;
             addAt(nodes.of(reference.layout), isReadFromOperands[key.index()] ? bitOfKey(key) | seenByCodeOfOperands : bitOfKey(key));
         }
-        AOT::sort(fieldsOfEnvironments);
+        AOT::sortInLine(fieldsOfEnvironments);
     }
     for (VariableID id : changed.variables)
         addAt(nodes.of(id), seenByAll);
@@ -322,6 +324,35 @@ Vector<FunctionID> findFunctionsSeeing(const Program& program, const ChangedReco
 
     auto addMarksOfSources = [&](Node count, const auto& forEachSourceOf) {
         constexpr unsigned nodesInShare = 512;
+        // Marks are only added, so the result does not depend on the order in which nodes take marks from their sources. Most marks arrive within a few steps. Long chains are followed from source to target below.
+        // To list the edges by their sources takes two walks with an atomic count per edge, and a layout that is in many sets is one count for all threads: as long as 37 rounds where 80 million edges were at rest in 13.
+        AOT_THRESHOLD(unsigned, maxRoundsOverAllNodes, 32);
+        bool isFinished = false;
+        for (unsigned round = 0; round < maxRoundsOverAllNodes && !isFinished; ++round) {
+            std::atomic<bool> didAdd { false };
+            forEachIndexInParallel(loops, (count + nodesInShare - 1) / nodesInShare, [&](unsigned share) {
+                bool didAddInShare = false;
+                for (Node target = share * nodesInShare; target < std::min(count, (share + 1) * nodesInShare); ++target) {
+                    Mark known = markAt(target);
+                    if (known == seenByAll)
+                        continue;
+                    Mark mark = known;
+                    forEachSourceOf(target, [&](Node source) {
+                        mark |= markAt(source);
+                    });
+                    if (mark == known)
+                        continue;
+                    addAt(target, mark);
+                    didAddInShare = true;
+                }
+                if (didAddInShare)
+                    didAdd.store(true, std::memory_order_relaxed);
+            });
+            isFinished = !didAdd.load(std::memory_order_relaxed);
+        }
+        if (isFinished)
+            return;
+
         auto forEachEdge = [&](const auto& functor) {
             forEachIndexInParallel(loops, (count + nodesInShare - 1) / nodesInShare, [&](unsigned share) {
                 for (Node target = share * nodesInShare; target < std::min(count, (share + 1) * nodesInShare); ++target) {

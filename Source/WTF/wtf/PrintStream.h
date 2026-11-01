@@ -76,8 +76,9 @@ public:
         end();
     }
     
+    // Bun: compiled once for a list of types and called. Printing is never hot, and inlined it is some 260 bytes at each of 1,900 places.
     template<typename... Types>
-    void print(const Types&... values)
+    NEVER_INLINE void print(const Types&... values)
     {
         atomically(
             [&] (PrintStream& out) {

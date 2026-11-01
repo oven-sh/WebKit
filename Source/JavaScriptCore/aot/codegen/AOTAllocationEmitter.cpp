@@ -82,12 +82,23 @@ static void clobberExtensionWord(Output& out, AOTHeaps& heaps)
     clobber->setGenerator([](CCallHelpers&, const B3::StackmapGenerationParams&) { });
 }
 
+// In line: 75 bytes a site. By the stub: 18 bytes and 3.5 instructions more.
+bool AllocationEmitter::initializesFrameObjectInStub(const ValueContext& value, LayoutID layout)
+{
+    const Layout& declared = m_program.at(layout);
+    if (!isObjectLayout(declared.kind) || declared.flow.fieldCreation == FieldCreation::OnlyAtConstruction)
+        return false;
+    return value.shape() != CodeShape::Fast || !analyses().isInCycle(value.block());
+}
+
 CellPointer AllocationEmitter::allocateFrameCell(const ValueContext& value, AllocationID id, const PlannedLayout& layout)
 {
     const PlacedAllocation& allocation = m_placement.allocation(id);
     CellAllocationEmitter& cellAllocation = emitter<CellAllocationEmitter>();
     if (!isObjectLayout(m_program.at(allocation.layout).kind))
-        return cellAllocation.allocateInFrame(layout.size, &layout);
+        return cellAllocation.allocateInFrame(value, layout.size, &layout);
+    if (initializesFrameObjectInStub(value, allocation.layout))
+        return CellPointer(callStub(value, initializeObjectInFrame(), { m_out.constInt64(id.index()), cellAllocation.allocateInFrame(value, layout.size, &layout).value() }).first);
 
     LBasicBlock hasNoRecord = newBlock();
     Join<Integer> headerOfHeapCells(m_out);
@@ -101,7 +112,7 @@ CellPointer AllocationEmitter::allocateFrameCell(const ValueContext& value, Allo
     headerOfHeapCells.add(callOperation<Integer>(value, RuntimeOperation::GetHeaderOfAllocation, { word32(static_cast<int32_t>(id.index())) }, { .isOnRarePath = true }));
     Integer header = headerOfHeapCells.finish();
 
-    CellPointer cell = cellAllocation.allocateInFrame(layout.size, &layout);
+    CellPointer cell = cellAllocation.allocateInFrame(value, layout.size, &layout);
     CodeGenerator::InitializationScope scope(generator());
     cellAllocation.storeHeader(cell, header);
     storeField(cell, m_heaps.AOTObject_orderWord, word32(static_cast<int32_t>(allocation.orderWord)));
@@ -267,11 +278,11 @@ CellPointer AllocationEmitter::allocateCell(const ValueContext& value, Allocatio
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-void AllocationEmitter::initializeHiddenFields(CellPointer cell, LayoutID layout, AllocationStorage storage, ZeroedBy zeroedBy)
+void AllocationEmitter::initializeHiddenFields(CellPointer cell, LayoutID layout, AllocationStorage storage, ZeroedBy zeroedBy, bool hasStateOfFrameCell)
 {
     // A store whose receiver may also be on the heap runs its barrier, which must not mistake a frame cell for a marked one.
     bool mayReachBarrier = isObjectLayout(m_program.at(layout).kind) || !inputs().frameAllocation.isOnlyInFrames(layout);
-    if (storage != AllocationStorage::Heap && mayReachBarrier)
+    if (storage != AllocationStorage::Heap && mayReachBarrier && !hasStateOfFrameCell)
         m_out.store32As8(m_out.constInt32(frameCellState), m_out.address(m_heaps.collectorState, cell.value(), JSCell::cellStateOffset()));
 
     const SlotPlan& plan = m_placement.slots();
@@ -430,7 +441,7 @@ CellPointer AllocationEmitter::allocateInstance(const ValueContext& value, Alloc
         m_out.appendTo(fill);
         {
             CodeGenerator::InitializationScope scope(generator());
-            initializeHiddenFields(cell, layout, AllocationStorage::Heap, ZeroedBy::Stub);
+            initializeHiddenFields(cell, layout, AllocationStorage::Heap, ZeroedBy::Stub, false);
             storeEmptySlots(cell, layout, BitVector(m_placement.layout(layout).numberOfFields()), ZeroedBy::Stub);
         }
         m_out.jump(isWhole);
@@ -507,7 +518,7 @@ CellPointer AllocationEmitter::allocateWithFields(const ValueContext& value, All
     CellPointer cell = allocateCell(value, id, layout, storage, zeroedBy);
     {
         CodeGenerator::InitializationScope scope(generator());
-        initializeHiddenFields(cell, layoutID, storage, zeroedBy);
+        initializeHiddenFields(cell, layoutID, storage, zeroedBy, storage != AllocationStorage::Heap && initializesFrameObjectInStub(value, layoutID));
         storeInitialFields(cell, layoutID, initialFields);
         storeEmptySlots(cell, layoutID, isInitialField, zeroedBy);
     }

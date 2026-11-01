@@ -50,6 +50,7 @@ ProgramStrings::ProgramStrings(State& state)
     , m_image(*state.instance.vm->aotState().image)
     , m_tables(state.tables)
     , m_usesWideReferences(state.instance.options().useWideReferences())
+    , m_numberOfLiteralStrings(static_cast<uint32_t>(state.tables.literalStrings().size()))
     , m_constantCells(ensureConstantCellTable(state), InstanceLayout::stringCellCardShift)
 {
     ConstantCellWords& constants = m_instance.runtime.constants;
@@ -203,7 +204,7 @@ void ProgramStrings::setImmortalCellAt(uint32_t* narrowCells, JSCell** wideCells
 
 JSString* ProgramStrings::literalStringIfCreated(uint32_t number) const
 {
-    RELEASE_ASSERT(number < m_tables.literalStrings().size());
+    RELEASE_ASSERT(number < m_numberOfLiteralStrings);
     const ConstantCellWords& constants = m_instance.runtime.constants;
     return uncheckedDowncast<JSString>(immortalCellAt(constants.literalStrings, constants.wideLiteralStrings, number));
 }
@@ -212,8 +213,13 @@ JSString* ProgramStrings::stringForLiteralStringWord(uint64_t word) const
 {
     ASSERT(isLiteralStringWord(word));
     uint32_t number = literalStringIndex(static_cast<uint32_t>(word));
-    if (JSString* cell = literalStringIfCreated(number))
+    if (JSString* cell = literalStringIfCreated(number)) [[likely]]
         return cell;
+    return createLiteralString(number);
+}
+
+NEVER_INLINE JSString* ProgramStrings::createLiteralString(uint32_t number) const
+{
     RELEASE_ASSERT_WITH_MESSAGE(m_image.text().hasText(StringID(m_tables.literalStrings()[number])), "AOT: a value is a literal string that the program spells nowhere, and no string from outside was that string");
     JSString* created = string(*m_instance.vm, StringID(m_tables.literalStrings()[number]));
     const ConstantCellWords& constants = m_instance.runtime.constants;
@@ -354,13 +360,22 @@ void ProgramStrings::willAnalyzeHeap(VM& vm)
         if (!m_tables.layouts()[shape])
             continue;
         if (shape >= m_tables.firstEnvironmentShape) {
-            for (const VariableData& variable : m_tables.environmentForShape(shape).describedVariables())
-                ensureName(variable.name, variable.slot);
+            for (const VariableData& variable : m_tables.environmentForShape(shape).describedVariables()) {
+                if (!m_hasNamedVariablesForHeapSnapshots && variable.name != VariableData::noName)
+                    identifiers.nameForHeapSnapshots(&variable, AtomString(text(m_tables, StringID(variable.name))));
+            }
             continue;
         }
         for (const FieldData& field : m_tables.layoutForShape(shape).fields())
             ensureName(field.name, field.slot);
     }
+    if (!m_hasNamedVariablesForHeapSnapshots) {
+        bool endsWhereAFunctionEnds = forEachNamedCapture(m_tables.namedCaptures(), [&](const NamedCaptureData& capture) {
+            identifiers.nameForHeapSnapshots(m_tables.closureNumberOf(capture.function), capture.slot, AtomString(text(m_tables, capture.nameString())));
+        });
+        RELEASE_ASSERT(endsWhereAFunctionEnds);
+    }
+    m_hasNamedVariablesForHeapSnapshots = true;
 }
 
 template<typename Appender>

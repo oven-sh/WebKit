@@ -65,6 +65,34 @@ static void testThreadJumpsDecidedByDominatingBranch()
     }
 }
 
+// `list[i] ?? 0`: a read gives a NaN of its own for a hole, and where the two ways meet the program asks for that NaN.
+static void testThreadJumpsDecidesBitsOfDoubleThatIsNotNaN()
+{
+    constexpr int64_t bitsForHole = 0x7ffa000000000000;
+    for (bool asksForNaN : { false, true }) {
+        Procedure proc(policyWithMaxTailSize(1));
+        Graph graph { proc };
+        TailWithTwoPredecessors blocks(graph);
+        BasicBlock* isNumber = asksForNaN ? blocks.right : blocks.left;
+        BasicBlock* isNaN = asksForNaN ? blocks.left : blocks.right;
+        Value* number = graph.make(blocks.root, BitwiseCast, blocks.first);
+        Value* phi = graph.phi(blocks.tail, Double);
+        graph.branch(blocks.root, graph.make(blocks.root, asksForNaN ? NotEqual : Equal, number, number), blocks.left, blocks.right);
+        graph.upsilon(isNumber, number, phi);
+        graph.upsilon(isNaN, graph.number(isNaN, std::bit_cast<double>(bitsForHole)), phi);
+        graph.branch(blocks.tail, graph.make(blocks.tail, GreaterEqual, graph.make(blocks.tail, BitwiseCast, phi), graph.int64(blocks.tail, bitsForHole)), blocks.taken, blocks.notTaken);
+        blocks.thread(graph);
+
+        CHECK(isNumber->last()->opcode() == Jump);
+        CHECK(isNumber->successorBlock(0) == blocks.notTaken);
+        auto code = compileProc(proc);
+        int64_t memory[1];
+        for (double value : { 1.5, -0.0, std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::infinity() })
+            CHECK_EQ(invoke<int64_t>(*code, std::bit_cast<int64_t>(value), 0, memory), 20);
+        CHECK_EQ(invoke<int64_t>(*code, std::bit_cast<int64_t>(std::numeric_limits<double>::quiet_NaN()), 0, memory), 10);
+    }
+}
+
 static void testThreadJumpsFollowsTestsOfSameValue()
 {
     Procedure proc(policyWithMaxTailSize(1));
@@ -1290,6 +1318,7 @@ void addBunJumpThreadingTests(const TestConfig* config, BunTestTasks& tasks)
 {
     RUN(testThreadJumpsOnConstantPhi());
     RUN(testThreadJumpsDecidedByDominatingBranch());
+    RUN(testThreadJumpsDecidesBitsOfDoubleThatIsNotNaN());
     RUN(testThreadJumpsFollowsTestsOfSameValue());
     RUN(testThreadJumpsFollowsTestsThroughPhisOnPath());
     RUN(testThreadJumpsOnVariableSetOnPath());

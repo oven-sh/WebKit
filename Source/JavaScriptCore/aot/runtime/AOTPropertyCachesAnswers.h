@@ -73,6 +73,9 @@ struct PropertyAnswer {
     bool absentIsUndefined { false };
     bool emptySlotMayBeUndefined { false };
     bool undefinedNeedsNoStorage { false };
+    // Slot::typeIsGivenByBits, of a store to a field of another image.
+    uint32_t bitsOfType { 0 };
+    bool readsByteOffset { false };
     std::optional<std::pair<uint32_t, uint32_t>> orderWords { };
     bool didFlatten { false };
     PropertyOffset offset { invalidOffset };
@@ -82,12 +85,21 @@ struct PropertyAnswer {
     bool storageHasIndexingHeader { false };
     const FieldData* field { nullptr };
     SlotData variable { };
+    // Of a variable of another image of the realm: the position of that image and one, in the place of the offset of a hidden word and in its unit. Zero: the variable is of the image that asks.
+    uint16_t imageOfVariable { 0 };
+    // Nothing: the place does not hold the position, and the access is not cached.
+    static std::optional<uint16_t> tryEncodeImageOfVariable(unsigned position)
+    {
+        uint64_t encoded = (static_cast<uint64_t>(position) + 1) << PackedSlot::hiddenWordOffsetShift;
+        return encoded <= std::numeric_limits<uint16_t>::max() ? std::optional(static_cast<uint16_t>(encoded)) : std::nullopt;
+    }
     uint32_t customAccessor { 0 };
     JSValue constant { };
     // Of an access that is not cacheable because the receiver is a proxy: what the trap is handed as the key.
     JSCell* keyForTrap { nullptr };
     uint16_t columnOfNameForTrap { 0 };
     ChainObjects changeableObjects { };
+    int16_t wordOfInheritedField { 0 };
 };
 
 struct ReadQuery {

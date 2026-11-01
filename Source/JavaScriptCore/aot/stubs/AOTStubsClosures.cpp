@@ -20,6 +20,7 @@
 #include "AOTStubProgramTables.h"
 #include "AOTStubRegisters.h"
 #include "AOTStubsAllocation.h"
+#include "AOTStubsBarriers.h"
 #include "AOTStubsCalls.h"
 #include "AOTStubsValues.h"
 #include "CellState.h"
@@ -162,6 +163,65 @@ void generateNewSlimClosure(StubAssembler& jit)
     createClosureInOperation(jit, function, restOfRequest, allocator);
 }
 
+StubSignature signatureOfMakeClosureOfField(StubKey)
+{
+    return closureRequestSignature(1);
+}
+
+void generateMakeClosureOfField(StubAssembler& jit)
+{
+    const auto [cell, request, allocator, header] = allocateClosureRegisters(jit);
+    const GPRReg object = jit.operand(1);
+    const GPRReg word = allocator;
+    const GPRReg offset = allocator;
+    const unsigned kind = jit.key().form();
+    const unsigned count = jit.key().count();
+    const unsigned allocatorIndex = (count + 1) / 2;
+    RELEASE_ASSERT(object == captureGPR(0) && noOverlap(cell, request, allocator, header, object));
+
+    JumpList slow;
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(closures.slimClosureAllocators) + allocatorIndex * sizeof(void*)), allocator);
+    AssemblyHelpers::FreeListRefill refill = allocateCellWithLateRefill(jit, cell, allocator, header, slow, MarkedSpace::sizeStep * (allocatorIndex + 1));
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(functionTables.closureWords)), word);
+    jit.zeroExtend32ToWord(request, header);
+    jit.load64(BaseIndex(word, header, CCallHelpers::TimesEight), word);
+    jit.load64(Address(instanceGPR, AOT_INSTANCE_OFFSET(slimClosureHeaders) + kind * sizeof(uint64_t)), header);
+    jit.storePair64(header, word, Address(cell));
+    if (count)
+        jit.store64(object, Address(cell, offsetOfSlimClosureCaptures));
+    fenceAfterAllocation(jit);
+
+    Label isMade = jit.label();
+    jit.urshift64(request, TrustedImm32(32), offset);
+    jit.urshift64(cell, TrustedImm32(cell32Shift), header);
+    jit.store32(header, BaseIndex(object, offset, CCallHelpers::TimesOne));
+    Jump needsBarrier = branchIfBarrierIsNeeded(jit, object, header);
+    jit.returnToCaller();
+
+    // The operation preserves the request and the object.
+    emitLateRefill(jit, refill, slow);
+    slow.link(&jit);
+    const GPRReg wholeRequest = allocator;
+    uint64_t restOfRequest = static_cast<uint64_t>(kind) << ClosureRequest::executableShift | 1ULL << ClosureRequest::isSlimBit | static_cast<uint64_t>(count) << ClosureRequest::countShift;
+    jit.zeroExtend32ToWord(request, wholeRequest);
+    jit.or64(TrustedImm64(static_cast<int64_t>(restOfRequest)), wholeRequest);
+    jit.callOperationAndReturn(Entry::operationAOTNewClosureSlow, { .saves = Saves::CallerSavedRegisters, .checksException = false, .secondArgumentIn = wholeRequest }, [&] {
+        jit.jump().linkTo(isMade, &jit);
+    });
+
+    // The barrier stub takes the object in the register that holds the closure. The closure is already in the slot.
+    needsBarrier.link(&jit);
+    checkStubOperands(writeBarrier(), { cell });
+    jit.clobberOperand(0);
+    jit.emitFunctionPrologue();
+    jit.move(object, cell);
+    jit.callStub(writeBarrier());
+    jit.load32(BaseIndex(object, offset, CCallHelpers::TimesOne), cell);
+    decodeCell32(jit, cell, cell);
+    jit.emitFunctionEpilogue();
+    jit.ret();
+}
+
 // The caller loses the registers that a call of the operation which keeps registers would cost it.
 StubSignature signatureOfClosureOfTable(StubKey)
 {
@@ -177,9 +237,7 @@ static void loadNumberOfClosureCell(StubAssembler& jit, GPRReg function, GPRReg 
     ASSERT(noOverlap(function, number, scratch));
     const GPRReg tables = scratch;
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.tables)), tables);
-    jit.move(function, number);
-    jit.sub32(Address(tables, OBJECT_OFFSETOF(ProgramTables, closureFunctions) + OBJECT_OFFSETOF(ClosureFunctionRangeData, first)), number);
-    jit.getEffectiveAddress(BaseIndex(number, number, CCallHelpers::TimesTwo), number);
+    jit.getEffectiveAddress(BaseIndex(function, function, CCallHelpers::TimesTwo, -static_cast<int32_t>(jit.options().closureNumbersBelow * sizeof(Number24))), number);
     jit.add32(Address(tables, offsetOfProgramTableRange(ProgramTableIndex::closureCellNumbers) + OBJECT_OFFSETOF(TableRange, offset)), number);
     jit.addPtr(tables, number);
     const GPRReg lowBytes = scratch;
@@ -367,12 +425,16 @@ void generateMaterializeEnvironment(StubAssembler& jit)
     jit.returnToCaller();
 }
 
-void loadSlimClosureWord(StubAssembler& jit, GPRReg closure, GPRReg word)
+void loadSlimClosureWord(StubAssembler& jit, GPRReg closure, GPRReg word, JumpList* isRenamed, JumpList* isOfOtherImage)
 {
     ASSERT(noOverlap(closure, word, instanceGPR));
     jit.load64(Address(closure, offsetOfSlimClosureWord), word);
     Jump isSlimClosure = jit.branchIfType(closure, SlimClosureType);
+    if (isRenamed)
+        isRenamed->append(jit.branchTest8(CCallHelpers::NonZero, Address(closure, JSCell::typeInfoFlagsOffset()), TrustedImm32(TypeInfoPerCellBit)));
     jit.load32(Address(word, ReifiedSlimClosure::offsetOfFunctionIndexInButterfly()), word);
+    if (isOfOtherImage)
+        branchUnlessClosureNumberOfThisImage(jit, word, *isOfOtherImage);
     jit.lshift64(TrustedImm32(3), word);
     jit.add64(Address(instanceGPR, AOT_INSTANCE_OFFSET(functionTables.closureWords)), word);
     jit.load64(Address(word), word);
@@ -406,6 +468,43 @@ void generateValueEndsItsTailCalls(StubAssembler& jit)
     jit.returnFlagsConstant(false);
 }
 
+StubSignature signatureOfRecordCallee(StubKey)
+{
+    return StubSignature::withoutResult({ calleeGPR });
+}
+
+void generateRecordCallee(StubAssembler& jit)
+{
+    const GPRReg closure = jit.operand(0);
+    const GPRReg stackPointerOfCaller = jit.allocateScratch(StubRegister::T11);
+    const GPRReg entries = jit.allocateScratch(StubRegister::T13);
+    const GPRReg scratch = jit.scratchRegister();
+
+    constexpr ptrdiff_t offsetOfMask = OBJECT_OFFSETOF(RecordedCallee, stackPointerOfCaller) - static_cast<ptrdiff_t>(sizeof(RecordedCallee));
+    jit.addPtr(TrustedImm32(sizeof(CallerFrameAndPC)), GPRInfo::callFrameRegister, stackPointerOfCaller);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(heap.recordedCallees)), entries);
+    // The call that was made from further out may not have returned.
+#if CPU(X86_64)
+    jit.move(stackPointerOfCaller, scratch);
+    jit.and64(Address(entries, offsetOfMask), scratch);
+    Jump isTaken = jit.branchPtr(CCallHelpers::Above, BaseIndex(entries, scratch, CCallHelpers::TimesOne, OBJECT_OFFSETOF(RecordedCallee, stackPointerOfCaller)), stackPointerOfCaller);
+    jit.storePtr(stackPointerOfCaller, BaseIndex(entries, scratch, CCallHelpers::TimesOne, OBJECT_OFFSETOF(RecordedCallee, stackPointerOfCaller)));
+    jit.storePtr(closure, BaseIndex(entries, scratch, CCallHelpers::TimesOne, OBJECT_OFFSETOF(RecordedCallee, closure)));
+#else
+    jit.loadPtr(Address(entries, offsetOfMask), scratch);
+    jit.andPtr(stackPointerOfCaller, scratch);
+    jit.addPtr(scratch, entries);
+    jit.loadPtr(Address(entries, OBJECT_OFFSETOF(RecordedCallee, stackPointerOfCaller)), scratch);
+    Jump isTaken = jit.branchPtr(CCallHelpers::Above, scratch, stackPointerOfCaller);
+    jit.storePtr(stackPointerOfCaller, Address(entries, OBJECT_OFFSETOF(RecordedCallee, stackPointerOfCaller)));
+    jit.storePtr(closure, Address(entries, OBJECT_OFFSETOF(RecordedCallee, closure)));
+#endif
+    jit.returnToCaller();
+
+    isTaken.link(&jit);
+    jit.callOperationAndReturn(Entry::operationAOTRecordCallee, { .returns = OperationCall::Returns::Void, .saves = Saves::CallerSavedRegisters, .checksException = false, .secondArgumentIn = closure, .thirdArgumentIn = stackPointerOfCaller });
+}
+
 StubSignature signatureOfValueIsClosureOf(StubKey)
 {
     return signatureWithFlagsResult({ gprOf(StubRegister::R0), gprOf(StubRegister::T9) }, MacroAssembler::Zero);
@@ -435,7 +534,7 @@ void generateValueIsClosureOf(StubAssembler& jit)
 #endif
     }
 
-    loadClosureWordOfThisRealm(jit, value, { word, scratch, word, scratch }, isNotClosure);
+    loadClosureWordOfThisRealm(jit, value, { word, scratch, word, scratch }, isNotClosure, RenamedClosures::AreLikeOthers);
     jit.urshift64(TrustedImm32(ClosureWord::functionShift), word);
     jit.returnFlags32(CCallHelpers::Equal, word, expectedUpperHalf);
 

@@ -44,10 +44,13 @@ std::optional<SiteContent> contentOfNamedAccess(const FunctionPassContext&, cons
 std::optional<ElementAccessSite> planElementAccessSite(FunctionPassContext&, const ValueSite&);
 
 bool isOnlyCalled(FunctionAnalyses&, ValueID read);
+bool isOnlyCalledBehindJoins(FunctionAnalyses&, ValueID read);
 
 AccessOperands operandsOfNamedAccess(const Value& access);
 SlotStamp createSlotStamp(FunctionPassContext&, const Value& access, const PropertyAccessPlan&);
 PassOutcome addEmptySlotCases(FunctionPassContext&);
+PassOutcome planAccessesBehindSlotTestsForProvenReceivers(FunctionPassContext&);
+PassOutcome splitReadsByExpectedReceivers(FunctionPassContext&);
 PassOutcome addCasesOfFieldsWithoutStorage(FunctionPassContext&);
 Effects effectsAfterRewrite(FunctionPassContext&, const PropertyAccessPlan&, const SlotStamp&);
 Effects effectsAfterRewrite(const ElementAccessPlan&, const Type& key);

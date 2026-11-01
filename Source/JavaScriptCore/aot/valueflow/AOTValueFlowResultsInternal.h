@@ -10,7 +10,9 @@
 #include "AOTBuildContext.h"
 #include "AOTBuiltinTable.h"
 #include "AOTFlowApplication.h"
+#include "AOTFlowOrder.h"
 #include "AOTLayout.h"
+#include "AOTPersistentSortedSet.h"
 #include "AOTSharedMemo.h"
 #include "AOTThreads.h"
 #include "AOTThreshold.h"
@@ -73,6 +75,7 @@ public:
 
     // The arrays whose kind of storage is decided and would not be what it is behind a conversion to the storage of numbers.
     ValueSetID arraysThatMustNotBeConverted { ValueSets::nothing };
+    bool keepsStorageOfListThatMayReadUndefined { false };
 
 private:
     Vector<uint32_t> m_positionOfObject;
@@ -163,6 +166,8 @@ constexpr ValueFlowKindsOfMadeNodes kindsOfMadeNodes(std::initializer_list<Value
     return bits;
 }
 
+class ValueFlowBirthsOfUnknownObject;
+
 struct ValueFlowResultInputs {
     const Program& program;
     ValueFlowSolution& solution;
@@ -174,6 +179,7 @@ struct ValueFlowResultInputs {
     const ValueFlowContainerResults* containers { nullptr };
     const BitVector* symbolsCreatedOnce { nullptr };
     const ValueFlowClassesOfBuiltinResults* classesOfBuiltinResults { nullptr };
+    ValueSetID objectsMadeForSuperCalls { ValueSets::nothing };
     const BitVector* layoutsOfDictionaries { nullptr };
     std::span<const std::pair<TypeID, TypeID>> typesBehindDictionaries;
     const BitVector* layoutSetsNamingDictionaries { nullptr };
@@ -181,6 +187,7 @@ struct ValueFlowResultInputs {
     const ValueFlowHeapIndex* heapIndex { nullptr };
     const ValueFlowNodesAskedFor* nodesAskedFor { nullptr };
     const LedgerOfClassesAndClosures* classesAndClosures { nullptr };
+    const ValueFlowBirthsOfUnknownObject* birthsOfUnknownObject { nullptr };
 
     const ValueFlowBodies& bodies() const { return solution.bodies(); }
     const ValueFlowUniverse& universe() const { return solution.bodies().universe(); }
@@ -206,7 +213,13 @@ struct ValueFlowResultInputs {
             return BuiltinClasses::Object;
         if (BuiltinClassID builtinClass = universe().classOf(object))
             return builtinClass;
-        return classesOfBuiltinResults ? classesOfBuiltinResults->get(object.index()) : BuiltinClassID();
+        return classesOfBuiltinResults && !universe().layoutOf(object) ? classesOfBuiltinResults->get(object.index()) : BuiltinClassID();
+    }
+
+    // `class Stamp extends Date {}`: what Date makes for super() has the layout of Stamp, the prototype of the new target, and is a Date.
+    BuiltinClassID classOfObjectMadeForSuperCall(ValueFlowObjectID object) const
+    {
+        return classesOfBuiltinResults && universe().layoutOf(object) ? classesOfBuiltinResults->get(object.index()) : BuiltinClassID();
     }
 
     static constexpr bool isPlaceholder(ValueFlowObjectID object) { return object == ValueFlowUniverse::unknownObject() || object == ValueFlowUniverse::untrackedObject(); }
@@ -385,6 +398,28 @@ constexpr UnprovenCause unprovenCauseOf(ValueFlowUnknownSource source)
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
+// How each object held by code outside the program escaped: at a statement that passes it on, or through another object:
+// contents through their holder, a prototype and its constructor through an instance, an instance through its constructor.
+class ValueFlowEscapeOrigins {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ValueFlowEscapeOrigins);
+public:
+    explicit ValueFlowEscapeOrigins(const ValueFlowResultInputs&);
+
+    // The objects in `escaping` escape at `statement`, or once an object in `through` has escaped.
+    struct EscapePath {
+        ValueFlowStatementID statement;
+        ValueSetID through;
+        ValueSetID escaping;
+    };
+
+    std::span<const EscapePath> paths() const LIFETIME_BOUND { return m_paths.span(); }
+    ValueSetID objectsWithPaths() const { return m_objectsWithPaths; }
+
+private:
+    Vector<EscapePath> m_paths;
+    ValueSetID m_objectsWithPaths { ValueSets::nothing };
+};
+
 class ValueFlowBirthsOfUnknownObject {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ValueFlowBirthsOfUnknownObject);
 public:
@@ -393,6 +428,14 @@ public:
     Witness witnessOf(ValueFlowNodeID) const;
     std::optional<ValueFlowUnknownSource> sourceOf(ValueFlowNodeID) const;
     bool hasSeveralRoots(ValueFlowNodeID node) const { return node && m_hasSeveralRoots.get(node.index()); }
+    // The next independent roots in source order, as FlowSiteLoss::otherOrigins names them.
+    uint16_t otherOriginsOf(ValueFlowNodeID node) const { return node && node.index() < m_otherOriginsOfNode.size() ? m_otherOriginsOfNode[node.index()] : 0; }
+    // The statement where an object held by code outside the program escaped, or where the first object that led to it did.
+    Witness escapeOriginOf(ValueFlowObjectID object) const { return object.index() < m_originOfObject.size() ? m_originOfObject[object.index()] : noWitness; }
+    // Without that statement the object still escapes, by a path that starts elsewhere.
+    bool hasOtherEscapeOrigins(ValueFlowObjectID object) const { return m_hasOtherOrigins.get(object.index()); }
+    uint16_t otherEscapeOriginsOf(ValueFlowObjectID object) const { return object.index() < m_otherOriginsOfObject.size() ? m_otherOriginsOfObject[object.index()] : 0; }
+    Vector<Wire::OtherOriginsRecord> takeOtherOrigins() { return std::exchange(m_otherOrigins, { }); }
 
 private:
     static constexpr uint32_t none = UINT32_MAX;
@@ -410,6 +453,11 @@ private:
     Vector<uint32_t> m_rootOfNode;
     Vector<Root> m_roots;
     BitVector m_hasSeveralRoots;
+    Vector<Witness> m_originOfObject;
+    BitVector m_hasOtherOrigins;
+    Vector<uint16_t> m_otherOriginsOfNode;
+    Vector<uint16_t> m_otherOriginsOfObject;
+    Vector<Wire::OtherOriginsRecord> m_otherOrigins;
 };
 
 Witness witnessOfAllocation(const ValueFlowResultInputs&, ValueFlowObjectID);
@@ -427,6 +475,9 @@ struct ValueFlowFieldContents {
     Vector<Vector<ValueFlowNumbers>> storedNumbers;
     Vector<Vector<ValueSetID>> storedInAppendedFields;
     Vector<Vector<ValueFlowNumbers>> numbersStoredInAppendedFields;
+    Vector<BitVector> appendedFieldsWithUnknownValues;
+    // `for (var name in defaults) options[name] = ..` where the layout of options has a field under one of the names: what the loop stores there is not what the stores under the name say.
+    Vector<BitVector> fieldsStoredUnderNamesOfEnumerations;
 };
 
 class ValueFlowNodesAskedFor {
@@ -776,6 +827,8 @@ struct ValueFlowBuiltinApplication {
     FunctionID function;
     ValueID site;
     const ValueFlowStatement* statement { nullptr };
+    // Not listed: a value that nobody knows is called, and the built-in has escaped.
+    bool isCalleeListed { true };
     ValueSetID thisValue { ValueSets::nothing };
     Vector<ValueSetID, numberOfGroupedArguments> arguments;
     ValueSetID otherArguments { ValueSets::nothing };
@@ -786,11 +839,15 @@ struct ValueFlowBuiltinApplication {
 
 using ValueFlowBuiltinApplicationFunctor = ScopedLambda<void(const ValueFlowBuiltinApplication&)>;
 void forEachBuiltinApplication(const ValueFlowResultInputs&, ValueFlowHeapView&, NOESCAPE const ValueFlowBuiltinApplicationFunctor&);
+// Of `among`: what the operands of a reached call list where nobody knows what is called.
+ValueSetID valuesHandedToCalleesNobodyKnows(const ValueFlowResultInputs&, const ValueFlowHeapView&, ValueSetID among);
 void forEachBuiltinApplication(const ValueFlowResultInputs&, ValueFlowHeapView&, const BitVector& onlyOfBuiltins, NOESCAPE const ValueFlowBuiltinApplicationFunctor&);
 void forEachBuiltinApplication(const ValueFlowResultInputs&, ValueFlowHeapView&, const BitVector& onlyOfBuiltins, ValueSetID onlyPassingAnyOf, NOESCAPE const ValueFlowBuiltinApplicationFunctor&);
 void forEachBuiltinApplicationOnAllThreads(const ValueFlowResultInputs&, const ValueFlowHeapView&, ValueSetMakers&, const BitVector& onlyOfBuiltins, ValueSetID onlyPassingAnyOf, NOESCAPE const ScopedLambda<void(unsigned worker, const ValueFlowBuiltinApplication&)>&);
 
-void computeClosuresNeverCompared(const ValueFlowResultInputs&, ValueFlowHeapView&, FlowResultTables&);
+// Answers the lists that something can tell apart.
+ValueSetID computeClosuresNeverCompared(const ValueFlowResultInputs&, ValueFlowHeapView&, FlowResultTables&);
+bool isNeverToldApart(const ValueFlowResultInputs&, ValueFlowObjectID list, ValueSetID listsToldApart);
 
 BitVector builtinsWithOverload(const BuiltinTable& builtins, NOESCAPE const Invocable<bool(const BuiltinOverload&)> auto& predicate)
 {
@@ -814,16 +871,33 @@ ValueSetID objectsThatMayBeEnumerated(const ValueFlowUsesOfHeap&);
 ValueSetID objectsWithAllKeysShown(const ValueFlowUsesOfHeap&);
 ValueSetID objectsWithEnumerableKeysShown(const ValueFlowUsesOfHeap&);
 
+struct ConstructionName {
+    PropertyKeyID key;
+    FieldReference field;
+    bool standsForValue { false };
+
+    friend auto operator<=>(const ConstructionName&, const ConstructionName&) = default;
+};
+
+inline void add(Hasher& hasher, const ConstructionName& name)
+{
+    addArgs(hasher, name.key, name.field.layout, name.field.field, name.standsForValue);
+}
+
+using ConstructionNames = PersistentSortedSet<ConstructionName>;
+
 struct ValueFlowConstructions {
     struct OfLayout {
         bool isFollowed { false };
         bool isNewTargetOfOtherFunctions { false };
         bool createsFieldsOnlyInListedOrders { false };
-        Vector<PropertyKeyID> keysStoredBeforeObjectLeaks;
-        Vector<FieldReference> fieldsStoredBeforeObjectLeaks;
+        ConstructionNames namesStoredBeforeObjectLeaks;
         Vector<PropertyKeyID> keysStoredAtBirth;
         Vector<PropertyKeyID> keysStoredWithValueAtBirth;
         Vector<FieldReference> fieldsStoredAtBirth;
+        // No proof: the object is seen without them. The mark of the cell says when they are stored.
+        Vector<PropertyKeyID> keysStoredBehindLiteral;
+        Vector<PropertyKeyID> keysStoredWithValueBehindLiteral;
         Vector<FieldOrder> orders;
         Vector<PropertyKeyID> inheritedKeysThatStoresMayNotCreate;
     };
@@ -834,10 +908,7 @@ struct ValueFlowConstructions {
     const Vector<FieldOrder>& ordersOf(LayoutID layout) const LIFETIME_BOUND { return layouts[layout.index()].orders; }
     bool isStoredBeforeObjectLeaks(LayoutID layout, PropertyKeyID key, FieldReference declaration) const
     {
-        const OfLayout& construction = layouts[layout.index()];
-        if (key)
-            return std::ranges::binary_search(construction.keysStoredBeforeObjectLeaks, key);
-        return std::ranges::binary_search(construction.fieldsStoredBeforeObjectLeaks, declaration);
+        return layouts[layout.index()].namesStoredBeforeObjectLeaks.contains(key ? ConstructionName { key, { } } : ConstructionName { { }, declaration });
     }
     bool mayBeKeptFromCreatingInheritedField(LayoutID layout, PropertyKeyID key) const { return key && std::ranges::binary_search(layouts[layout.index()].inheritedKeysThatStoresMayNotCreate, key); }
     bool isStoredAtBirth(LayoutID layout, PropertyKeyID key, FieldReference declaration) const
@@ -846,6 +917,14 @@ struct ValueFlowConstructions {
         if (key)
             return std::ranges::binary_search(construction.keysStoredAtBirth, key);
         return std::ranges::binary_search(construction.fieldsStoredAtBirth, declaration);
+    }
+    bool isStoredBehindLiteral(LayoutID layout, PropertyKeyID key) const
+    {
+        return key && std::ranges::binary_search(layouts[layout.index()].keysStoredBehindLiteral, key);
+    }
+    bool isStoredWithValueBehindLiteral(LayoutID layout, PropertyKeyID key) const
+    {
+        return key && std::ranges::binary_search(layouts[layout.index()].keysStoredWithValueBehindLiteral, key);
     }
     bool isStoredWithValueAtBirth(LayoutID layout, PropertyKeyID key) const
     {
@@ -874,6 +953,9 @@ struct ValueFlowUsesOfLibraryCode {
     Vector<UnseenCodeRecord> loadsOfMachineCode;
     Vector<BuiltinUseRecord> builtinUses;
     Vector<RuntimeFunctionID> libraryFunctionsLacked;
+    Vector<VariableID> exportsThatSpiesReplace;
+    Vector<BuiltinID> builtinsThatTestsReplace;
+    Vector<FlowAddedName> namesThatTestsAdd;
 };
 ValueFlowUsesOfLibraryCode findUsesOfLibraryCode(const ValueFlowResultInputs&);
 
@@ -888,13 +970,15 @@ void computeExecutionResults(const ValueFlowResultInputs&, const ValueFlowStampe
 BitVector computeCreatedSymbolResults(const ValueFlowResultInputs&, const FlowResultTables&);
 void reportOperationsWithoutValue(const ValueFlowResultInputs&);
 void computeClosuresMadeOnce(const ValueFlowResultInputs&, FlowResultTables&);
-void computeOrderResults(const ValueFlowResultInputs&, const ValueFlowStampedCalls&, FlowResultTables&);
+FlowCallsOfProgram computeOrderResults(const ValueFlowResultInputs&, const ValueFlowStampedCalls&, FlowResultTables&);
 void computeObjectResults(const ValueFlowResultInputs&, const ValueFlowStampedCalls&, FlowResultTables&);
 void computeClassResults(const ValueFlowResultInputs&, FlowResultTables&);
-inline LayoutID provenBaseOf(const FlowApplication& application, LayoutID id)
+void noteAccessorsDefinedAfterObjectsAreMade(const ValueFlowResultInputs&, const FlowCallsOfProgram&, FlowResultTables&);
+// No answer: the program links the prototype objects of several classes above, or nobody knows through what.
+std::optional<LayoutID> findBaseLinkedByProgram(const ValueFlowResultInputs&, LayoutID constructorFunction);
+inline LayoutID nearestLayoutAlwaysAbove(const FlowApplication& application, LayoutID id)
 {
-    const LayoutFlow& flow = application.layouts[id.index()].flow;
-    return flow.baseState == BaseState::Layout ? flow.base : LayoutID();
+    return nearestLayoutAlwaysAbove(application.layouts[id.index()].flow);
 }
 
 ValueFlowFieldContents computeFieldResults(const ValueFlowResultInputs&, ValueFlowUsesOfHeap&, const ValueFlowConstructions&, FlowResultTables&);
@@ -915,7 +999,7 @@ void computeAccessResults(const ValueFlowResultInputs&, TypeTable&, FlowResultTa
 void computeStoreNamingResults(const ValueFlowResultInputs&, ValueFlowUsesOfHeap&, FlowResultTables&);
 void computeSymbolConstantResults(const ValueFlowResultInputs&, FlowResultTables&);
 void computeTypedResultResults(const ValueFlowResultInputs&, FlowResultTables&);
-void computeDataNodeResults(const ValueFlowResultInputs&, const ValueFlowContainerResults&, TypeTable&, FlowResultTables&);
+void computeDataNodeResults(const ValueFlowResultInputs&, const ValueFlowContainerResults&, ValueSetID listsToldApart, TypeTable&, FlowResultTables&);
 BitVector computeLayoutsOfDictionaries(const ValueFlowResultInputs&, TypeTable&, FlowResultTables&);
 Type typeBehindDictionaries(const Program&, const BitVector& layoutsOfDictionaries, std::span<const std::pair<TypeID, TypeID>> ascendingTypes, const Type&, TypeArena&);
 void computeSinkOperandResults(const ValueFlowResultInputs&, const ValueFlowStampedCalls&, FlowResultTables&);

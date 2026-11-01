@@ -30,6 +30,9 @@
 
 #include "AirArgInlines.h"
 #include "AirBitMatrixLiveness.h"
+#include "AirBlockInsertionSet.h"
+#include "AirCFG.h"
+#include "AirCheckSpillSlots.h"
 #include "AirCode.h"
 #include "AirDominators.h"
 #include "AirEmitShuffle.h"
@@ -52,6 +55,8 @@
 #include "AirTmpWidthInlines.h"
 #include "AirUseCounts.h"
 #include "B3Procedure.h"
+#include <wtf/CycleForest.h>
+#include <wtf/FrequencyEstimator.h>
 #include <wtf/GenerationalSet.h>
 #include <wtf/IntervalSet.h>
 #include <wtf/IterationStatus.h>
@@ -726,17 +731,40 @@ private:
 // Mutable until sort() is called, after which it is binary searchable.
 class Coalescables {
 public:
+    // The result of `a && b && ..` is defined by one move per operand. A list that long is not walked for each move or def.
+    static constexpr size_t maxSizeWalked = 16;
+
+    // mergeDuplicates() follows the last call.
     void add(Tmp tmp, float moveCost)
     {
         ASSERT(!m_isSorted);
         ASSERT(m_entries.isEmpty() || m_entries.last().tmp.bank() == tmp.bank());
-        for (auto& entry : m_entries) {
-            if (entry.tmp == tmp) {
-                entry.moveCost += moveCost;
-                return;
+        if (m_entries.size() <= maxSizeWalked) {
+            for (auto& entry : m_entries) {
+                if (entry.tmp == tmp) {
+                    entry.moveCost += moveCost;
+                    return;
+                }
             }
         }
         m_entries.append({ tmp, moveCost });
+    }
+
+    // The costs of one Tmp are added in the order of the calls of add().
+    void mergeDuplicates()
+    {
+        if (m_entries.size() <= maxSizeWalked)
+            return;
+        std::ranges::stable_sort(m_entries, { }, [](const Entry& entry) { return entry.tmp.internalValue(); });
+        size_t size = 0;
+        for (size_t index = 0; index < m_entries.size(); ++index) {
+            Entry entry = m_entries[index];
+            if (size && m_entries[size - 1].tmp == entry.tmp)
+                m_entries[size - 1].moveCost += entry.moveCost;
+            else
+                m_entries[size++] = entry;
+        }
+        m_entries.shrink(size);
     }
 
     void remove(Tmp target)
@@ -894,6 +922,8 @@ struct TmpData {
     bool paysForCalleeSave { false };
     bool spansStretch { false };
     bool isClusterOverBlocks { false };
+    bool isOnlyReadAtSomeClobber { false };
+    bool isOnStackInSomeBlocks { false };
     Stage stage { Stage::New };
     Spillability spillability { Spillability::Spillable };
     Reg preferredReg;
@@ -924,6 +954,16 @@ struct TmpData {
         if (reg == preferredReg)
             return preferredWeight;
         return reg == secondPreferredReg ? secondPreferredWeight : 0;
+    }
+
+    void forgetWeightlessWishFor(Reg reg)
+    {
+        if (reg == secondPreferredReg && !secondPreferredWeight)
+            secondPreferredReg = Reg();
+        if (reg != preferredReg || preferredWeight)
+            return;
+        preferredReg = std::exchange(secondPreferredReg, Reg());
+        preferredWeight = std::exchange(secondPreferredWeight, 0);
     }
 
     Tmp neighbours[2];
@@ -1157,6 +1197,22 @@ public:
         return result;
     }
 
+    // How many points of the range clobber the register while nothing is live in it. Goes by the intervals of the range, not by the points, and stops at `enough`.
+    size_t numberOfDeadClobbers(Reg reg, const LiveRange& range, size_t enough)
+    {
+        if (!(m_regsWithDeadClobbers & bitOf(reg)))
+            return 0;
+        std::span<const unsigned> own = deadClobbersOf(reg);
+        size_t count = 0;
+        for (auto& interval : range.intervals()) {
+            auto first = std::ranges::lower_bound(own, firstClobberNotBefore(interval.begin()));
+            count += std::ranges::lower_bound(first, own.end(), firstClobberNotBefore(interval.end())) - first;
+            if (count >= enough)
+                break;
+        }
+        return count;
+    }
+
     bool hasPointClobberingAll(uint64_t regs, Interval interval) const
     {
         auto clobberPoints = m_clobberPoints.span();
@@ -1207,7 +1263,19 @@ private:
         RELEASE_ASSERT_NOT_REACHED();
     }
 
-    NEVER_INLINE size_t nextDeadClobberFor(Reg reg, size_t from)
+    unsigned firstClobberNotBefore(Point point) const
+    {
+        const unsigned numberOfPoints = m_clobberPoints.size();
+        size_t ordinal = point / PointOffsets::PointsPerInst;
+        if (ordinal >= m_instFirstClobber.size())
+            return numberOfPoints;
+        unsigned index = m_instFirstClobber[ordinal];
+        while (index < numberOfPoints && m_clobberPoints[index] < point)
+            ++index;
+        return index;
+    }
+
+    NEVER_INLINE std::span<const unsigned> deadClobbersOf(Reg reg)
     {
         if (m_regFirstDeadClobber.isEmpty()) {
             m_regFirstDeadClobber.fill(0, Reg::maxIndex() + 2);
@@ -1224,7 +1292,12 @@ private:
                     m_regDeadClobbers[next[std::countr_zero(regs)]++] = clobber;
             }
         }
-        auto own = m_regDeadClobbers.span().subspan(m_regFirstDeadClobber[reg.index()], m_regFirstDeadClobber[reg.index() + 1] - m_regFirstDeadClobber[reg.index()]);
+        return m_regDeadClobbers.span().subspan(m_regFirstDeadClobber[reg.index()], m_regFirstDeadClobber[reg.index() + 1] - m_regFirstDeadClobber[reg.index()]);
+    }
+
+    size_t nextDeadClobberFor(Reg reg, size_t from)
+    {
+        auto own = deadClobbersOf(reg);
         auto iterator = std::ranges::lower_bound(own, static_cast<unsigned>(from));
         return iterator == own.end() ? m_deadClobbersAtPoint.size() : *iterator;
     }
@@ -1714,6 +1787,7 @@ public:
 
         movesForWidths.grow(precedingInstCount);
         unsigned* nextMoveForWidths = movesForWidths.mutableSpan().data();
+        Vector<unsigned> wholeCopiesOfShuffles;
         m_tmpMoves.grow(precedingInstCount);
         unsigned* nextTmpMove = m_tmpMoves.mutableSpan().data();
 
@@ -1850,6 +1924,8 @@ public:
                         note(mention.tmp, Mentions::traitsOf(mention.role, mention.bank, mention.width));
                     wasDecodedSlowly = Mentions::wasDecodedSlowly;
                 }
+                if (opcode == Shuffle) [[unlikely]]
+                    recordWholeCopiesOfShuffle(inst, firstMention, mentionTraits, wholeCopiesOfShuffles);
 
                 bool hasEarlyDef = argTraits & Mentions::earlyDef;
                 bool hasLateUseOrDef = argTraits & (Mentions::lateUse | Mentions::lateDef);
@@ -1896,6 +1972,7 @@ public:
         instFirstMention[ordinal] = numberOfMentions;
         m_mentions.numberOfInsts = ordinal;
         movesForWidths.shrink(nextMoveForWidths - movesForWidths.mutableSpan().data());
+        movesForWidths.appendVector(wholeCopiesOfShuffles);
         m_tmpMoves.shrink(nextTmpMove - m_tmpMoves.mutableSpan().data());
     }
 
@@ -1930,6 +2007,27 @@ public:
             m_useCounts.fpConstantWidths[fpIndex] = opcode == MoveFloat ? Width32 : opcode == MoveDouble ? Width64 : Width128;
         }
         return traits | Mentions::isDefByConstant;
+    }
+
+    // The mention of the destination follows that of the source, as in a Move.
+    NEVER_INLINE static void recordWholeCopiesOfShuffle(Inst& inst, unsigned mention, uint16_t* mentionTraits, Vector<unsigned>& copies)
+    {
+        auto numberOfTmpsIn = [](Arg& arg) {
+            unsigned result = 0;
+            arg.forEachTmpFast([&](Tmp&) {
+                ++result;
+            });
+            return result;
+        };
+        for (unsigned i = 0; i + 2 < inst.args().size(); i += 3) {
+            Arg& source = inst.args()[i];
+            Arg& destination = inst.args()[i + 1];
+            if (TmpWidth::isCopyOfWholeGeneralRegister(source, destination, inst.args()[i + 2].width())) {
+                copies.append(mention);
+                mentionTraits[mention + 1] |= Mentions::hasNoWidthInformation;
+            }
+            mention += numberOfTmpsIn(source) + numberOfTmpsIn(destination);
+        }
     }
 
     void findWidths(Vector<unsigned>& movesForWidths)
@@ -2211,6 +2309,9 @@ public:
         if (hasFPTmps)
             validateAssignments<FP>();
 
+        if (m_code.proc().policy().validation.checksSpillSlots || m_code.proc().policy().validation.checksAllocatedRegisters) [[unlikely]]
+            checkPlacesOfValues();
+
         dataLogLnIf(verbose() || shouldDumpFunction(), "Greedy register allocator: function ", m_code.proc().name(), " about to assign registers:\n", *this, "IR:\n", m_code);
 
         assignRegisters();
@@ -2222,6 +2323,97 @@ public:
         m_stats[FP].numTmpsOut = m_code.numTmps(FP);
 
         dataLogLnIf(verbose() || shouldDumpFunction(), "Greedy register allocator: function ", m_code.proc().name(), " output IR:\n", m_code);
+    }
+
+    // All the Tmps that were split from one Tmp share its spill slot, and the slot stands for the value that they carry. An instruction that defines one of them changes that
+    // value, unless it only brings it from the slot or from another of them. Until the new value is stored, nothing may read the slot.
+    // A register holds the Tmp that was defined into it last, until an instruction clobbers it.
+    void checkPlacesOfValues()
+    {
+        bool checksSlots = m_code.proc().policy().validation.checksSpillSlots;
+        bool checksRegisters = m_code.proc().policy().validation.checksAllocatedRegisters;
+        // The moves around loops are Shuffles here, which say nothing of what they copy.
+        if (m_splitPolicy.splitsAroundLoops) {
+            if (checksSlots)
+                checkSpillSlotsAreWritten(m_code, PlacesOfValues::Words::OfSlots, "behind register allocation"_s);
+            return;
+        }
+        auto slotOf = [&](Tmp tmp) -> StackSlot* {
+            return tmp.isReg() ? nullptr : m_spillSlotTable[m_map[tmp].spillSlotTableIndex];
+        };
+        // Where gaps count as live (buildLiveRanges()), a Tmp is saved around a call, or on the way into a loop, also in blocks where it is dead. A predecessor of such a block may lie
+        // outside the live range, so the move reads a register that is somebody else's by then. Nobody reads what it writes: were the Tmp live there, it would be live in every predecessor.
+        auto savesValueThatMayBeDead = [&](Inst& inst) {
+            if (!m_countsGapsAsLive || inst.args().size() != 2 || !inst.args()[0].isTmp() || inst.args()[0].isReg())
+                return false;
+            Tmp tmp = inst.args()[0].tmp();
+            uint32_t slotIndex = m_map[tmp].spillSlotTableIndex;
+            if (!slotIndex || inst.kind.opcode != moveOpcode(tmp))
+                return false;
+            Arg& target = inst.args()[1];
+            if (target.isStack())
+                return target.stackSlot() == m_spillSlotTable[slotIndex];
+            return target.isTmp() && !target.isReg() && m_map[target.tmp()].spillSlotTableIndex == slotIndex;
+        };
+        PlacesOfValues places(m_code, PlacesOfValues::Words::OfSlots);
+        for (BasicBlock* block : m_code) {
+            places.beginBlock(block);
+            for (unsigned instIndex = 0; instIndex < block->size(); ++instIndex) {
+                Inst& inst = block->at(instIndex);
+                auto addReadsOfRegisters = [&](bool (*isRead)(Arg::Role)) {
+                    inst.forEachTmp([&](Tmp& tmp, Arg::Role role, Bank, Width) {
+                        if (!tmp.isReg() && isRead(role))
+                            places.addRead(assignedReg(tmp), tmp, instIndex);
+                    });
+                };
+                auto addWritesOfRegisters = [&](bool (*isWrite)(Arg::Role), const RegisterSet& clobbered) {
+                    clobbered.forEach([&](Reg reg) {
+                        places.addClobber(reg, instIndex);
+                    });
+                    inst.forEachTmp([&](Tmp& tmp, Arg::Role role, Bank, Width) {
+                        if (!isWrite(role))
+                            return;
+                        if (tmp.isReg())
+                            places.addClobber(tmp.reg(), instIndex);
+                        else
+                            places.addWrite(assignedReg(tmp), tmp, instIndex);
+                    });
+                };
+                bool isPatch = inst.kind.opcode == Patch;
+
+                if (checksSlots)
+                    places.addReadsOfSlots(inst, instIndex);
+                if (checksRegisters) {
+                    if (!savesValueThatMayBeDead(inst))
+                        addReadsOfRegisters(Arg::isEarlyUse);
+                    addWritesOfRegisters(Arg::isEarlyDef, isPatch ? inst.extraEarlyClobberedRegs() : RegisterSet());
+                    addReadsOfRegisters(Arg::isLateUse);
+                    addWritesOfRegisters(Arg::isLateDef, isPatch ? inst.extraClobberedRegs() : RegisterSet());
+                }
+                if (!checksSlots)
+                    continue;
+                inst.forEachTmp([&](Tmp& tmp, Arg::Role role, Bank, Width) {
+                    if (!Arg::isAnyDef(role))
+                        return;
+                    StackSlot* slot = slotOf(tmp);
+                    if (!slot)
+                        return;
+                    if (inst.args().size() == 2 && inst.args()[1] == Arg(tmp) && inst.kind.opcode == moveOpcode(tmp)) {
+                        Arg& source = inst.args()[0];
+                        if ((source.isStack() && source.stackSlot() == slot) || (source.isTmp() && slotOf(source.tmp()) == slot))
+                            return;
+                    }
+                    places.addChangeOfValue(slot, instIndex);
+                });
+                places.addWritesOfSlots(inst, instIndex);
+            }
+        }
+        places.check("behind register allocation"_s);
+    }
+
+    bool leavesOut(MoveLeftOutByRegisterAllocator move) const
+    {
+        return m_code.proc().policy().validation.moveLeftOutByRegisterAllocator == move;
     }
 
     bool shouldDumpFunction() const
@@ -2398,15 +2590,6 @@ private:
         return (point - positionOfHead) / PointOffsets::PointsPerInst;
     }
 
-    Origin originAt(Point point)
-    {
-        if (!m_code.shouldPreserveB3Origins() && !m_code.proc().policy().allocation.keepsValuesAfterLowering)
-            return Origin();
-        BasicBlock* block = findBlockContainingPoint(point);
-        Value* origin = block->at(instIndex(positionOfHead(block), point)).origin;
-        return origin ? origin->origin() : Origin();
-    }
-
     static Point LEGACY_NODELETE pointAtOffset(Point point, PointOffsets offset)
     {
         static_assert(!(PointOffsets::PointsPerInst & (PointOffsets::PointsPerInst - 1)));
@@ -2537,6 +2720,14 @@ private:
         return m_tmpWidth.useWidth(tmp);
     }
 
+    static constexpr size_t maxValidationFailuresListed = 8;
+
+    void reportValidationFailuresNotListed(size_t failureCount)
+    {
+        if (failureCount > maxValidationFailuresListed)
+            dataLogLn("AIR GREEDY VALIDATION: ", failureCount - maxValidationFailuresListed, " more failures are not listed");
+    }
+
     // Debug code to verify that the results of register allocation and finalization fixup is valid.
     // That is, no two Tmps simultaneously alive share the same register (unless they were coalesced).
     template<Bank bank>
@@ -2544,14 +2735,18 @@ private:
     {
         if (!Options::airValidateGreedRegAlloc())
             return;
-        bool anyFailures = false;
+        // A move that is left out on purpose is there for the checks that report what they find. This one stops the process.
+        if (!leavesOut(MoveLeftOutByRegisterAllocator::None)) [[unlikely]]
+            return;
+        size_t failureCount = 0;
 
         auto fail = [&](BasicBlock* block, Tmp a, Tmp b) {
+            if (failureCount++ >= maxValidationFailuresListed)
+                return;
             dataLogLn("AIR GREEDY REGISTER ALLOCATION VALIDATION FAILURE");
             dataLogLn("   In BB", *block);
             dataLogLn("     tmp = ", a, " : ", m_map[a]);
             dataLogLn("     tmp = ", b, " : ", m_map[b]);
-            anyFailures = true;
         };
 
         auto checkConflicts = [&](BasicBlock* block, const typename TmpLiveness<bank>::LocalCalc& localCalc) {
@@ -2601,10 +2796,11 @@ private:
         };
 
         auto failAtClobber = [&](BasicBlock* block, Inst& patch, Tmp tmp) {
+            if (failureCount++ >= maxValidationFailuresListed)
+                return;
             dataLogLn("AIR GREEDY REGISTER ALLOCATION VALIDATION FAILURE");
             dataLogLn("   In BB", *block, " at ", patch);
             dataLogLn("     clobbers the register of tmp = ", tmp, " : ", m_map[tmp]);
-            anyFailures = true;
         };
 
         auto checkClobbers = [&](BasicBlock* block, Inst& patch, const Vector<Tmp>& liveAfter, const typename TmpLiveness<bank>::LocalCalc& liveBefore) {
@@ -2664,7 +2860,8 @@ private:
             }
             checkConflicts(block, localCalc);
         }
-        if (anyFailures) {
+        if (failureCount) {
+            reportValidationFailuresNotListed(failureCount);
             dataLogLn("IR:\n", m_code);
             dataLogLn("State:\n", *this);
             RELEASE_ASSERT_NOT_REACHED();
@@ -2683,8 +2880,13 @@ private:
             m_columnToIndex.append(index);
         }
         BitMatrixLiveness<TmpBoundaryRows> liveness(m_code, BlockFacts { m_blockEnds.span(), m_exposedUses.span(), m_defsInBlocks.span(), m_usesAtTails.span(), m_crossesBoundary.span(), indexToColumn.span(), static_cast<unsigned>(m_columnToIndex.size()) });
+        // A Tmp that counts as live in a gap costs a register there, and no more.
+        liveness.countGapsAsLivePast(m_tailPoints[m_code.size() - 1] / PointOffsets::PointsPerInst * m_code.proc().limit(Limit::MaxBoundaryIndicesPerInst));
         liveness.compute();
         RELEASE_ASSERT(liveness.status() == BitMatrixLivenessStatus::Solved);
+        m_countsGapsAsLive = liveness.hasCountedGapsAsLive();
+        if (m_countsGapsAsLive)
+            m_code.proc().didReachLimit(Limit::MaxBoundaryIndicesPerInst);
 
         Vector<Piece> pieceStore;
         unsigned pieceCapacity = m_numberOfLinearIndices + m_numberOfLinearIndices / 2 + 8 * m_occupancy.numberOfClobberPoints() + 16;
@@ -2796,6 +2998,8 @@ private:
             ASSERT(inst.args()[0].isTmp() && inst.args()[1].isTmp());
             addMaybeCoalescable(inst.args()[0].tmp(), inst.args()[1].tmp(), block);
         }
+        for (Tmp tmp : m_tmpsWithCoalescables)
+            m_map[tmp].coalescables.mergeDuplicates();
 
         Point funcEndPoint = m_tailPoints[m_code.size() - 1];
         m_code.pinnedRegisters().forEachReg([&](Reg reg) {
@@ -2933,6 +3137,7 @@ private:
             m_map[tmpForLinearIndex(index)].liveRange = LiveRange(first, nextInterval - first, size);
         }
         m_intervalArena.tryResizeInPlace(allIntervals, numberOfPieces, nextInterval - allIntervals);
+        pruneCoalescablesAtDefsSetAside();
 
         m_columnToIndex.clear();
         m_crossesBoundary.clear();
@@ -2957,6 +3162,8 @@ private:
                 RELEASE_ASSERT(m_map[tmp].liveRange.contains(head));
             }
         }
+        if (m_countsGapsAsLive)
+            return;
         m_code.forEachTmp([&](Tmp tmp) {
             const LiveRange& liveRange = m_map[tmp].liveRange;
             forEachBlockInLiveRange(liveRange, [&](BasicBlock* block) {
@@ -2972,6 +3179,10 @@ private:
         if (defData.coalescables.isEmpty())
             return;
         Tmp movSrc = mayBeCoalescable(inst) ? inst.args()[0].tmp() : Tmp();
+        if (defData.coalescables.size() > Coalescables::maxSizeWalked) {
+            m_defsSetAside.append({ def, movSrc, point });
+            return;
+        }
         defData.coalescables.removeAllMatching([&](Tmp tmp) {
             ASSERT(tmp != def);
             if (tmp == movSrc)
@@ -2985,9 +3196,56 @@ private:
                     return false;
             }
             dataLogLnIf(verbose(), "Pruning affinity ", def, " ", tmp);
-            m_map[tmp].coalescables.remove(def);
+            Coalescables& coalescablesOfTmp = m_map[tmp].coalescables;
+            if (coalescablesOfTmp.size() > Coalescables::maxSizeWalked)
+                m_removalsSetAside.append({ tmp, def });
+            else
+                coalescablesOfTmp.remove(def);
             return true;
         });
+    }
+
+    // A long list is gone through once for all that leave it. It stays long until then, so its Tmp's defs are all set aside.
+    void removeCoalescablesSetAside()
+    {
+        std::ranges::sort(m_removalsSetAside, { }, [](const RemovalSetAside& removal) { return std::pair { removal.from.internalValue(), removal.partner.internalValue() }; });
+        for (std::span<const RemovalSetAside> rest = m_removalsSetAside.span(); !rest.empty();) {
+            Tmp from = rest.front().from;
+            size_t count = std::ranges::find_if(rest, [&](const RemovalSetAside& other) { return other.from != from; }) - rest.begin();
+            std::span<const RemovalSetAside> removals = rest.first(count);
+            rest = rest.subspan(count);
+            m_map[from].coalescables.removeAllMatching([&](Tmp tmp) {
+                return std::ranges::binary_search(removals, tmp.internalValue(), { }, [](const RemovalSetAside& removal) { return removal.partner.internalValue(); });
+            });
+        }
+        m_removalsSetAside.clear();
+    }
+
+    // Each partner looks for a def in its own live range, in place of each def looking at every partner.
+    void pruneCoalescablesAtDefsSetAside()
+    {
+        removeCoalescablesSetAside();
+        std::ranges::sort(m_defsSetAside, { }, [](const DefSetAside& def) { return std::pair { def.tmp.internalValue(), def.point }; });
+        for (std::span<const DefSetAside> rest = m_defsSetAside.span(); !rest.empty();) {
+            Tmp def = rest.front().tmp;
+            size_t count = std::ranges::find_if(rest, [&](const DefSetAside& other) { return other.tmp != def; }) - rest.begin();
+            std::span<const DefSetAside> defs = rest.first(count);
+            rest = rest.subspan(count);
+            m_map[def].coalescables.removeAllMatching([&](Tmp tmp) {
+                for (const Interval& interval : m_map[tmp].liveRange.intervals()) {
+                    for (auto at = std::ranges::lower_bound(defs, interval.begin(), { }, &DefSetAside::point); at != defs.end() && at->point < interval.end(); ++at) {
+                        if (at->movSrc == tmp)
+                            continue;
+                        dataLogLnIf(verbose(), "Pruning affinity ", def, " ", tmp);
+                        m_removalsSetAside.append({ tmp, def });
+                        return true;
+                    }
+                }
+                return false;
+            });
+        }
+        m_defsSetAside.clear();
+        removeCoalescablesSetAside();
     }
 
     Inst& instAtOrdinal(unsigned ordinal)
@@ -3626,7 +3884,7 @@ private:
             // Sort coalescables for binary search in Coalescables::contains.
             data.coalescables.sort<bank>();
             for (auto& with : data.coalescables) {
-                if (tmp.tmpIndex(bank) < with.tmp.tmpIndex(bank))
+                if (tmp.tmpIndex(bank) < with.tmp.tmpIndex(bank) && m_map.get<bank>(with.tmp).stage == Stage::New)
                     moves.append({ tmp, with.tmp, with.moveCost });
             }
         }
@@ -3671,7 +3929,7 @@ private:
     {
         if (!Options::airValidateGreedRegAlloc())
             return;
-        bool anyFailures = false;
+        size_t failureCount = 0;
 
         auto isSameGroupMove = [&](Inst& inst) {
             if (!mayBeCoalescable(inst))
@@ -3699,13 +3957,12 @@ private:
                 for (Tmp live : localCalc.live()) {
                     if (live == tmp || live.isReg())
                         continue;
-                    if (tmpToGroup[live] == groupIdx) {
+                    if (tmpToGroup[live] == groupIdx && failureCount++ < maxValidationFailuresListed) {
                         dataLogLn("AIR GREEDY COALESCING VALIDATION FAILURE");
                         dataLogLn("   In BB", *block, " at inst ", instIndex, ": ", inst);
                         dataLogLn("   Non-move ", earlyDefs ? "early" : "late", " def of group member ", tmp);
                         dataLogLn("   But group member ", live, " is simultaneously live");
                         dataLogLn("   Group: ", groups[groupIdx]);
-                        anyFailures = true;
                     }
                 }
             });
@@ -3722,7 +3979,8 @@ private:
                 checkDefs(block, instIndex, localCalc, true);
             }
         }
-        if (anyFailures) {
+        if (failureCount) {
+            reportValidationFailuresNotListed(failureCount);
             dataLogLn("IR:\n", m_code);
             dataLogLn("State:\n", *this);
             RELEASE_ASSERT_NOT_REACHED();
@@ -4076,6 +4334,10 @@ private:
             return;
         if (tryAllocateFreshCalleeSave<bank>(tmp, tmpData))
             return;
+        if (tryTakeRegisterOfTmpsCheaperOnStack<bank>(tmp, tmpData))
+            return;
+        if (tryTakeRegisterOfUnusedTmps<bank>(tmp, tmpData))
+            return;
         ASSERT(queueContainsOnlySpills());
         spill(tmp, tmpData);
     }
@@ -4164,6 +4426,34 @@ private:
         }
     }
 
+    // What notifyNeighbors() said no longer holds.
+    void takeBackFromNeighbors(Tmp tmp, TmpData& tmpData, Reg reg)
+    {
+        for (Tmp neighbour : tmpData.neighbours) {
+            if (!neighbour)
+                continue;
+            TmpData& neighbourData = m_map[neighbour];
+            bool isNamedByAnother = false;
+            for (Tmp other : neighbourData.neighbours)
+                isNamedByAnother |= other && other != tmp && m_map[other].assigned == reg;
+            if (!isNamedByAnother)
+                neighbourData.forgetWeightlessWishFor(reg);
+        }
+    }
+
+    // In the register of its other half, a half of a cut live range needs no move in the Shuffles between the two.
+    float wishFor(const TmpData& tmpData, Reg reg)
+    {
+        float wish = tmpData.wishFor(reg);
+        if (!tmpData.frequencyOfCuts)
+            return wish;
+        for (Tmp neighbour : tmpData.neighbours) {
+            if (neighbour && m_map[neighbour].assigned == reg)
+                return wish + tmpData.frequencyOfCuts;
+        }
+        return wish;
+    }
+
     template <Bank bank>
     bool tryAllocate(Tmp tmp, TmpData& tmpData)
     {
@@ -4193,7 +4483,7 @@ private:
         if (m_registerPolicy.evictsHolderOfPreferredRegister && !m_isEvictingHolder && tmpData.spillability != TmpData::Spillability::Unspillable) {
             auto holderCandidates = m_occupancy.candidatesFor(tmpData, RegisterOccupancy::FailureMemo::None, RegisterOccupancy::Clobbers::Exclude);
             auto tryEvictHolder = [&](Reg r) {
-                float wish = tmpData.wishFor(r);
+                float wish = r ? wishFor(tmpData, r) : 0;
                 if (!r || !(wish > 0) || !holderCandidates.contains(r))
                     return false;
                 Tmp holder;
@@ -4209,11 +4499,15 @@ private:
                 if (!isPossible || !holder)
                     return false;
                 TmpData& holderData = m_map.get<bank>(holder);
-                if (holderData.spillability == TmpData::Spillability::Unspillable || holderData.stage != Stage::Assigned || holderData.wishFor(r) >= wish)
+                if (holderData.spillability == TmpData::Spillability::Unspillable || holderData.stage != Stage::Assigned || wishFor(holderData, r) >= wish)
+                    return false;
+                // One move less at a cut is not worth a move more for the holder.
+                if (!(tmpData.wishFor(r) > 0) && wishFor(holderData, r) > 0)
                     return false;
                 Stage stage = tmpData.stage;
                 uint32_t holderFailedAtEpoch = holderData.allocationFailedAtEpoch;
                 evict(holder, holderData, r);
+                takeBackFromNeighbors(holder, holderData, r);
                 assign(tmp, tmpData, r);
                 m_isEvictingHolder = true;
                 bool isMoved = tryAllocate<bank>(holder, holderData);
@@ -4382,7 +4676,13 @@ private:
             if (tryAllocateFreshCalleeSave<bank>(tmp, tmpData))
                 return true;
         }
+        if (tmpData.isOnlyReadAtSomeClobber && trySplitAroundClobbers<bank>(tmp, tmpData, true, ClobbersThatRead::AreSplitAround))
+            return true;
         if (trySplitAroundLoop<bank>(tmp, tmpData))
+            return true;
+        if (tryTakeRegisterOfTmpsCheaperOnStack<bank>(tmp, tmpData))
+            return true;
+        if (tryTakeRegisterOfUnusedTmps<bank>(tmp, tmpData))
             return true;
         return trySplitIntraBlock<bank>(tmp, tmpData);
     }
@@ -4597,6 +4897,363 @@ private:
         return true;
     }
 
+    struct BlocksOnStack {
+        Tmp tmp;
+        Vector<unsigned, 8> blocks;
+    };
+
+    static bool containsPoint(const LiveRange& range, Point point)
+    {
+        auto intervals = range.intervals().span();
+        auto next = std::ranges::upper_bound(intervals, point, { }, [](const Interval& interval) {
+            return interval.begin();
+        });
+        return next != intervals.begin() && point < std::prev(next)->end();
+    }
+
+    static bool canPlaceMovesBetween(BasicBlock* from, BasicBlock* to)
+    {
+        return from->last().kind.opcode != Patch && !to->at(0).clobbersAtBlockEntry();
+    }
+
+    static bool endsInLoneJump(BasicBlock* block)
+    {
+        return block->numSuccessors() == 1 && block->last().kind.opcode == Jump;
+    }
+
+    static double shareOfFrequency(BasicBlock* from, BasicBlock* to)
+    {
+        constexpr WTF::FrequencyEstimatorConstants constants;
+        double all = 0;
+        double taken = 0;
+        for (const FrequentedBlock& edge : from->successors()) {
+            double share = edge.isRare() ? constants.rareEdgeShare : edge.frequency() == FrequencyClass::Unlikely ? constants.unlikelyEdgeShare : 1;
+            all += share;
+            if (edge.block() == to)
+                taken += share;
+        }
+        return taken / all;
+    }
+
+    float costOfMoveBetween(BasicBlock* from, BasicBlock* to)
+    {
+        if (!canPlaceMovesBetween(from, to))
+            return std::numeric_limits<float>::infinity();
+        float frequency = std::min<float>(adjustedBlockFrequency(from) * shareOfFrequency(from, to), adjustedBlockFrequency(to));
+        return endsInLoneJump(from) || to->numPredecessors() == 1 ? frequency : 2 * frequency;
+    }
+
+    // The blocks of `blocks`, which are in the order of the code, that `other` is live in. Nothing where it is named in one of them, or the moves cost `limit` or more.
+    template<Bank bank>
+    std::optional<Vector<unsigned, 8>> findBlocksToPassOnStack(Tmp other, const Vector<unsigned, 16>& blocks, const BitVector& isAmongBlocks, float limit, float& cost)
+    {
+        TmpData& otherData = m_map.get<bank>(other);
+        auto intervals = otherData.liveRange.intervals().span();
+        auto useDefs = useDefsOf(other);
+        size_t intervalIndex = 0;
+        size_t useDefIndex = 0;
+        Vector<unsigned, 8> result;
+        for (unsigned blockIndex : blocks) {
+            BasicBlock* block = m_code[blockIndex];
+            Point head = positionOfHead(block);
+            Point tail = positionOfTail(block);
+            while (intervalIndex < intervals.size() && intervals[intervalIndex].end() <= head)
+                ++intervalIndex;
+            if (intervalIndex == intervals.size())
+                break;
+            if (intervals[intervalIndex].begin() > tail)
+                continue;
+            if (intervals[intervalIndex].begin() > head || intervals[intervalIndex].end() <= tail)
+                return std::nullopt;
+            while (useDefIndex < useDefs.size() && useDefs[useDefIndex] < head)
+                ++useDefIndex;
+            if (useDefIndex < useDefs.size() && useDefs[useDefIndex] <= tail)
+                return std::nullopt;
+            result.append(blockIndex);
+        }
+        for (unsigned blockIndex : result) {
+            BasicBlock* block = m_code[blockIndex];
+            for (BasicBlock* predecessor : block->predecessors()) {
+                if (!isAmongBlocks.quickGet(predecessor->index()))
+                    cost += costOfMoveBetween(predecessor, block);
+            }
+            BasicBlock* previous = nullptr;
+            for (BasicBlock* successor : block->successorBlocks()) {
+                if (successor != std::exchange(previous, successor) && !isAmongBlocks.quickGet(successor->index()) && containsPoint(otherData.liveRange, positionOfHead(successor)))
+                    cost += costOfMoveBetween(block, successor);
+            }
+            if (cost >= limit)
+                return std::nullopt;
+        }
+        return result;
+    }
+
+    struct Cycles {
+        explicit Cycles(Code& code)
+            : forest(code.cfg(), [](std::span<BasicBlock* const> members, const auto&, const auto&) { return members[0]; })
+            , blocks(forest.size())
+            , namedTmps(forest.size())
+            , likelyBlocks(forest.size())
+        {
+            for (BasicBlock* block : code) {
+                for (unsigned cycle = forest.innermost(block); cycle != forest.none; cycle = forest[cycle].parent)
+                    blocks[cycle].append(block->index());
+            }
+        }
+
+        bool names(Code& code, unsigned cycle, Tmp tmp)
+        {
+            NamedTmps& named = namedTmps[cycle];
+            if (!named.numberOfTmps[GP] && !named.numberOfTmps[FP]) {
+                forEachBank([&](Bank bank) {
+                    named.numberOfTmps[bank] = code.numTmps(bank);
+                    named[bank].ensureSize(code.numTmps(bank));
+                });
+                for (unsigned blockIndex : blocks[cycle]) {
+                    for (Inst& inst : *code[blockIndex]) {
+                        inst.forEachTmpFast([&](Tmp& mentioned) {
+                            if (!mentioned.isReg())
+                                named[mentioned.bank()].quickSet(mentioned.tmpIndex());
+                        });
+                    }
+                }
+            }
+            return tmp.tmpIndex() >= named.numberOfTmps[tmp.bank()] || named[tmp.bank()].quickGet(tmp.tmpIndex());
+        }
+
+        // Whether a turn of the innermost cycle around the block gets there from the head without taking a rare edge. A cycle inside is left sooner or later, however its ways out are marked,
+        // and in code that is rare itself every edge is marked: an edge counts as rare only beside one that is not.
+        bool isLikelyInItsCycle(Code& code, BasicBlock* block)
+        {
+            unsigned cycle = forest.innermost(block);
+            if (cycle == forest.none)
+                return false;
+            BitVector& likely = likelyBlocks[cycle];
+            if (!hasLikelyBlocks.get(cycle)) {
+                hasLikelyBlocks.set(cycle);
+                likely.ensureSize(code.size());
+                Vector<BasicBlock*, 8> worklist { forest[cycle].header() };
+                likely.quickSet(worklist[0]->index());
+                while (!worklist.isEmpty()) {
+                    BasicBlock* from = worklist.takeLast();
+                    unsigned inner = forest.innermost(from);
+                    bool everyEdgeIsRare = std::ranges::all_of(from->successors(), [](const FrequentedBlock& successor) { return successor.isRare(); });
+                    for (FrequentedBlock& successor : from->successors()) {
+                        bool leavesCycleInside = inner != cycle && !forest.contains(inner, successor.block());
+                        if ((!successor.isRare() || everyEdgeIsRare || leavesCycleInside) && forest.contains(cycle, successor.block()) && !likely.quickSet(successor.block()->index()))
+                            worklist.append(successor.block());
+                    }
+                }
+            }
+            return likely.quickGet(block->index());
+        }
+
+        struct NamedTmps {
+            BitVector& operator[](Bank bank) { return tmps[bank]; }
+
+            std::array<BitVector, numBanks> tmps;
+            std::array<unsigned, numBanks> numberOfTmps { };
+        };
+
+        WTF::CycleForest<CFG> forest;
+        Vector<Vector<unsigned>> blocks;
+        Vector<NamedTmps> namedTmps;
+        Vector<BitVector> likelyBlocks;
+        BitVector hasLikelyBlocks;
+    };
+
+    // In a loop a Tmp competes with Tmps that the loop never names, and they bring the weight of their uses elsewhere.
+    // Those go to the stack in the loop and wherever else this one lives, if the moves at the borders run less often than the loads and stores of a spill.
+    template<Bank bank>
+    bool tryTakeRegisterOfUnusedTmps(Tmp tmp, TmpData& tmpData)
+    {
+        if (!m_splitPolicy.keepsUnusedTmpsOnStackThroughLoops || isConstDef<bank>(tmp))
+            return false;
+        CostOfSpill spill = costOfSpill(tmp);
+        if (!spill.mostFrequentBlock)
+            return false;
+        if (!m_cycles)
+            m_cycles.emplace(m_code);
+        unsigned cycle = m_cycles->forest.innermost(spill.mostFrequentBlock);
+        if (cycle == m_cycles->forest.none)
+            return false;
+
+        Vector<unsigned, 16> blocks;
+        BitVector isAmongBlocks;
+        auto findBlocks = [&] {
+            if (!blocks.isEmpty())
+                return;
+            isAmongBlocks.ensureSize(m_code.size());
+            for (unsigned blockIndex : m_cycles->blocks[cycle]) {
+                isAmongBlocks.quickSet(blockIndex);
+                blocks.append(blockIndex);
+            }
+            size_t numberOfBlocksInCycle = blocks.size();
+            forEachBlockInLiveRange(tmpData.liveRange, [&](BasicBlock* block) {
+                if (!isAmongBlocks.quickSet(block->index()))
+                    blocks.append(block->index());
+                return IterationStatus::Continue;
+            });
+            std::ranges::inplace_merge(blocks, blocks.begin() + numberOfBlocksInCycle);
+            ASSERT(std::ranges::is_sorted(blocks));
+        };
+        auto passesThroughBlockWhereTheyMeet = [&](Tmp other, const Interval& intervalOfOther) {
+            TmpData& otherData = m_map.get<bank>(other);
+            if (otherData.stage != Stage::Assigned || otherData.spillability != TmpData::Spillability::Spillable || otherData.splitFrom || isConstDef<bank>(other))
+                return false;
+            auto intervals = tmpData.liveRange.intervals().span();
+            auto first = std::ranges::upper_bound(intervals, intervalOfOther.begin(), { }, [](const Interval& interval) {
+                return interval.end();
+            });
+            ASSERT(first != intervals.end() && first->begin() < intervalOfOther.end());
+            BasicBlock* block = findBlockContainingPoint(std::max(first->begin(), intervalOfOther.begin()));
+            Point head = positionOfHead(block);
+            Point tail = positionOfTail(block);
+            if (intervalOfOther.begin() > head || intervalOfOther.end() <= tail)
+                return false;
+            auto useDefs = useDefsOf(other);
+            auto next = std::ranges::lower_bound(useDefs, head);
+            return next == useDefs.end() || *next > tail;
+        };
+
+        const float splitMultiplier = m_splitPolicy.splitMultiplier;
+        float leastCost = spill.frequency;
+        if (splitMultiplier > 0.0)
+            leastCost /= splitMultiplier;
+        Reg bestReg;
+        Vector<BlocksOnStack, 2> best;
+        Width width = widthForConflicts<bank>(tmp);
+        m_visited.resize(m_code.numTmps(bank));
+        auto candidates = m_occupancy.candidatesFor(tmpData, RegisterOccupancy::FailureMemo::None, RegisterOccupancy::Clobbers::Exclude);
+        for (Reg reg : m_allowedRegistersInPriorityOrder[bank]) {
+            if (!candidates.contains(reg))
+                continue;
+            float cost = 0;
+            bool isPossible = true;
+            Vector<BlocksOnStack, 2> others;
+            m_visited.clear();
+            m_occupancy.forEachTmpConflict(reg, tmpData.liveRange, width, [&](auto& conflict) -> IterationStatus {
+                if (!conflict.tmp.isReg() && !m_cycles->names(m_code, cycle, conflict.tmp)) {
+                    unsigned index = conflict.tmp.tmpIndex(bank);
+                    if (m_visited.contains(index))
+                        return IterationStatus::Continue;
+                    m_visited.add(index);
+                    if (passesThroughBlockWhereTheyMeet(conflict.tmp, conflict.interval)) {
+                        findBlocks();
+                        if (auto blocksOnStack = findBlocksToPassOnStack<bank>(conflict.tmp, blocks, isAmongBlocks, leastCost, cost)) {
+                            others.append({ conflict.tmp, WTF::move(*blocksOnStack) });
+                            return IterationStatus::Continue;
+                        }
+                    }
+                }
+                isPossible = false;
+                return IterationStatus::Done;
+            });
+            if (!isPossible || others.isEmpty() || cost >= leastCost)
+                continue;
+            leastCost = cost;
+            bestReg = reg;
+            best = WTF::move(others);
+        }
+        if (!bestReg)
+            return false;
+
+        for (BlocksOnStack& other : best) {
+            TmpData& otherData = m_map.get<bank>(other.tmp);
+            LiveRange rangeOnStack;
+            for (unsigned blockIndex : other.blocks)
+                rangeOnStack.append(m_intervalArena, Interval(positionOfHead(m_code[blockIndex]), positionOfTail(m_code[blockIndex]) + 1));
+            evict(other.tmp, otherData, bestReg);
+            otherData.setLiveRange(LiveRange::subtract(m_intervalArena, otherData.liveRange, rangeOnStack));
+            otherData.isOnStackInSomeBlocks = true;
+            ensureSpillSlotTableEntry(otherData);
+            assign(other.tmp, otherData, bestReg);
+            dataLogLnIf(verbose(), "On the stack where ", tmp, " lives: ", other.tmp, " in blocks ", listDump(other.blocks));
+            m_blocksOnStack.append(WTF::move(other));
+        }
+        assign(tmp, tmpData, bestReg);
+        return true;
+    }
+
+    void insertMovesOfTmpsOnStack(BlockInsertionSet& blockInsertionSet)
+    {
+        if (m_blocksOnStack.isEmpty())
+            return;
+
+        struct MoveOnEdge {
+            BasicBlock* from;
+            BasicBlock* to;
+            Inst move;
+        };
+        Vector<MoveOnEdge, 8> stores;
+        Vector<MoveOnEdge, 8> loads;
+        std::ranges::stable_sort(m_blocksOnStack, { }, [](const BlocksOnStack& entry) {
+            return entry.tmp.internalValue();
+        });
+        for (size_t first = 0; first < m_blocksOnStack.size();) {
+            Tmp tmp = m_blocksOnStack[first].tmp;
+            Vector<unsigned, 8> blocks;
+            for (; first < m_blocksOnStack.size() && m_blocksOnStack[first].tmp == tmp; ++first)
+                blocks.appendVector(m_blocksOnStack[first].blocks);
+            TmpData& tmpData = m_map[tmp];
+            if (tmpData.stage == Stage::Spilled)
+                continue;
+            RELEASE_ASSERT(tmpData.stage == Stage::Assigned);
+            StackSlot*& slot = m_spillSlotTable[tmpData.spillSlotTableIndex];
+            if (!slot)
+                slot = m_code.addStackSlot(stackSlotMinimumWidth(m_tmpWidth.requiredWidth(tmp)), StackSlotKind::Spill);
+            Opcode move = moveOpcode(tmp);
+            std::ranges::sort(blocks);
+            auto isOnStackIn = [&](BasicBlock* block) {
+                return std::ranges::binary_search(blocks, block->index());
+            };
+            for (unsigned blockIndex : blocks) {
+                BasicBlock* block = m_code[blockIndex];
+                for (BasicBlock* predecessor : block->predecessors()) {
+                    if (!isOnStackIn(predecessor))
+                        stores.append({ predecessor, block, Inst(move, predecessor->last().origin, tmp, Arg::stack(slot)) });
+                }
+                Vector<BasicBlock*, 2> successors;
+                for (BasicBlock* successor : block->successorBlocks()) {
+                    if (successors.contains(successor) || isOnStackIn(successor) || !containsPoint(tmpData.liveRange, positionOfHead(successor)))
+                        continue;
+                    successors.append(successor);
+                    loads.append({ block, successor, Inst(move, block->last().origin, Arg::stack(slot), tmp) });
+                }
+            }
+        }
+
+        // Where one Tmp leaves a register to the stack and another comes back into that register, the store is first.
+        HashMap<std::pair<unsigned, unsigned>, BasicBlock*> blocksOnEdges;
+        auto place = [&](MoveOnEdge& entry, InsertionPhase phaseAtTail, InsertionPhase phaseAtHead) {
+            auto [from, to, move] = WTF::move(entry);
+            if (endsInLoneJump(from)) {
+                insertInst(from, from->size() - 1, phaseAtTail, WTF::move(move));
+                return;
+            }
+            if (to->numPredecessors() == 1) {
+                insertInst(to, 0, phaseAtHead, WTF::move(move));
+                return;
+            }
+            BasicBlock* block = blocksOnEdges.ensure({ from->index() + 1, to->index() + 1 }, [&] {
+                double frequency = std::min(from->frequency() * shareOfFrequency(from, to), to->frequency());
+                BasicBlock* added = to == m_code[0] ? blockInsertionSet.insertAfter(from, frequency) : blockInsertionSet.insertBefore(to, frequency);
+                added->append(Jump, move.origin);
+                added->setSuccessors(FrequentedBlock(to));
+                for (FrequentedBlock& edge : from->successors()) {
+                    if (edge.block() == to)
+                        edge.block() = added;
+                }
+                return added;
+            }).iterator->value;
+            block->insts().insert(block->size() - 1, WTF::move(move));
+        };
+        for (MoveOnEdge& store : stores)
+            place(store, ClobberMoveFrom, SpillMoveTo);
+        for (MoveOnEdge& load : loads)
+            place(load, AroundLoopEntryFixup, AroundLoopExitFixup);
+    }
+
     bool isLiveIntoBlockEntryClobbers(BasicBlock* block, const LiveRange& liveRange)
     {
         for (BasicBlock* successor : block->successorBlocks()) {
@@ -4606,8 +5263,251 @@ private:
         return false;
     }
 
+    // What an instruction has read by the time it clobbers a register may stay in that register up to the instruction. The moves around such an
+    // instruction take more room than a callee save, so this is for a Tmp that would be spilled otherwise.
+    enum class ClobbersThatRead : bool { StopSplit, AreSplitAround };
+
+    float frequencyOfAllInsts()
+    {
+        if (!m_frequencyOfAllInsts) {
+            for (BasicBlock* block : m_code)
+                m_frequencyOfAllInsts += adjustedBlockFrequency(block) * block->size();
+        }
+        return m_frequencyOfAllInsts;
+    }
+
+    uint64_t regsClobberedAtCalls(Bank bank)
+    {
+        RegisterSet calleeSaves = RegisterSet::calleeSaveRegisters();
+        calleeSaves.exclude(m_code.unsavedCalleeSaves());
+        uint64_t result = 0;
+        for (Reg reg : m_allowedRegistersInPriorityOrder[bank]) {
+            if (!calleeSaves.contains(reg, IgnoreVectors))
+                result |= 1ULL << reg.index();
+        }
+        return result & m_occupancy.allClobberedRegs();
+    }
+
+    // A spilled Tmp costs an instruction for each stretch of a block, from one call to the next, in which some instruction cannot take it from the
+    // stack. A split one costs two at each clobber. The split has to run shorter, and where it is the longer of the two, by a larger factor than
+    // the function grows.
+    struct CostOfSpill {
+        size_t insts { 0 };
+        float frequency { 0 };
+        // A stretch that reads the Tmp first takes a load, and one that writes it a store.
+        float frequencyOfLoadsAndStores { 0 };
+        // Asked only once the cycles are known.
+        bool costsInLikelyBlockOfCycle { false };
+        BasicBlock* mostFrequentBlock { nullptr };
+    };
+
+    bool needsRegisterIn(Tmp tmp, Inst& inst)
+    {
+        if (isLargeInst(inst))
+            return false;
+        bool result = false;
+        inst.forEachArg([&](Arg& arg, Arg::Role role, Bank, Width) {
+            if (arg.isTmp())
+                result |= arg.tmp() == tmp && !Arg::isColdUse(role) && !admitsStack(inst, arg);
+            else
+                result |= arg.usesTmp(tmp);
+        });
+        return result;
+    }
+
+    // A move to or from the stack is a store or a load, where a move between two Tmps may get one register for both and go.
+    bool isOnlyReadInPlaceBy(Tmp tmp, Inst& inst)
+    {
+        if (isLargeInst(inst))
+            return true;
+        bool isMove = inst.kind.opcode == Move || inst.kind.opcode == Move32 || inst.kind.opcode == MoveFloat || inst.kind.opcode == MoveDouble;
+        bool result = true;
+        inst.forEachArg([&](Arg& arg, Arg::Role role, Bank, Width) {
+            if (!arg.isTmp())
+                result &= !arg.usesTmp(tmp);
+            else if (arg.tmp() == tmp && !Arg::isColdUse(role))
+                result &= !isMove && !Arg::isAnyDef(role) && admitsStack(inst, arg);
+        });
+        return result;
+    }
+
+    bool isInCycle(BasicBlock* block, unsigned cycle)
+    {
+        for (unsigned inner = m_cycles->forest.innermost(block); inner != m_cycles->forest.none; inner = m_cycles->forest[inner].parent) {
+            if (inner == cycle)
+                return true;
+        }
+        return false;
+    }
+
+    // With a cycle: what the blocks of that cycle alone cost.
+    CostOfSpill costOfSpill(Tmp tmp, std::optional<unsigned> cycle = std::nullopt)
+    {
+        ensureUseDefLists();
+        uint64_t clobberedAtCalls = regsClobberedAtCalls(tmp.bank());
+        CostOfSpill result;
+        BasicBlock* previousBlock = nullptr;
+        Point previousPoint = 0;
+        bool isStoredInStretch = false;
+        for (Point point : useDefsOf(tmp)) {
+            BasicBlock* block = findBlockContainingPoint(point);
+            if (cycle && !isInCycle(block, *cycle))
+                continue;
+            Inst& inst = block->at(instIndex(positionOfHead(block), point));
+            if (m_cycles && !result.costsInLikelyBlockOfCycle && m_cycles->isLikelyInItsCycle(m_code, block))
+                result.costsInLikelyBlockOfCycle = !isOnlyReadInPlaceBy(tmp, inst);
+            if (!needsRegisterIn(tmp, inst))
+                continue;
+            bool isInSameStretch = block == previousBlock && (!clobberedAtCalls || !m_occupancy.hasPointClobberingAll(clobberedAtCalls, Interval(previousPoint, point)));
+            previousBlock = block;
+            previousPoint = point;
+            bool reads = false;
+            bool writes = false;
+            inst.forEachArg([&](Arg& arg, Arg::Role role, Bank, Width) {
+                if (!arg.isTmp())
+                    reads |= arg.usesTmp(tmp);
+                else if (arg.tmp() == tmp && !Arg::isColdUse(role) && !admitsStack(inst, arg)) {
+                    reads |= Arg::isAnyUse(role);
+                    writes |= Arg::isAnyDef(role);
+                }
+            });
+            if (!isInSameStretch) {
+                isStoredInStretch = false;
+                if (reads)
+                    result.frequencyOfLoadsAndStores += adjustedBlockFrequency(block);
+            }
+            if (writes && !std::exchange(isStoredInStretch, true))
+                result.frequencyOfLoadsAndStores += adjustedBlockFrequency(block);
+            if (isInSameStretch)
+                continue;
+            ++result.insts;
+            result.frequency += adjustedBlockFrequency(block);
+            if (!result.mostFrequentBlock || block->frequency() > result.mostFrequentBlock->frequency())
+                result.mostFrequentBlock = block;
+        }
+        return result;
+    }
+
+    // The lists of uses and definitions of the Tmps that the allocator was handed do not change, so each is asked once.
     template<Bank bank>
-    bool trySplitAroundClobbers(Tmp tmp, TmpData& tmpData, bool mayEvict = false)
+    CostOfSpill knownCostOfSpill(Tmp tmp)
+    {
+        Vector<std::optional<CostOfSpill>>& known = m_costsOfSpill[bank];
+        unsigned index = tmp.tmpIndex(bank);
+        if (index >= known.size()) {
+            if (!known.isEmpty())
+                return costOfSpill(tmp);
+            known.grow(m_code.numTmps(bank));
+        }
+        if (!known[index])
+            known[index] = costOfSpill(tmp);
+        return *known[index];
+    }
+
+    float frequencyOfLoadsAndStoresIfSpilledInCycle(Tmp tmp, unsigned cycle)
+    {
+        return m_frequencyIfSpilledInCycle.ensure({ static_cast<unsigned>(tmp.internalValue()), cycle + 1 }, [&] {
+            return costOfSpill(tmp, cycle).frequencyOfLoadsAndStores;
+        }).iterator->value;
+    }
+
+    // Who is evicted goes by a weight that counts every use. An instruction that reads its operand from the stack in place needs no load, so a Tmp that the likely blocks of every loop
+    // read only that way costs a turn nothing: a bound that the counter is compared with. It leaves its register to a Tmp of a loop whose loads and stores would run more often than its own,
+    // which all stand outside loops or behind rare edges. A loop that is entered rarely weighs little beside what stands around it, however many turns it takes, so the one that leaves
+    // has to be the cheaper one in the whole function, in the loop of the one that comes, and in its own.
+    template<Bank bank>
+    bool tryTakeRegisterOfTmpsCheaperOnStack(Tmp tmp, TmpData& tmpData)
+    {
+        if (!m_splitPolicy.spillsTmpsReadInPlaceFirst || isConstDef<bank>(tmp))
+            return false;
+        CostOfSpill ifSpilled = costOfSpill(tmp);
+        if (!ifSpilled.mostFrequentBlock)
+            return false;
+        if (!m_cycles)
+            m_cycles.emplace(m_code);
+        unsigned cycle = m_cycles->forest.innermost(ifSpilled.mostFrequentBlock);
+        if (cycle == m_cycles->forest.none)
+            return false;
+        float leastCostInCycle = costOfSpill(tmp, cycle).frequencyOfLoadsAndStores;
+        Reg bestReg;
+        Width width = widthForConflicts<bank>(tmp);
+        m_visited.resize(m_code.numTmps(bank));
+        auto candidates = m_occupancy.candidatesFor(tmpData, RegisterOccupancy::FailureMemo::None, RegisterOccupancy::Clobbers::Exclude);
+        for (Reg reg : m_allowedRegistersInPriorityOrder[bank]) {
+            if (!candidates.contains(reg))
+                continue;
+            float cost = 0;
+            float costInCycle = 0;
+            bool isPossible = true;
+            m_visited.clear();
+            m_occupancy.forEachTmpConflict(reg, tmpData.liveRange, width, [&](auto& conflict) -> IterationStatus {
+                if (!conflict.tmp.isReg() && m_visited.contains(conflict.tmp.tmpIndex(bank)))
+                    return IterationStatus::Continue;
+                isPossible = false;
+                if (conflict.tmp.isReg())
+                    return IterationStatus::Done;
+                m_visited.add(conflict.tmp.tmpIndex(bank));
+                TmpData& otherData = m_map.get<bank>(conflict.tmp);
+                if (otherData.stage != Stage::Assigned || otherData.spillability != TmpData::Spillability::Spillable || otherData.splitFrom || otherData.isOnStackInSomeBlocks || isConstDef<bank>(conflict.tmp))
+                    return IterationStatus::Done;
+                CostOfSpill otherIfSpilled = knownCostOfSpill<bank>(conflict.tmp);
+                if (otherIfSpilled.costsInLikelyBlockOfCycle)
+                    return IterationStatus::Done;
+                cost += otherIfSpilled.frequencyOfLoadsAndStores;
+                if (cost >= ifSpilled.frequencyOfLoadsAndStores)
+                    return IterationStatus::Done;
+                costInCycle += frequencyOfLoadsAndStoresIfSpilledInCycle(conflict.tmp, cycle);
+                if (costInCycle >= leastCostInCycle)
+                    return IterationStatus::Done;
+                unsigned cycleOfOther = otherIfSpilled.mostFrequentBlock ? m_cycles->forest.innermost(otherIfSpilled.mostFrequentBlock) : cycle;
+                if (cycleOfOther != cycle && cycleOfOther != m_cycles->forest.none && frequencyOfLoadsAndStoresIfSpilledInCycle(conflict.tmp, cycleOfOther) >= frequencyOfLoadsAndStoresIfSpilledInCycle(tmp, cycleOfOther))
+                    return IterationStatus::Done;
+                isPossible = true;
+                return IterationStatus::Continue;
+            });
+            if (!isPossible)
+                continue;
+            leastCostInCycle = costInCycle;
+            bestReg = reg;
+        }
+        if (!bestReg)
+            return false;
+
+        Vector<Tmp, 2> others;
+        m_occupancy.forEachTmpConflict(bestReg, tmpData.liveRange, width, [&](auto& conflict) -> IterationStatus {
+            if (!others.contains(conflict.tmp))
+                others.append(conflict.tmp);
+            return IterationStatus::Continue;
+        });
+        for (Tmp other : others)
+            evict(other, m_map.get<bank>(other), bestReg);
+        assign(tmp, tmpData, bestReg);
+        for (Tmp other : others) {
+            TmpData& otherData = m_map.get<bank>(other);
+            dataLogLnIf(verbose(), "Cheaper on the stack than ", tmp, ": ", other);
+            if (!tryAllocate<bank>(other, otherData))
+                spill(other, otherData);
+        }
+        return true;
+    }
+
+    bool splitIsWorthItsSize(Tmp tmp, UseDefCost splitCost, size_t numberOfSites)
+    {
+        CostOfSpill ifSpilled = costOfSpill(tmp);
+        size_t instsIfSpilled = ifSpilled.insts;
+        float frequencyIfSpilled = ifSpilled.frequency;
+        if (frequencyIfSpilled <= splitCost.value())
+            return false;
+        size_t instsIfSplit = 2 * numberOfSites;
+        if (instsIfSplit <= instsIfSpilled)
+            return true;
+        float shorterRun = (frequencyIfSpilled - splitCost.value()) / frequencyOfAllInsts();
+        float growth = static_cast<float>(instsIfSplit - instsIfSpilled) / m_mentions.numberOfInsts;
+        return shorterRun > growth;
+    }
+
+    template<Bank bank>
+    bool trySplitAroundClobbers(Tmp tmp, TmpData& tmpData, bool mayEvict = false, ClobbersThatRead clobbersThatRead = ClobbersThatRead::StopSplit)
     {
         if (tmpData.splitAroundClobbersMetadataIndex)
             return false; // Already split around clobbers
@@ -4615,6 +5515,16 @@ private:
             return false;
         if (tmpData.liveRange.size() < splitMinRangeSize)
             return false; // Not enough instructions to be worthwhile
+        // Each site gets a value of its own, with two moves. At one site no more values are held in registers than there are registers, so more than that many for each site
+        // are of no use: they are what is left of values that were split and then evicted, and there may be as many of those as there are values.
+        const float leastCostOfSite = m_splitPolicy.leastCostOfSplitAroundClobber;
+        size_t sitesLeft = std::numeric_limits<size_t>::max();
+        if (leastCostOfSite > 0 && m_occupancy.numberOfClobberPoints()) {
+            size_t mostGapTmps = m_allowedRegistersInPriorityOrder[bank].size() * m_occupancy.numberOfClobberPoints();
+            if (m_numberOfGapTmps[bank] >= mostGapTmps)
+                return false;
+            sitesLeft = mostGapTmps - m_numberOfGapTmps[bank];
+        }
 
         struct ClobberSite {
             Point point;
@@ -4637,6 +5547,18 @@ private:
             inst.forEachTmpFast([&](Tmp useOrDef) {
                 usesOrDefsTmp |= useOrDef == tmp;
             });
+            if (usesOrDefsTmp && m_splitPolicy.splitsAroundClobbersThatRead && pointAtOffset(point, PointOffsets::Late) == point) {
+                bool isOnlyReadEarly = true;
+                if (isLargeInst(inst))
+                    ensureUseDefLists();
+                forEachMention(tmp, pointAtOffset(point, PointOffsets::Pre), inst, [&](Tmp&, Arg::Role role) {
+                    isOnlyReadEarly &= !Arg::isAnyDef(role) && !Arg::isLateUse(role);
+                });
+                if (isOnlyReadEarly) {
+                    tmpData.isOnlyReadAtSomeClobber = true;
+                    usesOrDefsTmp = clobbersThatRead == ClobbersThatRead::StopSplit;
+                }
+            }
             usesOrDefsTmp |= inst.clobbersAtBlockEntry();
             usesOrDefsTmp |= inst.isTerminal() && isLiveIntoBlockEntryClobbers(block, tmpData.liveRange);
             ClobberSite site { point, adjustedBlockFrequency(block) * 2, usesOrDefsTmp };
@@ -4645,8 +5567,6 @@ private:
         };
         ASSERT(tmpData.spillCost() != unspillableCost); // Should have evicted.
         const bool spansStretches = m_splitPolicy.spansStretchesOfClobbers;
-        const uint64_t maxClobberSites = m_code.proc().limit(Limit::MaxClobberSitesPerSplit);
-        std::optional<Point> firstPointPastMaxClobberSites;
 
         Reg bestSplitReg;
         constexpr UseDefCost invalidSplitCost(std::numeric_limits<float>::infinity());
@@ -4657,13 +5577,22 @@ private:
         UseDefCost minSplitCost = splitCostLimit;
         Reg bestSplitRegWithEviction;
         UseDefCost minSplitCostWithEviction = splitCostLimit;
+        size_t numberOfSitesOfBest = 0;
+        size_t numberOfSitesOfBestWithEviction = 0;
         Width width = widthForConflicts<bank>(tmp);
         auto candidates = m_occupancy.candidatesFor(tmpData, RegisterOccupancy::FailureMemo::None, RegisterOccupancy::Clobbers::Ignore);
         for (Reg r : m_allowedRegistersInPriorityOrder[bank]) {
             if (!candidates.contains(r))
                 continue;
+            // A register with too many sites for what each costs at least is found by counting. Walking them would take the sites of the range for each value and register.
+            if (leastCostOfSite > 0 && m_occupancy.numberOfClobberPoints() >= AirLimits::minClobberPointsToCountPerRegister) {
+                double mostSites = std::max(minSplitCost, minSplitCostWithEviction).value() / leastCostOfSite;
+                size_t tooManySites = mostSites < static_cast<double>(sitesLeft) ? std::min(static_cast<size_t>(mostSites * 1.01) + 2 + AirLimits::clobberSitesWithoutLeastCost, sitesLeft + 1) : sitesLeft + 1;
+                if (m_occupancy.numberOfDeadClobbers(r, tmpData.liveRange, tooManySites) >= tooManySites)
+                    continue;
+            }
             UseDefCost splitCost(0);
-            unsigned numberOfClobbers = 0;
+            size_t numberOfSites = 0;
             nextClobberSite = 0;
             SpillCost evictionCost(0);
             bool evicts = false;
@@ -4675,10 +5604,7 @@ private:
                 [&](auto& conflict) -> IterationStatus {
                     if (conflict.tmp.isReg() && conflict.interval.distance() == 1) {
                         ClobberSite site = clobberSiteAt(conflict.interval.begin());
-                        bool isPastMaxClobberSites = !site.usesOrDefsTmp && m_splitPolicy.limitsClobberSitesPerSplit && ++numberOfClobbers > maxClobberSites;
-                        if (isPastMaxClobberSites && !firstPointPastMaxClobberSites)
-                            firstPointPastMaxClobberSites = site.point;
-                        if (site.usesOrDefsTmp || isPastMaxClobberSites) {
+                        if (site.usesOrDefsTmp || ++numberOfSites > sitesLeft) {
                             // If the inst that clobbers regs also use/def the tmp trying to be split, then
                             // can't split the tmp around this clobber.
                             // FIXME: could allow uses, but then we'd have to make split tmp conflict with any
@@ -4687,7 +5613,7 @@ private:
                             return IterationStatus::Done;
                         }
                         // Times 2 for 'MOV tmp, gapTmp' and 'MOV gapTmp, tmp'
-                        splitCost += UseDefCost(site.cost);
+                        splitCost += UseDefCost(numberOfSites > AirLimits::clobberSitesWithoutLeastCost ? std::max(site.cost, leastCostOfSite) : site.cost);
                         if (splitCost >= (evicts ? minSplitCostWithEviction : mayEvict ? std::max(minSplitCost, minSplitCostWithEviction) : minSplitCost))
                             return IterationStatus::Done; // Not the best or already over limit, exit early.
                         return IterationStatus::Continue;
@@ -4713,38 +5639,114 @@ private:
                 if (UseDefCost(0) < splitCost && splitCost < minSplitCostWithEviction) {
                     minSplitCostWithEviction = splitCost;
                     bestSplitRegWithEviction = r;
+                    numberOfSitesOfBestWithEviction = numberOfSites;
                 }
                 continue;
             }
             if (splitCost < minSplitCost) {
                 minSplitCost = splitCost;
                 bestSplitReg = r;
+                numberOfSitesOfBest = numberOfSites;
+            }
+        }
+        auto holeAround = [&](Interval conflict) {
+            return conflict | lateInterval(positionOfEarly(conflict)) | lateInterval(positionOfEarly(Interval(conflict.end() - 1)));
+        };
+        if (spansStretches && minSplitCost < splitCostLimit) {
+            for (Reg r : { tmpData.preferredReg, tmpData.secondPreferredReg }) {
+                if (!r || r == bestSplitReg || !candidates.contains(r) || minSplitCost >= UseDefCost(tmpData.wishFor(r)))
+                    continue;
+                UseDefCost splitCost(0);
+                size_t numberOfSites = 0;
+                unsigned numberOfMovesKept = 0;
+                bool isHeld = false;
+                size_t liveIndex = 0;
+                auto liveIntervals = tmpData.liveRange.intervals();
+                nextClobberSite = 0;
+                m_occupancy.forEachConflict(r, tmpData.liveRange, width,
+                    [&](auto& conflict) -> IterationStatus {
+                        bool stopsSplit = !conflict.tmp.isReg() || ++numberOfSites > numberOfSitesOfBest;
+                        float cost = 0;
+                        if (!stopsSplit && conflict.interval.distance() == 1) {
+                            ClobberSite site = clobberSiteAt(conflict.interval.begin());
+                            stopsSplit = site.usesOrDefsTmp;
+                            cost = site.cost;
+                        } else if (!stopsSplit) {
+                            isHeld = true;
+                            Interval hole = holeAround(conflict.interval);
+                            BasicBlock* block = findBlockContainingPoint(hole.begin());
+                            while (liveIndex < liveIntervals.size() && liveIntervals[liveIndex].end() <= hole.begin())
+                                ++liveIndex;
+                            stopsSplit = hole.end() - 1 > positionOfTail(block) || liveIndex == liveIntervals.size()
+                                || liveIntervals[liveIndex].begin() > pointAtOffset(hole.begin(), PointOffsets::Pre)
+                                || liveIntervals[liveIndex].end() <= pointAtOffset(hole.end() - 1, PointOffsets::Post);
+                            if (!stopsSplit) {
+                                Point head = positionOfHead(block);
+                                size_t first = this->instIndex(head, hole.begin());
+                                size_t last = this->instIndex(head, hole.end() - 1);
+                                stopsSplit = block->at(last).isTerminal();
+                                for (size_t index = first; index <= last; ++index) {
+                                    Inst& inst = block->at(index);
+                                    inst.forEachTmpFast([&](Tmp useOrDef) {
+                                        stopsSplit |= useOrDef == tmp;
+                                    });
+                                    stopsSplit |= inst.clobbersAtBlockEntry();
+                                }
+                                Inst& move = block->at(first);
+                                if (mayBeCoalescable(move) && move.args()[1].tmp() == Tmp(r) && !move.args()[0].tmp().isReg()) {
+                                    const TmpData& source = m_map[move.args()[0].tmp()];
+                                    numberOfMovesKept += !source.assigned && source.preferredReg == r;
+                                }
+                                cost = adjustedBlockFrequency(block) * 2;
+                            }
+                        }
+                        splitCost += UseDefCost(numberOfSites > AirLimits::clobberSitesWithoutLeastCost ? std::max(cost, leastCostOfSite) : cost);
+                        if (stopsSplit || numberOfMovesKept > 1 || minSplitCost < splitCost) {
+                            splitCost = invalidSplitCost;
+                            return IterationStatus::Done;
+                        }
+                        return IterationStatus::Continue;
+                    });
+                if (!isHeld || minSplitCost < splitCost)
+                    continue;
+                minSplitCost = splitCost;
+                bestSplitReg = r;
+                numberOfSitesOfBest = numberOfSites;
             }
         }
         if (minSplitCost >= splitCostLimit && bestSplitRegWithEviction) {
             minSplitCost = minSplitCostWithEviction;
             bestSplitReg = bestSplitRegWithEviction;
+            numberOfSitesOfBest = numberOfSitesOfBestWithEviction;
         }
-        if (minSplitCost >= splitCostLimit) {
-            if (firstPointPastMaxClobberSites)
-                m_code.proc().didReachLimit(Limit::MaxClobberSitesPerSplit, originAt(*firstPointPastMaxClobberSites));
+        if (minSplitCost >= splitCostLimit)
             return false; // No register found or better to spill than to split
-        }
         ASSERT(bestSplitReg);
+        if (clobbersThatRead == ClobbersThatRead::AreSplitAround && !splitIsWorthItsSize(tmp, minSplitCost, numberOfSitesOfBest))
+            return false;
 
         LiveRange holeRange;
+        Interval lastHole;
         m_occupancy.forEachConflict(bestSplitReg, tmpData.liveRange, width,
             [&](auto& conflict) -> IterationStatus {
                 if (!conflict.tmp.isReg())
                     return IterationStatus::Continue;
-                ASSERT(conflict.interval.distance() == 1);
+                ASSERT(spansStretches || conflict.interval.distance() == 1);
                 // Punched hole should always include the instructions late interval so the
                 // split tmp won't be modeled as conflicting with late defs.
-                Interval hole = conflict.interval | lateInterval(positionOfEarly(conflict.interval));
-                ASSERT(hole.distance() == 1 || hole.distance() == 2);
-                holeRange.append(m_intervalArena, hole);
+                Interval hole = holeAround(conflict.interval);
+                ASSERT(spansStretches || hole.distance() == 1 || hole.distance() == 2);
+                if (lastHole && hole.begin() <= lastHole.end()) {
+                    lastHole |= hole;
+                    return IterationStatus::Continue;
+                }
+                if (lastHole)
+                    holeRange.append(m_intervalArena, lastHole);
+                lastHole = hole;
                 return IterationStatus::Continue;
             });
+        if (lastHole)
+            holeRange.append(m_intervalArena, lastHole);
         if (spansStretches && holeRange.intervals().size() > 1) {
             LiveRange stretches;
             Interval stretch;
@@ -4761,7 +5763,8 @@ private:
                     return false;
                 Point head = positionOfHead(block);
                 size_t site = instIndex(head, hole.begin());
-                for (size_t index = instIndex(head, stretch.end() - 1) + 1; index < site; ++index) {
+                size_t end = clobbersThatRead == ClobbersThatRead::AreSplitAround ? site + 1 : site;
+                for (size_t index = instIndex(head, stretch.end() - 1) + 1; index < end; ++index) {
                     bool mentionsTmp = false;
                     block->at(index).forEachTmpFast([&](Tmp& named) {
                         mentionsTmp |= named == tmp;
@@ -4818,6 +5821,7 @@ private:
                 gapInterval = Interval(pointAtOffset(hole.begin(), PointOffsets::Pre), pointAtOffset(hole.end() - 1, PointOffsets::Post) + 1);
             Tmp gapTmp = addSplitTmp(tmp, UseDefCost(freq), gapInterval);
             metadata.splits.append({ gapTmp });
+            ++m_numberOfGapTmps[bank];
             m_map.get<bank>(gapTmp).spansStretch = hole.distance() > 2;
             setStageAndEnqueue(gapTmp, m_map.get<bank>(gapTmp), Stage::TryAllocate);
         }
@@ -5058,6 +6062,7 @@ private:
     struct ClusterGroup {
         BasicBlock* block { nullptr };
         Interval cluster;
+        Point firstDefPoint { 0 };
         Point lastDefPoint { 0 };
         unsigned ptrsEnd { 0 };
         unsigned coldUsePtrsEnd { 0 };
@@ -5118,8 +6123,11 @@ private:
                         }
                         mentions.ptrs.append(&t);
                         mentions.points.append(point);
-                        if (Arg::isAnyDef(role))
+                        if (Arg::isAnyDef(role)) {
+                            if (!group.firstDefPoint)
+                                group.firstDefPoint = early;
                             group.lastDefPoint = early; // Remember where the fixup store to spill is needed
+                        }
                         group.cluster |= timingInterval;
                         group.block = &block;
                     };
@@ -5145,14 +6153,7 @@ private:
     template<Bank bank>
     void joinClusterGroups(Tmp tmp, ClusterGroups& groups, ClusterPieces& pieces)
     {
-        RegisterSet calleeSaves = RegisterSet::calleeSaveRegisters();
-        calleeSaves.exclude(m_code.unsavedCalleeSaves());
-        uint64_t regsClobberedAtCalls = 0;
-        for (Reg reg : m_allowedRegistersInPriorityOrder[bank]) {
-            if (!calleeSaves.contains(reg, IgnoreVectors))
-                regsClobberedAtCalls |= 1ULL << reg.index();
-        }
-        regsClobberedAtCalls &= m_occupancy.allClobberedRegs();
+        uint64_t regsClobberedAtCalls = this->regsClobberedAtCalls(bank);
         if (!regsClobberedAtCalls)
             return;
         auto keepsSomeRegisterWithin = [&](Interval interval) {
@@ -5213,6 +6214,10 @@ private:
             if (!isOpen)
                 continue;
             ClusterGroup& root = groups[pathsRoot];
+            // A lone read that takes the value from the stack needs no load. One in front of it for the sake of a block that runs less often would cost more than it saves.
+            if (m_splitPolicy.keepsUnusedTmpsOnStackThroughLoops && root.numberOfPtrsInCluster == 1 && adjustedBlockFrequency(group.block) * m_splitPolicy.splitMultiplier < adjustedBlockFrequency(root.block)
+                && !needsRegisterIn(tmp, root.block->at(instIndex(positionOfHead(root.block), root.cluster.begin()))))
+                continue;
             group.root = pathsRoot;
             root.numberOfPtrsInCluster += group.numberOfPtrsInCluster;
             root.numberOfGroupsInCluster++;
@@ -5224,6 +6229,7 @@ private:
     template<Bank bank>
     bool trySplitIntoClusters(Tmp tmp, ClusterReach reach)
     {
+        const bool isSecondSplit = m_map.get<bank>(tmp).isClusterOverBlocks;
         ClusterMentions mentions;
         ClusterGroups groups = collectClusterGroups<bank>(tmp, mentions);
         ClusterPieces pieces(groups.size());
@@ -5280,19 +6286,42 @@ private:
             TmpData& clusterData = m_map.get<bank>(clusterTmp);
             for (unsigned k = i ? groups[i - 1].ptrsEnd : 0; k < groups[i].ptrsEnd; ++k)
                 *mentions.ptrs[k] = clusterTmp; // Within this cluster, use clusterTmp rather than Tmp
+            Vector<Point, 8> coldUsePointsInCluster;
             for (unsigned k = i ? groups[i - 1].coldUsePtrsEnd : 0; k < groups[i].coldUsePtrsEnd; ++k) {
                 // Include coldUses only when they are within the warm cluster
                 if (clusterData.liveRange.contains(mentions.coldUsePtrs[k].second)) {
                     *mentions.coldUsePtrs[k].first = clusterTmp;
                     clusterData.hasColdUse = true;
+                    Point coldUsePoint = pointAtOffset(mentions.coldUsePtrs[k].second, PointOffsets::Pre);
+                    if (!m_code.proc().policy().validation.overlooksColdUsesOfClustersOverBlocks) [[likely]]
+                        coldUsePointsInCluster.append(coldUsePoint);
+                    if (isSecondSplit) [[unlikely]] {
+                        // Left on the name of the cluster over blocks, which is spilled, it would read the slot, and this cluster stores to the slot behind its last def alone.
+                        // Counted here and not where the registers are known: from here on the instruction mentions this cluster, which the split around clobbers asks about.
+                        m_stats[bank].numColdUsesKeptThroughSecondSplit++;
+                        m_code.proc().count(Counter::ColdUsesKeptThroughSecondSplit);
+                        const ClusterGroup& root = groups[groups[i].root];
+                        if (root.firstDefPoint && pointAtOffset(root.firstDefPoint, PointOffsets::Pre) < coldUsePoint && coldUsePoint <= pointAtOffset(root.lastDefPoint, PointOffsets::Pre)) {
+                            m_stats[bank].numColdUsesKeptThroughSecondSplitBetweenDefs++;
+                            m_code.proc().count(Counter::ColdUsesKeptThroughSecondSplitBetweenDefs);
+                        }
+                    }
                 }
             }
             if (clusterData.isClusterOverBlocks) {
+                // This cluster may be split again, and that split finds its mentions through this list. A cold use it
+                // missed would keep this cluster's name, and read the spill slot ahead of the store behind the last def.
                 UseDefList& list = m_newTmpUseDefLists.ensure(clusterTmp, [] {
                     return UseDefList();
                 }).iterator->value;
-                for (unsigned k = i ? groups[i - 1].pointsEnd : 0; k < groups[i].pointsEnd; ++k)
+                unsigned nextColdUse = 0;
+                for (unsigned k = i ? groups[i - 1].pointsEnd : 0; k < groups[i].pointsEnd; ++k) {
+                    while (nextColdUse < coldUsePointsInCluster.size() && coldUsePointsInCluster[nextColdUse] < mentions.points[k])
+                        list.add(coldUsePointsInCluster[nextColdUse++]);
                     list.add(mentions.points[k]);
+                }
+                while (nextColdUse < coldUsePointsInCluster.size())
+                    list.add(coldUsePointsInCluster[nextColdUse++]);
             }
         }
         for (unsigned i = 0; i < groups.size(); ++i) {
@@ -5325,7 +6354,7 @@ private:
             return false;
 
         ensureUseDefLists();
-        return trySplitIntoClusters<bank>(tmp, m_splitPolicy.splitsIntoClustersOverBlocks && !tmpData.isClusterOverBlocks ? ClusterReach::OverBlocks : ClusterReach::WithinBlock);
+        return trySplitIntoClusters<bank>(tmp, m_splitPolicy.splitsIntoClustersOverBlocks && !tmpData.isClusterOverBlocks && !tmpData.isOnStackInSomeBlocks ? ClusterReach::OverBlocks : ClusterReach::WithinBlock);
     }
 
     static unsigned LEGACY_NODELETE stackSlotMinimumWidth(Width width)
@@ -5655,8 +6684,12 @@ private:
 
                     bool canKillDef = canRematerializeConstant && !m_map.get<bank>(originalTmp).hasColdUse;
 
-                    if (Arg::isAnyUse(role) || (!canKillDef && Arg::isAnyDef(role)))
+                    if (Arg::isAnyUse(role) || (!canKillDef && Arg::isAnyDef(role))) {
                         tmp = addSpillTmpWithInterval(tmp, intervalForSpill(indexOfEarly, role));
+                        // For checkPlacesOfValues(): the instruction computes the value of the slot anew into this Tmp. Nothing else reads the index of a Tmp that cannot be spilled.
+                        if (m_code.proc().policy().validation.checksSpillSlots && Arg::isAnyDef(role) && role != Arg::Scratch) [[unlikely]]
+                            m_map[tmp].spillSlotTableIndex = m_map[originalTmp].spillSlotTableIndex;
+                    }
 
                     if (role == Arg::Scratch)
                         return;
@@ -5731,7 +6764,8 @@ private:
                             dataLogLnIf(verbose(), "Rematerialized BB", *block, " removing def inst: ", inst);
                         } else {
                             ASSERT(!doKillInst);
-                            insert(block, instIndex + 1, SpillMoveTo, move, inst.origin, tmp, arg);
+                            if (!leavesOut(MoveLeftOutByRegisterAllocator::StoreBehindSpilledDefinition)) [[likely]]
+                                insert(block, instIndex + 1, SpillMoveTo, move, inst.origin, tmp, arg);
                             m_stats[bank].numStoreSpill++;
                         }
                     }
@@ -5759,20 +6793,22 @@ private:
         std::ranges::sort(moves, [](const MoveAroundClobber& a, const MoveAroundClobber& b) {
             return std::tuple(a.blockIndex, a.index, a.isAfterClobber) < std::tuple(b.blockIndex, b.index, b.isAfterClobber);
         });
-        bool anyFailures = false;
+        size_t failureCount = 0;
         for (size_t begin = 0, end; begin < moves.size(); begin = end) {
             for (end = begin + 1; end < moves.size() && moves[end].blockIndex == moves[begin].blockIndex && moves[end].index == moves[begin].index && moves[end].isAfterClobber == moves[begin].isAfterClobber; ++end) { }
             for (size_t i = begin; i < end; ++i) {
                 for (size_t j = begin; j < end; ++j) {
                     if (i == j || !moves[i].source || moves[i].source != moves[j].destination)
                         continue;
+                    if (failureCount++ >= maxValidationFailuresListed)
+                        continue;
                     dataLogLn("AIR GREEDY REGISTER ALLOCATION VALIDATION FAILURE: MOVES AROUND A CLOBBER");
                     dataLogLn("   In BB#", moves[i].blockIndex, moves[i].isAfterClobber ? " after the clobber," : " before the clobber,", " index ", moves[i].index, ": ", moves[i].source, " -> ", moves[i].destination, " and ", moves[j].source, " -> ", moves[j].destination);
-                    anyFailures = true;
                 }
             }
         }
-        if (anyFailures) {
+        if (failureCount) {
+            reportValidationFailuresNotListed(failureCount);
             dataLogLn("IR:\n", m_code);
             RELEASE_ASSERT_NOT_REACHED();
         }
@@ -5808,7 +6844,11 @@ private:
                 insertInst(block, 0, AroundLoopExitFixup, createShuffle(block->at(0).origin, shufflePairs.span()));
         }
 
+        BlockInsertionSet blockInsertionSet(m_code);
+        insertMovesOfTmpsOnStack(blockInsertionSet);
         executeInsertions();
+        if (blockInsertionSet.execute())
+            m_code.resetReachability();
     }
 
     void insertInst(BasicBlock* block, size_t index, unsigned phase, Inst&& inst)
@@ -5887,8 +6927,10 @@ private:
                     m_movesAroundClobbers.append({ block->index(), precedingIndex, false, home, away });
                     m_movesAroundClobbers.append({ block->index(), instIndex + 1, true, away, home });
                 }
-                insert(block, precedingIndex, ClobberMoveFrom, move, inst.origin, metadata.originalTmp, arg);
-                insert(block, instIndex + 1, ClobberMoveTo, move, inst.origin, arg, metadata.originalTmp);
+                if (!spilled || !leavesOut(MoveLeftOutByRegisterAllocator::StoreAheadOfClobber)) [[likely]]
+                    insert(block, precedingIndex, ClobberMoveFrom, move, inst.origin, metadata.originalTmp, arg);
+                if (!spilled || !leavesOut(MoveLeftOutByRegisterAllocator::LoadBehindClobber)) [[likely]]
+                    insert(block, instIndex + 1, ClobberMoveTo, move, inst.origin, arg, metadata.originalTmp);
                 if (spilled)
                     m_stats[gapTmp.bank()].numSplitAroundClobberStackMoves += 2;
                 else
@@ -5926,7 +6968,8 @@ private:
             // trySplitIntraBlock includes the Pre point in the cluster interval iff the original Tmp is live into the cluster.
             if (pointAtOffset(clusterBegin, PointOffsets::Pre) == clusterBegin) {
                 unsigned instIndex = this->instIndex(positionOfHead, clusterBegin);
-                insert(block, instIndex, IntraBlockMoveFrom, move, block->at(instIndex).origin, Arg::stack(spilled), clusterTmp);
+                if (!leavesOut(MoveLeftOutByRegisterAllocator::LoadAheadOfCluster)) [[likely]]
+                    insert(block, instIndex, IntraBlockMoveFrom, move, block->at(instIndex).origin, Arg::stack(spilled), clusterTmp);
                 m_stats[bank].numSplitIntraBlockLoad++;
             } else
                 ASSERT(split.lastDefPoint);
@@ -5934,7 +6977,8 @@ private:
             // Need to store back into the original Tmp's spill slot only if the cluster def'ed the Tmp
             if (split.lastDefPoint) {
                 unsigned instIndex = this->instIndex(positionOfHead, split.lastDefPoint);
-                insert(block, instIndex + 1, IntraBlockMoveTo, move, block->at(instIndex).origin, clusterTmp, Arg::stack(spilled));
+                if (!leavesOut(MoveLeftOutByRegisterAllocator::StoreBehindCluster)) [[likely]]
+                    insert(block, instIndex + 1, IntraBlockMoveTo, move, block->at(instIndex).origin, clusterTmp, Arg::stack(spilled));
                 m_stats[bank].numSplitIntraBlockStore++;
             }
         }
@@ -6141,6 +7185,17 @@ private:
     Mentions m_mentions;
     Vector<unsigned> m_tmpMoves;
     Vector<Tmp> m_tmpsWithCoalescables;
+    struct DefSetAside {
+        Tmp tmp;
+        Tmp movSrc;
+        Point point;
+    };
+    Vector<DefSetAside> m_defsSetAside;
+    struct RemovalSetAside {
+        Tmp from;
+        Tmp partner;
+    };
+    Vector<RemovalSetAside> m_removalsSetAside;
     Vector<unsigned> m_instsThatNameNeighbors;
     unsigned m_gpIndicesEnd { 0 };
     unsigned m_numberOfLinearIndices { 0 };
@@ -6155,9 +7210,11 @@ private:
     Vector<unsigned> m_usesAtTails;
     Vector<uint8_t> m_crossesBoundary;
     Vector<unsigned> m_columnToIndex;
+    bool m_countsGapsAsLive { false };
     IntervalArena m_intervalArena;
     TmpDataMap m_map;
     Vector<unsigned> m_firstUseDef;
+    std::array<size_t, numBanks> m_numberOfGapTmps { };
     Vector<unsigned> m_useDefsEnd;
     Vector<Point> m_useDefs;
     Vector<unsigned> m_largeInsts;
@@ -6178,6 +7235,10 @@ private:
     Vector<MoveAroundClobber> m_movesAroundClobbers;
     Vector<IntraBlockSplitMetadata> m_intraBlockMetadata;
     Vector<AroundLoopSplitMetadata> m_aroundLoopMetadata;
+    Vector<BlocksOnStack> m_blocksOnStack;
+    std::optional<Cycles> m_cycles;
+    std::array<Vector<std::optional<CostOfSpill>>, numBanks> m_costsOfSpill;
+    HashMap<std::pair<unsigned, unsigned>, float> m_frequencyIfSpilledInCycle;
     Vector<StackSlot*> m_spillSlotTable;
     RegisterOccupancy m_occupancy;
     GenerationalSet<uint8_t, SaVector> m_visited;
@@ -6193,6 +7254,7 @@ private:
     std::array<AirAllocateRegistersStats, numBanks> m_stats = { { { GP, m_code.proc().name() }, { FP, m_code.proc().name() } } };
     std::array<bool, numBanks> m_didSpill { };
     bool m_needsEmitSpillCode { false };
+    float m_frequencyOfAllInsts { 0 };
     bool m_hasUseDefLists { false };
     std::unique_ptr<Dominators> m_dominators;
     std::unique_ptr<NaturalLoops> m_naturalLoops;
@@ -6201,11 +7263,102 @@ private:
 
 } // namespace JSC::B3::Air::Greedy
 
+// The moves that fill the registers of a call do not depend on each other, but the source of each is live while the registers in front of it are written.
+// The result of a call that came in one of those registers is read first: then it may stay in that register until this call.
+// That saves a move behind the call that made it and may cost one here, so it is done only behind a rare edge, for a result that came in front of every rare edge.
+static void orderMovesIntoRegisters(Code& code)
+{
+    BlockWorklist fastBlocks;
+    fastBlocks.push(code[0]);
+    while (BasicBlock* block = fastBlocks.pop()) {
+        for (FrequentedBlock& successor : block->successors()) {
+            if (!successor.isRare())
+                fastBlocks.push(successor.block());
+        }
+    }
+
+    TmpMap<Reg> cameIn(code);
+    bool hasAny = false;
+    auto isMove = [](const Inst& inst) {
+        return (inst.kind.opcode == Move || inst.kind.opcode == MoveDouble) && inst.args().size() == 2;
+    };
+    for (BasicBlock* block : code) {
+        if (!fastBlocks.saw(block))
+            continue;
+        bool isBehindCall = false;
+        for (Inst& inst : *block) {
+            if (inst.kind.opcode == Patch) {
+                isBehindCall = true;
+                continue;
+            }
+            isBehindCall &= isMove(inst) && inst.args()[0].isReg();
+            if (!isBehindCall || !inst.args()[1].isTmp() || inst.args()[1].isReg() || code.isPinned(inst.args()[0].reg()))
+                continue;
+            cameIn[inst.args()[1].tmp()] = inst.args()[0].reg();
+            hasAny = true;
+        }
+    }
+    if (!hasAny)
+        return;
+
+    auto fillsRegister = [&](const Inst& inst) {
+        if (!isMove(inst) || !inst.args()[1].isReg() || code.isPinned(inst.args()[1].reg()))
+            return false;
+        const Arg& source = inst.args()[0];
+        return source.isSomeImm() || (source.isTmp() && (!source.isReg() || code.isPinned(source.reg())));
+    };
+    Vector<Inst, 8> moves;
+    Vector<Inst, 8> ordered;
+    auto isStillRead = [&](Reg reg, unsigned except) {
+        for (unsigned i = 0; i < moves.size(); ++i) {
+            const Arg& source = moves[i].args()[0];
+            if (i != except && source.isTmp() && !source.isReg() && cameIn[source.tmp()] == reg)
+                return true;
+        }
+        return false;
+    };
+    for (BasicBlock* block : code) {
+        if (fastBlocks.saw(block))
+            continue;
+        for (unsigned begin = 0; begin < block->size();) {
+            unsigned end = begin;
+            RegisterSet filled;
+            while (end < block->size() && fillsRegister(block->at(end)) && !filled.contains(block->at(end).args()[1].reg(), IgnoreVectors))
+                filled.add(block->at(end++).args()[1].reg(), IgnoreVectors);
+            if (end - begin < 2) {
+                begin = std::max(end, begin + 1);
+                continue;
+            }
+            moves.shrink(0);
+            ordered.shrink(0);
+            for (unsigned i = begin; i < end; ++i)
+                moves.append(block->at(i));
+            while (!moves.isEmpty()) {
+                unsigned next = 0;
+                for (unsigned i = 0; i < moves.size(); ++i) {
+                    if (!isStillRead(moves[i].args()[1].reg(), i)) {
+                        next = i;
+                        break;
+                    }
+                }
+                ordered.append(moves[next]);
+                moves.removeAt(next);
+            }
+            for (unsigned i = begin; i < end; ++i)
+                block->at(i) = ordered[i - begin];
+            begin = end;
+        }
+    }
+}
+
 void allocateRegistersByGreedy(Code& code)
 {
     PhaseScope phaseScope(code, "allocateRegistersByGreedy"_s);
     if (code.policy().splitting.splitsAroundLoops)
         ensureDedicatedLoopEntryExitBlocks(code);
+    // Where results come in the register of first arguments.
+    if (code.policy().registers.evictsHolderOfPreferredRegister && GPRInfo::returnValueGPR == GPRInfo::argumentGPR0)
+        orderMovesIntoRegisters(code);
     Greedy::GreedyAllocator allocator(code);
     allocator.run();
 }

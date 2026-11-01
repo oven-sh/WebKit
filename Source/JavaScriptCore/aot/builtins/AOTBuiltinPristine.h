@@ -28,7 +28,7 @@ BuiltinClassID classBelowWithTestedStructure(const BuiltinTable&, BuiltinClassID
 PristineAspects aspectThatFindsMember(const BuiltinTable&, BuiltinClassID receiverClass, BuiltinID member);
 bool canOnlyBeProvenPristine(const BuiltinTable&, BuiltinClassID);
 
-inline constexpr PristineAspectSet aspectsWithoutTest { PristineAspects::AsCreated, PristineAspects::Dense };
+inline constexpr PristineAspectSet aspectsWithoutTest { PristineAspects::AsCreated, PristineAspects::Dense, PristineAspects::Prototype };
 
 enum class PristineProof : uint8_t { Unknown, Proven };
 

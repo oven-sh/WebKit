@@ -247,7 +247,7 @@ public:
     SharedLists forEachLayoutNamedByMembers(ValueSetID objects, Vector<uint32_t, 4>& lists, NOESCAPE const Invocable<void(LayoutID)> auto& functor) const
     {
         SharedLists shared;
-        m_inputs.sets().forEachMember(objects, [&](ValueFlowObjectID object) {
+        m_inputs.sets().forEachMemberInLine(objects, [&](ValueFlowObjectID object) {
             LayoutID named = namedLayoutOf(object);
             if (!named)
                 return;
@@ -312,14 +312,22 @@ struct StoredUnderKey {
     bool mayBeAccessor : 1 { false };
     bool isGivenValueByOperation : 1 { false };
     bool isGivenValueByDefinition : 1 { false };
+    // `object.key = value`, which first checks the prototype chain for a setter. Any other write under the key may define it on the object itself, whatever the chain holds.
+    bool isAssigned : 1 { false };
+    bool isWrittenOtherThanByAssignment : 1 { false };
     bool isNamedByOperation : 1 { false };
     bool isStoredByConstructor : 1 { false };
     bool mayBeOtherThanIntegers : 1 { false };
+    // Some store passes on the result of a field read, and that field's numbers have not been added yet: StoresIntoObjects::readsOfFields.
+    bool waitsForNumbersOfFields : 1 { false };
     uint8_t accessorForms { 0 };
+    // The forms in which calls that take a descriptor define a value under the key: ValueForms.
+    uint8_t formsOfDefinedValues { 0 };
     OptionSet<Actor> writers;
     Range integers { Range::empty() };
 
-    ValueFlowNumbers numbers() const { return { mayBeOtherThanIntegers, integers }; }
+    ValueFlowNumbers numbers() const { return waitsForNumbersOfFields ? ValueFlowNumbers::any() : numbersAddedSoFar(); }
+    ValueFlowNumbers numbersAddedSoFar() const { return { mayBeOtherThanIntegers, integers }; }
 
     void uniteNumbers(const ValueFlowNumbers& other)
     {
@@ -406,10 +414,53 @@ struct AccessorForms {
     }
 };
 
+// `Object.defineProperty(object, "name", { value, enumerable: false })`
+struct ValueForms {
+    static constexpr uint8_t unknown = 0xff;
+
+    static constexpr uint8_t of(bool isWritable, bool isEnumerable, bool isConfigurable) { return 1 << ((isWritable ? 0 : 4) + (isEnumerable ? 0 : 2) + (isConfigurable ? 0 : 1)); }
+
+    // `made.name ?? (made.name = { })` next to a definition: the definition is assumed to create the property.
+    static std::optional<OptionSet<FieldForm>> formToPlanFor(uint8_t forms)
+    {
+        constexpr uint8_t plain = of(true, true, true);
+        return onlyFormIn(forms == plain ? forms : forms & ~plain);
+    }
+
+    static std::optional<OptionSet<FieldForm>> onlyFormIn(uint8_t forms)
+    {
+        for (bool isWritable : { true, false }) {
+            for (bool isEnumerable : { true, false }) {
+                for (bool isConfigurable : { true, false }) {
+                    if (forms != of(isWritable, isEnumerable, isConfigurable))
+                        continue;
+                    OptionSet<FieldForm> form;
+                    if (!isWritable)
+                        form.add(FieldForm::IsReadOnly);
+                    if (!isEnumerable)
+                        form.add(FieldForm::IsNotEnumerable);
+                    if (!isConfigurable)
+                        form.add(FieldForm::IsNotConfigurable);
+                    return form;
+                }
+            }
+        }
+        return std::nullopt;
+    }
+};
+
 inline constexpr uint64_t noCopyLeavingOutKeys = UINT64_MAX;
+
+// `target.port = source.port`: what is stored under one key is what the objects hold under another.
+struct ReadOfFields {
+    uint32_t storedUnder;
+    uint32_t key;
+    ValueSetID objects;
+};
 
 struct StoresIntoObjects {
     StoresUnderKeys underKey;
+    Vector<ReadOfFields> readsOfFields;
     ValueSetID underUnknownKey { ValueSets::nothing };
     ValueFlowNumbers numbersUnderUnknownKey;
     bool isStoredUnderIndex { false };
@@ -468,6 +519,7 @@ public:
 
     ValueSetID storedUnder(LayoutID layout, PropertyKeyID key) { return storedUnder(m_heap.maker(), layout, key); }
     ValueSetID storedUnder(ValueSetMaker&, LayoutID, PropertyKeyID) const;
+    ValueSetID storedUnderExactName(ValueSetMaker&, LayoutID, PropertyKeyID) const;
     ValueFlowNumbers numbersStoredUnder(LayoutID, PropertyKeyID, ObjectsOfLayout = ObjectsOfLayout::All) const;
     bool isStoredAfterCreation(LayoutID, PropertyKeyID) const;
     OptionSet<Actor> writersSeenUnder(LayoutID, PropertyKeyID) const;
@@ -475,6 +527,7 @@ public:
     bool getsNameNobodyLists(LayoutID) const;
     Vector<PropertyKeyID> keysStoredInto(LayoutID, ObjectsOfLayout = ObjectsOfLayout::All) const;
     Vector<PropertyKeyID> keysStoredIntoKnownObjects(LayoutID) const;
+    bool isOnlyAssignedByStatements(LayoutID, PropertyKeyID) const;
     Vector<PropertyKeyID> keysNamedByStoresIntoKnownObjects(LayoutID) const;
     bool isStoredByConstructor(LayoutID, PropertyKeyID) const;
     const Vector<PropertyKeyID>& keysStoredThroughPlaceholders() const LIFETIME_BOUND { return m_keysThroughPlaceholders; }
@@ -489,10 +542,17 @@ public:
     FlowAccessorField accessorDefinedUnder(LayoutID layout, PropertyKeyID key) const { return accessorDefinedUnder(m_heap.maker(), layout, key); }
     FlowAccessorField accessorDefinedUnder(ValueSetMaker&, LayoutID, PropertyKeyID) const;
     Vector<PropertyKeyID> keysOfAccessorsDefinedIn(ValueSetMaker&, LayoutID) const;
+    // ValueForms: the forms in which the objects are observed to get a value under the key. A store, a literal and a class field create the plain form.
+    uint8_t formsOfValuesGivenUnder(LayoutID, PropertyKeyID) const;
+    Vector<PropertyKeyID> keysOfValuesDefinedIn(LayoutID) const;
+    // ValueForms: the forms in which the call defines a value, if it is an `Object.defineProperty(object, key, descriptor)`.
+    uint8_t formsOfValueDefinedByCall(ValueSetMaker&, const ValueFlowStatement&) const;
     bool getsAccessorsUnderKeysNobodyKnows(LayoutID) const;
     void setReceiversOfReads(ListsOfSetsByNumber&&);
     void noteKeyBroughtByCopies(LayoutID target, PropertyKeyID, ValueSetID value);
-    std::span<const PropertyKeyID> keysReadFrom(LayoutID layout) const LIFETIME_BOUND { return m_keysReadFrom[layout.index()].span(); }
+    bool isAnyKeyReadFrom(LayoutID layout) const { return !m_groupsOfKeysReadFrom[layout.index()].isEmpty(); }
+    // Sorted. Made where it is asked for: see m_groupsOfKeysReadFrom.
+    Vector<PropertyKeyID> keysReadFrom(LayoutID) const;
 
     bool hasEscapedObject(LayoutID layout) const { return m_hasEscapedObject.quickGet(layout.index()); }
     bool hasLostObject(LayoutID layout) const { return m_hasLostObject.quickGet(layout.index()); }
@@ -536,15 +596,22 @@ private:
         bool givesValueItself;
         bool isWrittenByCallOfBuiltin;
         bool definesValue;
+        bool isAssignment;
+        bool isOtherThanAssignment;
         bool leavesOutComputedKey;
         uint64_t copyLeavingOutKeys;
         uint8_t accessorForms;
+        uint8_t formsOfDefinedValues;
         OptionSet<Actor> writers;
         ValueSetID value;
         ValueFlowNumbers numbers;
+        // The numbers are `numbers` and those that these objects hold under the key.
+        ValueSetID objectsRead;
+        uint32_t keyRead;
 
         ValueFlowName name() const { return { static_cast<ValueFlowNameKind>(detail), payload }; }
-        auto group() const { return std::tuple { set, detail, payload, familyOfReceiver, familyDeclaredForReceiver, fillsTypedResult, createsData, copyLeavingOutKeys }; }
+        ValueFlowNumbers numbersWithoutFollowedReads() const { return objectsRead == ValueSets::nothing ? numbers : ValueFlowNumbers::any(); }
+        auto group() const { return std::tuple { set, detail, payload, familyOfReceiver, familyDeclaredForReceiver, fillsTypedResult, createsData, copyLeavingOutKeys, objectsRead.index(), keyRead }; }
         uint32_t hashOfGroup() const
         {
             uint64_t hash = (static_cast<uint64_t>(payload) << 32 | set) * 0x9e3779b97f4a7c15ull;
@@ -561,8 +628,11 @@ private:
         bool isIntoThisOfConstructor { false };
         bool definesValue { false };
         uint8_t accessorForms { 0 };
+        uint8_t formsOfDefinedValues { 0 };
         uint32_t familyDeclaredForReceiver { UINT32_MAX };
         std::optional<ValueFlowNumbers> numbers;
+        ValueSetID objectsRead { ValueSets::nothing };
+        uint32_t keyRead { 0 };
     };
 
     struct NameStoredThroughDeclaredReceiver {
@@ -575,6 +645,7 @@ private:
     };
 
     void findReceiversBehindChecks();
+    void findValuesBehindStoredParameters();
     static constexpr uint32_t isStatementInListOfWrites = 1u << 31;
 
     LayoutSetID familyOfReceiverOf(const ValueFlowStatement&) const;
@@ -617,6 +688,7 @@ private:
     void unite(ValueSetID& into, ValueSetID value) { into = m_heap.maker().unite(into, value); }
     bool spellsKey(ValueSetMaker&, const Writer&, ValueFlowName) const;
     void note(ValueSetMaker&, StoresIntoObjects&, ValueFlowName, ValueSetID value, bool isAllocation, bool isNamedByOperation);
+    ValueFlowNumbers numbersOf(FunctionID, ValueID) const;
     ValueFlowNumbers numbersStoredBy(const Writer&, ValueFlowName) const;
     ValueFlowNumbers numbersInData(LayoutID, ValueFlowName) const;
     void noteNumbers(StoresIntoObjects&, ValueFlowName, const ValueFlowNumbers&);
@@ -626,13 +698,20 @@ private:
         Vector<LayoutID, 4> layouts;
     };
     std::optional<CopiedObjects> objectsCopiedOnto(ValueSetMaker&, LayoutID) const;
+    std::optional<CopiedObjects> withLayoutsIfFollowed(ValueSetMaker&, ValueSetID objects) const;
     void followCopiedProperties();
+    std::optional<ReadOfFields> readOfFieldsStoredBy(ValueSetMaker&, const Writer&, ValueFlowName, ValueFlowNumbers& numbersBesideReads) const;
+    std::optional<CopiedObjects> objectsReadUnder(ValueSetMaker&, ValueSetID objects, PropertyKeyID) const;
+    void followReadsOfFields();
     void forEachSourceOf(LayoutID, ObjectsOfLayout, NOESCAPE const Invocable<void(const StoresIntoObjects&)> auto&) const;
 
     const ValueFlowResultInputs& m_inputs;
     ValueFlowHeapView& m_heap;
     ListsOfSetsByNumber m_receiversOfReads;
-    Vector<Vector<PropertyKeyID>> m_keysReadFrom;
+    // Objects of many layouts travel in one set, and then every key read off that set is read from each of the layouts: layouts times keys.
+    // So the keys that are read from the same layouts are one group, each key in one group, and a layout lists its groups.
+    Vector<Vector<PropertyKeyID>> m_groupsOfKeys;
+    Vector<Vector<uint32_t>> m_groupsOfKeysReadFrom;
     ValueSetID m_objectsPutAboveOthers { ValueSets::nothing };
     const LayoutsOfObjects& m_layoutsOfObjects;
     Vector<uint32_t> m_setsLookedAt;
@@ -667,6 +746,12 @@ private:
     BitVector m_isLostClass;
     Vector<NameStoredThroughDeclaredReceiver> m_namesStoredThroughDeclaredReceivers;
     Vector<BitVector> m_valuesBehindChecks;
+    struct ValuesBehindParameter {
+        ValueID parameter;
+        Vector<ValueID, 2> reads;
+        Vector<ValueID, 2> others;
+    };
+    Vector<Vector<ValuesBehindParameter>> m_valuesBehindStoredParameters;
     Vector<uint8_t> m_hasChecksNotLookedAt;
     Vector<uint32_t> m_writes;
     BitVector m_hasObjectOfCodeWithoutSolve;
@@ -719,6 +804,8 @@ private:
     void noteShownKeys(Noter, ValueSetID objects, ShownKeys, bool goesOnToPrototypes = false) const;
     void noteShownKeys(Noter, const ValueFlowBuiltinApplication&, BuiltinOperand, ShownKeys) const;
     ValueSetID followPrototypeLinks(ValueSetMaker&, ValueSetID objects) const;
+    ValueSetID withTargetsOfProxies(ValueSetMaker&, ValueSetID objects) const;
+    ValueSetID chainThroughProxies(ValueSetMaker&, ValueSetID objects) const;
     Noter noterOf(ValueSetMakers& makers, unsigned worker) { return { m_notes[worker], makers.of(worker) }; }
     void noteReads(ValueSetMakers&);
     void noteRead(Noter, const ValueFlowNodeKey&, Reader, ValueSetID startOfLookup);

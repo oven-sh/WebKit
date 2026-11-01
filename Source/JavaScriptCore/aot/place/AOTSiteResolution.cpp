@@ -21,8 +21,10 @@
 #include "AOTRegExpRequests.h"
 #include "AOTSchemaOperations.h"
 #include "AOTThreads.h"
+#include "AOTValueIdentity.h"
 #include "AOTVector.h"
 #include <algorithm>
+#include <atomic>
 #include <optional>
 #include <span>
 #include <tuple>
@@ -38,7 +40,7 @@ static_assert(Value::opcodesWithStaticsOffset == OpcodeSet { Opcode::NewArray, O
 static_assert(Value::opcodesWithGuardBit == OpcodeSet { Opcode::AreMembersUnchanged });
 static_assert(Value::opcodesWithRequest == OpcodeSet {
     Opcode::TryPutByIds, Opcode::NewClass, Opcode::NewTemplateObject, Opcode::DirectEval, Opcode::Data, Opcode::NewSetFromData,
-    Opcode::NewMapFromData, Opcode::CopyDataProperties, Opcode::CopyObject
+    Opcode::NewMapFromData, Opcode::NewFormatterWithPattern, Opcode::FormatDateWithPattern, Opcode::FormatNumberWithPattern, Opcode::CopyDataProperties, Opcode::CopyObject
 });
 
 static constexpr OpcodeSet opcodesWithOtherWords = Value::opcodesWithAllocation | Value::opcodesWithRegExpRecord | Value::opcodesWithRequest | Value::opcodesWithStaticsOffset | Value::opcodesWithOrderWord | Value::opcodesWithGuardBit;
@@ -233,6 +235,10 @@ struct WordResolver {
         case Opcode::NewSetFromData:
         case Opcode::NewMapFromData:
             return RequestRecord { CollectionDataRecord { value.data(), value.opcode == Opcode::NewMapFromData } };
+        case Opcode::NewFormatterWithPattern:
+        case Opcode::FormatDateWithPattern:
+        case Opcode::FormatNumberWithPattern:
+            return RequestRecord { FormatPatternRecord { Vector<uint32_t>(value.formatPattern()) } };
         default:
             RELEASE_ASSERT_NOT_REACHED();
         }
@@ -244,6 +250,8 @@ struct WordResolver {
         switch (value.encoding()) {
         case DataEncoding::ReadOnlyTree:
             return DataRecord { data, std::nullopt, std::nullopt };
+        case DataEncoding::MadeOnce:
+            return DataRecord { data, std::nullopt, std::nullopt, offsetOfKey(steps.sites.dataMadeOnce, steps.literals.cellOffsetsOfDataMadeOnce, data) };
         case DataEncoding::CopyOnWriteArray:
             if (isStorageOfArray(context.program.at(data).root.as<DataNode::Array>()))
                 return DataRecord { data, std::nullopt, offsetOfKey(steps.sites.arraysWithStorageInImage, steps.literals.nodesOfStorageInImage, data) };
@@ -372,6 +380,12 @@ bool mayReadSiteCachesAgain(FunctionAnalyses& analyses, BlockID block)
     return !context.program.at(context.id).isModuleBody() || analyses.isInCycle(block);
 }
 
+// The question ahead of a loop speaks for all its turns, however seldom it is asked.
+bool usesItsSiteCaches(FunctionAnalyses& analyses, const Value& value, BlockID block)
+{
+    return value.opcode == Opcode::GetCachedValue || mayReadSiteCachesAgain(analyses, block);
+}
+
 // FieldRecordIndex::isStoredWithoutTypeTest: the stubs by name store into such a slot in fewer instructions than PutKnownField, and file nothing either.
 static bool isStoredThroughTableOfFields(const Program& program, const Field& declaration, SlotRepresentation representation)
 {
@@ -414,6 +428,17 @@ bool storedFieldTakesAnyValue(const Program& program, const Placement& placement
     });
 }
 
+bool storedFieldAcceptsAnyNumber(const Program& program, const Placement& placement, const Function& function, const Value& store)
+{
+    return std::ranges::all_of(membersOf(program, program.typeOf(function, store.objectOperand())), [&](LayoutID member) {
+        uint32_t field = *program.at(member).findField(store.key());
+        const PlacedSlot& slot = placement.layout(member).slots[field];
+        const Type& held = program.at(slotTypeOf(program, fieldAt(program, declarationOf(program, { member, field }))));
+        bool holdsDouble = slot.representation == SlotRepresentation::Double || slot.representation == SlotRepresentation::OptionalDouble;
+        return holdsDouble && !slot.isOutOfLine() && (held.primitives & Primitive::Number) == Primitive::Number && held.integers == Range::full();
+    });
+}
+
 std::optional<uint32_t> findRecordOfStoredField(const Program& program, const Placement& placement, const Function& function, const Value& store, NameHasColumn nameHasColumn)
 {
     if ((store.opcode != Opcode::PropSet || store.isFreeName()) && store.opcode != Opcode::PropDefine)
@@ -425,7 +450,7 @@ std::optional<uint32_t> findRecordOfStoredField(const Program& program, const Pl
     for (LayoutID member : membersOf(program, receiver)) {
         const PlannedLayout& planned = placement.layout(member);
         std::optional<uint32_t> field = program.at(member).findField(store.key());
-        if (planned.storage != LayoutStorage::CompiledObject || !field)
+        if (!planned.holdsCompiledObjects() || !field)
             return std::nullopt;
         const Field& declaration = fieldAt(program, declarationOf(program, { member, *field }));
         const PlacedSlot& slot = planned.slots[*field];
@@ -446,6 +471,8 @@ static unsigned numberOfSiteCachesUsedByOperationWithRequest(const Program& prog
 {
     if (findRecordOfStoredField(program, placement, function, value, NameHasColumn::Yes))
         return 0;
+    if (value.opcode == Opcode::PropGet && value.asksOnlyTables())
+        return 0;
     // Flow has seen compiled objects come to this read. The table of fields answers for all their layouts alike, and the stub without a site asks it first: a site in front of it would stay empty.
     // A name that none of the layouts has is found above the object, and the table has nothing to say.
     if (value.opcode == Opcode::PropGet && !value.isFreeName() && value.receivers() && program.nameClassOf(value.key()) != NameClass::Length) {
@@ -455,6 +482,9 @@ static unsigned numberOfSiteCachesUsedByOperationWithRequest(const Program& prog
         if (isFieldOfReceiver)
             return 0;
     }
+    // The slot of the field was found empty, so the table of fields has nothing to say: `Message.prototype.retries = 3` answers for most objects.
+    if (value.opcode == Opcode::SuperGet && value.key() && value.baseOperand() == value.receiverOperand())
+        return 1;
     return siteCachesOf(value.opcode);
 }
 
@@ -485,7 +515,7 @@ void collectSiteCacheRequests(const Program& program, const Placement& placement
                 continue;
             if (!analyses)
                 analyses.emplace(AnalysisContext { build, program, &flow, nullptr, id }, function);
-            if (!mayReadSiteCachesAgain(*analyses, block)) {
+            if (!usesItsSiteCaches(*analyses, value, block)) {
                 requests.append(SiteCacheRequest { 0, id, valueID, true });
                 continue;
             }
@@ -493,6 +523,61 @@ void collectSiteCacheRequests(const Program& program, const Placement& placement
                 weights.emplace(program, heat, id, *analyses);
             requests.append(SiteCacheRequest { needsWeights ? weights->weightOf(block) : SiteWeight { 0 }, id, valueID });
         }
+    }
+}
+
+static bool isSameOperationAtSamePlace(const Value& value, const Value& other)
+{
+    return value.opcode == other.opcode && value.hasPosition() && value.position == other.position && value.inlineFrame == other.inlineFrame;
+}
+
+bool mayShareSiteCache(const Function& function, const Value& value, const Value& other)
+{
+    if (!isSameOperationAtSamePlace(value, other) || !value.hasSamePayloadAs(other) || !value.numberOfOperands() || value.numberOfOperands() != other.numberOfOperands())
+        return false;
+    ValueID receiver = sameObjectThroughCasts(function, value.operands()[0]).valueInFrontOfFacts();
+    ValueID otherReceiver = sameObjectThroughCasts(function, other.operands()[0]).valueInFrontOfFacts();
+    if (receiver == otherReceiver)
+        return true;
+    const Value& definition = function.at(receiver);
+    const Value& otherDefinition = function.at(otherReceiver);
+    if (isRematerializable(definition))
+        return definition.opcode == otherDefinition.opcode && definition.hasSamePayloadAs(otherDefinition);
+    return definition.opcode != Opcode::Parameter && isSameOperationAtSamePlace(definition, otherDefinition);
+}
+
+static void findRequestsThatShareCache(const Function& function, std::span<SiteCacheRequest> requests)
+{
+    Vector<uint32_t, 16> byOrigin;
+    for (uint32_t index = 0; index < requests.size(); ++index) {
+        if (!requests[index].runsAtMostOnce && function.at(requests[index].value).hasPosition())
+            byOrigin.append(index);
+    }
+    if (byOrigin.size() < 2)
+        return;
+    // All that two requests have in common before they are compared. The reads of one object pattern stand at one place, and each has a name of its own.
+    auto originOf = [&](uint32_t index) {
+        const Value& value = function.at(requests[index].value);
+        return std::tuple { value.position, value.inlineFrame, value.opcode, value.flags, value.inlinePayload() };
+    };
+    AOT::sort(byOrigin, { }, [&](uint32_t index) {
+        return std::tuple_cat(originOf(index), std::tuple { requests[index].value });
+    });
+    Vector<uint32_t, 4> owners;
+    for (size_t position = 0; position < byOrigin.size(); ++position) {
+        if (position && originOf(byOrigin[position]) != originOf(byOrigin[position - 1]))
+            owners.shrink(0);
+        SiteCacheRequest& request = requests[byOrigin[position]];
+        auto owner = std::ranges::find_if(owners, [&](uint32_t index) {
+            return mayShareSiteCache(function, function.at(requests[index].value), function.at(request.value));
+        });
+        if (owner == owners.end()) {
+            owners.append(byOrigin[position]);
+            continue;
+        }
+        request.sharesCacheOf = requests[*owner].value;
+        if ((request.weight > requests[*owner].weight).predicted())
+            requests[*owner].weight = request.weight;
     }
 }
 
@@ -517,18 +602,29 @@ SiteCaches placeSiteCaches(ProgramEditor& editor, const Placement& placement, co
     const ParallelLoops& loops = build.parallelLoops();
 
     uint32_t numberOfSitesWithoutCache = 0;
+    Vector<SiteCacheRequest> requestsThatShareCache;
     auto collectRequests = [&](bool needsWeights) {
         auto requests = collectInParallel<SiteCacheRequest>(loops, program.functions.size(), [&](unsigned index, Vector<SiteCacheRequest>& found) {
             if (!program.functions[index].hasBody())
                 return;
+            size_t numberFoundBefore = found.size();
             if (requestsOfFunctions.empty())
                 collectSiteCacheRequests(program, placement, flow, heat, build, FunctionID(index), needsWeights, found);
             else
                 found.appendVector(requestsOfFunctions[index]);
+            findRequestsThatShareCache(program.functions[index], found.mutableSpan().subspan(numberFoundBefore));
         });
         numberOfSitesWithoutCache = static_cast<uint32_t>(requests.removeAllMatching([](const SiteCacheRequest& request) {
             return request.runsAtMostOnce;
         }));
+        requestsThatShareCache.shrink(0);
+        for (const SiteCacheRequest& request : requests) {
+            if (request.sharesCacheOf)
+                requestsThatShareCache.append(request);
+        }
+        requests.removeAllMatching([](const SiteCacheRequest& request) {
+            return !!request.sharesCacheOf;
+        });
         return requests;
     };
     // Where every request is served, the order by position below is the only one that anybody sees.
@@ -554,6 +650,19 @@ SiteCaches placeSiteCaches(ProgramEditor& editor, const Placement& placement, co
         for (const SiteCacheRequest& request : groups[group])
             function.edit(request.value, ValueEdit::Definition).setSiteCache(SiteCacheID(static_cast<uint32_t>(&request - servedRequests.data())));
     });
+    std::atomic<uint32_t> numberOfUnservedCopies { 0 };
+    auto groupsThatShareCache = groupSitesByFunction(requestsThatShareCache.span());
+    forEachIndexInParallel(loops, groupsThatShareCache.size(), [&](unsigned group) {
+        Function& function = editor.atForPlacedWords(groupsThatShareCache[group].front().function);
+        for (const SiteCacheRequest& request : groupsThatShareCache[group]) {
+            if (SiteCacheID cache = std::as_const(function).at(request.sharesCacheOf).siteCache()) {
+                function.edit(request.value, ValueEdit::Definition).setSiteCache(cache);
+                continue;
+            }
+            build.gaveUp(LimitID::MaxSiteCaches, { .function = request.function, .value = request.value });
+            numberOfUnservedCopies.fetch_add(1, std::memory_order_relaxed);
+        }
+    });
     times.didFinish("writeSiteCaches"_s);
 
     auto unservedRequests = requests.span().subspan(count);
@@ -561,7 +670,7 @@ SiteCaches placeSiteCaches(ProgramEditor& editor, const Placement& placement, co
         build.gaveUp(LimitID::MaxSiteCaches, { .function = unservedRequests[index].function, .value = unservedRequests[index].value });
     });
 
-    numberOfSitesWithoutCache += static_cast<uint32_t>(unservedRequests.size());
+    numberOfSitesWithoutCache += static_cast<uint32_t>(unservedRequests.size()) + numberOfUnservedCopies.load(std::memory_order_relaxed);
     build.statistics().count(StatisticID::SiteCachesPlaced, count);
     build.statistics().count(StatisticID::SitesWithoutSiteCache, numberOfSitesWithoutCache);
     return SiteCaches(count, numberOfSitesWithoutCache);

@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTID.h"
+#include "AOTOutgrownTable.h"
 #include "AOTThreshold.h"
 #include "AOTVector.h"
 #include <array>
@@ -179,6 +180,8 @@ private:
             }
             tables.append(WTF::move(larger));
             table.store(tables.last().get(), std::memory_order_release);
+            if (tables.size() > 1)
+                letGoOfPagesOfOutgrownTable(tables[tables.size() - 2]->slots.mutableSpan());
             return *tables.last();
         }
 

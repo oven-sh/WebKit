@@ -1,0 +1,24 @@
+# Two blocks hand one handler the same argument, so they share a landing pad, where a stub makes the text out of its number. The operand of the read in b1 is a parameter of b1: it is not there on the way in from b2,
+# and a validating build looks at no operand around the call of the stub.
+# FORM: Placed
+# OPTIONS: heat=everything-is-hot check=validate-back-end validate
+# RUN: generate-code calls
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="twoBlocksOneHandler" parameters=[{type="a"|"b"}, {type=boolean}, {type=object}, {type=object}] results=[{type=anything}] {
+  b0(v0: "a"|"b" @LiteralString, v1: boolean @Boolean, v2: object @Cell, v3: object @Cell):
+    Branch v1 -> taken b1(v2), notTaken b2()
+  b1(v4: object @Cell) handler=b4(v0):
+    v5 @JSValue = PropGet v4 key="first"
+    Jump -> next b3(v5)
+  b2() handler=b4(v0):
+    v6 @JSValue = PropGet v3 key="second"
+    Jump -> next b3(v6)
+  b3(v7: anything @JSValue):
+    Return v7
+  b4(v8: "a"|"b" @JSValue) role=CatchHandler:
+    v9 @JSValue = CatchValue
+    Return v8
+}
+# CHECK-LABEL: f0:
+# CHECK: stub LiteralStringToString

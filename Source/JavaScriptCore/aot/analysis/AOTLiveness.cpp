@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTEdgeResults.h"
+#include "AOTHeldOperands.h"
 #include "AOTSort.h"
 #include "AOTThreshold.h"
 #include <algorithm>
@@ -47,7 +48,7 @@ static Vector<std::pair<ValueID, BlockID>> collectNarrowedOperandUses(const Func
             uses.append({ subject, block });
         });
     }
-    AOT::sort(uses);
+    AOT::sortInLine(uses);
     removeRepeatedElements(uses);
     return uses;
 }
@@ -82,7 +83,7 @@ Liveness::Liveness(const Function& function, const CFG& cfg, const UseLists& use
                 });
             }
         }
-        AOT::sort(interiorPointers);
+        AOT::sortInLine(interiorPointers);
     }
     m_hasTrackedBases = !interiorPointers.isEmpty();
 
@@ -515,6 +516,184 @@ bool Liveness::isLiveAtHead(ValueID id, BlockID block) const
     return std::ranges::binary_search(m_liveValues.subspan(first, m_firstLiveValue[block.index() + 1] - first), id);
 }
 
+void Liveness::forEachLastCrossing(NOESCAPE const ScopedLambda<bool(ValueID)>& isPoint, NOESCAPE const ScopedLambda<LastCrossing>& functor) const
+{
+    std::optional<ProgramPoint> onlyPoint;
+    unsigned numberOfPoints = 0;
+    for (BlockID block : m_cfg.reversePostOrder()) {
+        const BlockValues& values = m_function.at(block).values;
+        for (uint32_t index = 0; index < values.size() && isTrackedBlock(block); ++index) {
+            if (isPoint(values[index]) && !numberOfPoints++)
+                onlyPoint = ProgramPoint { block, index };
+        }
+    }
+    if (!numberOfPoints)
+        return;
+    if (numberOfPoints == 1) {
+        LocalCalc localCalc(*this, onlyPoint->block);
+        for (uint32_t index = m_function.at(onlyPoint->block).values.size(); index > onlyPoint->index + 1;)
+            localCalc.execute(--index);
+        ValueID point = m_function.at(onlyPoint->block).values[onlyPoint->index];
+        Vector<ValueID> live;
+        localCalc.forEachLive([&](ValueID id) {
+            if (id != point)
+                live.append(id);
+        });
+        functor(point, live.span(), [&](ValueID id) {
+            return localCalc.isLive(id);
+        });
+        return;
+    }
+
+    // `ends` holds what is live where the walk stands and is live after no point from there on.
+    Vector<Vector<ValueID>> endsAtHead(m_cfg.numNodes());
+    BitVector ends(m_useLists.numberOfValues());
+    BitVector isUsedLater(m_useLists.numberOfValues());
+    Vector<ValueID> mayEnd;
+    Vector<ValueID> usedLater;
+    Vector<BlockID, 4> successors;
+
+    // The targets of the edges that leave the natural loop of the back edge, as far as the walk has been there.
+    Vector<BlockID, 4> exits;
+    BitVector isInLoop(m_cfg.numNodes());
+    Vector<BlockID> loop;
+    auto findExitsBehind = [&](BlockID latch, BlockID header) {
+        exits.shrink(0);
+        loop.shrink(0);
+        auto reach = [&](BlockID block) {
+            if (!isInLoop.set(block.index()))
+                loop.append(block);
+        };
+        reach(header);
+        reach(latch);
+        bool isNatural = true;
+        for (size_t index = 1; index < loop.size(); ++index) {
+            for (BlockID predecessor : m_cfg.predecessors(loop[index])) {
+                isNatural &= m_cfg.reversePostOrderIndex(predecessor) >= m_cfg.reversePostOrderIndex(header);
+                reach(predecessor);
+            }
+        }
+        for (BlockID block : loop) {
+            for (BlockID target : m_cfg.successors(block)) {
+                if (isNatural && !isInLoop.get(target.index()) && m_cfg.reversePostOrderIndex(target) > m_cfg.reversePostOrderIndex(latch) && !exits.contains(target))
+                    exits.append(target);
+            }
+        }
+        for (BlockID block : loop)
+            isInLoop.clear(block.index());
+    };
+
+    auto takeEnds = [&] {
+        Vector<ValueID> result;
+        for (ValueID id : mayEnd) {
+            if (ends.clear(id.index()))
+                result.append(id);
+        }
+        mayEnd.shrink(0);
+        AOT::sort(result);
+        return result;
+    };
+
+    for (BlockID block : m_cfg.reversePostOrder() | std::views::reverse) {
+        if (!isTrackedBlock(block))
+            continue;
+        successors.shrink(0);
+        successors.append(m_cfg.successors(block));
+        for (auto& edge : std::ranges::equal_range(m_additionalEdges, block, { }, &std::pair<BlockID, BlockID>::first))
+            successors.append(edge.second);
+        auto isAhead = [&](BlockID successor) {
+            return m_cfg.reversePostOrderIndex(successor) > m_cfg.reversePostOrderIndex(block);
+        };
+        auto isLiveAtTail = [&](ValueID id) {
+            return std::ranges::any_of(successors, [&](BlockID successor) {
+                return isLiveAtHead(id, successor);
+            });
+        };
+        auto add = [&](ValueID id) {
+            if (!ends.set(id.index()))
+                mayEnd.append(id);
+        };
+        auto isLiveAfterLaterPoint = [&](ValueID id, BlockID from) {
+            return isLiveAtHead(id, from) && !std::ranges::binary_search(endsAtHead[from.index()], id);
+        };
+        for (BlockID successor : successors) {
+            auto addUnlessLiveAfterLaterPoint = [&](ValueID id) {
+                for (BlockID other : successors) {
+                    if (other != successor && isAhead(other) && isLiveAfterLaterPoint(id, other))
+                        return;
+                }
+                add(id);
+            };
+            if (isAhead(successor)) {
+                for (ValueID id : endsAtHead[successor.index()])
+                    addUnlessLiveAfterLaterPoint(id);
+                continue;
+            }
+            // What is live at the head of a loop is defined outside the loop, so it is live all the way to each exit at whose target it is live.
+            findExitsBehind(block, successor);
+            forEachLiveAtHead(successor, [&](ValueID id) {
+                for (BlockID exit : exits) {
+                    if (isLiveAfterLaterPoint(id, exit))
+                        return;
+                }
+                addUnlessLiveAfterLaterPoint(id);
+            });
+        }
+
+        auto useOne = [&](ValueID id) {
+            if (isUsedLater.set(id.index()))
+                return;
+            usedLater.append(id);
+            if (!ends.get(id.index()) && !isLiveAtTail(id))
+                add(id);
+        };
+        auto use = [&](ValueID id) {
+            if (!id)
+                return;
+            if (isTrackedValue(id))
+                useOne(id);
+            if (!m_hasTrackedBases)
+                return;
+            forEachBase(id, [&](ValueID base) {
+                if (isTrackedValue(base))
+                    useOne(base);
+                return IterationStatus::Continue;
+            });
+        };
+        auto isLiveAfterPoint = [&](ValueID id) {
+            return isUsedLater.get(id.index()) || isLiveAtTail(id);
+        };
+
+        const Block& body = m_function.at(block);
+        body.forEachChildOutsideValues(use);
+        forEachNarrowedOperand(m_function, block, use);
+        for (uint32_t index = body.values.size(); index--;) {
+            ValueID id = body.values[index];
+            ends.clear(id.index());
+            isUsedLater.clear(id.index());
+            bool holds = isPoint(id);
+            if (holds)
+                functor(id, takeEnds().span(), isLiveAfterPoint);
+            const Value& value = m_function.at(id);
+            value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+                // What the point holds it holds while the function is suspended there, so that does not end before the point.
+                if (holds && isHeldOperand(value, operandIndex)) {
+                    if (!isUsedLater.set(operand.index()))
+                        usedLater.append(operand);
+                    return;
+                }
+                use(operand);
+            });
+        }
+        for (ValueID parameter : body.parameters)
+            ends.clear(parameter.index());
+        endsAtHead[block.index()] = takeEnds();
+        for (ValueID id : usedLater)
+            isUsedLater.clear(id.index());
+        usedLater.shrink(0);
+    }
+}
+
 LivenessOfAskedValues::LivenessOfAskedValues(const Function& function, const CFG& cfg, const UseLists& useLists)
     : m_function(function)
     , m_cfg(cfg)
@@ -572,9 +751,15 @@ const BitVector& LivenessOfAskedValues::blocksEnteredWith(ValueID id)
 Liveness::LocalCalc::LocalCalc(const Liveness& liveness, BlockID block)
     : m_liveness(liveness)
     , m_block(block)
-    , m_live(liveness.m_useLists.numberOfValues())
 {
     RELEASE_ASSERT(liveness.m_cfg.isReachable(block));
+    {
+        Locker locker { liveness.m_spareWordsLock };
+        if (!liveness.m_spareWords.isEmpty())
+            m_words = liveness.m_spareWords.takeLast();
+    }
+    if (m_words.isEmpty())
+        m_words.fill(0, (liveness.m_useLists.numberOfValues() + 63) / 64);
     m_index = liveness.m_function.at(block).values.size();
 
     liveness.m_function.at(block).forEachChildOutsideValues([&](ValueID child) {
@@ -587,7 +772,7 @@ Liveness::LocalCalc::LocalCalc(const Liveness& liveness, BlockID block)
     auto addLiveAtHead = [&](BlockID successor) {
         RELEASE_ASSERT(liveness.isTrackedBlock(successor));
         liveness.forEachLiveAtHead(successor, [&](ValueID id) {
-            m_live.quickSet(id.index());
+            add(id);
         });
     };
     for (BlockID successor : liveness.m_cfg.successors(block))
@@ -596,12 +781,43 @@ Liveness::LocalCalc::LocalCalc(const Liveness& liveness, BlockID block)
         addLiveAtHead(edge.second);
 }
 
+Liveness::LocalCalc::~LocalCalc()
+{
+    for (uint32_t word : m_wordsInUse)
+        m_words[word] = 0;
+    Locker locker { m_liveness.m_spareWordsLock };
+    m_liveness.m_spareWords.append(WTF::move(m_words));
+}
+
+bool Liveness::LocalCalc::add(ValueID id)
+{
+    uint64_t& word = m_words[id.index() / 64];
+    uint64_t bit = 1ull << (id.index() % 64);
+    if (word & bit)
+        return true;
+    // The word may be listed: its last bit may have been cleared.
+    if (!word)
+        m_wordsInUse.append(id.index() / 64);
+    word |= bit;
+    return false;
+}
+
+std::span<const uint32_t> Liveness::LocalCalc::wordsInUse() const
+{
+    if (m_numberOfSortedWords != m_wordsInUse.size()) {
+        AOT::sort(m_wordsInUse);
+        removeRepeatedElements(m_wordsInUse);
+        m_numberOfSortedWords = m_wordsInUse.size();
+    }
+    return m_wordsInUse.span();
+}
+
 void Liveness::LocalCalc::execute(uint32_t index)
 {
     RELEASE_ASSERT(m_index && index == m_index - 1);
     m_index = index;
     ValueID id = m_liveness.m_function.at(m_block).values[index];
-    m_live.clear(id.index());
+    m_words[id.index() / 64] &= ~(1ull << (id.index() % 64));
     m_liveness.m_function.at(id).forEachOperand([&](ValueID operand, uint32_t) {
         use(operand);
     });
@@ -612,13 +828,13 @@ void Liveness::LocalCalc::use(ValueID id)
     if (!id)
         return;
     if (m_liveness.isTrackedValue(id))
-        m_live.set(id.index());
+        add(id);
     if (!m_liveness.m_hasTrackedBases)
         return;
     m_liveness.forEachBase(id, [&](ValueID base) {
         if (!m_liveness.isTrackedValue(base))
             return IterationStatus::Continue;
-        return m_live.set(base.index()) ? IterationStatus::Done : IterationStatus::Continue;
+        return add(base) ? IterationStatus::Done : IterationStatus::Continue;
     });
 }
 

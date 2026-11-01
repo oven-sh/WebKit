@@ -1066,10 +1066,13 @@ void Interpreter::appendStackTrace(JSCell* owner, Vector<StackFrame>& results, c
 #if ENABLE(AOT)
             } else if (visitor->isCompiledFrame()) {
                 const AOT::CompiledFrame& frame = visitor->compiledFrame();
+                AOT::RunningImageScope imageOfFrame(vm.aotState(), frame.instance->program);
                 if (visitor->isOfConstructedFunctionThatLeft())
                     appendIfWanted(StackFrame(*visitor.compiledFrames().constructedFunctionThatLeft()));
                 else if (visitor->isOfBuiltinCalledByCompiledFrame())
-                    appendIfWanted(StackFrame(AOT::TraceFrame { frame.code, AOT::functionInFramesOf(frame.calledBuiltin), frame.callSite, !!frame.inlineFrame, false }));
+                    appendIfWanted(StackFrame(AOT::TraceFrame { frame.code, AOT::functionInFramesOf(frame.calledBuiltin), frame.callSite, !!frame.inlineFrame, false, false, false, false, false, AOT::leavesByTailCall(frame.calledBuiltin) }));
+                else if (visitor.compiledFrames().isAtFailedTailCall() && !visitor->isConstructCall()) // A function that was constructed makes no tail calls.
+                    appendIfWanted(StackFrame(AOT::TraceFrame { frame.code, frame.function, frame.callSite, !!frame.inlineFrame, visitor->isConstructCall(), false, false, false, false, true }));
                 else {
                     std::optional<JSObject*> callee = visitor.compiledFrames().recordedCallee();
                     appendIfWanted(StackFrame(vm, owner, AOT::TraceFrame { frame.code, frame.function, frame.callSite, !!frame.inlineFrame, visitor->isConstructCall(), false, false, visitor.compiledFrames().calleeWasEntered(), callee && !*callee }, callee.value_or(nullptr)));
@@ -1823,11 +1826,24 @@ static NEVER_INLINE EncodedJSValue enterNativeFunctionUnderValidation(JSGlobalOb
 }
 #endif
 
-JSValue Interpreter::executeBoundCall(VM& vm, JSBoundFunction* function, JSCell* context, const ArgList& args)
+// Never inlined: executeCall would otherwise have words in its frame that only a call of a bound function writes, and the
+// conservative scan reads whatever an earlier call left in them.
+NEVER_INLINE JSValue Interpreter::executeBoundCall(VM& vm, JSBoundFunction* function, JSCell* context, const ArgList& args)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    ASSERT(function->boundArgsLength());
+    // Only one-level unwrap is enough! We already made JSBoundFunction's nest smaller.
+    if (function->isTainted())
+        vm.setMightBeExecutingTaintedCode();
+
+    JSObject* targetFunction = function->targetFunction();
+    JSValue boundThis = function->boundThis();
+    auto callData = JSC::getCallDataInline(targetFunction);
+    ASSERT(callData.type != CallData::Type::None);
+
+    // This is the simplest path, just replacing |this|.
+    if (!function->boundArgsLength())
+        RELEASE_AND_RETURN(scope, executeCallImpl(vm, targetFunction, callData, boundThis, context, args));
 
     MarkedArgumentBuffer combinedArgs;
     combinedArgs.ensureCapacity(function->boundArgsLength() + args.size());
@@ -1841,16 +1857,17 @@ JSValue Interpreter::executeBoundCall(VM& vm, JSBoundFunction* function, JSCell*
     if (combinedArgs.hasOverflowed()) [[unlikely]]
         return throwStackOverflowError(function->realm(), scope);
 
-    JSObject* targetFunction = function->targetFunction();
-    JSValue boundThis = function->boundThis();
-    auto callData = JSC::getCallDataInline(targetFunction);
-    ASSERT(callData.type != CallData::Type::None);
-
     RELEASE_AND_RETURN(scope, executeCallImpl(vm, targetFunction, callData, boundThis, context, combinedArgs));
 }
 
 ALWAYS_INLINE JSValue Interpreter::executeCallImpl(VM& vm, JSObject* function, const CallData& callData, JSValue thisValue, JSCell* context, const ArgList& args)
 {
+#if ENABLE(AOT)
+    // It says that it entered the VM by itself. Nothing waits behind it here, so this frame is gone during the call.
+    if (callData.type == CallData::Type::Compiled)
+        return AOT::callCompiledCode(vm, function, callData, thisValue, context, args);
+#endif
+
     auto clobberizeValidator = makeScopeExit([&] {
         vm.didEnterVM = true;
     });
@@ -1860,11 +1877,6 @@ ALWAYS_INLINE JSValue Interpreter::executeCallImpl(VM& vm, JSObject* function, c
     scope.assertNoException();
 
     ASSERT(!vm.isCollectorBusyOnCurrentThread());
-
-#if ENABLE(AOT)
-    if (callData.type == CallData::Type::Compiled)
-        RELEASE_AND_RETURN(scope, AOT::callCompiledCode(vm, function, callData, thisValue, context, args));
-#endif
 
     bool isJSCall = callData.type == CallData::Type::JS;
     JSScope* functionScope = nullptr;
@@ -1941,21 +1953,7 @@ JSValue Interpreter::executeCall(JSObject* function, const CallData& callData, J
     VM& vm = this->vm();
     if (callData.type != CallData::Type::Native || !callData.native.isBoundFunction)
         return executeCallImpl(vm, function, callData, thisValue, context, args);
-
-    // Only one-level unwrap is enough! We already made JSBoundFunction's nest smaller.
-    auto* boundFunction = uncheckedDowncast<JSBoundFunction>(function);
-    if (boundFunction->isTainted())
-        vm.setMightBeExecutingTaintedCode();
-    if (!boundFunction->boundArgsLength()) {
-        // This is the simplest path, just replacing |this|. We do not need to go to executeBoundCall.
-        // Let's just replace and get unwrapped functions again.
-        JSObject* targetFunction = boundFunction->targetFunction();
-        JSValue boundThis = boundFunction->boundThis();
-        auto targetFunctionCallData = JSC::getCallDataInline(targetFunction);
-        ASSERT(targetFunctionCallData.type != CallData::Type::None);
-        return executeCallImpl(vm, targetFunction, targetFunctionCallData, boundThis, context, args);
-    }
-    return executeBoundCall(vm, boundFunction, context, args);
+    return executeBoundCall(vm, uncheckedDowncast<JSBoundFunction>(function), context, args);
 }
 
 JSValue Interpreter::executeConstructAllowingPrimitiveResult(JSObject* constructor, const CallData& constructData, const ArgList& args, JSValue newTarget)

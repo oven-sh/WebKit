@@ -184,7 +184,7 @@ bool CodeGenerator::hasTypeOnlyBehindTest(ValueID parameter)
 
 static bool isPinnedByEffects(const Effects& effects)
 {
-    return effects.mayExitSideways() || effects.mayCollect || !effects.writes.isEmpty();
+    return effects.mayThrowOtherThanStackOverflow() || effects.mayBeTerminated || effects.mayRunOtherCode() || effects.mayCollect || !effects.writes.isEmpty();
 }
 
 static bool isCallOrPhi(B3::Opcode opcode)
@@ -287,6 +287,9 @@ static unsigned leastCellSizeOf(const Program& program, const Placement& placeme
     constexpr unsigned headerSize = sizeof(JSCell);
 
     ASSERT(!(type.primitives & ~cellPrimitives));
+    // The word is zero for a built-in that the realm lacks, or whose property held another value when it was first looked up.
+    if (!type.builtins.isEmpty())
+        return 0;
     if (type.environment)
         return placement.layout(type.environment).size;
     if (type.isAnyString() || type.isOpaque(OpaqueKind::FlatString))
@@ -297,10 +300,17 @@ static unsigned leastCellSizeOf(const Program& program, const Placement& placeme
     std::optional<unsigned> least;
     for (LayoutID member : membersOf(program, type)) {
         const PlannedLayout& layout = placement.layout(member);
-        unsigned size = layout.hasSlots() ? layout.size : headerSize;
+        unsigned size = layout.holdsCompiledObjects() ? layout.size : headerSize;
         least = least ? std::min(*least, size) : size;
     }
     return least.value_or(0);
+}
+
+bool CodeGenerator::holdsTypeWhereverComputed(ValueID id)
+{
+    // A reference is used as it was lowered. Any other form has to be converted first, and B3 may do that earlier.
+    PublishedValue published = function().at(id).representation == Representation::Cell ? PublishedValue::Itself : PublishedValue::DerivedFromIt;
+    return !typeOf(id).mayBeUnspecified() && typeHoldsWhereverComputed(*this, m_values.span(), id, published);
 }
 
 void CodeGenerator::publishKnownProperties(ValueID id, LValue lowered)
@@ -350,9 +360,30 @@ static std::optional<int64_t> constantStepOf(const InductionStep& step, Represen
     return amount.value();
 }
 
+// Once the other entries into such a cycle are removed, an edge that enters the loop today becomes a back edge, and it passes the counter unchanged.
+static bool isOnCycleWithSeveralEntries(FunctionAnalyses& analyses, const LoopInduction& induction)
+{
+    const NaturalLoops& loops = analyses.naturalLoops();
+    const NaturalLoop& loop = loops.loop(induction.loopIndex);
+    auto enters = [&](Edge edge) {
+        return !loops.belongsTo(edge.from, loop);
+    };
+    if (std::ranges::count_if(analyses.cfg().incomingEdges(induction.header), enters) <= 1)
+        return false;
+
+    const BlockCycles::Forest& forest = analyses.blockCycles().forest();
+    for (unsigned cycle = forest.innermost(induction.header); cycle != BlockCycles::Forest::none; cycle = forest[cycle].parent) {
+        if (!forest[cycle].isReducible())
+            return true;
+    }
+    return false;
+}
+
 void CodeGenerator::publishInductionVariables()
 {
     for (const LoopInduction& loop : analyses().inductionVariables().loops()) {
+        if (loop.variables.isEmpty() || isOnCycleWithSeveralEntries(analyses(), loop))
+            continue;
         for (const InductionVariable& counter : loop.variables) {
             if (counter.steppedValues.size() != 1)
                 continue;

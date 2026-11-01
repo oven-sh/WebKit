@@ -1,0 +1,36 @@
+# `if (list[k] > other) { held = list[k]; .. }` over a list without holes: the first read stands behind a test of its position and finds an element. The second is only handed on, so nothing tests its position
+# and by its type it finds an element or undefined. Nothing is written between them, so it finds what the first one found, and takes it. The other way round the first read knows less than the second: both stay.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass EliminateRedundantReads
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="untestedBehindTested" parameters=[{type=Array<int, proven, Int32, pristine[Storage, Names, Dense]>}, {type=int[0, 100]}, {type=boolean}, {type=anything}] results=[{type=anything}] {
+    v4 = IsInBounds v0, v1
+    Branch v4 -> taken b1(| 0), notTaken b4()
+  b1(v5: guard):
+    v6 = GetArrayElement v0, v1, v5 arrayStorage=Int32 level=Proven [keyIsIntegral, isInBounds]
+    Branch v2 -> taken b2(), notTaken b3()
+  b2():
+    v7 = GetArrayElement v0, v1 arrayStorage=Int32 level=Proven [keyIsIntegral]
+    Return v7
+  b3():
+    Return v6
+  b4():
+    Return v3
+# CHECK: b2():
+# CHECK-NEXT: Return v6
+}
+
+function f1 name="testedBehindUntested" parameters=[{type=Array<int, proven, Int32, pristine[Storage, Names, Dense]>}, {type=int[0, 100]}, {type=anything}] results=[{type=anything}] {
+    v3 = GetArrayElement v0, v1 arrayStorage=Int32 level=Proven [keyIsIntegral]
+    v4 = IsInBounds v0, v1
+    Branch v4 -> taken b1(| 0), notTaken b2()
+  b1(v5: guard):
+    v6 = GetArrayElement v0, v1, v5 arrayStorage=Int32 level=Proven [keyIsIntegral, isInBounds]
+    Return v6
+  b2():
+    Return v3
+# CHECK: b1(v5
+# CHECK-NEXT: = GetArrayElement v0, v1, v5
+}

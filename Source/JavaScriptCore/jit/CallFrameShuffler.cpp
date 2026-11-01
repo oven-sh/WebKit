@@ -400,7 +400,7 @@ void CallFrameShuffler::prepareForTailCall()
 #if CPU(ARM64) || CPU(RISCV64)
     m_jit.loadPtr(MacroAssembler::Address(MacroAssembler::framePointerRegister, CallFrame::returnPCOffset()),
         MacroAssembler::linkRegister);
-#if CPU(ARM64E)
+#if CPU(ARM64E) || ENABLE(RETURN_ADDRESS_SIGNING)
     m_jit.addPtr(MacroAssembler::TrustedImm32(sizeof(CallerFrameAndPC)), MacroAssembler::framePointerRegister);
     m_jit.untagPtr(MacroAssembler::framePointerRegister, MacroAssembler::linkRegister);
     m_jit.subPtr(MacroAssembler::TrustedImm32(sizeof(CallerFrameAndPC)), MacroAssembler::framePointerRegister);

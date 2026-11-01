@@ -1,0 +1,18 @@
+# error = new Error; somethingNoTableLists.held = error; `${somethingNoTableLists}`; `${error}`
+# RUN: valueflow-solve used
+# CHECK: used ErrorPrototypeMessage
+# CHECK: used ErrorPrototypeName
+# CHECK: run ErrorPrototypeToString
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=Error
+    v1 = Construct v0
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="somethingThatNoTableLists" [isFreeName]
+    PropSet v3, v1 key="held"
+    v5 = ToString v3
+    v6 = ToString v1
+    Return
+}

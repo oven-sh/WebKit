@@ -87,5 +87,6 @@ function f1 name="repeated" module=m0 flags=[IsChecked, HasExplicitName] length=
 # HOT-LABEL: end of loop
 # CALLS-LABEL: f3: size=
 # CALLS: operation operationAOTStackStringBuilderFinish x1
-# CALLS-NEXT: stub StackStringBuilderAppendString x1
+# The loop stands twice: under a bound that is an int32, and its copy for any other number.
+# CALLS-NEXT: stub StackStringBuilderAppendString x2
 # CALLS-NEXT: f4: size=

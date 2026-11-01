@@ -252,7 +252,7 @@ static JSObject* holderOf(VM& vm, State& state, const LayoutData& layout, ClassS
     if (!holder)
         return nullptr;
     ClassSide foundSide;
-    if (state.objects->classes.classHeldBy(holder, foundSide) != &layout || foundSide != side)
+    if (state.objects->classes.classWithGuardsHeldBy(holder, foundSide) != &layout || foundSide != side)
         return nullptr;
     return holder;
 }
@@ -334,6 +334,18 @@ static void noteSets(State& state, MemberGuardAggregates aggregates)
     for (uint32_t index = 0; index < aggregates.count; ++index) {
         if (!holds(words, sets[index]))
             watchpoints.didSetMemberOf(sets[index], sets[aggregates.count + index]);
+    }
+}
+
+static void noteSetsThatWaitForALook(State& state, MemberGuardAggregates aggregates)
+{
+    if (!aggregates.count)
+        return;
+    const uint32_t* sets = state.tables.at<uint32_t>(aggregates.offset);
+    const uint64_t* words = wordsOfBits(state);
+    for (uint32_t index = 0; index < aggregates.count && !(sets[index] & MemberGuardAggregates::holdsWhileClear); ++index) {
+        if (!holds(words, sets[index]))
+            watchpointsOf(state).didSetMemberOf(sets[index], sets[aggregates.count + index]);
     }
 }
 
@@ -423,13 +435,49 @@ static bool isDeclaredBetween(State& state, const LayoutData& from, const Layout
 
 static void leaveGuardsOfStoresForLater(State& state, const LayoutData& layout, ClassSide side)
 {
+    std::span<const MemberGuardData> guards = guardsOf(layout, side, MemberGuardKind::PassedByStores);
+    if (guards.empty())
+        return;
+    BitVector declared(guards.size());
+    auto noteDeclared = [&](std::optional<uint32_t> key) {
+        auto found = key ? std::ranges::lower_bound(guards, *key, { }, [](const MemberGuardData& guard) {
+            return static_cast<uint32_t>(guard.name);
+        }) : guards.end();
+        if (found != guards.end() && found->name == *key)
+            declared.quickSet(found - guards.begin());
+    };
+    for (const LayoutData* next = &layout; next; next = state.objects->classes.assumedBaseOf(*next)) {
+        for (const MethodData& method : methodsOf(*next, side)) {
+            if (!(method.flags & methodHasComputedName))
+                noteDeclared(method.name);
+        }
+        if (side == ClassSide::Static) {
+            for (const FieldData& field : next->staticFields())
+                noteDeclared(field.name);
+        }
+    }
+    const ImplicitMemberKeys& implicit = watchpointsOf(state).implicitMemberKeys();
+    if (side == ClassSide::Prototype)
+        noteDeclared(implicit.constructor);
+    else {
+        noteDeclared(implicit.prototype);
+        noteDeclared(implicit.name);
+        noteDeclared(implicit.length);
+    }
+
+    MemberGuardWatchpoints::MethodTableUpdate update(state);
+    std::span<const MemberGuardAggregates> aggregates = layout.memberGuardAggregates();
+    size_t first = guards.data() - layout.memberGuards().data();
     bool leavesGuardsClear = false;
-    for (const MemberGuardData& guard : guardsOf(layout, side, MemberGuardKind::PassedByStores)) {
-        if (!isDeclaredBetween(state, layout, nullptr, side, guard.name))
+    for (size_t index = 0; index < guards.size(); ++index) {
+        if (!declared.quickGet(index)) {
+            if (!aggregates.empty())
+                noteSetsThatWaitForALook(state, aggregates[first + index]);
             continue;
+        }
         if (!std::exchange(leavesGuardsClear, true) && side == ClassSide::Prototype)
             watchpointsOf(state).didLeaveGuardsOfStoresClear(MemberGuardAggregates::bitNumber(*layout.classData().guardWordsOffsetFor(side), 0), layout);
-        leaveForLater(state, layout, guard, SetsThatHeld::AreReadAgain);
+        leaveForLater(state, layout, guards[index], SetsThatHeld::AreReadAgain);
     }
 }
 
@@ -531,7 +579,7 @@ static bool hasPropertyOrSlot(VM& vm, JSObject* holder, MemberName& name)
 
 static const LayoutData* nextClassOnSide(const ClassTable& classes, const LayoutData& layout, ClassSide side)
 {
-    if (side == ClassSide::Static && !ClassTable::isDefinedByClass(layout))
+    if (side == ClassSide::Static && !classes.isDefinedByClass(layout))
         return nullptr;
     return classes.assumedBaseOf(layout);
 }
@@ -556,7 +604,7 @@ static bool lacksMember(VM& vm, State& state, JSObject* object, MemberName& name
         return false;
     // The stand-in for a prototype object reports the creation of its members to its own Instance.
     if (object->classInfo() == ClassPrototype::info())
-        return Instance::of(structure->realm()) == &state.instance && !object->butterfly() && !ClassPrototype::hasMember(object, name.uid());
+        return Instance::owning(object) == &state.instance && !object->butterfly() && !ClassPrototype::hasMember(object, name.uid());
     if (isCompiledObject(object))
         return !uncheckedDowncast<Object>(object)->isInFrame() && !hasPropertyOrSlot(vm, object, name);
     if (object->type() != FinalObjectType || !flattenOnce(vm, object) || !structure->propertyAccessesAreCacheable() || !structure->propertyAccessesAreCacheableForAbsence())
@@ -571,6 +619,16 @@ static bool passOtherObjects(VM& vm, State& state, JSValue first, JSObject* end,
             return false;
         passed.append(asObject(next));
     }
+    return true;
+}
+
+// `Object.setPrototypeOf(Readable, Stream)`: a constructor function below another function. The walk of the caches passes functions too, and names what it passed that may get the name or another parent.
+static bool findsMemberOfObjectAbove(State& state, JSObject* holder, JSObject* end, MemberName& name, ChainObjects& passed)
+{
+    ChainWalk walk = walkChain({ state.instance.globalObject, holder->structure(), holder }, name.uid());
+    if (walk.didFlatten || walk.result != ChainWalkResult::Found || walk.owner != end)
+        return false;
+    passed.appendVector(walk.changeableObjects);
     return true;
 }
 
@@ -680,8 +738,14 @@ static std::optional<GuardResolution> resolveAsDeclared(VM& vm, State& state, Cl
 
         bool hasNext = classes.at(index).next;
         JSObject* nextHolder = hasNext ? classes.at(index + 1).holder : objectAboveClasses(state, side);
-        if (!nextHolder || !passOtherObjects(vm, state, holder->getPrototypeDirect(), nextHolder, name, resolution.otherObjects))
+        if (!nextHolder)
             return std::nullopt;
+        size_t numberOfObjectsPassedBelow = resolution.otherObjects.size();
+        if (!passOtherObjects(vm, state, holder->getPrototypeDirect(), nextHolder, name, resolution.otherObjects)) {
+            resolution.otherObjects.shrink(numberOfObjectsPassedBelow);
+            if (hasNext || side != ClassSide::Static || !findsMemberOfObjectAbove(state, holder, nextHolder, name, resolution.otherObjects))
+                return std::nullopt;
+        }
         if (!hasNext)
             return resolution;
     }
@@ -698,7 +762,7 @@ static bool tryWatchDeclarer(VM& vm, State& state, const LayoutData& layout, Cla
     if (isLazyHolder(holder, side))
         return true;
     // Nothing can change or remove the prototype property of a class object. Class objects share their Structure, and a watchpoint on it would fire when another class leaves it.
-    if (side == ClassSide::Static && ClassTable::isDefinedByClass(*declarer) && !declaresMember(*declarer, side, name.key))
+    if (side == ClassSide::Static && state.objects->classes.isDefinedByClass(*declarer) && !declaresMember(*declarer, side, name.key))
         return true;
     // Whoever stores to the prototype property of a constructor function, defines it or deletes it comes through the functions of the closure, which report it and let no cache remember the store.
     if (side == ClassSide::Static && watchpointsOf(state).implicitMemberKeys().prototype == name.key && !declaresMember(*declarer, side, name.key))
@@ -760,6 +824,20 @@ static void setGuardOfStores(State& state, const LayoutData& layout, const Membe
     noteSets(state, layout.aggregatesOf(guard));
 }
 
+// The guard of the class that stores is set, and the store came by name all the same: a set that holds the guard is clear. A class that has stored nothing yet, an abstract base for one, may be all that stands in its way.
+static void completeSetsOfGuardOfStores(VM& vm, State& state, const LayoutData& layout, UniquedStringImpl* uid)
+{
+    if (!layout.classData().guardWordsOffsetFor(ClassSide::Prototype))
+        return;
+    std::optional<uint32_t> key = vm.aotState().identifiers->numberOf(uid);
+    const MemberGuardData* guard = key ? findGuard(layout, ClassSide::Prototype, MemberGuardKind::PassedByStores, *key) : nullptr;
+    if (!guard || !isSet(state, layout, *guard))
+        return;
+    SetForScope aStoreByNameHasAsked(watchpointsOf(state).aStoreByNameHasAsked(), true);
+    MemberGuardWatchpoints::MethodTableUpdate update(state);
+    noteSets(state, layout.aggregatesOf(*guard));
+}
+
 void ClassTable::didStoreByName(VM& vm, const LayoutData& instanceLayout, UniquedStringImpl* uid)
 {
     if (!instanceLayout.isClass())
@@ -781,8 +859,10 @@ void ClassTable::didFindThatStoresPass(VM& vm, const LayoutData& instanceLayout,
         return;
     const LayoutData& layout = classOfInstances(instanceLayout);
     const MemberGuardData* guard = findClearGuardOfStoresUnder(vm, m_state, layout, uid);
-    if (!guard)
+    if (!guard) {
+        completeSetsOfGuardOfStores(vm, m_state, layout, uid);
         return;
+    }
     watchpointsOf(m_state).watchOtherObjects(changeableObjects, layout, *guard, uid);
     setGuardOfStores(m_state, layout, *guard);
 }
@@ -801,19 +881,81 @@ static void updateMemberGuard(VM& vm, State& state, const LayoutData& layout, co
     updateMemberGuard(vm, state, layout, guard, classes);
 }
 
+// A member that the program assigns to the prototype object is not there yet when the class is defined. An access by name that has been answered looks again.
+void ClassTable::didFindMemberByName(VM& vm, const LayoutData& instanceLayout, UniquedStringImpl* uid)
+{
+    if (!instanceLayout.isClass())
+        return;
+    const LayoutData& layout = classOfInstances(instanceLayout);
+    // The guards of a constructor function begin with its first object, behind what the program assigns.
+    if (!isDefinedByClass(layout))
+        return;
+    if (holdsFromStart(layout) || !layout.numberOfMemberGuards() || layout.evaluation() == EvaluationState::SeenTwice || !classPrototypeIfExists(layout))
+        return;
+    std::optional<uint32_t> key = vm.aotState().identifiers->numberOf(uid);
+    const MemberGuardData* guard = key ? findGuard(layout, ClassSide::Prototype, MemberGuardKind::Member, *key) : nullptr;
+    MemberGuardWatchpoints& watchpoints = watchpointsOf(m_state);
+    if (!guard || isSet(m_state, layout, *guard) || watchpoints.hasEnded(*guard) || watchpoints.wasFoundNotToHold(*guard))
+        return;
+    MemberGuardWatchpoints::MethodTableUpdate update(m_state);
+    updateMemberGuard(vm, m_state, layout, *guard);
+    if (!isSet(m_state, layout, *guard))
+        watchpoints.didFindNotToHold(*guard);
+}
+
 uint64_t* ClassTable::guardWords(const LayoutData& layout, ClassSide side) const
 {
     std::optional<uint32_t> offset = layout.classData().guardWordsOffsetFor(side);
     return offset ? reinterpret_cast<uint64_t*>(m_state.instance.statics() + *offset) : nullptr;
 }
 
-const LayoutData* ClassTable::classHeldBy(JSObject* holder, ClassSide& side) const
+const LayoutData* ClassTable::classWithGuardsHeldBy(JSObject* holder, ClassSide& side) const
 {
     auto found = m_classSidesByHolder.find(holder);
     if (found == m_classSidesByHolder.end())
         return classLeftToRecordHeldBy(holder, side);
     side = static_cast<ClassSide>(found->value & 1);
     return classWithIndex(found->value >> 1);
+}
+
+const LayoutData* ClassTable::classHeldBy(JSObject* holder, ClassSide& side) const
+{
+    const LayoutData* layout = classWithGuardsHeldBy(holder, side);
+    return layout || !m_hasHoldersLeftOut ? layout : classOfHolderLeftOut(holder, side);
+}
+
+// Nothing can change or remove the prototype property of a class object, so a class object that names the holder as its prototype proves what the holder is.
+const LayoutData* ClassTable::classOfHolderLeftOut(JSObject* holder, ClassSide& side) const
+{
+    VM& vm = *m_state.instance.vm;
+    auto* classObject = dynamicDowncast<Closure>(holder);
+    side = classObject ? ClassSide::Static : ClassSide::Prototype;
+    if (!classObject) {
+        if (holder->type() != FinalObjectType)
+            return nullptr;
+        JSValue constructor = holder->getDirect(vm, vm.propertyNames->constructor);
+        classObject = constructor && constructor.isCell() ? dynamicDowncast<Closure>(constructor.asCell()) : nullptr;
+        if (!classObject)
+            return nullptr;
+    }
+    if (&classObject->state() != &m_state)
+        return nullptr;
+    const LayoutData* layout = classObject->classData();
+    if (!layout || !isDefinedByClass(*layout) || !watchpointsOf(m_state).hasNoGuardLeft(*layout))
+        return nullptr;
+    JSValue prototype = classObject->getDirect(vm, vm.propertyNames->prototype);
+    if (!prototype || (side == ClassSide::Prototype && prototype != JSValue(holder)))
+        return nullptr;
+    return layout;
+}
+
+bool ClassTable::tryLeaveHoldersOut(VM& vm, const LayoutData& layout, JSObject* prototype)
+{
+    if (!watchpointsOf(m_state).hasNoGuardLeft(layout))
+        return false;
+    prototype->didBecomePrototype(vm);
+    m_hasHoldersLeftOut = true;
+    return true;
 }
 
 void ClassTable::didCreatePrototypeLeftToRecord(const LayoutData& layout)
@@ -825,14 +967,14 @@ void ClassTable::didCreatePrototypeLeftToRecord(const LayoutData& layout)
 const LayoutData* ClassTable::classLeftToRecordHeldBy(JSObject* holder, ClassSide& side) const
 {
     if (auto* prototype = dynamicDowncast<ClassPrototype>(holder)) {
-        const LayoutData* layout = classWithIndex(prototype->classIndex());
+        const LayoutData* layout = classOf(*prototype);
         if (!layout || !leavesDefinitionToRecord(*layout) || classPrototypeIfExists(*layout) != holder)
             return nullptr;
         side = ClassSide::Prototype;
         return layout;
     }
     auto* classObject = dynamicDowncast<Closure>(holder);
-    const LayoutData* layout = classObject ? classObject->classData() : nullptr;
+    const LayoutData* layout = classObject && &classObject->state() == &m_state ? classObject->classData() : nullptr;
     if (!layout || !leavesDefinitionToRecord(*layout) || registeredClassObjectOf(m_state, *layout) != classObject)
         return nullptr;
     side = ClassSide::Static;
@@ -1020,7 +1162,7 @@ static void watchOwnMember(VM& vm, State& state, const LayoutData& layout, Class
     if (!layout.classData().subclassesOffset && !findGuard(layout, side, MemberGuardKind::Member, key))
         return;
     MemberName name { vm, key };
-    bool isAsDeclared = (holderState == ClassTable::HolderState::AsDefinitionMadeIt && ClassTable::hasOneClassObject(layout)) || holdsAsDeclared(vm, state, layout, side, holder, name);
+    bool isAsDeclared = (holderState == ClassTable::HolderState::AsDefinitionMadeIt && state.objects->classes.hasOneClassObject(layout)) || holdsAsDeclared(vm, state, layout, side, holder, name);
     ASSERT(isAsDeclared == holdsAsDeclared(vm, state, layout, side, holder, name));
     if (!isAsDeclared || !tryWatchDeclarer(vm, state, layout, side, &layout, holder, name))
         state.objects->classes.didChangeMember(layout, side, name.uid());
@@ -1180,8 +1322,10 @@ void ClassTable::didChangeMember(const LayoutData& layout, ClassSide side, Uniqu
     if (side == ClassSide::Prototype)
         watchpointsOf(m_state).didChangeNameOnPrototypeSide(layout, *key);
     auto endGuardsOf = [&](const LayoutData& inheriting) {
-        if (const MemberGuardData* guard = findGuard(inheriting, side, MemberGuardKind::Member, *key))
+        if (const MemberGuardData* guard = findGuard(inheriting, side, MemberGuardKind::Member, *key)) {
             clear(m_state, inheriting, *guard);
+            watchpointsOf(m_state).mayHoldAgain(*guard);
+        }
         if (const MemberGuardData* guard = findGuard(inheriting, side, MemberGuardKind::PassedByStores, *key))
             leaveForLater(m_state, inheriting, *guard);
     };
@@ -1228,6 +1372,8 @@ std::span<const uint64_t> ClassTable::classesBelowWithGuardsNamed(NamedGuardsBel
 
 void ClassTable::didDefineMember(VM& vm, const LayoutData& layout, ClassSide side, JSObject* holder, UniquedStringImpl* uid, JSObject* function)
 {
+    if (watchpointsOf(m_state).hasNoGuardLeft(layout))
+        return;
     std::optional<FunctionID> defined = functionOf(function);
     bool isNamedByClosureTable = defined && m_state.objects->closures.hasCellFor(*defined);
     if (!isNamedByClosureTable && holdsFromStart(layout) && !layout.classData().subclassesOffset && m_classSidesByHolder.contains(holder)) {
@@ -1301,8 +1447,9 @@ void ClassTable::didChangePrototypeLink(const LayoutData& layout, ClassSide side
     if (side == ClassSide::Prototype)
         watchpointsOf(m_state).didChangePrototypeSide(layout);
     auto clearGuards = [&](const LayoutData& inheriting) {
+        // The bit of a constructor function's class is not up until somebody has looked, and whoever looks later must not find the link unchanged.
         for (const MemberGuardData& guard : guardsOf(inheriting, side, MemberGuardKind::PrototypeLink))
-            clear(m_state, inheriting, guard);
+            end(m_state, inheriting, guard);
         clearInheritedGuards(m_state, inheriting, base, side);
         return IterationStatus::Continue;
     };
@@ -1371,6 +1518,21 @@ void ClassTable::disarmMemberGuards(const LayoutData& classLayout)
     for (const MemberGuardData& guard : classLayout.memberGuards())
         end(m_state, classLayout, guard);
     watchpointsOf(m_state).stopWatching(classLayout);
+
+    // A validating run looks at what every holder gets.
+    if (m_state.instance.vm->aotState().validatesRuntime || !m_state.tables.classPrototypeNames().empty() || !isDefinedByClass(classLayout))
+        return;
+    bool hasGuardOfStores = false;
+    auto lookForGuardOfStores = [&](const LayoutData& inheriting) {
+        hasGuardOfStores |= std::ranges::any_of(inheriting.memberGuards(), [](const MemberGuardData& guard) {
+            return guard.kind() == MemberGuardKind::PassedByStores;
+        });
+        return hasGuardOfStores ? IterationStatus::Done : IterationStatus::Continue;
+    };
+    if (lookForGuardOfStores(classLayout) == IterationStatus::Continue)
+        forEachDescendant(m_state, classLayout, lookForGuardOfStores);
+    if (!hasGuardOfStores)
+        watchpointsOf(m_state).didLeaveNoGuard(classLayout);
 }
 
 void didEvaluateClassAgain(State& state, const LayoutData& classLayout)
@@ -1544,7 +1706,7 @@ void MemberGuardWatchpoints::updateMethodTable()
 {
     if (m_changedBits.isEmpty())
         return;
-    const Image& image = *m_state.instance.vm->aotState().image;
+    const Image& image = *m_state.instance.program;
     std::span<const uint32_t> compiled = image.methodTable();
     std::span<const uint32_t> lookups = image.methodLookups();
     std::span<uint32_t> table = m_state.instance.methodTable();

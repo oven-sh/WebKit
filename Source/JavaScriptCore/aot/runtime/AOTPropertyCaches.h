@@ -81,6 +81,7 @@ public:
 
     void dropChainDependent(VM&, uint32_t siteIndex, UniquedStringImpl* uidOrNull) final;
     bool hasChainDependent(VM&, uint32_t siteIndex, UniquedStringImpl* uidOrNull) const final;
+    bool keepChainDependent(VM&, uint32_t siteIndex, UniquedStringImpl* uidOrNull, const CreatedMembers&) final;
 
     template<typename Visitor> void visitRoots(Visitor&);
     size_t removeDeadEntries(VM&, CollectionScope);
@@ -246,10 +247,14 @@ public:
     void remove(StructureID, const CachedName&, SlotAccess);
 
     void fileAbsenceFilterForStores(JSGlobalObject*, JSObject*);
+    // For a store to a field that the object lacks. The filter covers all the names of a Structure: it decides this store, and lets the stubs create the fields after this one.
+    bool addFilterAndCheckStoreCreatesOwnField(JSGlobalObject*, Object&, uint32_t identifierNumber);
     void didChangeObjectOnSomeChain(JSObject* changed, UniquedStringImpl* uidOrNull);
     void didStartWatchingReplacements();
     uint32_t absenceFilterGenerationForStores() const { return m_absenceFilterGenerationForStores; }
     bool wasChangedOnSomeChain(uint32_t identifierNumber) const { return m_namesChangedOnChains[identifierNumber / 64] >> identifierNumber % 64 & 1; }
+    // Like the stubs' branchIfChainMayHaveName(): no object on the prototype chain has an accessor or a read-only property with this name, so a store creates the object's own field.
+    bool storeCreatesOwnField(const Object&, uint32_t identifierNumber) const;
     void didChangeObjectPrototype(JSObject* prototype, UniquedStringImpl* uidOrNull);
     bool mayBeNameOfObjectPrototype(uint32_t identifierNumber) const { return m_namesOfObjectPrototypes[identifierNumber / 64] >> identifierNumber % 64 & 1; }
     const AbsenceFilter& absenceFilterFor(StructureID id) const { return m_absenceFilters[AbsenceFilter::indexFor(id.bits())]; }
@@ -257,9 +262,12 @@ public:
 
     void dropChainDependent(VM&, uint32_t structureIDBits, UniquedStringImpl* uidOrNull) final;
     bool hasChainDependent(VM&, uint32_t structureIDBits, UniquedStringImpl* uidOrNull) const final;
+    bool keepChainDependent(VM&, uint32_t structureIDBits, UniquedStringImpl* uidOrNull, const CreatedMembers&) final;
 
     size_t removeDeadEntries(VM&, CollectionScope);
     void validate(VM&) const;
+    bool describesObjectOfOtherImage(Structure*) const;
+    void validateImageOfSlot(VM&, const Slot&, SlotAccess, UniquedStringImpl*) const;
 
     // An object of some chain that is changed first and reports behind that. A collection may end in between. No compiled code runs there, so validation leaves alone what the report is about to drop.
     class UnreportedChange {
@@ -281,17 +289,36 @@ public:
 private:
     using BitPerName = std::array<uint64_t, (FieldTableEntry::maxName + 1) / 64>;
 
+    void didChangeFilteredObject(JSObject* changed, UniquedStringImpl* uidOrNull);
+
+    // Pages of the VM: zero-filled, and untouched until first read or written.
+    struct Tables {
+        std::array<AbsenceFilter, AbsenceFilter::numberOfFilters> absenceFilters;
+        BitPerName namesChangedOnChains;
+        BitPerName namesOfObjectPrototypes;
+        std::array<uint8_t, MissesOfPairs::numberOfCounters> missesOfPairs;
+        std::array<NameOfText, NameOfText::numberOfEntries> namesOfTexts;
+    };
+
+    // The VM has tables like these for each image that it runs, and an instance reads those of its own image.
+    bool serves(const Instance&) const;
+
     VM& m_vm;
+    const Image* m_image;
     CustomAccessorTable m_customAccessors;
     RowDisplacementTable m_front;
     HashedSlotTable m_hashedTable;
     UncheckedKeyHashMap<UniquedStringImpl*, uint16_t, WTF::PtrHash<UniquedStringImpl*>> m_columnsByNameAddress;
-    std::array<AbsenceFilter, AbsenceFilter::numberOfFilters> m_absenceFilters { };
+    Tables& m_tables;
+    std::array<AbsenceFilter, AbsenceFilter::numberOfFilters>& m_absenceFilters { m_tables.absenceFilters };
     uint32_t m_absenceFilterGenerationForStores { 1 };
-    BitPerName m_namesChangedOnChains { };
-    BitPerName m_namesOfObjectPrototypes { };
-    std::array<uint8_t, MissesOfPairs::numberOfCounters> m_missesOfPairs { };
-    std::array<NameOfText, NameOfText::numberOfEntries> m_namesOfTexts { };
+    uint32_t m_changesUnderNamesOnChains { 0 };
+    // The objects that the filters and the Object.prototype name sets describe.
+    ObjectsSeen m_filteredObjects;
+    BitPerName& m_namesChangedOnChains { m_tables.namesChangedOnChains };
+    BitPerName& m_namesOfObjectPrototypes { m_tables.namesOfObjectPrototypes };
+    std::array<uint8_t, MissesOfPairs::numberOfCounters>& m_missesOfPairs { m_tables.missesOfPairs };
+    std::array<NameOfText, NameOfText::numberOfEntries>& m_namesOfTexts { m_tables.namesOfTexts };
     Vector<JSObject*, 2> m_objectsWithUnreportedChange;
     bool m_hasInstance { false };
     bool m_isSharedByInstances { false };
@@ -328,7 +355,6 @@ public:
     void countNamed(ASCIILiteral what, UniquedStringImpl* name);
     void countMiss(ASCIILiteral access, bool shouldFile, JSValue receiver, UniquedStringImpl* name);
     void dumpNamedCounts(PrintStream&) const;
-    // The second store in a row that finds a field of an object of this Structure absent and leaves the stubs.
     void remember(const FieldExit& exit) { placeOf(exit.structureBefore, exit.name) = exit; }
     void forgetFieldExits() { m_fieldExits.fill({ }); }
     FieldExit* findFieldExit(StructureID structureID, uint32_t name)
@@ -336,12 +362,12 @@ public:
         FieldExit& exit = placeOf(structureID, name);
         return exit.field && exit.structureBefore == structureID && exit.name == name ? &exit : nullptr;
     }
-    bool createsFieldOutsideStubsAgain(StructureID structureID) { return std::exchange(m_structureOfLastFieldCreatedOutsideStubs, structureID) == structureID; }
     void didAddProperty(Structure* before, Structure* after);
     const Slot* findByKey(Structure*, UniquedStringImpl*, SlotAccess);
     void fillSiteCacheFromTables(SiteCache, JSCell* base, uint32_t identifierNumber, SlotAccess);
     // The getter that a read of the name calls on every object with the Structure of this one. Runs no code of the program and allocates no cell.
     JSValue findGetterAndFillSiteCache(SiteCache, JSCell* base, uint32_t identifierNumber);
+    void fileValueWithoutChangingObject(JSCell* base, uint32_t identifierNumber);
     void cacheFreeName(SiteCache, UniquedStringImpl*, SlotAccess, const PropertyAnswer&);
     // The cell that a trap of a proxy is handed for the name. A slot names it and does not hold it. For a name of the program there is one, which is kept, so such a slot lasts as long as its Structure.
     JSCell* keyForTraps(UniquedStringImpl*);
@@ -391,7 +417,6 @@ private:
     JSCell* m_holderLookedAtByName { nullptr };
     std::array<uint8_t, numberOfMissCounters> m_missCounters { };
     uint8_t* m_counterOfPairToFile { nullptr };
-    StructureID m_structureOfLastFieldCreatedOutsideStubs;
     FieldExit& placeOf(StructureID structureID, uint32_t name) { return m_fieldExits[((structureID.bits() >> StructureRowWords::granuleShift) + name) % FieldExit::numberOfPlaces]; }
     std::array<FieldExit, FieldExit::numberOfPlaces> m_fieldExits { };
     std::atomic<bool> m_shouldForgetMisses { false };

@@ -14,6 +14,7 @@
 #include "AOTVector.h"
 #include <algorithm>
 #include <wtf/CommaPrinter.h>
+#include <wtf/Hasher.h>
 #include <wtf/PrintStream.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -98,17 +99,41 @@ std::optional<uint32_t> VirtualFamily::findCounterpart(uint32_t field) const
     case VirtualFieldKind::RangeStart:
     case VirtualFieldKind::RangeEnd:
     case VirtualFieldKind::Operand:
+    case VirtualFieldKind::Position:
+    case VirtualFieldKind::Table:
         return std::nullopt;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static uint64_t hashOf(const VirtualShape& shape)
+{
+    return computeHash(static_cast<uint8_t>(shape.kind), static_cast<uint8_t>(shape.constant), shape.descriptionIndex, shape.length, shape.order.index(), shape.stored.hash());
+}
+
 VirtualShapeID VirtualFamily::intern(VirtualShape&& shape)
 {
-    size_t existing = m_shapes.find(shape);
-    if (existing != notFound)
-        return VirtualShapeID(existing);
+    constexpr size_t mostShapesComparedOneByOne = 8;
+    if (m_shapes.size() <= mostShapesComparedOneByOne) {
+        size_t existing = m_shapes.find(shape);
+        if (existing != notFound)
+            return VirtualShapeID(existing);
+        VirtualShapeID id(m_shapes.size());
+        m_shapes.append(WTF::move(shape));
+        if (m_shapes.size() > mostShapesComparedOneByOne) {
+            for (uint32_t index = 0; index < m_shapes.size(); ++index)
+                m_shapesByHash.add(hashOf(m_shapes[index]), Vector<uint32_t, 1>()).iterator->value.append(index);
+        }
+        return id;
+    }
+
+    Vector<uint32_t, 1>& shapesWithHash = m_shapesByHash.add(hashOf(shape), Vector<uint32_t, 1>()).iterator->value;
+    for (uint32_t existing : shapesWithHash) {
+        if (m_shapes[existing] == shape)
+            return VirtualShapeID(existing);
+    }
     VirtualShapeID id(m_shapes.size());
+    shapesWithHash.append(id.index());
     m_shapes.append(WTF::move(shape));
     return id;
 }
@@ -291,6 +316,8 @@ static KnownValue knownValueOf(const VirtualObjectDescription& description)
     case VirtualObjectKind::BuiltinFields:
     case VirtualObjectKind::BuiltinPrefix:
     case VirtualObjectKind::ViewRange:
+    case VirtualObjectKind::ArrayIterator:
+    case VirtualObjectKind::CollectionIterator:
         return KnownValue::object();
     case VirtualObjectKind::Opaque:
     case VirtualObjectKind::Environment:
@@ -322,7 +349,7 @@ static KnownBoolean evaluateTypeTestOfFields(const Program& program, const Virtu
     return evaluateTypeTest(program, knownValueOf(description), tested);
 }
 
-static KnownBoolean evaluateTypeTestOfShape(const ShapeContext& context, const VirtualShape& shape, const Type& tested)
+KnownBoolean evaluateTypeTestOfShape(const ShapeContext& context, const VirtualShape& shape, const Type& tested)
 {
     switch (shape.kind) {
     case VirtualShapeKind::Cell:
@@ -635,6 +662,9 @@ static KnownBoolean evaluateArrayStorageTest(const ShapeContext& context, const 
     // An array that is never built has no storage for anybody to see, so the test goes the way it was expected to.
     if (!description.canBeBuilt)
         return KnownBoolean::True;
+    // The list of the surplus arguments is made with room for any value, wherever and whenever it is built.
+    if (description.kind == VirtualObjectKind::ArgumentList)
+        return knownBoolean(test.arrayStorage() == ArrayStorage::Contiguous);
     if (description.kind != VirtualObjectKind::Array)
         return KnownBoolean::Unknown;
 
@@ -649,7 +679,8 @@ static KnownBoolean evaluateArrayStorageTest(const ShapeContext& context, const 
 
 static KnownBoolean evaluateBoundsTest(const ShapeContext& context, const VirtualShape& shape, const Value& test)
 {
-    if (!isArray(context.family.descriptionOf(shape)))
+    // How many arguments a frame holds is known when it runs.
+    if (!isArray(context.family.descriptionOf(shape)) || context.family.descriptionOf(shape).kind == VirtualObjectKind::ArgumentList)
         return KnownBoolean::Unknown;
     KnownValue position = knownValueOf(context.objects.program, context.objects.function, test.positionOperand());
     if (position.kind() == KnownValue::Kind::Integer)
@@ -709,8 +740,15 @@ static KnownBoolean evaluateTestOfFields(const ShapeContext& context, const Virt
     case Opcode::PropHas:
     case Opcode::ElemHas:
     case Opcode::HasArrayElement:
-    case Opcode::IsElementPresent:
         return evaluateFieldTest(context, shape, test);
+    case Opcode::IsElementPresent: {
+        KnownBoolean answer = evaluateFieldTest(context, shape, test);
+        // `arguments[k]` in a loop: an index that is known only by its range finds an element where the list has one at every index.
+        // Only a written list is as long as its shape says: a list that a built-in makes may be shorter.
+        if (answer == KnownBoolean::Unknown && description.kind == VirtualObjectKind::Array && !partsOfLiteral(context.family, shape).hasHoles && evaluateBoundsTest(context, shape, test) == KnownBoolean::True)
+            return KnownBoolean::True;
+        return answer;
+    }
     case Opcode::HasArrayStorage:
         return evaluateArrayStorageTest(context, shape, test);
     case Opcode::IsInBounds:
@@ -730,6 +768,11 @@ static KnownBoolean evaluateTestOfFields(const ShapeContext& context, const Virt
     case Opcode::HasLayoutPrototype:
         return evaluatePrototypeTest(context, shape);
     case Opcode::IsPristine:
+        // Nothing has been stored by name into an iterator that is not built.
+        if (description.kind == VirtualObjectKind::ArrayIterator && test.builtinClass() == BuiltinClasses::ArrayIterator)
+            return KnownBoolean::True;
+        if (description.kind == VirtualObjectKind::CollectionIterator && (test.builtinClass() == BuiltinClasses::MapIterator || test.builtinClass() == BuiltinClasses::SetIterator))
+            return KnownBoolean::True;
         return isArray(description) && test.builtinClass() == BuiltinClasses::Array ? KnownBoolean::True : KnownBoolean::Unknown;
     case Opcode::HasKeyOrder:
         if (hasUnprovenFieldThatMayLeaveSlot(context, shape))

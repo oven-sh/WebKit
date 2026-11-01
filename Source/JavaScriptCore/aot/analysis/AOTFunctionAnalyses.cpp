@@ -154,16 +154,18 @@ static EffectInputs effectInputsOf(TerminatorKind kind)
 static EffectInputs effectInputsOf(const Value& value) { return effectFactsOf(value).inputs; }
 static EffectInputs effectInputsOf(const Terminator& terminator) { return effectInputsOf(terminator.kind); }
 
-static void addPayload(AnalysisWordHasher& hasher, const Instruction& instruction)
+static void addPayload(AnalysisWordHasher& hasher, const Instruction& instruction, std::optional<unsigned> wordLeftOut = std::nullopt)
 {
     static_assert(numberOfInlinePayloadWords == 3);
     std::array<uint32_t, numberOfInlinePayloadWords> inlinePayload = instruction.inlinePayload();
+    if (wordLeftOut && *wordLeftOut < numberOfInlinePayloadWords)
+        inlinePayload[*wordLeftOut] = 0;
     hasher.add(instruction.flags, inlinePayload[0]);
     hasher.add(inlinePayload[1], inlinePayload[2]);
     std::span<const uint32_t> outOfLinePayload = instruction.outOfLinePayload();
     hasher.add(outOfLinePayload.size());
-    for (uint32_t word : outOfLinePayload)
-        hasher.add(word);
+    for (size_t index = 0; index < outOfLinePayload.size(); ++index)
+        hasher.add(wordLeftOut == index + numberOfInlinePayloadWords ? 0 : outOfLinePayload[index]);
 }
 
 static bool addDefinitionBehindCasts(AnalysisWordHasher& hasher, const Function& function, ValueID id)
@@ -212,7 +214,7 @@ static bool addOperands(AnalysisWordHasher& hasher, const Function& function, co
     return true;
 }
 
-static uint64_t finishStamp(AnalysisWordHasher& hasher, const Function& function, const Instruction& instruction, EffectInputs inputs)
+static uint64_t finishStamp(AnalysisWordHasher& hasher, const Function& function, const Instruction& instruction, EffectInputs inputs, std::optional<unsigned> payloadWordLeftOut = std::nullopt)
 {
     switch (inputs) {
     case EffectInputs::Row:
@@ -223,7 +225,7 @@ static uint64_t finishStamp(AnalysisWordHasher& hasher, const Function& function
     case EffectInputs::DefinitionsBehindCasts:
         break;
     }
-    addPayload(hasher, instruction);
+    addPayload(hasher, instruction, payloadWordLeftOut);
     if (inputs != EffectInputs::Payload && !addOperands(hasher, function, instruction, inputs))
         return 0;
     return hasher.hash && hasher.hash < std::numeric_limits<uint64_t>::max() - 1 ? hasher.hash : 1;
@@ -235,7 +237,9 @@ static uint64_t stampOf(const Function& function, const Value& value, EffectInpu
     hasher.add(static_cast<uint32_t>(value.opcode));
     if (inputs != EffectInputs::Payload)
         hasher.add(value.type.index(), value.expected().predicted().index());
-    return finishStamp(hasher, function, value, inputs);
+    // What a call does follows from its callees and operands. Its site tells it from every other call, and a thousand calls of one set of callees have one answer.
+    std::optional<unsigned> site = effectRuleOf(value.opcode) == EffectRule::Call ? PayloadWord::accessSite(value.opcode) : std::nullopt;
+    return finishStamp(hasher, function, value, inputs, site);
 }
 
 static uint64_t stampOf(const Function& function, const Terminator& terminator, EffectInputs inputs)
@@ -251,7 +255,7 @@ static uint32_t hashOf(const EffectsOnEdges& effectsOnEdges)
     for (const Effects* effects : { &effectsOnEdges.normal, &effectsOnEdges.handler }) {
         hasher.add(effects->reads.mixedWords());
         hasher.add(effects->writes.mixedWords());
-        hasher.add(WTF::packBools(static_cast<bool>(effects->mayThrow), effects->mayThrowByRule(), effects->mayCollect, effects->mayCallUnknownCode, effects->maySuspend, effects->mayBeTerminated));
+        hasher.add(WTF::packBools(static_cast<bool>(effects->mayThrow), effects->mayThrowOtherThanStackOverflow(), effects->mayThrowByRule(), effects->mayCollect, effects->mayCallUnknownCode, effects->maySuspend, effects->mayBeTerminated));
     }
     return static_cast<uint32_t>(hasher.hash);
 }

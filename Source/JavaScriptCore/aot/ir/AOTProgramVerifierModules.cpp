@@ -76,10 +76,10 @@ static bool isUncompiledCode(const Module& module)
     return module.kind == ModuleKind::External && module.externalKind == ExternalKind::UncompiledCode;
 }
 
-// Only the run knows every name of such a module.
+// The names of such a module are known only at run time, or the host creates an export when it is first read.
 static bool findsNamesAtRunTime(const Module& module)
 {
-    return isUncompiledCode(module) || module.requests.containsIf([](const ModuleRequest& request) {
+    return isUncompiledCode(module) || module.kind == ModuleKind::Runtime || module.requests.containsIf([](const ModuleRequest& request) {
         return request.isDynamicStarExport;
     });
 }
@@ -104,6 +104,10 @@ static bool isCommonJsRule(SyntheticExportRule rule)
 
 static bool hasValidInterop(const Program& program, const Module& module)
 {
+    if (module.requireResult == RequireResult::NamespaceIfImported && module.kind != ModuleKind::Data)
+        return false;
+    if (module.flags.contains(ModuleFlags::AnswersLoaderWithNamespace) && module.kind != ModuleKind::Data)
+        return false;
     switch (module.kind) {
     case ModuleKind::SourceText:
         if (module.requireResult == RequireResult::ModuleExports)
@@ -226,6 +230,7 @@ static std::optional<InternalErrorKind> findModuleError(const Program& program, 
         : !rules.hasRuntimeModule || isLibrary;
     bool hasValidLinks = (!!module.referrer == rules.hasReferrer || (module.referrer && module.kind == ModuleKind::CommonJs))
         && (!module.data || rules.canHaveData)
+        && (!module.typeAttribute || isUncompiledCode(module))
         && !!module.namespaceLayout == (module.kind == ModuleKind::SourceText);
     auto isBound = [&](const ModuleExport& entry) {
         return hasOneBinding(program, entry);
@@ -546,7 +551,7 @@ void ProgramVerifier::verifyModuleFailures()
 {
     for (unsigned index = 0; index < m_program.moduleFailures.size(); ++index) {
         const ModuleFailure& failure = m_program.moduleFailures[index];
-        if (!failure.importer || !failure.specifier || (failure.exportSpecifier && !failure.exporter))
+        if (!failure.importer || !failure.specifier || (failure.exportSpecifier && !failure.exporter) || (failure.endsLoadOf && failure.exporter))
             fail({ .kind = InternalErrorKind::InvalidModuleFailure, .count = index });
     }
 }
@@ -750,6 +755,17 @@ void ProgramVerifier::verifySmallRecords()
 
     for (unsigned index = 0; index < m_program.expectedResults.size(); ++index) {
         if (!isValidExpectedResult(m_program, m_program.expectedResults[index]))
+            fail({ .kind = InternalErrorKind::PayloadOutOfRange, .count = index });
+    }
+
+    for (unsigned index = 0; index < m_program.ambiguousExports.size(); ++index) {
+        const AmbiguousExport& ambiguous = m_program.ambiguousExports[index];
+        if (!ambiguous.module || !ambiguous.name || !rulesOf(m_program.at(ambiguous.module).kind).hasExportTable)
+            fail({ .kind = InternalErrorKind::PayloadOutOfRange, .count = index });
+    }
+
+    for (unsigned index = 0; index < m_program.sourceStamps.size(); ++index) {
+        if (!m_program.sourceStamps[index].module)
             fail({ .kind = InternalErrorKind::PayloadOutOfRange, .count = index });
     }
 

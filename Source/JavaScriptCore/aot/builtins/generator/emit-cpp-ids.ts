@@ -12,7 +12,6 @@ import {
 import { emitMacroList, formatDouble, formatInt64, joinBlocks } from "./emit-cpp-support.ts";
 import { fileHeader } from "./emit-rust-ids.ts";
 import type { ModelAttachments, ModelBound, ModelBuiltin, ModelFunction, ModelSlot, TableModel } from "./model.ts";
-import { tokenOf } from "./paths.ts";
 import { cap } from "./support.ts";
 
 type Constant = readonly [name: string, number: number];
@@ -62,8 +61,8 @@ function slotConstantOf(slot: ModelSlot): Constant {
   return [slotTokenOf(slot), slot.id];
 }
 
-function functionConstantOf({ file, name, id }: ModelFunction): Constant {
-  return [tokenOf([file.slice(file.lastIndexOf("/") + 1), name]), id];
+function functionConstantOf({ token, id }: ModelFunction): Constant {
+  return [token, id];
 }
 
 function hasConstant({ role, implements: implemented }: ModelFunction): boolean {

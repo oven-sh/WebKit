@@ -147,6 +147,24 @@ Condition TypeTestEmitter::emitBoolean(Operand operand, const TypeTestPlan& plan
     });
 }
 
+std::optional<Condition> TypeTestEmitter::tryEmitAsOneCondition(Operand operand, const TypeTestPlan& plan, CodeShape shape)
+{
+    RELEASE_ASSERT(operand.representation == plan.representation);
+    SetForScope shapeOfTest(m_shape, shape);
+    switch (plan.verdict) {
+    case TypeTestVerdict::AlwaysPasses:
+        return boolean(true);
+    case TypeTestVerdict::NeverPasses:
+        return boolean(false);
+    case TypeTestVerdict::NeedsTest:
+        break;
+    }
+    LBasicBlock blockBefore = m_out.m_block;
+    std::optional<Condition> condition = tryGetSingleCondition(operand, plan);
+    RELEASE_ASSERT(condition || m_out.m_block == blockBefore);
+    return condition;
+}
+
 void TypeTestEmitter::leaveUnless(Condition condition, B3::FrequentedBlock failure)
 {
     if (condition.value()->hasInt32()) {
@@ -305,18 +323,9 @@ void TypeTestEmitter::test(Operand operand, const TypeTestPlan& plan, B3::Freque
         });
         return;
     case Representation::LiteralString:
+        // Every producer of a word uses the literal number for a string that has one, so a word that is a cell never equals a string with a literal number.
         testWithMarkers(operand, plan, failure, [&] {
-            ConversionEmitter& conversions = emitter<ConversionEmitter>();
-            LiteralStringWord word = operand.as<LiteralStringWord>();
-            LBasicBlock isLiteral = newBlock();
-            LBasicBlock isStringCell = newBlock();
-            Join<LiteralStringWord> literal(m_out);
-            m_out.branch(conversions.isStringCell(word).value(), unlikelyEdge(isStringCell), normalEdge(isLiteral));
-            m_out.appendTo(isLiteral);
-            literal.add(word);
-            m_out.appendTo(isStringCell);
-            literal.add(conversions.toLiteralString(CellPointer(word.value())));
-            leaveUnless(isOneOfLiteralStringWords(literal.finish(), plan), failure);
+            leaveUnless(isOneOfLiteralStringWords(operand.as<LiteralStringWord>(), plan), failure);
         });
         return;
     case Representation::Boolean:
@@ -556,9 +565,6 @@ Condition TypeTestEmitter::integerPasses(Integer value, const TypeTestPlan& plan
 
     Range range = *plan.integers;
     Range known = m_program.at(plan.from).integers.intersectWith(heldByForm);
-    uint64_t maximum = static_cast<uint64_t>(range.maximum);
-    if (known.minimum >= 0 && range.minimum <= 0 && range.maximum > 0 && !(maximum & (maximum + 1)))
-        return Condition(m_out.testIsZero64(value.value(), m_out.constInt64(~range.maximum)));
     if (known.minimum >= range.minimum)
         return lessThanOrEqual(value, integer(range.maximum));
     if (known.maximum <= range.maximum)

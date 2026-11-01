@@ -24,7 +24,7 @@ static JSValue objectOf(Instance* instance, BuiltinID id)
     return cell ? JSValue(cell) : jsUndefined();
 }
 
-static JSValue callInEngineOn(Instance* instance, BuiltinID function, JSValue receiver, JSValue first, JSValue second, JSValue third)
+JSValue callMethodInEngine(Instance* instance, BuiltinID function, JSValue receiver, const ArgList& arguments)
 {
     JSGlobalObject* globalObject = instance->globalObject;
     VM& vm = *instance->vm;
@@ -35,6 +35,13 @@ static JSValue callInEngineOn(Instance* instance, BuiltinID function, JSValue re
         throwException(globalObject, scope, createNotAFunctionError(globalObject, callee));
         return { };
     }
+    JSValue result = call(globalObject, callee, callData, receiver, arguments);
+    RETURN_IF_EXCEPTION(scope, { });
+    return result;
+}
+
+static JSValue callInEngineOn(Instance* instance, BuiltinID function, JSValue receiver, JSValue first, JSValue second, JSValue third)
+{
     MarkedArgumentBuffer list;
     if (first)
         list.append(first);
@@ -42,9 +49,7 @@ static JSValue callInEngineOn(Instance* instance, BuiltinID function, JSValue re
         list.append(second);
     if (third)
         list.append(third);
-    JSValue result = call(globalObject, callee, callData, receiver, list);
-    RETURN_IF_EXCEPTION(scope, { });
-    return result;
+    return callMethodInEngine(instance, function, receiver, list);
 }
 
 JSValue callInEngine(Instance* instance, BuiltinID function, JSValue first, JSValue second, JSValue third)

@@ -2,7 +2,7 @@ enum AllocationStorage { | engine Heap Frame FrameUntilMaterialized }
 enum ClosureForm { | engine Full Slim Deferred Singleton }
 enum ArrayLiteralStorage { | engine Fresh Profiled }
 enum TailCallRequirement { | engine Required Allowed }
-enum DataEncoding { | engine Unselected Expanded ReadOnlyTree CopyOnWriteArray }
+enum DataEncoding { | engine Unselected Expanded ReadOnlyTree CopyOnWriteArray MadeOnce }
 enum ExpectedElements { | engine Anything Int32Array Uint8Array }
 enum OperatorForm {
     | engine Unselected Generic Integers CheckedIntegers Numbers NumberAndValue Bits Booleans BigInts Strings StringAndValue Int32AndValue
@@ -28,7 +28,7 @@ operation String (string: String) -> constant ; CreatesConstant ; runtime = Stri
 operation BigInt (digits: String) -> constant ; CreatesConstant ; runtime = BigIntConstant ; flow = TableProves ; flowsWithoutRule = true
 operation Builtin (builtin: Builtin) [isNotReadFromHolder] -> constant ; CreatesConstant ; runtime = BuiltinCell ; flow = TableProves ; flowRule = Module
 operation ModuleBuiltin (builtin: Builtin, module: Module(Referrer)) -> constant ; Allocates UsesRuntime throws ; runtime = ModuleBuiltinCell ; flow = TableProves
-operation Data (data: Data, engine allocationSite?: AllocationSite, engine arrayStorage: ArrayStorage, engine from Selected encoding: DataEncoding, engine from Placed request?: Request) -> constant ; Allocates throws ; runtime = NewFromData ; interpreted = Allocation ; flow = Allocates ; flowRule = Heap
+operation Data (data: Data, engine allocationSite?: AllocationSite, engine arrayStorage: ArrayStorage, engine from Selected encoding: DataEncoding, engine from Placed request?: Request) [| engine isNeverToldApart] -> constant ; Allocates throws ; runtime = NewFromData ; interpreted = Allocation ; flow = Allocates ; flowRule = Heap
 operation NewClosure (function: Function(Closure), captures...: Declared/retains(result), with CellStamp, engine from Selected closureForm: ClosureForm) [| engine isMadeOnDemand isHeldByClosureTable isLent] -> constant ; Allocates ; runtime = NewClosureSlow ; interpreted = Allocation ; allocatesInline = true ; flow = Allocates ; flowsWithoutRule = true
 engine operation KeyConstant (key: PropertyKey) -> constant ; CreatesConstant ; runtime = KeyConstant ; flow = TableProves ; flowsWithoutRule = true
 operation Unspecified (valueType: Type) -> declared(valueType) ; none ; Prepared..Placed
@@ -47,7 +47,7 @@ family Allocation AsRead..Placed
 operation NewObject (layout: Layout, fields: List<Field>, prototype?: Object/retains(result), values...: Declared/retains(result), with CellStamp, engine allocationClass?: AllocationClass) [| engine listsOnlyStoredValues] -> allocation(layout) ; Allocates writes(MemberGuards) ; runtime = AllocateSlow ; interpreted = Allocation ; allocatesInline = true ; allocatesAfterLastSafepoint = true ; replaces = CreateIteratorResult ; flow = Allocates ; flowRule = Heap
 operation NewDictionary () -> natural(object) ; Allocates ; runtime = NewDictionary ; allocatesInline = true ; flow = Allocates ; flowRule = NewDictionary
 operation FinishObject (object: Object/returns) -> natural(same(object)) ; none ; interpreted = Cast ; flow = Copies
-operation NewArray (contents: Type, holes: List<UInt32>, engine capacity?: Integer/inspects, elements...: Declared/retains(result), engine allocationSite?: AllocationSite, engine storage: AllocationStorage, engine literalStorage: ArrayLiteralStorage, engine arrayStorage: ArrayStorage, engine from Placed staticsOffset?: StaticsOffset) [| engine contentsAreProven] -> allocation(Array<contents>) ; Allocates ; runtime = NewArray ; interpreted = Allocation ; allocatesInline = true ; flow = Allocates ; flowRule = Heap
+operation NewArray (contents: Type, holes: List<UInt32>, engine capacity?: Integer/inspects, elements...: Declared/retains(result), engine allocationSite?: AllocationSite, engine storage: AllocationStorage, engine literalStorage: ArrayLiteralStorage, engine arrayStorage: ArrayStorage, engine from Placed staticsOffset?: StaticsOffset) [| engine contentsAreProven keepsLength] -> allocation(Array<contents>) ; Allocates ; runtime = NewArray ; interpreted = Allocation ; allocatesInline = true ; flow = Allocates ; flowRule = Heap
 operation AppendElement (array: Array/inspects+writesContents, value: Any/retains(array)) -> none ; GrowsArray ; runtime = ArrayPush ; interpreted = Store ; runsOwnerBarrier = true ; flow = Copies ; flowRule = Heap
 operation AppendSpread (array: Array/inspects+writesContents, iterable: Any/Iterated) -> none ; GrowsArray ; AsRead..AsRead ; interpreted = List ; removedBy = ExpandIteration ; flow = Copies ; flowRule = Iteration
 operation AppendHole (array: Array/inspects+writesContents) -> none ; GrowsArray ; runtime = AppendHole ; interpreted = Store ; flow = Copies ; flowRule = Heap
@@ -62,7 +62,7 @@ operation GetMappedArgument (arguments: Object/inspects, index: UInt32) -> unkno
 operation SetMappedArgument (arguments: Object/inspects+writesContents, index: UInt32, value: Any/retains(arguments)) -> none ; writes(Elements[Arguments]) ; runtime = SetMappedArgument ; interpreted = Store ; runsOwnerBarrier = true ; remembersOwner = true ; flow = Copies ; flowRule = Heap
 
 family Access AsRead..Placed
-operation PropGet (object: Any/inspects, key: PropertyKey, with AccessStamp) [isFreeName isForTypeOf] -> unknown => declared(key) ; unknownCode by Access ; access = Read ; receiver = object ; interpreted = Read ; accessClass = ByName ; runtime = GetByIdAndCache ; siteCaches = 1 ; flow = Copies ; runsBeforeCallee = true ; flowRule = Heap
+operation PropGet (object: Any/inspects, key: PropertyKey, with AccessStamp) [isFreeName isForTypeOf | engine asksOnlyTables] -> unknown => declared(key) ; unknownCode by Access ; access = Read ; receiver = object ; interpreted = Read ; accessClass = ByName ; runtime = GetByIdAndCache ; siteCaches = 1 ; flow = Copies ; runsBeforeCallee = true ; flowRule = Heap
 operation PropSet (object: Any/inspects, key: PropertyKey, mode: ECMAMode, value: Any/retains(object), with AccessStamp) [isFreeName] -> none ; unknownCode by Access ; access = Store ; receiver = object ; stored = value ; interpreted = Store ; accessClass = ByName ; runtime = PutByIdAndCache ; siteCaches = 1 ; flow = Copies ; flowRule = Heap
 operation PropDefine (object: Object/inspects, key: PropertyKey, value: Any/retains(object), with AccessStamp) -> none ; unknownCode by Access ; access = Define ; receiver = object ; stored = value ; interpreted = Store ; accessClass = ByName ; runtime = DefineById ; flow = Copies ; flowRule = Heap
 operation PropHas (object: Any/inspects, key: PropertyKey, with AccessStamp) -> natural(boolean) ; unknownCode by Access ; access = Has ; receiver = object ; interpreted = Test ; accessClass = ByName ; runtime = InByIdAndCache ; branches = May ; flow = TableProves ; flowRule = Heap
@@ -79,7 +79,7 @@ operation TryReExportFields (target: Any/inspects+definesName, source: Any/retai
 operation SetFunctionName (function: Callable/inspects+definesName, computedKey: PropertyKey/inspects, methodKind: MethodKind) -> none ; reads(NamedProperties, StringStorage) writes(NamedProperties, StringStorage, RuntimeState) throws collects ; runtime = SetFunctionName ; flow = Copies ; flowRule = Heap
 operation SetLiteralPrototype (object: Object/inspects+changesPrototype, prototype: Any/retains(object)+becomesPrototype, engine replacedCallee?: Any/inspects, engine replacedThis?: Any/inspects) [| engine refusesOtherValues] -> none ; reads(PrototypeLinks, ShapeWords) writes(PrototypeLinks, ShapeWords, MemberGuards, Elements[Object], RuntimeState) throws collects ; runtime = SetLiteralPrototype ; flow = Copies ; flowRule = Heap
 operation CopyDataProperties (target: Object/inspects+assignsFrom(source), source: Any/Copied, excludedKeys: List<PropertyKey>, excluded...: PropertyKey/inspects, engine from Placed request?: Request) -> none ; DefinesProperty ; interpreted = List ; runtime = CopyDataProperties ; flow = Copies ; flowRule = Heap ; hasOwnFoldingRule = true
-operation CopyObject (source: Any/Copied, excludedKeys: List<PropertyKey>, excluded...: PropertyKey/inspects, engine from Placed request?: Request) -> natural(object) ; DefinesProperty ; runtime = CopyObject ; flow = Allocates ; flowRule = Heap
+operation CopyObject (source: Any/Copied, excludedKeys: List<PropertyKey>, excluded...: PropertyKey/inspects, engine from Placed request?: Request) [assigns] -> natural(object) ; DefinesProperty ; runtime = CopyObject ; flow = Allocates ; flowRule = Heap
 operation GetSuperBase (homeKind: HomeObjectKind, home: Object/inspects) -> natural(object | null) ; reads(PrototypeLinks) ; runtime = GetSuperBase ; flow = TableProves ; flowRule = Heap
 operation SuperGet (base: Any/inspects, receiver: Any/retains, computedKey?: Any/Converted, key?: PropertyKey, with AccessStamp) -> unknown ; unknownCode ; exactlyOneOf = key, computedKey ; accessClass = ByName ; runtime = SuperGet ; flow = Copies ; flowRule = Heap ; hasOwnFoldingRule = true
 operation SuperSet (mode: ECMAMode, base: Any/inspects, receiver: Any/retains+storesByKey, value: Any/retains, computedKey?: Any/Converted, key?: PropertyKey, with AccessStamp) -> none ; unknownCode ; exactlyOneOf = key, computedKey ; accessClass = ByName ; runtime = SuperSet ; flow = Copies ; flowRule = Heap ; hasOwnFoldingRule = true
@@ -112,10 +112,10 @@ operation StrictEq (left: Any/inspects, right: Any/inspects, engine from Selecte
 operation InstanceOf (value: Any/inspects+runs(PrototypeChain), constructor: Any/inspects+runs(HasInstance+Named(prototype)), writtenExpression?: String) -> natural(boolean) ; Allocates reads(PrototypeLinks) throws ; runtime = InstanceOfAndCache ; branches = May ; flow = TableProves ; flowRule = InstanceOf
 operation ToBoolean (value: Any/inspects, engine from Selected form: OperatorForm) -> natural(boolean) ; none ; runtime = ToBoolean ; proves = Truthiness ; branches = May ; interpreted = Test ; flow = TableProves ; hasKnownValueRule = true ; hasOwnFoldingRule = true
 operation LogicalNot (value: Boolean/inspects) -> natural(boolean) ; none ; flow = TableProves ; hasKnownValueRule = true
-operation TypeOf (value: Any/inspects) -> natural(string) ; none ; runtime = TypeOf ; flow = TableProves
+operation TypeOf (value: Any/inspects) -> natural(string) ; none ; runtime = TypeOf ; flow = TableProves ; hasOwnFoldingRule = true
 operation ToString (value: Any/Converted, engine from Selected form: OperatorForm, engine calledBuiltin?: Builtin) -> natural(string) ; CreatesString by Operator ; runtime = ToString ; flow = TableProves ; hasOwnFoldingRule = true
 operation Strcat (parts...: Any/Converted) [| engine isLikelyKey] -> natural(string) ; CreatesString ; runtime = Concatenate ; flow = TableProves
-operation ToPropertyKey (value: Any/Converted, engine calledBuiltin?: Builtin) -> natural(string | symbol) ; CreatesString ; runtime = ToKey ; flow = TableProves ; flowRule = ToPropertyKey ; hasOwnFoldingRule = true
+operation ToPropertyKey (value: Any/Converted, engine calledBuiltin?: Builtin) -> natural(string | symbol) ; CreatesString ; runtime = ToKey ; replaces = CallBuiltin, NewObject, SetLiteralPrototype ; flow = TableProves ; flowRule = ToPropertyKey ; hasOwnFoldingRule = true
 operation ToObject (value: Any/returns, message?: String, engine calledBuiltin?: Builtin) -> natural(object) ; Allocates throws ; runtime = ToObject ; flow = Copies ; flowRule = ConversionToObject
 operation ToThis (value: Any/returns) -> natural(object) ; Allocates ; runtime = ToThis ; flow = Copies ; flowRule = ConversionToObject
 
@@ -135,10 +135,10 @@ operation TypeTest (value: Any/inspects, testedType: Type) -> natural(boolean) ;
 family Call AsRead..Placed
 operation Call (callee: Any/calls, thisValue?: Any/retains, arguments...: Any/retains, calleeKey?: PropertyKey, calleeName?: String, expectedResult?: ExpectedResult, calledBuiltin?: Builtin, callNumber?: UInt32, with CallStamp) [isAnnotatedPure isNeverInlined isDoneInPlace | engine isAlwaysInlined] -> unknown ; unknownCode by Call ; accessClass = IndirectCall ; flow = Copies ; runsBeforeCallee = true ; flowRule = Call
 operation Construct (callee: Any/calls, newTarget?: Any/retains, arguments...: Any/retains, calleeName?: String, with CallStamp) [isAnnotatedPure] -> unknown ; unknownCode by Call ; accessClass = IndirectCall ; runtime = Construct ; flow = TableProves ; flowRule = Call
-operation CallList (callee: Any/calls, thisValue?: Any/retains, list: Array/Listed, calleeKey?: PropertyKey, calleeName?: String, expectedResult?: ExpectedResult, with CallStamp) -> unknown ; unknownCode by Call ; accessClass = IndirectCall ; interpreted = List ; runtime = Apply ; flow = Copies ; runsBeforeCallee = true ; flowRule = Call
+operation CallList (callee: Any/calls, thisValue?: Any/retains, list: Array/Listed, calleeKey?: PropertyKey, calleeName?: String, expectedResult?: ExpectedResult, engine calledBuiltin?: Builtin, with CallStamp) -> unknown ; unknownCode by Call ; accessClass = IndirectCall ; interpreted = List ; runtime = Apply ; flow = Copies ; runsBeforeCallee = true ; flowRule = Call
 operation ConstructList (callee: Any/calls, newTarget?: Any/retains, list: Array/Listed, calleeName?: String, with CallStamp) -> unknown ; unknownCode by Call ; accessClass = IndirectCall ; interpreted = List ; runtime = ConstructWithArray ; flow = TableProves ; flowRule = Call
-operation CallDirect (function: Function(Call), arguments...: Declared/retains, engine accessSite?: AccessSite, engine calledBuiltin?: Builtin) [| engine isNeverInlined isAlwaysInlined isAfterInlinedHead isConstruction callsOwnFunctionObject calleeIsPredicted] -> declared(function) ; unknownCode by Call ; accessClass = DirectCall ; flow = Copies ; runsBeforeCallee = true ; flowsWithoutRule = true
-engine operation CallTable (function: Function(Call), arguments...: Declared/retains, key: PropertyKey, receivers: LayoutSet, entrypoints: List<Function(Call)>, with CallStamp) -> declared(function) ; unknownCode by Call ; Prepared..Placed ; accessClass = IndirectCall
+operation CallDirect (function: Function(Call), arguments...: Declared/retains, engine accessSite?: AccessSite, engine calledBuiltin?: Builtin) [| engine isNeverInlined isAlwaysInlined isAfterInlinedHead isConstruction callsOwnFunctionObject calleeIsKeptInFrame calleeIsPredicted] -> declared(function) ; unknownCode by Call ; accessClass = DirectCall ; flow = Copies ; runsBeforeCallee = true ; flowsWithoutRule = true
+engine operation CallTable (function: Function(Call), arguments...: Declared/retains, key: PropertyKey, receivers: LayoutSet, entrypoints: CalleeSet, with CallStamp) -> declared(function) ; unknownCode by Call ; Prepared..Placed ; accessClass = IndirectCall
 operation Results (values...: Declared/returns) -> results(..) ; none ; flow = Copies ; flowsWithoutRule = true
 operation ResultAt (results: Results/inspects, index: UInt32) -> declared(results) ; none ; interpreted = List ; flow = Copies ; flowsWithoutRule = true
 
@@ -147,7 +147,8 @@ operation CatchValue () -> unknown ; UsesRuntime collects ; runtime = Catch ; bo
 operation CatchException () -> natural(Exception) ; UsesRuntime collects ; runtime = CatchException ; boundTo = Frame ; flow = Copies ; flowsWithoutRule = true
 
 family Hint AsRead..Placed
-operation LoopHint () [| engine isVersioned replacesTailCalls] -> none ; UsesRuntime throws terminates collects ; runtime = PollSlow ; flow = TableProves ; flowsWithoutRule = true
+operation LoopHint () [| engine isVersioned replacesTailCalls throwsOwedError leavesOwedError] -> none ; UsesRuntime throws terminates collects ; runtime = PollSlow ; flow = TableProves ; flowsWithoutRule = true
+operation ReleaseHint (value: Any/inspects) -> none ; writes(ExternalState) ; boundTo = Function ; flow = TableProves ; flowsWithoutRule = true
 
 family Control AsRead..Placed
 terminator Jump () -> next ; none ; canEndInteriorBlock = true ; canEndHeadBlock = true ; canEndBlockOfHead = true
@@ -158,4 +159,4 @@ terminator Return (value?: Declared/returns) -> none ; none ; canEndHeadBlock = 
 terminator ReturnCall (call: Any/returns, casts: List<TailCast>, engine requirement: TailCallRequirement) -> none ; none
 terminator Throw (value: Any/retains) -> none ; throws ; canEndInteriorBlock = true
 terminator Rethrow (exception: Exception/retains) -> none ; throws
-terminator Unreachable () -> none ; none ; canEndInteriorBlock = true
+terminator Unreachable (engine cutBy: PassID) -> none ; none ; canEndInteriorBlock = true

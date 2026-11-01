@@ -1,0 +1,29 @@
+# As for a map: a walk over a set keeps its own form behind a test of what Set.prototype holds under @@iterator, where a test run lists that member.
+# FORM: Prepared optimizing
+# RUN: pass ExpandIteration
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+replaceablebuiltin member=SetPrototypeSymbolIterator
+
+function f0 name="overASet" parameters=[{type=Set<number, proven, pristine[Names]>}] results=[{type=anything}] {
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b1()
+  b2():
+    Return v5
+}
+# CHECK-LABEL: function f0 name="overASet"
+# CHECK-NEXT: b0(
+# CHECK-NEXT: [[isUnchanged]]: boolean{{*}} = IsBuiltinLocationUnchanged member=SetPrototypeSymbolIterator
+# CHECK-NEXT: Branch [[isUnchanged]] -> taken [[own]](), notTaken [[asks]]()
+# CHECK: SetNext v0
+# CHECK: = CallDirect {{*}} function={{*}} [isNeverInlined]
+# CHECK: [[own]]():
+# CHECK-NEXT: CollectionTable v0
+# CHECK: [[asks]]() frequency=Unlikely:

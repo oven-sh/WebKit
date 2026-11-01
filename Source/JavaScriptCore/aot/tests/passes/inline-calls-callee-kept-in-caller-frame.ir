@@ -1,0 +1,27 @@
+# A call whose function object the caller keeps in its frame has no second way to the callee beside it: the body is copied as the budget of the place allows, and the record of the copy says that the function object is kept: so it stays kept in front of a copy that may throw.
+# FORM: Prepared
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass InlineCalls
+# RUN(SWEPT): pass InlineCalls EliminateDeadCode
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="large" kind=Arrow captures=[{type=number}] parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, RecordsCallee, RecordsCalleeOnceRenamed] {
+    v2 = PropGet v1 key="first"
+    v3 = PropGet v2 key="second"
+    v4 = PropGet v3 key="third"
+    v5 = PropGet v4 key="fourth"
+    v6 = PropGet v5 key="fifth"
+    Return v6
+}
+
+function f1 name="callsTheLargeOne" parameters=[{type=f0}, {type=anything}] results=[{type=anything}] {
+    v2 = GetCapture v0 function=f0
+    KeepCalleeInFrame v0 @7
+    v4 = CallDirect v2, v1 function=f0 [calleeIsKeptInFrame] @7
+    Return v4
+# CHECK: KeepCalleeInFrame v0 @7
+# CHECK-NOT: CallDirect
+# CHECK: key="fifth"
+# SWEPT: KeepCalleeInFrame v0 @7
+# SWEPT: key="fifth"
+}

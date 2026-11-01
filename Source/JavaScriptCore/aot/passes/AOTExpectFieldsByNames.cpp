@@ -29,15 +29,16 @@ AOT_THRESHOLD(size_t, maxLayoutsComparedForField, 8);
 
 namespace {
 
-// One of: a name that is asked of what the field holds, a layout that is stored in it, another field that was filled with the same value, or that the code that allocates the object fills the field.
+// One of: a name that is read from the field's value, a layout that is stored in it, another field that was filled with the same value, that the allocating code fills the field, or that an array is stored in it.
 struct NameAskedOfField {
     FieldReference field;
     PropertyKeyID name;
     LayoutID layoutStored;
     FieldReference fieldWithSameValue;
     bool isFilledByCreator { false };
+    bool isGivenArray { false };
 
-    bool namesFieldWithSameValue() const { return !name && !layoutStored && !isFilledByCreator; }
+    bool namesFieldWithSameValue() const { return !name && !layoutStored && !isFilledByCreator && !isGivenArray; }
 
     friend auto operator<=>(const NameAskedOfField&, const NameAskedOfField&) = default;
 };
@@ -70,6 +71,17 @@ static FieldReferenceList findUntoldFields(const Program& program, const Functio
     return fields;
 }
 
+static bool isArray(const Program& program, const Function& function, ValueID value)
+{
+    auto holdsOnlyArrays = [](const Type& type) {
+        Type object = type.withoutPrimitives(Primitive::UndefinedOrNull);
+        const ClassPart* part = object.singleBuiltinClass();
+        return part && part->builtinClass == BuiltinClasses::Array && !(type.primitives & ~Primitive::UndefinedOrNull);
+    };
+    TypeID expected = function.at(value).expected().predicted();
+    return holdsOnlyArrays(program.typeOf(function, value)) || (expected && holdsOnlyArrays(program.at(expected)));
+}
+
 static void collectNamesAsked(const Program& program, const Function& function, Vector<NameAskedOfField>& found)
 {
     UncheckedKeyHashMap<uint32_t, FieldReferenceList> fieldsRead;
@@ -81,6 +93,17 @@ static void collectNamesAsked(const Program& program, const Function& function, 
             const Value& access = function.at(id);
             if (access.opcode == Opcode::NewObject && access.layout()) {
                 allocatedInBlock.add(id.index() + 1, access.layout());
+                std::span<const ValueID> listed = access.variadicOperands();
+                for (size_t index = 0; index < listed.size(); ++index) {
+                    FieldReference declaration = declarationOf(program, { access.layout(), access.fields()[index] });
+                    if (listed[index] && isArray(program, function, listed[index]) && tellsNothingOfWhatItHolds(program, fieldAt(program, declaration)))
+                        found.append({ declaration, { }, { }, { }, false, true });
+                }
+                continue;
+            }
+            if ((access.opcode == Opcode::PropSet || access.opcode == Opcode::PropDefine) && access.key() && isArray(program, function, access.valueOperand())) {
+                for (FieldReference field : findUntoldFields(program, function, access.objectOperand(), access.key()))
+                    found.append({ field, { }, { }, { }, false, true });
                 continue;
             }
             if (access.opcode == Opcode::PropSet && access.key()) {
@@ -205,7 +228,7 @@ void expectFieldsByNamesAsked(Program& program, BuildContext& build)
             entry.field = grouped->second;
     }
     AOT::stableSort(groups, { }, &FieldAndGroup::second);
-    AOT::sort(asked);
+    AOT::sortInLine(asked);
     removeRepeatedElements(asked);
 
     TypeArena types(program.types);
@@ -222,19 +245,22 @@ void expectFieldsByNamesAsked(Program& program, BuildContext& build)
         size_t count = std::ranges::find_if_not(remaining, [&](const NameAskedOfField& entry) { return entry.field == reference; }) - remaining.begin();
         Vector<PropertyKeyID, 16> names;
         LayoutList layouts;
+        bool isGivenArray = false;
         for (const NameAskedOfField& entry : remaining.first(count)) {
-            if (entry.layoutStored)
+            if (entry.isGivenArray)
+                isGivenArray = true;
+            else if (entry.layoutStored)
                 layouts.add(entry.layoutStored);
             else if (!program.layoutsWithName(entry.name).empty())
                 names.append(entry.name);
         }
         remaining = remaining.subspan(count);
         // What the program is seen to store in the field says more than the names do.
-        if (layouts.isEmpty() && names.size() >= minNamesAskedOfField)
+        if (layouts.isEmpty() && !isGivenArray && names.size() >= minNamesAskedOfField)
             layouts = findLayoutsExpectedOf(program, names.span());
-        if (layouts.isEmpty() || layouts.size() > maxLayoutsExpectedOfField)
+        if (isGivenArray ? !layouts.isEmpty() : layouts.isEmpty() || layouts.size() > maxLayoutsExpectedOfField)
             continue;
-        Type expected = Type::forLayouts(layouts.span(), types);
+        Type expected = isGivenArray ? Type::builtinClass(BuiltinClasses::Array).withoutClassProofs() : Type::forLayouts(layouts.span(), types);
         expected.primitives |= Primitive::UndefinedOrNull;
         TypeID expectedID = types.intern(WTF::move(expected));
         auto fieldsOfGroup = std::ranges::equal_range(groups, reference, { }, &FieldAndGroup::second);

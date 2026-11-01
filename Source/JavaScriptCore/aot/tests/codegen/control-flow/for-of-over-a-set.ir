@@ -11,6 +11,12 @@
 # OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
 # RUN: lower-to-b3 optimized f1
 # REQUIRES: unsanitized-code
+# RUN(FAST): lower-to-b3 optimized loops f1
+# REQUIRES(FAST): unsanitized-code
+# RUN(X64LOOP): lower-to-air loops f1
+# REQUIRES(X64LOOP): x86_64 unsanitized-code not-windows faulting-loop-polls
+# RUN(ARM64LOOP): lower-to-air loops f1
+# REQUIRES(ARM64LOOP): arm64 unsanitized-code not-windows
 # RUN(X64): lower-to-air size f1
 # REQUIRES(X64): x86_64 unsanitized-code not-windows faulting-loop-polls
 # RUN(ARM64): lower-to-air size f1
@@ -88,10 +94,20 @@ function f1 name="total" module=m0 flags=[IsChecked, HasExplicitName] length=1 t
 # CHECK: Int64 b@[[table]] = Load(b@[[set]], offset = 16, ControlDependent|Reads:CollectionStorage, {{*}}:CollectionTable)
 # CHECK: Patchpoint({{*}}isLoopPoll{{*}}:LoopHint)
 # CHECK: Int64 b@[[value]] = Load(b@{{*}}, offset = 24, ControlDependent|Reads:CollectionEntries, {{*}}:SetNext)
-# CHECK-NEXT: Branch(b@[[value]], Terminal, {{*}}:SetNext)
 # CHECK: Double b@{{*}} = Add(b@{{*}}, b@{{*}}, {{*}}:Add)
 # CHECK-LABEL: end of function
-# The one patchpoint on the likely paths is the poll: nothing is called and nothing is allocated. Each turn reads the table, its kind, its flags and its size again.
+# The patchpoints on the likely paths are the polls of the two copies of the loop: nothing is called and nothing is allocated.
 # The function has calls, and Windows passes arguments in other registers: its count is not checked.
-# X64: instructions: 59, patchpoints: 1, rare instructions: 10
+# The body touches no collection, so the loop has a copy for a table that stays as it is: the table, its kind, its size and the place of its entries are read ahead of that copy.
+# A turn of it polls, compares the position with the size and loads the entry. An entry that was deleted, a table of another kind and the end of the walk leave it.
+# FAST-LABEL: steps by 1
+# FAST-NOT: Reads:CollectionStorage
+# FAST: Patchpoint({{*}}isLoopPoll{{*}}:LoopHint)
+# FAST-NOT: Reads:CollectionStorage
+# FAST: Load(b@{{*}}Reads:CollectionEntries, {{*}}:SetNext)
+# FAST-NOT: Reads:Collection
+# FAST-LABEL: end of loop
+# X64LOOP: loop #{{*}}, instructions: 14, patchpoints: 1
+# ARM64LOOP: loop #{{*}}, instructions: 14, patchpoints: 1
+# X64: instructions: 81, patchpoints: 2, rare instructions: 13
 # ARM64: instructions: 66, patchpoints: 1, rare instructions: 13

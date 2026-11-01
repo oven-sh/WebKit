@@ -27,7 +27,14 @@ TypeID TypingContext::typeIDOf(const DeclaredType& declared) const
         if (std::optional<Type> known = knownPositions->find(declared))
             return types.intern(*known);
     }
-    return level == TypeLevel::Expected ? declared.expected().predicted() : program.provenTypeOf(declared);
+    if (level == TypeLevel::Proven)
+        return program.provenTypeOf(declared);
+    // Integers that end where a step of one is lost to rounding are those of a counter, which seldom outgrows 32 bits.
+    TypeID expected = declared.expected().predicted();
+    const Type& type = types.at(expected);
+    bool isCounter = type.isInteger() && (type.integers.maximum == maxExactInteger || type.integers.minimum == -maxExactInteger);
+    Range withinInt32 = type.integers.intersectWith(Range::int32());
+    return isCounter && !withinInt32.isEmpty() ? types.intern(Type::integer(withinInt32)) : expected;
 }
 
 static TypeID typeIDOfField(const TypingContext& context, const Field& field)
@@ -86,12 +93,21 @@ static std::optional<Type> tryTypeOfField(const TypingContext& context, LayoutID
     return std::nullopt;
 }
 
+static bool holdsOnlyArrays(const Type& type)
+{
+    Type object = type.withoutPrimitives(Primitive::UndefinedOrNull);
+    const ClassPart* part = object.singleBuiltinClass();
+    return part && part->builtinClass == BuiltinClasses::Array && !(type.primitives & ~Primitive::UndefinedOrNull);
+}
+
 std::optional<Type> tryTypeOfFieldRead(const TypingContext& context, std::span<const LayoutID> receivers, PropertyKeyID key)
 {
     bool isProof = context.level == TypeLevel::Proven;
     BaseChain chain = isProof ? BaseChain::Proven : BaseChain::Predicted;
     Type result = Type::never();
     bool isMissingInEveryReceiver = true;
+    bool isMissingInSomeReceiver = false;
+    bool hasUninformativeField = false;
     for (LayoutID receiver : receivers) {
         if (context.program.at(receiver).flow.allocation == AllocationState::NeverAllocated)
             continue;
@@ -99,17 +115,25 @@ std::optional<Type> tryTypeOfFieldRead(const TypingContext& context, std::span<c
         if (!field) {
             if (isProof)
                 return std::nullopt;
-            result = result.withPrimitives(Primitive::Undefined);
+            isMissingInSomeReceiver = true;
             continue;
         }
         isMissingInEveryReceiver = false;
         std::optional<Type> part = tryTypeOfField(context, receiver, *field);
         if (!part)
             return std::nullopt;
+        if (!isProof && part->isAnything()) {
+            hasUninformativeField = true;
+            continue;
+        }
         result = result.unionWith(*part, context.types);
     }
     if (isMissingInEveryReceiver)
         return std::nullopt;
+    if (isMissingInSomeReceiver)
+        result = result.withPrimitives(Primitive::Undefined);
+    if (hasUninformativeField && !holdsOnlyArrays(result))
+        return Type::anything();
     return result;
 }
 
@@ -126,12 +150,20 @@ static Type typeOfSlotContents(const TypingContext& context, FieldReference refe
 std::optional<Type> tryTypeOfSlotContents(const TypingContext& context, std::span<const LayoutID> receivers, PropertyKeyID key)
 {
     Type result = Type::never();
+    bool hasUninformativeField = false;
     for (LayoutID receiver : receivers) {
         std::optional<FieldReference> field = findField(context.program, receiver, key, BaseChain::Proven);
         if (!field)
             return std::nullopt;
-        result = result.unionWith(typeOfSlotContents(context, *field), context.types);
+        Type contents = typeOfSlotContents(context, *field);
+        if (context.level == TypeLevel::Expected && contents.isAnything()) {
+            hasUninformativeField = true;
+            continue;
+        }
+        result = result.unionWith(contents, context.types);
     }
+    if (hasUninformativeField && !holdsOnlyArrays(result))
+        return Type::anything();
     return result;
 }
 

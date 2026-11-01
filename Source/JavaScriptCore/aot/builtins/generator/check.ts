@@ -53,7 +53,8 @@ const promiseClassToken = "Promise";
 const functionClassToken = "Function";
 const classesOfTestedClosures = [functionClassToken, "AsyncFunction"];
 const engineFileExtension = ".ts";
-const cppIdentifierPattern = /^[A-Za-z_][A-Za-z0-9_]*$/;
+// A getter may be a template over one enumerator, as errorStructureWithErrorType<ErrorType::TypeError> is.
+const realmGetterPattern = /^[A-Za-z_][A-Za-z0-9_]*(<[A-Za-z_][A-Za-z0-9_]*::[A-Za-z_][A-Za-z0-9_]*>)?$/;
 const maximumOwnSlotOffset = 0xff;
 
 const restatedLists = [
@@ -701,6 +702,8 @@ function needsText(role: OperandRole): boolean {
     case "WorkerEntryPath":
     case "DescribedWhenRefused":
     case "ContentsOfContentsAreOnlyStored":
+    case "FunctionsAreOnlyNamed":
+    case "ProxiesArePrintedAsTheirTargets":
       return false;
   }
 }
@@ -934,7 +937,7 @@ function checkOwnSlot(overload: ModelOverload, model: TableModel, problems: Prob
       `a getter of JSGlobalObject answers the Structure ${getter}, so a declaration file of the engine names it`,
     );
   }
-  if (!cppIdentifierPattern.test(getter)) {
+  if (!realmGetterPattern.test(getter)) {
     report(problems, overload, `${JSON.stringify(getter)} is not the name of a getter of JSGlobalObject`);
   }
   if (!overload.result.type.isAnything && builtin.mutability !== "AlwaysLocked") {

@@ -42,6 +42,7 @@ struct TypePropagationInputs {
     const KnownPositionTypes* knownPositions { nullptr };
     // Parameters are typed as if no edge came from these blocks.
     const BitVector* blocksThatPassNothing { nullptr };
+    Renumbering* renumbering { nullptr };
 };
 
 struct TypePropagationOutcome {
@@ -189,7 +190,9 @@ private:
     TypeID compute(const TypingContext&, ValueID, const ValueLocation&);
     TypeID computeValue(const TypingContext&, ValueID);
     TypeID computeParameter(const TypingContext&, ValueID, BlockID, uint32_t index);
+    TypeID computeIncomingType(const TypingContext&, Edge, uint32_t index);
     TypeID computeTypeOnEdge(const TypingContext&, EdgeResultPosition, const EdgeResult&);
+    bool growsOnBackEdge(TypeLevel, ValueID parameter, TypeID old, TypeID grown);
     TypeID meetWithPreviousExpectation(ValueID, TypeID computed);
     TypeID joinIntoParameter(const TypingContext&, ValueID parameter, TypeID current, TypeID incoming);
     TypeID widenGrownParameter(ValueID parameter, TypeID old, TypeID grown);

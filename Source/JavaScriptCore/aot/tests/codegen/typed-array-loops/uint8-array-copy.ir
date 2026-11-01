@@ -16,7 +16,7 @@
 # RUN(HOT): lower-to-b3 optimized loops f1
 # REQUIRES(HOT): unsanitized-code
 # RUN(X64): lower-to-air loops f1
-# REQUIRES(X64): x86_64 unsanitized-code
+# REQUIRES(X64): x86_64 unsanitized-code faulting-loop-polls
 # RUN(ARM64): lower-to-air loops f1
 # REQUIRES(ARM64): arm64 unsanitized-code
 
@@ -131,12 +131,14 @@ function f1 name="turn" module=m0 position=66 flags=[IsChecked, HasExplicitName]
 # HOT-NOT: isLoopPoll
 # HOT-NOT: Reads:JSArrayBufferView
 # HOT-LABEL: end of loop
-# Three loops, in the order in which they are emitted: one for fewer than sixteen bytes (6 | 7 instructions), one for fewer than eight times sixteen (4), and the one above.
+# Four loops, in the order in which they are emitted: one for fewer than eight times sixteen bytes (4 instructions), one byte at a time with eight turns written out, the one above, and one byte at a time (5).
 # X64-NOT: loop #
 # X64: loop #{{*}}, instructions: 4, patchpoints: 2, {{*}} steps by 16
-# X64: loop #{{*}}, instructions: 6, patchpoints: 2
+# X64: loop #{{*}}, instructions: 19, patchpoints: 16, rare instructions: 15, {{*}} steps by 8
 # X64: loop #{{*}}, instructions: 18, patchpoints: 16, {{*}} steps by 128
+# X64: loop #{{*}}, instructions: 5, patchpoints: 2, {{*}} steps by 1
 # ARM64-NOT: loop #
-# ARM64: loop #{{*}}, instructions: 7, patchpoints: 2
 # ARM64: loop #{{*}}, instructions: 4, patchpoints: 2, {{*}} steps by 16
+# ARM64: loop #{{*}}, instructions: 21, patchpoints: 16, rare instructions: 13, {{*}} steps by 8
 # ARM64: loop #{{*}}, instructions: 20, patchpoints: 16, {{*}} steps by 128
+# ARM64: loop #{{*}}, instructions: 5, patchpoints: 2, {{*}} steps by 1

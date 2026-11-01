@@ -9,17 +9,21 @@
 #if ENABLE(AOT)
 
 #include "AOTArrayStorageForms.h"
+#include "AOTBorrowedParameters.h"
 #include "AOTBuildContext.h"
 #include "AOTFlowApply.h"
 #include "AOTFlowResults.h"
 #include "AOTFrameAllocationPlanner.h"
 #include "AOTRegionCloner.h"
 #include "AOTSort.h"
+#include "AOTSpecifiedValues.h"
+#include "AOTSplitUnions.h"
 #include "AOTStatistics.h"
 #include "AOTThreshold.h"
 #include "AOTValueIdentity.h"
 #include "AOTVector.h"
 #include <algorithm>
+#include <wtf/SetForScope.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -37,7 +41,7 @@ AllocationSinking::AllocationSinking(FunctionAnalyses& analyses, const SinkingPo
     , m_program(analyses.program())
     , m_function(analyses.function())
     , m_policy(policy)
-    , m_objectContext { analyses.program(), analyses.function(), analyses.context().flow }
+    , m_objectContext { analyses.program(), analyses.function(), analyses.context().flow, policy.types }
     , m_candidateOfValue(analyses.function().values.size())
     , m_checksShortcuts(analyses.context().build.options().verifiesAfterEveryPass)
     , m_maxWork(limit(LimitID::MaxSinkingWork))
@@ -50,6 +54,7 @@ void AllocationSinking::analyze()
 {
     m_joinsSetAside.shrink(0);
     m_setsAsideJoins = true;
+    giveUpOnCandidatesCarriedTooFar();
     setAsideJoinsOfAllocationsBuiltInTheirBlocks();
     analyzeUntilNothingChanges();
     m_setsAsideJoins = false;
@@ -246,6 +251,17 @@ void AllocationSinking::abandon(VirtualObjectID object, LimitID limit)
         context().build.gaveUp(limit, m_analyses.subject(candidate.definition));
 }
 
+// `head = { next: head }` in a loop: a list grows by an object that holds the one before it. Carried round the loop unbuilt, each object is only built one iteration later,
+// and every further run of the pass puts that off by one more iteration, with a switch over what is still unbuilt.
+void AllocationSinking::abandonJoinsOfFamilyOf(VirtualObjectID object)
+{
+    VirtualFamilyID family = at(object).family;
+    for (uint32_t index = 0; index < m_candidates.size(); ++index) {
+        if (m_candidates[index].isJoin && m_candidates[index].family == family)
+            abandon(VirtualObjectID(index));
+    }
+}
+
 bool AllocationSinking::isIgnored(Edge edge) const
 {
     return m_ignoredEdges.contains(edge);
@@ -282,21 +298,449 @@ void AllocationSinking::didBuildAfterMerge(VirtualObjectID object, BlockID merge
         candidate.mergeBlock = mergeBlock;
 }
 
+// `let sum = 0; list.forEach(value => { sum += value; })`: the arrow function is inlined on the loop's likely path, and called with its environment on the others: the rare ones, and the unlikely one after a failed test of a declared parameter type.
+// Each such call gets a copy of the environment, and what the callee left in the copy is stored back after the call. Then only reads and stores name the environment, and its variables become values.
+// The callee only borrows the environment: nothing holds it after the callee returns.
+// Every variable was given a value of its type when the environment was created, so it holds one from then on, wherever the program first reads it.
+static PassOutcome lendCopiesOfEnvironmentsToRareCalls(FunctionPassContext& context)
+{
+    Function& function = context.function;
+    FunctionAnalyses& analyses = context.analyses;
+    const Program& program = context.program;
+    if (!analyses.opcodesOfValues().contains(Opcode::CallDirect) || !analyses.opcodesOfValues().contains(Opcode::PutEnvironmentField))
+        return PassOutcome::Unchanged;
+
+    const UseLists& useLists = analyses.useLists();
+    struct Loan {
+        ValueID environment;
+        ValueID call;
+    };
+    // Null for a field that holds no program value, such as the enclosing environment.
+    auto flowOfVariable = [&](LayoutID layout, uint32_t field) -> const LocationFlow* {
+        if (!program.at(program.at(layout).fields[field].declared.written()).isJavaScriptValue())
+            return nullptr;
+        return &flowOf(program, { layout, field }).location;
+    };
+    // For such a variable, flow analysis only says that it is stored before every read by the program. A read added by a pass is read as a word, and the cast after it names the fact.
+    auto isReadAsWord = [&](LayoutID layout, uint32_t field) {
+        const LocationFlow* flow = flowOfVariable(layout, field);
+        return flow && flow->initialization == InitializationState::StoredBeforeEveryRead;
+    };
+    auto isMadeWithValuesOfDeclaredTypes = [&](const Value& made) {
+        std::span<const uint32_t> fields = made.fields();
+        std::span<const ValueID> values = made.valuesOperands();
+        for (size_t index = 0; index < fields.size(); ++index) {
+            const Type& listed = program.typeOf(function, values[index]);
+            if (listed.mayBeUnspecified() || !listed.isSubsetOf(program.at(program.at(made.layout()).fields[fields[index]].declared.written()), program))
+                return false;
+        }
+        return fields.size() == values.size();
+    };
+    Vector<Loan, 4> loans;
+    for (BlockID block : analyses.cfg().reversePostOrder()) {
+        for (ValueID id : function.at(block).values) {
+            const Value& made = function.at(id);
+            if (made.opcode != Opcode::NewObject || program.at(made.layout()).kind != LayoutKind::Environment)
+                continue;
+            if (made.fields().size() != program.at(made.layout()).fields.size() || made.listsOnlyStoredValues() || !isMadeWithValuesOfDeclaredTypes(made))
+                continue;
+            bool isStoredInLikelyCode = false;
+            Vector<ValueID, 2> calls;
+            bool canLend = std::ranges::all_of(useLists.usesOf(id), [&](const Use& use) {
+                if (use.kind != Use::Kind::Operand)
+                    return false;
+                const Value& user = function.at(use.user);
+                const Block& at = function.at(useLists.blockOf(use.user));
+                if (user.opcode == Opcode::GetEnvironmentField)
+                    return true;
+                if (user.opcode == Opcode::PutEnvironmentField && use.operandIndex == OperandIndex::PutEnvironmentField::environment) {
+                    isStoredInLikelyCode |= at.frequency.predicted() != BlockFrequency::Rare;
+                    return true;
+                }
+                if (user.opcode != Opcode::CallDirect || at.frequency.predicted() == BlockFrequency::Normal || at.handler || program.typeOf(function, use.user).hasCells())
+                    return false;
+                // The callee reads and writes the variables and does not retain the environment.
+                if (!usesOfBorrowedParameter.containsAll(summarizeOperand(analyses.effectContext(), function, user, use.operandIndex).uses))
+                    return false;
+                calls.append(use.user);
+                return std::ranges::count(user.argumentsOperands(), id) == 1;
+            });
+            if (!canLend || !isStoredInLikelyCode || calls.isEmpty())
+                continue;
+            for (ValueID call : calls)
+                loans.append(Loan { id, call });
+        }
+    }
+    if (loans.isEmpty())
+        return PassOutcome::Unchanged;
+
+    IRBuilder builder(analyses.context(), function, context.types, &analyses);
+    auto read = [&](ProgramPoint point, ValueID from, LayoutID layout, uint32_t field) {
+        Value read = IRBuilder::make(Opcode::GetEnvironmentField, { from });
+        read.setLayout(layout);
+        read.setField(field);
+        read.setMayPrecedeItsStore(isReadAsWord(layout, field));
+        bool isWord = read.mayPrecedeItsStore();
+        ValueID word = builder.insertBefore(point, WTF::move(read));
+        if (!isWord)
+            return word;
+        ValueID fact = builder.insertBefore(point, IRBuilder::make(Opcode::Specified));
+        return builder.insertBefore(point, makeCastBehindFact(function, context.types, word, fact));
+    };
+    auto store = [&](ProgramPoint point, ValueID to, ValueID value, LayoutID layout, uint32_t field) {
+        Value store = IRBuilder::make(Opcode::PutEnvironmentField, { to, value });
+        store.setLayout(layout);
+        store.setField(field);
+        builder.insertBefore(point, WTF::move(store));
+    };
+    for (const Loan& loan : loans) {
+        ValueLocation location = useLists.locationOf(loan.call);
+        ProgramPoint before { location.block, location.index };
+        ProgramPoint behind { location.block, location.index + 1 };
+        builder.setOrigin(function.at(loan.call).origin());
+        Value copy = function.at(loan.environment);
+        LayoutID layout = copy.layout();
+        Vector<uint32_t, 8> fields(copy.fields());
+        Vector<ValueID, 8> held;
+        for (uint32_t field : fields)
+            held.append(read(before, loan.environment, layout, field));
+        copy.setValuesOperands(held.span());
+        copy.setStorage(AllocationStorage::Heap);
+        ValueID lent = builder.insertBefore(before, WTF::move(copy));
+        for (uint32_t field : fields) {
+            const LocationFlow* flow = flowOfVariable(layout, field);
+            if (flow && !flow->isUnchangedDuringActivation)
+                store(behind, loan.environment, read(behind, lent, layout, field), layout, field);
+        }
+        Value& call = function.edit(loan.call);
+        Vector<ValueID, 8> arguments(call.argumentsOperands());
+        for (ValueID& argument : arguments) {
+            if (argument == loan.environment)
+                argument = lent;
+        }
+        call.setArgumentsOperands(arguments.span());
+    }
+    builder.applyInsertions();
+    analyses.didChangeValues();
+    return PassOutcome::Changed;
+}
+
+// If a path on which an object and a closure over it are cells meets a path on which they are not, cells in the fields that link the two would force the object to be built where the closure is created, before every later store.
+// Built before the first branch after that place, the two never meet such a path. If they still do, the fields hold cells.
+void AllocationSinking::buildUnderHandler(VirtualObjectID object)
+{
+    if (at(object).willBeBuiltUnderHandler || !m_analyses.cfg().hasHandlers())
+        return;
+    VirtualFamilyID family = at(object).family;
+    auto isOfFamily = [&](const Candidate& candidate) {
+        return !candidate.isLeftOut && candidate.family == family;
+    };
+    bool isCreatedUnderHandler = std::ranges::any_of(m_candidates, [&](const Candidate& candidate) {
+        return isOfFamily(candidate) && !candidate.isJoin && handlerOf(candidate.block);
+    });
+    if (!isCreatedUnderHandler)
+        return;
+    for (uint32_t index = 0; index < m_candidates.size(); ++index) {
+        if (isOfFamily(m_candidates[index]))
+            at(VirtualObjectID(index)).willBeBuiltUnderHandler = true;
+    }
+    m_mustSolveAgain = true;
+}
+
+bool AllocationSinking::buildCycleBeforeBranches(const SinkingState& state, VirtualObjectID holder, VirtualObjectID held)
+{
+    Candidate& holding = at(holder);
+    Candidate& heldCandidate = at(held);
+    if (holding.isJoin || heldCandidate.isJoin)
+        return false;
+    if (holding.isBuiltBeforeBranchesOnceCyclic && heldCandidate.isBuiltBeforeBranchesOnceCyclic)
+        return false;
+    bool isKnownCycle = holding.willBeBuiltBeforeBranchesOnceCyclic && heldCandidate.willBeBuiltBeforeBranchesOnceCyclic;
+    if (!isKnownCycle && !state.canReach(held, holder))
+        return false;
+    holding.willBeBuiltBeforeBranchesOnceCyclic = true;
+    heldCandidate.willBeBuiltBeforeBranchesOnceCyclic = true;
+    m_mustSolveAgain = true;
+    return true;
+}
+
+// `Object.create(shared)` whose object nothing uses any more, once its reads are answered by its stores: the link to the prototype is all that names it.
+static PassOutcome removeLinksOfUnusedObjects(FunctionPassContext& context)
+{
+    Function& function = context.function;
+    if (!context.analyses.opcodesOfValues().contains(Opcode::SetLiteralPrototype))
+        return PassOutcome::Unchanged;
+
+    const UseLists& useLists = context.analyses.useLists();
+    IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
+    PassOutcome outcome = PassOutcome::Unchanged;
+    for (BlockID block : context.analyses.cfg().reversePostOrder()) {
+        BitVector erased;
+        const BlockValues& values = function.at(block).values;
+        for (uint32_t index = 0; index < values.size(); ++index) {
+            const Value& link = function.at(values[index]);
+            if (link.opcode != Opcode::SetLiteralPrototype || link.replacedCalleeOperand() || link.replacedThisOperand())
+                continue;
+            // Anything else is refused with an error.
+            const Type& prototype = context.program.typeOf(function, link.prototypeOperand());
+            bool isTaken = prototype.hasObjects() ? !(prototype.primitives & ~Primitive::Null) : prototype.hasOnlyPrimitives(Primitive::Null);
+            if (function.at(link.objectOperand()).opcode == Opcode::NewObject && useLists.useCount(link.objectOperand()) == 1 && (isTaken || !link.refusesOtherValues()))
+                erased.set(index);
+        }
+        if (erased.isEmpty())
+            continue;
+        builder.eraseValues(block, erased);
+        outcome = PassOutcome::Changed;
+    }
+    return outcome;
+}
+
+// On a copy of a function nothing is counted, and no further copy is made.
+enum class SinkingRun : uint8_t { OfThePass, OnCopy };
+static PassOutcome sinkAllocations(FunctionPassContext&, SinkingRun);
+
+static void testPrototypeInFrontOfLink(IRBuilder& builder, Function& function, ProgramPoint point)
+{
+    Value link = function.at(function.at(point.block).values[point.index]);
+    LayoutID layout = function.at(link.objectOperand()).layout();
+    IRBuilder::Expansion expansion = builder.beginExpansion(point);
+    Value test = IRBuilder::make(Opcode::IsPrototypeOfClass, { link.prototypeOperand() });
+    test.setLayout(layout);
+    ValueID hasPrototypeOfClass = builder.append(WTF::move(test));
+    BlockID linked = builder.addBlock(BlockFrequency::Rare);
+    builder.emitBranch(hasPrototypeOfClass, Target { expansion.continuation }, Target { linked });
+    builder.moveToEndOf(linked);
+    builder.append(WTF::move(link));
+    builder.endExpansion(expansion, std::span<const ValueID>());
+}
+
+// What Object.create makes needs no link where it is handed the prototype of its class, which its Structure already says. Behind a test of that the object is one like any other and may sink; the link moves to the way where the test fails.
+// The ways meet again behind a link that writes the guards of the class, so an object that is made anyway would only lose by the test: it is put where a copy of the function says that the allocation goes.
+static PassOutcome testPrototypesOfCreatedObjects(FunctionPassContext& context)
+{
+    Function& function = context.function;
+    OpcodeSet opcodes = context.analyses.opcodesOfValues();
+    if (!opcodes.contains(Opcode::SetLiteralPrototype) || !(opcodes.contains(Opcode::HasLayoutPrototype) || opcodes.contains(Opcode::AreMembersUnchanged)))
+        return PassOutcome::Unchanged;
+
+    // Until its accesses are resolved nothing asks about the prototype of the object or the guards of its class, and it cannot go.
+    BitVector layoutsAsked;
+    for (BlockID block : context.analyses.cfg().reversePostOrder()) {
+        for (ValueID id : function.at(block).values) {
+            const Value& value = function.at(id);
+            if (value.opcode == Opcode::HasLayoutPrototype) {
+                const Value& subject = function.at(context.analyses.identityOf(value.objectOperand()));
+                if (subject.opcode == Opcode::NewObject)
+                    layoutsAsked.set(subject.layout().index());
+            } else if (value.opcode == Opcode::AreMembersUnchanged) {
+                for (const MemberConditionRecord& condition : value.conditions())
+                    layoutsAsked.set(condition.layout.index());
+            }
+        }
+    }
+
+    Vector<ProgramPoint, 2> points;
+    for (BlockID block : context.analyses.cfg().reversePostOrder()) {
+        // Where a test has failed the object is made and linked.
+        if (function.at(block).frequency.predicted() != BlockFrequency::Normal)
+            continue;
+        const BlockValues& values = function.at(block).values;
+        for (uint32_t index = 1; index < values.size(); ++index) {
+            const Value& link = function.at(values[index]);
+            if (link.opcode != Opcode::SetLiteralPrototype || link.replacedCalleeOperand() || link.replacedThisOperand() || link.objectOperand() != values[index - 1])
+                continue;
+            const Value& made = function.at(values[index - 1]);
+            if (made.opcode != Opcode::NewObject || made.prototypeOperand() || !layoutsAsked.get(made.layout().index()) || !context.program.at(made.layout()).has(LayoutFlags::IsOfCreatedObject))
+                continue;
+            const Type& prototype = context.program.typeOf(function, link.prototypeOperand());
+            if (prototype.hasObjects() && !prototype.primitives)
+                points.append(ProgramPoint { block, index });
+        }
+    }
+    if (points.isEmpty())
+        return PassOutcome::Unchanged;
+    // From the last to the first, so that a cut moves no point that is still to come.
+    AOT::sort(points, [](const ProgramPoint& a, const ProgramPoint& b) {
+        return a.block != b.block ? a.block > b.block : a.index > b.index;
+    });
+
+    // The pass itself says so: it gives the way behind a failed test a copy of what follows, which an analysis alone does not.
+    AOT_THRESHOLD(unsigned, maxRunsOnCopy, 4);
+    BitVector layoutsStillMade;
+    {
+        Function copy = function;
+        FunctionAnalyses analyses(context.analyses.context(), copy);
+        {
+            IRBuilder builder(context.analyses.context(), copy, context.types, &analyses);
+            for (ProgramPoint point : points)
+                testPrototypeInFrontOfLink(builder, copy, point);
+        }
+        FunctionPassContext onCopy { context.program, context.inputs, context.id, copy, analyses, context.types, context.strings, context.build };
+        for (unsigned runs = 0; runs < maxRunsOnCopy; ++runs) {
+            analyses.didChangeControlFlow();
+            if (sinkAllocations(onCopy, SinkingRun::OnCopy) != PassOutcome::Changed)
+                break;
+        }
+        analyses.didChangeControlFlow();
+        for (BlockID block : analyses.cfg().reversePostOrder()) {
+            if (copy.at(block).frequency.predicted() != BlockFrequency::Normal)
+                continue;
+            for (ValueID id : copy.at(block).values) {
+                if (copy.at(id).opcode == Opcode::NewObject)
+                    layoutsStillMade.set(copy.at(id).layout().index());
+            }
+        }
+    }
+
+    IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
+    PassOutcome outcome = PassOutcome::Unchanged;
+    for (ProgramPoint point : points) {
+        if (layoutsStillMade.get(function.at(function.at(point.block).values[point.index - 1]).layout().index()))
+            continue;
+        testPrototypeInFrontOfLink(builder, function, point);
+        outcome = PassOutcome::Changed;
+    }
+    return outcome;
+}
+
+// `new Message(i).retries`, where the program never stores the name: all that remains of the object is that the lookup starts at it.
+// What the site knows of the Structure answers without the object, and a miss makes it. Nothing else names the object, and it lists nothing under the name, so its slot is empty.
+static PassOutcome readAboveObjectsMadeOnlyForTheRead(FunctionPassContext& context, IRBuilder& builder)
+{
+    Function& function = context.function;
+    if (!context.analyses.opcodesOfValues().contains(Opcode::SuperGet) || !context.analyses.opcodesOfValues().contains(Opcode::NewObject))
+        return PassOutcome::Unchanged;
+    const UseLists& useLists = context.analyses.useLists();
+    auto isMadeOnlyForTheRead = [&](const Value& read) {
+        if (read.opcode != Opcode::SuperGet || !read.key() || !read.accessSite() || read.baseOperand() != read.receiverOperand())
+            return false;
+        const Value& made = function.at(read.receiverOperand());
+        if (made.opcode != Opcode::NewObject || made.prototypeOperand() || useLists.useCount(read.receiverOperand()) != 2)
+            return false;
+        std::optional<FieldReference> field = findField(context.program, made.layout(), read.key(), BaseChain::Proven);
+        if (!field)
+            return false;
+        const Layout& layout = context.program.at(made.layout());
+        if (std::ranges::any_of(made.fields(), [&](uint32_t listed) { return layout.fields[listed].key == read.key(); }))
+            return false;
+        // The read that makes the object after a miss looks the same.
+        return std::ranges::none_of(function.values, [&](const Value& other) {
+            return other.opcode == Opcode::ReadAboveFreshObject && other.accessSite() == read.accessSite();
+        });
+    };
+    for (BlockID block : context.analyses.cfg().reversePostOrder()) {
+        const BlockValues& values = function.at(block).values;
+        for (uint32_t index = 0; index < values.size(); ++index) {
+            ValueID id = values[index];
+            if (!isMadeOnlyForTheRead(function.at(id)))
+                continue;
+            Value made = function.at(function.at(id).receiverOperand());
+            ValueID oldObject = function.at(id).receiverOperand();
+            SiteExpansion expansion(context, builder);
+            expansion.begin(ValueSite { block, index, id });
+            Value above = IRBuilder::make(Opcode::ReadAboveFreshObject);
+            above.setKey(expansion.original().key());
+            above.setAccessSite(expansion.original().accessSite());
+            ValueID answer = expansion.append(WTF::move(above));
+            ValueID didRead = expansion.append(IRBuilder::make(Opcode::DidReadAbove, { answer }));
+            BlockID hasAnswer = builder.addBlock(expansion.frequency());
+            BlockID hasNoAnswer = builder.addBlock(BlockFrequency::Rare);
+            builder.emitBranch(didRead, Target { hasAnswer, { }, { } }, Target { hasNoAnswer, { }, { } });
+            builder.moveToEndOf(hasAnswer);
+            expansion.finishArm(answer);
+            builder.moveToEndOf(hasNoAnswer);
+            ValueID object = builder.append(WTF::move(made));
+            Value lookup = IRBuilder::make(Opcode::SuperGet, { object, object });
+            lookup.setKey(expansion.original().key());
+            lookup.setAccessSite(expansion.original().accessSite());
+            expansion.finishArm(expansion.append(WTF::move(lookup)));
+            expansion.end();
+            for (BlockID other : context.analyses.cfg().reversePostOrder()) {
+                const BlockValues& inOther = function.at(other).values;
+                for (uint32_t position = 0; position < inOther.size(); ++position) {
+                    if (inOther[position] != oldObject)
+                        continue;
+                    BitVector erased;
+                    erased.set(position);
+                    builder.eraseValues(other, erased);
+                    context.analyses.didChangeValues();
+                    return PassOutcome::Changed;
+                }
+            }
+            context.analyses.didChangeValues();
+            return PassOutcome::Changed;
+        }
+    }
+    return PassOutcome::Unchanged;
+}
+
+static PassOutcome declareListsOfNumbers(FunctionPassContext&);
+
+// `finally { if (step && !step.done && (close = it.return)) close.call(it); }`, as TypeScript and Babel write a for-of for ES5. No iterator of a list, a Map or a Set has a `return`.
+// Read as undefined, the member leaves the handler without a use of the iterator, which then need not be made.
+static PassOutcome readAbsentMembersOfIterators(FunctionPassContext& context)
+{
+    Function& function = context.function;
+    if (!context.analyses.opcodesOfValues().contains(Opcode::PropGet) || !context.analyses.opcodesOfValues().contains(Opcode::CallBuiltin))
+        return PassOutcome::Unchanged;
+
+    Vector<ValueID, 2> reads;
+    for (BlockID block : context.analyses.cfg().reversePostOrder()) {
+        for (ValueID id : function.at(block).values) {
+            const Value& read = function.at(id);
+            if (read.opcode != Opcode::PropGet)
+                continue;
+            // Flow has proven that the program gives this iterator no member of its own.
+            const ClassPart* iterator = context.program.typeOf(function, read.objectOperand()).singleBuiltinClass();
+            static constexpr std::array classes { BuiltinClasses::ArrayIterator, BuiltinClasses::MapIterator, BuiltinClasses::SetIterator };
+            if (!iterator || !std::ranges::contains(classes, iterator->builtinClass) || !iterator->provenPristine.contains(PristineAspects::Names))
+                continue;
+            BuiltinMemberAnswer member = findMemberOfInstances({ context.program, context.inputs.flow }, iterator->builtinClass, read.key());
+            if (member.outcome == BuiltinMemberLookup::Outcome::Absent && member.proof == LocationProof::Constant)
+                reads.append(id);
+        }
+    }
+    for (ValueID id : reads)
+        becomeUndefined(function, id);
+    if (reads.isEmpty())
+        return PassOutcome::Unchanged;
+    context.analyses.didChangeValues();
+    return PassOutcome::Changed;
+}
+
 PassOutcome sinkAllocations(FunctionPassContext& context)
+{
+    return sinkAllocations(context, SinkingRun::OfThePass);
+}
+
+static PassOutcome sinkAllocations(FunctionPassContext& context, SinkingRun run)
 {
     AOT_THRESHOLD(unsigned, maxEdgeSplittingRounds, 3);
     constexpr OpcodeSet allocations = opcodesInterpretedAs(Interpretation::Allocation);
 
     if (!context.analyses.opcodesOfValues().intersects(allocations))
         return PassOutcome::Unchanged;
+    if (removeLinksOfUnusedObjects(context) == PassOutcome::Changed)
+        return PassOutcome::Changed;
+    if (run == SinkingRun::OfThePass && testPrototypesOfCreatedObjects(context) == PassOutcome::Changed)
+        return PassOutcome::Changed;
+    if ((declareListsOfNumbers(context) | readAbsentMembersOfIterators(context)) == PassOutcome::Changed)
+        return PassOutcome::Changed;
     if (4 * context.analyses.cfg().reversePostOrder().size() > 3 * context.numberOfBlocksWhenSinkingGaveUp && context.numberOfBlocksWhenSinkingGaveUp)
         return PassOutcome::Unchanged;
 
+    {
+        IRBuilder builder(context.analyses.context(), context.function, context.types, &context.analyses);
+        if (readAboveObjectsMadeOnlyForTheRead(context, builder) == PassOutcome::Changed)
+            return PassOutcome::Changed;
+    }
+    PassOutcome lent = lendCopiesOfEnvironmentsToRareCalls(context);
     BlocksThatMayGetTests blocksThatMayGetTests { context.inputs.heat };
-    SinkingPolicy policy { .leavesWhenNoAllocationPays = true, .followsUndefinedAndNullInFields = true, .blocksThatMayGetTests = &blocksThatMayGetTests };
+    SinkingPolicy policy { .leavesWhenNoAllocationPays = true, .followsUndefinedAndNullInFields = true, .blocksThatMayGetTests = &blocksThatMayGetTests, .types = &context.types };
+    policy.recordsLosses = run == SinkingRun::OfThePass;
     if (!context.build.options().verifiesAfterEveryPass)
         policy.tracesOfFruitlessAllocations = &context.tracesOfAllocationsNotWorthSinking;
-    PassOutcome outcome = PassOutcome::Unchanged;
+    PassOutcome outcome = lent;
     std::optional<SinkingFindings> findingsBeforeSplitting;
     bool hasGivenUp = false;
     for (unsigned round = 0; round < maxEdgeSplittingRounds; ++round) {
@@ -313,7 +757,8 @@ PassOutcome sinkAllocations(FunctionPassContext& context)
             context.numberOfBlocksWhenSinkingGaveUp = context.analyses.cfg().reversePostOrder().size();
 
         IRBuilder builder(context.analyses.context(), context.function, context.types, &context.analyses);
-        if (sinking.testElementsOfLists(builder) || sinking.duplicateLiveRange(builder))
+        // Splitting edges changes no plan. The ones that failed in the first round would fail again.
+        if (sinking.testElementsOfLists(builder) || (!round && sinking.duplicateLiveRange(builder)))
             return PassOutcome::Changed;
         if (!sinking.hasCandidates()) {
             sinking.recordLosses();
@@ -330,7 +775,8 @@ PassOutcome sinkAllocations(FunctionPassContext& context)
         sinking.rewrite(builder);
         sinking.raiseFrequenciesBehindDecidedBranches();
         sinking.recordLosses();
-        sinking.countStatistics();
+        if (run == SinkingRun::OfThePass)
+            sinking.countStatistics();
         return PassOutcome::Changed;
     }
 
@@ -375,7 +821,7 @@ static bool isFrameAllocatableObject(const AllocationSinking& sinking, const Val
         break;
     }
 
-    if (object.prototypeOperand() || layout.has(LayoutFlags::IsOfCreatedObject) || layout.flow.fieldCreation != FieldCreation::OnlyAtConstruction)
+    if (object.prototypeOperand() || layout.has(LayoutFlags::IsOfCreatedObject))
         return false;
     // The verifier allows an on-demand closure exactly one use, so the allocation that lists it cannot be duplicated.
     for (uint32_t field = 0; field < layout.fields.size(); ++field) {
@@ -402,23 +848,47 @@ bool isFrameAllocatable(const AllocationSinking& sinking, const Candidate& candi
     return isFrameAllocatableObject(sinking, definition);
 }
 
+static void resetCountersOf(Candidate& candidate)
+{
+    // Count no longer tracks an abandoned candidate: recordDecline() and duplicateLiveRange() read what its last count found.
+    if (candidate.isAbandoned)
+        return;
+    candidate.needsGuard = false;
+    candidate.diesVirtual = false;
+    candidate.diesOutsideJoins = false;
+    candidate.holdersThatStoreItLate.shrink(0);
+    candidate.numberOfBuilds = 0;
+    candidate.numberOfRarerBuilds = 0;
+    candidate.numberOfBorrowingBuilds = 0;
+    candidate.numberOfFoldedStores = 0;
+    candidate.numberOfRepeatedStores = 0;
+    // Building before branches hides the merge. The plan to duplicate the code after it still needs it.
+    if (!candidate.isBuiltBeforeBranches)
+        candidate.mergeBlock = BlockID();
+    candidate.firstCause = std::nullopt;
+}
+
+void AllocationSinking::willAccessInTrial(uint32_t index)
+{
+    TrialsOfCandidate& trials = m_trialsOfCandidates[index];
+    if (trials.lastSavedIn != m_trial) {
+        trials.lastSavedIn = m_trial;
+        m_candidatesSavedInTrial.append({ index, m_candidates[index] });
+    }
+    if (m_didResetCountersInTrial && trials.lastResetIn != m_trial) {
+        trials.lastResetIn = m_trial;
+        resetCountersOf(m_candidates[index]);
+    }
+}
+
 void AllocationSinking::resetCounters()
 {
-    for (Candidate& candidate : m_candidates) {
-        // Count no longer tracks an abandoned candidate: recordDecline() and duplicateLiveRange() read what its last count found.
-        if (candidate.isAbandoned)
-            continue;
-        candidate.needsGuard = false;
-        candidate.diesVirtual = false;
-        candidate.diesOutsideJoins = false;
-        candidate.holdersThatStoreItLate.shrink(0);
-        candidate.numberOfBuilds = 0;
-        candidate.numberOfRarerBuilds = 0;
-        candidate.numberOfBorrowingBuilds = 0;
-        candidate.numberOfFoldedStores = 0;
-        candidate.numberOfRepeatedStores = 0;
-        candidate.mergeBlock = BlockID();
-        candidate.firstCause = std::nullopt;
+    if (m_trialRange) {
+        RELEASE_ASSERT(!m_didResetCountersInTrial);
+        m_didResetCountersInTrial = true;
+    } else {
+        for (Candidate& candidate : m_candidates)
+            resetCountersOf(candidate);
     }
     m_returns.clear();
     m_edgesNeedingCode.clear();
@@ -431,6 +901,15 @@ void AllocationSinking::count()
     findWhetherObjectsAreBuiltBeforeBranches();
     ++m_numberOfSweeps;
     for (BlockID block : m_analyses.cfg().reversePostOrder())
+        countBlock(block);
+}
+
+// A trial changes nothing that findWhetherObjectsAreBuiltBeforeBranches() reads.
+void AllocationSinking::countIn(std::span<const BlockID> range)
+{
+    resetCounters();
+    ++m_numberOfSweeps;
+    for (BlockID block : range)
         countBlock(block);
 }
 
@@ -475,6 +954,14 @@ void AllocationSinking::countBlock(BlockID block)
     }
 
     for (uint32_t targetIndex = 0; targetIndex < terminator.targets.size(); ++targetIndex) {
+        if (isOutsideTrialRange(terminator.targets[targetIndex].block)) {
+            // The trial knows nothing past its range. An object that leaves it virtual may die virtual.
+            for (const ObjectEntry& entry : state.objects) {
+                if (!entry.state.isCell())
+                    at(entry.object).diesVirtual = true;
+            }
+            continue;
+        }
         const SinkingState* headOfTarget = headOf(terminator.targets[targetIndex].block);
         if (!headOfTarget || interpreter.isDeadEdge(terminator, targetIndex))
             continue;
@@ -524,11 +1011,15 @@ bool AllocationSinking::buildBeforeBranchesInsteadOfAbandoning()
     for (Candidate& candidate : m_candidates) {
         if (candidate.isAbandoned || candidate.isJoin || candidate.isBuiltBeforeBranches)
             continue;
-        if (candidate.numberOfBuilds < 2 || candidate.numberOfFoldedStores <= candidate.numberOfRepeatedStores)
+        // Each build repeats its stores, and there will be only one.
+        if (candidate.numberOfBuilds < 2 || candidate.numberOfFoldedStores * candidate.numberOfBuilds <= candidate.numberOfRepeatedStores)
             continue;
         if (!exceedsMaxBuilds(candidate, maxNumberOfBuilds) && paysToSink(candidate))
             continue;
         candidate.isBuiltBeforeBranches = true;
+        // Duplicating the code after the merge pays where one of the builds is on a rarer path. Planning it for the others is work for nothing.
+        if (!candidate.numberOfRarerBuilds)
+            candidate.mergeBlock = BlockID();
         changed = true;
     }
     if (changed)
@@ -540,12 +1031,12 @@ void AllocationSinking::abandonJoinsThatOnlyFeedAbandonedJoins()
 {
     auto indexOfJoin = [](const EntryIntoJoin& entry) { return entry.join.index(); };
     auto indexOfSource = [](const EntryIntoJoin& entry) { return entry.source.index(); };
-    AOT::sort(m_entriesIntoJoins, { }, [](const EntryIntoJoin& entry) {
+    AOT::sortInLine(m_entriesIntoJoins, { }, [](const EntryIntoJoin& entry) {
         return std::pair { entry.join.index(), entry.source.index() };
     });
     removeRepeatedElements(m_entriesIntoJoins);
     Vector<EntryIntoJoin> entriesBySource = m_entriesIntoJoins;
-    AOT::stableSort(entriesBySource, { }, indexOfSource);
+    AOT::stableSortInLine(entriesBySource, { }, indexOfSource);
 
     auto goesOnlyIntoAbandonedJoins = [&](VirtualObjectID object) {
         const Candidate& candidate = at(object);
@@ -698,6 +1189,10 @@ static void resetAnalysis(AllocationSinking& sinking)
         if (candidate.abandonedBy == LimitID::None && !candidate.isLeftOut)
             candidate.isAbandoned = false;
         candidate.isBuiltBeforeBranches = false;
+        candidate.isBuiltBeforeBranchesOnceCyclic = false;
+        candidate.willBeBuiltBeforeBranchesOnceCyclic = false;
+        candidate.isBuiltUnderHandler = false;
+        candidate.willBeBuiltUnderHandler = false;
     }
     sinking.decisions() = SinkingDecisions { };
 }
@@ -805,33 +1300,82 @@ Vector<BlockID> AllocationSinking::collectLiveRange(VirtualObjectID object, Bloc
         }
     }
 
-    AOT::sort(region, { }, [&](BlockID block) {
+    AOT::sortInLine(region, { }, [&](BlockID block) {
         return cfg.reversePostOrderIndex(block);
     });
     return region;
 }
 
-bool AllocationSinking::paysWithoutEdges(VirtualObjectID object, std::span<const Edge> edges)
+static BitVector collectObjectsAllocatedOnEveryPath(std::span<const Candidate> candidates)
 {
-    BitVector allocatedOnEveryPath(m_candidates.size());
-    for (size_t index = 0; index < m_candidates.size(); ++index) {
-        if (allocatesOnEveryPath(m_candidates[index]))
-            allocatedOnEveryPath.quickSet(index);
+    BitVector result(candidates.size());
+    for (size_t index = 0; index < candidates.size(); ++index) {
+        if (allocatesOnEveryPath(candidates[index]))
+            result.quickSet(index);
     }
+    return result;
+}
 
-    resetAnalysis(*this);
-    m_ignoredEdges.clear();
-    m_ignoredEdges.append(edges);
-    analyze();
-    m_ignoredEdges.clear();
-
-    const SinkingState* head = headOf(targetOf(m_function, edges.front()).block);
+bool AllocationSinking::savesAllocation(VirtualObjectID object, BlockID merge, const BitVector& allocatedOnEveryPath) const
+{
+    const SinkingState* head = headOf(merge);
     if (!head)
         return false;
     Vector<VirtualObjectID, 4> objects = collectReachableObjects(*head, object);
     return std::ranges::any_of(objects, [&](VirtualObjectID member) {
         return allocatedOnEveryPath.quickGet(member.index()) && !allocatesOnEveryPath(at(member));
     });
+}
+
+// Most plans fail because the object is built in the range to duplicate. Analyzing the range costs the same in a function of any size.
+bool AllocationSinking::mayPayWithoutEdges(VirtualObjectID object, std::span<const Edge> edges, std::span<const BlockID> range, const BitVector& allocatedOnEveryPath)
+{
+    BitVector isInRange(m_function.blocks.size());
+    for (BlockID block : range)
+        isInRange.quickSet(block.index());
+    SetForScope<const BitVector*> trialRange(m_trialRange, &isInRange);
+    ++m_trial;
+    m_didResetCountersInTrial = false;
+    if (m_trialsOfCandidates.size() != m_candidates.size())
+        m_trialsOfCandidates.fill(TrialsOfCandidate { }, m_candidates.size());
+
+    // The cells that came over the edges are behind many of the decisions.
+    SinkingDecisions decisions = std::exchange(m_decisions, SinkingDecisions { });
+    BitVector blocksEnteredWithNothing = m_blocksEnteredWithNothing;
+    Heads heads(range.size(), [&](size_t index) {
+        return m_heads[range[index].index()];
+    });
+
+    m_ignoredEdges.clear();
+    m_ignoredEdges.append(edges);
+    do {
+        m_mustSolveAgain = false;
+        solveAgainIn(range);
+    } while ((m_decisions.takeDidChange() || m_mustSolveAgain) && !hasSpentItsWork());
+    countIn(range);
+    m_ignoredEdges.clear();
+    bool result = !hasSpentItsWork() && savesAllocation(object, targetOf(m_function, edges.front()).block, allocatedOnEveryPath);
+
+    for (size_t index = 0; index < range.size(); ++index)
+        m_heads[range[index].index()] = WTF::move(heads[index]);
+    m_blocksEnteredWithNothing = WTF::move(blocksEnteredWithNothing);
+    for (auto& [index, candidate] : m_candidatesSavedInTrial)
+        m_candidates[index] = WTF::move(candidate);
+    m_candidatesSavedInTrial.shrink(0);
+    m_decisions = WTF::move(decisions);
+    return result;
+}
+
+bool AllocationSinking::paysWithoutEdges(VirtualObjectID object, std::span<const Edge> edges)
+{
+    BitVector allocatedOnEveryPath = collectObjectsAllocatedOnEveryPath(m_candidates.span());
+
+    resetAnalysis(*this);
+    m_ignoredEdges.clear();
+    m_ignoredEdges.append(edges);
+    analyze();
+    m_ignoredEdges.clear();
+    return savesAllocation(object, targetOf(m_function, edges.front()).block, allocatedOnEveryPath);
 }
 
 void AllocationSinking::duplicate(IRBuilder& builder, std::span<const BlockID> region, std::span<const Edge> cellEdges)
@@ -903,6 +1447,62 @@ static void testElementsOfList(IRBuilder& builder, const Program& program, Funct
     builder.moveToEndOf(holdsOtherValue);
     list.setContents(TypeTable::anything);
     builder.emitJump(expansion.continuation, { builder.append(makeAssumeType(builder.append(WTF::move(list)), Proven::byConstruction(typeOfList))) });
+}
+
+static bool isAskedForItsStorage(FunctionPassContext& context, ValueID alias)
+{
+    return std::ranges::any_of(context.analyses.useLists().usesOf(alias), [&](const Use& use) {
+        if (use.kind != Use::Kind::Operand)
+            return false;
+        Opcode opcode = context.function.at(use.user).opcode;
+        if (opcode == Opcode::HasArrayStorage)
+            return true;
+        return (opcode == Opcode::AssumeType || opcode == Opcode::Upcast || opcode == Opcode::Expect) && !use.operandIndex && isAskedForItsStorage(context, use.user);
+    });
+}
+
+// The list of a call's further arguments is declared to hold what the callee may read from it, undefined among it.
+// Where every element is a number by its type, the list says so. Until then the answer to a test of its storage is unknown, and a list that a loop asks is not even analyzed.
+static PassOutcome declareListsOfNumbers(FunctionPassContext& context)
+{
+    const Program& program = context.program;
+    Function& function = context.function;
+    if (!context.analyses.opcodesOfValues().contains(Opcode::NewArray) || !context.analyses.opcodesOfValues().contains(Opcode::HasArrayStorage))
+        return PassOutcome::Unchanged;
+
+    Vector<ProgramPoint, 2> points;
+    for (BlockID block : context.analyses.cfg().reversePostOrder()) {
+        const Block& blockData = function.at(block);
+        for (uint32_t index = 0; index < blockData.values.size(); ++index) {
+            ValueID literal = blockData.values[index];
+            const Value& list = function.at(literal);
+            if (list.opcode != Opcode::NewArray || list.elementsOperands().empty() || !list.holes().empty() || list.capacityOperand())
+                continue;
+            ArrayStorage storage = arrayStorageAtAllocation(program, program.at(list.type));
+            if (storage == ArrayStorage::Contiguous || fitsStorageOfLiteral(storage, program.at(list.contents())))
+                continue;
+            bool holdsOnlyNumbers = std::ranges::all_of(list.elementsOperands(), [&](ValueID element) {
+                return fitsStorageOfLiteral(storage, program.typeOf(function, element));
+            });
+            // Only an allocation is a guard of what it makes, and a call that takes its arguments out of a list looks for the literal itself.
+            static constexpr OpcodeSet castsAndReads { Opcode::AssumeType, Opcode::Upcast, Opcode::Expect, Opcode::HasArrayStorage, Opcode::IsInBounds, Opcode::IsElementPresent, Opcode::GetArrayLength, Opcode::GetArrayElement };
+            bool isOnlyCastOrRead = std::ranges::all_of(context.analyses.useLists().usesOf(literal), [&](const Use& use) {
+                return use.kind == Use::Kind::Operand && function.at(use.user).operandKind(use.operandIndex) != OperandKind::Guard && castsAndReads.contains(function.at(use.user).opcode);
+            });
+            if (holdsOnlyNumbers && isOnlyCastOrRead && isAskedForItsStorage(context, literal))
+                points.append(ProgramPoint { block, index });
+        }
+    }
+    if (points.isEmpty())
+        return PassOutcome::Unchanged;
+
+    AOT::sort(points, [](const ProgramPoint& a, const ProgramPoint& b) {
+        return a.block != b.block ? a.block > b.block : a.index > b.index;
+    });
+    IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
+    for (ProgramPoint point : points)
+        testElementsOfList(builder, program, function, point);
+    return PassOutcome::Changed;
 }
 
 bool AllocationSinking::testElementsOfLists(IRBuilder& builder)
@@ -1015,12 +1615,18 @@ bool AllocationSinking::duplicateLiveRange(IRBuilder& builder)
         return region;
     };
 
+    BitVector allocatedOnEveryPath = collectObjectsAllocatedOnEveryPath(m_candidates.span());
     resetAnalysis(*this);
     startWorkOver();
     solve();
     for (DuplicationPlan& plan : plans) {
         plan.cellEdges = collectCellEdges(plan.object, plan.merge);
-        if (!plan.cellEdges.isEmpty() && collectClonableRange(plan).isEmpty())
+        if (plan.cellEdges.isEmpty())
+            continue;
+        Vector<BlockID> region = collectClonableRange(plan);
+        // An object that pays already is planned for the sake of one it holds. Whether it holds cells was decided before the range.
+        bool rangeDecides = allocatedOnEveryPath.quickGet(plan.object.index());
+        if (region.isEmpty() || (rangeDecides && !mayPayWithoutEdges(plan.object, plan.cellEdges.span(), region.span(), allocatedOnEveryPath)))
             plan.cellEdges.clear();
     }
 

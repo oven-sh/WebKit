@@ -8,21 +8,32 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCFG.h"
+#include "AOTCheckedFrameCells.h"
 #include "AOTConstantEmitter.h"
+#include "AOTEdgeResults.h"
+#include "AOTFunctionAnalyses.h"
 #include "AOTNumberLiteralStrings.h"
 #include "AOTPureOperations.h"
 #include "AOTRepresentation.h"
 #include "AOTRepresentationRules.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTStubsStringLiterals.h"
+#include "B3BasicBlockInlines.h"
+#include "B3BasicBlockUtils.h"
+#include "B3Dominators.h"
+#include "B3InsertionSetInlines.h"
 #include "B3IntRange.h"
+#include "B3ProcedureInlines.h"
 #include "B3StackmapGenerationParams.h"
 #include "JSCJSValueInlines.h"
 #include "PureNaN.h"
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <optional>
 #include <span>
+#include <tuple>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -485,16 +496,6 @@ Integer ConversionEmitter::toNearestInteger(Number value)
 }
 #endif
 
-struct ConversionEmitter::ExactInteger {
-    Integer value;
-    Range range;
-    bool mayBeRounded { false };
-    int64_t largestSumOfOtherTerms { 0 };
-    std::optional<Word32> word { };
-    // Where it is set, the range holds only while it does: each integer behind the number whose size nothing bounds is an int32.
-    Condition holdsWhile { };
-};
-
 // What is added to a product that may be rounded stays far below the 2^53 from which on it is.
 static constexpr Range neverRounded { -(1ll << 51), 1ll << 51 };
 // The product of two int32, with room for those terms within int64.
@@ -519,23 +520,212 @@ static int64_t largestMagnitudeIn(Range range)
     return std::max(std::abs(range.minimum), std::abs(range.maximum));
 }
 
-std::optional<ConversionEmitter::ExactInteger> ConversionEmitter::findExactIntegerBehind(LValue number)
+static bool isArithmeticOnNumbers(LValue number)
 {
-    auto whileBoth = [&](Condition first, Condition second) {
-        return first && second ? logicalAnd(first, second) : first ? first : second;
+    switch (number->opcode()) {
+    case B3::Neg:
+    case B3::Add:
+    case B3::Sub:
+    case B3::Mul:
+        return true;
+    default:
+        return false;
+    }
+}
+
+// Answers for every value of the arithmetic that makes a number, operands first, the left one before the right one.
+// `a -= a - b` names a twice, and forty such lines lead to the first a in 2^40 ways: a value is asked once, however many ways lead to it.
+template<typename Answer>
+static void answerOperandsFirst(LValue number, UncheckedKeyHashMap<LValue, Answer>& answers, NOESCAPE const Invocable<Answer(LValue)> auto& answerFor)
+{
+    Vector<LValue, 16> pending { number };
+    while (!pending.isEmpty()) {
+        LValue value = pending.last();
+        if (answers.contains(value)) {
+            pending.removeLast();
+            continue;
+        }
+        size_t sizeBefore = pending.size();
+        if (isArithmeticOnNumbers(value)) {
+            for (unsigned index = value->numChildren(); index--;) {
+                if (!answers.contains(value->child(index)))
+                    pending.append(value->child(index));
+            }
+        }
+        if (pending.size() != sizeBefore)
+            continue;
+        pending.removeLast();
+        answers.add(value, answerFor(value));
+    }
+}
+
+// What was read is likely a whole number if the program goes on to add it to an integer and truncate. What was computed, like `x + width * 0.5`, is as likely not, and a branch on it would be taken at random.
+static bool isReadFromStorage(LValue number)
+{
+    return number->type() == B3::Double && (number->opcode() == B3::Load || number->opcode() == B3::Phi);
+}
+
+ConversionEmitter::ExactInteger ConversionEmitter::wholeNumberReadFromStorage(LValue number)
+{
+    Word32 word = low32(toInteger(Number(number)));
+    return ExactInteger { .value = signExtended(word), .word = word, .holdsWhile = equal(toNumber(word), Number(number)) };
+}
+
+// One of the integers that the number is made of comes from a join, as a variable does that goes round a loop.
+bool ConversionEmitter::holdsJoinedInteger(LValue number)
+{
+    answerOperandsFirst<bool>(number, m_holdsJoinedInteger, [&](LValue value) {
+        if (value->opcode() == B3::IToD)
+            return value->child(0)->opcode() == B3::Phi;
+        if (!isArithmeticOnNumbers(value))
+            return false;
+        for (LValue operand : value->children()) {
+            if (m_holdsJoinedInteger.get(operand))
+                return true;
+        }
+        return false;
+    });
+    return m_holdsJoinedInteger.get(number);
+}
+
+// `(sum + row.id + name.length) | 0`: in integers two conversions go, and the test of `row.id` takes one.
+bool ConversionEmitter::convertsSeveralIntegers(LValue number)
+{
+    answerOperandsFirst<ConvertedIntegers>(number, m_convertedIntegers, [&](LValue value) {
+        if (value->opcode() == B3::IToD)
+            return ConvertedIntegers { .first = value };
+        ConvertedIntegers converted;
+        if (!isArithmeticOnNumbers(value))
+            return converted;
+        for (LValue operand : value->children()) {
+            ConvertedIntegers byOperand = m_convertedIntegers.get(operand);
+            converted.areSeveral |= byOperand.areSeveral || (converted.first && byOperand.first && converted.first != byOperand.first);
+            if (!converted.first)
+                converted.first = byOperand.first;
+        }
+        return converted;
+    });
+    return m_convertedIntegers.get(number).areSeveral;
+}
+
+void ConversionEmitter::computeValueCycles()
+{
+    const CFG& cfg = analyses().cfg();
+    unsigned numberOfValues = m_function.values.size();
+    Vector<ValueID> parameterSources;
+    Vector<std::pair<uint32_t, uint32_t>> parameterSourceRanges;
+    parameterSourceRanges.fill({ 0, 0 }, numberOfValues);
+    for (BlockID blockID : cfg.reversePostOrder()) {
+        const auto& parameters = m_function.at(blockID).parameters;
+        for (uint32_t index = 0; index < parameters.size(); ++index) {
+            uint32_t start = parameterSources.size();
+            for (Edge edge : cfg.incomingEdges(blockID)) {
+                IncomingValue incoming = incomingValueOf(m_function, edge, index);
+                if (incoming.kind == IncomingValue::Kind::Argument) {
+                    parameterSources.append(incoming.argument);
+                    continue;
+                }
+                EdgeResult result = edgeResultAt(m_function, incoming.result);
+                switch (result.kind) {
+                case EdgeResultKind::NarrowedOperand:
+                    parameterSources.append(result.subject);
+                    break;
+                case EdgeResultKind::Guard:
+                    break;
+                case EdgeResultKind::DeclaredResult:
+                    parameterSources.append(m_function.at(edge.from).terminator.operands());
+                    break;
+                }
+            }
+            parameterSourceRanges[parameters[index].index()] = { start, parameterSources.size() - start };
+        }
+    }
+
+    struct Sources {
+        size_t size() const { return values.size(); }
+        unsigned operator[](size_t index) const { return values[index] ? values[index].index() : absentOperand; }
+
+        std::span<const ValueID> values;
+        unsigned absentOperand;
     };
-    auto converted = [&](LValue source, bool mayBeTested = false) -> std::optional<ExactInteger> {
+    unsigned absentOperand = numberOfValues;
+    m_valueCycles = computeStronglyConnectedComponents(numberOfValues + 1, [&](unsigned index) -> Sources {
+        if (index == absentOperand)
+            return { { }, absentOperand };
+        const Value& value = m_function.at(ValueID(index));
+        if (value.opcode == Opcode::Parameter)
+            return { parameterSources.subspan(parameterSourceRanges[index].first, parameterSourceRanges[index].second), absentOperand };
+        return { value.operands(), absentOperand };
+    });
+    for (unsigned index = 0; index < numberOfValues; ++index) {
+        if (!m_valueCycles->isInCycle.get(index))
+            continue;
+        Representation representation = m_function.at(ValueID(index)).representation;
+        if (representation == Representation::Int32 || representation == Representation::Int64)
+            m_cyclesWithIntegers.set(m_valueCycles->componentOf[index]);
+    }
+}
+
+// `sum = (sum + list[i]) | 0`: the sum is computed from an integer that the next iteration computes from the sum.
+bool ConversionEmitter::isInLoopCarriedIntegerCycle(ValueID id)
+{
+    if (!analyses().cfg().hasCycle())
+        return false;
+    if (!m_valueCycles)
+        computeValueCycles();
+    return m_valueCycles->isInCycle.get(id.index()) && m_cyclesWithIntegers.get(m_valueCycles->componentOf[id.index()]);
+}
+
+// `sum = (sum + await next()) | 0`, `sum = (sum + parse(lines[i])) | 0`, `sum = (sum + totalOf(rows)) | 0` with the loops of totalOf() in line:
+// an iteration that calls a function, suspends or runs a loop of its own takes longer than the three conversions, so the next one does not wait for them.
+bool ConversionEmitter::isInLoopWithLongIterations(ValueID id)
+{
+    const NaturalLoops& loops = analyses().naturalLoops();
+    BlockID blockOfValue = analyses().useLists().blockOf(id);
+    const NaturalLoop* loop = blockOfValue ? loops.innerMostLoopOf(blockOfValue) : nullptr;
+    if (!loop)
+        return false;
+    return m_loopsWithLongIterations.ensure(loop->header().index(), [&] {
+        for (unsigned index = 0; index < loop->size(); ++index) {
+            const Block& block = m_function.at(loop->at(index));
+            if (block.frequency.predicted() != BlockFrequency::Normal)
+                continue;
+            if (loops.innerMostLoopOf(loop->at(index)) != loop)
+                return true;
+            for (ValueID value : block.values) {
+                Opcode opcode = m_function.at(value).opcode;
+                if (effectRuleOf(opcode) == EffectRule::Call || maySuspend(opcode))
+                    return true;
+            }
+        }
+        return false;
+    }).iterator->value;
+}
+
+bool ConversionEmitter::isMadeOutsideLoopOf(LValue user, LValue number)
+{
+    ValueID userID = valueOfOrigin(user->origin());
+    ValueID numberID = valueOfOrigin(number->origin());
+    if (!userID || !numberID)
+        return false;
+    const UseLists& useLists = analyses().useLists();
+    const NaturalLoops& loops = analyses().naturalLoops();
+    BlockID blockOfUser = useLists.blockOf(userID);
+    BlockID blockOfNumber = useLists.blockOf(numberID);
+    const NaturalLoop* loop = blockOfUser ? loops.innerMostLoopOf(blockOfUser) : nullptr;
+    return loop && blockOfNumber && !loops.belongsTo(blockOfNumber, *loop);
+}
+
+std::optional<ConversionEmitter::IntegerBehindNumber> ConversionEmitter::describeIntegerBehind(LValue number, bool mayTestWhatWasRead, const IntegersBehindNumbers& operands)
+{
+    auto converted = [&](LValue source, bool mayBeTested = false) -> std::optional<IntegerBehindNumber> {
         B3::IntRange known = B3::rangeFor(m_proc, source);
         Range range { known.min(), known.max() };
-        if (!range.isSubsetOf(neverRounded)) {
-            if (!mayBeTested || source->type() != B3::Int64)
-                return std::nullopt;
-            Integer wide(source);
-            return ExactInteger { .value = wide, .range = Range::int32(), .holdsWhile = equal(signExtended(low32(wide)), wide) };
-        }
-        if (source->type() != B3::Int32)
-            return ExactInteger { Integer(source), range };
-        return ExactInteger { .value = widen(Word32(source), range), .range = range, .word = Word32(source) };
+        if (range.isSubsetOf(neverRounded))
+            return IntegerBehindNumber { .range = range };
+        if (!mayBeTested || source->type() != B3::Int64)
+            return std::nullopt;
+        return IntegerBehindNumber { .range = Range::int32(), .isTested = true };
     };
 
     switch (number->opcode()) {
@@ -543,8 +733,7 @@ std::optional<ConversionEmitter::ExactInteger> ConversionEmitter::findExactInteg
         double constant = number->asDouble();
         if (std::trunc(constant) != constant || std::abs(constant) > static_cast<double>(neverRounded.maximum) || (!constant && std::signbit(constant)))
             return std::nullopt;
-        int64_t whole = static_cast<int64_t>(constant);
-        return ExactInteger { integer(whole), Range::one(whole) };
+        return IntegerBehindNumber { .range = Range::one(static_cast<int64_t>(constant)) };
     }
     case B3::IToD:
         return converted(number->child(0), true);
@@ -555,43 +744,45 @@ std::optional<ConversionEmitter::ExactInteger> ConversionEmitter::findExactInteg
         return converted(number->child(0));
     }
     case B3::Neg: {
-        std::optional<ExactInteger> operand = findExactIntegerBehind(number->child(0));
+        std::optional<IntegerBehindNumber> operand = operands.get(number->child(0));
         if (!operand || operand->mayBeRounded)
             return std::nullopt;
-        return ExactInteger { .value = sub(integer(0), operand->value), .range = Range { -operand->range.maximum, -operand->range.minimum }, .holdsWhile = operand->holdsWhile };
+        return IntegerBehindNumber { .range = Range { -operand->range.maximum, -operand->range.minimum }, .isTested = operand->isTested };
     }
     case B3::Mul: {
-        std::optional<ExactInteger> left = findExactIntegerBehind(number->child(0));
-        std::optional<ExactInteger> right = left ? findExactIntegerBehind(number->child(1)) : std::nullopt;
-        if (!right || left->mayBeRounded || right->mayBeRounded)
+        std::optional<IntegerBehindNumber> left = operands.get(number->child(0));
+        std::optional<IntegerBehindNumber> right = operands.get(number->child(1));
+        if (!left || !right || left->mayBeRounded || right->mayBeRounded)
             return std::nullopt;
         std::optional<Range> range = rangeOfProduct(left->range, right->range);
         if (!range || !range->isSubsetOf(productsBehindNumbers))
             return std::nullopt;
-        // B3 selects a multiplication that branches on overflow for the product of two sign-extended words.
-        auto factor = [&](const ExactInteger& operand) {
-            return operand.word ? signExtended(*operand.word) : operand.value;
-        };
-        Integer leftFactor = factor(*left);
-        return ExactInteger { .value = mul(leftFactor, factor(*right)), .range = *range, .mayBeRounded = !range->isSubsetOf(neverRounded), .holdsWhile = whileBoth(left->holdsWhile, right->holdsWhile) };
+        return IntegerBehindNumber { .range = *range, .mayBeRounded = !range->isSubsetOf(neverRounded), .isTested = left->isTested || right->isTested };
     }
     case B3::Add:
     case B3::Sub: {
-        std::optional<ExactInteger> left = findExactIntegerBehind(number->child(0));
-        std::optional<ExactInteger> right = left ? findExactIntegerBehind(number->child(1)) : std::nullopt;
-        if (!right || (left->mayBeRounded && right->mayBeRounded))
+        std::optional<IntegerBehindNumber> left = operands.get(number->child(0));
+        std::optional<IntegerBehindNumber> right = operands.get(number->child(1));
+        if (!left && !right)
+            return std::nullopt;
+        // `sum = (sum + list[i]) | 0` over a list held as numbers: in numbers each turn waits for the last through three conversions. A test of the element waits for the load alone.
+        // `total += i & 255; return total & 1023` and `marks[k] = (marks[k] + i) & 1023`: nothing waits for the truncation, and the test would only come on top.
+        std::optional<IntegerBehindNumber>& missing = left ? right : left;
+        LValue operandWithoutInteger = number->child(left ? 1 : 0);
+        if (!missing && isReadFromStorage(operandWithoutInteger) && (mayTestWhatWasRead || isMadeOutsideLoopOf(number, operandWithoutInteger)))
+            missing = IntegerBehindNumber { .range = Range::int32(), .isTested = true };
+        if (!left || !right || (left->mayBeRounded && right->mayBeRounded))
             return std::nullopt;
         bool isSum = number->opcode() == B3::Add;
-        ExactInteger result {
-            .value = isSum ? add(left->value, right->value) : sub(left->value, right->value),
+        IntegerBehindNumber result {
             .range = isSum ? Range { left->range.minimum + right->range.minimum, left->range.maximum + right->range.maximum } : Range { left->range.minimum - right->range.maximum, left->range.maximum - right->range.minimum },
             .mayBeRounded = left->mayBeRounded || right->mayBeRounded,
-            .holdsWhile = whileBoth(left->holdsWhile, right->holdsWhile),
+            .isTested = left->isTested || right->isTested,
         };
         if (!result.mayBeRounded)
             return result.range.isSubsetOf(neverRounded) ? std::optional(result) : std::nullopt;
-        const ExactInteger& rounded = left->mayBeRounded ? *left : *right;
-        const ExactInteger& other = left->mayBeRounded ? *right : *left;
+        const IntegerBehindNumber& rounded = left->mayBeRounded ? *left : *right;
+        const IntegerBehindNumber& other = left->mayBeRounded ? *right : *left;
         result.largestSumOfOtherTerms = rounded.largestSumOfOtherTerms + largestMagnitudeIn(other.range);
         if (result.largestSumOfOtherTerms > neverRounded.maximum)
             return std::nullopt;
@@ -602,10 +793,192 @@ std::optional<ConversionEmitter::ExactInteger> ConversionEmitter::findExactInteg
     }
 }
 
+ConversionEmitter::ExactInteger ConversionEmitter::computeIntegerBehind(LValue number, const IntegerBehindNumber& known, const ExactIntegers& operands)
+{
+    auto whileBoth = [&](Condition first, Condition second) {
+        return first && second ? logicalAnd(first, second) : first ? first : second;
+    };
+
+    switch (number->opcode()) {
+    case B3::ConstDouble:
+        return ExactInteger { integer(known.range.minimum) };
+    case B3::IToD:
+    case B3::Patchpoint: {
+        LValue source = number->child(0);
+        if (known.isTested) {
+            Integer wide(source);
+            return ExactInteger { .value = wide, .holdsWhile = equal(signExtended(low32(wide)), wide) };
+        }
+        if (source->type() != B3::Int32)
+            return ExactInteger { Integer(source) };
+        return ExactInteger { .value = widen(Word32(source), known.range), .word = Word32(source) };
+    }
+    case B3::Neg: {
+        ExactInteger operand = *operands.get(number->child(0));
+        return ExactInteger { .value = sub(integer(0), operand.value), .holdsWhile = operand.holdsWhile };
+    }
+    case B3::Mul: {
+        ExactInteger left = *operands.get(number->child(0));
+        ExactInteger right = *operands.get(number->child(1));
+        // B3 selects a multiplication that branches on overflow for the product of two sign-extended words.
+        auto factor = [&](const ExactInteger& operand) {
+            return operand.word ? signExtended(*operand.word) : operand.value;
+        };
+        Integer leftFactor = factor(left);
+        return ExactInteger { .value = mul(leftFactor, factor(right)), .mayBeRounded = known.mayBeRounded, .holdsWhile = whileBoth(left.holdsWhile, right.holdsWhile) };
+    }
+    case B3::Add:
+    case B3::Sub: {
+        std::optional<ExactInteger> left = operands.get(number->child(0));
+        std::optional<ExactInteger> right = operands.get(number->child(1));
+        if (!left)
+            left = wholeNumberReadFromStorage(number->child(0));
+        else if (!right)
+            right = wholeNumberReadFromStorage(number->child(1));
+        return ExactInteger {
+            .value = number->opcode() == B3::Add ? add(left->value, right->value) : sub(left->value, right->value),
+            .mayBeRounded = known.mayBeRounded,
+            .holdsWhile = whileBoth(left->holdsWhile, right->holdsWhile),
+        };
+    }
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+}
+
+// No code is emitted until it is known that the whole of the arithmetic can be done in integers.
+std::optional<ConversionEmitter::ExactInteger> ConversionEmitter::findExactIntegerBehind(LValue number, ValueID irValue, bool mayBeTested)
+{
+    bool mayTestWhatWasRead = mayBeTested && irValue && holdsJoinedInteger(number) && isInLoopCarriedIntegerCycle(irValue) && (convertsSeveralIntegers(number) || !isInLoopWithLongIterations(irValue));
+    IntegersBehindNumbers& known = m_integersBehindNumbers[mayTestWhatWasRead];
+    answerOperandsFirst<std::optional<IntegerBehindNumber>>(number, known, [&](LValue value) {
+        return describeIntegerBehind(value, mayTestWhatWasRead, known);
+    });
+    std::optional<IntegerBehindNumber> knownOfNumber = known.get(number);
+    if (!knownOfNumber || (knownOfNumber->isTested && !mayBeTested))
+        return std::nullopt;
+
+    ExactIntegers& computed = m_exactIntegers[mayTestWhatWasRead];
+    answerOperandsFirst<std::optional<ExactInteger>>(number, computed, [&](LValue value) -> std::optional<ExactInteger> {
+        std::optional<IntegerBehindNumber> knownOfValue = known.get(value);
+        if (!knownOfValue)
+            return std::nullopt;
+        PlaceInBlock start = placeOfNextValue();
+        ExactInteger exact = computeIntegerBehind(value, *knownOfValue, computed);
+        rememberCodeOfExactInteger(value, start);
+        return exact;
+    });
+    ExactInteger exact = *computed.get(number);
+    useExactInteger(exact.value.value());
+    if (exact.word)
+        useExactInteger(exact.word->value());
+    if (exact.holdsWhile)
+        useExactInteger(exact.holdsWhile.value());
+    return exact;
+}
+
+void ConversionEmitter::rememberCodeOfExactInteger(LValue number, PlaceInBlock start)
+{
+    RELEASE_ASSERT(m_out.m_block == start.block);
+    for (unsigned index = start.index; index < start.block->size(); ++index) {
+        LValue value = start.block->at(index);
+        for (LValue operand : value->children())
+            useExactInteger(operand);
+        m_indexOfCodeOfExactInteger.add(value, static_cast<unsigned>(m_codeOfExactIntegers.size()));
+        m_codeOfExactIntegers.append(CodeOfExactInteger { value, number, { start.block, index } });
+    }
+}
+
+void ConversionEmitter::useExactInteger(LValue value)
+{
+    auto found = m_indexOfCodeOfExactInteger.find(value);
+    if (found == m_indexOfCodeOfExactInteger.end() || m_codeOfExactIntegers[found->value].place.block == m_out.m_block)
+        return;
+    m_usesOfExactIntegersInOtherBlocks.append(UseOfExactInteger { found->value, placeOfNextValue() });
+}
+
+// `if (early) a = sum | 0; b = sum | 0;`: what was emitted in the arm moves in front of the branch.
+void ConversionEmitter::placeExactIntegers()
+{
+    if (m_usesOfExactIntegersInOtherBlocks.isEmpty())
+        return;
+
+    LBasicBlock root = m_proc.at(0);
+    for (LBasicBlock block : m_proc)
+        block->predecessors().shrink(0);
+    B3::updatePredecessorsAfter(root);
+    B3::Dominators dominators(m_proc);
+    auto isReached = [&](LBasicBlock block) {
+        return block == root || block->numPredecessors();
+    };
+
+    Vector<std::optional<PlaceInBlock>> places;
+    places.reserveInitialCapacity(m_codeOfExactIntegers.size());
+    for (const CodeOfExactInteger& code : m_codeOfExactIntegers)
+        places.append(isReached(code.place.block) ? std::optional(code.place) : std::nullopt);
+
+    auto placeInFrontOf = [&](unsigned code, PlaceInBlock use) {
+        std::optional<PlaceInBlock>& place = places[code];
+        if (!place) {
+            place = use;
+            return;
+        }
+        if (place->block == use.block) {
+            place->index = std::min(place->index, use.index);
+            return;
+        }
+        if (dominators.strictlyDominates(place->block, use.block))
+            return;
+        if (dominators.strictlyDominates(use.block, place->block)) {
+            place = use;
+            return;
+        }
+        LBasicBlock blockOfNumber = m_codeOfExactIntegers[code].number->owner;
+        if (!blockOfNumber)
+            blockOfNumber = root;
+        place = PlaceInBlock { blockOfNumber, static_cast<unsigned>(blockOfNumber->size() - 1) };
+    };
+
+    for (const UseOfExactInteger& use : m_usesOfExactIntegersInOtherBlocks) {
+        if (isReached(use.place.block))
+            placeInFrontOf(use.code, use.place);
+    }
+    for (unsigned code = m_codeOfExactIntegers.size(); code--;) {
+        if (!places[code])
+            continue;
+        for (LValue operand : m_codeOfExactIntegers[code].value->children()) {
+            auto found = m_indexOfCodeOfExactInteger.find(operand);
+            if (found != m_indexOfCodeOfExactInteger.end())
+                placeInFrontOf(found->value, *places[code]);
+        }
+    }
+
+    Vector<unsigned> moved;
+    for (unsigned code = 0; code < m_codeOfExactIntegers.size(); ++code) {
+        const PlaceInBlock& emitted = m_codeOfExactIntegers[code].place;
+        if (places[code] && (places[code]->block != emitted.block || places[code]->index != emitted.index))
+            moved.append(code);
+    }
+    std::ranges::sort(moved, [&](unsigned a, unsigned b) {
+        return std::tuple(places[a]->block->index(), places[a]->index, a) < std::tuple(places[b]->block->index(), places[b]->index, b);
+    });
+    for (unsigned code : moved) {
+        const CodeOfExactInteger& emitted = m_codeOfExactIntegers[code];
+        emitted.place.block->values()[emitted.place.index] = m_proc.add<B3::Value>(B3::Nop, B3::Void, emitted.value->origin());
+    }
+    B3::InsertionSet insertionSet(m_proc);
+    for (size_t next = 0; next < moved.size();) {
+        LBasicBlock block = places[moved[next]]->block;
+        for (; next < moved.size() && places[moved[next]]->block == block; ++next)
+            insertionSet.insertValue(places[moved[next]]->index, m_codeOfExactIntegers[moved[next]].value);
+        insertionSet.execute(block);
+    }
+}
+
 std::optional<Integer> ConversionEmitter::exactIntegerBehind(Number number)
 {
-    std::optional<ExactInteger> exact = findExactIntegerBehind(number.value());
-    if (!exact || exact->holdsWhile)
+    std::optional<ExactInteger> exact = findExactIntegerBehind(number.value(), { }, false);
+    if (!exact)
         return std::nullopt;
     build().statistics().count(StatisticID::ExactIntegersBehindNumbers);
     return exact->value;
@@ -616,11 +989,11 @@ Integer ConversionEmitter::widen(Word32 value, Range range)
     return isNonNegative(range) ? zeroExtended(value) : signExtended(value);
 }
 
-Word32 ConversionEmitter::toInt32(Number value, BitsOfInt32 bits)
+Word32 ConversionEmitter::toInt32(Number value, BitsOfInt32 bits, ValueID irValue)
 {
     if (std::optional<Word32> converted = convertedInt32Of(value))
         return *converted;
-    std::optional<ExactInteger> exact = findExactIntegerBehind(value.value());
+    std::optional<ExactInteger> exact = findExactIntegerBehind(value.value(), irValue);
     if (exact && !exact->holdsWhile) {
         build().statistics().count(StatisticID::ExactIntegersBehindNumbers);
         if (!exact->mayBeRounded)
@@ -728,16 +1101,34 @@ Operand ConversionEmitter::decode(NarrowReference word, const Type& type, Repres
 
 NarrowReference ConversionEmitter::compress(Operand operand, const Type& type)
 {
+    // A narrow reference never refers to a cell kept in a frame. No other value has the upper half of the addresses used by AOTCheckedFrameCells.h.
+    auto checkIsNotInFrame = [&](LValue bits) {
+        if (!generator().validatesOrChecksProofs())
+            return;
+        LBasicBlock liesInFrame = newBlock();
+        LBasicBlock continuation = newBlock();
+        LValue upperHalf = m_out.lShr(bits, m_out.constInt32(CheckedFrameCells::bitsOfOffsetInRange));
+        m_out.branch(m_out.equal(upperHalf, m_out.constInt64(CheckedFrameCells::startOfRange >> CheckedFrameCells::bitsOfOffsetInRange)), rareEdge(liesInFrame), normalEdge(continuation));
+        m_out.appendTo(liesInFrame);
+        Operand arguments[] { Pointer(bits) };
+        callWithoutSite(RuntimeOperation::ReportEscapedFrameCell, arguments, Representation::Void, { .isOnRarePath = true });
+        m_out.unreachable();
+        m_out.appendTo(continuation);
+    };
+
     switch (operand.representation) {
     case Representation::Void:
         RELEASE_ASSERT(isValueWithoutBits(type));
         return convertMarkers(operand, type, Representation::Cell32).as<NarrowReference>();
     case Representation::Cell:
+        checkIsNotInFrame(operand.value);
         return compress(operand.as<CellPointer>());
     case Representation::Cell32:
         return operand.as<NarrowReference>();
     case Representation::JSValue: {
         Boxed value = operand.as<Boxed>();
+        if (type.hasCells())
+            checkIsNotInFrame(operand.value);
         if (!(type.primitives & markerPrimitives))
             return compress(unboxCell(value));
         NarrowReference marker(low32(value).value());
@@ -911,7 +1302,7 @@ LiteralStringWord ConversionEmitter::toLiteralString(Operand operand, const Type
         CallOptions options { .pureFunction = pureFunction(PureOperation::ToLiteralString, 0, true) };
         // The stub takes every cell for a string.
         if (type.hasOnlyPrimitives(Primitive::AnyString | markerPrimitives))
-            return LiteralStringWord(emitter<RuntimeCallEmitter>().callStubWithoutSite(AOT::toLiteralString(), singleElementSpan(operand.value), options).first);
+            return LiteralStringWord(emitter<RuntimeCallEmitter>().callStubWithoutSite(AOT::toLiteralString(type.isAnyString() ? ComparedOperand::String : ComparedOperand::Value), singleElementSpan(operand.value), options).first);
         return LiteralStringWord(callWithoutSite<Boxed>(RuntimeOperation::ToLiteralString, { Boxed(operand.value) }, options).value());
     }
     case Representation::LiteralString:
@@ -974,6 +1365,11 @@ Boxed ConversionEmitter::boxLiteralString(const OperationContext& context, Liter
 
     static_assert(1 << literalStringShift == sizeof(uint32_t) && 2 << literalStringShift == sizeof(JSCell*));
     Integer scaledNumber = sub(Integer(word.value()), integer(emptyLiteralStringWord));
+    bool isAlwaysNumber = type.hasOnlyPrimitives(Primitive::LiteralString) && std::ranges::all_of(type.stringLiterals, [&](StringID literal) {
+        return inputs().literalStrings.indexOf(literal).has_value();
+    });
+    if (isAlwaysNumber)
+        return loadOrCreateCell(word, m_out.baseIndex(m_heaps.AOTInstance_stringCells, loadImmutablePointer(offsetOfCells).value(), scaledNumber.value(), isNarrow ? FTL::ScaleOne : FTL::ScaleTwo));
     LBasicBlock literalCase = newBlock();
     LBasicBlock boxedCase = newBlock();
     Join<Boxed> join(m_out);

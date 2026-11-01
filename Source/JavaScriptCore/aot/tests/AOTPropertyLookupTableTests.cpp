@@ -395,7 +395,7 @@ void vmTeardownReleasesRows()
 {
     auto haveNoRows = [](const Vector<StructureID>& ids) {
         for (StructureID id : ids) {
-            if (StructureRows::singleton().rowOf(id))
+            if (StructureRows::ofImageAt(0).rowOf(id))
                 return false;
         }
         return true;
@@ -530,7 +530,7 @@ bool hasPublishedWords(TableFixture& fixture, const Instance& instance)
     const PropertyCacheWords& words = instance.propertyCaches;
     for (SlotAccess access : allSlotAccesses) {
         const FrontWords& front = words.front[static_cast<unsigned>(access)];
-        if (front.plane != fixture.front().plane(access) || front.rowsForStructureIDZero != StructureRows::singleton().rowsForStructureIDZero())
+        if (front.plane != fixture.front().plane(access) || front.rowsForStructureIDZero != StructureRows::ofImageAt(0).rowsForStructureIDZero())
             return false;
     }
     return words.hashedSlots == fixture.hashedTable().entries() && words.hashedSlotOffsetMask == fixture.hashedTable().offsetMask()

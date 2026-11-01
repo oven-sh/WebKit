@@ -24,6 +24,7 @@
 #include "IntlObject.h"
 #include <tuple>
 #include <wtf/HashMap.h>
+#include <wtf/HashSet.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -781,6 +782,397 @@ Vector<FlowWorkerEntry> collectWorkerEntries(const ValueFlowResultInputs& inputs
     });
     AOT::sort(entries, { }, &FlowWorkerEntry::path);
     return entries;
+}
+
+static bool appliesCallee(Opcode opcode)
+{
+    return opcode == Opcode::Call || opcode == Opcode::CallList || opcode == Opcode::Construct || opcode == Opcode::ConstructList || opcode == Opcode::SuperConstruct || opcode == Opcode::SuperConstructList;
+}
+
+// The front end follows what a Worker starts from only where the program names the constructor.
+std::optional<Witness> findWorkerStartWithoutName(const ValueFlowResultInputs& inputs)
+{
+    const Program& program = inputs.program;
+    const BuiltinTable& builtins = program.builtins();
+    const ValueFlowUniverse& universe = inputs.universe();
+    const ValueFlowSolver& solver = inputs.solver();
+    const ValueSets& sets = inputs.sets();
+    BitVector takingEntryPath = builtinsWithOverload(builtins, [](const BuiltinOverload& overload) {
+        return std::ranges::any_of(overload.parameters, [](const BuiltinParameter& parameter) {
+            return parameter.roles.contains(BuiltinOperandRole::WorkerEntryPath);
+        });
+    });
+    // By canonical ID.
+    BitVector constructors(builtins.builtinCount());
+    bool isAnyUsed = false;
+    Vector<ValueFlowObjectID, 32> objects;
+    Vector<PropertyKeyID, 2> keysOfConstructors;
+    for (size_t index : takingEntryPath) {
+        BuiltinID constructor(static_cast<uint32_t>(index));
+        constructors.quickSet(builtins.canonicalID(constructor).index());
+        keysOfConstructors.appendIfNotContains(program.keyOf(builtins.at(constructor).name));
+        isAnyUsed |= !solver.usesOf(constructor).isEmpty();
+        universe.appendObjectsOf(constructor, objects);
+    }
+    if (!isAnyUsed)
+        return std::nullopt;
+
+    ValueSetMakers makers(inputs);
+    ValueSetID constructorObjects = makers.of(0).of(objects.span());
+    BuiltinID globalThis = builtins.canonicalID(Builtins::GlobalThis);
+    ValueFlowObjectID globalObject = universe.objectOf(globalThis);
+    PropertyKeyID constructorKey = program.keyOf(BuiltinNames::constructor);
+    auto lists = [&](ValueSetID set, ValueFlowObjectID object) {
+        return !ValueSets::isComplement(set) && sets.contains(set, object);
+    };
+    Vector<Witness> starts = collectWithMakers<Witness>(inputs, makers, program.functions.size(), [&](unsigned index, ValueSetMaker& maker, Vector<Witness>& found) {
+        // The Worker of node:worker_threads applies the constructor itself, and the front end follows that class by its name.
+        const Function& function = program.functions[index];
+        if (!solver.isReached(FunctionID(index)) || !isWrittenInProgram(function) || isOfLibrary(program, function))
+            return;
+        for (const ValueFlowStatement& statement : inputs.bodies().statementsOf(index)) {
+            if (statement.kind != ValueFlowStatementKind::Operation || !statement.site)
+                continue;
+            const Value& operation = function.at(statement.site);
+            std::span<const ValueFlowOperand> operands = inputs.bodies().operandsOf(statement);
+            if (appliesCallee(statement.opcode)) {
+                ValueSetID callees = maker.unite(ValueFlowRuleContext::valueShownToRules(operands[0], solver, maker), inputs.seenValuesOf(maker, operands[0]));
+                // A Worker is made by the host, so flow does not know it as an object and lists no callee at `new worker.constructor()`.
+                const Value& callee = function.at(definitionThroughSameValues(function, operation.operand(0)));
+                bool isUnknown = ValueSets::isComplement(callees) || sets.contains(callees, ValueFlowUniverse::unknownObject()) || sets.contains(callees, ValueFlowUniverse::untrackedObject());
+                if (isUnknown && callee.opcode == Opcode::PropGet && callee.key() == constructorKey) {
+                    found.append(witnessAt(function, FunctionID(index), statement.site));
+                    continue;
+                }
+                if (ValueSets::isComplement(callees) || !sets.meet(callees, constructorObjects))
+                    continue;
+                BuiltinID named = builtinBoundTo(program, function, operation.operand(0));
+                if (!named || !constructors.get(named.index()))
+                    found.append(witnessAt(function, FunctionID(index), statement.site));
+                continue;
+            }
+            // Nor does it know what `holder.Worker` reads where nobody knows the holder: the host may have handed back the global object or the module.
+            if (statement.opcode == Opcode::PropGet && keysOfConstructors.contains(operation.key())) {
+                ValueSetID holder = inputs.possibleValuesOf(maker, operands[*OperandPosition::object(statement.opcode)]);
+                if (ValueSets::isComplement(holder) || sets.contains(holder, ValueFlowUniverse::unknownObject()) || sets.contains(holder, ValueFlowUniverse::untrackedObject()))
+                    found.append(witnessAt(function, FunctionID(index), statement.site));
+                continue;
+            }
+            // Flow hands out no member of the host under a key that it does not know, so it lists no callee at `new globalThis[name]()`.
+            if (statement.opcode != Opcode::ElemGet)
+                continue;
+            ValueSetID key = inputs.possibleValuesOf(maker, operands[*OperandPosition::property(statement.opcode)]);
+            if (!sets.contains(key, ValueFlowUniverse::primitive(PrimitiveSet::String)) && !sets.contains(key, ValueFlowUniverse::unknownObject()) && !sets.contains(key, ValueFlowUniverse::untrackedObject()))
+                continue;
+            ValueSetID object = inputs.possibleValuesOf(maker, operands[*OperandPosition::object(statement.opcode)]);
+            if (lists(object, globalObject) || lists(object, ValueFlowUniverse::untrackedObject()) || builtinBoundTo(program, function, operation.objectOperand()) == globalThis)
+                found.append(witnessAt(function, FunctionID(index), statement.site));
+        }
+    });
+    if (starts.isEmpty())
+        return std::nullopt;
+    Witness first = noWitness;
+    for (const Witness& start : starts)
+        keepEarlierPlace(first, start);
+    return first;
+}
+
+namespace {
+
+// A file that hands on the exports of many others has thousands of them, and each is looked up by name in the file that it comes from.
+class ExportedVariables {
+public:
+    explicit ExportedVariables(const Program& program)
+        : m_program(program)
+        , m_exportsByName(program.modules.size())
+        , m_syntheticExportsByName(program.modules.size())
+    {
+    }
+
+    void appendAll(ModuleID id, Vector<VariableID>& variables)
+    {
+        const Module& module = m_program.at(id);
+        for (const ModuleExport& entry : module.exports)
+            append(entry, m_program.modules.size(), variables);
+        for (const SyntheticExport& entry : module.syntheticExports)
+            append(entry, variables);
+    }
+
+    void appendNamed(ModuleID id, StringID name, Vector<VariableID>& variables)
+    {
+        if (!name)
+            return appendAll(id, variables);
+        appendNamed(id, name, m_program.modules.size(), variables);
+    }
+
+private:
+    // A re-export names the variable of the module that declares it.
+    void append(const ModuleExport& entry, unsigned stepsLeft, Vector<VariableID>& variables)
+    {
+        if (entry.kind == ModuleExportKind::Variable && entry.variable)
+            variables.append(entry.variable);
+        if (entry.kind == ModuleExportKind::Indirect && entry.module && entry.importName && stepsLeft)
+            appendNamed(entry.module, entry.importName, stepsLeft - 1, variables);
+    }
+
+    static void append(const SyntheticExport& entry, Vector<VariableID>& variables)
+    {
+        if (entry.variable)
+            variables.append(entry.variable);
+    }
+
+    void appendNamed(ModuleID id, StringID name, unsigned stepsLeft, Vector<VariableID>& variables)
+    {
+        const Module& module = m_program.at(id);
+        forEachNamed(module.exports, m_exportsByName[id.index()], name, [&](const ModuleExport& entry) {
+            append(entry, stepsLeft, variables);
+        });
+        forEachNamed(module.syntheticExports, m_syntheticExportsByName[id.index()], name, [&](const SyntheticExport& entry) {
+            append(entry, variables);
+        });
+    }
+
+    template<typename Entry>
+    static void forEachNamed(const Vector<Entry>& entries, Vector<uint32_t>& byName, StringID name, NOESCAPE const Invocable<void(const Entry&)> auto& functor)
+    {
+        AOT_THRESHOLD(size_t, fewestEntriesToSort, 16);
+        if (entries.size() < fewestEntriesToSort) {
+            for (const Entry& entry : entries) {
+                if (entry.name == name)
+                    functor(entry);
+            }
+            return;
+        }
+        auto nameAt = [&](uint32_t position) {
+            return entries[position].name.index();
+        };
+        if (byName.isEmpty()) {
+            byName = Vector<uint32_t>(entries.size(), [](size_t position) {
+                return static_cast<uint32_t>(position);
+            });
+            AOT::sort(byName, { }, [&](uint32_t position) {
+                return std::pair { nameAt(position), position };
+            });
+        }
+        for (uint32_t position : std::ranges::equal_range(byName, name.index(), { }, nameAt))
+            functor(entries[position]);
+    }
+
+    const Program& m_program;
+    Vector<Vector<uint32_t>> m_exportsByName;
+    Vector<Vector<uint32_t>> m_syntheticExportsByName;
+};
+
+struct KeysOfSpies {
+    void add(ValueSetMaker& maker, ValueSetID otherKeys, bool otherMayBeAnyKey)
+    {
+        isSpiedOn = true;
+        mayBeAnyKey |= otherMayBeAnyKey;
+        if (!mayBeAnyKey && otherKeys != keys)
+            keys = maker.unite(keys, otherKeys);
+    }
+
+    void add(ValueSetMaker& maker, const KeysOfSpies& other)
+    {
+        if (other.isSpiedOn)
+            add(maker, other.keys, other.mayBeAnyKey);
+    }
+
+    bool isSpiedOn { false };
+    bool mayBeAnyKey { false };
+    ValueSetID keys { ValueSets::nothing };
+};
+
+} // anonymous namespace
+
+// Spies replace under several sets of keys what they replace under all those keys together. A test run has thousands of spies and of modules,
+// so the keys are gathered per set of holders, then per module, and the exports of a module are looked at once.
+Vector<VariableID> collectExportsThatSpiesReplace(const ValueFlowResultInputs& inputs, std::span<const UnseenCodeRecord> unseenCode)
+{
+    const Program& program = inputs.program;
+    const BuiltinTable& builtins = program.builtins();
+    const ValueFlowUniverse& universe = inputs.universe();
+    BitVector spies(builtins.builtinCount());
+    bool isUsed = false;
+    // An executable refuses a spy that its build has not seen.
+    bool loaderHandsOnEveryModule = inputs.solver().possibleValuesOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::LoadedModulesAreHandedToNativeCode)) != ValueSets::nothing;
+    // Nor where the test files come from disk: an entry point names what they do with the program.
+    bool followsSpiesOutOfSight = inputs.build.options().admitsReplacedBuiltins() && !inputs.build.options().admitsFilesRunByHost() && !loaderHandsOnEveryModule;
+    bool isSpyOutOfSight = false;
+    for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
+        if (!builtins.has(BuiltinMark::IsSpy, BuiltinID(index)))
+            continue;
+        spies.quickSet(index);
+        isUsed |= !inputs.solver().usesOf(BuiltinID(index)).isEmpty();
+        // Nobody names a spy that is taken off what `Bun[name](path)` answers, or that text made at run time finds: whoever holds the object has its members.
+        Vector<ValueFlowObjectID, 32> objects;
+        universe.appendObjectsOf(BuiltinID(index), objects);
+        if (BuiltinID holder = builtins.at(BuiltinID(index)).holder)
+            universe.appendObjectsOf(holder, objects);
+        isSpyOutOfSight |= followsSpiesOutOfSight && std::ranges::any_of(objects, [&](ValueFlowObjectID spy) { return inputs.hasEscaped(spy) || inputs.isLost(spy); });
+    }
+    // `import { spyOn, jest } from "bun:test"`: the variables that stand for a spy, and for an object that has one.
+    BitVector variablesOfSpies(program.variables.size());
+    Vector<std::pair<VariableID, BuiltinID>, 4> variablesOfHoldersOfSpies;
+    for (const Module& module : program.modules) {
+        BuiltinID object = module.kind == ModuleKind::Runtime && module.runtimeModule ? builtins.namespaceOf(module.runtimeModule) : BuiltinID();
+        if (!object)
+            continue;
+        for (const SyntheticExport& entry : module.syntheticExports) {
+            std::optional<PropertyKeyID> key = entry.variable ? program.types.find({ .kind = PropertyKeyKind::Text, .text = entry.name }) : std::nullopt;
+            BuiltinName name = key ? program.builtinNameOf(*key) : BuiltinName();
+            BuiltinID member = name ? builtins.findOwnMember(object, name) : BuiltinID();
+            if (!member)
+                continue;
+            if (spies.quickGet(member.index())) {
+                variablesOfSpies.quickSet(entry.variable.index());
+                isUsed = true;
+            } else if (std::ranges::any_of(builtins.membersOf(member), [&](BuiltinID inner) { return spies.quickGet(inner.index()); })) {
+                variablesOfHoldersOfSpies.append({ entry.variable, member });
+                isUsed = true;
+            }
+        }
+    }
+    if (!isUsed && !isSpyOutOfSight)
+        return { };
+
+    ValueFlowHeapView heap(inputs);
+    ValueSetMaker& maker = heap.maker();
+    auto forEachNamespaceIn = [&](ValueSetID objects, NOESCAPE const Invocable<void(ModuleID)> auto& functor) {
+        if (ValueSets::isComplement(objects))
+            return;
+        inputs.sets().forEachMember(maker.intersect(objects, universe.namespaces()), [&](ValueFlowObjectID object) {
+            functor(universe.moduleOf(object));
+        });
+    };
+    auto holdsPlaceholder = [&](ValueSetID values) {
+        return ValueSets::isComplement(values) || inputs.sets().contains(values, ValueFlowUniverse::unknownObject()) || inputs.sets().contains(values, ValueFlowUniverse::untrackedObject());
+    };
+
+    struct SpiedHolders {
+        ValueSetID holders;
+        KeysOfSpies keys;
+    };
+    Vector<SpiedHolders> spiedHolders;
+    UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> positionOfHolders;
+    auto noteSpy = [&](ValueSetID holders, ValueSetID keys) {
+        bool mayBeAnyKey = holdsPlaceholder(keys) || inputs.sets().contains(keys, ValueFlowUniverse::primitive(PrimitiveSet::String));
+        auto position = positionOfHolders.add(holders.index(), spiedHolders.size());
+        if (position.isNewEntry)
+            spiedHolders.append({ holders, { } });
+        spiedHolders[position.iterator->value].keys.add(maker, keys, mayBeAnyKey);
+    };
+    // Where a spy is out of sight, a value that nobody knows and that is called may be one, or code that nobody has seen and that calls one. It may spy on what the call
+    // hands it. Only the namespace objects that the call lists count: with those that have escaped, every such call would open every export of the program.
+    ValueSetID handedToValuesNobodyKnows = isSpyOutOfSight ? valuesHandedToCalleesNobodyKnows(inputs, heap, universe.namespaces()) : ValueSets::nothing;
+    forEachBuiltinApplication(inputs, heap, spies, [&](const ValueFlowBuiltinApplication& application) {
+        if (application.isCalleeListed) {
+            noteSpy(application.valueAt(BuiltinOperand::argument(0), maker), application.valueAt(BuiltinOperand::argument(1), maker));
+            return;
+        }
+        if (!followsSpiesOutOfSight)
+            return;
+        auto take = [&](ValueSetID values) {
+            if (!ValueSets::isComplement(values))
+                handedToValuesNobodyKnows = maker.unite(handedToValuesNobodyKnows, maker.intersect(values, universe.namespaces()));
+        };
+        take(application.thisValue);
+        take(application.otherArguments);
+        for (ValueSetID argument : application.arguments)
+            take(argument);
+    });
+
+    // Such a variable holds the unknown value too where somebody may have laid something else on the object of the module, and the unknown value covers a spy that has
+    // escaped: the call then goes with the calls of values that nobody knows. What the text calls is still in sight, and so are the operands of the call.
+    auto variableReadBy = [&](const Function& function, ValueID value) {
+        const Value& definition = function.at(definitionThroughSameValues(function, value));
+        return definition.opcode == Opcode::GetModuleVariable ? definition.variable() : VariableID();
+    };
+    auto callsImportOfSpy = [&](const Function& function, const Value& call) {
+        if (VariableID variable = variableReadBy(function, call.calleeOperand()))
+            return variablesOfSpies.quickGet(variable.index());
+        const Value& read = function.at(definitionThroughSameValues(function, call.calleeOperand()));
+        if (read.opcode != Opcode::PropGet || variablesOfHoldersOfSpies.isEmpty())
+            return false;
+        VariableID variable = variableReadBy(function, read.objectOperand());
+        BuiltinName name = variable ? program.builtinNameOf(read.key()) : BuiltinName();
+        return name && std::ranges::any_of(variablesOfHoldersOfSpies, [&](const auto& holder) {
+            BuiltinID member = holder.first == variable ? builtins.findOwnMember(holder.second, name) : BuiltinID();
+            return member && spies.quickGet(member.index());
+        });
+    };
+    if (!variablesOfSpies.isEmpty() || !variablesOfHoldersOfSpies.isEmpty()) {
+        std::span<const ValueFlowBodyRange> ranges = inputs.bodies().ranges();
+        std::span<const ValueFlowStatement> statements = inputs.bodies().statements();
+        for (uint32_t index = 0; index < program.functions.size(); ++index) {
+            if (!inputs.isReached(FunctionID(index)))
+                continue;
+            const Function& function = program.functions[index];
+            for (uint32_t position = ranges[index].statement; position < ranges[index + 1].statement; ++position) {
+                const ValueFlowStatement& statement = statements[position];
+                if (statement.kind != ValueFlowStatementKind::Operation || statement.opcode != Opcode::Call || !callsImportOfSpy(function, function.at(statement.site)))
+                    continue;
+                std::span<const ValueFlowOperand> operands = inputs.bodies().operandsOf(statement);
+                if (operands.size() >= 4)
+                    noteSpy(heap.possibleValuesOf(operands[2]), heap.possibleValuesOf(operands[3]));
+            }
+        }
+    }
+
+    Vector<KeysOfSpies> keysOfModule(program.modules.size());
+    KeysOfSpies keysOutOfSight;
+    for (const SpiedHolders& spied : spiedHolders) {
+        forEachNamespaceIn(spied.holders, [&](ModuleID id) {
+            keysOfModule[id.index()].add(maker, spied.keys);
+        });
+        if (holdsPlaceholder(spied.holders))
+            keysOutOfSight.add(maker, spied.keys);
+    }
+
+    forEachNamespaceIn(handedToValuesNobodyKnows, [&](ModuleID id) {
+        keysOfModule[id.index()].add(maker, ValueSets::nothing, true);
+    });
+
+    // Text that nobody has seen finds a spy by itself, and every namespace object that has escaped is within its reach: in an object that it is handed, on the global
+    // object, in a variable of the scope that it is evaluated in. The copy of a file that runs again has the text of the compiled file, whose spies are seen.
+    bool runsTextNobodyHasSeen = std::ranges::any_of(unseenCode, [](const UnseenCodeRecord& record) {
+        return record.cause == UnseenCodeCause::EvaluatesText || (record.cause == UnseenCodeCause::RunsUnseenCode && record.builtin != Wire::none);
+    });
+    if (isSpyOutOfSight && runsTextNobodyHasSeen)
+        keysOutOfSight.add(maker, ValueSets::nothing, true);
+
+    if (keysOutOfSight.isSpiedOn) {
+        for (ValueFlowNodeID node : { ValueFlowProgramNodes::escaped(), ValueFlowProgramNodes::lost() }) {
+            forEachNamespaceIn(inputs.solver().possibleValuesOf(node), [&](ModuleID id) {
+                keysOfModule[id.index()].add(maker, keysOutOfSight);
+            });
+        }
+    }
+
+    ExportedVariables exported(program);
+    Vector<VariableID> variables;
+    for (uint32_t index = 0; index < keysOfModule.size(); ++index) {
+        const KeysOfSpies& spied = keysOfModule[index];
+        if (!spied.isSpiedOn)
+            continue;
+        ModuleID id(index);
+        const Module& module = program.at(id);
+        if (spied.mayBeAnyKey || !module.namespaceLayout) {
+            exported.appendAll(id, variables);
+            continue;
+        }
+        for (uint32_t position = 0; position < module.exports.size(); ++position) {
+            if (inputs.sets().contains(spied.keys, universe.keyConstant(program.at(module.namespaceLayout).fields[position].key)))
+                exported.appendNamed(id, module.exports[position].name, variables);
+        }
+    }
+
+    variables.removeAllMatching([&](VariableID variable) {
+        return program.at(variable).flags.contains(VariableFlags::IsReplaceable);
+    });
+    AOT::sort(variables, { }, [](VariableID variable) { return variable.index(); });
+    variables.shrink(std::ranges::unique(variables).begin() - variables.begin());
+    return variables;
 }
 
 } } } // namespace JSC::AOT::Typed

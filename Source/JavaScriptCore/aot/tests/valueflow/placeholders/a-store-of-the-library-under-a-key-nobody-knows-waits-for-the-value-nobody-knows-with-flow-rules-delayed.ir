@@ -1,0 +1,86 @@
+# box.held = Bun; box.held = pass(somethingThatNoTableLists); storeOfLibrary(box.held, someKey); somethingThatNoTableLists(Bun)   where pass hands its operand through eight calls
+# storeOfLibrary = (object, key) => { object[key] = 1 } is a function of the library. Its receiver shows Bun alone for a long while: the value nobody knows is still on its way, and in the end it stands for Bun there.
+# A store under a key nobody knows hits every member of a built-in receiver, so the library's store waits until all else is at rest, and then writes no member of Bun.
+# OPTIONS: testing=DelayFlowRules:1
+# RUN: valueflow-solve used
+# CHECK-NOT: BunServe
+
+layout L0 name="Box" fields=[{key="held" declared={type=anything}}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="somethingThatNoTableLists" [isFreeName]
+    v2 = Builtin builtin=Bun
+    v3 = Undefined
+    v4 = NewObject layout=L0
+    PropSet v4, v2 key="held" mode=Strict
+    v6 = NewClosure function=f2
+    v7 = Call v6, v3, v1
+    PropSet v4, v7 key="held" mode=Strict
+    v9 = PropGet v4 key="held"
+    v10 = PropGet v0 key="someKey" [isFreeName]
+    v11 = NewClosure function=f1
+    v12 = Call v11, v3, v9, v10
+    v13 = Call v1, v3, v2
+    Return
+}
+function f1 name="storeOfLibrary" kind=Arrow role=Library parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer integer=1
+    ElemSet v0, v1, v2 mode=Strict
+    Return
+}
+function f2 name="pass0" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f3
+    v2 = Undefined
+    v3 = Call v1, v2, v0
+    Return v3
+}
+function f3 name="pass1" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f4
+    v2 = Undefined
+    v3 = Call v1, v2, v0
+    Return v3
+}
+function f4 name="pass2" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f5
+    v2 = Undefined
+    v3 = Call v1, v2, v0
+    Return v3
+}
+function f5 name="pass3" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f6
+    v2 = Undefined
+    v3 = Call v1, v2, v0
+    Return v3
+}
+function f6 name="pass4" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f7
+    v2 = Undefined
+    v3 = Call v1, v2, v0
+    Return v3
+}
+function f7 name="pass5" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f8
+    v2 = Undefined
+    v3 = Call v1, v2, v0
+    Return v3
+}
+function f8 name="pass6" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f9
+    v2 = Undefined
+    v3 = Call v1, v2, v0
+    Return v3
+}
+function f9 name="pass7" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

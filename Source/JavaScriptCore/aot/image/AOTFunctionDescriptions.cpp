@@ -31,6 +31,7 @@ static FunctionID subjectOf(const Program& program, FunctionID id)
     case FunctionRole::ResultWrapper:
     case FunctionRole::ParameterWrapper:
     case FunctionRole::EntryChecks:
+    case FunctionRole::ChecksThatGiveUp:
     case FunctionRole::OutlinedBody:
     case FunctionRole::Serializer:
     case FunctionRole::Parser:
@@ -100,6 +101,7 @@ static String roleWord(const Program& program, FunctionID id)
         return "result-worker"_s;
     case FunctionRole::ParameterWrapper:
     case FunctionRole::EntryChecks:
+    case FunctionRole::ChecksThatGiveUp:
         return "parameter-wrapper"_s;
     case FunctionRole::OutlinedBody:
         return "outlined"_s;

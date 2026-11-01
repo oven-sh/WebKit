@@ -84,6 +84,8 @@ struct RuntimeDifference {
 };
 
 JS_EXPORT_PRIVATE std::span<const uint8_t> descriptionOfThisRuntime();
+// One per fact, in the order of the facts after the header of the description.
+JS_EXPORT_PRIVATE std::span<const ASCIILiteral> namesOfRuntimeFacts();
 // Takes the record of the engine or the record of the table.
 JS_EXPORT_PRIVATE std::optional<RuntimeDifference> findDifferenceFromThisRuntime(std::span<const uint8_t> other);
 

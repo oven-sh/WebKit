@@ -669,7 +669,17 @@ namespace JSC {
             // Reading |this| checks that it is bound, and super() throws instead of rebinding it, so it cannot change afterwards.
             if (leftHandSide->isThisNode())
                 return false;
-            return leftHandSideNeedsCopy(rightHasAssignments, rightIsPure);
+            if (!leftHandSideNeedsCopy(rightHasAssignments, rightIsPure))
+                return false;
+#if ENABLE(AOT)
+            // Reading a constant checks that it is initialized, and nothing stores to its register afterwards.
+            if (Options::runsCompiledImage() && leftHandSide->isResolveNode()) {
+                Variable constant = variable(static_cast<ResolveNode*>(leftHandSide)->identifier());
+                if (constant.local() && constant.isConst())
+                    return false;
+            }
+#endif
+            return true;
         }
 
         ALWAYS_INLINE RefPtr<RegisterID> emitNodeForLeftHandSide(ExpressionNode* n, bool rightHasAssignments, bool rightIsPure)

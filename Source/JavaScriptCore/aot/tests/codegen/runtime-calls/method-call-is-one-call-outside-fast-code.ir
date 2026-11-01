@@ -26,6 +26,6 @@ function f1 name="inFastCode" parameters=[{type=anything}, {type=anything}, {typ
     Return
 }
 # CHECK-NOT: stub CallMethodById
-# CHECK: stub CallValue.n1
+# CHECK: stub CallValue.Ordinary.n1
 # CHECK: stub GetByIdAtSite
 # S: f1 b1 Fast

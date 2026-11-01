@@ -17,7 +17,7 @@ function f0 name="storesIntoEnvironmentOrCopy" parameters=[{type=boolean}] resul
     v6 = GetEnvironmentField v3 layout=L0
     Return v6
 }
-# CHECK: f0 return: reads(EnvironmentFields, AllocatorState) writes(AllocatorState) collects throw: none p0: [Inspects]
+# CHECK: f0 return: reads(EnvironmentFields, AllocatorState) writes(AllocatorState) throwsForLackOfStack collects throw: throwsForLackOfStack collects p0: [Inspects]
 # BASES-LABEL: function f0
 # BASES: v1 base objects: [OwnAllocation]
 # BASES-NEXT: v2 base objects: [OwnAllocation OwnAllocation]
@@ -29,6 +29,6 @@ function f1 name="storesIntoEnvironmentOfCaller" kind=Arrow captures=[{type=env 
     v3 = GetEnvironmentField v0 layout=L0
     Return v3
 }
-# CHECK-NEXT: f1 return: reads(EnvironmentFields/1) throw: none p0: [Inspects, RetainsContents] writes(EnvironmentFields/1)
+# CHECK-NEXT: f1 return: reads(EnvironmentFields/1) throwsForLackOfStack throw: throwsForLackOfStack p0: [Inspects, RetainsContents] writes(EnvironmentFields/1)
 # BASES-LABEL: function f1
 # BASES: v0 base objects: [EntryParameter(0)]

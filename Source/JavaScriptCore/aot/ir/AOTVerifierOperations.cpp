@@ -30,7 +30,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr OpcodeSet opcodesWithConstructionRules { Opcode::FinishObject, Opcode::FinishClass, Opcode::DefineMethod, Opcode::GetClassPrototype };
 static constexpr OpcodeSet opcodesWithClassRules { Opcode::NewClass, Opcode::SuperConstruct, Opcode::SuperConstructList };
-static constexpr OpcodeSet tailCallOpcodes { Opcode::Call, Opcode::CallList, Opcode::CallDirect, Opcode::CallForwardVarargs };
+static constexpr OpcodeSet tailCallOpcodes { Opcode::Call, Opcode::CallList, Opcode::CallDirect, Opcode::CallTable, Opcode::CallForwardVarargs };
 
 static bool isPrivateKind(PropertyKeyKind kind)
 {
@@ -313,8 +313,8 @@ void FunctionVerifier::verifyOperation(BlockID block, uint32_t indexInBlock, Val
     case OperationFamily::Module:
         if (opcode == Opcode::EvaluateModule || opcode == Opcode::RecordRequire)
             verifyModuleEvaluation(block, id, value);
-        // A module whose namespace object nothing makes has no word to keep it in.
-        else if ((opcode == Opcode::ModuleNamespace || opcode == Opcode::ImportModule) && m_inputs.flow && m_inputs.flow->hasResults() && m_inputs.flow->module(value.module()).namespaceUse == NamespaceUse::NeverCreated)
+        // A module whose namespace object is never created has no word for it. An operation that flow analysis saw and that never runs asks the runtime, which keeps the object with the module. Passes add no other such operation.
+        else if ((opcode == Opcode::ModuleNamespace || opcode == Opcode::ImportModule) && m_inputs.flow && m_inputs.flow->hasResults() && m_inputs.flow->module(value.module()).namespaceUse == NamespaceUse::NeverCreated && !m_inputs.flow->wasNamespaceNamedByOperation(value.module()))
             fail(InternalErrorKind::InvalidModule, block, id, value.module().index());
         return;
     case OperationFamily::Binding:

@@ -27,6 +27,7 @@ struct MemberSite {
     TypeID testedReceiverType;
     BuiltinReceiver start;
     BuiltinMemberAnswer answer;
+    bool typeProvesNamesOfEveryClass { false };
 };
 
 enum class LocationState : uint8_t { Unknown, NeedsTest, Constant };
@@ -53,6 +54,67 @@ std::optional<Type> testedTypeOfExpectedInstances(const Program& program, TypeAr
     return Type::function();
 }
 
+// Instances of a class and its subclasses, such as Uint8Array and Buffer. Every class finds the same member at a fixed location, and the type proves that instances still have the properties they were created with.
+static std::optional<MemberSite> findMemberInClassOrSubclasses(const BuiltinUseInputs& inputs, ValueID receiver, PropertyKeyID key, const Type& present)
+{
+    if (!present.isObject() || !present.hasOnlyClassObjects() || present.classes.size() < 2)
+        return std::nullopt;
+    const BuiltinTable& table = inputs.program.builtins();
+    BuiltinClassID highest = present.classes[0].builtinClass;
+    for (const ClassPart& part : present.classes) {
+        if (table.isSameOrSubclassOf(highest, part.builtinClass))
+            highest = part.builtinClass;
+    }
+    BuiltinLookupContext lookup = inputs.lookup();
+    MemberSite site { .receiver = receiver, .key = key };
+    site.start = { BuiltinReceiverKind::Instance, { }, highest };
+    site.answer = findMemberOfInstances(lookup, highest, key);
+    site.typeProvesNamesOfEveryClass = true;
+    if (!site.answer.isConstant())
+        return std::nullopt;
+    for (const ClassPart& part : present.classes) {
+        if (!table.isSameOrSubclassOf(part.builtinClass, highest) || !part.provenPristine.contains(PristineAspects::Names))
+            return std::nullopt;
+        BuiltinMemberAnswer below = findMemberOfInstances(lookup, part.builtinClass, key);
+        if (!below.isConstant() || below.member != site.answer.member)
+            return std::nullopt;
+    }
+    return site;
+}
+
+// Instances of classes whose constructors leave the property at the same place, such as Error and TypeError, or TypeError and RangeError.
+// The read compares the Structure of the object with the one of each class and goes by name for any other, so the type has nothing to prove.
+static std::optional<MemberSite> findOwnSlotOfEveryClass(const BuiltinUseInputs& inputs, ValueID receiver, PropertyKeyID key, const Type& present)
+{
+    if (!present.isObject() || !present.hasOnlyClassObjects() || present.classes.size() < 2)
+        return std::nullopt;
+    const BuiltinTable& table = inputs.program.builtins();
+    BuiltinMemberName name = builtinMemberNameOf(inputs.program, key);
+    if (!name || name.isPrivateAlias)
+        return std::nullopt;
+
+    BuiltinClassID above = present.classes[0].builtinClass;
+    for (const ClassPart& part : present.classes) {
+        while (above && !table.isSameOrSubclassOf(part.builtinClass, above))
+            above = table.at(above).parent;
+    }
+    BuiltinOverloadID slotAbove = above ? findOwnSlotOfInstances(table, above, name.name) : BuiltinOverloadID();
+    if (!slotAbove)
+        return std::nullopt;
+    for (const ClassPart& part : present.classes) {
+        BuiltinOverloadID slot = findOwnSlotOfInstances(table, part.builtinClass, name.name);
+        if (!slot || !liesAtSamePlace(table, slot, slotAbove))
+            return std::nullopt;
+    }
+
+    MemberSite site { .receiver = receiver, .key = key };
+    site.start = { BuiltinReceiverKind::Instance, { }, above };
+    site.answer = findMemberOfInstances(inputs.lookup(), above, key);
+    if (!site.answer.isConstant() || site.answer.member != table.canonicalID(table.at(slotAbove).builtin))
+        return std::nullopt;
+    return site;
+}
+
 static std::optional<MemberSite> findMember(const BuiltinUseInputs& inputs, ValueID receiver, PropertyKeyID key, BuiltinClassID expectedClass = { })
 {
     const Program& program = inputs.program;
@@ -63,6 +125,10 @@ static std::optional<MemberSite> findMember(const BuiltinUseInputs& inputs, Valu
     MemberSite site { .receiver = receiver, .key = key };
     site.start = builtinReceiverOf(program, present);
     if (!site.start) {
+        if (std::optional<MemberSite> found = findMemberInClassOrSubclasses(inputs, receiver, key, present))
+            return found;
+        if (std::optional<MemberSite> found = findOwnSlotOfEveryClass(inputs, receiver, key, present))
+            return found;
         TypeID expectedType = inputs.function.at(receiver).expected().predicted();
         if (!expectedType)
             return std::nullopt;
@@ -218,7 +284,7 @@ static void addReceiverRequirements(const BuiltinUseInputs& inputs, const Member
     }
 
     bool isInherited = site.start.kind == BuiltinReceiverKind::Instance && !table.at(site.answer.member).flags.contains(BuiltinFlag::IsOwnPropertyOfInstances);
-    if (isInherited && !isClosureAsCreated(inputs, site)) {
+    if (isInherited && !site.typeProvesNamesOfEveryClass && !isClosureAsCreated(inputs, site)) {
         PristineRequirement names = testThatFindsMember(inputs, site);
         bool isProven = pristineProofOf(inputs.pristine(), site.receiver, names, point) == PristineProof::Proven;
         if (PristineRequirement wider = testThatInstancesOfClassAbovePassToo(table, names, site.answer.member); !isProven && wider != names) {
@@ -693,6 +759,101 @@ BuiltinUsePlan planBuiltinRead(const BuiltinUseInputs& inputs, ValueID use, Prog
         return { };
     }
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+ValueID findReadOfCallee(const Program& program, const Function& function, const Value& call)
+{
+    if (call.opcode != Opcode::Call)
+        return { };
+    ValueID id = sameObjectThroughCasts(function, call.calleeOperand()).valueInFrontOfFacts();
+    const Value& read = function.at(id);
+    switch (read.opcode) {
+    case Opcode::PropGet: {
+        bool readsCalledMemberOfReceiver = call.calleeKey() && read.key() == call.calleeKey() && call.thisValueOperand()
+            && sameObjectThroughCasts(function, read.objectOperand()) == sameObjectThroughCasts(function, call.thisValueOperand());
+        return readsCalledMemberOfReceiver ? id : ValueID();
+    }
+    case Opcode::CallBuiltin: {
+        const BuiltinTable& table = program.builtins();
+        const BuiltinOverload& overload = table.at(read.overload());
+        bool runsAccessor = overload.mode == BuiltinCallMode::Get && read.builtinCallForm() == BuiltinCallForm::Whole && read.receiverOperand();
+        return runsAccessor && table.answersFunctionBoundToReceiver(table.canonicalID(overload.builtin)) ? id : ValueID();
+    }
+    default:
+        return { };
+    }
+}
+
+bool mayFindProvenCallOfFunctionBoundToReceiver(const BuiltinUseInputs& inputs, const Value& call)
+{
+    const Program& program = inputs.program;
+    ValueID read = findReadOfCallee(program, inputs.function, call);
+    if (!read)
+        return false;
+    if (inputs.function.at(read).opcode == Opcode::CallBuiltin)
+        return true;
+    if (!builtinMemberNameOf(program, call.calleeKey()) || !mayBeKnownReceiver(program.typeOf(inputs.function, call.thisValueOperand())))
+        return false;
+    std::optional<MemberSite> site = findMember(inputs, call.thisValueOperand(), call.calleeKey());
+    return site && !site->testedReceiverType && program.builtins().answersFunctionBoundToReceiver(site->answer.member);
+}
+
+// No test of the callee tells that it is the function of this receiver. What the read has found tells it.
+// An object never gets back the names it was created with, and the arguments are evaluated behind the read: a receiver that passes the test in front of the call would have passed it in front of the read.
+BuiltinUsePlan planCallOfFunctionBoundToReceiver(const BuiltinUseInputs& inputs, ValueID use, ProgramPoint point)
+{
+    const Program& program = inputs.program;
+    const BuiltinTable& table = program.builtins();
+    const Value& call = inputs.function.at(use);
+    ValueID readID = findReadOfCallee(program, inputs.function, call);
+    if (!readID)
+        return { };
+    const Value& read = inputs.function.at(readID);
+
+    KnownBuiltinCall known;
+    known.operands.arguments.append(call.argumentsOperands());
+    known.stamps.expectedResult = call.expectedResult();
+    known.stamps.accessSite = call.accessSite();
+
+    std::optional<MemberSite> site;
+    LocationState location = LocationState::Constant;
+    if (read.opcode == Opcode::CallBuiltin) {
+        known.callee = table.canonicalID(table.at(read.overload()).builtin);
+        known.operands.receiver = read.receiverOperand();
+    } else {
+        if (!builtinMemberNameOf(program, call.calleeKey()))
+            return { };
+        site = findMember(inputs, call.thisValueOperand(), call.calleeKey());
+        if (!site || site->start.kind != BuiltinReceiverKind::Instance || !table.answersFunctionBoundToReceiver(site->answer.member))
+            return { };
+        // A program may put another accessor in its place, and never this one again: a location that is unchanged in front of the call was unchanged at the read.
+        location = locationStateOf(inputs, *site);
+        if (location == LocationState::Unknown)
+            return { };
+        known.callee = site->answer.member;
+        known.operands.receiver = site->receiver;
+    }
+
+    BuiltinUsePlan plan = planKnownBuiltinCall(inputs, known, point);
+    if (plan.kind != BuiltinUseKind::Call)
+        return { };
+    // The getter looks into any other receiver, and refuses it in front of the arguments.
+    BuiltinClassID receiverClass = table.receiverClassOf(known.callee);
+    const BuiltinOverload& overload = table.at(plan.call.overload);
+    TypingContext typing = inputs.typing();
+    if (!receiverClass || !overload.receiver || !typeOfBuiltinType({ typing }, overload.receiver->accepted).isSubsetOf(Type::builtinClass(receiverClass), program))
+        return { };
+
+    // Flow may have followed the read to the accessor.
+    bool isReadAnsweredByAccessor = singleBuiltinOf(program.typeOf(inputs.function, readID)) == known.callee;
+    if (site && !isReadAnsweredByAccessor) {
+        bool isPossible = addLocationRequirement(inputs, *site, location, plan);
+        addReceiverRequirements(inputs, *site, point, plan, isPossible);
+        if (!isPossible)
+            return { };
+    }
+    plan.isNeverInlined = call.isNeverInlined();
+    return plan;
 }
 
 BuiltinUsePlan planBuiltinStore(const BuiltinUseInputs& inputs, ValueID use, ProgramPoint point)

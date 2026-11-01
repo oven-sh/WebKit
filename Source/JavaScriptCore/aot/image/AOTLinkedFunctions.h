@@ -9,6 +9,7 @@
 
 #include "AOTCompiledCode.h"
 #include "AOTThreads.h"
+#include <atomic>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -36,6 +37,7 @@ public:
     const CompiledCode* begin() const { return span().data(); }
     const CompiledCode* end() const { return begin() + size(); }
     void grow(size_t newSize, BuildContext&);
+    void makeRoomFor(size_t newSize);
     void clearOnAllThreads(BuildContext&);
     void reorder(std::span<const uint32_t> order, BuildContext&);
 };
@@ -87,29 +89,45 @@ struct ResolvedCallees {
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 template<typename T>
-Vector<OptionalIndex> indexByFunction(std::span<const T> elements)
+Vector<OptionalIndex> indexByFunction(std::span<const T> elements, const ParallelLoops* loops)
 {
-    uint32_t endOfFunctions = 0;
-    for (const T& element : elements) {
-        RELEASE_ASSERT(element.function);
-        endOfFunctions = std::max(endOfFunctions, element.function.index() + 1);
-    }
+    constexpr size_t elementsInShare = 2048;
+    auto forEachShare = [&](const auto& functor) {
+        if (!loops) {
+            functor(0, elements.size());
+            return;
+        }
+        forEachIndexInParallel(*loops, static_cast<unsigned>((elements.size() + elementsInShare - 1) / elementsInShare), [&](unsigned share) {
+            functor(share * elementsInShare, std::min(elements.size(), (share + 1) * elementsInShare));
+        });
+    };
+    std::atomic<uint32_t> endOfFunctions { 0 };
+    forEachShare([&](size_t first, size_t end) {
+        uint32_t endInShare = 0;
+        for (size_t index = first; index < end; ++index) {
+            RELEASE_ASSERT(elements[index].function);
+            endInShare = std::max(endInShare, elements[index].function.index() + 1);
+        }
+        uint32_t known = endOfFunctions.load(std::memory_order_relaxed);
+        while (known < endInShare && !endOfFunctions.compare_exchange_weak(known, endInShare, std::memory_order_relaxed)) { }
+    });
     Vector<OptionalIndex> indices;
-    indices.fill(OptionalIndex { }, endOfFunctions);
-    uint32_t index = 0;
-    for (const T& element : elements) {
-        OptionalIndex& indexed = indices[element.function.index()];
-        RELEASE_ASSERT(!indexed);
-        indexed = { index++ };
-    }
+    indices.fill(OptionalIndex { }, endOfFunctions.load(std::memory_order_relaxed));
+    forEachShare([&](size_t first, size_t end) {
+        for (size_t index = first; index < end; ++index) {
+            OptionalIndex& indexed = indices[elements[index].function.index()];
+            RELEASE_ASSERT(!indexed);
+            indexed = { static_cast<uint32_t>(index) };
+        }
+    });
     return indices;
 }
 
 // Valid for one order of the bodies: a step that removes or moves a body needs a new index afterwards.
 class CodeIndex {
 public:
-    explicit CodeIndex(std::span<const CompiledCode> functions)
-        : m_positions(indexByFunction(functions))
+    explicit CodeIndex(std::span<const CompiledCode> functions, const ParallelLoops* loops = nullptr)
+        : m_positions(indexByFunction(functions, loops))
     {
     }
 
@@ -125,8 +143,8 @@ private:
 // Valid for one list of aliases: a step that adds, removes or moves an alias needs a new index afterwards.
 class AliasIndex {
 public:
-    explicit AliasIndex(std::span<const EntryAlias> aliases)
-        : m_aliases(indexByFunction(aliases))
+    explicit AliasIndex(std::span<const EntryAlias> aliases, const ParallelLoops* loops = nullptr)
+        : m_aliases(indexByFunction(aliases, loops))
     {
     }
 

@@ -77,12 +77,15 @@ static void branchIfChainMayHaveName(StubAssembler& jit, GPRReg object, GPRReg s
     jit.urshift64(name, scratch);
     mayHaveName.append(jit.branchTest64(CCallHelpers::NonZero, scratch, TrustedImm32(1)));
     // What has happened to a name since the filter was made.
+    jit.load32(Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.changesUnderNamesOnChains)), scratch);
+    Jump filterIsCurrent = jit.branch32(CCallHelpers::Equal, Address(filter, OBJECT_OFFSETOF(AbsenceFilter, changesUnderNames)), scratch);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.namesChangedOnChains)), filter);
     jit.urshift32(name, TrustedImm32(6), scratch);
     jit.load64(BaseIndex(filter, scratch, CCallHelpers::TimesEight), scratch);
     jit.urshift64(name, scratch);
     mayHaveName.append(jit.branchTest64(CCallHelpers::NonZero, scratch, TrustedImm32(1)));
 
+    filterIsCurrent.link(&jit);
     isAbsent.link(&jit);
 }
 
@@ -164,8 +167,51 @@ static void generatePutKnownFieldThatTakesAnyValue(StubAssembler& jit)
     jit.linkToStub(isLeftToStubForAnyField, putKnownField(mode));
 }
 
+static void generatePutKnownFieldAcceptingAnyNumber(StubAssembler& jit)
+{
+    static_assert(traitsOf(SlotRepresentation::OptionalDouble).absentBits == absentDouble && !traitsOf(SlotRepresentation::Double).hasAbsent);
+    const PutMode mode = static_cast<PutMode>(jit.key().form());
+    const GPRReg object = jit.operand(0);
+    const GPRReg value = jit.operand(1);
+    const GPRReg offsetOfRecord = jit.immediate();
+    const GPRReg offset = jit.allocateScratch(StubRegister::T10);
+    const GPRReg scratch = jit.allocateScratch(StubRegister::T11);
+    const GPRReg record = jit.allocateScratch(slotHeaderRegister);
+    const GPRReg structure = jit.allocateScratch(slotPayloadRegister);
+    const FPRReg number = CCallHelpers::fpTempRegister;
+    const BaseIndex slot(object, offset, CCallHelpers::TimesOne);
+    constexpr uint32_t flagsOfUnusualFields = fieldAttributeFlags | fieldIsPrivate | fieldIsBrand | fieldIsOutOfLine | fieldMayExistWithoutStorage | fieldIsStoredOnce;
+    JumpList isLeftToStubForAnyField;
+
+    isLeftToStubForAnyField.append(jit.branchIfNotNumber(value));
+    loadStructure(jit, object, structure);
+    jit.loadPtr(Address(structure, CompiledStructure::offsetOfLayout()), record);
+    jit.addPtr(offsetOfRecord, record);
+    isLeftToStubForAnyField.append(jit.branchTest32(CCallHelpers::NonZero, Address(record, offsetOfFlagsWord), TrustedImm32(flagsOfUnusualFields)));
+    isLeftToStubForAnyField.append(jit.branchTest32(CCallHelpers::NonZero, Address(object, offsetOfOrderWord), TrustedImm32(integrityBitsBlockingStore(operationFor(mode)))));
+    jit.load32(Address(record, OBJECT_OFFSETOF(FieldData, slot)), offset);
+    jit.and32(TrustedImm32(SlotData::maxOffset), offset);
+    jit.load64(slot, scratch);
+    isLeftToStubForAnyField.append(jit.branch64(CCallHelpers::Equal, scratch, TrustedImm64(static_cast<int64_t>(absentDouble))));
+    Jump isNotInt32 = jit.branchIfNotInt32(value);
+    jit.convertInt32ToDouble(value, number);
+    jit.storeDouble(number, slot);
+    jit.returnToCaller();
+
+    isNotInt32.link(&jit);
+    unboxDouble(jit, value, scratch, number);
+    jit.storeDouble(number, slot);
+    jit.returnToCaller();
+
+    jit.linkToStub(isLeftToStubForAnyField, putKnownField(mode));
+}
+
 void generatePutKnownField(StubAssembler& jit)
 {
+    if (jit.key().count() == 2) {
+        generatePutKnownFieldAcceptingAnyNumber(jit);
+        return;
+    }
     if (jit.key().count()) {
         generatePutKnownFieldThatTakesAnyValue(jit);
         return;
@@ -240,10 +286,8 @@ void generatePutKnownField(StubAssembler& jit)
     goesByName.append(jit.branchTest32(CCallHelpers::NonZero, orderWord, TrustedImm32(static_cast<int32_t>(orderWordIntegrityBits | orderWordHasFieldOutsideSlot))));
     // Where the key order alone says that the field exists, a field without a granule reads as undefined, so that value asks for none: the key is listed and nothing is stored.
     Jump alwaysNeedsStorage = jit.branchTest32(CCallHelpers::Zero, Address(record, offsetOfFlagsWord), TrustedImm32(fieldMayExistWithoutStorage));
-    Jump isNotUndefined = jit.branch64(CCallHelpers::NotEqual, value, TrustedImm32(JSValue::ValueUndefined));
-    goesByName.append(jit.branchTest32(CCallHelpers::Zero, Address(record, offsetOfFlagsWord), TrustedImm32(fieldIsStoredOnce)));
-    Jump needsNoStorage = jit.jump();
-    isNotUndefined.link(&jit);
+    // The field may be listed already. The step in the key order then leads to the same order.
+    Jump needsNoStorage = jit.branch64(CCallHelpers::Equal, value, TrustedImm32(JSValue::ValueUndefined));
     alwaysNeedsStorage.link(&jit);
     createGranuleOfField(jit, registers, loadOffsetOfExtensionWord, findStorage);
 

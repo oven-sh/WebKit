@@ -1,0 +1,61 @@
+# function often(a, n) { for (..) last = a.step.inner }, where `a` may be undefined: every turn tests that `a` can be read from. The first turn has passed that test or has thrown, and `a` is the same in every
+# turn, so the test holds behind the first turn, where the questions are asked: `a.step` is asked for once. Flow's word on what `a.step` answers goes with the answer, so `.inner` is asked for once as well.
+# A turn of `seldom` may pass the read by, so the first turn says nothing about `a`, and a test ahead of the loop might throw where the program does not: its read stays as it is.
+# FORM: Prepared
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass SeparateUnlikelyLoopPaths
+# STATISTIC: LoopsEnteredByAnswers = 1
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="often" parameters=[{type=anything}, {type=i32}] results=[{type=anything}] {
+  b0(v0: anything, v1: i32):
+    v2 = Integer integer=0
+    v3 = Undefined
+    Jump -> next b1(v2, v3)
+  b1(v4: i32, v5: anything):
+    LoopHint
+    v7 = Less v4, v1
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = RequireObjectCoercible v0 name="step"
+    v9 = PropGet v8 key="step"
+    v10 = AssumeType v9 provenType=object
+    v11 = PropGet v10 key="inner"
+    v12 = Integer integer=1
+    v13 = Add v4, v12
+    v14 = BitOr v13, v2
+    Jump -> next b1(v14, v11)
+  b3():
+    Return v5
+# CHECK: b1(
+# CHECK-NOT: PropGet
+# CHECK: b3(
+# CHECK: = GetCachedValue {{*}} key="step"
+# CHECK: = GetCachedValue {{*}} key="inner"
+}
+
+function f1 name="seldom" parameters=[{type=anything}, {type=i32}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: i32, v2: boolean):
+    v3 = Integer integer=0
+    v4 = Undefined
+    Jump -> next b1(v3, v4)
+  b1(v5: i32, v6: anything):
+    LoopHint
+    v8 = Less v5, v1
+    Branch v8 -> taken b2(), notTaken b5()
+  b2():
+    Branch v2 -> taken b3(), notTaken b4(v6)
+  b3():
+    v9 = RequireObjectCoercible v0 name="step"
+    v10 = PropGet v9 key="step"
+    Jump -> next b4(v10)
+  b4(v11: anything):
+    v12 = Integer integer=1
+    v13 = Add v5, v12
+    v14 = BitOr v13, v3
+    Jump -> next b1(v14, v11)
+  b5():
+    Return v6
+# CHECK-NOT: GetCachedValue
+}

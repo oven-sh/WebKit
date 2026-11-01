@@ -11,6 +11,7 @@
 #include "AOTThreshold.h"
 #include "AOTValueFlow.h"
 #include "AOTValueFlowBuiltinTables.h"
+#include "AOTValueFlowListPutAway.h"
 #include "AOTValueFlowUnobservedDefinitions.h"
 #include "AOTVector.h"
 #include <array>
@@ -80,6 +81,10 @@ struct ValueFlowSite {
     LayoutID layout;
     BuiltinClassID builtinClass;
     bool namesPrototype { false };
+    bool isProxyFromNamedConstructor { false };
+    bool isDenseArrayLiteral { false };
+    // Of what a built-in function answers: f(), f(a). So f.bind(receiver) binds no argument.
+    bool isAnswerOfCallWithOneArgumentAtMost { false };
 
     friend bool operator==(const ValueFlowSite&, const ValueFlowSite&) = default;
 };
@@ -88,6 +93,8 @@ class ValueFlowUniverse {
 public:
     static constexpr ValueFlowObjectID primitive(PrimitiveSet kind) { return ValueFlowObjectID(static_cast<uint32_t>(std::countr_zero(static_cast<uint16_t>(kind)))); }
     static constexpr uint32_t numberOfPrimitiveKinds = 16;
+    // ValueFlowGraph keys a table by the mask of the first 64 objects. A number that names nothing keeps every mask off the markers of that table.
+    static_assert(numberOfEnumerators<PrimitiveSet> < numberOfPrimitiveKinds);
 
     static constexpr ValueFlowObjectID unknownObject() { return ValueFlowObjectID(numberOfPrimitiveKinds); }
     static constexpr ValueFlowObjectID untrackedObject() { return ValueFlowObjectID(numberOfPrimitiveKinds + 1); }
@@ -146,6 +153,8 @@ public:
     BuiltinID builtinOf(ValueFlowObjectID) const;
     ModuleID moduleOf(ValueFlowObjectID) const;
     ModuleID moduleOf(RuntimeModuleID runtimeModule) const { return runtimeModule.index() < m_moduleOfRuntimeModule.size() ? m_moduleOfRuntimeModule[runtimeModule.index()] : ModuleID(); }
+    // The sets that are written down when first asked for.
+    void keepSetsRemembered(ValueSets&) const;
     std::atomic<uint32_t>& rememberedClosuresCalledDirectlyBy(FunctionID function) const { return m_closuresCalledDirectlyBy[function.index()]; }
     ModuleID moduleWithBody(FunctionID) const;
     PropertyKeyID keyOf(ValueFlowObjectID object) const { return object.index() >= m_firstKey ? PropertyKeyID(object.index() - m_firstKey) : PropertyKeyID(); }
@@ -167,19 +176,40 @@ public:
     ValueSetID objectsWithLockedPrototypeLink() const { return m_objectsWithLockedPrototypeLink; }
     ValueSetID objectsBornWithoutPrototype() const { return m_objectsBornWithoutPrototype; }
     ValueSetID holdersOfLibraryExports() const { return m_holdersOfLibraryExports; }
+    // What code that nobody has seen gets at by a name. A name written outside the library finds only its public modules. A module of the library that the image
+    // lacks runs from its text, which names the others too: where one may, these are all holders.
+    ValueSetID holdersOfPublicLibraryExports() const { return m_holdersOfPublicLibraryExports; }
     ValueSetID holdersOfExportsOf(ModuleID module) const { return m_holdersOfExportsOfModule[module.index()]; }
     ValueSetID holdersOfLibraryExportsThatRaiseNoEvent() const { return m_holdersOfLibraryExportsThatRaiseNoEvent; }
+    ValueSetID eventRaisingLibraryExportHolders() const { return m_eventRaisingLibraryExportHolders; }
+    ValueSetID eventRaisingLibraryClosures() const { return m_eventRaisingLibraryClosures; }
     ValueSetID prototypeObjectsOfLibraryClasses() const { return m_prototypeObjectsOfLibraryClasses; }
+    ValueSetID constructorsOfLibraryClasses() const { return m_constructorsOfLibraryClasses; }
+    ValueSetID prototypeObjectsOfClasses() const { return m_prototypeObjectsOfClasses; }
     ValueSetID instancesBelowLibraryClasses() const { return m_instancesBelowLibraryClasses; }
+    ValueSetID instancesBelowBuiltinClasses() const { return m_instancesBelowBuiltinClasses; }
     ValueSetID objectsOfLibraryFoundByNameAlone() const { return m_objectsOfLibraryFoundByNameAlone; }
     ValueSetID callables() const { return m_callables; }
     ValueSetID closures() const { return m_closures; }
+    // A definition of a property that cannot be configured compares with SameValue what it defines with what is there.
+    ValueSetID objectsThatDefinitionsTellApart() const { return m_objectsThatDefinitionsTellApart; }
     ValueSetID builtinFunctions() const { return m_builtinFunctions; }
     ValueSetID builtinFunctionsOfProtocols() const { return m_builtinFunctionsOfProtocols; }
     ValueSetID builtinFunctionsThatReadSpecies() const { return m_builtinFunctionsThatReadSpecies; }
     // They store into their receiver, change it, or construct what its `constructor` names. None of that happens to an object because it has escaped.
     ValueSetID builtinFunctionsThatActOnReceiver() const { return m_builtinFunctionsThatActOnReceiver; }
     ValueSetID otherCallables() const { return m_otherCallables; }
+    // An accessor that answers a function bound to its receiver stands for the target of those functions: it lies in their hidden slot and nowhere else, and a call enters its overloads for calls.
+    ValueSetID accessorsThatBindFunctions() const { return m_accessorsThatBindFunctions; }
+    ValueSetID targetsOfBoundFunctionsAmongBuiltins() const { return m_targetsOfBoundFunctionsAmongBuiltins; }
+    ValueSetID targetsOfBoundFunctions() const { return m_targetsOfBoundFunctions; }
+    // One object stands for all the functions that such an accessor has made.
+    bool isFunctionBoundByAccessor(ValueFlowObjectID object) const
+    {
+        if (object.index() < m_firstResultOfBuiltin || object.index() >= m_firstResultOfBuiltin + 2 * m_builtins->builtinCount() || (object.index() - m_firstResultOfBuiltin) % 2)
+            return false;
+        return m_builtins->answersFunctionBoundToReceiver(BuiltinID((object.index() - m_firstResultOfBuiltin) / 2));
+    }
     std::atomic<uint64_t>& rememberedBoundFunctionsBindingNoArgument() const { return m_boundFunctionsBindingNoArgument[0]; }
     ValueSetID arrays() const { return m_arrays; }
     ValueSetID records() const { return m_records; }
@@ -191,6 +221,8 @@ public:
     ValueSetID instancesOf(BuiltinClassID builtinClass) const { return m_objectsOfClass[builtinClass.index()]; }
     ValueSetID objectsWith(LayoutID layout) const { return m_objectsOfLayout[layout.index()]; }
     ValueSetID sureInstancesOf(BuiltinClassID builtinClass) const { return m_sureInstancesOfClass[builtinClass.index()]; }
+    ValueSetID proxiesFromNamedConstructor() const { return m_proxiesFromNamedConstructor; }
+    ValueSetID denseArrayLiterals() const { return m_denseArrayLiterals; }
     // By what an object was made as, whether or not compiled code has a test for the class.
     ValueSetID objectsThatMayBeMadeAs(BuiltinClassID builtinClass) const { return m_objectsThatMayBeMadeAs[builtinClass.index()]; }
     ValueSetID objectsMadeAs(BuiltinClassID builtinClass) const { return m_objectsMadeAs[builtinClass.index()]; }
@@ -203,7 +235,8 @@ public:
     ValueSetID constructedObjects() const { return m_constructedObjects; }
     ValueSetID instancesOfClasses() const { return m_instancesOfClasses; }
     ValueSetID constructorsWithLayouts() const { return m_constructorsWithLayouts; }
-    std::span<const LayoutID> recordsThatTypedCodeTakes() const LIFETIME_BOUND { return m_recordsThatTypedCodeTakes.span(); }
+    std::span<const LayoutID> recordsOfTableThatTypedCodeTakes() const LIFETIME_BOUND { return m_recordsOfTableThatTypedCodeTakes.span(); }
+    ValueSetID objectsOfRecordsThatTypedCodeTakes() const { return m_objectsOfRecordsThatTypedCodeTakes; }
     ValueFlowObjectID objectAllocatedUnder(const Program&, ValueFlowObjectID site, ValueFlowObjectID prototype) const;
     ValueSetID constructorsAnsweringOnlyWhatTheyConstruct() const { return m_constructorsAnsweringOnlyWhatTheyConstruct; }
     ValueFlowPlaceholders placeholders() const { return { untrackedObject(), unknownObject(), m_objectsWithLayoutOfProgram, m_closures }; }
@@ -257,6 +290,8 @@ private:
     Vector<ValueSetID> m_objectsOfLayout;
     Vector<ValueSetID> m_objectsOfClass;
     Vector<ValueSetID> m_sureInstancesOfClass;
+    ValueSetID m_proxiesFromNamedConstructor { ValueSets::nothing };
+    ValueSetID m_denseArrayLiterals { ValueSets::nothing };
     Vector<ValueSetID> m_objectsThatMayBeMadeAs;
     Vector<ValueSetID> m_objectsMadeAs;
     ValueSetID m_objectsAllocatedAsIterators;
@@ -272,13 +307,17 @@ private:
     BitVector m_isLayoutOfTable;
     BitVector m_isAllocatedByProgram;
     Vector<LayoutID> m_recordsThatTypedCodeTakes;
+    Vector<LayoutID> m_recordsOfTableThatTypedCodeTakes;
+    ValueSetID m_objectsOfRecordsThatTypedCodeTakes;
     ValueSetID m_closures;
+    ValueSetID m_objectsThatDefinitionsTellApart;
     ValueSetID m_builtinFunctions;
     ValueSetID m_builtinFunctionsOfProtocols;
     ValueSetID m_builtinFunctionsThatReadSpecies;
     ValueSetID m_builtinFunctionsThatActOnReceiver;
     ValueSetID m_builtinsThatMayBeAnyLibraryClosure;
     uint32_t m_numberOfRememberedLayoutSets { 0 };
+    uint32_t m_numberOfRememberedFunctions { 0 };
     std::unique_ptr<std::atomic<uint32_t>[]> m_objectsSurelyWithLayoutIn;
     std::unique_ptr<std::atomic<uint32_t>[]> m_objectsWithLayoutIn;
     std::unique_ptr<std::atomic<uint32_t>[]> m_closuresCalledDirectlyBy;
@@ -289,6 +328,9 @@ private:
     BitVector m_isCanonicalEntryOfCallableBuiltin;
     HashMap<uint32_t, Vector<ValueFlowObjectID, 2>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_builtinsThatMayBeClosureOf;
     ValueSetID m_otherCallables;
+    ValueSetID m_accessorsThatBindFunctions;
+    ValueSetID m_targetsOfBoundFunctionsAmongBuiltins;
+    ValueSetID m_targetsOfBoundFunctions;
     ValueSetID m_strings;
     ValueSetID m_symbols;
     ValueSetID m_textKeys;
@@ -302,11 +344,17 @@ private:
     ValueSetID m_objectsWithLockedPrototypeLink;
     ValueSetID m_objectsBornWithoutPrototype;
     ValueSetID m_holdersOfLibraryExports;
+    ValueSetID m_holdersOfPublicLibraryExports;
     Vector<ValueSetID> m_holdersOfExportsOfModule;
     ValueSetID m_holdersOfLibraryExportsThatRaiseNoEvent;
+    ValueSetID m_eventRaisingLibraryExportHolders;
+    ValueSetID m_eventRaisingLibraryClosures;
     ValueSetID m_prototypeObjectsOfLibraryClasses;
+    ValueSetID m_constructorsOfLibraryClasses;
+    ValueSetID m_prototypeObjectsOfClasses;
     ValueSetID m_objectsOfLibraryFoundByNameAlone;
     ValueSetID m_instancesBelowLibraryClasses;
+    ValueSetID m_instancesBelowBuiltinClasses;
     ValueSetID m_primitives;
     ValueSetID m_anyPrimitive;
     ValueSetID m_undefinedValue;
@@ -361,10 +409,10 @@ enum class ValueFlowHostNode : uint8_t {
     RecordsMadeByParsers,
     BuiltinObjectsThatStatementsWrite,
     FunctionsOfHostTakenFromKnownHolders,
-    NamespacesTiedByStatementsOfBodies,
     ChildrenOfModuleObjects,
     ParentsOfModuleObjects,
     PairsOfSteps,
+    ArraysThatMayHaveHoles,
     CodeOutsideImageIsLoaded,
     NamespacesCarriedOutAsValues,
     ValuesCarriedOut,
@@ -396,14 +444,30 @@ enum class ValueFlowHostNode : uint8_t {
     LibraryModulesRequestedByProgram,
     LibraryModulesHandedOut,
     ObjectsNobodyFollowsThatDefinitionsName,
+    OperandsHandedToUnseenCode,
+    ObjectsNobodyFollowsThatStatementsGiveDisplayName,
     StoredUnderSymbolsNobodyKnows,
     StoredByLibraryUnderSymbolsNobodyKnows,
     SymbolsThatHostLooksForMayBeInHand,
     HoldersOfLibraryExportsThatProgramWrites,
     HoldersOfClassesThatAppliedRowsName,
+    MembersStoredByNameThroughPlaceholders,
+    LibraryModulesAreLoadedUnderSpelledNames,
+    ReceiversOfMembersNobodyKnows,
+    LoadedModulesAreHandedToNativeCode,
+    UnseenCopiesOfFilesMayRun,
+    ReachedByUnseenCopiesOfFiles,
+    EntriesOfModuleCacheAreRead,
+    ObjectsOfLoadedModules,
+    ExportsOfEntriesStoredInModuleCache,
+    PathOfMainModuleIsStored,
+    LoaderFunctionsSeenToBeStored,
+    BuiltinObjectsAboveEscapedObjects,
+    MemberNobodyKnowsIsCalled,
 };
 
-inline constexpr unsigned numberOfValueFlowHostNodes = 74;
+inline constexpr unsigned numberOfValueFlowHostNodes = 89;
+static_assert(static_cast<unsigned>(ValueFlowHostNode::MemberNobodyKnowsIsCalled) + 1 == numberOfValueFlowHostNodes);
 
 class ValueFlowProgramNodes {
 public:
@@ -574,8 +638,13 @@ struct ValueFlowBody {
         ValueFlowStatementKind kind { ValueFlowStatementKind::Operation };
         uint32_t firstSite { none };
         bool isOnlyCalledOnItsHolder { false };
+        bool isOnlyReceiverOfCalls { false };
+        bool isOnlyTested { false };
         uint8_t guardCount { 0 };
         uint32_t firstGuard { 0 };
+        uint32_t guardsOfOperands { 0 };
+        PropertyKeyID key;
+        OptionSet<ValueFlowFactOfText> factsOfText;
     };
 
     struct ObservedValue {
@@ -608,9 +677,12 @@ struct ValueFlowBody {
     uint32_t firstStatementLeavingBody { 0 };
     Vector<Operand> operands;
     Vector<ObservedValue> observedValues;
+    Vector<ValueFlowRareFactsOfText> rareFactsOfText;
+    Vector<ValueFlowCopyOfOperation> copiesOfOperations;
     struct ComparedValues {
         Operand left;
         Operand right;
+        bool mayBeFunctions;
     };
     Vector<ComparedValues> comparedValues;
     Vector<ValueID> valuesAliveForComparisonsOnly;
@@ -650,6 +722,8 @@ struct ValueFlowComparedValues {
     FunctionID function;
     ValueFlowOperand left;
     ValueFlowOperand right;
+    // By their types as read. Otherwise the comparison tells only instances of built-in classes apart.
+    bool mayBeFunctions;
 };
 
 struct ValueFlowValueOfFunction {
@@ -730,6 +804,27 @@ public:
     const ValueFlowUniverse& universe() const LIFETIME_BOUND { return m_universe; }
     const ValueFlowProgramNodes& nodes() const LIFETIME_BOUND { return m_nodes; }
 
+    // Round the last solve, which reads none of them.
+    void putAwayWhatOnlyResultsRead(const ParallelLoops& loops)
+    {
+        m_observedValuesPutAway.putAway(loops, WTF::move(m_observedValues));
+        m_comparedValuesPutAway.putAway(loops, WTF::move(m_comparedValues));
+        m_valuesAliveForComparisonsOnlyPutAway.putAway(loops, WTF::move(m_valuesAliveForComparisonsOnly));
+    }
+    size_t bytesOfWhatOnlyResultsRead() const { return m_observedValues.sizeInBytes() + m_comparedValues.sizeInBytes() + m_valuesAliveForComparisonsOnly.sizeInBytes(); }
+    size_t bytesOfWhatIsPutAway() const { return m_observedValuesPutAway.sizeInBytes() + m_comparedValuesPutAway.sizeInBytes() + m_valuesAliveForComparisonsOnlyPutAway.sizeInBytes(); }
+    void takeOutWhatWasPutAway(const ParallelLoops& loops)
+    {
+        m_observedValues = m_observedValuesPutAway.takeOut(loops);
+        m_comparedValues = m_comparedValuesPutAway.takeOut(loops);
+        m_valuesAliveForComparisonsOnly = m_valuesAliveForComparisonsOnlyPutAway.takeOut(loops);
+    }
+    // Once the graph of the last solve has them.
+    void letGoOfEdgesAndMasks()
+    {
+        m_edges = { };
+        m_masks = { };
+    }
     std::span<const ValueFlowEdge> edges() const LIFETIME_BOUND { return m_edges.span(); }
     std::span<const ValueFlowNodeMask> masks() const LIFETIME_BOUND { return m_masks.span(); }
     std::span<const ValueFlowStatement> statements() const LIFETIME_BOUND { return m_statements.span(); }
@@ -741,6 +836,8 @@ public:
     std::span<const FunctionID> functionsEnteredOnceReached() const LIFETIME_BOUND { return m_functionsEnteredOnceReached.span(); }
     std::span<const ValueFlowBodyRange> ranges() const LIFETIME_BOUND { return m_ranges.span(); }
     std::span<const ValueFlowObservedValue> observedValues() const LIFETIME_BOUND { return m_observedValues.span(); }
+    std::span<const ValueFlowRareFactsOfText> rareFactsOfText() const LIFETIME_BOUND { return m_rareFactsOfText.span(); }
+    std::span<const ValueFlowCopyOfOperation> copiesOfOperations() const LIFETIME_BOUND { return m_copiesOfOperations.span(); }
     std::span<const ValueFlowComparedValues> comparedValues() const LIFETIME_BOUND { return m_comparedValues.span(); }
     std::span<const ValueFlowValueOfFunction> valuesAliveForComparisonsOnly() const LIFETIME_BOUND { return m_valuesAliveForComparisonsOnly.span(); }
     const UnobservedFieldDefinitions& unobservedDefinitions() const LIFETIME_BOUND { return m_unobservedDefinitions; }
@@ -770,8 +867,13 @@ private:
     Vector<ValueFlowNodeSet> m_seedsOnceReached;
     Vector<FunctionID> m_functionsEnteredOnceReached;
     Vector<ValueFlowObservedValue> m_observedValues;
+    Vector<ValueFlowRareFactsOfText> m_rareFactsOfText;
+    Vector<ValueFlowCopyOfOperation> m_copiesOfOperations;
     Vector<ValueFlowComparedValues> m_comparedValues;
     Vector<ValueFlowValueOfFunction> m_valuesAliveForComparisonsOnly;
+    ValueFlowListPutAway<ValueFlowObservedValue> m_observedValuesPutAway;
+    ValueFlowListPutAway<ValueFlowComparedValues> m_comparedValuesPutAway;
+    ValueFlowListPutAway<ValueFlowValueOfFunction> m_valuesAliveForComparisonsOnlyPutAway;
     UnobservedFieldDefinitions m_unobservedDefinitions;
     ValueFlowBodiesTimes m_times;
     Vector<ValueFlowNotedOperations> m_notedOperations;
@@ -798,16 +900,18 @@ class ValueFlowInstancedFunctions {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ValueFlowInstancedFunctions);
 public:
     static constexpr uint32_t noKey = UINT32_MAX;
+    static constexpr uint32_t positionOfKeyInGetTrap = 1;
     struct TextPassed {
         uint32_t positionOfArgument;
         StringID text;
     };
     static constexpr uint32_t mostArgumentsLookedAtForTexts = 64;
-    static Vector<uint32_t> findParametersThatAreKeys(const Program&, const ParallelLoops&, Vector<TextPassed>& textsPassed, Vector<ValueFlowNotedOperations>& notedOperations);
+    static Vector<uint32_t> findParametersThatAreKeys(const Program&, const ParallelLoops&, Vector<TextPassed>& textsPassed, Vector<StringID>& relativePaths, Vector<ValueFlowNotedOperations>& notedOperations);
 
     ValueFlowInstancedFunctions(const Program&, const ValueFlowBodies&, std::span<const uint32_t> positionOfKey, ValueSetMaker&, const ParallelLoops&);
 
     bool isEmpty() const { return m_functions.isEmpty(); }
+    std::span<const ValueFlowInstancedFunction> functions() const LIFETIME_BOUND { return m_functions.span(); }
     const ValueFlowInstancedFunction* find(FunctionID function) const { return function && function.index() < m_indexOfFunction.size() && m_indexOfFunction[function.index()] ? &m_functions[m_indexOfFunction[function.index()] - 1] : nullptr; }
     bool holdsNode(ValueFlowNodeID node) const { return node.index() < m_isNodeOfFunction.size() && m_isNodeOfFunction.quickGet(node.index()); }
     ValueSetID closures() const { return m_closures; }

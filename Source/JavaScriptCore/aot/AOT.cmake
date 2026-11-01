@@ -174,6 +174,7 @@ set(JavaScriptCore_AOT_EXPORTED_HEADERS
     aot/support/AOTCompileOptionWords.h
     aot/support/AOTCompileOptions.h
     aot/support/AOTDiagnostics.h
+    aot/support/AOTHostFunctionTexts.h
     aot/support/AOTLimits.h
     aot/support/AOTLosses.h
     aot/support/AOTStatistics.h
@@ -499,15 +500,21 @@ function(AOT_COMPUTE_SOURCES)
         set(${list}_DERIVED_SOURCES_DIR "${JavaScriptCore_DERIVED_SOURCES_DIR}")
         WEBKIT_COMPUTE_SOURCES(${list})
     endforeach ()
-    if (COMPILER_IS_CLANG AND NOT MSVC)
+    if (COMPILER_IS_CLANG)
         set_source_files_properties(${JavaScriptCoreAOTCompiledForSize_SOURCES} ${JavaScriptCore_AOT_GENERATED_SOURCES_COMPILED_FOR_SIZE} PROPERTIES COMPILE_OPTIONS "$<$<NOT:$<CONFIG:Debug>>:-mllvm=-force-attribute=optsize>")
         set_source_files_properties(${JavaScriptCoreAOTCompiledForMinimumSize_SOURCES} PROPERTIES COMPILE_OPTIONS "$<$<NOT:$<CONFIG:Debug>>:-mllvm=-force-attribute=minsize>")
+        # Unrolling loops whose trip count is not known adds 2% to this code and no speed. Under ThinLTO loops are unrolled in the link, so this counts where the objects are machine code.
+        set_source_files_properties(${JavaScriptCoreAOT_SOURCES} PROPERTIES COMPILE_OPTIONS "$<$<NOT:$<CONFIG:Debug>>:-mllvm=-unroll-runtime=false>")
     endif ()
     if (COMPILER_IS_GCC_OR_CLANG AND NOT MSVC)
         # A switch that has no default names every enumerator: whoever adds one is shown each question it has to answer.
         # The prefix is read as text. A precompiled header is loaded in front of every -include, and AOTPrefix.h begins with what has to stand in front of the standard library's headers.
         set_property(SOURCE ${JavaScriptCoreAOT_SOURCES} ${JavaScriptCoreAOTCompiledForSize_SOURCES} ${JavaScriptCoreAOTCompiledForMinimumSize_SOURCES} APPEND PROPERTY COMPILE_OPTIONS -Werror=switch -include "${JAVASCRIPTCORE_DIR}/aot/support/AOTPrefix.h")
         set_source_files_properties(${JavaScriptCoreAOT_SOURCES} ${JavaScriptCoreAOTCompiledForSize_SOURCES} ${JavaScriptCoreAOTCompiledForMinimumSize_SOURCES} PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+    endif ()
+    if (COMPILER_IS_CLANG)
+        # No pointer, reference or view into a temporary is kept beyond the statement that made the temporary. Both drivers of clang take the flag.
+        set_property(SOURCE ${JavaScriptCoreAOT_SOURCES} ${JavaScriptCoreAOTCompiledForSize_SOURCES} ${JavaScriptCoreAOTCompiledForMinimumSize_SOURCES} APPEND PROPERTY COMPILE_OPTIONS -Werror=dangling)
     endif ()
     set(JavaScriptCore_SOURCES ${JavaScriptCore_SOURCES} ${JavaScriptCoreAOT_SOURCES} ${JavaScriptCoreAOTCompiledForSize_SOURCES} ${JavaScriptCoreAOTCompiledForMinimumSize_SOURCES} PARENT_SCOPE)
 endfunction()

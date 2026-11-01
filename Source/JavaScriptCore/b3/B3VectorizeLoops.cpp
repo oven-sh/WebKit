@@ -1794,7 +1794,6 @@ private:
         report->clobber(RegisterSet::macroClobberedGPRs());
         report->effects = Effects::none();
         report->effects.terminal = true;
-        report->setRunsWithoutFrame(true);
         MovedLoad load { Load, Int64, access->offset(), access->origin(), access->range() };
         report->setGenerator([load, task = m_proc.policy().reportsMovedLoad](CCallHelpers& jit, const StackmapGenerationParams& params) {
             AllowMacroScratchRegisterUsage allowScratch(jit);

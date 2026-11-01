@@ -11,8 +11,10 @@
 #include "AOTEffects.h"
 #include "AOTIRTestSupport.h"
 #include "AOTLimits.h"
+#include "AOTParkedBodies.h"
 #include "AOTResultRules.h"
 #include "AOTSchemaWalkers.h"
+#include "AOTThreads.h"
 #include "AOTTypeArena.h"
 #include "AOTVector.h"
 #include "AOTWire.h"
@@ -809,7 +811,7 @@ static void recordFitsRoleForEveryRole()
         { CreatorRecord::None { }, { FunctionRole::Source, FunctionRole::Library, FunctionRole::Model, FunctionRole::Signature, FunctionRole::OutlinedBody } },
         { CreatorRecord::Entrypoint { }, { FunctionRole::GenericEntrypoint, FunctionRole::TableEntrypoint } },
         { CreatorRecord::TableLookup { }, { FunctionRole::TableLookup } },
-        { CreatorRecord::Version { }, { FunctionRole::GenericVersion, FunctionRole::AllocatedThisVersion, FunctionRole::ConstructBody, FunctionRole::CallSiteVersion, FunctionRole::CalleeVersion } },
+        { CreatorRecord::Version { }, { FunctionRole::GenericVersion, FunctionRole::AllocatedThisVersion, FunctionRole::ConstructBody, FunctionRole::CallSiteVersion, FunctionRole::CalleeVersion, FunctionRole::ChecksThatGiveUp } },
         { CreatorRecord::Coroutine { }, { FunctionRole::CoroutineRamp, FunctionRole::CoroutineBody, FunctionRole::AsyncWorker } },
         { CreatorRecord::BoundFunction { }, { FunctionRole::BoundFunction } },
         { CreatorRecord::ResultWrapper { }, { FunctionRole::ResultWrapper } },
@@ -1067,6 +1069,113 @@ static void forEachTypeVisitsEveryPosition()
     AOT_TEST_CHECK(hasElements(visited, { TypeID(100u), TypeID(101u), TypeID(102u), TypeID(103u), TypeID(104u), TypeID(106u) }));
 }
 
+static void parkedBodyThatEndsInWordsOfNoBytesComesBack()
+{
+    Function::Blocks::Storage blocks;
+    Function::Values::Storage values;
+    blocks.grow(3);
+    ParkedBody parked(blocks, values);
+    AOT_TEST_CHECK(parked && blocks.isEmpty());
+    parked.takeInto(blocks, values);
+    AOT_TEST_CHECK(!parked && blocks.size() == 3 && values.isEmpty());
+    AOT_TEST_CHECK(blocks[2].values.isEmpty() && blocks[2].parameters.isEmpty());
+}
+
+static void parkedBodyKeepsWordsThatDifferByEverySize()
+{
+    constexpr std::array<uint32_t, 8> steps { 0, 1, 0x7f, 0x80, 0x7fff, 0x8000, 0x12345678, 0xffffff00 };
+    for (unsigned numberOfValues : { 1u, 2u, 3u, 4u, 5u, 31u, 700u }) {
+        uint32_t state = numberOfValues;
+        uint32_t word = 0;
+        auto nextWord = [&] {
+            state = state * 1664525 + 1013904223;
+            return word += steps[state >> 29];
+        };
+        auto forEachWord = [&](Function::Blocks::Storage& blocks, Function::Values::Storage& values, auto&& visit) {
+            state = numberOfValues;
+            word = 0;
+            for (unsigned index = 0; index < numberOfValues; ++index) {
+                visit(values[index].type, TypeID(nextWord()));
+                for (unsigned operand = 0; operand < index % 9; ++operand)
+                    visit(values[index], operand + 2, ValueID(nextWord()));
+            }
+            for (Block& block : blocks)
+                visit(block.subject, ValueID(nextWord()));
+        };
+        Function::Blocks::Storage blocks;
+        Function::Values::Storage values;
+        blocks.grow(numberOfValues / 3 + 1);
+        for (unsigned index = 0; index < numberOfValues; ++index)
+            values.append(Value(Opcode::Call));
+        forEachWord(blocks, values, WTF::makeVisitor(
+            [](auto& field, auto id) { field = id; },
+            [](Value& value, unsigned, ValueID id) { value.appendVariadicOperand(id); }));
+        ParkedBody parked(blocks, values);
+        parked.takeInto(blocks, values);
+        AOT_TEST_CHECK(values.size() == numberOfValues && blocks.size() == numberOfValues / 3 + 1);
+        forEachWord(blocks, values, WTF::makeVisitor(
+            [](auto& field, auto id) { AOT_TEST_CHECK(field == id); },
+            [](Value& value, unsigned operand, ValueID id) { AOT_TEST_CHECK(value.operand(operand) == id); }));
+    }
+}
+
+static Vector<Function> functionsWithAndWithoutBodies(unsigned count)
+{
+    Vector<Function> functions(count);
+    for (unsigned index = 0; index < count; ++index) {
+        if (index % 3 == 1)
+            continue;
+        functions[index].storageOfBlocks().grow(index % 5 + 1);
+        functions[index].storageOfValues().grow(index % 7);
+    }
+    return functions;
+}
+
+static bool hasItsBody(const Function& function, unsigned index)
+{
+    if (index % 3 == 1)
+        return !function.hasBody() && function.blocks.isEmpty() && function.values.isEmpty();
+    return function.hasBody() && function.blocks.size() == index % 5 + 1 && function.values.size() == index % 7;
+}
+
+static void parkedBodiesComeBackAtTheFirstRead()
+{
+    Vector<Function> functions = functionsWithAndWithoutBodies(12);
+    ParallelLoops loops(1);
+    ParkedBodies parked(functions.mutableSpan(), loops);
+    AOT_TEST_CHECK(parked.numberOfParkedFunctions() == 8);
+    AOT_TEST_CHECK(functions[0].hasBody() && functions[0].blocks.isEmpty() && !functions[1].hasBody());
+    AOT_TEST_CHECK(hasItsBody(parked.at(FunctionID(5u)), 5) && hasItsBody(parked.at(FunctionID(5u)), 5) && hasItsBody(parked.at(FunctionID(4u)), 4));
+    AOT_TEST_CHECK(parked.numberTakenBackAtRead() == 1 && functions[6].blocks.isEmpty());
+    parked.parkAgain();
+    AOT_TEST_CHECK(hasItsBody(functions[5], 5) && hasItsBody(parked.at(FunctionID(6u)), 6));
+    parked.parkAgain();
+    AOT_TEST_CHECK(functions[5].hasBody() && functions[5].blocks.isEmpty() && hasItsBody(functions[6], 6));
+    AOT_TEST_CHECK(hasItsBody(parked.at(FunctionID(5u)), 5) && parked.numberTakenBackAtRead() == 3);
+    parked.takeAllBack();
+    for (unsigned index = 0; index < functions.size(); ++index)
+        AOT_TEST_CHECK(hasItsBody(functions[index], index) && !functions[index].bodyIsReleased);
+}
+
+static void parkedBodiesComeBackOnceUnderManyThreads()
+{
+    constexpr unsigned numberOfFunctions = 96;
+    constexpr unsigned numberOfWorkers = 16;
+    ParallelLoops loops(numberOfWorkers);
+    for (unsigned round = 0; round < 200; ++round) {
+        Vector<Function> functions = functionsWithAndWithoutBodies(numberOfFunctions);
+        ParkedBodies parked(functions.mutableSpan(), loops);
+        forEachIndexInParallel(loops, numberOfWorkers * 64, [&](unsigned turn) {
+            unsigned index = (turn * 7 + round) % (numberOfFunctions / 2);
+            AOT_TEST_CHECK(hasItsBody(parked.at(FunctionID(index)), index));
+        });
+        AOT_TEST_CHECK(parked.numberTakenBackAtRead() == numberOfFunctions / 2 - numberOfFunctions / 6);
+        parked.takeAllBack();
+        for (unsigned index = 0; index < numberOfFunctions; ++index)
+            AOT_TEST_CHECK(hasItsBody(functions[index], index));
+    }
+}
+
 #define FOR_EACH_AOT_IR_TEST(v) \
     v(compactListAppendInsertRemove) v(compactListAppendOwnSpan) v(compactListCopyAndMove) v(compactListRemoveAtEnd) v(compactListEmptyOperationsLeaveSharedHeader) \
     v(compactListStoresSingleElementInline) v(inlineListSpillsAndShrinksToFit) v(inlineListCopiesElementsInPlace) v(inlineListMovesAndDestroysElements) v(outOfLineOptionalMatchesStdOptional) \
@@ -1083,7 +1192,8 @@ static void forEachTypeVisitsEveryPosition()
     v(recordFitsRoleForEveryRole) v(entryParameterPositions) v(declaredEntryTypeOfCalleeIsFunction) v(declaredEntryTypeOfEachPosition) \
     v(unsplitAsyncFunctionHasNoOrdinaryFrame) v(coroutineBodyHasNoCapability) v(hiddenByFlagOrCapability) \
     v(locationOfInlinedValue) v(locationWithoutFrameModuleIsCallSite) v(locationOfMalformedFrameListIsAbsent) \
-    v(compactDropsUnreachableCycle) v(compactDropsUnlistedValue) v(compactKeepsCompactFunction) v(compactRenumbersInBlockOrder) v(forEachTypeVisitsEveryPosition)
+    v(compactDropsUnreachableCycle) v(compactDropsUnlistedValue) v(compactKeepsCompactFunction) v(compactRenumbersInBlockOrder) v(forEachTypeVisitsEveryPosition) \
+    v(parkedBodyThatEndsInWordsOfNoBytesComesBack) v(parkedBodyKeepsWordsThatDifferByEverySize) v(parkedBodiesComeBackAtTheFirstRead) v(parkedBodiesComeBackOnceUnderManyThreads)
 
 std::span<const NativeTest> irTests()
 {

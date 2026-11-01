@@ -37,6 +37,8 @@ JS_EXPORT_PRIVATE unsigned length(JSObject* callee);
 // Of a slim closure. It looks for neither property.
 JS_EXPORT_PRIVATE bool canAssumeNameAndLengthAreOriginal(VM&, JSObject* callee);
 JS_EXPORT_PRIVATE JSValue sourceText(JSGlobalObject*, JSObject* callee);
+// The string that sourceText() returned for the callee's function, if it is still alive. Does not allocate.
+JSString* sourceStringIfCreated(VM&, JSObject* callee);
 JS_EXPORT_PRIVATE FunctionKind kind(JSObject* callee);
 JS_EXPORT_PRIVATE bool isBoundFunction(JSObject* callee);
 
@@ -61,6 +63,7 @@ JS_EXPORT_PRIVATE bool belongsToBuiltinModule(JSCell*);
 JS_EXPORT_PRIVATE bool isCompiledClassObject(JSFunction*);
 JS_EXPORT_PRIVATE bool isClosureOf(JSCell*, FunctionID);
 std::optional<FunctionID> functionOf(const JSCell*);
+std::optional<uint32_t> closureNumberOf(const JSCell*);
 
 } // namespace AOT
 } // namespace JSC

@@ -9,35 +9,35 @@ function f0 name="underAnotherKey" parameters=[{type=anything}, {type=anything}]
     ReturnCall v2
 }
 # CHECK: f0: size=[[other]] frame=
-# CHECK-NEXT: stub CallValue.n1 x1
+# CHECK-NEXT: stub CallValue.InTailPosition.n1 x1
 # CHECK-NEXT: stub ThrowUnlessCallable x1
 # CHECK-NEXT: f1: size=
 function f1 name="call" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
     v2 = Call v1, v0, v0 calleeKey="call" calleeName="f.call" @30
     ReturnCall v2
 }
-# CHECK-NEXT: stub CallValue.n1 x1
+# CHECK-NEXT: stub CallValue.InTailPosition.n1 x1
 # CHECK-NEXT: stub ThrowUnlessForwardedCalleeIsCallable x1
 # CHECK-NEXT: f2: size=
 function f2 name="apply" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
     v2 = Call v1, v0, v0 calleeKey="apply" calleeName="f.apply" @30
     ReturnCall v2
 }
-# CHECK-NEXT: stub CallValue.n1 x1
+# CHECK-NEXT: stub CallValue.InTailPosition.n1 x1
 # CHECK-NEXT: stub ThrowUnlessForwardedCalleeIsCallable x1
 # CHECK-NEXT: f3: size=[[other]] frame=
 function f3 name="callOfFunction" parameters=[{type=function}, {type=anything}] results=[{type=anything}] {
     v2 = Call v1, v0, v0 calleeKey="call" calleeName="f.call" @30
     ReturnCall v2
 }
-# CHECK-NEXT: stub CallValue.n1 x1
+# CHECK-NEXT: stub CallValue.InTailPosition.n1 x1
 # CHECK-NEXT: stub ThrowUnlessCallable x1
 # CHECK-NEXT: f4: size=
 function f4 name="callWithList" parameters=[{type=anything}, {type=anything}, {type=Array}] results=[{type=anything}] {
     v3 = CallList v1, v0, v2 calleeKey="call" calleeName="f.call" @30
     ReturnCall v3
 }
-# CHECK-NEXT: stub CallWithArray x1
+# CHECK-NEXT: stub CallWithArray.InTailPosition x1
 # CHECK-NEXT: stub ThrowUnlessForwardedCalleeIsCallable x1
 # CHECK-NEXT: f5: size=
 function f5 name="calleeIsTheBuiltin" parameters=[{type=anything}] results=[{type=anything}] {

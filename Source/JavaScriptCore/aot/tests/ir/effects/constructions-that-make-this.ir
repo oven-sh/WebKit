@@ -69,7 +69,7 @@ function f6 name="calls" parameters=[{type=f0}, {type=object}] results=[{type=un
     Return
 }
 # CHECK-LABEL: function f6
-# CHECK-NEXT: v2 Call: none
+# CHECK-NEXT: v2 Call: throwsForLackOfStack
 function f7 name="callsWhatConstructs" parameters=[{type=f0}, {type=anything}, {type=function}, {type=Array}] results=[{type=undefined}] {
     v4 = CallDirect v0, v1, v2, v3 function=f3
     Return

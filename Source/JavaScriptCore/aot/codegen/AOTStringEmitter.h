@@ -83,9 +83,11 @@ public:
     String textOf(StringID) const;
 
     Word32 lengthOf(ValueID string);
+    Word32 lengthOf(LiteralStringWord, const Type&);
     Word32 lengthOf(CellPointer string);
     CharacterView viewOf(const OperationContext&, ValueID string);
     CharacterView viewOfFlatString(CellPointer flat);
+    Pointer implOfFlatString(CellPointer flat);
     CharacterView viewOfString(const OperationContext&, CellPointer string);
     CharacterView subview(const CharacterView&, CodeUnitRange);
 
@@ -100,10 +102,18 @@ public:
 
     enum class StringIdentity : bool { Unknown, Distinct };
     Condition areEqual(const OperationContext&, CellPointer, CellPointer, StringIdentity = StringIdentity::Unknown);
+    // Neither string is a rope.
+    Condition areBoth8Bit(CellPointer, CellPointer);
     Word32 order(const OperationContext&, CellPointer, CellPointer);
     Word32 orderToCharacter(const CharacterView&, char16_t codeUnit);
-    Condition equalsLiteral(const OperationContext&, ComparedOperand, LValue subject, StringID, bool subjectIsFlat = false, bool everyCellIsString = false);
-    void branchOnEqualsLiteral(const OperationContext&, ComparedOperand, LValue subject, StringID, BranchTargets, bool subjectIsFlat = false, bool everyCellIsString = false);
+    Condition equalsLiteral(const OperationContext&, ComparedOperand, LValue subject, StringID, bool subjectIsFlat = false, bool everyCellIsString = false, bool subjectIsComparedAgain = false);
+    void branchOnEqualsLiteral(const OperationContext&, ComparedOperand, LValue subject, StringID, BranchTargets, bool subjectIsFlat = false, bool everyCellIsString = false, bool subjectIsComparedAgain = false);
+    // Where the atom of a name of the image lies. In an image that may lie anywhere the atom is made on demand: `exists` says whether it has been.
+    struct AtomOfName {
+        Pointer address;
+        std::optional<Condition> exists;
+    };
+    AtomOfName atomOfName(uint32_t identifierNumber);
     // For a subject that the comparison in place cannot answer: a rope, a 16-bit string.
     void branchOnEqualsLiteralByStub(const OperationContext&, ComparedOperand, LValue subject, StringID, BranchTargets);
     Condition hasTextAt(const CharacterView&, Word32 offset, StringID);
@@ -124,7 +134,6 @@ public:
 private:
     Word32 flagsInImpl(Pointer impl, bool isImmutable);
     CharacterSource sourceInImpl(Pointer impl, bool isImmutable);
-    Pointer implOfFlatString(CellPointer flat);
     CharacterSource sourceOfRope(const OperationContext&, CellPointer rope, Pointer fiber);
     CharacterView viewOfSource(const CharacterSource&, CellPointer owner);
     CellPointer substringBaseOf(CellPointer rope);
@@ -134,6 +143,7 @@ private:
     void generateEndsLiteral(const ValueContext&, LiteralEnd);
     void generateFindLiteral(const ValueContext&, SearchDirection);
     bool comparesLiteralInPlace(const OperationContext&, const String& text) const;
+    bool isSubjectComparedAgain(const ValueContext&);
     void branchOnBytesAt(Pointer address, std::span<const uint8_t> bytes, const B3::AbstractHeap&, CellPointer owner, BranchTargets);
     Integer truncateToInteger(Number position);
     StringPosition truncatedPositionOf(Number position, StringRangeMethod);
@@ -145,6 +155,8 @@ private:
     };
     // What FlattenString has read where it made the flat string, which is in front of every reader of it.
     UncheckedKeyHashMap<LValue, OpenedString> m_openedStrings;
+    // The comparisons with a literal whose subject another one compares too, in front of it or behind it on every way.
+    std::optional<HashSet<ValueID>> m_comparisonsOfSharedSubjects;
 };
 
 template<typename T>

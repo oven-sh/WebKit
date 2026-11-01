@@ -4,11 +4,11 @@ enum InitializationState { | engine Unknown StoredBeforeEveryRead SetAtCreation 
 enum ReadState { | engine Unknown OnlyCalled OnlyAccessed NeverRead OnlyWhereDefined }
 enum ClosureDeferral { | engine Unknown CapturesNothing CapturesObject CapturesEnvironment }
 enum Occupancy { | engine Unknown FilledAtBirth FilledWithValueAtBirth AlwaysFilled }
-enum PrototypeNameState { | engine Unknown AbsentOnPrototypes }
+enum PrototypeNameState { | engine Unknown AbsentOnPrototypes AccessorOnPrototypes }
 enum ExecutionCount { | engine Unknown AtMostOnce }
 enum AllocationState { | engine Unknown NeverAllocated }
 enum KeyEnumeration { | engine Unknown NeverEnumerated }
-enum FieldCreation { | engine Unknown OnlyAtConstruction }
+enum FieldCreation { | engine Unknown OnlyAtConstruction OnlyBeforeObjectIsFinished }
 enum MemberMutability { | engine Unknown Fixed }
 enum BaseState { | engine Unknown None Layout BuiltinClass }
 enum FrameLocality { | engine Unknown FrameLocal }
@@ -33,14 +33,16 @@ record LocationFlow engine {
 record FieldFlow engine { location: LocationFlow occupancy: Occupancy prototypeName: PrototypeNameState stability: FieldStability }
 record FieldOrder engine { fields: List<UInt32> }
 record LayoutFlow engine {
-    allocation: AllocationState baseState: BaseState base: Layout? baseClass: BuiltinClass? members: List<Layout> allocationClasses: List<AllocationClass>
+    allocation: AllocationState baseState: BaseState base: Layout? baseClass: BuiltinClass? commonAncestor: Layout? intermediateClasses: List<Layout>
+    members: List<Layout> allocationClasses: List<AllocationClass>
     constructorOrders: List<FieldOrder> fieldCreation: FieldCreation observedUses: ObservedUse cause: UnprovenCause witness: Witness
     impossibleMutations: ObjectMutation keys: KeyEnumeration addedKeys: List<PropertyKey> addedKeysAreComplete: Bool
     isReachedThroughUnknownReceivers: Bool ownAccessors: List<ClassMember> ownAccessorsAreComplete: Bool closureEnvironmentField: UInt32?
+    neverEscapes: Bool
 }
 record ClassMember engine {
     key: PropertyKey? side: ClassSide kind: MethodKind function: Function(Dispatch)? mutability: MemberMutability closureUse: ClosureUse
-    isWritableData: Bool
+    isWritableData: Bool isAssignedByProgram: Bool isDefinedAfterObjectsAreMade: Bool
 }
 record ClassFlow engine {
     evaluations: ExecutionCount prototypeLink: MemberMutability staticLink: MemberMutability constructorProperty: MemberMutability
@@ -52,7 +54,7 @@ record FunctionFlow engine {
     reachability: FunctionReachability callers: CallerState executions: ExecutionCount closureUse: ClosureUse
     cause: UnprovenCause witness: Witness
 }
-record ModuleFlow engine { namespaceUse: NamespaceUse exportsReadByName: List<Variable> }
+record ModuleFlow engine { namespaceUse: NamespaceUse exportsReadByName: List<Variable> exportsClosedToOutside: List<Variable> }
 record BuiltinLocationFlow engine { holder: Builtin key: PropertyKey state: BuiltinLocationState witness: Witness }
 
 record LayoutSet engine handwrittenStruct { members: List<Layout> isComplete: Bool }

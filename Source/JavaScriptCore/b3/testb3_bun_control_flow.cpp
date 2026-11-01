@@ -12,6 +12,8 @@
 #include "B3InferSwitches.h"
 #include "B3LowerMacros.h"
 #include "B3SplitBranchConditions.h"
+#include <functional>
+#include <wtf/WeakRandom.h>
 
 static void buildSwitchOnSmallValues(Procedure& proc, const Vector<int64_t>& values, uint64_t numberOfTargets = 1)
 {
@@ -268,6 +270,118 @@ static void testInferSwitchesManyCases()
     CHECK_EQ(invoke<int64_t>(*code, 200 * 7, 0), -1);
 }
 
+// `a == v0 || a == v1 || a == v2 || a == v3` or `a != v0 && a != v1 && a != v2 && a != v3`, used as a value.
+static void buildComparisonChainUsedAsValue(Procedure& proc, B3::Opcode comparison, const Vector<int32_t>& values)
+{
+    Graph graph { proc };
+    BasicBlock* block = proc.addBlock();
+    BasicBlock* shortCircuit = proc.addBlock();
+    BasicBlock* join = proc.addBlock();
+    Value* subject = graph.make(block, Trunc, cCallArgumentValues<int64_t>(proc, block)[0]);
+    Value* phi = graph.phi(join, Int32);
+    for (unsigned i = 0; i + 1 < values.size(); ++i) {
+        BasicBlock* next = proc.addBlock();
+        Value* condition = graph.make(block, comparison, subject, graph.int32(block, values[i]));
+        if (comparison == Equal)
+            graph.branch(block, condition, shortCircuit, next);
+        else
+            graph.branch(block, condition, next, shortCircuit);
+        block = next;
+    }
+    graph.upsilon(block, graph.make(block, comparison, subject, graph.int32(block, values.last())), phi);
+    graph.jump(block, join);
+    graph.upsilon(shortCircuit, graph.int32(shortCircuit, comparison == Equal), phi);
+    graph.jump(shortCircuit, join);
+    graph.ret(join, phi);
+    proc.resetReachability();
+}
+
+static void testInferSwitchesMergesComparisonUsedAsValue()
+{
+    struct Case {
+        Vector<int32_t> values;
+        bool fitsInOneBitTest;
+    };
+    for (B3::Opcode comparison : { Equal, NotEqual }) {
+        for (const Case& testCase : { Case { { 32, 9, 10, 13 }, true }, Case { { 100, 163, 101, 140 }, true }, Case { { 32, 9, 10, 73 }, false }, Case { { 32, 9, 10 }, false } }) {
+            for (bool usesPolicy : { false, true }) {
+                bool isMerged = usesPolicy && testCase.fitsInOneBitTest;
+                Procedure inferred(usesPolicy ? bitTestPolicy() : Policy());
+                buildComparisonChainUsedAsValue(inferred, comparison, testCase.values);
+                CHECK(inferSwitches(inferred));
+                validate(inferred);
+                CHECK_EQ(numberOfValues(inferred, Switch), 1u);
+                CHECK_EQ(inferred.at(0)->last()->as<SwitchValue>()->numCaseValues(), testCase.values.size() - !isMerged);
+                CHECK_EQ(numberOfValues(inferred, comparison), isMerged ? 0u : 1u);
+                CHECK(lowerMacros(inferred));
+                validate(inferred);
+                if (isMerged) {
+                    CHECK_EQ(numberOfValues(inferred, Branch), 0u);
+                    CHECK_EQ(numberOfValues(inferred, ZShr), 1u);
+                }
+
+                Procedure proc(usesPolicy ? bitTestPolicy() : Policy());
+                buildComparisonChainUsedAsValue(proc, comparison, testCase.values);
+                auto code = compileProc(proc);
+                for (int64_t value = -70; value <= 240; ++value)
+                    CHECK_EQ(invoke<int32_t>(*code, value), static_cast<int32_t>(testCase.values.contains(static_cast<int32_t>(value)) == (comparison == Equal)));
+            }
+        }
+    }
+}
+
+// Both targets of the bit test only produce a constant.
+static void testBitTestBetweenConstantsIsBranchless()
+{
+    struct Case {
+        int64_t ifMatched;
+        int64_t otherwise;
+        bool usesSelect;
+    };
+    const Vector<int64_t> values { 9, 10, 13, 32 };
+    for (const Case& testCase : { Case { 1, 0, false }, Case { 0, 1, false }, Case { 7, 6, true }, Case { -1, 40, true } }) {
+        for (bool usesPhi : { false, true }) {
+            auto build = [&](Procedure& proc) {
+                Graph graph { proc };
+                BasicBlock* root = proc.addBlock();
+                BasicBlock* matched = proc.addBlock();
+                BasicBlock* otherwise = proc.addBlock();
+                BasicBlock* join = proc.addBlock();
+                Value* phi = graph.phi(join, Int64);
+                SwitchValue* switchValue = root->appendNew<SwitchValue>(proc, Origin(), cCallArgumentValues<int64_t>(proc, root)[0]);
+                switchValue->setFallThrough(FrequentedBlock(otherwise));
+                for (int64_t value : values)
+                    switchValue->appendCase(SwitchCase(value, FrequentedBlock(matched)));
+                auto produce = [&](BasicBlock* block, int64_t constant) {
+                    if (!usesPhi) {
+                        graph.ret(block, graph.int64(block, constant));
+                        return;
+                    }
+                    graph.upsilon(block, graph.int64(block, constant), phi);
+                    graph.jump(block, join);
+                };
+                produce(matched, testCase.ifMatched);
+                produce(otherwise, testCase.otherwise);
+                graph.ret(join, phi);
+                proc.resetReachability();
+            };
+            Procedure lowered(bitTestPolicy());
+            build(lowered);
+            CHECK(lowerMacros(lowered));
+            validate(lowered);
+            CHECK_EQ(numberOfValues(lowered, Branch), 0u);
+            CHECK_EQ(numberOfValues(lowered, ZShr), 1u);
+            CHECK_EQ(numberOfValues(lowered, Select), testCase.usesSelect ? 1u : 0u);
+
+            Procedure proc(bitTestPolicy());
+            build(proc);
+            auto code = compileProc(proc);
+            for (int64_t value = -70; value <= 140; ++value)
+                CHECK_EQ(invoke<int64_t>(*code, value), values.contains(value) ? testCase.ifMatched : testCase.otherwise);
+        }
+    }
+}
+
 static void testInferSwitchesStopsAtRareEdge()
 {
     constexpr unsigned degree = 8;
@@ -517,6 +631,70 @@ static void testSplitBranchConditionsKeepsOtherConditions()
     });
 }
 
+static void testSplitBranchConditionsOfAnyShape()
+{
+    using Holds = std::function<bool(int64_t, int64_t)>;
+    struct Condition {
+        Value* value;
+        Holds holds;
+    };
+    WeakRandom random(1);
+    for (unsigned round = 0; round < 300; ++round) {
+        BranchOnTwoConditions test;
+        unsigned numberOfParts = 2 + random.getUint32(14);
+        Value* sum = test.make(Add, test.x, test.y);
+        Value* shared = nullptr;
+        int64_t addedToShared = 0;
+        Vector<Condition> conditions;
+        for (unsigned part = 0; part < numberOfParts; ++part) {
+            if (!shared || !random.getUint32(3)) {
+                addedToShared = random.getUint32(16);
+                shared = test.make(Add, sum, test.int64(addedToShared));
+            }
+            int64_t added = addedToShared;
+            int64_t bit = 1ll << random.getUint32(5);
+            conditions.append({ test.isBitSet(shared, bit), [=](int64_t x, int64_t y) { return !!((x + y + added) & bit); } });
+        }
+        while (conditions.size() > 1) {
+            unsigned at = random.getUint32(conditions.size() - 1);
+            bool isAnd = random.getUint32(2);
+            Holds left = conditions[at].holds;
+            Holds right = conditions[at + 1].holds;
+            conditions[at] = { test.make(isAnd ? BitAnd : BitOr, conditions[at].value, conditions[at + 1].value), [=](int64_t x, int64_t y) { return isAnd ? left(x, y) && right(x, y) : left(x, y) || right(x, y); } };
+            conditions.removeAt(at + 1);
+        }
+        CHECK(test.split(conditions[0].value));
+
+        CHECK_EQ(numberOfValues(test.proc, Branch), numberOfParts);
+        CHECK_EQ(numberOfJoinedConditions(test.proc), 0u);
+        auto code = compileProc(test.proc);
+        int64_t memory[1] = { 3 };
+        for (int64_t x = 0; x < 64; ++x)
+            CHECK_EQ(invoke<int64_t>(*code, x, round, memory), conditions[0].holds(x, round) ? 1 : 2);
+    }
+}
+
+static void testSplitBranchConditionsOfLongChains()
+{
+    constexpr unsigned numberOfParts = 3000;
+    for (bool growsToTheLeft : { true, false }) {
+        BranchOnTwoConditions test;
+        Vector<Value*> parts;
+        for (unsigned part = 0; part < numberOfParts; ++part)
+            parts.append(test.isBitSet(test.make(Add, test.x, test.int64(part * 2)), 1));
+        Value* condition = growsToTheLeft ? parts.first() : parts.last();
+        for (unsigned part = 1; part < numberOfParts; ++part)
+            condition = growsToTheLeft ? test.make(BitAnd, condition, parts[part]) : test.make(BitAnd, parts[numberOfParts - 1 - part], condition);
+        CHECK(test.split(condition));
+
+        CHECK_EQ(numberOfValues(test.proc, Branch), numberOfParts);
+        CHECK_EQ(numberOfJoinedConditions(test.proc), 0u);
+        CHECK(test.root->last()->child(0) == parts.first());
+        CHECK_EQ(numberOfValues(test.root, Add), 1u);
+        test.checkResults({ { 1, 0, 1 }, { 2, 0, 2 } });
+    }
+}
+
 static void testSplitBranchConditionsLeavesCompareChainsToARM64()
 {
     BranchOnTwoConditions test;
@@ -690,6 +868,8 @@ void addBunControlFlowTests(const TestConfig* config, BunTestTasks& tasks)
 {
     RUN(testSwitchOnSmallValuesBecomesBitTestWithoutSubtraction());
     RUN(testInferSwitchesManyCases());
+    RUN(testInferSwitchesMergesComparisonUsedAsValue());
+    RUN(testBitTestBetweenConstantsIsBranchless());
     RUN(testInferSwitchesStopsAtRareEdge());
     RUN(testSwitchWhoseArmsChooseNumbersLoadsFromTable());
     RUN(testInferSwitchesIgnoresTestOfOtherValue());
@@ -698,6 +878,8 @@ void addBunControlFlowTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testSplitBranchConditionsNested());
     RUN(testSplitBranchConditionsKeepsLoadAboveStore());
     RUN(testSplitBranchConditionsKeepsOtherConditions());
+    RUN(testSplitBranchConditionsOfAnyShape());
+    RUN(testSplitBranchConditionsOfLongChains());
     RUN(testSplitBranchConditionsLeavesCompareChainsToARM64());
     RUN(testSplitBranchConditionsSplitsUnselectableCompareChains());
     RUN(testLargePredecessorLists());

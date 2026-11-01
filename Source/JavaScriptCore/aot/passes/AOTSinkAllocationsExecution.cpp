@@ -12,6 +12,7 @@
 #include "AOTBuiltinTypes.h"
 #include "AOTEffectsOfOperands.h"
 #include "AOTFlowApply.h"
+#include "AOTFrameAllocationPlanner.h"
 #include "AOTSort.h"
 #include "AOTVector.h"
 #include "MathCommon.h"
@@ -236,7 +237,7 @@ void ObjectInterpreter::executeByInterpretation(ValueID id)
     case Interpretation::Guards:
         return executeGuards(id);
     case Interpretation::None:
-        return familyOf(function().at(id).opcode) == OperationFamily::RuntimeValidation ? executeRuntimeValidation(id) : executeOther(id);
+        return goesWithUnbuiltOperands(function().at(id).opcode) ? executeRuntimeValidation(id) : executeOther(id);
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -272,6 +273,8 @@ void ObjectInterpreter::executeAllocation(ValueID id)
         VirtualObjectID held = objectOf(value);
         if (!held)
             continue;
+        if (m_sinking.at(held).isJoin && m_sinking.at(held).family == m_sinking.at(object).family)
+            m_sinking.abandonJoinsOfFamilyOf(object);
         if (canHold(object, field, held)) {
             state.hold(field, held);
             continue;
@@ -279,7 +282,22 @@ void ObjectInterpreter::executeAllocation(ValueID id)
         if (!stateOf(held)->isCell())
             build(held, causeOf(id, findOperandIndex(function().at(id), value)));
     }
+    // An iterator is born in front of the first element.
+    const bool isIterator = description.kind == VirtualObjectKind::ArrayIterator || description.kind == VirtualObjectKind::CollectionIterator;
+    std::optional<uint32_t> position = isIterator ? family.findField(VirtualField::part(VirtualFieldKind::Position)) : std::nullopt;
+    // A Set or Map iterator made here has seen no table: its first step takes the one the collection holds then, which finds what the table of now would find.
+    std::optional<uint32_t> table = description.kind == VirtualObjectKind::CollectionIterator ? family.findField(VirtualField::part(VirtualFieldKind::Table)) : std::nullopt;
+    for (std::optional<uint32_t> born : { position, table }) {
+        if (!born)
+            continue;
+        for (ObjectVariant& variant : state.variants)
+            variant.shape = family.intern(shapeAfterStore(family, m_sinking.orders(), family.at(variant.shape), *born));
+    }
     const ObjectState& added = m_state.add(object, WTF::move(state));
+    if (position && isRewriting())
+        values().ensure(object).setField(*position, cursor().builder().appendInteger(0));
+    if (table && isRewriting())
+        values().ensure(object).setField(*table, cursor().builder().append(Opcode::Null, { }));
     if (description.kind == VirtualObjectKind::Object) {
         for (auto [field, value] : initialFields)
             willStore(m_sinking, object, added, field, { function().at(value).type });
@@ -308,6 +326,8 @@ void ObjectInterpreter::executeCast(ValueID id)
         return executeOther(id);
 
     VariantCastOutcomes outcomes = evaluateCastOnVariants(m_sinking.shapeContext(object), *stateOf(object), function().at(id));
+    if (function().at(id).opcode == Opcode::AssumeType)
+        narrowToProvenType(object, function().at(id).provenType());
     if (outcomes.canSplit())
         splitThrowingVariants(id, object, outcomes.throwingTagBits);
     else if (!outcomes.alwaysPasses()) {
@@ -316,8 +336,11 @@ void ObjectInterpreter::executeCast(ValueID id)
         return;
     }
 
-    if (function().at(id).opcode == Opcode::AssumeType)
+    if (function().at(id).opcode == Opcode::AssumeType) {
         stateOf(object)->assume(function().at(id).provenType());
+        // `L|ArrayIterator<pristine>` is proven of the result of a helper. Of the iterator that says more than either type alone.
+        assumeTypeOfAlias(object, function().at(id).type);
+    }
     if (!m_sinking.decisions().holdsCells(id)) {
         bind(id, object);
         return;
@@ -425,16 +448,21 @@ void ObjectInterpreter::holdMembersOfUnbuiltObjects(ValueID suspension)
     if (unbuilt.isEmpty())
         return;
 
+    // The objects of the state may be as many as the function has closures, and a suspension reaches a few.
     BitVector isReached;
+    Vector<VirtualObjectID, 8> reached;
     while (!unbuilt.isEmpty()) {
         VirtualObjectID object = unbuilt.takeLast();
         if (!isReached.add(object.index()))
             continue;
         if (const ObjectState* state = m_state.find(object)) {
+            if (!isBuilt.get(object.index()))
+                reached.append(object);
             for (const HeldObject& member : state->heldObjects)
                 unbuilt.append(member.object);
         }
     }
+    AOT::sort(reached);
 
     Function& rewritten = cursor().builder().function();
     BitVector isListed;
@@ -444,16 +472,15 @@ void ObjectInterpreter::holdMembersOfUnbuiltObjects(ValueID suspension)
         if (member && !isUnbuilt(objectOf(member)) && mayHoldObject(program().typeOf(rewritten, member)) && !isListed.set(member.index()))
             held.append(member);
     };
-    for (const ObjectEntry& entry : m_state.objects) {
-        if (isBuilt.get(entry.object.index()) || !isReached.get(entry.object.index()))
-            continue;
-        const ObjectValues* members = values().find(entry.object);
+    for (VirtualObjectID object : reached) {
+        const ObjectValues* members = values().find(object);
         if (!members)
             continue;
-        if (entry.state.hasCell())
+        const ObjectState& state = *m_state.find(object);
+        if (state.hasCell())
             hold(members->cell);
         // A member that is built holds its own members.
-        if (!entry.state.isCell())
+        if (!state.isCell())
             std::ranges::for_each(members->fields, hold);
     }
     setHeldOperands(rewritten.edit(suspension), held.span());
@@ -855,10 +882,22 @@ static TypeID typeOfCell(const AllocationSinking& sinking, VirtualObjectID objec
     return candidate.isJoin ? sinking.function().at(candidate.definition).type : sinking.descriptionOf(object).type;
 }
 
-static bool fieldValueFits(const AllocationSinking& sinking, VirtualObjectID object, const ObjectState& state, uint32_t field, TypeID type)
+static bool areElementsAssumedWithin(const Program& program, const ObjectState& state, TypeID type)
+{
+    return state.assumedTypes.containsIf([&](TypeID assumedType) {
+        const ClassPart* part = program.at(assumedType).findClassPart(BuiltinClasses::Array);
+        std::optional<ProvenValue<TypeID>> elements = part ? part->provenContentsAt(program.builtins(), ContentsSlot::Element) : std::nullopt;
+        return elements && isWithin(program, elements->value(), type);
+    });
+}
+
+static bool fieldValueFits(const AllocationSinking& sinking, VirtualObjectID object, const ObjectState& state, uint32_t field, TypeID type, FieldTypeProof admittedProof = FieldTypeProof::AssumedOfContents)
 {
     const VirtualFamily& family = sinking.familyOf(object);
+    bool isAssumedOfElements = admittedProof == FieldTypeProof::AssumedOfContents && family.fieldAt(field).kind == VirtualFieldKind::Element && areElementsAssumedWithin(sinking.program(), state, type);
     auto fitsIn = [&](const VirtualObjectDescription& description) {
+        if (isAssumedOfElements && description.kind == VirtualObjectKind::Array)
+            return true;
         return isWithin(sinking.program(), contentsOf(sinking.shapeContext(object), description, field), type);
     };
     return std::ranges::all_of(state.variants, [&](const ObjectVariant& variant) {
@@ -942,7 +981,7 @@ static bool isLateEdge(const VirtualObjectContext& context, const VirtualFamily&
 
 static void canonicalizeVariants(ObjectState& state)
 {
-    AOT::sort(state.variants);
+    AOT::sortInLine(state.variants);
     removeRepeatedElements(state.variants);
     state.normalize();
 }
@@ -971,7 +1010,7 @@ static ValueID emitValueOrUndefined(AllocationSinking& sinking, ObjectInterprete
 {
     std::optional<uint32_t> carriedBits = tagBitsWhenCarried(sinking.familyOf(object), *interpreter.state().find(object), field);
     RELEASE_ASSERT(carriedBits);
-    ValueID carried = interpreter.valueOfField(object, field, type);
+    ValueID carried = interpreter.valueOfFieldRead(object, field, type);
     ValueID none = sinking.cursor().builder().appendUndefined();
     return sinking.cursor().emitSelection(interpreter.emitTagTest(object, *carriedBits), carried, none, type);
 }
@@ -1076,7 +1115,7 @@ void ObjectInterpreter::finishRead(ValueID id, VirtualObjectID object, std::opti
         return;
     case FieldRead::Value:
         if (isRewriting())
-            replaceRead(id, valueOfField(object, *field, function().at(id).type));
+            replaceRead(id, valueOfFieldRead(object, *field, function().at(id).type));
         return;
     case FieldRead::ValueOrUndefined:
         if (isRewriting())
@@ -1183,7 +1222,19 @@ bool ObjectInterpreter::fitsType(VirtualObjectID object, TypeID type) const
 {
     const ObjectState* state = stateOf(object);
     RELEASE_ASSERT(state);
-    return isAssumedWithin(program(), *state, type) || fitsTypeWithoutCasts(object, type);
+    if (isAssumedWithin(program(), *state, type) || fitsTypeWithoutCasts(object, type))
+        return true;
+    // Every edge into a join passes a value of the parameter's type. What was assumed on one edge is lost where another passes a constant.
+    if (m_sinking.at(object).isJoin && isWithin(program(), typeOfCell(m_sinking, object), type))
+        return true;
+    // What was assumed about a result that may be absent holds, without null and undefined, for one that is present.
+    const VirtualFamily& family = m_sinking.familyOf(object);
+    bool isThere = std::ranges::all_of(state->variants, [&](const ObjectVariant& variant) {
+        return family.at(variant.shape).kind == VirtualShapeKind::Fields;
+    });
+    return isThere && state->assumedTypes.containsIf([&](TypeID assumedType) {
+        return program().at(assumedType).withoutNullish().isSubsetOf(program().at(type), program());
+    });
 }
 
 bool ObjectInterpreter::fitsTypeWithoutCasts(VirtualObjectID object, TypeID type) const
@@ -1231,14 +1282,18 @@ void ObjectInterpreter::executeDynamicElementRead(ValueID read, VirtualObjectID 
         return true;
     };
     bool findsElement = false;
+    bool fitsAsDeclared = false;
     auto takesEveryElement = [&] {
         if (!hasListedElements(object))
             return false;
         findsElement = findsElementAtEveryPosition();
+        if (!findsElement && (function().at(read).opcode == Opcode::GetArrayElement && function().at(read).isPresent()))
+            return false;
         if (!findsElement && !mayBeUndefined(program().at(type)))
             return false;
         const VirtualShape& shape = shapeOf(object, stateOf(object)->variants[0]);
-        return isWithin(program(), m_sinking.familyOf(object).descriptionOf(shape).elementType, type);
+        fitsAsDeclared = isWithin(program(), m_sinking.familyOf(object).descriptionOf(shape).elementType, type);
+        return fitsAsDeclared || areElementsAssumedWithin(program(), *stateOf(object), type);
     };
     if (!takesEveryElement())
         return executeOnCell(read, 0);
@@ -1248,7 +1303,7 @@ void ObjectInterpreter::executeDynamicElementRead(ValueID read, VirtualObjectID 
         return;
 
     ValueID none = findsElement ? ValueID() : emitUndefined();
-    Vector<ValueID, 8> elements = listedElementsOf(object);
+    Vector<ValueID, 8> elements = fitsAsDeclared ? listedElementsOf(object) : listedElementsOf(object, type, FieldTypeProof::AssumedOfContents);
     ValueID otherwise = findsElement ? elements.takeLast() : none;
     if (elements.isEmpty()) {
         replaceRead(read, otherwise);
@@ -1316,7 +1371,7 @@ void ObjectInterpreter::executeStore(ValueID id)
     }
     TypeID typeProvenByFlow;
     if (!canStore(object, *access, *field, stored)) {
-        if (opcode != Opcode::PropSet || !canStoreUnprovenValue(object, *access, *field))
+        if ((opcode != Opcode::PropSet && opcode != Opcode::PropDefine) || !canStoreUnprovenValue(object, *access, *field))
             return executeAccessOnCell(id, object);
         if (!objectOf(stored))
             typeProvenByFlow = typeOfFieldThatStaysInSlot(m_sinking, object, *stateOf(object), *field);
@@ -1331,7 +1386,9 @@ void ObjectInterpreter::executeStore(ValueID id)
         return executeAccessOnCell(id, object);
     }
 
-    if (VirtualObjectID held = objectOf(stored); held && !canHold(object, *field, held)) {
+    // These two answer with what they store, and the answer is a cell.
+    bool answersWithStored = opcode == Opcode::PutInternalField || opcode == Opcode::PutCollectionIteratorTable;
+    if (VirtualObjectID held = objectOf(stored); held && (!canHold(object, *field, held) || answersWithStored)) {
         requireCell(stored, BuildCause { .reasons = EscapeReason::StoredInEscapingObject });
         if (!stateOf(object)->isVirtual())
             return executeAccessOnCell(id, object);
@@ -1340,6 +1397,8 @@ void ObjectInterpreter::executeStore(ValueID id)
     if (typeProvenByFlow && isRewriting())
         stored = cursor().emit(makeAssumeType(stored, Proven::byFlowOfPosition(typeProvenByFlow)));
     storeField(object, *field, stored);
+    if (answersWithStored && isRewriting())
+        replaceRead(id, resolve(stored));
     return didFoldStores(object, 1);
 }
 
@@ -1362,7 +1421,7 @@ std::optional<uint32_t> ObjectInterpreter::fieldFor(VirtualObjectID object, cons
 
 bool ObjectInterpreter::canStore(VirtualObjectID object, const VirtualFieldAccess& access, uint32_t field, ValueID stored) const
 {
-    constexpr EnumSet<VirtualObjectKind> writableKinds { VirtualObjectKind::Object, VirtualObjectKind::Environment, VirtualObjectKind::Array, VirtualObjectKind::Arguments };
+    constexpr EnumSet<VirtualObjectKind> writableKinds { VirtualObjectKind::Object, VirtualObjectKind::Environment, VirtualObjectKind::Array, VirtualObjectKind::ArrayIterator, VirtualObjectKind::CollectionIterator, VirtualObjectKind::Arguments };
     const VirtualFamily& family = m_sinking.familyOf(object);
     const VirtualField& virtualField = family.fieldAt(field);
     TypeID storedType = function().at(stored).type;
@@ -1417,6 +1476,8 @@ bool ObjectInterpreter::canHold(VirtualObjectID holder, uint32_t field, VirtualO
 void ObjectInterpreter::storeField(VirtualObjectID object, uint32_t field, ValueID stored)
 {
     VirtualObjectID held = objectOf(stored);
+    if (held && m_sinking.at(held).isJoin && m_sinking.at(held).family == m_sinking.at(object).family)
+        m_sinking.abandonJoinsOfFamilyOf(object);
     if (held && !canHold(object, field, held)) {
         requireCell(stored, BuildCause { .reasons = EscapeReason::StoredInEscapingObject });
         held = { };
@@ -1503,12 +1564,22 @@ ValueID ObjectInterpreter::valueOfField(VirtualObjectID object, uint32_t field)
     return cellOf(held);
 }
 
-ValueID ObjectInterpreter::valueOfField(VirtualObjectID object, uint32_t field, TypeID typeInVariants)
+ValueID ObjectInterpreter::valueOfField(VirtualObjectID object, uint32_t field, TypeID typeInVariants, FieldTypeProof proof)
 {
     ValueID value = valueOfField(object, field);
     if (isWithin(program(), function().at(value).type, typeInVariants))
         return value;
-    return cursor().emit(makeAssumeType(value, Proven::byConstruction(typeInVariants)));
+    if (proof == FieldTypeProof::Declared)
+        return cursor().emit(makeAssumeType(value, Proven::byConstruction(typeInVariants)));
+    ValueID claim = cursor().emit(makeAssumeType(value, Proven::byFlow(typeInVariants, ProofScope::BehindChecks)));
+    m_sinking.tables().claimsAssumedOfContents.append(claim);
+    return claim;
+}
+
+ValueID ObjectInterpreter::valueOfFieldRead(VirtualObjectID object, uint32_t field, TypeID typeOfRead)
+{
+    bool fitsAsDeclared = fieldValueFits(m_sinking, object, *stateOf(object), field, typeOfRead, FieldTypeProof::Declared);
+    return valueOfField(object, field, typeOfRead, fitsAsDeclared ? FieldTypeProof::Declared : FieldTypeProof::AssumedOfContents);
 }
 
 ValueID ObjectInterpreter::emitUndefined()
@@ -1593,10 +1664,45 @@ static bool canBeBuiltByCaller(const Function& function, const VirtualObjectDesc
     return description.canBeBuilt && !description.staysInPlace && boundToOf(allocation.opcode) == BoundTo::Nothing;
 }
 
+// A list of substrings has no holes, so an element is present exactly when its index is below the length.
+// The test becomes that comparison. Both edges of its branch stay live and the list stays virtual on both.
+bool ObjectInterpreter::executePresenceTestOnDenseList(ValueID id)
+{
+    const Value& test = function().at(id);
+    if (test.opcode != Opcode::IsElementPresent)
+        return false;
+    VirtualObjectID list = objectOf(test.operand(0));
+    if (!list || !stateOf(list)->isVirtual() || stateOf(list)->variants.size() != 1)
+        return false;
+
+    const VirtualFamily& family = m_sinking.familyOf(list);
+    const VirtualShape& shape = singleShapeOf(list);
+    if (shape.kind != VirtualShapeKind::Fields)
+        return false;
+    const VirtualObjectDescription& description = family.descriptionOf(shape);
+    if (description.kind != VirtualObjectKind::BuiltinPrefix || !program().builtins().at(function().at(description.allocation).overload()).result.substringOf)
+        return false;
+
+    std::optional<int64_t> index = integerConstantThroughCasts(program(), function(), test.positionOperand());
+    std::optional<uint32_t> length = family.findField(VirtualField::part(VirtualFieldKind::Length));
+    if (!index || *index < 0 || !length || !hasStored(shape, *length))
+        return false;
+
+    m_state.setTest(TestEntry { id, list, std::nullopt, 0 });
+    if (isRewriting()) {
+        IRBuilder& builder = cursor().builder();
+        ValueID position = builder.appendInteger(*index);
+        replaceRead(id, builder.append(Opcode::Less, { position, values().find(list)->field(*length) }));
+    }
+    return true;
+}
+
 void ObjectInterpreter::executeTest(ValueID id)
 {
     if (testsLeftToRun.contains(function().at(id).opcode))
         return executeOther(id);
+    if (executePresenceTestOnDenseList(id) || executeBoundsTestOnArgumentList(id))
+        return;
 
     std::optional<TestEntry> entry = evaluateTestOn(id);
     if (!entry) {
@@ -1707,17 +1813,46 @@ void ObjectInterpreter::buildBeforeBranch(const Terminator& terminator)
     if (numberOfLiveTargets < 2)
         return;
 
+    auto holdsItsReferrer = [&](const ObjectEntry& entry) {
+        return std::ranges::any_of(entry.state.heldObjects, [&](const HeldObject& held) {
+            return m_state.canReach(held.object, entry.object);
+        });
+    };
     Vector<VirtualObjectID, 4> objects;
     for (const ObjectEntry& entry : m_state.objects) {
-        if (!entry.state.isCell() && m_sinking.at(entry.object).isBuiltBeforeBranches)
+        if (entry.state.isCell())
+            continue;
+        const Candidate& candidate = m_sinking.at(entry.object);
+        if (candidate.isBuiltBeforeBranches || (candidate.isBuiltBeforeBranchesOnceCyclic && holdsItsReferrer(entry)))
             objects.append(entry.object);
     }
     for (VirtualObjectID object : objects)
         build(object, BuildCause { .limit = LimitID::MaxMaterializations });
 }
 
+void ObjectInterpreter::buildBeforeLeavingHandler(const Terminator& terminator)
+{
+    BlockID handler = m_sinking.handlerOf(m_state.block);
+    if (!handler)
+        return;
+    bool leavesHandler = false;
+    for (uint32_t targetIndex = 0; targetIndex < terminator.targets.size(); ++targetIndex)
+        leavesHandler |= !isDeadEdge(terminator, targetIndex) && m_sinking.handlerOf(terminator.targets[targetIndex].block) != handler;
+    if (!leavesHandler)
+        return;
+
+    Vector<VirtualObjectID, 4> objects;
+    for (const ObjectEntry& entry : m_state.objects) {
+        if (!entry.state.isCell() && m_sinking.at(entry.object).isBuiltUnderHandler)
+            objects.append(entry.object);
+    }
+    for (VirtualObjectID object : objects)
+        build(object, BuildCause { });
+}
+
 void ObjectInterpreter::executeTerminator(const Terminator& terminator)
 {
+    buildBeforeLeavingHandler(terminator);
     buildBeforeBranch(terminator);
     switch (terminator.kind) {
     case TerminatorKind::Return:
@@ -1822,6 +1957,13 @@ void ObjectInterpreter::executeReturn(const Terminator& terminator)
         bool canStayVirtual = std::ranges::all_of(stateOf(object)->variants, [&](const ObjectVariant& variant) {
             const VirtualShape& shape = family.at(variant.shape);
             return shape.kind != VirtualShapeKind::Fields || canBeBuiltByCaller(function(), family.descriptionOf(shape));
+        });
+        // An object held under some variants alone exists only on their paths, and its fields hold nothing on the others. Here, ahead of the switch on the tag, the paths have not parted.
+        canStayVirtual = canStayVirtual && std::ranges::all_of(stateOf(object)->heldObjects, [&](const HeldObject& entry) {
+            return std::ranges::all_of(stateOf(object)->variants, [&](const ObjectVariant& variant) {
+                const VirtualShape& shape = family.at(variant.shape);
+                return shape.kind == VirtualShapeKind::Fields && hasStored(shape, entry.field);
+            });
         });
         if (canStayVirtual) {
             Vector<VirtualObjectID, 4> objectsInFields;
@@ -1954,6 +2096,22 @@ void ObjectInterpreter::forgetAnswersOfTests()
         entry = TestEntry { entry.test, hasLastingAnswer(function().at(entry.test)) ? VirtualObjectID() : entry.object, std::nullopt };
 }
 
+// An AssumeType is a proof, so a variant outside its type cannot reach it: `r.ok ? r.value : r.error`.
+void ObjectInterpreter::narrowToProvenType(VirtualObjectID object, TypeID provenType)
+{
+    const ObjectState& state = *stateOf(object);
+    if (state.variants.size() < 2 || hasUntaggedVariant(state))
+        return;
+    ShapeContext context = m_sinking.shapeContext(object);
+    uint32_t keptTagBits = 0;
+    for (const ObjectVariant& variant : state.variants) {
+        if (evaluateTypeTestOfShape(context, context.family.at(variant.shape), program().at(provenType)) != KnownBoolean::False)
+            keptTagBits |= variant.tagMask();
+    }
+    if (keptTagBits && keptTagBits != state.tagBits())
+        narrow(object, keptTagBits);
+}
+
 void ObjectInterpreter::narrow(VirtualObjectID object, uint32_t keptTagBits)
 {
     ObjectState& state = *stateOf(object);
@@ -2001,6 +2159,7 @@ void convertListCall(Value& call, std::span<const ValueID> elements)
         call.setCalleeKey(listCall.calleeKey());
         call.setCalleeName(listCall.calleeName());
         call.setExpectedResult(listCall.expectedResult());
+        call.setCalledBuiltin(listCall.calledBuiltin());
         break;
     case Opcode::ConstructList:
         call.become(Opcode::Construct);
@@ -2074,13 +2233,19 @@ std::optional<uint32_t> ObjectInterpreter::findListedElement(VirtualObjectID obj
 Vector<ValueID, 8> ObjectInterpreter::listedElementsOf(VirtualObjectID object)
 {
     RELEASE_ASSERT(isRewriting() && hasListedElements(object));
+    return listedElementsOf(object, singleDescriptionOf(object)->elementType, FieldTypeProof::Declared);
+}
+
+Vector<ValueID, 8> ObjectInterpreter::listedElementsOf(VirtualObjectID object, TypeID typeOfElements, FieldTypeProof proof)
+{
+    RELEASE_ASSERT(isRewriting() && hasListedElements(object));
     uint32_t length = singleShapeOf(object).length;
     Vector<ValueID, 8> elements;
     elements.reserveInitialCapacity(length);
     ValueID valueOfHoles;
     for (uint32_t position = 0; position < length; ++position) {
         if (std::optional<uint32_t> field = findListedElement(object, position)) {
-            elements.append(valueOfField(object, *field, singleDescriptionOf(object)->elementType));
+            elements.append(valueOfField(object, *field, typeOfElements, proof));
             continue;
         }
         if (!valueOfHoles)
@@ -2530,6 +2695,8 @@ void ObjectInterpreter::build(VirtualObjectID root, const BuildCause& cause)
             m_sinking.abandon(member);
         if (m_mode == SinkingMode::Count && state.hasCell())
             m_sinking.didBuildAfterMerge(member, state.cellJoinedAt);
+        if (!isRewriting() && !m_sinking.handlerOf(m_state.block))
+            m_sinking.buildUnderHandler(member);
     }
 
     if (!isRewriting()) {
@@ -2538,7 +2705,9 @@ void ObjectInterpreter::build(VirtualObjectID root, const BuildCause& cause)
     }
 
     Origin userOrigin = cursor().builder().origin();
+    cursor().willBuild(*this);
     buildMembers(members.span(), cause);
+    cursor().didBuild();
     cursor().setOrigin(userOrigin);
 }
 
@@ -2759,6 +2928,12 @@ ValueID ObjectInterpreter::emitAllocation(VirtualObjectID object, const VirtualS
     ValueID cell = cursor().emit(WTF::move(allocation));
     for (const FieldValue& stored : storedByName)
         cursor().emit(makeStoreByName(stored, cell));
+    for (const FieldValue& part : parts) {
+        if (part.field.kind == VirtualFieldKind::Position)
+            cursor().emit(IRBuilder::make(Opcode::PutInternalField, { cell, part.value }));
+        else if (part.field.kind == VirtualFieldKind::Table)
+            cursor().emit(IRBuilder::make(Opcode::PutCollectionIteratorTable, { cell, part.value }));
+    }
     if (m_sinking.at(object).needsGuard) {
         Value guard(Opcode::AllGuards);
         guard.setGuardsOperands(singleElementSpan(cell));
@@ -2893,7 +3068,16 @@ void ObjectInterpreter::didBuild(VirtualObjectID object, const BuildCause& cause
         Expected<BlockFrequency> frequency = frequencies.classOf(m_state.block);
         if (m_enteredEdge.edge)
             frequency = rarerOf(frequencies.classOf(m_enteredEdge.edge->edge.from), frequencies.classOf(m_enteredEdge.edge->edge));
-        bool isBorrowed = isBorrowingCall(cause);
+        const VirtualFamily& family = m_sinking.familyOf(object);
+        bool isBorrowed = isBorrowingCall(cause) && std::ranges::none_of(state.variants, [&](const ObjectVariant& variant) {
+            const VirtualShape& shape = shapeOf(object, variant);
+            if (shape.kind != VirtualShapeKind::Fields || family.descriptionOf(shape).kind != VirtualObjectKind::Object)
+                return false;
+            size_t numberOfFields = 0;
+            for (size_t field : shape.stored)
+                numberOfFields += family.fieldAt(static_cast<uint32_t>(field)).isProperty();
+            return hasUnprovenField(family, shape) || mayCreateFieldsLater(program().at(family.descriptionOf(shape).layout), numberOfFields);
+        });
         auto countBuilds = [&](VirtualObjectID built, unsigned numberOfBuilds) {
             Candidate& candidate = m_sinking.at(built);
             candidate.numberOfBuilds += numberOfBuilds;
@@ -2954,16 +3138,21 @@ ValueID ObjectInterpreter::cellOf(VirtualObjectID object)
     if (m_enteredEdge.edge && m_enteredEdge.edge->edge.isHandlerEdge())
         return cell;
 
-    for (TypeID assumedType : state.assumedTypes) {
+    auto assume = [&](TypeID assumedType) {
         const Type& type = program().typeOf(function(), cell);
         if (type.isSubsetOf(program().at(assumedType), program()))
-            continue;
+            return;
         if (!type.castTo(program().at(assumedType), cursor().builder().types()).isSubsetOf(type, program()))
-            continue;
+            return;
         if (m_sinking.context().build.validates() && function().at(cell).opcode != Opcode::Parameter)
             cursor().emit(makeValidateType(cell, assumedType));
         cell = cursor().emit(makeAssumeType(cell, Proven::byConstruction(assumedType)));
-    }
+    };
+    for (TypeID assumedType : state.assumedTypes)
+        assume(assumedType);
+    // fitsType() lets a join count as what its parameter says.
+    if (m_sinking.at(object).isJoin)
+        assume(typeOfCell(m_sinking, object));
     return cell;
 }
 

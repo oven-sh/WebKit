@@ -1,8 +1,8 @@
-# The copy of a block has the rarer of its own frequency and the frequency of the block with the call. A call in a rare block stays a call, whatever it is marked with
+# The copy of a block has the rarer of its own frequency and the frequency of the block with the call. A call in a rare block stays a call unless it is marked isAlwaysInlined: the frames of a fused chain of array methods are placed when its traversal is copied in
 # FORM: Prepared
 # OPTIONS: heat=OnlyLoopsAreHot
 # RUN: pass InlineCalls
-# STATISTIC: InlineDecisionInline = 2
+# STATISTIC: InlineDecisionInline = 3
 # CHECK: outcome: Changed
 
 module m0 path="main.js" displayPath="main.js"
@@ -47,14 +47,30 @@ function f2 name="callInUnlikelyBlock" parameters=[{type=number}, {type=boolean}
 function f3 name="callInRareBlock" parameters=[{type=number}, {type=boolean}] results=[{type=number}] {
     Branch v1 -> taken b1(), notTaken b2()
   b1() frequency=Rare:
-    v2 = CallDirect v0, v1 function=f0 [isAlwaysInlined]
+    v2 = CallDirect v0, v1 function=f0
     Return v2
   b2():
     Return v0
 }
 # CHECK-LABEL: name="callInRareBlock"
 # CHECK: b1() frequency=Rare:
-# CHECK-NEXT: = CallDirect v0, v1 function=f0 [isAlwaysInlined]
+# CHECK-NEXT: = CallDirect v0, v1 function=f0
 # CHECK-NEXT: Return v2
 # CHECK-NOT: = Mul
 # CHECK-NOT: = Add
+
+function f4 name="markedCallInRareBlock" parameters=[{type=number}, {type=boolean}] results=[{type=number}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v2 = CallDirect v0, v1 function=f0 [isAlwaysInlined]
+    Return v2
+  b2():
+    Return v0
+}
+# CHECK-LABEL: name="markedCallInRareBlock"
+# CHECK-NOT: CallDirect
+# CHECK: Branch v1 -> taken [[rare1]](), notTaken [[rare2]]() @0:1
+# CHECK: [[rare1]]() frequency=Rare:
+# CHECK-NEXT: = Mul v0, v0
+# CHECK: [[rare2]]() frequency=Rare:
+# CHECK-NEXT: = Add v0, v0

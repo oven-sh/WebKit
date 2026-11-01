@@ -48,7 +48,7 @@ void StubAssembler::callLeaf(Entry entry, unsigned bytesPushed)
 }
 
 // An access that calls an accessor keeps few floating-point registers: storing and loading all of them was a third of the way to a getter and back.
-static RegisterSet floatingPointRegistersLostToAccessors(StubCallee callee)
+RegisterSet floatingPointRegistersLostToAccessors(StubCallee callee)
 {
     constexpr unsigned numberKept = 2;
     RegisterSet lost = RegisterSet::macroClobberedFPRs();
@@ -95,6 +95,8 @@ void StubAssembler::callAndReturnPreservingRegisters(const PreservingCall& prese
     Jump threw = branchTestPtr(NonZero, Address(scratch, VM::exceptionOffset()));
     if (preservingCall.emitBeforeReturn)
         (*preservingCall.emitBeforeReturn)();
+    if (preservingCall.callee == StubCallee::HostFunction)
+        pollBeforeReturningFromNativeCode();
     ret();
     threw.link(this);
     if (key().callerFrame() == CallerFrame::StubFrame)

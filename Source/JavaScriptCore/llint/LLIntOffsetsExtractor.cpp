@@ -31,6 +31,8 @@
 #include "AOTInterpreterSlowPaths.h"
 #include "AOTPrimitives.h"
 #include "AOTRuntimeType.h"
+#include "AOTSlimClosure.h"
+#include "AOTThisAllocationInlines.h"
 #include "ArithProfile.h"
 #include "ArrayProfile.h"
 #include "BytecodeIndices.h"

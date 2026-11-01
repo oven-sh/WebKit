@@ -51,15 +51,35 @@ constexpr bool isPassedInFPR(Representation representation)
 
 EntryConvention entryConventionOf(const Function&);
 
+constexpr bool isPassedAs(Representation handed, Representation passed)
+{
+    return handed == passed || (handed == Representation::Double && holdsAnyNaN(passed));
+}
+
 constexpr bool isCellOrBoxedValue(Representation representation)
 {
     return representation == Representation::Cell || representation == Representation::JSValue;
 }
 
+constexpr bool isDoubleOrMarker(Representation representation)
+{
+    return representation == Representation::Double || representation == Representation::OptionalDouble;
+}
+
+constexpr bool isInt64OrMarker(Representation representation)
+{
+    return representation == Representation::Int64 || representation == Representation::OptionalInt64;
+}
+
 // What a tail call returns is proven to be inside the result type of its caller, so where the caller returns a cell a boxed result holds one, and a boxed cell is the pointer.
+// A number keeps the same bits when undefined or null may appear in its place.
 constexpr bool haveSameRegisterRepresentation(Representation returned, Representation expected)
 {
-    return returned == expected || (isCellOrBoxedValue(returned) && isCellOrBoxedValue(expected));
+    return returned == expected
+        || (returned == Representation::Double && expected == Representation::ImpureDouble)
+        || (isCellOrBoxedValue(returned) && isCellOrBoxedValue(expected))
+        || (isDoubleOrMarker(returned) && isDoubleOrMarker(expected))
+        || (isInt64OrMarker(returned) && isInt64OrMarker(expected));
 }
 
 } } } // namespace JSC::AOT::Typed

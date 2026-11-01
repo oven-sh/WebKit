@@ -1,0 +1,26 @@
+# interface O { a: number; b: number; c: number }   const defaults: O = { a: 1, b: 0.5, c: 3000000000 }   const merged: O & { z: number } = { z: 0, ...defaults }
+# No store names `a` of the copy, so no pass that looks at stores has made it an int32 slot. Every integer that the copy brings fits one, so the field that the type declares
+# is such a slot, as a field that the analysis appends already is.
+# Not so: a field that gets a fraction, and one that gets an integer too large for the slot.
+# RUN: valueflow-apply
+# CHECK: layout L1 name="Merged" fields=[{key="a" declared={type=int[-2147483643, 2147483647]}{{*}}{key="b" declared={type=fractional}{{*}}{key="c" declared={type=int}{{*}}{key="z"
+# CHECK: function f0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Defaults" fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=number} flags=[IsRequired]}, {key="c" declared={type=number} flags=[IsRequired]}]
+layout L1 name="Merged" fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=number} flags=[IsRequired]}, {key="c" declared={type=number} flags=[IsRequired]}, {key="z" declared={type=number} flags=[IsRequired]}]
+data d0 root=Object{layout=L0 members=[{key="a" value=Number{value=1}}, {key="b" value=Number{value=0.5}}, {key="c" value=Number{value=3000000000}}]}
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer
+    v1 = Data data=d0
+    v2 = NewObject -, v0 layout=L1 fields=[3]
+    CopyDataProperties v2, v1
+    v4 = FinishObject v2
+    v5 = PropGet v4 key="a"
+    v6 = PropGet v4 key="b"
+    v7 = PropGet v4 key="c"
+    Return
+}

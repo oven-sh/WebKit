@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTCheckedFrameCells.h"
 #include "AOTCodeSites.h"
 #include "AOTFaultHandler.h"
 #include "AOTImage.h"
@@ -433,11 +434,17 @@ static bool handleLoopPoll(const Fault& fault, PlatformRegisters& registers)
 {
     static_assert(hasFaultingLoopPolls);
     bool isFrameless = fault.callerFrame == CallerFrame::Frameless;
-    if (fault.address != registerOf(registers, instanceGPR) + InstanceLayout::offsetOfLoopPollPage() + (isFrameless ? offsetOfLeafPollInLoopPollPage : 0))
+    uintptr_t instance = registerOf(registers, instanceGPR);
+    uintptr_t address = instance + InstanceLayout::offsetOfLoopPollPage() + (isFrameless ? offsetOfLeafPollInLoopPollPage : 0);
+    bool leavesOwedError = fault.address == address + offsetOfPollLeavingOwedErrorInLoopPollPage;
+    if (fault.address != address && !leavesOwedError)
         return false;
     void* target = findStub(fault.image, pollAtLoop(fault.callerFrame));
     if (!target)
         return false;
+
+    if (leavesOwedError)
+        std::bit_cast<Instance*>(instance)->runtime.exceptions.pollLeavesOwedError = 1;
 
     void*& stackPointer = MachineContext::stackPointerImpl(registers);
     auto* top = static_cast<uintptr_t*>(stackPointer);
@@ -453,27 +460,12 @@ static bool handleLoopPoll(const Fault& fault, PlatformRegisters& registers)
 }
 #endif
 
-static bool handleDivertedReturn(PlatformRegisters& registers)
-{
-    auto* instance = std::bit_cast<Instance*>(registerOf(registers, instanceGPR));
-    void* target = findStub(*instance->vm->aotState().image, handleException(false));
-    if (!target)
-        return false;
-    uintptr_t returnAddress = std::bit_cast<uintptr_t>(instance->runtime.exceptions.stackPointerOfHandler);
-#if CPU(ARM64)
-    registerOf(registers, ARM64Registers::lr) = returnAddress;
-#elif CPU(X86_64)
-    void*& stackPointer = MachineContext::stackPointerImpl(registers);
-    auto* top = static_cast<uintptr_t*>(stackPointer);
-    *--top = returnAddress;
-    stackPointer = top;
-#endif
-    MachineContext::setInstructionPointer(registers, target);
-    return true;
-}
-
 bool handleAccessFault(void* faultingAddress, PlatformRegisters& registers)
 {
+    if (CheckedFrameCells::isInRange(faultingAddress) && CheckedFrameCells::isInUse()) [[unlikely]] {
+        CheckedFrameCells::report(faultingAddress);
+        return false;
+    }
     auto instructionPointer = MachineContext::instructionPointer(registers);
     if (!instructionPointer)
         return false;
@@ -481,8 +473,6 @@ bool handleAccessFault(void* faultingAddress, PlatformRegisters& registers)
         return false;
     // This may run on another thread than the code it is about, so the registers say which image that code belongs to.
     void* pc = instructionPointer->untaggedPtr();
-    if (std::bit_cast<uintptr_t>(pc) == registerOf(registers, instanceGPR) + InstanceLayout::offsetOfLoopPollPage() + offsetOfDivertedReturnInLoopPollPage) [[unlikely]]
-        return handleDivertedReturn(registers);
     const Image* image = Image::findByCodeAddress(pc);
     if (!image)
         return false;

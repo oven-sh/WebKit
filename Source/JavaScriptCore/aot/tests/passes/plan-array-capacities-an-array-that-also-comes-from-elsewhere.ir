@@ -1,0 +1,23 @@
+# `(groups[key] ??= []).push(x)`: the push also takes arrays read back from the object. They have outlived their literal, so one append says nothing of what they hold: the literal gets no planned capacity.
+# FORM: Prepared optimizing
+# RUN: pass PlanArrayCapacities
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="fromElsewhere" parameters=[{type=Object}, {type=string}, {type=int[0, 100]}] results=[{type=anything}] {
+    v3 = ElemGet v0, v1
+    v4 = TypeTest v3 testedType=undefined|null
+    Branch v4 -> taken b1(), notTaken b2(| 0)
+  b1():
+    v5 = NewArray
+    ElemSet v0, v1, v5
+    Jump -> next b3(v5)
+  b2(v7: anything):
+    v8 = AssumeType v7 provenType=Array<int>
+    Jump -> next b3(v8)
+  b3(v9: Array<int>):
+    v10 = CallBuiltin v9, v2 overload=ArrayPrototypePush/0
+    Return v10
+# CHECK: v5:{{*}}= NewArray
+# CHECK-NOT: capacity=
+}

@@ -36,8 +36,8 @@ struct ExceptionWords {
     void* stackPointerOfHandler;
     // Not about exceptions: it fills what was padding, so that no other word moves.
     uint32_t predictionFailureState;
-    // Not zero behind an error for lack of memory: so much of the stack below the frame of the handler is cleared on the way to the handler.
-    uint32_t bytesOfDeadStackBelowHandler;
+    // Set by a loop poll that was taken out of its handler, on its way to operationAOTPollSlow, which clears it.
+    uint32_t pollLeavesOwedError;
 };
 static_assert(sizeof(ExceptionWords) == 24);
 

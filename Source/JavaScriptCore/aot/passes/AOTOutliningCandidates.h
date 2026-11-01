@@ -40,8 +40,9 @@ public:
     AnalysisContext contextOf(FunctionID) const;
     // By function, as many as the program had when the finder was made.
     std::span<const uint8_t> hasSites() const LIFETIME_BOUND;
-    // Behind the last function.
-    ParallelArray<OutliningSite> takeSites();
+    // Behind the last function. The sites stay where they were found, until discardSites().
+    ParallelArray<OutliningSite*> chooseSites();
+    void discardSites();
 
 private:
     std::unique_ptr<State> m_state;

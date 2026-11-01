@@ -1,0 +1,41 @@
+# The object of a turn is the guard of its own store on the likely path, and the unlikely path that leaves stores to it by name, so it is live where the copy is entered. The guarded store is reached only through the allocation: in the copy it stands behind the copy's own object and needs no join, so the loop is separated
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass SeparateUnlikelyLoopPaths
+# STATISTIC: LoopsSeparatedFromUnlikelyPaths = 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 fields=[{key="error" declared={type=string flags=[OmitsNull]} flags=[IsEnforced] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation} prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="ok" declared={type=boolean} flags=[IsRequired, IsEnforced] flow={location={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation initialization=SetAtCreation isUnchangedDuringActivation=true} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="value" declared={type=int[-2147483643, 2147483647]} flags=[IsEnforced] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation} prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined]}}] declaredOrder=[1, 0, 2] ownFieldCount=3 flow={baseState=None allocationClasses=[0] constructorOrders=[{fields=[1]}] impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype] keys=NeverEnumerated addedKeysAreComplete=true}
+
+function f0 name="sum" parameters=[{type=number}, {type=number}, {type=boolean}] results=[{type=i32}] {
+    v3 = Integer integer=0
+    v4 = Integer integer=0
+    Jump -> next b1(v3, v4)
+  b1(v5, v6):
+    LoopHint
+    v8 = Less v6, v1
+    Branch v8 -> taken b2(), notTaken b6()
+  b2():
+    v9 = NewObject -, v2 layout=L0 fields=[1]
+    v10 = TypeTest v0 testedType=int[-2147483643, 2147483647]
+    Branch v10 -> taken b3(| 0), notTaken b4()
+  b3(v11: int[-2147483643, 2147483647]):
+    PutSlot v9, v9, v11 key="value" receivers=[L0] level=Expected
+    v13 = Add v5, v11
+    Jump -> next b5(v13)
+  b4() frequency=Unlikely:
+    PropSet v9, v0 key="value" mode=Strict receivers=[L0]
+    v15 = Add v5, v0
+    Jump -> next b5(v15)
+  b5(v16):
+    v17 = BitOr v16, v6
+    v18 = Increment v6
+    Jump -> next b1(v17, v18)
+  b6():
+    Return v5
+# CHECK: [[object]]: L0 = NewObject -, v2 layout=L0
+# CHECK: Branch v10 -> taken b3(| 0), notTaken [[leaves]]({{*}})
+# CHECK: PutSlot [[object]], [[object]], v11 key="value"
+# CHECK: [[leaves]]({{*}}) frequency=Rare:
+# CHECK-NEXT: PropSet {{*}}, v0 key="value"
+}

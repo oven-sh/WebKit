@@ -2,10 +2,12 @@
 # RUN: pass PlaceTypeTests
 
 module m0 path="main.js" displayPath="main.js"
-layout L0 name="KeptInSight" fields=[{key="rank" declared={type=number} flags=[IsRequired] flow={location={writers=AllKnown}}}] flow={baseState=None}
+layout L0 name="KeptInSight" fields=[{key="rank" declared={type=number} flags=[IsRequired]}] flow={baseState=None neverEscapes=true}
 layout L1 name="HandedOut" fields=[{key="grade" declared={type=number} flags=[IsRequired]}] flow={baseState=None}
+layout L2 name="StoredUnderUnknownKey" fields=[{key="score" declared={type=number} flags=[IsRequired] flow={location={writers=AllKnown}}}] flow={baseState=None}
+layout L3 kind=Instance name="Account" constructor=f4 fields=[{key="balance" declared={type=number} flags=[IsRequired]}] flow={baseState=None neverEscapes=true} classFlow={members=[{key="roomLeft" function=f5}] namedMembers=[{key="roomLeft" function=f5}]}
 
-function f0 name="everyWriterIsKnown" parameters=[{type=anything}] results=[{type=anything}] {
+function f0 name="neverEscapes" parameters=[{type=anything}] results=[{type=anything}] {
     v1 = PropGet v0 key="rank"
     Return v1
 # CHECK-NOT: L0
@@ -18,4 +20,25 @@ function f1 name="anybodyMayWrite" parameters=[{type=anything}] results=[{type=a
     Return v1
 # CHECK: = TypeTest {{*}} testedType=L1
 # CHECK: = GetSlot {{*}} key="grade" receivers=[L1] level=Expected
+}
+
+# globalThis[key] = [{ score }]: the object escapes, and flow still knows every writer of its field.
+function f2 name="escapesAndEveryWriterIsKnown" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="score"
+    Return v1
+# CHECK: = TypeTest {{*}} testedType=L2
+# CHECK: = GetSlot {{*}} key="score" receivers=[L2] level=Expected
+}
+
+# account.roomLeft(): flow lists what arrives on accesses of fields alone, so a method says nothing against its class.
+function f3 name="methodOfClassThatNeverEscapes" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="roomLeft"
+    v2 = Call v1, v0 calleeKey="roomLeft"
+    Return v2
+# CHECK: = TypeTest {{*}} testedType=L3
+}
+function f4 name="Account" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L3
+function f5 name="roomLeft" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = PropGet v0 key="balance"
+    Return v1
 }

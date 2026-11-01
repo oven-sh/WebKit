@@ -137,7 +137,7 @@ void emitStackOverflowPaths(CCallHelpers& jit, CodeRecords& records, StackCheckS
         case StackLimit::TrapAwareSoft: {
             // The stub returns to the resume offset of the PrologueCheck, never to the address after the call.
             CCallHelpers::Label call = jit.label();
-            records.stubCalls.call(jit, pollAtPrologue(), OptionalIndex { });
+            records.stubCalls.call(jit, pollAtPrologue(state.functionMayCollect), OptionalIndex { });
             records.units.pin(call, jit.label());
             records.traps.stackChecks.append({ call, check.resume });
             break;
@@ -153,7 +153,7 @@ Vector<PrologueCheck, 1> linkStackChecks(LinkBuffer& linkBuffer, FunctionID id, 
         RELEASE_ASSERT(labels.call.isSet() && labels.resume.isSet());
         checks.append({ id.index(), linkBuffer.offsetOf(labels.call), linkBuffer.offsetOf(labels.resume) });
     }
-    AOT::sort(checks, { }, &PrologueCheck::callOffset);
+    AOT::sortInLine(checks, { }, &PrologueCheck::callOffset);
     return checks;
 }
 

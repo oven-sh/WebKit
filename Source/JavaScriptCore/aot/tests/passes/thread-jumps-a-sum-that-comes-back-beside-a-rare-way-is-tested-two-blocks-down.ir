@@ -1,0 +1,110 @@
+# `a + b + this.c`: the sum of the first two is a number on the way that tested them, and whatever it may be on the slow way. Both meet, the third is read, which leaves on a rare way when it is missing, and only then is the sum tested.
+# The way that knows gets a copy of the join and of the block with the test, so the test folds there. The slow way keeps both blocks, rare now, and the test.
+# FORM: Prepared optimizing
+# OPTIONS: heat=EverythingIsHot
+# RUN: function-passes behind-rounds ThreadJumps
+# RUN(ROUNDS): function-passes ThreadJumps
+# RUN(CLEANED): function-passes behind-rounds ThreadJumps RemoveTrivialParameters
+# LOSS: MaxInlineHeadBytes
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="sumOfThree" parameters=[{type=number}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+    v3 = TypeTest v1 testedType=number
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    v5 = Add v0, v4
+    Jump -> next b3(v5)
+  b2() frequency=Rare:
+    v6 = Add v0, v1
+    Jump -> next b3(v6)
+  b3(v7):
+    Branch v2 -> taken b4(), notTaken b7()
+  b4():
+    v8 = TypeTest v7 testedType=number
+    Branch v8 -> taken b5(| 0), notTaken b6()
+  b5(v9):
+    v10 = Add v9, v0
+    Return v10
+  b6() frequency=Rare:
+    v11 = Add v7, v0
+    Return v11
+  b7() frequency=Rare:
+    Return v7
+# CHECK: Jump -> next [[copy]](v5)
+# CHECK: b2() frequency=Rare:
+# CHECK-NEXT: = Add v0, v1
+# CHECK-NEXT: Jump -> next b3(
+# CHECK: b3(v7: number|string|bigint ~ number) frequency=Rare:
+# CHECK: b4() frequency=Rare:
+# CHECK-NEXT: = TypeTest v7 testedType=number
+# CHECK: [[copy]](
+# ROUNDS: Jump -> next b3(v5)
+}
+
+# What the failing side of the next + still reads, the sum as it came, comes along beside the sum that the test has narrowed. On every edge both take one value: the join keeps the narrower, and the likely way converts nothing.
+function f1 name="narrowedSumAndTheSumAsItCame" parameters=[{type=number}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+    v3 = TypeTest v1 testedType=number
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    v5 = Add v0, v4
+    Jump -> next b3(v5)
+  b2() frequency=Rare:
+    v6 = Add v0, v1
+    Jump -> next b3(v6)
+  b3(v7):
+    Branch v2 -> taken b4(), notTaken b7()
+  b4():
+    v8 = TypeTest v7 testedType=number
+    Branch v8 -> taken b5(| 0), notTaken b6()
+  b5(v9):
+    v10 = TypeTest v1 testedType=number
+    Branch v10 -> taken b8(| 0), notTaken b9()
+  b6() frequency=Rare:
+    v11 = Add v7, v0
+    Return v11
+  b7() frequency=Rare:
+    Return v7
+  b8(v12):
+    v13 = Add v9, v12
+    Return v13
+  b9() frequency=Rare:
+    v14 = Add v7, v1
+    Return v14
+# CLEANED: b5(v9: number):
+# CLEANED-NEXT: = Upcast v9
+}
+
+# Two joins, one below the other, each above a test of its own. The upper one takes the lower one along in its copy, and what is left of the lower one is rare: it is not copied a second time.
+function f2 name="joinBelowJoin" parameters=[{type=number}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+    v3 = TypeTest v1 testedType=number
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    v5 = Add v0, v4
+    Jump -> next b3(v5)
+  b2() frequency=Rare:
+    v6 = Add v0, v1
+    Branch v2 -> taken b3(v6), notTaken b4(v6, v6)
+  b3(v7):
+    Jump -> next b4(v0, v7)
+  b4(v8, v9):
+    v10 = TypeTest v9 testedType=number
+    Branch v10 -> taken b5(| 0), notTaken b8()
+  b5(v11):
+    v12 = TypeTest v8 testedType=number
+    Branch v12 -> taken b6(| 0), notTaken b7()
+  b6(v13):
+    v14 = Add v11, v13
+    Return v14
+  b7() frequency=Rare:
+    v15 = Add v11, v8
+    Return v15
+  b8() frequency=Rare:
+    Return v8
+# CHECK: Jump -> next [[upper]](v5)
+# CHECK: b3(v7: number|string|bigint ~ number) frequency=Rare:
+# CHECK: b4(v8: number|string|bigint ~ number, v9: number|string|bigint ~ number) frequency=Rare:
+# CHECK: [[upper]](
+# CHECK-NEXT: Jump -> next [[lower]](v0,
+# CHECK-NEXT: [[lower]](
+}

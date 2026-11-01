@@ -18,6 +18,7 @@
 #include "B3ValueKeyInlines.h"
 #include <algorithm>
 #include <limits>
+#include <tuple>
 #include <wtf/DataLog.h>
 #include <wtf/HashFunctions.h>
 
@@ -80,6 +81,8 @@ void MemoryNumbering::beginWalk(Dominators& dominators)
     m_dominators = &dominators;
     m_values.clear();
     m_pureCalls.clear();
+    m_copiesOfPartsOfAddresses.clear();
+    m_firstCopies.clear();
     m_heapEpochs.clear();
     m_replacedLoads.shrink(0);
     m_loadsToLog.shrink(0);
@@ -99,6 +102,7 @@ void MemoryNumbering::enterBlock(BasicBlock* block)
     m_block = block;
     m_values.startLayer();
     m_pureCalls.startLayer();
+    m_copiesOfPartsOfAddresses.startLayer();
     m_heapEpochs.startLayer();
 
     MemoryState& state = m_memoryState;
@@ -131,6 +135,9 @@ HeapSet MemoryNumbering::writesOf(Value* value)
         return constantEffects.fence ? HeapSet(HeapRange::top()) : constantEffects.writes;
     if (isLoad(value->opcode()) && !value->as<MemoryValue>()->hasFence())
         return HeapSet();
+    // A frame comes back from a suspension without the slots that are dead there.
+    if (auto* patchpoint = value->as<PatchpointValue>(); patchpoint && patchpoint->isSuspension())
+        return HeapSet(HeapRange::top());
     Effects effects = value->effects();
     return effects.fence ? HeapSet(HeapRange::top()) : effects.writes;
 }
@@ -158,6 +165,7 @@ void MemoryNumbering::leaveDominatorSubtree()
 {
     m_values.dropLastLayer();
     m_pureCalls.dropLastLayer();
+    m_copiesOfPartsOfAddresses.dropLastLayer();
     m_heapEpochs.dropLastLayer();
 }
 
@@ -192,6 +200,28 @@ Value* MemoryNumbering::ensureRepresentative(Value* value)
     if (!key || value->isConstant())
         return value;
     return m_values.findOrAdd(key, value).value_or(value);
+}
+
+Value* MemoryNumbering::representativeOfOppositeComparison(Value* comparison)
+{
+    if (comparison->opcode() != Equal && comparison->opcode() != NotEqual)
+        return nullptr;
+    Opcode opposite = comparison->opcode() == Equal ? NotEqual : Equal;
+    return m_values.find(ValueKey(opposite, comparison->type(), comparison->child(0), comparison->child(1))).value_or(nullptr);
+}
+
+void MemoryNumbering::numberCopyOfPartOfAddress(Value* copy)
+{
+    Value* left = firstCopyOf(copy->child(0));
+    Value* right = firstCopyOf(copy->child(1));
+    if (copy->opcode() == Add && !right->isConstant() && left->index() > right->index())
+        std::swap(left, right);
+    ValueKey key(copy->kind(), copy->type(), left, right);
+    std::optional<Value*> first = m_values.find(key);
+    if (!first)
+        first = m_copiesOfPartsOfAddresses.findOrAdd(key, copy);
+    if (first && *first != copy)
+        m_firstCopies.set(copy, *first);
 }
 
 bool MemoryNumbering::canBeRecorded(const HeapRange& range)
@@ -390,7 +420,7 @@ unsigned MemoryNumbering::heapEpoch(unsigned heap)
 ValueKey MemoryNumbering::keyForLoad(Kind kind, Type type, MemoryValue* memory)
 {
     v128_t bits;
-    bits.u32x4[0] = memory->lastChild()->index();
+    bits.u32x4[0] = firstCopyOf(memory->lastChild())->index();
     bits.u32x4[1] = static_cast<uint32_t>(memory->offset());
     if (memory->isLoad() && memory->readsMutability() == Mutability::Immutable)
         bits.u32x4[2] = noID;
@@ -420,13 +450,13 @@ MemoryNumbering::PureCallKey MemoryNumbering::keyForPureCall(const PatchpointVal
     return key;
 }
 
-bool MemoryNumbering::isEqualLoad(const MemoryValue* load, const Value* other)
+bool MemoryNumbering::isEqualLoad(const MemoryValue* load, const Value* other) const
 {
     const MemoryValue* otherMemory = other->as<MemoryValue>();
     return otherMemory
         && otherMemory->kind() == load->kind()
         && otherMemory->type() == load->type()
-        && otherMemory->lastChild() == load->lastChild()
+        && firstCopyOf(otherMemory->lastChild()) == firstCopyOf(load->lastChild())
         && otherMemory->offset() == load->offset();
 }
 
@@ -450,6 +480,12 @@ MemoryNumbering::Result MemoryNumbering::replaceIfRedundant(Value* current)
             return Result::Unchanged;
         }
         if (memory->isStore()) {
+            // Nothing but this code writes a slot of its frame, so one that holds the value already is not stored again.
+            if (memory->opcode() == Store && memory->lastChild()->opcode() == SlotBase
+                && m_values.find(keyForLoad(Load, memory->child(0)->type(), memory)) == std::optional(memory->child(0))) {
+                current->replaceWithNop();
+                return Result::Replaced;
+            }
             didWriteMemory(memory->range(), memory->origin());
             if (memory->opcode() == Store) {
                 ValueKey keyOfLoad = keyForLoad(Load, memory->child(0)->type(), memory);
@@ -524,13 +560,39 @@ MemoryNumbering::Result MemoryNumbering::replacePureCallIfRedundant(Value* curre
 
 void MemoryNumbering::validateReplacedLoads()
 {
-    IndexSet<BasicBlock*> reachable;
-    reachable.addAll(m_proc.blocksInPreOrder());
+    if (m_replacedLoads.isEmpty())
+        return;
+
+    ReplacedLoadCheck check;
+    check.reachable.addAll(m_proc.blocksInPreOrder());
+    check.blockOfValue.fill(nullptr, m_proc.values().size());
+    check.indexInBlock.fill(0, m_proc.values().size());
+    check.locationReadBy.fill(0, m_proc.values().size());
+    check.lastLocationEnteredFor.fill(0, m_proc.size());
+    for (BasicBlock* block : m_proc) {
+        for (unsigned index = 0; index < block->size(); ++index) {
+            check.blockOfValue[block->at(index)->index()] = block;
+            check.indexInBlock[block->at(index)->index()] = index;
+        }
+    }
+
+    // Loads of one location that got one replacement are checked together: none of them walks over code that another has walked over.
+    auto locationOf = [&](const ReplacedLoad& replaced) {
+        return std::tuple(replaced.replacement->index(), firstCopyOf(replaced.address->foldIdentity())->index(), replaced.offset, replaced.range.begin(), replaced.range.end(), replaced.isImmutable, replaced.isForwardedStore);
+    };
+    std::ranges::sort(m_replacedLoads, { }, locationOf);
+    unsigned location = 0;
+    for (size_t index = 0; index < m_replacedLoads.size(); ++index) {
+        if (!index || locationOf(m_replacedLoads[index - 1]) != locationOf(m_replacedLoads[index]))
+            ++location;
+        check.locationReadBy[m_replacedLoads[index].load->index()] = location;
+    }
+
     for (const ReplacedLoad& replaced : m_replacedLoads) {
-        if (!reachable.contains(replaced.block))
+        if (!check.reachable.contains(replaced.block))
             continue;
         Value* clobber = nullptr;
-        if (isUnchangedSince(replaced, reachable, clobber))
+        if (isUnchangedSince(replaced, check, clobber))
             continue;
         dataLogLn("B3 VALIDATION FAILURE");
         dataLogLn("    Memory numbering replaced a load whose location may be written after the replacement.");
@@ -546,19 +608,42 @@ void MemoryNumbering::validateReplacedLoads()
     }
 }
 
-bool MemoryNumbering::isUnchangedSince(const ReplacedLoad& replaced, const IndexSet<BasicBlock*>& reachable, Value*& clobber)
+bool MemoryNumbering::isOnEveryPathTo(Value* earlier, Value* later, const ReplacedLoadCheck& check) const
 {
+    BasicBlock* earlierBlock = check.blockOfValue[earlier->index()];
+    BasicBlock* laterBlock = check.blockOfValue[later->index()];
+    if (!earlierBlock || !laterBlock)
+        return false;
+    if (earlierBlock == laterBlock)
+        return check.indexInBlock[earlier->index()] < check.indexInBlock[later->index()];
+    // The walk only takes edges away, so a block that dominated another when the walk began still does.
+    return hasStateAtTail(earlierBlock) && hasStateAtTail(laterBlock) && m_dominators->strictlyDominates(earlierBlock, laterBlock);
+}
+
+bool MemoryNumbering::isUnchangedSince(const ReplacedLoad& replaced, ReplacedLoadCheck& check, Value*& clobber)
+{
+    RELEASE_ASSERT(check.blockOfValue[replaced.load->index()] == replaced.block);
+
+    // Nothing writes the location, so all there is to ask is whether every path comes by the earlier load.
+    if (replaced.isImmutable && !replaced.isForwardedStore && isOnEveryPathTo(replaced.replacement, replaced.load, check))
+        return true;
+
+    unsigned location = check.locationReadBy[replaced.load->index()];
     Value* replacement = replaced.replacement->foldIdentity();
-    Value* address = replaced.address->foldIdentity();
+    Value* address = firstCopyOf(replaced.address->foldIdentity());
     auto isSource = [&](Value* value) {
         if (!replaced.isForwardedStore && value == replaced.replacement)
             return true;
+        // Another load of the location that got the same replacement. It has a check of its own: a path that brings a write here
+        // brings it to the first such load behind the write, with no other in between.
+        if (value->opcode() == Identity)
+            return check.locationReadBy[value->index()] == location;
         if (value->opcode() != Store)
             return false;
         MemoryValue* store = value->as<MemoryValue>();
         return !store->hasFence()
             && store->child(0)->foldIdentity() == replacement
-            && store->lastChild()->foldIdentity() == address
+            && firstCopyOf(store->lastChild()->foldIdentity()) == address
             && store->offset() == replaced.offset;
     };
 
@@ -566,12 +651,9 @@ bool MemoryNumbering::isUnchangedSince(const ReplacedLoad& replaced, const Index
         BasicBlock* block;
         size_t index;
     };
-    size_t loadIndex = replaced.block->values().find(replaced.load);
-    RELEASE_ASSERT(loadIndex != notFound);
 
-    IndexSet<BasicBlock*> entered;
     Vector<Position, 16> worklist;
-    worklist.append(Position { replaced.block, loadIndex });
+    worklist.append(Position { replaced.block, check.indexInBlock[replaced.load->index()] });
     while (!worklist.isEmpty()) {
         Position position = worklist.takeLast();
         bool didReachSource = false;
@@ -594,11 +676,15 @@ bool MemoryNumbering::isUnchangedSince(const ReplacedLoad& replaced, const Index
         if (position.block == m_proc.at(0))
             return false;
         for (BasicBlock* predecessor : position.block->predecessors()) {
+            if (check.lastLocationEnteredFor[predecessor->index()] == location || !check.reachable.contains(predecessor))
+                continue;
             bool isLiveEdge = predecessor->successors().containsIf([&](const FrequentedBlock& successor) {
                 return successor.block() == position.block;
             });
-            if (isLiveEdge && reachable.contains(predecessor) && entered.add(predecessor))
-                worklist.append(Position { predecessor, predecessor->size() });
+            if (!isLiveEdge)
+                continue;
+            check.lastLocationEnteredFor[predecessor->index()] = location;
+            worklist.append(Position { predecessor, predecessor->size() });
         }
     }
     return true;

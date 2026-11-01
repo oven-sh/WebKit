@@ -69,14 +69,14 @@ function f0 name="breakOuter" parameters=[{type=object}, {type=anything}] result
 # CHECK-NEXT: Jump
 # The inner protocol under the outer array: its own landing block, which no handler covers.
 # CHECK: LoopHint
-# CHECK-NEXT: = Call [[innerNext0]], [[innerIterator0]]
+# CHECK-NEXT: = CallDirect [[innerIterator0]], [[innerNext0]] function={{*}} [isNeverInlined]
 # CHECK: frequency=Unlikely handler=[[innerLanding0]]():
 # CHECK-NEXT: = Call v1, -,
 # CHECK: = CallDirect [[innerIterator0]] function=[[closeIterator]] [isNeverInlined]
 # CHECK: [[innerLanding0]]() role=CleanupHandler frequency=Unlikely:
 # The outer protocol: the body over an inner array is covered by the outer landing block alone.
 # CHECK: LoopHint
-# CHECK-NEXT: = Call [[outerNext0]], [[outerIterator0]]
+# CHECK-NEXT: = CallDirect [[outerIterator0]], [[outerNext0]] function={{*}} [isNeverInlined]
 # CHECK: frequency=Unlikely handler=[[outerLanding0]]():
 # CHECK-NEXT: [[innerObject0]]: object = Check {{*}} expectedType=object
 # CHECK-NEXT: = TypeTest [[innerObject0]] testedType=Array
@@ -92,7 +92,7 @@ function f0 name="breakOuter" parameters=[{type=object}, {type=anything}] result
 # CHECK-NEXT: [[arrayClosed0]]() frequency=Unlikely handler=[[outerLanding0]]():
 # CHECK-NEXT: Jump -> next [[exit0]]()
 # CHECK: LoopHint
-# CHECK-NEXT: = Call [[secondInnerNext0]], [[secondInnerIterator0]]
+# CHECK-NEXT: = CallDirect [[secondInnerIterator0]], [[secondInnerNext0]] function={{*}} [isNeverInlined]
 # CHECK: = Results [[protocolDone0]], [[protocolValue0]]
 # CHECK: Branch [[protocolDone0]] -> taken {{*}}, notTaken [[beforeProtocolBody0]]()
 # CHECK: [[beforeProtocolBody0]]() frequency=Unlikely handler=[[outerLanding0]]():
@@ -190,7 +190,7 @@ function f1 name="largeOuterBody" parameters=[{type=object}, {type=anything}, {t
 # CHECK: Jump -> next [[innerHeader1]]()
 # CHECK-NEXT: [[innerHeader1]]() frequency=Unlikely handler=b11():
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: = Call [[innerNext1]], [[innerIterator1]]
+# CHECK-NEXT: = CallDirect [[innerIterator1]], [[innerNext1]] function={{*}} [isNeverInlined]
 # CHECK: Jump -> next [[innerBody1]]()
 # CHECK-NEXT: [[innerBody1]]() frequency=Unlikely handler=[[innerLanding1]]():
 # CHECK-NEXT: = Call v1, -,
@@ -210,5 +210,5 @@ function f1 name="largeOuterBody" parameters=[{type=object}, {type=anything}, {t
 
 # LEFT-NOT: IteratorOpen
 # LEFT-NOT: IteratorResume
-# LEFT-NOT: IteratorClose
+# LEFT-NOT: IteratorClose v
 # LEFT-NOT: AppendSpread

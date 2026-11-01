@@ -277,7 +277,7 @@ void FunctionQueue::processShare(Worker& own)
         }
 
         confirmFoundFunctions(found);
-        AOT::sort(found, isProcessedLater);
+        AOT::sortInLine(found, isProcessedLater);
         if (!found.isEmpty()) {
             Locker locker { own.lock };
             own.functions.append(found.span());
@@ -318,8 +318,8 @@ void FunctionQueue::processEach(std::span<const QueuedFunction> functions, std::
         first.append(function);
         m_speculativeFunctions.append(SpeculativeFunction { function.id, { } });
     }
-    AOT::sort(m_speculativeFunctions, { }, &SpeculativeFunction::id);
-    AOT::sort(first, isProcessedLater);
+    AOT::sortInLine(m_speculativeFunctions, { }, &SpeculativeFunction::id);
+    parallelSort(m_loops, first.mutableSpan(), isProcessedLater);
 
     ParallelRegionScope parallelRegion;
     m_numberOfSpareThreads.store(m_loops.width() - 1, std::memory_order_relaxed);
@@ -417,7 +417,12 @@ static void runInPlace(FunctionSchedule schedule, Program& program, const Optimi
     didFinish("order functions, open phases"_s);
     {
         ProgramCaches caches(program, runner.build());
+        // A pass frees on the thread that runs it what another thread allocated, and the allocator keeps that until the thread that allocated it looks.
+        // Selection, where a build holds the most, makes each function anew.
+        const unsigned batchesBetweenRequests = std::max<unsigned>(batches.size() / 4, 1);
         auto runBatch = [&](unsigned batchIndex) {
+            if (schedule == FunctionSchedule::Select && batchIndex && !(batchIndex % batchesBetweenRequests))
+                loops.askThreadsAtWorkForFreeMemory();
             std::span<const uint64_t> functionsInBatch = order.subspan(batches[batchIndex].first, batches[batchIndex].size);
             for (uint64_t key : functionsInBatch) {
                 unsigned i = static_cast<unsigned>(key);
@@ -543,15 +548,22 @@ struct FinishedCopy {
 
     RemapSites remapSites;
     BodyIndex::Row row;
+    // Nobody reads a finished copy until all are finished.
+    ParkedBody body;
 };
 
 } // anonymous namespace
 
-static QueuedFunction createQueuedFunction(const Program& program, FunctionID id)
+// The size estimates how long a function takes to compile. A function with warm code runs the long schedule and grows through inlining.
+static QueuedFunction createQueuedFunction(const Program& program, FunctionID id, const Heat* heat = nullptr)
 {
     if (ProvisionalFunctions::contains(id))
         return { id, 0 };
-    return { id, static_cast<uint32_t>(numberOfValuesIn(program, id)) };
+    AOT_THRESHOLD(uint64_t, warmCodeCostFactor, 6);
+    uint64_t size = numberOfValuesIn(program, id);
+    if (heat && heat->hasWarmCode(program, id).predicted())
+        size *= warmCodeCostFactor;
+    return { id, static_cast<uint32_t>(std::min<uint64_t>(size, UINT32_MAX)) };
 }
 
 static void runOnCopies(const ScheduleDescriptor& schedule, Program& programToEdit, const OptimizationInputs& inputs, const PassRunner& runner, ProgramAnalyses& analyses)
@@ -566,22 +578,29 @@ static void runOnCopies(const ScheduleDescriptor& schedule, Program& programToEd
     unsigned count = program.functions.size();
     auto phases = makeUnique<InterningPhases>(programToEdit, count);
     {
-        DerivedFunctionPhase derived(derivedFunctions, programToEdit, inputs.flow, *phases);
+        DerivedFunctionPhase derived(derivedFunctions, programToEdit, inputs.flow, *phases, &inputs);
         FunctionQueue queue(loops, count);
+        // Of the functions that have changed.
         Vector<std::unique_ptr<Function>> optimized(count);
+        Vector<uint8_t> areValuesTypedAsDefined(FillWith { }, count, static_cast<uint8_t>(0));
         // Of a copy that has changed.
         Vector<std::unique_ptr<FinishedCopy>> finished(count);
-        Vector<uint8_t> didChange(FillWith { }, count, static_cast<uint8_t>(0));
+        const Heat* heat = schedule.id == FunctionSchedule::Optimize ? &inputs.heat : nullptr;
         // A function is found only when one that names it is finished, so long functions that name each other would run one after the other.
         Vector<QueuedFunction> startedEarly;
         if (schedule.functions == ScheduledFunctions::Reached) {
-            startedEarly = largeFunctions(program, loops).map([&](uint32_t index) {
-                return createQueuedFunction(program, FunctionID(index));
+            AOT_THRESHOLD(size_t, minValuesOfLargeFunction, 4096);
+            AOT_THRESHOLD(size_t, minValuesWithWarmCode, 64);
+            startedEarly = collectInParallel<QueuedFunction>(loops, count, [&](unsigned index, Vector<QueuedFunction>& found) {
+                FunctionID id(index);
+                size_t numberOfValues = numberOfValuesIn(program, id);
+                if (numberOfValues >= minValuesOfLargeFunction || (heat && numberOfValues >= minValuesWithWarmCode && heat->hasWarmCode(program, id).predicted()))
+                    found.append(createQueuedFunction(program, id, heat));
             });
         }
 
         auto reach = [&](FunctionID target, FunctionReferenceKind kind, FoundFunctions& found) {
-            found.append(createQueuedFunction(program, target));
+            found.append(createQueuedFunction(program, target, heat));
             switch (kind) {
             case FunctionReferenceKind::Call:
             case FunctionReferenceKind::Dispatch:
@@ -603,6 +622,16 @@ static void runOnCopies(const ScheduleDescriptor& schedule, Program& programToEd
             }
         };
 
+        // Many bodies may name one callee set. Its functions are queued by the first body that names it and is known to be reached: what a body finds that was only started early may never be queued.
+        // A set that a pass makes has a number of its task.
+        Vector<uint8_t> isCalleeSetRead(FillWith { }, program.types.numberOfCalleeSets(), static_cast<uint8_t>(0));
+        auto shouldReadFor = [&](bool isReached, CalleeSetID set) {
+            if (!isReached || set.index() >= isCalleeSetRead.size())
+                return true;
+            AtomicRef flag(isCalleeSetRead[set.index()]);
+            return !flag.load(std::memory_order_relaxed) && !flag.exchange(1, std::memory_order_relaxed);
+        };
+
         {
             ProgramCaches caches(program, build);
             Vector<QueuedFunction> scheduled;
@@ -614,9 +643,9 @@ static void runOnCopies(const ScheduleDescriptor& schedule, Program& programToEd
                 });
                 break;
             case ScheduledFunctions::Reached:
-                scheduled.reserveInitialCapacity(inputs.callGraph.roots().size());
-                for (FunctionID root : inputs.callGraph.roots())
-                    scheduled.append(createQueuedFunction(program, root));
+                scheduled = collectInParallel<QueuedFunction>(loops, inputs.callGraph.roots().size(), [&](unsigned position, Vector<QueuedFunction>& roots) {
+                    roots.append(createQueuedFunction(program, inputs.callGraph.roots()[position], heat));
+                });
                 break;
             case ScheduledFunctions::OneAtATime:
                 RELEASE_ASSERT_NOT_REACHED();
@@ -640,17 +669,24 @@ static void runOnCopies(const ScheduleDescriptor& schedule, Program& programToEd
                 shrinkToFit(*copy);
                 // An All schedule has already queued every function with a body.
                 if (schedule.functions == ScheduledFunctions::Reached) {
+                    bool isReached = queue.wasConfirmed(id);
                     forEachFunctionReference(program, *copy, [&](FunctionID target, FunctionReferenceKind kind) {
                         reach(target, kind, found);
+                    }, [&](CalleeSetID set) {
+                        return shouldReadFor(isReached, set);
                     });
                 }
                 if (isProvisional)
                     derived.setOptimizedBody(id, WTF::move(copy));
                 else {
-                    didChange[id.index()] = outcome == PassOutcome::Changed;
-                    if (outcome == PassOutcome::Changed)
+                    areValuesTypedAsDefined[id.index()] = copy->valuesAreTypedAsDefined();
+                    // A copy that no pass has changed dies here.
+                    if (outcome == PassOutcome::Changed) {
                         finished[id.index()] = makeUnique<FinishedCopy>(*copy);
-                    optimized[id.index()] = WTF::move(copy);
+                        if (schedule.id == FunctionSchedule::Optimize)
+                            finished[id.index()]->body = ParkedBody(copy->storageOfBlocks(), copy->storageOfValues());
+                        optimized[id.index()] = WTF::move(copy);
+                    }
                 }
             }, [&](FunctionID id) {
                 derived.confirmRequestsOf(id);
@@ -680,25 +716,40 @@ static void runOnCopies(const ScheduleDescriptor& schedule, Program& programToEd
 
             BodyIndex& bodyIndex = analyses.bodyIndex();
             std::atomic<uint64_t> numberOfRemovedBodies { 0 };
+            // A thread that frees what another thread has allocated cannot use that room. So the bodies from before the loop go first, and each thread takes in what was freed of its own.
             forEachIndexInParallel(loops, count, [&](unsigned index) {
                 FunctionID id(index);
                 if (queue.wasConfirmed(id)) {
-                    if (auto& copy = optimized[index]; copy && didChange[index]) {
-                        FinishedCopy& finishedCopy = *finished[index];
-                        if (!finishedCopy.remapSites.isEmpty()) {
-                            applyRemaps(remaps, *copy, finishedCopy.remapSites);
-                            finishedCopy.row.applyRemaps(remaps.types, remaps.functions, finishedCopy.remapSites.record ? copy.get() : nullptr);
-                        }
-                        std::swap(editor.at(id), *copy);
-                        bodyIndex.write(id, WTF::move(finishedCopy.row));
-                    } else if (copy && copy->valuesAreTypedAsDefined())
-                        programToEdit.functions[index].setValuesAreTypedAsDefined();
+                    if (optimized[index] && finished[index]->body) {
+                        programToEdit.functions[index].storageOfBlocks() = { };
+                        programToEdit.functions[index].storageOfValues() = { };
+                    }
                     return;
                 }
                 if (!removesUnreachedBodies || !program.functions[index].hasBody())
                     return;
                 editor.removeBody(id);
                 numberOfRemovedBodies.fetch_add(1, std::memory_order_relaxed);
+            });
+            if (removesUnreachedBodies)
+                build.giveFreedMemoryBack();
+            forEachIndexInParallel(loops, count, [&](unsigned index) {
+                FunctionID id(index);
+                if (queue.wasConfirmed(id)) {
+                    if (auto& copy = optimized[index]) {
+                        FinishedCopy& finishedCopy = *finished[index];
+                        if (finishedCopy.body)
+                            finishedCopy.body.takeInto(copy->storageOfBlocks(), copy->storageOfValues());
+                        if (!finishedCopy.remapSites.isEmpty()) {
+                            applyRemaps(remaps, *copy, finishedCopy.remapSites);
+                            finishedCopy.row.applyRemaps(remaps.types, remaps.functions, finishedCopy.remapSites.record ? copy.get() : nullptr);
+                        }
+                        std::swap(editor.at(id), *copy);
+                        bodyIndex.write(id, WTF::move(finishedCopy.row));
+                        copy = nullptr;
+                    } else if (areValuesTypedAsDefined[index])
+                        programToEdit.functions[index].setValuesAreTypedAsDefined();
+                }
             });
             forEachIndexInParallel(loops, commit.functions.size(), [&](unsigned position) {
                 Function& function = programToEdit.functions[count + position];

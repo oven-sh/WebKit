@@ -11,6 +11,7 @@
 #include "AOTEffectsOfOperands.h"
 #include "AOTLargeVectors.h"
 #include "AOTThreads.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include <array>
 #include <atomic>
@@ -18,6 +19,7 @@
 #include <memory>
 #include <optional>
 #include <wtf/BitVector.h>
+#include <wtf/HashMap.h>
 #include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/ScopedLambda.h>
@@ -86,6 +88,7 @@ public:
         MayCallUnknownCode = 1 << 3,
         MaySuspend = 1 << 4,
         MayBeTerminated = 1 << 5,
+        MayThrowOtherThanStackOverflow = 1 << 6,
     };
 
     constexpr uint32_t reads() const { return m_bits & idMask; }
@@ -239,6 +242,10 @@ public:
     OperandSummary operand(uint32_t entryParameter) const;
     OperandMemory memory(uint32_t entryParameter) const;
     EffectsOnEdges onCall() const;
+    // Merges onCall() without making a copy of it.
+    void mergeOnCallInto(EffectsOnEdges&) const;
+    // What onCall() says on either edge. Of most functions the flags say no, and nothing is copied.
+    bool isRemovableWhenUnused() const;
     UnknownCodeWitness unknownCodeWitness() const { return m_summary ? m_summary->unknownCodeWitness : m_witness; }
     FunctionSummary expanded() const;
     FunctionSummary withoutParameters(const BitVector& removedEntryParameters) const { return expanded().withoutParameters(removedEntryParameters); }
@@ -252,6 +259,89 @@ private:
     const StoredFunctionEffects* m_effects { nullptr };
     std::span<const StoredParameterSummary> m_parameters;
     UnknownCodeWitness m_witness;
+};
+
+// What a table of summaries says of a call that may enter any function of one long list. Many calls may name the same list, and each of them is asked about again
+// whenever an analysis is made anew. The members are walked once for each question, and a call that asks the same only compares the lists.
+// The answers hold for the table and the functions' records as they are.
+class AnswersForCalleeLists {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(AnswersForCalleeLists);
+    WTF_MAKE_NONCOPYABLE(AnswersForCalleeLists);
+public:
+    AOT_CLASS_THRESHOLD(size_t, fewestCallees, 16);
+
+    struct EffectsOnCall {
+        EffectsOnEdges effects { EffectsOnEdges::none() };
+        bool namesFunctionWithoutBody { false };
+    };
+
+    AnswersForCalleeLists() = default;
+
+    // `question` says all that the answer depends on besides the list.
+    OperandSummary operandSummary(std::span<const FunctionID> callees, uint64_t question, NOESCAPE const Invocable<OperandSummary()> auto& compute)
+    {
+        return answer(callees, question, &List::operandSummaries, compute);
+    }
+
+    // What entering a callee does before its body runs. `question` is the way it is called.
+    EffectsOnEdges effectsOfEntering(std::span<const FunctionID> callees, uint64_t question, NOESCAPE const Invocable<EffectsOnEdges()> auto& compute)
+    {
+        return answer(callees, question, &List::effectsOfEntering, compute);
+    }
+
+    EffectsOnCall effectsOnCall(std::span<const FunctionID> callees, NOESCAPE const Invocable<EffectsOnCall()> auto& compute)
+    {
+        return answer(callees, 0, &List::effectsOnCall, compute);
+    }
+
+    void clear();
+
+private:
+    template<typename Answer> using Answers = Vector<std::pair<uint64_t, Answer>, 1>;
+
+    struct List {
+        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(List);
+        // Never changes once the list is in the table, so it is compared outside the lock.
+        Vector<FunctionID> callees;
+        Answers<OperandSummary> operandSummaries;
+        Answers<EffectsOnEdges> effectsOfEntering;
+        Answers<EffectsOnCall> effectsOnCall;
+    };
+    using ListsWithOneHash = Vector<std::unique_ptr<List>, 1>;
+
+    // Of a few members, so that a call pays for comparing the lists and nothing else.
+    static uint64_t hashOf(std::span<const FunctionID>);
+    List* find(uint64_t hash, std::span<const FunctionID>);
+    List& findOrAdd(uint64_t hash, std::span<const FunctionID>) WTF_REQUIRES_LOCK(m_lock);
+
+    template<typename Answer>
+    Answer answer(std::span<const FunctionID> callees, uint64_t question, Answers<Answer> List::* answers, NOESCAPE const Invocable<Answer()> auto& compute)
+    {
+        auto findIn = [&](List& list) -> const Answer* {
+            for (const auto& [known, answer] : list.*answers) {
+                if (known == question)
+                    return &answer;
+            }
+            return nullptr;
+        };
+        uint64_t hash = hashOf(callees);
+        if (List* list = find(hash, callees)) {
+            Locker locker { m_lock };
+            if (const Answer* known = findIn(*list))
+                return *known;
+        }
+        Answer computed = compute();
+        Locker locker { m_lock };
+        List& list = findOrAdd(hash, callees);
+        // Another thread may have answered meanwhile.
+        if (!findIn(list))
+            (list.*answers).append({ question, computed });
+        return computed;
+    }
+
+    Lock m_lock;
+    UncheckedKeyHashMap<uint64_t, ListsWithOneHash> m_lists WTF_GUARDED_BY_LOCK(m_lock);
+    std::atomic<bool> m_isEmpty { true };
 };
 
 class EffectSummaries {
@@ -274,6 +364,13 @@ public:
     unsigned size() const { return m_known ? 0 : m_parameterRanges.size(); }
     bool isEmpty() const { return m_known ? m_known->isEmpty() : m_parameterRanges.isEmpty(); }
     bool contains(FunctionID) const;
+
+    // Null where the table keeps no answers.
+    AnswersForCalleeLists* answersForCalleeLists() const { return m_known || (m_parameterRanges.isEmpty() && !m_keepsAnswersWhileEmpty) ? nullptr : &m_answersForCalleeLists.get(); }
+    // An empty table says the same of every function, and nobody brings it up to date. It keeps answers only for an owner that drops it before any function's record changes.
+    void keepAnswersForCalleeLists() { m_keepsAnswersWhileEmpty = true; }
+    // Rows are written in loops over all functions, so no row forgets by itself: whoever has changed rows, or brings the table up to date with functions whose records have changed, says so.
+    void forgetAnswersForCalleeLists() { m_answersForCalleeLists.clear(); }
 
     void dump(PrintStream&, const Program&) const;
 
@@ -311,6 +408,42 @@ private:
     void set(unsigned index, const StoredFunctionEffects&, UnknownCodeWitness);
     std::span<StoredParameterSummary> parametersOf(unsigned index) LIFETIME_BOUND { return m_parameters.mutableSpan().subspan(m_parameterRanges[index].first, m_parameterRanges[index].size); }
 
+    // Made by the first call that asks. Few programs have a list that long.
+    class LazyAnswers {
+    public:
+        LazyAnswers() = default;
+        LazyAnswers(LazyAnswers&& other)
+            : m_answers(other.m_answers.exchange(nullptr))
+        {
+        }
+        LazyAnswers& operator=(LazyAnswers&& other)
+        {
+            delete m_answers.exchange(other.m_answers.exchange(nullptr));
+            return *this;
+        }
+        ~LazyAnswers() { delete m_answers.load(); }
+
+        AnswersForCalleeLists& get()
+        {
+            if (AnswersForCalleeLists* made = m_answers.load(std::memory_order_acquire))
+                return *made;
+            auto* mine = new AnswersForCalleeLists;
+            AnswersForCalleeLists* made = nullptr;
+            if (m_answers.compare_exchange_strong(made, mine, std::memory_order_acq_rel))
+                return *mine;
+            delete mine;
+            return *made;
+        }
+        void clear()
+        {
+            if (AnswersForCalleeLists* made = m_answers.load(std::memory_order_acquire))
+                made->clear();
+        }
+
+    private:
+        std::atomic<AnswersForCalleeLists*> m_answers { nullptr };
+    };
+
     RefPtr<InternedLocationMasks> m_masks;
     Contents m_contents { Contents::Any };
     StoredFunctionEffects m_effectsOfUnknownFunction;
@@ -322,6 +455,8 @@ private:
     Effects m_unknownCode { Effects::unknownCode() };
     const EffectSummaries* m_known { nullptr };
     unsigned m_firstStored { 0 };
+    bool m_keepsAnswersWhileEmpty { false };
+    mutable LazyAnswers m_answersForCalleeLists;
 };
 
 class CalleeSummary {
@@ -345,8 +480,12 @@ private:
 EffectSummaries createSummariesFromFlow(const Program&, const FlowResults&, BuildContext&);
 EffectSummaries createSummariesFromFlow(const Program&, const FlowResults&, const BorrowedParameters&, BuildContext&);
 EffectSummaries computeEffectSummaries(const Program&, const FlowResults&, BuildContext&);
+// A typed body that restarts in the generic version of its function passes its own parameters. Here that call is summarized by what the generic version does to values of those types, and so is a call
+// to code outlined from the generic version. Each such callee is read again for each such call, which is too expensive for a build, so only the verifier asks, when a guard is unavailable.
+EffectSummaries computeEffectSummariesByOperandTypes(const Program&, const FlowResults&, BuildContext&);
 void updateEffectSummaries(const Program&, const FlowResults&, BuildContext&, BodySummaries& kept, EffectSummaries&, BodyReferences* = nullptr);
-FunctionSummary summarizeBody(const EffectContext&, FunctionID, FunctionAnalyses&);
+// A callee listed here is read as the summary beside it says.
+FunctionSummary summarizeBody(const EffectContext&, FunctionID, FunctionAnalyses&, std::span<const std::pair<FunctionID, FunctionSummary>> versionsOfCallees = { });
 
 uint64_t stampOfRecord(const Function&);
 uint64_t stampOfRecordForCallers(const Function&);

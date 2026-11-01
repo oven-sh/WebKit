@@ -169,11 +169,11 @@ static bool mayRefuseChangedClosures(FunctionAnalyses& analyses, const Value& te
 void keepRepeatedTests(FunctionAnalyses& analyses, Vector<BranchOnTypeTest>& branches)
 {
     // The identities of values are asked for only where two tests are for one type.
-    AOT::stableSort(branches, { }, &BranchOnTypeTest::testedType);
+    AOT::stableSortInLine(branches, { }, &BranchOnTypeTest::testedType);
     keepRepeated(branches, &BranchOnTypeTest::testedType);
     for (BranchOnTypeTest& branch : branches)
         branch.subject = analyses.identityOf(branch.subject);
-    AOT::stableSort(branches, { }, &BranchOnTypeTest::test);
+    AOT::stableSortInLine(branches, { }, &BranchOnTypeTest::test);
     // A test that no other branch repeats has nothing to learn from the table.
     keepRepeated(branches, &BranchOnTypeTest::test);
 }
@@ -194,7 +194,7 @@ TypeTestBranches::TypeTestBranches(FunctionAnalyses& analyses)
             m_blocksThatBranchOnTypeTest.append(block);
         }
     }
-    AOT::stableSort(m_branchesByOperand, { }, &BranchOnValue::operand);
+    AOT::stableSortInLine(m_branchesByOperand, { }, &BranchOnValue::operand);
     keepRepeated(m_branchesByOperand, &BranchOnValue::operand);
     keepRepeatedTests(analyses, m_branches);
     if (!m_branches.isEmpty())
@@ -326,7 +326,7 @@ SlotValueTests::SlotValueTests(FunctionAnalyses& analyses, TypeArena& types, std
     AOT::sort(testedObjects);
     for (BlockID block : analyses.cfg().reversePostOrder())
         collectTestedReads(testedObjects.span(), block);
-    AOT::stableSort(m_reads, { }, &TestedRead::object);
+    AOT::stableSortInLine(m_reads, { }, &TestedRead::object);
 }
 
 static bool declareSameType(const Program& program, std::span<const LayoutID> layouts, PropertyKeyID key)
@@ -546,7 +546,7 @@ TestsOfSameValues::TestsOfSameValues(FunctionAnalyses& analyses, TypeArena& type
             }
         }
     }
-    AOT::stableSort(m_operands, { }, &TestedOperand::subject);
+    AOT::stableSortInLine(m_operands, { }, &TestedOperand::subject);
     size_t end = 0;
     forEachRunOfEqualKeys(m_operands.span(), &TestedOperand::subject, [&](std::span<const TestedOperand> operands) {
         if (operands.size() < 2 || std::ranges::all_of(operands, &TestedOperand::isExpectation))
@@ -675,7 +675,7 @@ void TestsOfSameValues::computeOutcomes()
         }
         if (!entersEdge)
             return;
-        AOT::stableSort(steps, { }, &Step::order);
+        AOT::stableSortInLine(steps, { }, &Step::order);
         for (const Step& step : steps) {
             while (!scopes.isEmpty() && scopes.last().lastNumberBelow < step.number)
                 scopes.removeLast();
@@ -942,14 +942,40 @@ void raiseFrequenciesBehind(FunctionAnalyses& analyses, Function& function, Edge
     Expected<BlockFrequency> actual = function.at(decided.from).frequency;
     if (!isRarerThan(expected, actual).predicted() || !analyses.cfg().isReachable(decided.from))
         return;
-    bool isEnteredAnotherWay = std::ranges::any_of(analyses.cfg().incomingEdges(target), [&](Edge edge) {
-        return edge != decided && function.at(edge.from).frequency.predicted() != BlockFrequency::Rare;
-    });
-    if (isEnteredAnotherWay)
+    auto isEnteredAnotherWay = [&](Edge way) {
+        return std::ranges::any_of(analyses.cfg().incomingEdges(targetOf(function, way).block), [&](Edge edge) {
+            return edge != way && function.at(edge.from).frequency.predicted() != BlockFrequency::Rare;
+        });
+    };
+    if (isEnteredAnotherWay(decided))
         return;
+    Vector<Edge, 4> jumpsToRarerBlocks;
+    auto raise = [&](BlockID block) {
+        function.edit(block, BlockEdit::Rest).frequency = actual;
+        const Terminator& terminator = function.at(block).terminator;
+        if (terminator.kind == TerminatorKind::Jump && isRarerThan(function.at(terminator.next().block).frequency, actual).predicted())
+            jumpsToRarerBlocks.append(Edge { block, 0 });
+    };
+    // Past a block as frequent as the test, rare blocks are the failing sides of other tests.
+    BitVector isReachedThroughRareBlocks(function.blocks.size());
+    isReachedThroughRareBlocks.quickSet(target.index());
+    Vector<BlockID, 16> worklist { target };
+    while (!worklist.isEmpty()) {
+        for (BlockID next : analyses.cfg().successors(worklist.takeLast())) {
+            if (isRarerThan(function.at(next).frequency, actual).predicted() && !isReachedThroughRareBlocks.quickSet(next.index()))
+                worklist.append(next);
+        }
+    }
     for (BlockID block : analyses.cfg().reversePostOrder()) {
-        if (function.at(block).frequency.isSamePredictionAs(expected) && analyses.dominators().dominates(target, block))
-            function.edit(block, BlockEdit::Rest).frequency = actual;
+        if (isReachedThroughRareBlocks.quickGet(block.index()) && function.at(block).frequency.isSamePredictionAs(expected) && analyses.dominators().dominates(target, block))
+            raise(block);
+    }
+    // What a block always goes on to runs as often as the block. The way behind a failed test often joins one that is rarer still. What lies behind the tests there stays as it is until they are decided too.
+    while (!jumpsToRarerBlocks.isEmpty()) {
+        Edge jump = jumpsToRarerBlocks.takeLast();
+        BlockID next = targetOf(function, jump).block;
+        if (isRarerThan(function.at(next).frequency, actual).predicted() && !isEnteredAnotherWay(jump))
+            raise(next);
     }
 }
 

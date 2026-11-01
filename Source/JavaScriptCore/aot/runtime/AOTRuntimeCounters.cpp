@@ -34,6 +34,7 @@
 #include "AOTVector.h"
 #include "BlockDirectory.h"
 #include "FreeList.h"
+#include "FreeListInlines.h"
 #include "JSCInlines.h"
 #include "JSCJSValueInlines.h"
 #include "LocalAllocator.h"
@@ -44,12 +45,17 @@
 #include <optional>
 #include <span>
 #include <wtf/HexNumber.h>
+#include <wtf/NeverDestroyed.h>
 #include <wtf/PrintStream.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/text/StringView.h>
+
+#if COMPILER(CLANG)
+#pragma clang attribute push(__attribute__((minsize)), apply_to = function)
+#endif
 
 namespace JSC { namespace AOT {
 
@@ -99,6 +105,24 @@ void countLimitHit(VM& vm, LimitID limit)
 {
     if (RuntimeCounters* counters = vm.aotState().counters.get())
         ++counters->limitHits[static_cast<size_t>(limit)];
+}
+
+void countStackListingAfterGivenUpCapture(VM& vm)
+{
+    if (RuntimeCounters* counters = vm.aotState().counters.get())
+        ++counters->stackListingsAfterGivenUpCaptures;
+}
+
+void countRopeFlattenedForPrefixTest(VM& vm)
+{
+    if (RuntimeCounters* counters = vm.aotState().counters.get())
+        ++counters->ropesFlattenedForPrefixTests;
+}
+
+void countNativeTextHashed(VM& vm)
+{
+    if (RuntimeCounters* counters = vm.aotState().counters.get())
+        ++counters->nativeTextsHashed;
 }
 
 uint64_t valueOf(VM& vm, RuntimeCounterID counter)
@@ -209,7 +233,7 @@ void ArrivalCounts::record(JSValue receiver, uint32_t site)
     m_hasCalledNothingSinceArrival = true;
 }
 
-void ArrivalCounts::didCallOperation(Entry entry)
+NEVER_INLINE void ArrivalCounts::didCallOperation(Entry entry)
 {
     if (!m_hasCalledNothingSinceArrival || entry == Entry::operationAOTRecordArrival)
         return;
@@ -314,12 +338,18 @@ static std::optional<CompiledFrame> findAllocatingFrame(VM& vm, FunctionID const
     return frames->isAtEnd() ? innermost : frames->frame();
 }
 
-static String describePlace(VM& vm, FunctionID constructor = { })
+static const Image& imageOf(VM& vm, const std::optional<CompiledFrame>& frame)
 {
-    std::optional<CompiledFrame> frame = findAllocatingFrame(vm, constructor);
+    return frame && frame->instance ? *frame->instance->program : *vm.aotState().image;
+}
+
+static String describePlace(VM& vm, const std::optional<CompiledFrame>& frame)
+{
     if (!frame)
         return "- -"_str;
-    const Image& image = *vm.aotState().image;
+    // The numbers of a frame are those of its image. Another one may run: native code that goes through the instances of a realm allocates under each of them.
+    const Image& image = imageOf(vm, frame);
+    RunningImageScope imageOfFrame(vm.aotState(), &image);
     FunctionDescription description(frame->function);
     String function = description.codeType() == ModuleCode ? "module"_str : countedAsWord(description.name(vm));
     if (image.isObfuscated()) {
@@ -335,7 +365,7 @@ static String describePlace(VM& vm, FunctionID constructor = { })
 
 static String describeLayoutOfAllocation(const Instance& instance, uint32_t allocation)
 {
-    const Image& image = *instance.vm->aotState().image;
+    const Image& image = *instance.program;
     const ProgramTables& tables = instance.tables();
     uint32_t shape = tables.allocations()[allocation].shape;
     if (shape < tables.firstEnvironmentShape) {
@@ -348,6 +378,27 @@ static String describeLayoutOfAllocation(const Instance& instance, uint32_t allo
     StringID name(environment.name);
     bool hasName = !image.isObfuscated() && name && image.text().hasText(name);
     return makeString('L', environment.index, ':', countedAsWord(hasName ? image.text().createString(name) : emptyString()));
+}
+
+template<typename Functor>
+const String& AllocationCounts::wordsAtAllocatingFrame(VM& vm, FunctionID constructor, Counted kind, uint64_t detail, const Functor& describeCounted)
+{
+    ASSERT(!(detail >> 56));
+    uint64_t counted = static_cast<uint64_t>(kind) << 56 | detail;
+    const void* returnAddress = constructor ? nullptr : CompiledFrameIterator::findReturnAddressInFunctionAtTop(vm);
+    if (returnAddress) {
+        if (auto known = m_wordsOfReturnAddresses.find({ returnAddress, counted }); known != m_wordsOfReturnAddresses.end())
+            return known->value;
+    }
+    std::optional<CompiledFrame> frame = findAllocatingFrame(vm, constructor);
+    // A call site lies in one function, inlined or not.
+    uint64_t site = frame ? (static_cast<uint64_t>(frame->code.index()) + 1) << 32 | frame->callSite.bits() : 0;
+    const String& words = m_wordsOfLines.ensure({ site, counted, imageOf(vm, frame).position() }, [&] {
+        return makeString(describePlace(vm, frame), ' ', describeCounted());
+    }).iterator->value;
+    if (returnAddress)
+        m_wordsOfReturnAddresses.add({ returnAddress, counted }, words);
+    return words;
 }
 
 AllocationCounts& AllocationCounts::ensure(Instance& instance)
@@ -373,7 +424,10 @@ void AllocationCounts::willAllocate(Instance& instance, uint32_t allocation)
         FunctionID constructor { instance.tables().constructorOfAllocation(allocation) };
         if (constructor)
             constructor = FunctionDescription(constructor).sourceFunction();
-        addLine(ensure(instance).m_allocations, makeString(describePlace(*instance.vm, constructor), ' ', describeLayoutOfAllocation(instance, allocation)), *list);
+        AllocationCounts& counts = ensure(instance);
+        addLine(counts.m_allocations, counts.wordsAtAllocatingFrame(*instance.vm, constructor, Counted::Layout, allocation, [&] {
+            return describeLayoutOfAllocation(instance, allocation);
+        }), *list);
     }
     size_t reason = 0;
     if (record && record->header)
@@ -388,36 +442,100 @@ void AllocationCounts::willAllocateClosure(Instance& instance, uint64_t request)
         allocator = instance.closures.slimClosureAllocators[MarkedSpace::sizeClassToIndex(SlimClosure::allocationSize(ClosureRequest::countOf(request))) - 1];
     else if (const AllocationSiteRecord* record = instance.objects.allocationSite(ClosureRequest::allocationOf(request)))
         allocator = record->allocator;
-    if (auto list = usedUpListOf(allocator))
-        addLine(ensure(instance).m_allocations, makeString(describePlace(*instance.vm), " closure:"_s, countedAsWord(writtenFunctionName(FunctionID(ClosureRequest::functionOf(request))))), *list);
+    if (auto list = usedUpListOf(allocator)) {
+        AllocationCounts& counts = ensure(instance);
+        addLine(counts.m_allocations, counts.wordsAtAllocatingFrame(*instance.vm, { }, Counted::Closure, ClosureRequest::closureNumberOf(request), [&] {
+            return makeString("closure:"_s, countedAsWord(writtenFunctionName(closureFunctionWithNumber(ClosureRequest::closureNumberOf(request)))));
+        }), *list);
+    }
 }
 
 void AllocationCounts::willAllocateMap(Instance& instance)
 {
     if (auto list = usedUpListOf(instance.allocation.inlineAllocations[static_cast<unsigned>(InlineAllocation::Map)].allocator))
-        addLine(ensure(instance).m_allocations, makeString(describePlace(*instance.vm), " Map"_s), *list);
+        addLine(ensure(instance).m_allocations, ensure(instance).wordsAtAllocatingFrame(*instance.vm, { }, Counted::Map, 0, [] {
+            return "Map"_s;
+        }), *list);
 }
 
 void AllocationCounts::willAllocateSet(Instance& instance)
 {
     if (auto list = usedUpListOf(instance.allocation.inlineAllocations[static_cast<unsigned>(InlineAllocation::Set)].allocator))
-        addLine(ensure(instance).m_allocations, makeString(describePlace(*instance.vm), " Set"_s), *list);
+        addLine(ensure(instance).m_allocations, ensure(instance).wordsAtAllocatingFrame(*instance.vm, { }, Counted::Set, 0, [] {
+            return "Set"_s;
+        }), *list);
+}
+
+// Each VM's allocators that have requested a free list. An allocator is registered by willRefill() before it gets its first list.
+using AllocatorsOfVMs = UncheckedKeyHashMap<const VMState*, UncheckedKeyHashSet<const LocalAllocator*>>;
+static Lock allocatorsOfVMsLock;
+static AllocatorsOfVMs& allocatorsOfVMs() WTF_REQUIRES_LOCK(allocatorsOfVMsLock)
+{
+    static NeverDestroyed<AllocatorsOfVMs> allocators;
+    return allocators;
+}
+
+static String describeCellsOf(const LocalAllocator& allocator)
+{
+    return makeString(countedAsWord(String::fromLatin1(allocator.directory().subspace()->name().data())), ':', allocator.cellSize());
+}
+
+static void addListInUse(const LocalAllocator& allocator, AllocationCounts::Lines& refills)
+{
+    const FreeList& list = freeListOf(&allocator);
+    uint64_t bytesLeft = 0;
+    list.forEachInterval([&](char* start, char* end) {
+        bytesLeft += end - start;
+    });
+    if (uint64_t bytesUsed = list.originalSize() - bytesLeft)
+        addLine(refills, makeString("- list_in_use "_s, describeCellsOf(allocator)), { bytesUsed, bytesUsed / list.cellSize() });
+}
+
+// A free list is counted when it is used up. Adding the used part of the current lists makes the lines sum to the number of cells handed out.
+static void addListsInUse(const VMState& state, AllocationCounts::Lines& refills)
+{
+    Locker locker { allocatorsOfVMsLock };
+    auto allocators = allocatorsOfVMs().find(&state);
+    if (allocators == allocatorsOfVMs().end())
+        return;
+    for (const LocalAllocator* allocator : allocators->value)
+        addListInUse(*allocator, refills);
 }
 
 void AllocationCounts::willRefill(VM& vm, const LocalAllocator& allocator)
 {
+    AllocationCounts* counts = ensureForFirstInstance(vm);
+    if (!counts || counts->m_listedAllocators.add(&allocator).isNewEntry) {
+        Locker locker { allocatorsOfVMsLock };
+        allocatorsOfVMs().add(&vm.aotState(), UncheckedKeyHashSet<const LocalAllocator*> { }).iterator->value.add(&allocator);
+    }
     if (RuntimeTable* table = vm.aotState().runtimeTable.get())
         table->willRefillAllocator();
     CountedCells list = listOf(&allocator);
-    AllocationCounts* counts = list.bytes ? ensureForFirstInstance(vm) : nullptr;
-    if (counts)
-        addLine(counts->m_refills, makeString(describePlace(vm), ' ', countedAsWord(String::fromLatin1(allocator.directory().subspace()->name().data())), ':', allocator.cellSize()), list);
+    if (counts && list.bytes)
+        addLine(counts->m_refills, counts->wordsAtAllocatingFrame(vm, { }, Counted::CellsOfAllocator, std::bit_cast<uintptr_t>(&allocator), [&] {
+            return describeCellsOf(allocator);
+        }), list);
+}
+
+void AllocationCounts::willStopAllocating(VM& vm, const LocalAllocator& allocator)
+{
+    if (AllocationCounts* counts = ensureForFirstInstance(vm))
+        addListInUse(allocator, counts->m_refills);
+}
+
+void AllocationCounts::willShutDownHeap(VMState& state)
+{
+    if (!state.instances.isEmpty() && state.instances.first()->state)
+        addListsInUse(state, ensure(*state.instances.first()).m_refills);
+    Locker locker { allocatorsOfVMsLock };
+    allocatorsOfVMs().remove(&state);
 }
 
 void AllocationCounts::didMake(VM& vm, ASCIILiteral what, const char* detailOrNull)
 {
     if (AllocationCounts* counts = ensureForFirstInstance(vm))
-        addLine(counts->m_made, makeString(describePlace(vm), ' ', what, detailOrNull ? ":"_s : ""_s, detailOrNull ? countedAsWord(String::fromLatin1(detailOrNull)) : emptyString()), { 0, 1 });
+        addLine(counts->m_made, makeString(describePlace(vm, findAllocatingFrame(vm, { })), ' ', what, detailOrNull ? ":"_s : ""_s, detailOrNull ? countedAsWord(String::fromLatin1(detailOrNull)) : emptyString()), { 0, 1 });
 }
 
 size_t ExactAllocationCounts::numberOfKinds()
@@ -444,11 +562,17 @@ void AllocationCounts::dump(const Instance& instance, PrintStream& out)
         dumpLines(out, "allocation"_s, lines);
     }
     const AllocationCounts* counts = instance.state->allocationCounts.get();
+    if (counts && !exactCounts)
+        dumpLines(out, "allocation"_s, counts->m_allocations);
+    Lines refills;
+    if (counts)
+        refills = counts->m_refills;
+    // A VM's free lists are counted for its first instance.
+    if (instance.vm->aotState().instances.first() == &instance)
+        addListsInUse(instance.vm->aotState(), refills);
+    dumpLines(out, "refill"_s, refills);
     if (!counts)
         return;
-    if (!exactCounts)
-        dumpLines(out, "allocation"_s, counts->m_allocations);
-    dumpLines(out, "refill"_s, counts->m_refills);
     dumpLines(out, "made"_s, counts->m_made);
     for (size_t reason = 0; reason < reasonsForSlowAllocation.size(); ++reason)
         out.println("slow-allocation "_s, reasonsForSlowAllocation[reason], " "_s, counts->m_slowAllocations[reason]);
@@ -493,6 +617,17 @@ void dumpCounts(VM& vm, PrintStream& out)
             out.println(hits, "\tlimit:", Wire::nameOf(limit));
     }
     dumpOperationCalls(vm, out);
+    out.println(vm.hasBytecodeIntrinsicRegistry() ? 1 : 0, "\tmade:BytecodeIntrinsicRegistry");
+    RuntimeCounters* counters = vm.aotState().counters.get();
+    out.println(counters ? counters->stackListingsAfterGivenUpCaptures : 0, "\tmade:StackListingsAfterGivenUpCaptures");
+    out.println(counters ? counters->ropesFlattenedForPrefixTests : 0, "\tflattened:RopesForPrefixTests");
+    out.println(counters ? counters->nativeTextsHashed : 0, "\thashed:NativeTexts");
+    uint64_t inlineFramesDecoded = 0;
+    for (const VMState::PartsOfImage& parts : vm.aotState().parts) {
+        if (parts.callSiteCache)
+            inlineFramesDecoded += parts.callSiteCache->numberOfInlineFramesDecoded();
+    }
+    out.println(inlineFramesDecoded, "\tdecoded:InlineFrames");
 
     forEachInstance(vm, [&](const Instance& instance) {
         if (!instance.runtime.counters.branchCounts)
@@ -530,5 +665,9 @@ void dumpCounts(VM& vm, PrintStream& out)
 }
 
 } } // namespace JSC::AOT
+
+#if COMPILER(CLANG)
+#pragma clang attribute pop
+#endif
 
 #endif // ENABLE(AOT)

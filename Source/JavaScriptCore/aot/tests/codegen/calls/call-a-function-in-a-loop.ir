@@ -9,7 +9,7 @@
 # declare const input: any;
 # (globalThis as any).answer = weighAll(input | 0, +input);
 # FORM: AsRead
-# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls,pass:InlineHeads
 # RUN: lower-to-b3 optimized f2
 # REQUIRES: unsanitized-code
 # RUN(LOOP): lower-to-b3 optimized loops f2

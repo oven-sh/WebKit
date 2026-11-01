@@ -39,13 +39,13 @@ function f4 name="calls" parameters=[{type=anything}, {type=f0|f1}, {type=number
 # CHECK-NEXT: v4 Call: {{*}}callsUnknownCode
 # CHECK-NEXT: v5 Call: {{*}}callsUnknownCode
 # CHECK-NEXT: v6 Call: {{*}}callsUnknownCode
-# CHECK-NEXT: v7 Call: writes(ModuleVariables/2)
+# CHECK-NEXT: v7 Call: writes(ModuleVariables/2) throwsForLackOfStack
 # CHECK-NEXT: v8 Call: writes(ModuleVariables/2) throws
-# CHECK-NEXT: v9 Call: writes(ModuleVariables/1)
+# CHECK-NEXT: v9 Call: writes(ModuleVariables/1) throwsForLackOfStack
 # CHECK-NEXT: b0 Return
 # ONLY-LABEL: function f4
-# ONLY-NOT: v7 Call:{{*}}throws
-# ONLY-NOT: v9 Call:{{*}}throws
+# ONLY: v7 Call: writes(ModuleVariables/2) throwsForLackOfStack
+# ONLY: v9 Call: writes(ModuleVariables/1) throwsForLackOfStack
 function f5 name="noCallee" parameters=[{type=anything}, {type=f0|f1}, {type=f2}, {type=f3}, {type=builtin(MathAbs)}] results=[{type=undefined}] {
     v5 = Call v0 callees=[]
     v6 = Call v1 callees=[]
@@ -72,7 +72,7 @@ function f6 name="constructs" parameters=[{type=anything}, {type=f2}] results=[{
     Return
 }
 # CHECK-LABEL: function f6
-# CHECK-NEXT: v2 Construct: reads(AllocatorState) writes(ModuleVariables/1, AllocatorState) collects
+# CHECK-NEXT: v2 Construct: reads(AllocatorState) writes(ModuleVariables/1, AllocatorState) throwsForLackOfStack collects
 # CHECK-NEXT: v3 Construct: reads(AllocatorState) writes(ModuleVariables/1, AllocatorState) throws collects
 # CHECK-NEXT: v4 Construct: {{*}}callsUnknownCode
 # CHECK-NEXT: v5 Construct: {{*}}callsUnknownCode

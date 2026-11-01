@@ -1,0 +1,42 @@
+# The first copy between two shapes costs the run time thousands of instructions to plan. Cold code copies inline behind a guard when the source is expected to have at most two key orders,
+# and keeps the call on the rare path. A source with more orders keeps the call alone.
+# FORM: Prepared optimizing
+# OPTIONS: heat=EverythingIsCold
+# RUN: pass ExpandOwnKeys
+# STATISTIC: OwnKeyWalksExpanded = 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Copy" fields=[{key="first" declared={type=number}}]
+layout L1 name="Options" fields=[{key="a" declared={type=number}}, {key="b" declared={type=string}}] flow={constructorOrders=[{fields=[0, 1]}]}
+layout L2 name="ThreeOrders" fields=[{key="a" declared={type=number}}, {key="b" declared={type=string}}] flow={constructorOrders=[{fields=[0, 1]}, {fields=[1, 0]}, {fields=[1]}]}
+
+function f0 name="oneExpectedOrder" parameters=[{type=object}, {type=number}] results=[{type=anything}] {
+  b0(v0: object ~ L1, v1: number):
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    CopyDataProperties v2, v0
+    v4 = FinishObject v2
+    Return v4
+# CHECK: b0(
+# CHECK-NEXT: = NewObject
+# CHECK-NEXT: = ShapeTest v0 layouts=[L1]
+# CHECK: frequency=Rare:
+# CHECK-NEXT: CopyDataProperties v2, v0
+# CHECK: = HasKeyOrder v0{{*}} layout=L1 fields=[0, 1]
+# CHECK: [[a]]:{{*}}= GetSlot v0{{*}} key="a"
+# CHECK: [[b]]:{{*}}= GetSlot v0{{*}} key="b"
+# CHECK: PropDefine v2, [[a]] key="a"
+# CHECK-NEXT: PropDefine v2, [[b]] key="b"
+}
+
+function f1 name="threeExpectedOrders" parameters=[{type=object}, {type=number}] results=[{type=anything}] {
+  b0(v0: object ~ L2, v1: number):
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    CopyDataProperties v2, v0
+    v4 = FinishObject v2
+    Return v4
+# CHECK: b0(
+# CHECK-NEXT: = NewObject
+# CHECK-NEXT: CopyDataProperties v2, v0
+# CHECK-NEXT: = FinishObject v2
+# CHECK-NEXT: Return v4
+}

@@ -22,6 +22,7 @@
 #include "ClonedArguments.h"
 #include "DeferTermination.h"
 #include "JSCInlines.h"
+#include "JSSet.h"
 #include "ObjectConstructor.h"
 #include "OperationResult.h"
 #include "Options.h"
@@ -44,8 +45,11 @@ static constexpr ASCIILiteral unmappedArgumentsTest = "runtime-operations/unmapp
 static constexpr ASCIILiteral readsOfArgumentsTest = "runtime-operations/reads-of-arguments-that-were-never-created"_s;
 static constexpr ASCIILiteral appendElementsTest = "runtime-operations/append-elements"_s;
 static constexpr ASCIILiteral arrayLiteralsTest = "runtime-operations/array-literals-are-pristine-and-contiguous"_s;
+static constexpr ASCIILiteral listsOfMembersTest = "runtime-operations/lists-of-members-have-the-storage-that-arrays-of-the-realm-have"_s;
+static constexpr ASCIILiteral badTimeStopsTest = "runtime-operations/a-realm-with-an-image-that-begins-to-have-a-bad-time-stops"_s;
 static constexpr ASCIILiteral pushesAndHolesTest = "runtime-operations/pushes-and-holes"_s;
 static constexpr ASCIILiteral deferredTerminationTest = "runtime-operations/poll-throws-deferred-termination-after-the-deferral"_s;
+static constexpr ASCIILiteral pollInCallStubTest = "runtime-operations/poll-in-call-stub-leaves-pending-out-of-memory-error"_s;
 
 static constexpr ASCIILiteral programText =
     "module m0 path=\"/main.js\" displayPath=\"main.js\" body=f0\n"
@@ -355,6 +359,41 @@ static void checkAppendElements(LoadedProgram& program)
     }
 }
 
+static void checkListsOfMembers(LoadedProgram& program)
+{
+    Realms& realms = program.realms();
+    JSGlobalObject* realm = program.realm();
+    struct SetAndMembers {
+        ASCIILiteral set;
+        ASCIILiteral members;
+    };
+    static constexpr SetAndMembers cases[] = {
+        { "new Set()"_s, "[]"_s },
+        { "new Set([1, 2, 3])"_s, "[1, 2, 3]"_s },
+        { "new Set([1.5, 2.5])"_s, "[1.5, 2.5]"_s },
+        { "new Set([true, 1, null])"_s, "[true, 1, null]"_s },
+    };
+    for (const auto& [source, membersSource] : cases) {
+        JSObject* set = realms.object(realm, source);
+        Vector<EncodedJSValue> members = elementsOf(realm, realms.array(realm, membersSource));
+
+        auto* list = dynamicDowncast<JSArray>(callFromNativeCode(program, operationAOTNewArrayOfMembers, set, static_cast<uint64_t>(ArrayWithInt32)));
+        AOT_TEST_CHECK_FOR_SOURCE(list && elementsOf(realm, list) == members, source);
+        AOT_TEST_CHECK_FOR_SOURCE(!hasAnyArrayStorage(list->indexingType()), source);
+
+        JSArray* target = realms.array(realm, "[0].slice()"_s);
+        callFromNativeCode(program, operationAOTAppendMembers, target, set);
+        members.insert(0, JSValue::encode(jsNumber(0)));
+        AOT_TEST_CHECK_FOR_SOURCE(elementsOf(realm, target) == members, source);
+        AOT_TEST_CHECK_FOR_SOURCE(!hasAnyArrayStorage(target->indexingType()), source);
+    }
+}
+
+static void haveABadTime(LoadedProgram& program)
+{
+    program.realm()->haveABadTime(program.vm());
+}
+
 static void checkArrayLiterals(LoadedProgram& program)
 {
     JSGlobalObject* realm = program.realm();
@@ -398,6 +437,19 @@ static void checkPollThrowsDeferredTerminationAfterTheDeferral(LoadedProgram& pr
     vm.clearHasTerminationRequest();
 }
 
+// No collection has run inside the polled call.
+static void checkPollInCallStubLeavesPendingOutOfMemoryError(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    vm.heap.cage().didFindNoRoomWithoutCollecting();
+    vm.traps().setNeedsOutOfMemoryError(true);
+    void* returnAddressesOfPolledCall[2] = { &vm, &vm };
+    callOperationFromTest(vm, operationAOTPollBeforeEntering, &program.instance(), static_cast<void*>(returnAddressesOfPolledCall + 2));
+    AOT_TEST_CHECK(!scope.exception() && vm.traps().needsOutOfMemoryError() && vm.heap.cage().owesCollection());
+    vm.traps().setNeedsOutOfMemoryError(false);
+}
+
 static void unusedEntriesTrap()
 {
     runWithLoadedProgram(unusedEntriesTrapTest, programText, checkUnusedEntriesTrap);
@@ -421,6 +473,16 @@ static void appendElements()
 static void arrayLiteralsArePristineAndContiguous()
 {
     runWithLoadedProgram(arrayLiteralsTest, programText, checkArrayLiterals);
+}
+
+static void listsOfMembersHaveTheStorageThatArraysOfTheRealmHave()
+{
+    runWithLoadedProgram(listsOfMembersTest, programText, checkListsOfMembers);
+}
+
+static void realmWithImageThatBeginsToHaveABadTimeStops()
+{
+    runWithLoadedProgramThatStops(badTimeStopsTest, programText, haveABadTime, "AOT: the realm of a compiled program is having a bad time"_s);
 }
 
 static void pushesAndHoles()
@@ -448,6 +510,11 @@ static void pollThrowsDeferredTerminationAfterTheDeferral()
         dataLogLn("The process that polls ", result.description());
         failNativeTest(__FILE__, __LINE__, deferredTerminationTest.characters());
     }
+}
+
+static void pollInCallStubLeavesPendingOutOfMemoryError()
+{
+    runWithLoadedProgram(pollInCallStubTest, programText, checkPollInCallStubLeavesPendingOutOfMemoryError);
 }
 
 static void callsAreNotCountedByDefault()
@@ -501,8 +568,11 @@ std::span<const NativeTest> runtimeOperationTests()
         { readsOfArgumentsTest, readsOfArgumentsThatWereNeverCreated },
         { appendElementsTest, appendElements },
         { arrayLiteralsTest, arrayLiteralsArePristineAndContiguous },
+        { listsOfMembersTest, listsOfMembersHaveTheStorageThatArraysOfTheRealmHave },
+        { badTimeStopsTest, realmWithImageThatBeginsToHaveABadTimeStops },
         { pushesAndHolesTest, pushesAndHoles },
         { deferredTerminationTest, pollThrowsDeferredTerminationAfterTheDeferral },
+        { pollInCallStubTest, pollInCallStubLeavesPendingOutOfMemoryError },
     };
     return tests;
 }

@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCheckedFrameCells.h"
 #include "AOTCompiledCallee.h"
 #include "AOTCompiledFrame.h"
 #include "AOTEmptyPages.h"
@@ -15,9 +16,11 @@
 #include "AOTHeapCacheRegistry.h"
 #include "AOTImage.h"
 #include "AOTInstance.h"
+#include "AOTModuleEnvironment.h"
 #include "AOTObject.h"
 #include "AOTRuntimeValidation.h"
 #include "AOTState.h"
+#include "AOTUnwinding.h"
 #include "AOTVMState.h"
 #include "AbstractSlotVisitorInlines.h"
 #include "Collector.h"
@@ -100,23 +103,38 @@ void initializeCollectorWords(VM& vm, Instance& instance)
 
 void validateFunctionCellIsNotInFrame(VM& vm, const JSCell* cell)
 {
-    if (!Thread::currentSingleton().stack().contains(const_cast<JSCell*>(cell))) [[likely]]
+    if (!Thread::currentSingleton().stack().contains(const_cast<JSCell*>(cell)) && !CheckedFrameCells::isInRange(cell)) [[likely]]
         return;
     crashOnValidationFailure(vm, { ValidationFailureKind::FunctionCellInFrameGotProperties, functionOf(cell).value_or(FunctionID()), { }, cell });
 }
 
 namespace HeapHooks {
 
+template<typename Visitor>
+static ALWAYS_INLINE void visitCheckedFrameCells(VM& vm, Visitor& visitor)
+{
+    if (!CheckedFrameCells::isInUse()) [[likely]]
+        return;
+    if (CheckedFrameCells* cells = CheckedFrameCells::find(vm))
+        cells->visitLiveCells(visitor);
+}
+
 void visitCalleesOfFrames(VM& vm, SlotVisitor& visitor, uint64_t phase)
 {
-    if (auto& tables = vm.aotState().functionTables)
-        tables->visitRecordedCallees(vm, visitor, phase);
+    for (auto& parts : vm.aotState().parts) {
+        if (auto& tables = parts.functionTables)
+            tables->visitRecordedCallees(vm, visitor, phase);
+    }
+    visitCheckedFrameCells(vm, visitor);
 }
 
 void visitCalleesOfFrames(VM& vm, AbstractSlotVisitor& visitor, uint64_t phase)
 {
-    if (auto& tables = vm.aotState().functionTables)
-        tables->visitRecordedCallees(vm, visitor, phase);
+    for (auto& parts : vm.aotState().parts) {
+        if (auto& tables = parts.functionTables)
+            tables->visitRecordedCallees(vm, visitor, phase);
+    }
+    visitCheckedFrameCells(vm, visitor);
 }
 
 void finalize(VM& vm, CollectionScope scope, uint64_t phase)
@@ -127,14 +145,18 @@ void finalize(VM& vm, CollectionScope scope, uint64_t phase)
         state.instances.removeAllMatching([&](Instance* instance) {
             if (vm.heap.isMarked(livenessToken(instance)))
                 return false;
+            if (auto& tables = state.parts[instance->program->position()].functionTables; tables && instance->state)
+                tables->forgetDisplayNamesOf(*instance->state);
             state.instancesToDestroy.append(instance);
             return true;
         });
         state.didChangeInstances();
     }
 
-    if (state.functionTables)
-        state.functionTables->finalizeRecordedCallees(vm, phase);
+    for (auto& parts : state.parts) {
+        if (parts.functionTables)
+            parts.functionTables->finalizeRecordedCallees(vm, phase);
+    }
 
     CacheValidation validation = state.validatesRuntime ? CacheValidation::On : CacheValidation::Off;
     state.caches->finalize(vm, scope, validation);
@@ -158,6 +180,21 @@ void willAnalyzeHeap(VM& vm)
     state.caches->willAnalyzeHeap(vm);
     for (Instance* instance : state.instances)
         instance->state->caches->willAnalyzeHeap(vm);
+}
+
+void willCollectForExhaustedCage(VM& vm)
+{
+    vm.aotState().returnAddressOfCallThatCollected = returnAddressOfInnermostCompiledCall(vm);
+}
+
+void didFindNoRoomWhereCollectionMayRun(VM& vm)
+{
+    vm.aotState().returnAddressOfCallThatCollected = returnAddressOfInnermostCompiledCall(vm);
+}
+
+bool isModuleEnvironment(JSCell* cell)
+{
+    return cell->classInfo() == ModuleEnvironment::info();
 }
 
 String nameOfCompiledCallee(JSCell* cell)

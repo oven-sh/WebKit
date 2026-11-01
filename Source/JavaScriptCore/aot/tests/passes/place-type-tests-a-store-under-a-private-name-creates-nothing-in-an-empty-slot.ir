@@ -1,0 +1,69 @@
+# `o.#stamp = v`, where `new Field(point)` gave the layout of `point` a field for the private name: an object of that layout whose slot is empty lacks the name. The store creates nothing there: it goes to the run time, which throws
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot
+# RUN: pipeline SeparateUnlikelyLoopPaths
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Point" module=m0 constructor=f1 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L1 kind=Instance name="ReturnsArgument" module=m0 constructor=f2
+layout L2 kind=Instance name="Field" module=m0 base=L1 constructor=f3 fields=[{key=#"#"@L2 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key=#"#stamp"@L2 declared={type=anything} flags=[IsRequired, IsPrivate]}] supertypes=[L1] flags=[HasHeritage] ownFieldCount=2
+variable g0 module=m0 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsImmutable]
+
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = NewClosure function=f2
+    v4 = NewClass v3 layout=L1
+    v5 = FinishClass v4 layout=L1
+    v6 = ResolveHeritage v5
+    v7 = NewClassToken layout=L2
+    PutModuleVariable v7 variable=g0
+    v9 = NewClosure function=f3
+    v10 = NewClass v9, v5, v6 layout=L2
+    v11 = NewClosure function=f4
+    DefineMethod v10, v11 layout=L2 side=Static key="store"
+    v13 = FinishClass v10 layout=L2
+    v14 = Integer integer=1
+    v15 = Construct v2, -, v14
+    v16 = Construct v13, -, v15
+    v17 = PropGet v13 key="store"
+    v18 = Construct v2, -, v14
+    v19 = String string="v"
+    v20 = Call v17, v13, v18, v19
+    Return v20
+}
+function f1 name="Point" module=m0 kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] constructedClass=L0 {
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    PropSet v3, v1 key="x"
+    Return v3
+}
+function f2 name="ReturnsArgument" module=m0 kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] constructedClass=L1 {
+    Return v1
+}
+function f3 name="Field" module=m0 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee] parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=anything}] constructedClass=L2 {
+    v3 = GetSuperBase v0
+    v4 = SuperConstructList v3, v1, v2 layout=L2
+    v5 = GetModuleVariable variable=g0
+    PrivateDefine v4, v5, v5 layout=L2
+    v7 = Undefined
+    PrivateDefine v4, v5, v7 layout=L2 field=1
+    Return v4
+}
+function f4 name="store" module=m0 kind=Method parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = GetModuleVariable variable=g0
+    PrivateSet v0, v2, v1 layout=L2 field=1
+    Return
+}
+# CHECK-LABEL: function f4 name="store"
+# CHECK: [[isFilled]]: boolean = IsSlotFilled v0 key=#"#stamp"@L2 receivers=[L0] level=Expected
+# CHECK-NEXT: Branch [[isFilled]] -> taken [[filled]](| 0), notTaken [[empty]]()
+# CHECK: [[filled]]([[guard]]: guard):
+# CHECK-NEXT: PutSlot v0, [[guard]], v1 key=#"#stamp"@L2 receivers=[L0] level=Expected
+# CHECK-NOT: PutSlot
+# CHECK: [[empty]]() frequency=Unlikely:
+# CHECK-NEXT: PrivateSet v0, {{*}}, v1 layout=L2 field=1
+# CHECK-NOT: PutSlot
+# CHECK-LABEL: function f5 name="library"

@@ -18,7 +18,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v4 = CallDirect function=f4
     Return
 }
-function f1 name="registered" role=Library enclosingRuntimeFunction=0 results=[{type=undefined}] {
+function f1 name="registered" role=Library enclosingRuntimeFunction=PromiseConstructorPromise results=[{type=undefined}] {
     Return
 }
 function f2 name="hoisted" results=[{type=undefined}] {
@@ -30,11 +30,11 @@ function f3 name="namedByClosure" results=[{type=undefined}] {
 function f4 name="onlyCalledDirectly" results=[{type=undefined}] {
     Return
 }
-function f5 name="calledByCompiledCodeOnly" role=Library enclosingRuntimeFunction=131072 results=[{type=undefined}] {
+function f5 name="calledByCompiledCodeOnly" role=Library enclosingRuntimeFunction=IteratorOperationsIteratorGenericClose results=[{type=undefined}] {
     Return
 }
-runtimefunction id=0 function=f1
-runtimefunction id=131072 function=f5
+runtimefunction id=PromiseConstructorPromise function=f1
+runtimefunction id=IteratorOperationsIteratorGenericClose function=f5
 # CHECK: name="main" module=m0 kind=Module role=GenericEntrypoint flags=[HasThis] captures=[{type=function}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f0} creator=Entrypoint{target=f0 arguments=Registers} {
 # CHECK: = CallDirect function=f0
 # CHECK: name="registered"{{*}}role=GenericEntrypoint{{*}}capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f1}

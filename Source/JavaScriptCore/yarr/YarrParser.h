@@ -103,7 +103,7 @@ public:
      */
     ErrorCode parse()
     {
-        if (m_size > maxPatternSize)
+        if (m_size > maxPatternSize && (m_size > maxPatternSizeWithCharacterClasses || sizeWithoutPlainCharacterClasses() > maxPatternSize))
             return ErrorCode::PatternTooLarge;
 
         parseTokens();
@@ -2222,6 +2222,72 @@ private:
             m_errorCode = ErrorCode::TooManyCaptures;
     }
 
+    // Returns the pattern's length with each plain character class counted as one character. A plain class contains only characters
+    // and ranges, so it compiles to one sorted list no matter how long its source is.
+    // Other classes can cost much more than their length suggests: \p{L} adds about 650 ranges, and [\S--a] visits every code point.
+    // Those are counted at their full length.
+    unsigned sizeWithoutPlainCharacterClasses() const
+    {
+        auto isSetOfCharacters = [](char32_t escaped) {
+            switch (escaped) {
+            case 'd':
+            case 'D':
+            case 's':
+            case 'S':
+            case 'w':
+            case 'W':
+            case 'p':
+            case 'P':
+            case 'q':
+                return true;
+            default:
+                return false;
+            }
+        };
+
+        unsigned size = 0;
+        unsigned classDepth = 0;
+        unsigned classStart = 0;
+        bool isPlain = true;
+        for (unsigned index = 0; index < m_size; ++index) {
+            char32_t ch = m_data[index];
+            if (!classDepth)
+                ++size;
+            if (ch == '\\') {
+                if (++index == m_size)
+                    break;
+                if (!classDepth)
+                    ++size;
+                else if (isSetOfCharacters(m_data[index]))
+                    isPlain = false;
+                continue;
+            }
+            if (!classDepth) {
+                if (ch == '[') {
+                    classDepth = 1;
+                    classStart = index;
+                    isPlain = true;
+                }
+                continue;
+            }
+            if (ch == ']') {
+                if (!--classDepth && !isPlain)
+                    size += index - classStart;
+                continue;
+            }
+            if (!isUnicodeSetsCompilation())
+                continue;
+            if (ch == '[') {
+                ++classDepth;
+                isPlain = false;
+            } else if (index + 1 < m_size && ((ch == '-' && m_data[index + 1] == '-') || (ch == '&' && m_data[index + 1] == '&')))
+                isPlain = false;
+        }
+        if (classDepth && !isPlain)
+            size += m_size - 1 - classStart;
+        return size;
+    }
+
     bool isLegacyCompilation() const { return m_compileMode == CompileMode::Legacy; }
     bool isUnicodeCompilation() const { return m_compileMode == CompileMode::Unicode; }
     bool isUnicodeSetsCompilation() const { return m_compileMode == CompileMode::UnicodeSets; }
@@ -2254,6 +2320,7 @@ private:
     UncheckedKeyHashSet<String> m_forwardReferenceNames;
 
     static constexpr unsigned maxPatternSize = 1024 * 1024; // Derived by empirical testing of compile time in PCRE and WREC.
+    static constexpr unsigned maxPatternSizeWithCharacterClasses = 4 * maxPatternSize;
     static constexpr unsigned maxCapturesCount = (1 << 16) / 2; // Derived from V8's configuration.
 };
 

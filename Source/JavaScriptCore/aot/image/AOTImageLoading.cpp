@@ -10,6 +10,7 @@
 
 #include "AOTHost.h"
 #include "AOTImage.h"
+#include "AOTLoadedObject.h"
 #include "Options.h"
 #include "WasmCodeInImage.h"
 #include <wtf/AccessibleAddress.h>
@@ -31,7 +32,6 @@
 #endif
 #if OS(LINUX) || OS(FREEBSD)
 #include <fcntl.h>
-#include <link.h>
 #include <unistd.h>
 #if OS(LINUX)
 #include <sys/auxv.h>
@@ -96,8 +96,11 @@ using WTF::isAddressRandomizationDisabled;
 #else
 static bool isAddressRandomizationDisabled()
 {
-    int persona = personality(0xffffffff);
-    return persona != -1 && persona & ADDR_NO_RANDOMIZE;
+    static const bool result = [] {
+        int persona = personality(0xffffffff);
+        return persona != -1 && persona & ADDR_NO_RANDOMIZE;
+    }();
+    return result;
 }
 #endif
 #endif
@@ -119,6 +122,12 @@ static void* chooseAddressForCode(size_t size)
 static void* mapCode(intptr_t descriptor, int64_t fileOffset, size_t size, size_t executableSize)
 {
     int fileDescriptor = static_cast<int>(descriptor);
+#if OS(LINUX)
+    if (size == executableSize) {
+        void* code = mmap(chooseAddressForCode(size), size, PROT_READ | PROT_EXEC, MAP_PRIVATE, fileDescriptor, fileOffset);
+        return code == MAP_FAILED ? nullptr : code;
+    }
+#endif
     void* code = mmap(chooseAddressForCode(size), size, PROT_READ, MAP_PRIVATE, fileDescriptor, fileOffset);
     if (code == MAP_FAILED)
         return nullptr;
@@ -263,27 +272,46 @@ struct SegmentOfExecutable {
 
 static constexpr bool dataHasSegmentsOfItsOwn = true;
 
+const ProgramHeader* LoadedObject::findSegment(uintptr_t address) const
+{
+    for (const ProgramHeader& header : programHeaders) {
+        uintptr_t start = loadBias + header.p_vaddr;
+        if (header.p_type == PT_LOAD && address >= start && address - start < header.p_filesz)
+            return &header;
+    }
+    return nullptr;
+}
+
+int LoadedObjectSearch::visit(const LoadedObject& object)
+{
+    if (!object.findSegment(m_address))
+        return 0;
+    m_found = object;
+    return 1;
+}
+
+const LoadedObject& loadedExecutable()
+{
+    static const LoadedObject executable = [] {
+        static constexpr uint8_t byteInEngine { };
+        LoadedObjectSearch search(reinterpret_cast<uintptr_t>(&byteInEngine));
+        dl_iterate_phdr([](struct dl_phdr_info* object, size_t, void* data) {
+            size_t numberOfHeaders = object->dlpi_phdr ? object->dlpi_phnum : 0;
+            return static_cast<LoadedObjectSearch*>(data)->visit({ object->dlpi_addr, { object->dlpi_phdr, numberOfHeaders } });
+        }, &search);
+        return search.found().value_or(LoadedObject { });
+    }();
+    return executable;
+}
+
 static std::optional<SegmentOfExecutable> findSegmentOfExecutable(const uint8_t* address)
 {
-    struct Search {
-        uintptr_t address;
-        std::optional<SegmentOfExecutable> found;
-    };
-    Search search { reinterpret_cast<uintptr_t>(address), std::nullopt };
-    dl_iterate_phdr([](struct dl_phdr_info* object, size_t, void* data) {
-        auto& search = *static_cast<Search*>(data);
-        for (unsigned index = 0; index < object->dlpi_phnum; ++index) {
-            const auto& header = object->dlpi_phdr[index];
-            uintptr_t start = object->dlpi_addr + header.p_vaddr;
-            if (header.p_type != PT_LOAD || search.address < start || search.address - start >= header.p_filesz)
-                continue;
-            search.found = SegmentOfExecutable { header.p_filesz - (search.address - start), !!(header.p_flags & PF_W), !!(header.p_flags & PF_X), static_cast<int64_t>(header.p_offset + (search.address - start)), !object->dlpi_addr };
-            break;
-        }
-        // The executable is the first object, and the image is in no other.
-        return 1;
-    }, &search);
-    return search.found;
+    const LoadedObject& executable = loadedExecutable();
+    const ProgramHeader* segment = executable.findSegment(reinterpret_cast<uintptr_t>(address));
+    if (!segment)
+        return std::nullopt;
+    uint64_t offsetInSegment = reinterpret_cast<uintptr_t>(address) - (executable.loadBias + segment->p_vaddr);
+    return SegmentOfExecutable { segment->p_filesz - offsetInSegment, !!(segment->p_flags & PF_W), !!(segment->p_flags & PF_X), static_cast<int64_t>(segment->p_offset + offsetInSegment), !executable.loadBias };
 }
 
 #elif OS(DARWIN)
@@ -527,13 +555,23 @@ static void didPublishImage(const Image& image)
     activateSignalHandlersFor(Signal::AccessFault);
 #if OS(LINUX) && !defined(BUN_HARDENED)
     if (Options::useAOTPerfMap()) [[unlikely]]
-        writePerfMap();
+        writePerfMap(image);
 #endif
 }
 
 #if OS(LINUX) && defined(BUN_REFUSES_EXECUTE_ONLY_START)
 extern "C" __attribute__((used, retain)) const char JSC__AOT__startsOnlyWhereItsFileCanBeRead[] = "execute-only start: nothing moves the code that the loader mapped";
 #endif
+
+bool takesImagesAboveOthers()
+{
+    // The string headers of a position-independent image are made at run time, each image's by itself: nothing numbers them across images yet.
+#if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
+    return false;
+#else
+    return true;
+#endif
+}
 
 Wire::ImageVerdict useImage(std::span<const uint8_t> bytes, std::optional<ImageFile> file, const std::array<uint8_t, 16>& identity, std::span<const uint8_t> allImages)
 {
@@ -544,13 +582,21 @@ Wire::ImageVerdict useImage(std::span<const uint8_t> bytes, std::optional<ImageF
     static Lock lock;
     Locker locker { lock };
     if (const Image* image = Image::find(bytes)) {
-        Image::setCurrentOfThread(image);
+        Image::setCurrentOfThread(&image->first());
         return ImageVerdict::Accepted;
     }
     if (ImageVerdict verdict = Image::check(bytes, identity); verdict != ImageVerdict::Accepted)
         return verdict;
 
     auto& header = *reinterpret_cast<const ImageHeader*>(bytes.data());
+    // An image that was built above others joins those that the thread has named so far.
+    const Image* first = nullptr;
+    if (header.numbers.firstStringHeader) {
+        const Image* current = Image::current();
+        if (!current || !current->sharesRealms() || current->last().header().numbers.endOfStringHeaders != header.numbers.firstStringHeader || current->last().header().numbers.lastShape != header.numbers.shapesBelow)
+            return ImageVerdict::OptionsConflict;
+        first = &current->first();
+    }
     uint64_t position = file ? static_cast<uint64_t>(file->offset) : reinterpret_cast<uintptr_t>(bytes.data());
     if (!isOnPageBoundaries(position, header.codeOffset, header.size, WTF::pageSize()))
         return ImageVerdict::Misaligned;
@@ -577,6 +623,19 @@ Wire::ImageVerdict useImage(std::span<const uint8_t> bytes, std::optional<ImageF
         return refusal;
     std::unique_ptr<Image> image = Image::create(bytes, static_cast<const uint8_t*>(code));
     image->setPositionInFile(positionInFile);
+    if (first) {
+#if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
+        return ImageVerdict::CannotMapCode;
+#else
+        if (!copyStringHeadersBehind(first->bytes(), bytes.first(header.size)))
+            return ImageVerdict::CannotMapCode;
+        image->text().didCopyStringHeaders(reinterpret_cast<const ImageStringHeader*>(first->text().identifierAtoms()));
+        const Image& added = *image;
+        Image::publishAbove(*first, WTF::move(image));
+        didPublishImage(added);
+        return ImageVerdict::Accepted;
+#endif
+    }
     Image::publish(WTF::move(image), allImages);
     didPublishImage(*Image::current());
     return ImageVerdict::Accepted;
@@ -593,6 +652,11 @@ namespace JSC { namespace AOT {
 Wire::ImageVerdict useImage(std::span<const uint8_t>, std::optional<ImageFile>, const std::array<uint8_t, 16>&, std::span<const uint8_t>)
 {
     return Wire::ImageVerdict::Unsupported;
+}
+
+bool takesImagesAboveOthers()
+{
+    return false;
 }
 
 } } // namespace JSC::AOT

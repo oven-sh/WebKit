@@ -8,17 +8,29 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCurrentWork.h"
 #include "AOTNativeTest.h"
+#include "AOTShellProcess.h"
 #include "AOTTemporaryFile.h"
 #include "AOTTestRunner.h"
 #include "AOTTestSubcommands.h"
+#include "AOTThreads.h"
 #include "AOTVector.h"
 #include <stdlib.h>
+#include <wtf/ASCIICType.h>
+#include <wtf/DataLog.h>
+#include <wtf/FileSystem.h>
 #include <wtf/StringPrintStream.h>
 #include <wtf/text/MakeString.h>
 
 #if OS(WINDOWS)
 #include <windows.h>
+#endif
+#if OS(LINUX)
+#include <array>
+#include <poll.h>
+#include <signal.h>
+#include <unistd.h>
 #endif
 
 namespace JSC { namespace AOT {
@@ -99,6 +111,12 @@ static void testCrash()
     ChildProcessResult result = runWith(createLauncher(), { String(runSubcommandName), file.path() });
     AOT_TEST_CHECK(result.outcome == ChildProcessOutcome::Crashed);
     AOT_TEST_CHECK(result.description().startsWith("crashed with "_s));
+}
+
+static void testShellCrash()
+{
+    ChildProcessResult result = runWith(ChildProcessLauncher(shellPath(), { }), { "--useDollarVM=1"_s, "-e"_s, "$vm.crash()"_s });
+    AOT_TEST_CHECK(result.outcome == ChildProcessOutcome::Crashed);
 }
 
 static void testNotStarted()
@@ -186,11 +204,89 @@ static void testDoesNothing()
 {
 }
 
+static constexpr ASCIILiteral fileLeftPrefix = "leaves "_s;
+
 static void testCrashesOnRequest()
 {
-    if (getenv(crashRequestVariable))
-        CRASH();
+    if (!getenv(crashRequestVariable))
+        return;
+    TemporaryFile file(".image"_s, { });
+    dataLogLn(fileLeftPrefix, file.path());
+    CRASH();
 }
+
+#if OS(LINUX) && (CPU(X86_64) || CPU(ARM64))
+
+static NEVER_INLINE void trapWithMarkerOnStack()
+{
+    volatile uint64_t marker = 0x5afe5afe5afe5afeull;
+    UNUSED_VARIABLE(marker);
+    __builtin_trap();
+}
+
+static void testTrapsOnRequest()
+{
+    if (!getenv(crashRequestVariable))
+        return;
+    runOnBuildThread([] {
+        CurrentWork::ofCurrentThread();
+        trapWithMarkerOnStack();
+    });
+}
+
+static void testTrapIsReported()
+{
+    setCrashRequest(true);
+    ChildProcessResult result = runWith(createLauncher(), { String(nativeSubcommandName), String(singleProcessFlag), "trap-on-request/trap"_s });
+    setCrashRequest(false);
+    AOT_TEST_CHECK(result.outcome == ChildProcessOutcome::Crashed);
+    AOT_TEST_CHECK(result.output.contains(" in thread \"AOT build\" at 0x"_s));
+    AOT_TEST_CHECK(result.output.contains("registers:"_s) && result.output.contains("return addresses: 0x"_s));
+    AOT_TEST_CHECK(result.output.contains("5afe5afe5afe5afe"_s));
+}
+
+#endif
+
+#if OS(LINUX)
+
+static constexpr const char* endParentRequestVariable = "TESTAOT_END_PARENT_ON_REQUEST";
+
+static ChildProcessResult runAlone(ASCIILiteral test)
+{
+    return runWith(createLauncher(), { String(nativeSubcommandName), String(singleProcessFlag), String(test) });
+}
+
+static void testEndsParentOnRequest()
+{
+    if (!getenv(endParentRequestVariable))
+        return;
+    kill(getppid(), SIGKILL);
+    sleep(30);
+}
+
+static void testStartsChildOnRequest()
+{
+    if (getenv(endParentRequestVariable))
+        runAlone("end-parent-on-request/child"_s);
+}
+
+static void testChildEndsWithParent()
+{
+    // Every process below this one inherits the write end, so the read end reports the end once the last of them is gone.
+    std::array<int, 2> ends;
+    AOT_TEST_CHECK(!pipe(ends.data()));
+    setenv(endParentRequestVariable, "1", 1);
+    ChildProcessResult parent = runAlone("end-parent-on-request/parent"_s);
+    unsetenv(endParentRequestVariable);
+    close(ends[1]);
+    AOT_TEST_CHECK(parent.outcome == ChildProcessOutcome::Crashed && parent.code == SIGKILL);
+
+    struct pollfd poller { ends[0], POLLIN, 0 };
+    AOT_TEST_CHECK(poll(&poller, 1, 10'000) == 1);
+    close(ends[0]);
+}
+
+#endif // OS(LINUX)
 
 static void testNativeTestsAfterCrashStillRun()
 {
@@ -212,6 +308,22 @@ static void testNativeTestsAfterCrashStillRun()
     size_t firstCrash = report.find("FAIL crash-on-request/first: crashed with "_s);
     size_t secondCrash = report.find("FAIL crash-on-request/second: crashed with "_s);
     AOT_TEST_CHECK(firstCrash != notFound && secondCrash != notFound && firstCrash < secondCrash);
+}
+
+static void testCrashLeavesNoFiles()
+{
+    setCrashRequest(true);
+    ChildProcessResult result = runWith(createLauncher(), { String(nativeSubcommandName), String(singleProcessFlag), "crash-on-request/first"_s });
+    setCrashRequest(false);
+    AOT_TEST_CHECK(result.outcome == ChildProcessOutcome::Crashed);
+
+    size_t start = result.output.find(fileLeftPrefix);
+    AOT_TEST_CHECK(start != notFound);
+    start += fileLeftPrefix.length();
+    String path = result.output.substring(start, result.output.find('\n', start) - start).trim(isASCIIWhitespace<char16_t>);
+    AOT_TEST_CHECK(path.startsWith(temporaryFolder()) && path.endsWith(".image"_s));
+    AOT_TEST_CHECK(!FileSystem::fileExists(path));
+    AOT_TEST_CHECK(!FileSystem::fileExists(FileSystem::parentPath(path)));
 }
 
 static void testNativeTestsAfterNamedTest()
@@ -270,7 +382,18 @@ std::span<const NativeTest> childProcessTests()
         { "child-process/exit-codes"_s, testExitCodes },
         { "child-process/shared-arguments"_s, testSharedArguments },
         { "child-process/crash"_s, testCrash },
+        { "child-process/shell-crash"_s, testShellCrash },
         { "child-process/not-started"_s, testNotStarted },
+        { "child-process/crash-leaves-no-files"_s, testCrashLeavesNoFiles },
+#if OS(LINUX) && (CPU(X86_64) || CPU(ARM64))
+        { "child-process/trap-is-reported"_s, testTrapIsReported },
+        { "trap-on-request/trap"_s, testTrapsOnRequest },
+#endif
+#if OS(LINUX)
+        { "child-process/ends-with-parent"_s, testChildEndsWithParent },
+        { "end-parent-on-request/parent"_s, testStartsChildOnRequest },
+        { "end-parent-on-request/child"_s, testEndsParentOnRequest },
+#endif
         { "runner/files-after-crash"_s, testFilesAfterCrashStillRun },
         { "runner/shows-output-of-children"_s, testOutputOfPassingFileIsShown },
         { "runner/todo-lines"_s, testTodoLines },

@@ -248,6 +248,7 @@ public:
     StringImpl* tryGetHeader(StringID) const;
 
     std::optional<uint32_t> identifierNumber(StringID) const;
+    // Of a number that an image before this one gave out: what this program calls so, or nothing.
     const ImageIdentifierWord& identifier(uint32_t number) const { return m_identifiers[number]; }
 #if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
     std::span<const ImageStringRecord> stringRecords() const { return m_stringRecords; }
@@ -261,7 +262,10 @@ public:
     size_t lazyHeadersCapacity() const { return (m_stringRecords.size() + 1) * sizeof(LazyStringHeader); }
     JS_EXPORT_PRIVATE size_t lazyHeadersSize() const;
 #else
-    UniquedStringImpl* identifierAtoms() const { return reinterpret_cast<UniquedStringImpl*>(const_cast<ImageStringHeader*>(m_stringHeaders.data())); }
+    UniquedStringImpl* identifierAtoms() const { return reinterpret_cast<UniquedStringImpl*>(const_cast<ImageStringHeader*>(m_headerOfNumberZero)); }
+    // The image shares its realms with images that were loaded before it, and its headers have been copied behind theirs.
+    void didCopyStringHeaders(const ImageStringHeader* headerOfNumberZero) { m_headerOfNumberZero = headerOfNumberZero; }
+    std::span<const ImageStringHeader> ownStringHeaders() const { return m_stringHeaders; }
 #endif
     StringID stringConstant(uint32_t number) const { return StringID(m_stringConstants[number]); }
     bool hasListedHash(StringID string) const { return m_strings[string.index()].hasListedHash(); }
@@ -286,13 +290,19 @@ private:
     std::span<const uint8_t> m_text;
     std::span<const ImageIdentifierWord> m_identifiers;
     std::span<const uint32_t> m_stringConstants;
+    uint32_t m_firstStringHeader { 0 };
 #if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
     std::span<const ImageStringRecord> m_stringRecords;
     std::atomic<uint32_t>* m_lazyHeaderOffsets { nullptr };
     uint8_t* m_lazyHeaders { nullptr };
     void* m_lazyHeadersReservation { nullptr };
 #else
+    const ImageStringHeader& headerAt(uint32_t number) const { return m_headerOfNumberZero[number]; }
+
+    // Those of the numbers that this image gave out, without the room that the first image of a realm leaves for others.
     std::span<const ImageStringHeader> m_stringHeaders;
+    // Where the header of number 0 lies, or would lie: an image alone holds its own numbers, from m_firstStringHeader on.
+    const ImageStringHeader* m_headerOfNumberZero { nullptr };
     uint64_t m_addressOfText { 0 };
 #endif
 };
@@ -343,7 +353,7 @@ inline std::optional<uint32_t> ImageText::literalStringWordOfHeader(const String
 #if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
     if (!lazyHeaderNumber(string))
 #else
-    uintptr_t offset = std::bit_cast<uintptr_t>(&string) - std::bit_cast<uintptr_t>(m_stringHeaders.data());
+    uintptr_t offset = std::bit_cast<uintptr_t>(&string) - std::bit_cast<uintptr_t>(m_headerOfNumberZero + m_firstStringHeader);
     if (offset >= m_stringHeaders.size_bytes())
 #endif
         return std::nullopt;
@@ -362,7 +372,7 @@ inline StringImpl* ImageText::tryGetHeader(StringID string) const
         return nullptr;
     return &ensureLazyHeader(word.number());
 #else
-    const ImageStringHeader& header = m_stringHeaders[word.number()];
+    const ImageStringHeader& header = headerAt(word.number());
     if (header.length < 2)
         return nullptr;
     auto* impl = reinterpret_cast<StringImpl*>(const_cast<ImageStringHeader*>(&header));
@@ -393,8 +403,11 @@ JS_EXPORT_PRIVATE void relocateImage(std::span<uint8_t> image, uint64_t address)
 
 #if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
 [[nodiscard]] inline bool relocateLoadedImage(std::span<const uint8_t>) { return true; }
+[[nodiscard]] inline bool copyStringHeadersBehind(std::span<const uint8_t>, std::span<const uint8_t>) { return false; }
 #else
 [[nodiscard]] JS_EXPORT_PRIVATE bool relocateLoadedImage(std::span<const uint8_t> image);
+// Both are loaded and relocated. The headers of the image go into the room that the first image of its realms has left behind its own.
+[[nodiscard]] bool copyStringHeadersBehind(std::span<const uint8_t> firstImage, std::span<const uint8_t> image);
 #endif
 
 } } // namespace JSC::AOT

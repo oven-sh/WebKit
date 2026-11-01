@@ -55,9 +55,15 @@ public:
 
     // What entriesInOrder() and propertiesInOrder() return stays where it is, unchanged, for as long as the table lives.
     std::span<const uint16_t> entriesInOrder(const LayoutData&, uint32_t order);
+    // The entries of an order word that lists every own key of its objects, all of which are fields, or null. After this call compiled code finds the result without calling.
+    const uint16_t* publishEntriesOfFields(const LayoutData&, uint32_t orderWord);
     std::optional<uint32_t> orderStartingWith(const LayoutData&, std::span<const uint16_t> entries);
+    // The step that compiled code takes without consulting a table: to the next key of an order that the image lists.
+    std::optional<uint32_t> stepInsideOrderOfImage(const LayoutData&, uint32_t orderWord, uint16_t entry) const;
     enum class Step : bool { IsPublished, IsNotPublished };
     std::optional<uint32_t> orderAfterCreating(const LayoutData&, uint32_t orderWord, uint16_t entry, Step = Step::IsPublished);
+    // For an object without extra keys that has every key of an order added at run time: most objects that have left the orders of the image get all their later fields this way.
+    std::optional<uint32_t> tryAppendToAddedOrder(const LayoutData&, uint32_t orderWord, const FieldData&);
     bool positionsExtraKeys(const LayoutData&, uint32_t orderWord, uint32_t numberOfExtraKeys);
 
     // Neither lists an order with an extra key or with a field that is anything but a writable, enumerable, configurable data property.

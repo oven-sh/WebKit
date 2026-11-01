@@ -286,6 +286,7 @@ struct MemoryAccess {
     MemoryLocation location { AbstractHeap::RuntimeState };
     ValueID base;
     ValueID stored;
+    uint32_t storedOperandIndex { 0 };
 
     explicit operator bool() const { return kind != Kind::NotExact; }
 };
@@ -297,8 +298,8 @@ enum class LocationStability : uint8_t { Unknown, ChangedByOwnStores, UnchangedD
 LocationStability stabilityOf(const Program&, const Value& access, const MemoryAccess&);
 // The location has been stored to wherever a function that reads it is entered, and not sooner. In the function's own body that is everywhere. A copy of the body in another function names a fact that says where it begins.
 bool holdsDeclaredTypeOnlyBehindEntry(const LocationFlow&);
-// What is stored ahead of every caller of its readers is stored ahead of the callers that flow has followed. The copy of a callee that was predicted may stand in another function, where no more holds than that the callee is entered.
-bool holdsDeclaredTypeOnlyBehindEntry(const LocationFlow&, bool calleeIsPredicted);
+// The function around a copy may run and never enter the copy, with the location never stored to.
+bool holdsDeclaredTypeOnlyBehindEntryOfCopy(const LocationFlow&);
 bool holdsDeclaredTypeOnlyBehindEntry(const Program&, const Function&, const Value& read);
 // What flow says of the variable of a module or of an enclosing function that the operation reads. Null for any other operation, and for a field that holds no value of the program.
 const LocationFlow* flowOfVariableReadBy(const Program&, const Value&);

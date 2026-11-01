@@ -21,6 +21,7 @@
 #include "AOTFunctionKinds.h"
 #include "AOTIDPrefix.h"
 #include "AOTIdentifierTable.h"
+#include "AOTImagesBelow.h"
 #include "AOTLayoutData.h"
 #include "AOTLiteralStringDigest.h"
 #include "AOTModuleGraph.h"
@@ -362,7 +363,7 @@ static std::optional<RuntimeCellTest> encodeCellTest(TableEncoder& encoder, cons
         return RuntimeCellTest::isBuiltinCell(encoder.numberOrFail(encoder.placement.builtinCell(test.builtin), ProgramTableRule::TypeNotEncoded));
     case CellTestKind::IsClosureOf:
         if (FunctionID entrypoint = encoder.findEntrypoint(test.function))
-            return RuntimeCellTest::isClosureOf(entrypoint);
+            return RuntimeCellTest::isClosureOf(encoder.placement.closureNumberOf(entrypoint));
         return std::nullopt;
     case CellTestKind::IsSymbol:
         return RuntimeCellTest::isSymbol(encoder.identifierNumber(test.symbol, "the symbol that a type test compares with"_s));
@@ -370,6 +371,10 @@ static std::optional<RuntimeCellTest> encodeCellTest(TableEncoder& encoder, cons
         return RuntimeCellTest::sharingModeIs(test.sharingMode);
     case CellTestKind::IsNamespaceOf:
         return RuntimeCellTest::isNamespaceOf(test.module);
+    case CellTestKind::CarriesBrandOfClass:
+        if (std::optional<uint32_t> rank = encoder.placement.rankOfClass(test.classLayout))
+            return RuntimeCellTest::carriesBrandOfClass(*rank);
+        return std::nullopt;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -418,6 +423,10 @@ static void appendRuntimeType(TableEncoder& encoder, const LayoutSetRecords& rec
             if (std::optional<RuntimeCellTest> encoded = encodeCellTest(encoder, records, test))
                 cellTests.append(*encoded);
         }
+        // RuntimeType::testsOfOneFunctionEach().
+        AOT::stableSort(cellTests.mutableSpan(), { }, [](const RuntimeCellTest& test) -> int64_t {
+            return test.kind == CellTestKind::IsClosureOf ? static_cast<int64_t>(test.operand) : -1;
+        });
         for (StringID literal : plan.stringLiterals) {
             if (!numbered.isLeftOut(literal))
                 literalStrings.append(literal);
@@ -438,6 +447,7 @@ static void appendRuntimeType(TableEncoder& encoder, const LayoutSetRecords& rec
     for (StringID string : literalStrings)
         header.flags |= numbered.isWithoutText(string) ? RuntimeType::hasLiteralStringWithoutText : numbered.indexOf(string) ? 0 : RuntimeType::hasLiteralStringWithoutWord;
     header.numberOfCellTests = static_cast<uint16_t>(cellTests.size());
+    header.numberOfTestsOfMoreThanOneFunctionIfFew = static_cast<uint8_t>(std::min<size_t>(RuntimeType::hasManyTestsOfMoreThanOneFunction, std::ranges::count_if(cellTests, [](const RuntimeCellTest& test) { return test.kind != CellTestKind::IsClosureOf; })));
     header.numberOfLiteralStrings = static_cast<uint16_t>(literalStrings.size());
 
     Vector<uint32_t, 16> words;
@@ -851,7 +861,7 @@ static std::optional<uint32_t> tryEncodeTableInImage(TableEncoder& encoder, cons
     strings.reserveInitialCapacity(entries.elements.size());
     for (const DataNode& entry : entries.elements) {
         StringID string = (hasValues ? entry.as<DataNode::Array>().elements[0] : entry).as<DataNode::String>().value;
-        keys.append(TableInImage::Key { encoder.stringNumber(string), decodeForImage(encoder.program.strings[string]).hash });
+        keys.append(TableInImage::Key { encoder.stringNumber(string), decodeForImage(encoder.program.strings[string]).hash, encoder.stringConstantNumber(string) });
         strings.append(keys.last().string);
         if (!hasValues)
             continue;
@@ -899,7 +909,8 @@ void encodeDataTable(TableEncoder& encoder)
             },
             [](const NewClassRecord&) { },
             [](const TemplateObjectRecord&) { },
-            [](const DirectEvalRecord&) { });
+            [](const DirectEvalRecord&) { },
+            [](const FormatPatternRecord&) { });
     }
     AOT::sort(placedNodes, { }, &std::pair<uint32_t, DataID>::first);
     placedNodes.shrink(std::ranges::unique(placedNodes).begin() - placedNodes.begin());
@@ -934,7 +945,7 @@ static uint16_t fieldFlagsOf(TableEncoder& encoder, FieldReference reference)
         { slot.deferredClosureCapturesObject, fieldDeferredClosureCapturesObject },
         { slot.deferredClosureCapturesEnvironment, fieldDeferredClosureCapturesEnvironment },
         { declaration.flags.contains(FieldFlags::IsPrivate) || (declaration.flags.contains(FieldFlags::IsHidden) && !declaration.key), fieldIsPrivate },
-        { declaration.flags.contains(FieldFlags::IsBrand), fieldIsBrand },
+        { declaration.flags.contains(FieldFlags::IsBrand) && flowOf(program, reference).location.reads != ReadState::NeverRead, fieldIsBrand },
         { stability.contains(FieldStability::IsNeverDeleted), fieldIsNeverDeleted },
         { stability.contains(FieldStability::IsNeverRedefined), fieldIsNeverRedefined },
         { stability.contains(FieldStability::IsNeverStoredWithOtherType), fieldIsNeverStoredWithOtherType },
@@ -952,8 +963,10 @@ static uint16_t fieldFlagsOf(TableEncoder& encoder, FieldReference reference)
 static std::optional<uint32_t> fieldOperandOf(TableEncoder& encoder, const PlacedSlot& slot)
 {
     switch (traitsOf(slot.representation).valueKind) {
-    case SlotValueKind::DeferredClosure:
-        return indexOrNone(encoder.findEntrypoint(slot.deferredFunction));
+    case SlotValueKind::DeferredClosure: {
+        FunctionID entrypoint = encoder.findEntrypoint(slot.deferredFunction);
+        return entrypoint ? encoder.placement.closureNumberOf(entrypoint) : indexOrNone(FunctionID());
+    }
     case SlotValueKind::SignedInteger:
     case SlotValueKind::UnsignedInteger:
     case SlotValueKind::Float:
@@ -975,6 +988,7 @@ static Vector<FieldData> collectFields(TableEncoder& encoder, LayoutID id, Vecto
     Vector<FieldData> fields(FillWith { }, planned.numberOfRecordFields, FieldData { });
     layoutData.hasOnlyPlainSlots = true;
     layoutData.isCopiedByWords = true;
+    StringID underscoreProto = program.strings.find(byteCast<uint8_t>("__proto__"_span));
     for (FieldIndex index = 0; index < planned.numberOfFields(); ++index) {
         const PlacedSlot& slot = planned.slots[index];
         if (!slot.indexInLayoutRecord)
@@ -1006,7 +1020,9 @@ static Vector<FieldData> collectFields(TableEncoder& encoder, LayoutID id, Vecto
             RELEASE_ASSERT(environmentSlot.storage == SlotStorage::Inline && environmentSlot.representation == SlotRepresentation::Cell32);
             operands.append(environmentSlot.data().encoded());
         }
-        bool isCopiedByWords = !(data.flags & (fieldIsPrivate | fieldIsBrand | fieldAttributeFlags)) && data.slot.representation() != SlotRepresentation::DeferredClosure;
+        // A store under __proto__ changes the prototype, so a copy by stores looks at that name.
+        bool isNamedProto = underscoreProto && declaration.key && program.at(declaration.key).kind == PropertyKeyKind::Text && program.at(declaration.key).text == underscoreProto;
+        bool isCopiedByWords = !(data.flags & (fieldIsPrivate | fieldIsBrand | fieldAttributeFlags)) && data.slot.representation() != SlotRepresentation::DeferredClosure && !isNamedProto;
         layoutData.isCopiedByWords &= isCopiedByWords;
         layoutData.hasOnlyPlainSlots &= isCopiedByWords && !(data.flags & fieldIsStoredOnce);
         layoutData.hasFieldsWithSymbolKeys |= declaration.key && isSymbolKind(program.at(declaration.key).kind);
@@ -1083,6 +1099,15 @@ static uint32_t appendKeyOrders(TableEncoder& encoder, LayoutID id)
     return orders.isEmpty() ? 0 : encoder.writer.append(orders);
 }
 
+// A heap snapshot names the variables of the files of the program.
+static bool showsVariablesOf(const TableEncoder& encoder, ModuleID id)
+{
+    if (encoder.obfuscates() || !id)
+        return false;
+    const Module& module = encoder.program.at(id);
+    return isProgramModuleOf(module.kind) && !module.flags.contains(ModuleFlags::IsLibrary);
+}
+
 static uint32_t appendEnvironment(TableEncoder& encoder, LayoutID id, uint32_t shape)
 {
     PartWithoutNames part(encoder);
@@ -1091,6 +1116,7 @@ static uint32_t appendEnvironment(TableEncoder& encoder, LayoutID id, uint32_t s
     const Layout& layout = encoder.program.at(id);
     const PlannedLayout& planned = encoder.slots.layout(id);
     RELEASE_ASSERT(layout.isEnvironment());
+    bool showsVariables = showsVariablesOf(encoder, layout.module);
     Vector<VariableData> described;
     for (FieldIndex index = 0; index < planned.numberOfFields(); ++index) {
         const PlacedSlot& slot = encoder.slots.slot(id, index);
@@ -1099,8 +1125,8 @@ static uint32_t appendEnvironment(TableEncoder& encoder, LayoutID id, uint32_t s
             continue;
         if (slot.isOutOfLine())
             encoder.fail(ProgramTableRule::TableOutOfBounds, id);
-        PropertyKeyID key = layout.fields[index].key;
-        described.append({ key ? encoder.identifiers.numberOf(key).value_or(0) : 0, slot.data() });
+        StringID name = layout.fields[index].variableName;
+        described.append({ showsVariables && name && traits.holdsCell ? encoder.shownStringNumber(name) : VariableData::noName, slot.data() });
     }
     uint32_t referencesOffset = appendReferences(encoder, id);
 
@@ -1119,13 +1145,17 @@ static uint32_t appendEnvironment(TableEncoder& encoder, LayoutID id, uint32_t s
 
 // The numbers of the sets, which is all that clearing the guard looks at, then the offset of the list of members of each: a set is set with the last of its members.
 // A list says how many members the set has, then their numbers. The writer keeps one copy of equal lists, so every member names the same one.
+// The sets that hold only once somebody has looked come first.
 static MemberGuardAggregates appendAggregatesOf(TableEncoder& encoder, GuardBitID guard)
 {
     PartWithoutNames part(encoder);
     const GuardBitTable& table = encoder.placement.guardBits();
-    std::span<const GuardBitID> sets = table.setsContaining(guard);
-    if (sets.empty() || !part.isWritten())
+    Vector<GuardBitID, 8> sets(table.setsContaining(guard));
+    if (sets.isEmpty() || !part.isWritten())
         return { 0, 0 };
+    std::ranges::stable_partition(sets, [&](GuardBitID set) {
+        return !encoder.placement.guardBit(set).holdsWhileClear;
+    });
     Vector<uint32_t, 8> words;
     for (GuardBitID set : sets) {
         const PlacedGuardBit& placed = encoder.placement.guardBit(set);
@@ -1215,10 +1245,16 @@ static ClassRecordParts collectClassRecordParts(TableEncoder& encoder, LayoutID 
         guards.append({ guard, appendAggregatesOf(encoder, GuardBitID(static_cast<size_t>(&placed - table.bits.begin()))) });
         data.guardWordsOffset[static_cast<unsigned>(placed.side)] = placed.wordOffset - placed.bit / MemberGuardData::bitsPerWord * static_cast<uint32_t>(sizeof(uint64_t));
     }
+    bool listsNamesOfFields = hasTestForOtherNames(program, id);
+    Vector<uint32_t, 8> namesOfFields;
+    if (listsNamesOfFields) {
+        for (const Field& field : layout.fields)
+            namesOfFields.append(encoder.identifierNumber(field.key, "a field of a class below a built-in class"_s, id));
+    }
     PartWithoutNames rest(encoder);
     if (!rest.isWritten())
         return parts;
-    AOT::sort(guards, { }, [](const auto& entry) {
+    AOT::sortInLine(guards, { }, [](const auto& entry) {
         const MemberGuardData& guard = entry.first;
         return std::tuple<uint32_t, uint32_t, uint32_t> { guard.sideBits, guard.kindBits, guard.name };
     });
@@ -1233,7 +1269,7 @@ static ClassRecordParts collectClassRecordParts(TableEncoder& encoder, LayoutID 
 
     LayoutID environment;
     if (layout.constructor) {
-        const Vector<DeclaredType>& captures = program.at(layout.constructor).captures;
+        const auto& captures = program.at(layout.constructor).captures;
         if (captures.size() == 1 && captures[0].written())
             environment = program.at(captures[0].written()).environment;
     }
@@ -1242,6 +1278,7 @@ static ClassRecordParts collectClassRecordParts(TableEncoder& encoder, LayoutID 
     data.base = hasProvenBase ? expectedBaseOf(layout).index() : LayoutData::noBase;
     data.expectedBase = hasProvenBase ? LayoutData::noBase : indexOrNone(expectedBaseOf(layout));
     data.builtinBase = indexOrNone(builtinParentNamedByClassRecord(program, layout));
+    data.instancesCarryBrand = carriesBrandOfClass(program, id);
     data.classConstructor = indexOrNone(classConstructor);
     data.environment = indexOrNone(environment);
     data.numberOfStaticFields = static_cast<uint32_t>(parts.staticFields.size());
@@ -1251,6 +1288,11 @@ static ClassRecordParts collectClassRecordParts(TableEncoder& encoder, LayoutID 
         Vector<uint32_t, 8> list { static_cast<uint32_t>(subclasses.size()) };
         list.appendVector(subclasses);
         data.subclassesOffset = encoder.writer.append(list);
+    }
+    if (listsNamesOfFields) {
+        AOT::sort(namesOfFields);
+        namesOfFields.insert(0, static_cast<uint32_t>(namesOfFields.size()));
+        data.namesOfFieldsOffset = encoder.writer.append(namesOfFields);
     }
     return parts;
 }
@@ -1459,7 +1501,7 @@ static void encodeShapeSetBits(TableEncoder& encoder)
 template<typename T>
 static void setSortedTable(TableEncoder& encoder, ProgramTableIndex index, Vector<T>& items, auto... order)
 {
-    AOT::sort(items, order...);
+    AOT::sortInLine(items, order...);
     encoder.setTable(index, items);
 }
 
@@ -1486,6 +1528,12 @@ static void encodeRemovedFields(TableEncoder& encoder)
     setSortedTable(encoder, ProgramTableIndex::removedFields, removedFields);
 }
 
+// The runtime checks what happens to an object against these lists. They are data only; no code depends on them.
+static bool encodesAddedNames(const BuildContext& build)
+{
+    return build.validates() || build.recordedOptions().has(TestingSwitch::CheckProofsAtRunTime);
+}
+
 static void encodeAddedNames(TableEncoder& encoder)
 {
     const Program& program = encoder.program;
@@ -1498,7 +1546,7 @@ static void encodeAddedNames(TableEncoder& encoder)
     const Vector<PropertyKeyID>* sharedKeys = program.keysStoredThroughUnknownReceivers();
     bool canListSharedKeys = sharedKeys && haveNumbers(*sharedKeys);
     bool listsSharedKeys = false;
-    for (unsigned index = 0; encoder.build.validates() && index < program.layouts.size(); ++index) {
+    for (unsigned index = 0; encodesAddedNames(encoder.build) && index < program.layouts.size(); ++index) {
         LayoutID id(index);
         const LayoutFlow& flow = program.at(id).flow;
         if (!flow.addedKeysAreComplete || encoder.slots.storageOf(id) != LayoutStorage::CompiledObject)
@@ -1524,7 +1572,7 @@ static void encodeClassPrototypeNames(TableEncoder& encoder)
 {
     const Program& program = encoder.program;
     Vector<AddedNameData> names;
-    for (unsigned index = 0; encoder.build.validates() && index < program.layouts.size(); ++index) {
+    for (unsigned index = 0; encodesAddedNames(encoder.build) && index < program.layouts.size(); ++index) {
         const ClassFlow& flow = program.layouts[index].classFlow;
         if (!flow.prototypeNamesAreComplete)
             continue;
@@ -1700,6 +1748,22 @@ public:
         if (word >= m_words.size())
             m_words.insertFill(m_words.size(), 0, std::max(word + 1, m_words.size() * 2) - m_words.size());
         m_words[word] |= 1ull << index % 64;
+        if (!~m_words[word]) {
+            if (word / 64 >= m_fullWords.size())
+                m_fullWords.insertFill(m_fullWords.size(), 0, std::max(word / 64 + 1, m_fullWords.size() * 2) - m_fullWords.size());
+            m_fullWords[word / 64] |= 1ull << word % 64;
+        }
+    }
+
+    uint32_t firstClearBitFrom(uint32_t index) const
+    {
+        size_t word = index / 64;
+        uint64_t clearBits = ~wordAt(word) & ~0ull << index % 64;
+        while (!clearBits) {
+            word = firstWordWithClearBitFrom(word + 1);
+            clearBits = ~wordAt(word);
+        }
+        return static_cast<uint32_t>(word * 64 + WTF::ctz(clearBits));
     }
 
     uint32_t firstBitThatMayBeClear()
@@ -1712,7 +1776,18 @@ public:
 private:
     uint64_t wordAt(size_t word) const { return word < m_words.size() ? m_words[word] : 0; }
 
+    size_t firstWordWithClearBitFrom(size_t word) const
+    {
+        uint64_t mask = ~0ull << word % 64;
+        for (size_t group = word / 64; group < m_fullWords.size(); ++group, mask = ~0ull) {
+            if (uint64_t wordsWithClearBit = ~m_fullWords[group] & mask)
+                return group * 64 + WTF::ctz(wordsWithClearBit);
+        }
+        return std::max(word, m_fullWords.size() * 64);
+    }
+
     Vector<uint64_t> m_words;
+    Vector<uint64_t> m_fullWords;
     size_t m_firstWordWithClearBit { 0 };
 };
 
@@ -1720,7 +1795,7 @@ private:
 
 static uint32_t numberOfFieldTableColumns(const TableEncoder& encoder)
 {
-    return static_cast<uint32_t>(std::min<uint64_t>(encoder.identifiers.count(), FieldTableEntry::maxName + 1));
+    return encoder.identifiers.countWithFieldTableColumn();
 }
 
 static std::optional<uint32_t> findNumberOfConstructorName(const TableEncoder& encoder)
@@ -1752,7 +1827,7 @@ static std::optional<Vector<DeclaredClassMember>> collectDeclaredClassMembers(co
         uint32_t cell = cellOf(method.function);
         if (method.flags & (methodHasComputedName | methodIsCreatedAtDefinition) || !cell)
             return std::nullopt;
-        if (FieldTableEntry::hasColumn(method.name))
+        if (encoder.identifiers.hasFieldTableColumn(method.name))
             definitions.append(Definition { method.name, method.kind(), cell });
     }
     // ClassTable::DeclaredMember::define(): a later definition of a name replaces an earlier one, and the halves of an accessor add up.
@@ -1807,10 +1882,10 @@ void encodeFieldTable(TableEncoder& encoder)
         const LayoutData& layout = writer.at<LayoutData>(offset);
         size_t begin = named.fields.size();
         for (const FieldData& field : layout.fields()) {
-            if (FieldTableEntry::hasColumn(field.name))
+            if (encoder.identifiers.hasFieldTableColumn(field.name))
                 named.fields.append({ field.name, FieldTableEntry::forField(layout, field).bits, FieldRecordIndex::create(field, layout.indexOf(field), writer.at<RuntimeType>(field.type), typeOfAnyValue).bits });
         }
-        AOT::sort(named.fields.mutableSpan().subspan(begin));
+        AOT::sortInLine(named.fields.mutableSpan().subspan(begin));
         named.endRow(shape, 0, begin);
     }
 
@@ -1838,7 +1913,7 @@ void encodeFieldTable(TableEncoder& encoder)
         named.endRow(0, rank, begin);
     }
 
-    AOT::sort(named.rows, [&](const FieldTableRow& a, const FieldTableRow& b) {
+    AOT::sortInLine(named.rows, [&](const FieldTableRow& a, const FieldTableRow& b) {
         if (a.size() != b.size())
             return a.size() > b.size();
         auto fieldsOfA = named.fieldsOf(a);
@@ -1856,6 +1931,12 @@ void encodeFieldTable(TableEncoder& encoder)
     uint32_t highestFirstEntry = rowWithoutFields;
 
     uint32_t entryOfFirstFieldOfLastRow = 0;
+    // A row of a new size is tried from the start of the table. Where most rows differ in size that is rows times entries,
+    // so a search that has cost this much for each field goes on from the row before.
+    constexpr uint64_t maxTestsPerField = 32;
+    constexpr uint64_t fewestTestsAllowed = 1 << 24;
+    const uint64_t maxNumberOfTests = std::max(named.fields.size() * maxTestsPerField, fewestTestsAllowed);
+    uint64_t numberOfTests = 0;
     const FieldTableRow* lastRow = nullptr;
     for (const FieldTableRow& row : named.rows) {
         auto fields = named.fieldsOf(row);
@@ -1863,18 +1944,27 @@ void encodeFieldTable(TableEncoder& encoder)
             firstEntryOf(row) = firstEntryOf(*lastRow);
             continue;
         }
-        if (!lastRow || lastRow->size() != row.size() || row.size() == 1)
+        if ((!lastRow || lastRow->size() != row.size() || row.size() == 1) && numberOfTests <= maxNumberOfTests)
             entryOfFirstFieldOfLastRow = 0;
         uint32_t lowestEntryOfFirstField = std::max(occupiedEntries.firstBitThatMayBeClear(), entryOfFirstFieldOfLastRow);
         uint32_t firstEntry = lowestEntryOfFirstField > fields[0].name ? lowestEntryOfFirstField - fields[0].name : 0;
-        for (;; firstEntry += Bitmap::bitsPerBatch) {
+        for (;;) {
             uint64_t fitting = firstEntries.clearBitsFrom(firstEntry);
-            for (size_t i = 0; i < fields.size() && fitting; ++i)
-                fitting &= occupiedEntries.clearBitsFrom(firstEntry + fields[i].name);
+            size_t numberOfFieldsTried = 0;
+            while (numberOfFieldsTried < fields.size() && fitting)
+                fitting &= occupiedEntries.clearBitsFrom(firstEntry + fields[numberOfFieldsTried++].name);
+            numberOfTests += numberOfFieldsTried + 1;
             if (fitting) {
                 firstEntry += WTF::ctz(fitting);
                 break;
             }
+            // The row fits only where the field that ruled out this batch finds its entry free.
+            firstEntry += Bitmap::bitsPerBatch;
+            if (numberOfFieldsTried) {
+                uint32_t name = fields[numberOfFieldsTried - 1].name;
+                firstEntry = occupiedEntries.firstClearBitFrom(firstEntry + name) - name;
+            } else
+                firstEntry = firstEntries.firstClearBitFrom(firstEntry);
         }
         firstEntries.set(firstEntry);
         for (const NamedField& field : fields)
@@ -1899,6 +1989,7 @@ void encodeFieldTable(TableEncoder& encoder)
         }
     }
     encoder.header.numberOfFieldTableRows = highestObjectShape;
+    encoder.header.numberOfFieldTableColumns = numberOfFieldTableColumns(encoder);
     encoder.setTable(ProgramTableIndex::fieldTable, table);
     encoder.setTable(ProgramTableIndex::fieldRecordIndices, recordIndices);
     encoder.setTable(ProgramTableIndex::classMemberRows, firstEntryOfClass);
@@ -1967,7 +2058,7 @@ NumberedFunctionRecords numberFunctionRecords(std::span<const FunctionRecordData
             distinct.append({ bits, 0, 0 });
         ++distinct.last().count;
     }
-    AOT::stableSort(distinct, std::ranges::greater { }, &DistinctRecord::count);
+    AOT::stableSortInLine(distinct, std::ranges::greater { }, &DistinctRecord::count);
     for (uint32_t number = 0; number < distinct.size(); ++number)
         distinct[number].number = number;
 
@@ -1975,7 +2066,7 @@ NumberedFunctionRecords numberFunctionRecords(std::span<const FunctionRecordData
     result.records = Vector<FunctionRecordData>(std::min<size_t>(distinct.size(), functionRecordIsListedByFunction), [&](size_t number) {
         return std::bit_cast<FunctionRecordData>(distinct[number].bits);
     });
-    AOT::sort(distinct, { }, &DistinctRecord::bits);
+    AOT::sortInLine(distinct, { }, &DistinctRecord::bits);
     result.numbers = Vector<uint8_t>(recordsOfFunctions.size(), [&](size_t index) {
         uint32_t number = std::ranges::lower_bound(distinct, std::bit_cast<uint32_t>(recordsOfFunctions[index]), { }, &DistinctRecord::bits)->number;
         if (number < functionRecordIsListedByFunction)
@@ -2054,9 +2145,9 @@ static void appendClosureFunctionTables(TableEncoder& encoder)
     encoder.header.numberOfClosureCells = countClosureCells(encoder, range);
 }
 
-static bool hasFunctionText(const Program& program, const Function& function)
+static bool mayShowText(const Program& program, const Function& function)
 {
-    if (!function.module || function.text.start >= function.text.end)
+    if (!function.module)
         return false;
     const Module& module = program.at(function.module);
     if (isBundlerHelperModule(program, module))
@@ -2064,20 +2155,340 @@ static bool hasFunctionText(const Program& program, const Function& function)
     return showsSourceTextOf(function.role) && !function.enclosingRuntimeFunction && module.kind != ModuleKind::RuntimeSource;
 }
 
-static void appendFunctionTexts(TableEncoder& encoder)
+static bool hasFunctionText(const Program& program, const Function& function)
 {
-    struct RetainedTextRange {
-        uint32_t start;
-        uint32_t end;
-        uint32_t textOffset { 0 };
+    return function.text.start < function.text.end && mayShowText(program, function);
+}
+
+static uint32_t linesOfClassAboveConstructor(const Program& program, const Function& function)
+{
+    if ((function.kind != FunctionKind::BaseConstructor && function.kind != FunctionKind::DerivedConstructor) || !function.constructedClass)
+        return 0;
+    unsigned firstLine = program.lineColumnFor(function.module, program.at(function.constructedClass).position).line;
+    unsigned line = program.lineColumnFor(function.module, function.position).line;
+    return line > firstLine ? line - firstLine : 0;
+}
+
+struct RetainedTextRange {
+    uint32_t start;
+    uint32_t end;
+    uint32_t textOffset { 0 };
+};
+
+// See PiecesOfModule. `ranges` are in the order of the text of the module, and none holds a part of another.
+// A piece is followed through its file here as it is where the program runs. Where that does not lead to the lines and columns that the module has for it, the piece is left out, and nothing is found by it.
+static void appendPiecesOfModule(const Program& program, ModuleID id, std::span<const uint8_t> moduleText, std::span<const RetainedTextRange> ranges, Vector<PiecesOfModule>& modules, Vector<uint8_t>& pieces)
+{
+    std::span<const uint8_t> cuts = program.at(id).typesCutFromFunctionText;
+    auto takeNumber = [&] {
+        uint64_t number = 0;
+        for (unsigned shift = 0; !cuts.empty() && shift < 64; shift += 7) {
+            uint8_t byte = cuts.front();
+            cuts = cuts.subspan(1);
+            number |= static_cast<uint64_t>(byte & 0x7f) << shift;
+            if (!(byte & 0x80))
+                break;
+        }
+        return number;
     };
+    // A cut of no size says that the text has something there that the file lacks, the value of a define behind its name, and how much follows it.
+    // That has no place in the file, so a part ends in front of it and the next part starts behind it.
+    struct AddedText {
+        uint64_t start;
+        uint64_t end;
+    };
+    Vector<AddedText> addedTexts;
+    for (uint64_t at = 0; !cuts.empty();) {
+        at += takeNumber();
+        if (takeNumber())
+            continue;
+        uint64_t size = takeNumber();
+        addedTexts.append({ at, at + size });
+        at += size;
+    }
+    cuts = program.at(id).typesCutFromFunctionText;
+
+    // Where the next cut lies in the text, its size in the file, and how much longer the file is than the text in front of it.
+    uint64_t nextCut = 0;
+    uint64_t sizeOfNextCut = 0;
+    uint64_t addedAtNextCut = 0;
+    uint64_t sizeOfCutsInFront = 0;
+    auto takeCut = [&] {
+        sizeOfCutsInFront += sizeOfNextCut - addedAtNextCut;
+        nextCut += addedAtNextCut;
+        sizeOfNextCut = 0;
+        addedAtNextCut = 0;
+        if (cuts.empty()) {
+            nextCut = std::numeric_limits<uint64_t>::max();
+            return;
+        }
+        nextCut += takeNumber();
+        sizeOfNextCut = takeNumber();
+        if (!sizeOfNextCut)
+            addedAtNextCut = takeNumber();
+    };
+    takeCut();
+
+    // Not within a character, nor between a carriage return and its line feed.
+    auto endOfPartFrom = [&](uint32_t start, uint32_t endOfWhole) {
+        if (endOfWhole - start < 2 * PiecesOfModule::bytesOfOnePart)
+            return endOfWhole;
+        uint32_t end = start + PiecesOfModule::bytesOfOnePart;
+        while (end < endOfWhole && ((moduleText[end] & 0xC0) == 0x80 || moduleText[end] == '\n'))
+            ++end;
+        return end;
+    };
+
+    bool hasRecord = false;
+    PieceOfKeptText lastPiece;
+    LineColumn startOfLastPiece;
+    Vector<uint8_t> cutsOfPiece;
+    auto appendPart = [&](const RetainedTextRange& whole, uint32_t startOfPart, uint32_t endOfPart) {
+        while (nextCut <= startOfPart)
+            takeCut();
+        auto placeInFileOf = [&](uint64_t offsetInText, uint64_t sizeOfCut = 0) {
+            return program.lineColumnFor(id, static_cast<uint32_t>(offsetInText + sizeOfCutsInFront + sizeOfCut));
+        };
+        LineColumn start = placeInFileOf(startOfPart);
+        PlaceOfTextInFile place { start.line, start.column };
+        size_t at = startOfPart;
+        auto leadsTo = [&](size_t offsetInText) {
+            while (at < offsetInText)
+                at = place.advanceOver(moduleText, at);
+            return at == offsetInText && LineColumn { place.line, place.column } == placeInFileOf(offsetInText);
+        };
+        cutsOfPiece.shrink(0);
+        bool isFollowed = start.line > startOfLastPiece.line || (start.line == startOfLastPiece.line && start.column > startOfLastPiece.column);
+        while (isFollowed && nextCut < endOfPart) {
+            size_t distance = static_cast<size_t>(nextCut) - at;
+            LineColumn behind = placeInFileOf(nextCut, sizeOfNextCut);
+            isFollowed = leadsTo(static_cast<size_t>(nextCut)) && (behind.line > place.line || (behind.line == place.line && behind.column >= place.column));
+            if (!isFollowed)
+                break;
+            uint32_t lines = behind.line - place.line;
+            uint32_t columns = lines ? behind.column - 1 : behind.column - place.column;
+            appendVarint(cutsOfPiece, static_cast<uint64_t>(distance) << 1);
+            appendVarint(cutsOfPiece, static_cast<uint64_t>(columns) << 1 | !!lines);
+            if (lines)
+                appendVarint(cutsOfPiece, lines);
+            place.advanceOverCut(lines, columns);
+            takeCut();
+        }
+        if (!isFollowed || !leadsTo(endOfPart))
+            return;
+        if (!hasRecord || pieces.size() - modules.last().start >= PiecesOfModule::bytesOfOneRecord) {
+            modules.append({ id.index(), static_cast<uint32_t>(pieces.size()) });
+            hasRecord = true;
+            lastPiece = { };
+        }
+        uint32_t startInText = whole.textOffset + (startOfPart - whole.start);
+        PieceOfKeptText piece { startInText, startInText + (endOfPart - startOfPart), start.line, start.column, whole.textOffset, whole.textOffset + (whole.end - whole.start) };
+        piece.appendTo(pieces, lastPiece);
+        pieces.appendVector(cutsOfPiece);
+        lastPiece = piece;
+        startOfLastPiece = start;
+    };
+    size_t nextAdded = 0;
+    for (const RetainedTextRange& range : ranges) {
+        for (uint32_t start = range.start; start < range.end;) {
+            while (nextAdded < addedTexts.size() && addedTexts[nextAdded].end <= start)
+                ++nextAdded;
+            uint32_t end = endOfPartFrom(start, range.end);
+            uint32_t startOfNext = end;
+            if (nextAdded < addedTexts.size() && addedTexts[nextAdded].start < end) {
+                end = static_cast<uint32_t>(std::max<uint64_t>(start, addedTexts[nextAdded].start));
+                startOfNext = static_cast<uint32_t>(std::min<uint64_t>(range.end, addedTexts[nextAdded].end));
+            }
+            if (start < end)
+                appendPart(range, start, end);
+            start = startOfNext;
+        }
+    }
+}
+
+// See markOfDifferences. The front end counts in the file, and the text that an executable keeps has no types. Nothing where a type is cut out of what is copied.
+static std::optional<Vector<uint8_t>> moveDifferences(const TextPrintedInPlace& piece, const Invocable<uint32_t(uint32_t)> auto& inText)
+{
+    std::span<const uint8_t> differences = piece.bytes.subspan(2);
+    auto takeNumber = [&] {
+        uint64_t number = 0;
+        for (unsigned shift = 0; !differences.empty() && shift < 64; shift += 7) {
+            uint8_t byte = differences.front();
+            differences = differences.subspan(1);
+            number |= static_cast<uint64_t>(byte & 0x7f) << shift;
+            if (!(byte & 0x80))
+                break;
+        }
+        return number;
+    };
+    Vector<uint8_t> moved { markOfTextFromPrinter, markOfDifferences };
+    uint64_t endOfCopied = piece.start;
+    while (!differences.empty()) {
+        uint8_t byte = differences.front();
+        differences = differences.subspan(1);
+        moved.append(byte);
+        if (byte == lineBreakWithIndentation)
+            appendVarint(moved, takeNumber());
+        if (byte != copyOfWrittenText && byte != textWithPieceOfItsOwn && byte != writtenTextAsEscapes)
+            continue;
+        uint64_t start = endOfCopied + takeNumber();
+        uint64_t end = start + takeNumber();
+        if (start > piece.end || end > piece.end || end < start)
+            return std::nullopt;
+        uint32_t startInText = inText(static_cast<uint32_t>(start));
+        uint32_t sizeInText = inText(static_cast<uint32_t>(end)) - startInText;
+        if (byte != textWithPieceOfItsOwn && sizeInText != end - start)
+            return std::nullopt;
+        appendVarint(moved, startInText - inText(static_cast<uint32_t>(endOfCopied)));
+        appendVarint(moved, sizeInText);
+        endOfCopied = end;
+    }
+    return moved;
+}
+
+// See TextPrintedInPlaceOfModule. The front end counts from the start of the file. Here the pieces move to where the text of the module lies among the text of all functions.
+// `ranges` are in the order of the text of the module, and apart.
+static void appendTextPrintedInPlaceOfModule(const Program& program, ModuleID id, std::span<const uint8_t> moduleText, std::span<const RetainedTextRange> ranges, Vector<TextPrintedInPlaceOfModule>& modules, Vector<uint8_t>& bytes)
+{
+    Vector<TextPrintedInPlace> pieces = TextPrintedInPlace::readAll(program.at(id).positions.textPrintedInPlace);
+    if (pieces.isEmpty() || ranges.empty())
+        return;
+    if (TextPrintedInPlace::sayFileRunsAsWritten(pieces.span())) {
+        modules.append({ id.index(), static_cast<uint32_t>(bytes.size()) });
+        pieces[0].appendTo(bytes, 0);
+        return;
+    }
+
+    // See AddedText.
+    struct Cut {
+        uint64_t start;
+        uint64_t size;
+        uint64_t added;
+        uint64_t sizeOfCutsInFront;
+    };
+    Vector<Cut> cuts;
+    std::span<const uint8_t> packedCuts = program.at(id).typesCutFromFunctionText;
+    auto takeNumber = [&] {
+        uint64_t number = 0;
+        for (unsigned shift = 0; !packedCuts.empty() && shift < 64; shift += 7) {
+            uint8_t byte = packedCuts.front();
+            packedCuts = packedCuts.subspan(1);
+            number |= static_cast<uint64_t>(byte & 0x7f) << shift;
+            if (!(byte & 0x80))
+                break;
+        }
+        return number;
+    };
+    for (uint64_t end = 0, sizeOfCutsInFront = 0; !packedCuts.empty();) {
+        uint64_t start = end + takeNumber();
+        uint64_t size = takeNumber();
+        uint64_t added = size ? 0 : takeNumber();
+        cuts.append({ start, size, added, sizeOfCutsInFront });
+        end = start + size;
+        sizeOfCutsInFront += size - added;
+    }
+    auto inText = [&](uint32_t offsetInFile) {
+        auto next = std::ranges::lower_bound(cuts, static_cast<uint64_t>(offsetInFile), { }, &Cut::start);
+        if (next == cuts.begin())
+            return offsetInFile;
+        const Cut& last = *std::prev(next);
+        return static_cast<uint32_t>(offsetInFile - last.sizeOfCutsInFront - std::min<uint64_t>(last.size, offsetInFile - last.start) + last.added);
+    };
+    Vector<Vector<uint8_t>> movedDifferences;
+    for (TextPrintedInPlace& piece : pieces) {
+        bool isLost = false;
+        if (!cuts.isEmpty() && isFromPrinter(piece) && piece.bytes.size() > 1 && piece.bytes[1] == markOfDifferences) {
+            std::optional<Vector<uint8_t>> moved = moveDifferences(piece, inText);
+            isLost = !moved;
+            movedDifferences.append(moved ? WTF::move(*moved) : Vector<uint8_t>());
+            piece.bytes = movedDifferences.last().span();
+        }
+        piece.start = inText(piece.start);
+        // A piece of no size is not placed.
+        piece.end = isLost ? piece.start : inText(piece.end);
+        piece.startOfCopied = inText(piece.startOfCopied);
+        piece.endOfCopied = inText(piece.endOfCopied);
+    }
+
+    auto findRangeThatHolds = [&](uint32_t start, uint32_t end) -> const RetainedTextRange* {
+        auto next = std::ranges::upper_bound(ranges, start, { }, &RetainedTextRange::start);
+        if (next == ranges.begin())
+            return nullptr;
+        const RetainedTextRange& range = *std::prev(next);
+        return end <= range.end ? &range : nullptr;
+    };
+    Vector<TextPrintedInPlace> placed;
+    Vector<Vector<uint8_t>> printedTexts;
+    uint32_t endOfBytes = 0;
+    for (const TextPrintedInPlace& piece : pieces) {
+        const RetainedTextRange* range = findRangeThatHolds(piece.start, piece.end);
+        if (!range || piece.start >= piece.end)
+            continue;
+        // Nothing beneath what is given as bytes is printed. A copy there still says where the place of an error in an initializer leads.
+        bool isPrinted = piece.start >= endOfBytes;
+        TextPrintedInPlace moved = piece;
+        moved.start = range->textOffset + (piece.start - range->start);
+        moved.end = range->textOffset + (piece.end - range->start);
+        if (piece.isCopy && findRangeThatHolds(piece.startOfCopied, piece.endOfCopied) == range) {
+            moved.startOfCopied = range->textOffset + (piece.startOfCopied - range->start);
+            moved.endOfCopied = range->textOffset + (piece.endOfCopied - range->start);
+        } else if (!isPrinted)
+            continue;
+        else if (piece.isCopy) {
+            // The constant of a module is declared outside every function, and that text is not kept.
+            if (piece.endOfCopied > moduleText.size())
+                continue;
+            Vector<uint8_t> printed;
+            if (piece.isInBrackets)
+                printed.append('(');
+            appendWithTextPrintedInPlace(printed, moduleText, piece.startOfCopied, piece.endOfCopied, pieces.span());
+            if (piece.isInBrackets)
+                printed.append(')');
+            printedTexts.append(WTF::move(printed));
+            moved.isCopy = false;
+            moved.bytes = printedTexts.last().span();
+        }
+        if (!moved.isCopy && !isFromPrinter(moved))
+            endOfBytes = piece.end;
+        placed.append(moved);
+    }
+    if (placed.isEmpty())
+        return;
+    // The same text may stand in the file twice, and is held once.
+    AOT::sortInLine(placed, [](const TextPrintedInPlace& a, const TextPrintedInPlace& b) {
+        return a.start != b.start ? a.start < b.start : a.end > b.end;
+    });
+    const TextPrintedInPlace* last = nullptr;
+    bool startsRecord = true;
+    for (const TextPrintedInPlace& piece : placed) {
+        if (last && last->start == piece.start && last->end == piece.end)
+            continue;
+        if (startsRecord)
+            modules.append({ id.index(), static_cast<uint32_t>(bytes.size()) });
+        piece.appendTo(bytes, startsRecord ? 0 : last->start);
+        last = &piece;
+        startsRecord = bytes.size() - modules.last().start >= TextPrintedInPlaceOfModule::bytesOfOneRecord;
+    }
+}
+
+static void appendFunctionTexts(TableEncoder& encoder, std::span<const FunctionTraceRecord> traces)
+{
     struct FunctionWithText {
         FunctionID function;
         FunctionID entrypoint;
     };
     const Program& program = encoder.program;
+    const HostFunctionTexts& hostTexts = encoder.build.functionTexts();
+    auto sizeOfText = [&](ModuleID id) -> size_t {
+        size_t size = program.at(id).functionText.size();
+        return size || !hostTexts.size ? size : hostTexts.size(hostTexts.owner, id.index());
+    };
     Vector<FunctionWithText> functions;
+    Vector<ConstructorLineData> constructorLines;
     Vector<Vector<RetainedTextRange>> moduleRanges(program.modules.size());
+    // Where the front end says that a statement of the body begins: what touches there is not one piece.
+    Vector<Vector<uint32_t>> startsOfStatements(program.modules.size());
+    bool keepsTextOfBodies = false;
     for (size_t index = 0; !encoder.obfuscates() && index < program.functions.size(); ++index) {
         const Function& function = program.functions[index];
         if (!hasFunctionText(program, function))
@@ -2086,50 +2497,171 @@ static void appendFunctionTexts(TableEncoder& encoder)
         FunctionID entrypoint = encoder.findEntrypoint(id);
         if (!entrypoint)
             continue;
-        if (function.text.end > program.at(function.module).functionText.size()) {
+        if (function.text.end > sizeOfText(function.module)) {
             encoder.fail(ProgramTableRule::TableOutOfBounds, { }, id);
             continue;
         }
         functions.append({ id, entrypoint });
         moduleRanges[function.module.index()].append({ function.text.start, function.text.end });
+        if (uint32_t lines = linesOfClassAboveConstructor(program, function))
+            constructorLines.append({ traces[entrypoint.index()].sourceFunctionIndex, lines });
     }
-    if (functions.isEmpty()) {
+    // An error quotes what failed from the text of the function that it failed in, so a function that is only ever called has its text too, under its own number.
+    // A test run reads the line from the file.
+    if (!encoder.obfuscates() && !encoder.build.options().admitsReplacedBuiltins()) {
+        BitVector isQuoted(program.functions.size());
+        for (size_t index : encoder.inputs.bodyFacts.functionsWithFrames)
+            isQuoted.quickSet(traces[index].sourceFunctionIndex);
+        for (const FunctionWithText& function : functions)
+            isQuoted.quickClear(traces[function.entrypoint.index()].sourceFunctionIndex);
+        BitVector modulesThatRunOwnText(program.modules.size());
+        for (size_t index : isQuoted) {
+            const Function& function = program.functions[index];
+            // The body of a module, and what else nobody wrote as a function: an initializer of fields, the function that the text of a CommonJS file is.
+            if (function.text.start >= function.text.end && mayShowText(program, function))
+                modulesThatRunOwnText.quickSet(function.module.index());
+            if (!hasFunctionText(program, function) || function.text.end > sizeOfText(function.module))
+                continue;
+            functions.append({ FunctionID(index), FunctionID(index) });
+            moduleRanges[function.module.index()].append({ function.text.start, function.text.end });
+            if (uint32_t lines = linesOfClassAboveConstructor(program, function))
+                constructorLines.append({ static_cast<uint32_t>(index), lines });
+        }
+        // See SourcePositions::textOfBody. No function stands for this text: a place is found in it by its line and column.
+        for (size_t module : modulesThatRunOwnText) {
+            size_t size = sizeOfText(ModuleID(static_cast<uint32_t>(module)));
+            std::span<const uint8_t> packed = program.modules[module].positions.textOfBody;
+            auto takeNumber = [&] {
+                uint64_t number = 0;
+                for (unsigned shift = 0; !packed.empty() && shift < 64; shift += 7) {
+                    uint8_t byte = packed.front();
+                    packed = packed.subspan(1);
+                    number |= static_cast<uint64_t>(byte & 0x7f) << shift;
+                    if (!(byte & 0x80))
+                        break;
+                }
+                return number;
+            };
+            for (uint64_t endOfLast = 0; !packed.empty();) {
+                uint64_t start = endOfLast + takeNumber();
+                endOfLast = start + takeNumber();
+                if (start > size || endOfLast > size || endOfLast < start) {
+                    encoder.fail(ProgramTableRule::TableOutOfBounds, { }, program.modules[module].body);
+                    break;
+                }
+                if (start == endOfLast) {
+                    startsOfStatements[module].append(static_cast<uint32_t>(start));
+                    continue;
+                }
+                moduleRanges[module].append({ static_cast<uint32_t>(start), static_cast<uint32_t>(endOfLast) });
+                keepsTextOfBodies = true;
+            }
+        }
+    }
+    AOT::sortInLine(constructorLines, { }, &ConstructorLineData::function);
+    constructorLines.shrink(std::ranges::unique(constructorLines, { }, &ConstructorLineData::function).begin() - constructorLines.begin());
+    encoder.setTable(ProgramTableIndex::constructorLines, constructorLines);
+
+    // A test run has the files beside it, and finds the place in those.
+    bool findsPlacesInText = !encoder.build.options().admitsReplacedBuiltins();
+    Vector<TextPrintedInPlaceOfModule> modulesWithTextPrintedInPlace;
+    Vector<uint8_t> textPrintedInPlace { static_cast<uint8_t>(!findsPlacesInText) };
+    auto setTextPrintedInPlace = [&] {
+        if (modulesWithTextPrintedInPlace.isEmpty())
+            textPrintedInPlace.clear();
+        else
+            modulesWithTextPrintedInPlace.append({ std::numeric_limits<uint32_t>::max(), static_cast<uint32_t>(textPrintedInPlace.size()) });
+        encoder.setTable(ProgramTableIndex::modulesWithTextPrintedInPlace, modulesWithTextPrintedInPlace);
+        encoder.setTable(ProgramTableIndex::textPrintedInPlace, textPrintedInPlace);
+    };
+    for (size_t module = 0; !findsPlacesInText && !encoder.obfuscates() && module < program.modules.size(); ++module) {
+        std::span<const uint8_t> pieces = program.modules[module].positions.textPrintedInPlace;
+        if (pieces.empty())
+            continue;
+        modulesWithTextPrintedInPlace.append({ static_cast<uint32_t>(module), static_cast<uint32_t>(textPrintedInPlace.size()) });
+        textPrintedInPlace.append(pieces);
+    }
+    if (functions.isEmpty() && !keepsTextOfBodies) {
         encoder.setTable(ProgramTableIndex::functionTexts, Vector<FunctionTexts> { });
+        setTextPrintedInPlace();
         return;
     }
 
+    // Copies of a package hold the same functions. Their text is held once.
+    UncheckedKeyHashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> offsetsByHashAndSize;
     Vector<uint8_t> text;
+    Vector<PiecesOfModule> modulesWithPieces;
+    Vector<uint8_t> pieces;
     for (size_t module = 0; module < moduleRanges.size(); ++module) {
         Vector<RetainedTextRange>& ranges = moduleRanges[module];
-        AOT::sort(ranges, [](const RetainedTextRange& a, const RetainedTextRange& b) {
+        AOT::sortInLine(ranges, [](const RetainedTextRange& a, const RetainedTextRange& b) {
             return a.start != b.start ? a.start < b.start : a.end > b.end;
         });
         size_t count = 0;
         for (const RetainedTextRange& next : ranges) {
-            if (count && next.start < ranges[count - 1].end)
+            if (count && next.start <= ranges[count - 1].end)
                 ranges[count - 1].end = std::max(ranges[count - 1].end, next.end);
             else
                 ranges[count++] = next;
         }
         ranges.shrink(count);
+        if (!startsOfStatements[module].isEmpty()) {
+            Vector<RetainedTextRange> apart;
+            auto next = startsOfStatements[module].begin();
+            auto end = startsOfStatements[module].end();
+            for (RetainedTextRange range : ranges) {
+                while (next != end && *next <= range.start)
+                    ++next;
+                for (; next != end && *next < range.end; ++next) {
+                    apart.append({ range.start, *next });
+                    range.start = *next;
+                }
+                apart.append(range);
+            }
+            ranges = WTF::move(apart);
+            count = ranges.size();
+        }
+        std::span<const uint8_t> moduleText = program.modules[module].functionText;
+        Vector<uint8_t> textOfHost;
+        if (moduleText.empty() && count) {
+            textOfHost.grow(hostTexts.size(hostTexts.owner, module));
+            hostTexts.copy(hostTexts.owner, module, textOfHost.mutableSpan().data());
+            moduleText = textOfHost.span();
+        }
         for (RetainedTextRange& range : ranges) {
+            std::span bytes = moduleText.subspan(range.start, range.end - range.start);
+            uint64_t hashAndSize = static_cast<uint64_t>(StringHasher::computeHashAndMaskTop8Bits(byteCast<Latin1Character>(bytes))) << 32 | bytes.size();
+            range.textOffset = offsetsByHashAndSize.add(hashAndSize, static_cast<uint32_t>(text.size())).iterator->value;
+            if (range.textOffset < text.size() && equalSpans(text.subspan(range.textOffset, bytes.size()), bytes))
+                continue;
             range.textOffset = static_cast<uint32_t>(text.size());
-            text.append(program.modules[module].functionText.subspan(range.start, range.end - range.start));
+            text.append(bytes);
+        }
+        if (findsPlacesInText) {
+            appendPiecesOfModule(program, ModuleID(static_cast<uint32_t>(module)), moduleText, ranges.span(), modulesWithPieces, pieces);
+            appendTextPrintedInPlaceOfModule(program, ModuleID(static_cast<uint32_t>(module)), moduleText, ranges.span(), modulesWithTextPrintedInPlace, textPrintedInPlace);
         }
     }
+    setTextPrintedInPlace();
+    uint32_t numberOfModulesWithPieces = static_cast<uint32_t>(modulesWithPieces.size());
+    modulesWithPieces.append({ std::numeric_limits<uint32_t>::max(), static_cast<uint32_t>(pieces.size()) });
 
     Vector<FunctionTextEntry> entries(functions.size(), [&](size_t index) {
         const Function& function = program.at(functions[index].function);
         auto next = std::ranges::upper_bound(moduleRanges[function.module.index()], function.text.start, { }, &RetainedTextRange::start);
         const RetainedTextRange& range = *std::prev(next);
         uint32_t start = range.textOffset + function.text.start - range.start;
-        return FunctionTextEntry { functions[index].entrypoint.index(), start, start + function.text.end - function.text.start };
+        return FunctionTextEntry { Number24(functions[index].entrypoint.index()), Number32(start), Number32(start + function.text.end - function.text.start) };
     });
-    AOT::sort(entries, { }, &FunctionTextEntry::function);
+    AOT::sortInLine(entries, { }, [&](const FunctionTextEntry& entry) {
+        return std::pair { traces[entry.function].sourceFunctionIndex, static_cast<uint32_t>(entry.function) };
+    });
 
     uint32_t entriesOffset = encoder.writer.append(entries);
     uint32_t textOffset = encoder.writer.append(text);
-    encoder.setTable(ProgramTableIndex::functionTexts, Vector<FunctionTexts, 1> { FunctionTexts { static_cast<uint32_t>(entries.size()), entriesOffset, textOffset } });
+    uint32_t modulesWithPiecesOffset = encoder.writer.append(modulesWithPieces);
+    uint32_t piecesOffset = encoder.writer.append(pieces);
+    encoder.setTable(ProgramTableIndex::functionTexts, Vector<FunctionTexts, 1> { FunctionTexts { static_cast<uint32_t>(entries.size()), entriesOffset, textOffset, numberOfModulesWithPieces, modulesWithPiecesOffset, piecesOffset } });
 }
 
 static void appendConstructEntrypoints(TableEncoder& encoder)
@@ -2141,14 +2673,17 @@ static void appendConstructEntrypoints(TableEncoder& encoder)
         if (function.role != FunctionRole::GenericEntrypoint || !function.hasBody())
             continue;
         FunctionID constructEntrypoint = function.creator.as<CreatorRecord::Entrypoint>().constructEntrypoint;
-        if (!constructEntrypoint)
+        if (!constructEntrypoint) {
+            if (encoder.inputs.bodyFacts.functionsThatOnlyReturn.get(index) && encoder.placement.functionKind(FunctionID(index)).isConstructiblePlainFunction())
+                constructEntrypoints.append({ encoder.placement.closureNumberOf(FunctionID(index)), ConstructEntrypointData::onlyReturns });
             continue;
+        }
         if (!program.at(constructEntrypoint).hasBody()) {
             encoder.fail(ProgramTableRule::FunctionWithoutEntrypoint, { }, FunctionID(index));
             continue;
         }
         bool allocatesThis = program.at(constructEntrypoint).derivation.parameter == allocatingConstructEntrypointParameter;
-        constructEntrypoints.append({ index, constructEntrypoint.index() | (allocatesThis ? ConstructEntrypointData::allocatesThis : 0) });
+        constructEntrypoints.append({ encoder.placement.closureNumberOf(FunctionID(index)), encoder.placement.closureNumberOf(constructEntrypoint) | (allocatesThis ? ConstructEntrypointData::allocatesThis : 0) });
     }
     encoder.setTable(ProgramTableIndex::constructEntrypoints, constructEntrypoints);
 }
@@ -2161,9 +2696,13 @@ static void appendPlacesOfTailCalls(TableEncoder& encoder)
     TailCallPlace inFront;
     for (size_t index = 0; index < calls.size(); ++index) {
         const WrittenTailCall& call = calls[index];
-        bool isOneOfSeveral = (index && calls[index - 1].function == call.function) || (index + 1 < calls.size() && calls[index + 1].function == call.function);
+        auto isOtherCallOfFunction = [&](const WrittenTailCall& other) {
+            return other.function == call.function && !other.isWhereThisIsMade;
+        };
+        bool isOneOfSeveral = (index && isOtherCallOfFunction(calls[index - 1])) || (index + 1 < calls.size() && isOtherCallOfFunction(calls[index + 1]));
         TailCallPlace place;
         place.function = call.function.index();
+        place.isWhereThisIsMade = call.isWhereThisIsMade;
         if (isOneOfSeveral && call.callee)
             place.callee = call.callee.index();
         if (!encoder.obfuscates()) {
@@ -2199,6 +2738,9 @@ void encodeFunctionTables(TableEncoder& encoder)
     encoder.setTableFrom<Number24>(ProgramTableIndex::functionSources, traces.span().subspan(firstDerived), [](const FunctionTraceRecord& trace) {
         return Number24(trace.sourceFunctionIndex);
     });
+    encoder.setTableFrom<Number24>(ProgramTableIndex::closureFormsBySource, encoder.placement.closureFormsBySource(), [](FunctionID form) {
+        return Number24(form.index());
+    });
     Vector<ImplementedBuiltinData> implementedBuiltins;
     for (uint32_t index = 0; index < traces.size(); ++index) {
         if (std::optional<BuiltinID> builtin = traces[index].implements())
@@ -2207,7 +2749,7 @@ void encodeFunctionTables(TableEncoder& encoder)
     encoder.setTable(ProgramTableIndex::implementedBuiltins, implementedBuiltins);
 
     appendClosureFunctionTables(encoder);
-    appendFunctionTexts(encoder);
+    appendFunctionTexts(encoder, traces.span());
     appendConstructEntrypoints(encoder);
     appendPlacesOfTailCalls(encoder);
 }
@@ -2233,6 +2775,8 @@ struct ModuleLists {
     Vector<SyntheticExportData> syntheticExports;
     Vector<RequiredNameData> requiredNames;
     Vector<ExportStatementData> exportStatements;
+    Vector<AmbiguousExportData> ambiguousExports;
+    Vector<SourceStampData> sourceStamps;
 };
 
 struct EncodedRequestTargets {
@@ -2244,20 +2788,31 @@ struct EncodedRequestTargets {
 
 } // anonymous namespace
 
-static BitVector findModuleBodiesThatOnlyReturn(const Program& program)
+static bool onlyReturns(const Function& function)
+{
+    if (function.blocks.size() != 1 || function.has(FunctionFlags::IsAsync) || function.blocks.first().terminator.kind != TerminatorKind::Return)
+        return false;
+    // Not an argument, which is no value of the block.
+    ValueID returned = function.blocks.first().terminator.valueOperand();
+    if (returned && function.at(returned).opcode != Opcode::Undefined)
+        return false;
+    return std::ranges::all_of(function.blocks.first().values, [&](ValueID id) {
+        return function.at(id).opcode == Opcode::Undefined;
+    });
+}
+
+// The bodies of modules, and what a function is entered at by value.
+static BitVector findFunctionsThatOnlyReturn(const Program& program)
 {
     BitVector result(program.functions.size());
     for (const Module& module : program.modules) {
-        if (!module.body)
-            continue;
-        const Function& body = program.at(module.body);
-        if (body.blocks.size() != 1 || body.has(FunctionFlags::IsAsync) || body.blocks.first().terminator.kind != TerminatorKind::Return)
-            continue;
-        bool hasOnlyUndefined = std::ranges::all_of(body.blocks.first().values, [&](ValueID id) {
-            return body.at(id).opcode == Opcode::Undefined;
-        });
-        if (hasOnlyUndefined)
+        if (module.body && onlyReturns(program.at(module.body)))
             result.quickSet(module.body.index());
+    }
+    for (size_t index = 0; index < program.functions.size(); ++index) {
+        const Function& function = program.functions[index];
+        if (function.role == FunctionRole::GenericEntrypoint && onlyReturns(function))
+            result.quickSet(index);
     }
     return result;
 }
@@ -2297,6 +2852,75 @@ static void forEachPieceOfPath(std::span<const uint8_t> path, NOESCAPE const Inv
         size_t length = slash == path.end() ? path.size() : static_cast<size_t>(slash - path.begin()) + 1;
         functor(path.first(length));
         path = path.subspan(length);
+    }
+}
+
+void hidePathsOfModules(Program& program, const FlowResults& flow, const BuildContext& build)
+{
+    // A name that is made at run time may be that of any file, and so may one that a walk over the folders of the executable finds.
+    if (!build.options().obfuscates() || build.options().sharesRealms() || flow.findsFilesOfProgramByName())
+        return;
+    // Code that comes from outside the image names what it likes. A text that the program evaluates finds no file: the run time refuses it where nothing is found by name.
+    for (const UnseenCodeRecord& record : flow.unseenCode()) {
+        if (record.cause != UnseenCodeCause::EvaluatesText && record.cause != UnseenCodeCause::LoadsModuleByName && record.cause != UnseenCodeCause::RunsMachineCode)
+            return;
+    }
+    BitVector isRead = modulesThatHostAsksFor(program, true, true);
+    auto read = [&](ModuleID module) {
+        if (module)
+            isRead.quickSet(module.index());
+    };
+    for (const Function& function : program.functions) {
+        for (const Value& value : function.values) {
+            switch (value.opcode) {
+            // `import.meta`, `require`, `module`, `__filename`
+            case Opcode::ModuleBuiltin:
+            case Opcode::CountExecution:
+                read(value.module());
+                break;
+            // `require.resolve("./a")` answers with the path of the other file.
+            case Opcode::ResolveModule:
+                read(value.module());
+                read(value.referrer());
+                break;
+            // "require() async module <path> is unsupported"
+            case Opcode::RequireModule:
+            case Opcode::EvaluateRequiredModule:
+                read(value.module());
+                break;
+            case Opcode::RecordRequire:
+                read(value.module());
+                read(value.referrer());
+                break;
+            // The host resolves the name against the file that asks. For a module that is not of the image the table has that file: Module::referrer.
+            case Opcode::ImportDynamic:
+            case Opcode::RequireDynamic:
+            case Opcode::ResolveDynamic:
+                read(value.referrer());
+                break;
+            default:
+                break;
+            }
+        }
+    }
+    for (const Module& module : program.modules) {
+        read(module.referrer);
+        // "Export named 'a' not found in module <path>"
+        for (const RequiredName& required : module.requiredNames)
+            read(required.module);
+    }
+    for (const ModuleFailure& failure : program.moduleFailures) {
+        read(failure.importer);
+        read(failure.exporter);
+        read(failure.endsLoadOf);
+    }
+    constexpr OptionSet<ModuleFlags> isKnownByPath { ModuleFlags::IsLibrary, ModuleFlags::IsBundlerHelper, ModuleFlags::NamesWayToModuleObjects, ModuleFlags::HasInstalledPositions, ModuleFlags::IsFoundByName, ModuleFlags::MayBeMocked, ModuleFlags::MayBeEvicted, ModuleFlags::IsListedInCache, ModuleFlags::RunsAgain };
+    for (uint32_t index = 0; index < program.modules.size(); ++index) {
+        Module& module = program.modules[index];
+        if (isRead.quickGet(index) || module.kind != ModuleKind::SourceText || module.flags.containsAny(isKnownByPath))
+            continue;
+        // As the face of a CommonJS file is named.
+        module.path = program.strings.intern(makeString('#', index));
     }
 }
 
@@ -2366,9 +2990,13 @@ static void appendModule(TableEncoder& encoder, ModuleID id, const Module& modul
     setDisplayPath(encoder, id, module, lists, entry);
     entry.hasInstalledPositions = module.flags.contains(ModuleFlags::HasInstalledPositions);
     entry.loadedByLoader = module.flags.contains(ModuleFlags::IsLoadedByLoader);
-    entry.importedWhileItRuns = module.flags.contains(ModuleFlags::MayBeImportedWhileItRuns);
+    entry.importedWhileItRunsOrAsNamespace = module.flags.contains(module.kind == ModuleKind::CommonJs ? ModuleFlags::MayBeImportedWhileItRuns : module.kind == ModuleKind::Data ? ModuleFlags::AnswersLoaderWithNamespace : ModuleFlags::IsImportedAsNamespace);
+    if (module.kind == ModuleKind::RuntimeSource || module.kind == ModuleKind::Runtime)
+        entry.importedWhileItRunsOrAsNamespace = encoder.placement.hasRequireCacheValue(id);
+    bool isOfLibrary = module.kind == ModuleKind::RuntimeSource || module.kind == ModuleKind::Runtime || module.flags.contains(ModuleFlags::IsLibrary) || isBundlerHelperModule(program, module);
+    entry.evictableOrHeldUnderNameWithoutPrefix = module.flags.contains(isOfLibrary ? ModuleFlags::IsHeldUnderNameWithoutPrefix : ModuleFlags::MayBeEvicted);
     entry.kind = module.kind;
-    entry.externalKind = module.externalKind;
+    entry.externalKind = module.kind != ModuleKind::External && module.flags.contains(ModuleFlags::MayBeMocked) ? ModuleData::mayBeMockedBit : module.externalKind;
     entry.exportRule = module.exportRule;
     entry.requireResult = module.requireResult;
     entry.body = optionalNumber24(bodyEntrypointOf(encoder, module));
@@ -2385,7 +3013,7 @@ static void appendModule(TableEncoder& encoder, ModuleID id, const Module& modul
         { module.flags.contains(ModuleFlags::EvaluatesItself) && entry.bodyFunction(), Flag::EvaluatesItself },
         { module.exportsVariable || encoder.placement.hasModuleValue(id), Flag::HasValue },
         { isBundlerHelperModule(program, module), Flag::IsLibraryCodeWithFilePath },
-        { module.kind == ModuleKind::RuntimeSource || module.kind == ModuleKind::Runtime || module.flags.contains(ModuleFlags::IsLibrary) || isBundlerHelperModule(program, module), Flag::IsOfLibrary },
+        { isOfLibrary, Flag::IsOfLibrary },
     };
     for (auto [holds, flag] : flags) {
         if (holds)
@@ -2455,16 +3083,21 @@ static bool isAnsweredByCode(const TableEncoder& encoder, ModuleID requester, co
 static void appendExports(TableEncoder& encoder, ModuleID id, const Module& module, ModuleLists& lists)
 {
     for (const ModuleExport& moduleExport : module.exports) {
-        if (!isDescribedToRunTime(encoder.program, encoder.flow, id, moduleExport))
+        // Where the host runs files that the build has not seen, the name of an export that the build has let go of stays, so that the run time can say so to a file that asks for it.
+        bool isDescribed = isDescribedToRunTime(encoder.program, encoder.flow, id, moduleExport);
+        if (!isDescribed && !encoder.build.options().admitsFilesRunByHost())
             continue;
         ModuleExportData entry { };
         entry.name = encoder.identifierNumberOfText(moduleExport.name, "an export of"_s, id);
         entry.kindBits = static_cast<uint32_t>(moduleExport.kind);
         entry.isDeferred = moduleExport.phase == ImportPhase::Defer;
         entry.isFromStarExport = moduleExport.isFromStarExport;
+        entry.isDroppedWhileEmpty = moduleExport.isDroppedWhileEmpty;
         switch (moduleExport.kind) {
         case ModuleExportKind::Variable:
-            entry.variable = placedVariableSlot(encoder, moduleExport.variable);
+            entry.variable = isDescribed ? placedVariableSlot(encoder, moduleExport.variable) : ModuleExportData::noSlot;
+            entry.isReplaceable = encoder.program.at(moduleExport.variable).flags.contains(VariableFlags::IsReplaceable);
+            entry.isClosedToOutside = !isDescribed || std::ranges::binary_search(encoder.flow.module(id).exportsClosedToOutside, moduleExport.variable);
             break;
         case ModuleExportKind::Namespace:
             entry.module = moduleExport.module.index();
@@ -2502,6 +3135,7 @@ static ModuleLists collectModuleLists(TableEncoder& encoder)
             entry.name = encoder.identifierNumberOfText(syntheticExport.name, "an export that the run time fills for"_s, id);
             entry.absentIsUndefined = syntheticExport.isKnownMember;
             entry.hasVariable = !!syntheticExport.variable;
+            entry.isReplaceable = syntheticExport.isReplaceable;
             entry.variable = syntheticExport.variable ? placedVariableSlot(encoder, syntheticExport.variable) : SlotData { };
             lists.syntheticExports.append(entry);
         }
@@ -2509,19 +3143,25 @@ static ModuleLists collectModuleLists(TableEncoder& encoder)
             if (isNeverEvaluated(program, module))
                 continue;
             if (requiredName.specifier)
-                lists.exportStatements.append({ static_cast<uint32_t>(lists.requiredNames.size()), encoder.shownStringNumber(requiredName.exportName), encoder.shownStringNumber(requiredName.specifier) });
+                lists.exportStatements.append({ static_cast<uint32_t>(lists.requiredNames.size()), encoder.shownStringNumber(requiredName.exportName), requiredName.dropsExportIfAbsent, encoder.shownStringNumber(requiredName.specifier) });
             lists.requiredNames.append({ requiredName.module.index(), requiredName.mayBeAbsent, encoder.identifierNumberOfText(requiredName.name, "what another module must export for"_s, id) });
         }
     }
-    for (const Entry& entry : program.entries)
-        lists.modules[entry.module.index()].add(ModuleData::Flag::IsEntryPoint);
+    for (size_t index : modulesThatHostAsksFor(program, encoder.flow.findsFilesOfProgramByName(), encoder.flow.hostRunsFilesOutsideImage() || encoder.build.options().sharesRealms()))
+        lists.modules[index].add(ModuleData::Flag::IsEntryPoint);
+    for (const AmbiguousExport& ambiguous : program.ambiguousExports)
+        lists.ambiguousExports.append({ ambiguous.module.index(), encoder.shownStringNumber(ambiguous.name) });
+    AOT::stableSort(lists.ambiguousExports, { }, &AmbiguousExportData::module);
+    for (const SourceStamp& stamp : program.sourceStamps)
+        lists.sourceStamps.append({ stamp.module.index(), stamp.low, stamp.high });
+    AOT::stableSort(lists.sourceStamps, { }, &SourceStampData::module);
     ModuleData endEntry { };
     lists.setListStarts(endEntry);
     lists.modules.append(endEntry);
 
     for (const RequiredNameData& requiredName : lists.requiredNames) {
         const ModuleData& exporter = lists.modules[requiredName.exporter];
-        if (exporter.exportRule != SyntheticExportRule::RuntimeModule)
+        if (exporter.exportRule != SyntheticExportRule::RuntimeModule || requiredName.mayBeAbsent)
             continue;
         uint32_t end = lists.modules[requiredName.exporter + 1].firstSyntheticExport;
         for (uint32_t index = exporter.firstSyntheticExport; index < end; ++index) {
@@ -2557,13 +3197,37 @@ static void appendTablesOfCompiledModules(TableEncoder& encoder)
             continue;
         if (module.kind == ModuleKind::RuntimeSource && module.runtimeModule)
             runtimeModules.append({ module.runtimeModule.index(), index });
-        if (!isNeverEvaluated(program, module) && (!isBundlerHelperModule(program, module) || isBundlerHelperNamedByProgram(program, ModuleID(index))))
+        // The host looks a module up by the name that a mock gives.
+        bool isNamed = !isBundlerHelperModule(program, module) || module.flags.contains(ModuleFlags::MayBeMocked) || isBundlerHelperNamedByProgram(program, ModuleID(index));
+        if (!isNeverEvaluated(program, module) && isNamed)
             modulesByPath.append(index);
     }
-    AOT::sort(modulesByPath, [&](uint32_t left, uint32_t right) {
+    AOT::sortInLine(modulesByPath, [&](uint32_t left, uint32_t right) {
         return std::ranges::lexicographical_compare(program.string(program.modules[left].path), program.string(program.modules[right].path));
     });
     encoder.setTable(ProgramTableIndex::modulesByPath, encodeModuleNumbers(encoder, modulesByPath));
+    Vector<uint32_t> hashesOfDirectories;
+    for (uint32_t index : modulesByPath) {
+        String path = String::fromUTF8(program.string(program.modules[index].path));
+        uint32_t hash = HashOfDirectory::ofNoText;
+        for (char16_t character : StringView(path).codeUnits()) {
+            hash = HashOfDirectory::with(hash, character);
+            if (character == '/')
+                hashesOfDirectories.append(hash);
+        }
+    }
+    AOT::sort(hashesOfDirectories);
+    hashesOfDirectories.shrink(std::ranges::unique(hashesOfDirectories).begin() - hashesOfDirectories.begin());
+    Vector<uint32_t> directoriesOfModulesByPath;
+    if (!hashesOfDirectories.isEmpty()) {
+        size_t numberOfBits = WTF::roundUpToPowerOfTwo(std::max<size_t>(hashesOfDirectories.size() * HashOfDirectory::bitsPerDirectory, 32));
+        directoriesOfModulesByPath.fill(0, numberOfBits / 32);
+        for (uint32_t hash : hashesOfDirectories) {
+            size_t bit = HashOfDirectory::bit(hash, numberOfBits);
+            directoriesOfModulesByPath[bit / 32] |= 1u << (bit % 32);
+        }
+    }
+    encoder.setTable(ProgramTableIndex::directoriesOfModulesByPath, directoriesOfModulesByPath);
     setSortedTable(encoder, ProgramTableIndex::compiledRuntimeModules, runtimeModules, std::ranges::less { }, &CompiledRuntimeModuleData::registryID);
 
     BitVector isCalledByHost = functionsCalledByHost(program);
@@ -2575,20 +3239,17 @@ static void appendTablesOfCompiledModules(TableEncoder& encoder)
     encoder.setTable(ProgramTableIndex::compiledRuntimeFunctions, runtimeFunctions);
 }
 
-// A face has the display path of its file.
+// The run time finds the file behind a face in the first request that the tables keep.
 static void markFacesOfFiles(const TableEncoder& encoder, ModuleLists& lists)
 {
     const Program& program = encoder.program;
-    auto shownPath = [&](const Module& module) {
-        return module.displayPath && !encoder.obfuscates() ? program.string(module.displayPath) : std::span<const uint8_t>();
-    };
     for (size_t index = 0; index < program.modules.size(); ++index) {
+        if (!isFaceOfCommonJSFile(program, program.modules[index]))
+            continue;
         ModuleData& face = lists.modules[index];
         uint32_t firstRequest = face.firstRequest;
-        if (face.kind != ModuleKind::SourceText || firstRequest == lists.modules[index + 1].firstRequest || !lists.requests[firstRequest].isRequire)
-            continue;
-        uint32_t file = lists.requests[firstRequest].target();
-        face.faceOfFile = lists.modules[file].kind == ModuleKind::CommonJs && std::ranges::equal(shownPath(program.modules[index]), shownPath(program.modules[file]));
+        uint32_t file = program.modules[index].requests[0].target.index();
+        face.faceOfFile = firstRequest != lists.modules[index + 1].firstRequest && lists.requests[firstRequest].isRequire && lists.requests[firstRequest].target() == file;
         lists.modules[file].shownByFace |= face.faceOfFile;
     }
 }
@@ -2630,6 +3291,124 @@ static Vector<ModuleImportSite> findImportSites(const Program& program, const Pa
     return sites;
 }
 
+static void encodeNamedVariables(TableEncoder& encoder)
+{
+    struct NamedVariable {
+        uint32_t module;
+        NamedVariableData data;
+    };
+    const Program& program = encoder.program;
+    const Vector<PlacedVariable>& placedVariables = encoder.placement.statics().variables;
+    Vector<NamedVariable> named;
+    for (unsigned index = 0; index < placedVariables.size(); ++index) {
+        const PlacedVariable& placed = placedVariables[index];
+        const Variable& variable = program.variables[index];
+        if (placed.storage == VariableStorage::None || !variable.name || variable.owner || !showsVariablesOf(encoder, variable.module))
+            continue;
+        if (placed.storage == VariableStorage::ClosureTable) {
+            // Without that entry point nothing ever makes the closure.
+            if (FunctionID entrypoint = encoder.findEntrypoint(placed.function)) {
+                RELEASE_ASSERT(entrypoint.index() < 1u << (32 - NamedVariableData::placeBits));
+                named.append({ variable.module.index(), NamedVariableData::closureOf(encoder.shownStringNumber(variable.name), entrypoint.index()) });
+            }
+            continue;
+        }
+        SlotTraits traits = traitsOf(placed.representation);
+        if (!traits.holdsCell)
+            continue;
+        RELEASE_ASSERT(!(placed.offset % sizeof(uint32_t)));
+        named.append({ variable.module.index(), NamedVariableData::inStatics(encoder.shownStringNumber(variable.name), placed.offset, traits.isNarrowReference) });
+    }
+    AOT::sortInLine(named, { }, [](const NamedVariable& variable) { return std::tuple(variable.module, variable.data.name, variable.data.placeAndNumber); });
+    NamedVariablesWriter writer;
+    for (size_t index = 0; index < named.size(); ++index) {
+        if (!index || named[index - 1].module != named[index].module) {
+            size_t end = index + 1;
+            while (end < named.size() && named[end].module == named[index].module)
+                ++end;
+            writer.beginModule(end - index);
+        }
+        writer.append(named[index].data);
+    }
+    encoder.setTable(ProgramTableIndex::namedVariables, writer.bytes());
+}
+
+static void encodeNamedCaptures(TableEncoder& encoder)
+{
+    const Program& program = encoder.program;
+    ClosureFunctionRange range = encoder.placement.closureFunctions();
+    NamedCapturesWriter writer;
+    for (uint32_t index = range.first.index(); index < range.end.index(); ++index) {
+        if (program.at(FunctionID(index)).role != FunctionRole::GenericEntrypoint)
+            continue;
+        const Function& target = program.at(closureTargetOf(program, FunctionID(index)));
+        if (!showsVariablesOf(encoder, target.module))
+            continue;
+        unsigned numberOfReferences = closureCaptureCountsOf(program, target).references;
+        Vector<std::pair<uint32_t, uint32_t>, 8> named;
+        for (unsigned capture = 0; capture < target.captures.size(); ++capture) {
+            StringID name = target.captures[capture].variableName;
+            if (!name)
+                continue;
+            if (unsigned slot = closureCaptureSlotOf(program, target, capture); slot < numberOfReferences)
+                named.append({ slot, encoder.shownStringNumber(name) });
+        }
+        if (named.isEmpty())
+            continue;
+        writer.beginFunction(index, named.size());
+        for (auto [slot, name] : named)
+            writer.append(slot, name);
+    }
+    encoder.setTable(ProgramTableIndex::namedCaptures, writer.bytes());
+}
+
+static bool isReadAsItStarts(const Program& program, const Variable& variable, const PlacedVariable& placed)
+{
+    if (placed.encoding != VariableEncoding::Plain || variable.flow.initialization == InitializationState::Unknown)
+        return true;
+    SlotTraits traits = traitsOf(placed.representation);
+    return !!(program.at(program.provenTypeOf(variable.declared)).primitives & Primitive::Absent) && traits.hasAbsent && placed.initialWord == traits.absentBits;
+}
+
+static void encodeStateOfLibraryModules(TableEncoder& encoder)
+{
+    using Kind = StateOfLibraryModuleData::Kind;
+    const Program& program = encoder.program;
+    auto isLibraryModuleWithBody = [&](ModuleID module) {
+        return module && program.at(module).kind == ModuleKind::RuntimeSource;
+    };
+    Vector<StateOfLibraryModuleData> found;
+    const Vector<PlacedVariable>& placedVariables = encoder.placement.statics().variables;
+    for (unsigned index = 0; index < placedVariables.size(); ++index) {
+        const PlacedVariable& placed = placedVariables[index];
+        const Variable& variable = program.variables[index];
+        if (placed.hasWordInStatics() && !variable.owner && isLibraryModuleWithBody(variable.module) && isReadAsItStarts(program, variable, placed))
+            found.append(StateOfLibraryModuleData::create(variable.module.index(), Kind::Variables, placed.offset, widthOf(placed.representation)));
+    }
+    auto moduleOf = [&](FunctionID function) {
+        return program.at(firstSourceOf(program, closureTargetOf(program, function))).module;
+    };
+    for (unsigned index = 0; index < program.functions.size(); ++index) {
+        uint32_t cell = encoder.placement.closureCellNumber(FunctionID(index));
+        if (ModuleID module = cell ? moduleOf(FunctionID(index)) : ModuleID(); isLibraryModuleWithBody(module))
+            found.append(StateOfLibraryModuleData::create(module.index(), Kind::Closures, cell, 1));
+    }
+    for (unsigned index = 0; index < program.layouts.size(); ++index) {
+        FunctionID constructor = encoder.placement.isInUse(LayoutID(index)) ? program.layouts[index].constructor : FunctionID();
+        if (ModuleID module = constructor ? moduleOf(constructor) : ModuleID(); isLibraryModuleWithBody(module))
+            found.append(StateOfLibraryModuleData::create(module.index(), Kind::Classes, index, 1));
+    }
+    AOT::sort(found, { }, [](const StateOfLibraryModuleData& state) { return std::pair(state.moduleAndKind, state.first); });
+    Vector<StateOfLibraryModuleData> ranges;
+    for (const StateOfLibraryModuleData& state : found) {
+        if (!ranges.isEmpty() && ranges.last().moduleAndKind == state.moduleAndKind && ranges.last().first + ranges.last().count == state.first)
+            ranges.last().count += state.count;
+        else
+            ranges.append(state);
+    }
+    encoder.setTable(ProgramTableIndex::stateOfLibraryModules, ranges);
+}
+
 void encodeModuleTables(TableEncoder& encoder)
 {
     const Program& program = encoder.program;
@@ -2637,6 +3416,9 @@ void encodeModuleTables(TableEncoder& encoder)
     PartWithoutNames rest(encoder);
     if (!rest.isWritten())
         return;
+    encodeNamedVariables(encoder);
+    encodeNamedCaptures(encoder);
+    encodeStateOfLibraryModules(encoder);
     markFacesOfFiles(encoder, lists);
     computeModuleFlags(lists.modules.mutableSpan(), lists.requests.span());
     for (size_t index = 0; index < program.modules.size(); ++index)
@@ -2651,16 +3433,37 @@ void encodeModuleTables(TableEncoder& encoder)
     for (const RequireEdge& edge : encoder.placement.requireEdges())
         sitesThatAskRunTime.append(ModuleImportSite { edge.referrer.index(), edge.target.index() });
     Vector<uint32_t> groupsLoadedWithGroups = groupModulesLoadedTogether(lists.modules.mutableSpan(), lists.requests.span(), sitesThatAskRunTime.span());
-    Vector<uint32_t> modulesOfUncompiledCode;
+    Vector<UncompiledModuleData> modulesOfUncompiledCode;
     for (uint32_t index = 0; index + 1 < lists.modules.size(); ++index) {
-        if (lists.modules[index].isUncompiledCode())
-            modulesOfUncompiledCode.append(index);
+        if (!lists.modules[index].isUncompiledCode())
+            continue;
+        StringID typeAttribute = program.modules[index].typeAttribute;
+        modulesOfUncompiledCode.append({ index, typeAttribute ? encoder.shownStringNumber(typeAttribute) : UncompiledModuleData::noTypeAttribute });
     }
     encoder.setTable(ProgramTableIndex::modulesOfUncompiledCode, modulesOfUncompiledCode);
     encoder.setTable(ProgramTableIndex::modules, lists.modules);
     encoder.setTable(ProgramTableIndex::moduleDirectories, lists.directories);
     encoder.setTable(ProgramTableIndex::moduleDisplayPaths, lists.displayPaths);
     encoder.setTable(ProgramTableIndex::moduleRequests, lists.requests);
+    Vector<ImportOfHeldFileData> importsOfHeldFiles;
+    for (uint32_t importer = 0; importer + 1 < lists.modules.size(); ++importer) {
+        if (lists.modules[importer].kind != ModuleKind::SourceText)
+            continue;
+        uint32_t firstRequest = lists.modules[importer].firstRequest;
+        for (const ModuleRequestData& request : lists.requests.span().subspan(firstRequest, lists.modules[importer + 1].firstRequest - firstRequest)) {
+            if (request.isRequire)
+                continue;
+            const ModuleData& target = lists.modules[request.target()];
+            uint32_t file = target.isFaceOfFile() ? lists.requests[target.firstRequest].target() : request.target();
+            // A mock replaces a module of the library that no import has loaded.
+            bool isOfLibraryAndMayBeMocked = (lists.modules[file].kind == ModuleKind::RuntimeSource || lists.modules[file].kind == ModuleKind::Runtime) && lists.modules[file].mayBeMocked();
+            if (lists.modules[file].requireResult == RequireResult::NamespaceIfImported || lists.modules[file].mayBeImportedWhileItRuns() || isOfLibraryAndMayBeMocked)
+                importsOfHeldFiles.append({ file, importer });
+        }
+    }
+    AOT::sort(importsOfHeldFiles, std::ranges::less { }, &ImportOfHeldFileData::key);
+    importsOfHeldFiles.shrink(std::ranges::unique(importsOfHeldFiles, { }, &ImportOfHeldFileData::key).begin() - importsOfHeldFiles.begin());
+    encoder.setTable(ProgramTableIndex::importsOfHeldFiles, importsOfHeldFiles);
     encoder.setTable(ProgramTableIndex::linkRequests, encodeModuleNumbers(encoder, contracted.linkRequests));
     encoder.setTable(ProgramTableIndex::evaluationRequests, encodeModuleNumbers(encoder, contracted.evaluationRequests));
     encoder.setTable(ProgramTableIndex::groupsLoadedWithGroups, encodeModuleNumbers(encoder, groupsLoadedWithGroups));
@@ -2672,13 +3475,24 @@ void encodeModuleTables(TableEncoder& encoder)
     encoder.setTable(ProgramTableIndex::syntheticExports, lists.syntheticExports);
     encoder.setTable(ProgramTableIndex::requiredNames, lists.requiredNames);
     encoder.setTable(ProgramTableIndex::exportStatements, lists.exportStatements);
-    encoder.setTableFrom<ModuleFailureData>(ProgramTableIndex::moduleFailures, program.moduleFailures, [&](const ModuleFailure& failure) {
+    encoder.setTable(ProgramTableIndex::ambiguousExports, lists.ambiguousExports);
+    encoder.setTable(ProgramTableIndex::sourceStamps, lists.sourceStamps);
+    Vector<ModuleFailureData> moduleFailures;
+    Vector<ModuleFailureData> failedLoads;
+    moduleFailures.reserveInitialCapacity(program.moduleFailures.size());
+    for (const ModuleFailure& failure : program.moduleFailures) {
+        if (failure.endsLoadOf)
+            failedLoads.append(ModuleFailureData::ofLoad(failure.endsLoadOf, ModuleFailureID(moduleFailures.size())));
         if (failure.exportSpecifier) {
             uint32_t exportSpecifier = encoder.shownStringNumber(failure.exportSpecifier);
-            return ModuleFailureData::ofExportStatement(exportSpecifier, encoder.shownStringNumber(failure.specifier));
+            moduleFailures.append(ModuleFailureData::ofExportStatement(exportSpecifier, encoder.shownStringNumber(failure.specifier)));
+            continue;
         }
-        return failure.exporter ? ModuleFailureData::ofAbsentExport(failure.exporter, encoder.shownStringNumber(failure.specifier)) : ModuleFailureData { failure.importer.index(), encoder.shownStringNumber(failure.specifier) };
-    });
+        moduleFailures.append(failure.exporter ? ModuleFailureData::ofAbsentExport(failure.exporter, encoder.shownStringNumber(failure.specifier)) : ModuleFailureData { failure.importer.index(), encoder.shownStringNumber(failure.specifier) });
+    }
+    AOT::sort(failedLoads, { }, &ModuleFailureData::importer);
+    moduleFailures.appendVector(failedLoads);
+    encoder.setTable(ProgramTableIndex::moduleFailures, moduleFailures);
     appendTablesOfCompiledModules(encoder);
 }
 
@@ -2757,7 +3571,8 @@ static void encodeIdentifierTables(TableEncoder& encoder)
     Vector<uint32_t> numbers;
     Vector<StringID> texts;
     Vector<uint32_t> engineSymbols;
-    for (uint32_t number = 1; number < encoder.identifiers.count(); ++number) {
+    // The image that gave a number out lists it.
+    for (uint32_t number = std::max(1u, encoder.identifiers.first()); number < encoder.identifiers.count(); ++number) {
         const auto& identifier = encoder.identifiers.at(number);
         if (encoder.identifiers.numberOfText(identifier.text) == number) {
             numbers.append(number);
@@ -2781,7 +3596,25 @@ static void encodeBuiltinAndBigIntTables(TableEncoder& encoder)
         return;
     encoder.setTableFrom<uint32_t>(ProgramTableIndex::builtinCells, encoder.placement.builtinCells(), &BuiltinCellKey::encoded);
     encoder.setTable(ProgramTableIndex::eagerBuiltinCells, encoder.placement.eagerBuiltinCells());
-    encoder.setTableFrom<uint32_t>(ProgramTableIndex::constantBuiltinMembers, constantBuiltinMembersToLock(encoder.program, encoder.flow), &BuiltinID::index);
+    Vector<uint32_t> members;
+    for (BuiltinID member : constantBuiltinMembersToLock(encoder.program, encoder.flow))
+        members.append(member.index());
+    BitVector unlocked = encoder.flow.builtinMembersWrittenInSharedRealm();
+    // What an image that holds the library alone takes for unlocked is whatever any run may open. The images over it take over what is listed here, so it lists what it writes itself.
+    if (!encoder.build.options().holdsLibraryAlone()) {
+        for (BuiltinID member : encoder.program.unlockedBuiltins())
+            unlocked.set(member.index());
+    } else if (const ImagesBelow* library = encoder.build.referenceLibraryImage()) {
+        unlocked.clearAll();
+        library->forEachUnlockedBuiltinMember([&](BuiltinID member) {
+            unlocked.set(member.index());
+        });
+    }
+    for (size_t member : unlocked)
+        members.append(static_cast<uint32_t>(member) | ProgramTables::unlockedBuiltinMember);
+    for (const OpenedName& opened : encoder.program.openedNames)
+        members.appendList({ opened.holder.index() | ProgramTables::openedName, encoder.stringNumber(opened.name) | ProgramTables::openedName });
+    encoder.setTable(ProgramTableIndex::constantAndUnlockedBuiltinMembers, members);
     encoder.setTableFrom<uint32_t>(ProgramTableIndex::bigIntConstants, encoder.placement.bigIntConstants(), [&](StringID digits) {
         return encoder.stringNumber(digits);
     });
@@ -2808,6 +3641,24 @@ static bool mayBeCalledAndConstructed(const Function& function)
     return function.kind == FunctionKind::Plain && !function.hasAny({ FunctionFlags::IsAsync, FunctionFlags::IsGenerator });
 }
 
+// SourcePositions::whereThisIsMade has two words for each plain function of the file, ascending: the position of the function, and where a stack trace lists the function while `this` is made for it.
+static std::optional<uint32_t> findWhereThisIsMade(const SourcePositions& positions, uint32_t function)
+{
+    std::span<const uint32_t> words = positions.whereThisIsMade;
+    size_t begin = 0;
+    size_t end = words.size() / 2;
+    while (begin < end) {
+        size_t middle = begin + (end - begin) / 2;
+        if (words[2 * middle] == function)
+            return words[2 * middle + 1];
+        if (words[2 * middle] < function)
+            begin = middle + 1;
+        else
+            end = middle;
+    }
+    return std::nullopt;
+}
+
 static Vector<WrittenTailCall> findPlacesOfTailCalls(const Program& program, const BitVector& bodiesWithoutCode)
 {
     auto hasCode = [&](size_t index) {
@@ -2820,6 +3671,14 @@ static Vector<WrittenTailCall> findPlacesOfTailCalls(const Program& program, con
     }
 
     Vector<WrittenTailCall> places;
+    for (size_t index : isEnteredByValue) {
+        const Function& function = program.functions[index];
+        // What is left of a function that has lost parameters is hidden, and the function is listed all the same.
+        if (!mayBeCalledAndConstructed(function) || !function.module || function.enclosingRuntimeFunction || function.has(FunctionFlags::IsHiddenInStackTraces))
+            continue;
+        if (std::optional<uint32_t> position = findWhereThisIsMade(program.at(function.module).positions, function.position))
+            places.append({ FunctionID(index), { }, *position, true });
+    }
     for (size_t index = 0; index < program.functions.size(); ++index) {
         const Function& function = program.functions[index];
         if (!hasCode(index) || !mayBeCalledAndConstructed(function))
@@ -2834,15 +3693,20 @@ static Vector<WrittenTailCall> findPlacesOfTailCalls(const Program& program, con
             // The call takes every function from the stack that was copied in around it. The code was entered for the outermost of them that is shown.
             const Value& call = function.at(block.terminator.callOperand());
             std::optional<WrittenTailCall> place;
+            FunctionID callee = call.opcode == Opcode::CallDirect ? call.function() : FunctionID();
             for (Origin origin = call.origin();;) {
                 FunctionID standing = origin.inlineFrame ? function.inlineFrames[origin.inlineFrame].callee : FunctionID(index);
                 if (standing && !program.at(standing).isHiddenInStackTraces() && firstSourceOf(program, standing) == source) {
+                    // The tests at the head of a function hand on to its body at the position of the function. Nobody wrote that call.
+                    bool handsOnToOwnBody = callee && origin.position == program.at(callee).position && firstSourceOf(program, callee) == source;
                     bool isCallOfFunction = origin.inlineFrame == call.origin().inlineFrame;
-                    place = { source, isCallOfFunction && call.opcode == Opcode::CallDirect ? firstSourceOf(program, call.function()) : FunctionID(), origin.position };
+                    if (!handsOnToOwnBody)
+                        place = { source, isCallOfFunction && call.opcode == Opcode::CallDirect ? firstSourceOf(program, call.function()) : FunctionID(), origin.position };
                 }
                 if (!origin.inlineFrame)
                     break;
                 const InlineFrame& frame = function.inlineFrames[origin.inlineFrame];
+                callee = frame.callee;
                 origin.position = frame.callPosition;
                 origin.inlineFrame = frame.parent;
             }
@@ -2851,10 +3715,10 @@ static Vector<WrittenTailCall> findPlacesOfTailCalls(const Program& program, con
         }
     }
     auto placeOf = [](const WrittenTailCall& place) {
-        return std::pair { place.function.index(), place.position };
+        return std::tuple { place.function.index(), !place.isWhereThisIsMade, place.position };
     };
     // Of two forms of one call the one that knows its callee comes first.
-    AOT::sort(places, { }, [&](const WrittenTailCall& place) {
+    AOT::sortInLine(places, { }, [&](const WrittenTailCall& place) {
         return std::tuple { placeOf(place), !place.callee, place.callee ? place.callee.index() : 0 };
     });
     places.shrink(std::ranges::unique(places, { }, placeOf).begin() - places.begin());
@@ -2866,7 +3730,7 @@ BodyFactsForTables collectBodyFactsForTables(const Program& program, const BitVe
     BodyFactsForTables facts;
     if (build.recordedOptions().policy() == MismatchPolicy::Report)
         facts.usedTypeSites = findUsedTypeSites(program, build.parallelLoops());
-    facts.functionsThatOnlyReturn = findModuleBodiesThatOnlyReturn(program);
+    facts.functionsThatOnlyReturn = findFunctionsThatOnlyReturn(program);
     facts.functionsWithFrames = BitVector(program.functions.size());
     for (size_t index = 0; index < program.functions.size(); ++index) {
         const Function& function = program.functions[index];
@@ -2944,11 +3808,12 @@ EncodedProgramTables encodeProgramTables(const ProgramTableInputs& inputs, Build
     const ShapeTable& shapes = encoder.placement.shapes();
     ClosureFunctionRange closureFunctions = encoder.placement.closureFunctions();
     header.magic = ProgramTables::expectedMagic;
-    header.flags = (encoder.flow.programInstances() == ProgramInstances::AtMostOne ? 0 : ProgramTables::mayRunInMultipleInstances) | (encoder.flow.mayReadLegacyRegExpStatics() ? 0 : ProgramTables::neverReadsLegacyRegExpStatics);
+    header.flags = (encoder.flow.programInstances() == ProgramInstances::AtMostOne ? 0 : ProgramTables::mayRunInMultipleInstances) | (encoder.flow.mayReadLegacyRegExpStatics() ? 0 : ProgramTables::neverReadsLegacyRegExpStatics)
+        | (std::ranges::any_of(encoder.program.functions, [](const Function& function) { return function.capabilities.containsAny({ FunctionCapabilities::MakesNoTailCall, FunctionCapabilities::RecordsCalleeOnceRenamed }); }) ? ProgramTables::callersKeepCallees : 0);
     header.instanceSizes = inputs.instanceSizes;
     header.numberOfShapes = shapes.numberOfShapes();
     header.firstEnvironmentShape = shapes.firstEnvironmentShape();
-    header.closureFunctions = { closureFunctions.first.index(), closureFunctions.end.index(), closureFunctions.omittedWordCount };
+    header.closureFunctions = { closureFunctions.first.index(), closureFunctions.end.index(), closureFunctions.omittedWordCount, closureFunctions.numbersBelow };
     encoder.writer.at<ProgramTables>(0) = header;
 
     Vector<uint8_t> bytes = encoder.writer.take();

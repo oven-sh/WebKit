@@ -16,6 +16,7 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTIR.h"
 #include "AOTLargeVectors.h"
+#include "AOTProgramPasses.h"
 #include "AOTThreads.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -139,6 +140,7 @@ InternedLocationMasks::ID InternedLocationMasks::intern(const LocationMasks& mas
 CompactEffects InternedLocationMasks::compress(const Effects& effects)
 {
     uint8_t flags = (effects.mayThrow ? CompactEffects::MayThrow : 0)
+        | (effects.mayThrow.otherThanStackOverflow() ? CompactEffects::MayThrowOtherThanStackOverflow : 0)
         | (effects.mayThrow.byRule() ? CompactEffects::MayThrowByRule : 0)
         | (effects.mayCollect ? CompactEffects::MayCollect : 0)
         | (effects.mayCallUnknownCode ? CompactEffects::MayCallUnknownCode : 0)
@@ -152,6 +154,8 @@ static ThrowEffect throwEffectOf(uint8_t flags)
 {
     if (!(flags & CompactEffects::MayThrow))
         return false;
+    if (!(flags & CompactEffects::MayThrowOtherThanStackOverflow))
+        return ThrowEffect::onlyStackOverflow();
     return flags & CompactEffects::MayThrowByRule ? ThrowEffect(true) : ThrowEffect::onlyForLackOfMemory();
 }
 
@@ -294,6 +298,24 @@ EffectsOnEdges FunctionSummaryView::onCall() const
     return { m_masks->expand(m_effects->normalOnCall), m_masks->expand(m_effects->handlerOnCall) };
 }
 
+void FunctionSummaryView::mergeOnCallInto(EffectsOnEdges& effects) const
+{
+    if (m_summary) {
+        effects.merge(m_summary->onCall());
+        return;
+    }
+    m_masks->mergeInto(effects.normal, m_effects->normalOnCall);
+    m_masks->mergeInto(effects.handler, m_effects->handlerOnCall);
+}
+
+bool FunctionSummaryView::isRemovableWhenUnused() const
+{
+    constexpr uint8_t flagsOfWhatStays = CompactEffects::MayCallUnknownCode | CompactEffects::MaySuspend | CompactEffects::MayBeTerminated;
+    if (!m_summary && (m_effects->normalOnCall.flags() | m_effects->handlerOnCall.flags()) & flagsOfWhatStays)
+        return false;
+    return onCall().onAnyEdge().isRemovableWhenUnused();
+}
+
 FunctionSummary FunctionSummaryView::expanded() const
 {
     if (m_summary)
@@ -310,6 +332,57 @@ static StoredFunctionEffects compress(InternedLocationMasks& masks, const Functi
     StoredFunctionEffects effects { masks.compress(summary.elsewhere.normal), masks.compress(summary.elsewhere.handler), masks.compress(summary.throughParameters), { }, { } };
     effects.computeEffectsOnCall(masks);
     return effects;
+}
+
+uint64_t AnswersForCalleeLists::hashOf(std::span<const FunctionID> callees)
+{
+    constexpr size_t numberOfSamples = 16;
+    uint64_t hash = callees.size();
+    size_t step = std::max<size_t>(callees.size() / numberOfSamples, 1);
+    for (size_t index = 0; index < callees.size(); index += step)
+        hash = (std::rotl(hash, 5) ^ callees[index].index()) * 0x9e3779b97f4a7c15ull;
+    hash = (std::rotl(hash, 5) ^ callees.back().index()) * 0x9e3779b97f4a7c15ull;
+    // Neither the empty nor the deleted key of the table.
+    return (hash >> 1) | 1;
+}
+
+AnswersForCalleeLists::List* AnswersForCalleeLists::find(uint64_t hash, std::span<const FunctionID> callees)
+{
+    Vector<List*, 4> candidates;
+    {
+        Locker locker { m_lock };
+        if (auto found = m_lists.find(hash); found != m_lists.end()) {
+            for (const std::unique_ptr<List>& list : found->value)
+                candidates.append(list.get());
+        }
+    }
+    for (List* list : candidates) {
+        if (equalSpans(list->callees.span(), callees))
+            return list;
+    }
+    return nullptr;
+}
+
+AnswersForCalleeLists::List& AnswersForCalleeLists::findOrAdd(uint64_t hash, std::span<const FunctionID> callees)
+{
+    ListsWithOneHash& lists = m_lists.add(hash, ListsWithOneHash { }).iterator->value;
+    for (const std::unique_ptr<List>& list : lists) {
+        if (equalSpans(list->callees.span(), callees))
+            return *list;
+    }
+    lists.append(makeUnique<List>());
+    lists.last()->callees = Vector<FunctionID>(callees);
+    m_isEmpty.store(false, std::memory_order_relaxed);
+    return *lists.last();
+}
+
+void AnswersForCalleeLists::clear()
+{
+    if (m_isEmpty.load(std::memory_order_relaxed))
+        return;
+    Locker locker { m_lock };
+    m_lists.clear();
+    m_isEmpty.store(true, std::memory_order_relaxed);
 }
 
 EffectSummaries::EffectSummaries(Ref<InternedLocationMasks>&& masks, Contents contents)
@@ -352,6 +425,7 @@ void EffectSummaries::store(std::span<const FunctionSummary> summaries)
 
 void EffectSummaries::clear()
 {
+    forgetAnswersForCalleeLists();
     m_effects.clear();
     m_parameterRanges.clear();
     m_parameters.clear();
@@ -363,6 +437,7 @@ void EffectSummaries::grow(unsigned size, const ParallelLoops* loops)
     RELEASE_ASSERT(size >= m_parameterRanges.size());
     if (size == m_parameterRanges.size())
         return;
+    forgetAnswersForCalleeLists();
     if (loops) {
         if (m_contents == Contents::Any)
             reserveCapacityInParallel(*loops, m_effects, size);
@@ -459,6 +534,11 @@ bool describeByRole(const Program& program, const Function& function, EffectDesc
     case FunctionRole::AllocatedThisVersion:
         description.addFunction(function.derivation.source);
         return true;
+    case FunctionRole::OutlinedBody:
+        if (!isCallWithSharedArms(function))
+            return false;
+        describeCallees(program, CalleeList::complete({ calleesOfCallWithSharedArms(program, function), { } }), BuiltinCallMode::Call, description);
+        return true;
     case FunctionRole::Source:
     case FunctionRole::Library:
     case FunctionRole::Model:
@@ -477,7 +557,7 @@ bool describeByRole(const Program& program, const Function& function, EffectDesc
     case FunctionRole::ResultWorker:
     case FunctionRole::ParameterWrapper:
     case FunctionRole::EntryChecks:
-    case FunctionRole::OutlinedBody:
+    case FunctionRole::ChecksThatGiveUp:
     case FunctionRole::StubBody:
         return false;
     }
@@ -497,14 +577,25 @@ static FunctionSummary summarizeByRole(const EffectContext& context, const Funct
     Vector<ParameterSummary> parameters(function.numberOfEntryParameters(), [&](size_t) {
         return parameter;
     });
+    // The body is the source's: it reads and writes through a parameter what the source does. What the source does to the object it creates is in no summary.
+    if (function.role == FunctionRole::AllocatedThisVersion) {
+        CalleeSummary source(context, function.derivation.source);
+        const auto& parameterMap = function.derivation.parameterMap;
+        for (size_t index = 0; index < std::min<size_t>(parameters.size(), parameterMap.size()); ++index) {
+            if (std::optional<uint32_t> original = parameterMap[index].original)
+                parameters[index].memory = source->memory(*original);
+        }
+    }
     return createFunctionSummary(effects.normal, effects.handler, WTF::move(parameters), { });
 }
 
 CalleeSummary::CalleeSummary(const EffectContext& context, FunctionID id)
     : m_computed(context.summaries.of(id))
 {
-    // A callee version is the body of its source with the same parameters, given fewer values.
-    while (id && !context.summaries.contains(id) && context.program.at(id).role == FunctionRole::CalleeVersion) {
+    if (context.summaries.contains(id)) [[likely]]
+        return;
+    // A callee version is the body of its source with the same parameters, given fewer values. Tests that give up do what the tests they stand for do, or throw, as a function that may run unknown code may.
+    while (id && !context.summaries.contains(id) && (context.program.at(id).role == FunctionRole::CalleeVersion || context.program.at(id).role == FunctionRole::ChecksThatGiveUp)) {
         id = context.program.at(id).derivation.source;
         m_computed = context.summaries.of(id);
     }
@@ -585,7 +676,8 @@ uint64_t parametersWhoseContentsAreCalled(const Program& program, FunctionID id,
     for (uint32_t parameter = 0; parameter < numberOfTrackedParameters; ++parameter) {
         if (!borrowedParameters.isBorrowed(id, parameter) || !borrowedParameters.mayBeCalled(id, parameter))
             continue;
-        if (isNeverCalled(program.typeOf(function, parameters[parameter])))
+        bool isCalleeWithContentsLost = function.calleeParameterIndex() == parameter && !borrowedParameters.borrowsContents(id, parameter);
+        if (isNeverCalled(program.typeOf(function, parameters[parameter])) || isCalleeWithContentsLost)
             result |= 1ull << parameter;
     }
     return result;
@@ -619,7 +711,8 @@ FunctionSummary createSummaryFromFlow(const Program& program, const FlowResults&
             continue;
         operand = operand.uses == OperandUses::all() ? borrowedParameters.summaryOf(id, parameter) : withoutUsesThatTableExcludes(operand.uses, borrowedParameters, id, parameter);
         if (contentsAreCalled >> parameter & 1) {
-            operand.uses.remove(callingUses);
+            if (program.at(id).calleeParameterIndex() != parameter)
+                operand.uses.remove(callingUses);
             operand.uses.add(OperandUse::RetainsContents);
         }
     }
@@ -650,6 +743,27 @@ EffectSummaries computeEffectSummaries(const Program& program, const FlowResults
     EffectSummaries summaries;
     EffectSummarizer(program, flow, build, nothingKept, EffectSummarizer::Witnesses::Found).update(summaries);
     return summaries;
+}
+
+static EffectSummaries computeEffectSummariesByOperandTypes(const Program& program, const FlowResults& flow, BuildContext& build, const EffectSummaries* rowsOfBodies)
+{
+    BodySummaries nothingKept;
+    EffectSummaries summaries;
+    EffectSummarizer summarizer(program, flow, build, nothingKept, EffectSummarizer::Witnesses::Found);
+    summarizer.setIsOnlyCheck();
+    summarizer.readCalleesByOperandTypes();
+    if (rowsOfBodies)
+        summarizer.takeRowsOfBodiesFrom(*rowsOfBodies);
+    summarizer.update(summaries);
+    return summaries;
+}
+
+EffectSummaries computeEffectSummariesByOperandTypes(const Program& program, const FlowResults& flow, BuildContext& build)
+{
+    // The seed says nothing of a function that was made after flow analysis, and a call of one may stand where operations of the caller's own body stood.
+    // So a body that hands a parameter on to it seems to use the parameter in every way. The second reading knows what the first found in that function's body.
+    EffectSummaries first = computeEffectSummariesByOperandTypes(program, flow, build, nullptr);
+    return computeEffectSummariesByOperandTypes(program, flow, build, &first);
 }
 
 void updateEffectSummaries(const Program& program, const FlowResults& flow, BuildContext& build, BodySummaries& kept, EffectSummaries& summaries, BodyReferences* references)
@@ -755,7 +869,22 @@ static bool isRecursiveCall(const SummaryDependency& ownDependency)
     return ownDependency.source.part == SummaryPart::OnReturn;
 }
 
-FunctionSummary summarizeBody(const EffectContext& context, FunctionID id, FunctionAnalyses& analyses)
+static Effects valueOf(const FunctionSummary& summary, const SummaryNode& node)
+{
+    switch (node.part) {
+    case SummaryPart::OnReturn:
+        return summary.elsewhere.normal;
+    case SummaryPart::OnThrow:
+        return summary.elsewhere.handler;
+    case SummaryPart::Parameter:
+        return effectsOfMemory(summary.parameter(node.parameter).memory);
+    case SummaryPart::UnknownCode:
+        break;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+FunctionSummary summarizeBody(const EffectContext& context, FunctionID id, FunctionAnalyses& analyses, std::span<const std::pair<FunctionID, FunctionSummary>> versionsOfCallees)
 {
     ASSERT(id);
     BodySummary body = summarizeBodyLocally(context, id, analyses);
@@ -767,7 +896,9 @@ FunctionSummary summarizeBody(const EffectContext& context, FunctionID id, Funct
             ownDependencies.append(dependency);
             continue;
         }
-        Effects source = valueOf(context, dependency.source);
+        auto version = std::ranges::find(versionsOfCallees, dependency.source.function, &std::pair<FunctionID, FunctionSummary>::first);
+        bool hasVersion = dependency.source.part != SummaryPart::UnknownCode && version != versionsOfCallees.end();
+        Effects source = hasVersion ? valueOf(version->second, dependency.source) : valueOf(context, dependency.source);
         mergeInto(body, dependency.target, source);
         if (source.mayCallUnknownCode && !body.unknownCodeWitness)
             body.unknownCodeWitness = witnessOf(context, dependency.source.function);
@@ -783,6 +914,15 @@ FunctionSummary summarizeBody(const EffectContext& context, FunctionID id, Funct
         changed = false;
         for (const SummaryDependency& dependency : ownDependencies)
             changed |= mergeInto(body, dependency.target, valueOf(body, dependency.source));
+    }
+
+    // Only values of an environment type point to environments. A parameter that may be read back from memory is charged with every write in the body, including writes to the body's own environments.
+    const Function& function = analyses.function();
+    for (uint32_t index = 0; index < body.parameters.size(); ++index) {
+        if (context.program.typeOf(function, function.at(entryBlock).parameters[index]).environment)
+            continue;
+        body.parameters[index].memory.reads.remove(AbstractHeapSet { AbstractHeap::EnvironmentFields });
+        body.parameters[index].memory.writes.remove(AbstractHeapSet { AbstractHeap::EnvironmentFields });
     }
 
     return createFunctionSummary(body.onReturn, body.onThrow, WTF::move(body.parameters), body.unknownCodeWitness);

@@ -465,7 +465,7 @@ private:
             if (seenBodies.set(body.number))
                 addItem(Kind::DuplicateBody, unit, linked.uniqueUnitOffsets[unit], body.regExp);
         }
-        AOT::stableSort(section.items, { }, &RegExpSectionItem::offset);
+        AOT::stableSortInLine(section.items, { }, &RegExpSectionItem::offset);
         return section;
     }
 

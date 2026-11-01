@@ -20,10 +20,11 @@ operation DefineAccessors (object: Object/inspects+definesName, keys: List<Prope
 family SelectedOperator Selected..Placed
 operation IntegerBound (number: Number/inspects, comparison: Opcode) [numberIsOnLeft] -> natural(integer) ; none
 operation RememberOwner (object: Object/inspects) -> none ; writes(RuntimeState)
+operation MoveTableToHeap (collection: Object/inspects+readsContents+returns) -> natural(same(collection)) ; CreatesConstant reads(CollectionStorage, CollectionEntries) writes(CollectionStorage) ; replaces = CallBuiltin ; runtime = MoveTableToHeap
 operation FulfillFreshPromise (promise: Object/inspects+writesContents, value: Any/retains(promise), guard?: Guard/inspects) -> none ; writes(PromiseState) ; relies = NotThenable ; guarded = value ; replaces = ReturnAsyncResult, ResolvePromise ; runsOwnerBarrier = true ; remembersOwner = true
 
 family String Selected..Placed
-operation Substring (string: String/inspects, start: Integer/inspects, end: Integer/inspects) -> natural(string) ; CreatesString ; Prepared..Placed ; interpreted = Allocation ; replaces = CallBuiltin, ElemGet ; runtime = Substring
+operation Substring (string: String/inspects, start: Integer/inspects, end: Integer/inspects) -> natural(string) ; CreatesString ; Prepared..Placed ; interpreted = Allocation ; replaces = CallBuiltin, ElemGet ; runtime = Substring ; hasOwnFoldingRule = true
 operation SubstringOrUndefined (string: String/inspects, start: Integer/inspects, end: Integer/inspects) -> natural(string | undefined) ; CreatesString ; Prepared..Placed ; interpreted = Allocation ; replaces = CallBuiltin ; runtime = Substring
 operation FlattenString (string: String/inspects+returns) -> natural(FlatString) ; ResolvesRopes ; Prepared..Placed ; replaces = CallBuiltin, ElemGet, StrictEq, StringRangeCodeUnitOrNaN, StringRangeCodeUnitOrMinusOne, StringRangeCodePointOrUndefined, StringRangeCharacterOrEmpty, StringRangeCharacterOrUndefined, StringRangeEqualsLiteral, StringRangeToNumber, StringRangeParseInt, StringRangeSubstringOrUndefined, Substring, StringEqualsLiteral, StringOrderToCharacter, StringStartsWithLiteral, StringEndsWithLiteral, StringIndexOfLiteral, StringIndexOfCharacter, StringLastIndexOfLiteral, GetStringCodeUnit, GetStringLength ; runtime = Flatten
 operation StringRange (length: Integer/inspects, first: Number/inspects, second?: Number/inspects, method: StringRangeMethod) -> results(natural(int[0, 2147483647]), natural(int[0, 2147483647])) ; none ; Prepared..Placed
@@ -65,7 +66,7 @@ operation HasByKeyParts (collection: Object/inspects+readsContents, parts...: An
 
 family ResolvedCall Selected..Placed
 operation ResolveCallTarget (callee: Any/inspects, argumentCount: UInt32) -> natural(CodeAddress) ; none
-operation CallResolved (callee: Any/calls, target: CodeAddress/inspects, thisValue?: Any/retains, arguments...: Any/retains, calleeName?: String, with CallStamp) -> unknown ; unknownCode by Call ; accessClass = IndirectCall ; replaces = Call ; runsBeforeCallee = true
+operation CallResolved (callee: Any/calls, target: CodeAddress/inspects, thisValue?: Any/retains, arguments...: Any/retains, calleeName?: String, calledBuiltin?: Builtin, with CallStamp) -> unknown ; unknownCode by Call ; accessClass = IndirectCall ; replaces = Call ; runsBeforeCallee = true
 operation RegExpMatchLiteral (overload: BuiltinOverload, string: String/inspects, regExp?: Object/inspects, guard?: Guard/inspects, pattern: String, regExpFlags: RegExpFlags, matchForm: RegExpMatchForm, from Placed regExpRecord?: RegExpRecord) -> declared(overload) ; CreatesString reads(RegExpState) writes(RegExpState) ; relies = Pristine ; guarded = regExp ; replaces = CallBuiltin
 
 family InlineBuiltin Selected..Placed ; replaces = CallBuiltin

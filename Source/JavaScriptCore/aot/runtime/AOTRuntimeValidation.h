@@ -12,6 +12,7 @@
 #include "JSCJSValue.h"
 #include "VM.h"
 #include <algorithm>
+#include <atomic>
 #include <optional>
 #include <tuple>
 
@@ -28,6 +29,15 @@ struct ValidationFailure {
     FunctionID function;
     Typed::ValueID value;
     JSValue found;
+    // How compiled code held a value that has no encoding to read its class from, or Void if the check looked at no value. `found` is empty in both cases.
+    Typed::Representation unboxedAs { Typed::Representation::Unchosen };
+};
+
+// The third argument of operationAOTReportValidationFailure.
+struct ReportedFailure {
+    static constexpr unsigned unboxedAsShift = 16;
+
+    static constexpr uint32_t encode(ValidationFailureKind kind, Typed::Representation unboxedAs) { return static_cast<uint32_t>(kind) | static_cast<uint32_t>(unboxedAs) << unboxedAsShift; }
 };
 
 // What ValidationFailure::found holds for CallChangedKeptRegister and UnwindingChangedKeptRegister: an int32 with the register and, if a call names it, the callee.
@@ -97,6 +107,13 @@ JS_EXPORT_PRIVATE std::optional<SlotOutsideType> findSlotOutsideType(VM&, const 
 JS_EXPORT_PRIVATE void validateSlotTypes(VM&, const Object&);
 
 ALWAYS_INLINE bool validatesRuntime(VM& vm) { return vm.aotState().validatesRuntime; }
+
+// True once an image built with --aot-testing=CheckProofsAtRunTime is attached. Its code is identical to a production build's.
+JS_EXPORT_PRIVATE extern std::atomic<bool> imageChecksProofs;
+// The compiler's claims about the objects of a layout (which changes never happen to them, which names they ever get, what their slots hold)
+// are rechecked whenever the runtime changes an object, and for every object that survives a garbage collection.
+// The check changes nothing that the program or compiled code can observe, so it also runs against production code.
+ALWAYS_INLINE bool checksClaimsAboutObjects(VM& vm) { return vm.aotState().validatesRuntime || imageChecksProofs.load(std::memory_order_relaxed); }
 
 struct OperationPermissions {
     bool mayEnterVM { true };

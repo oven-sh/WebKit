@@ -1,4 +1,5 @@
-# A function whose function objects may get another name where nobody sees is called directly while no function object has got one: one test stands in front, and the call of the value behind its failure.
+# A function whose function objects may get another name where nobody sees is called directly, and the caller keeps the function object in a word of its own frame: whoever lists the frames finds it there.
+# No test stands in front and no call of the value beside it. A tail call gives up the frame of the caller: there one test stands in front, and the call of the value behind its failure.
 # Whether its body is copied is the inliner's to say. A function that records its callee from the start is called by value.
 # FORM: Prepared
 # RUN: pass ResolveCalls
@@ -18,19 +19,30 @@ function f1 name="renamedInSight" kind=Arrow parameters=[{type=anything}] result
 function f2 name="callsTheFirst" parameters=[{type=f0}, {type=anything}] results=[{type=anything}] {
     v2 = Call v0, -, v1
     Return v2
-# CHECK: [[areUnchanged]]: boolean = AreFunctionNamesUnchanged
-# CHECK-NEXT: Branch [[areUnchanged]] -> taken [[direct]](), notTaken [[byValue]]()
-# CHECK: [[direct]]():
-# CHECK-NEXT: [[capture]]: number = GetCapture v0 function=f0
-# CHECK-NEXT: = CallDirect [[capture]], v1 function=f0
+# CHECK-NOT: AreFunctionNamesUnchanged
+# CHECK: [[capture]]: number = GetCapture v0 function=f0
+# CHECK-NEXT: KeepCalleeInFrame v0
+# CHECK-NEXT: = CallDirect [[capture]], v1 function=f0 [calleeIsKeptInFrame
 # CHECK-NOT: isNeverInlined
-# CHECK: [[byValue]]() frequency=Unlikely:
-# CHECK-NEXT: = Call v0, -, v1
+# CHECK-NOT: = Call v0, -, v1
 }
 
 function f3 name="callsTheSecond" parameters=[{type=f1}, {type=anything}] results=[{type=anything}] {
     v2 = Call v0, -, v1
     Return v2
-# CHECK-NOT: AreFunctionNamesUnchanged
+# CHECK-NOT: KeepCalleeInFrame
 # CHECK: = Call v0, -, v1
+}
+
+function f4 name="leavesByACallOfTheFirst" parameters=[{type=f0}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v1
+    ReturnCall v2
+# CHECK-NOT: KeepCalleeInFrame
+# CHECK: [[areUnchanged]]: boolean = AreFunctionNamesUnchanged
+# CHECK-NEXT: Branch [[areUnchanged]] -> taken [[direct]](), notTaken [[byValue]]()
+# CHECK: [[direct]]():
+# CHECK-NEXT: [[captureOfLast]]: number = GetCapture v0 function=f0
+# CHECK-NEXT: = CallDirect [[captureOfLast]], v1 function=f0
+# CHECK: [[byValue]]() frequency=Unlikely:
+# CHECK-NEXT: = Call v0, -, v1
 }

@@ -1,0 +1,75 @@
+# What is built may find no room, and then it throws where it stands. An object that the program makes inside a `try` is built where the handler of that `try` covers.
+# FORM: Prepared optimizing
+# RUN: pass SinkAllocations
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Pair" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+
+# try { const pair = { x: given }; pair.y = flag ? 1 : 2; kept = pair; } catch { .. }
+# The blocks behind the test hold nothing that throws, so no handler covers them: the object is not built there.
+function f0 name="neededWhereNoHandlerCovers" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1() handler=b5():
+    v2 = NewObject layout=L0
+    PropDefine v2, v0 key="x" receivers=[L0]
+    v4 = Call v0
+    Branch v1 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b4()
+  b3():
+    Jump -> next b4()
+  b4():
+    PutModuleVariable v2 variable=g0
+    Return v0
+  b5() role=CatchHandler:
+    v6 = CatchValue
+    Return v6
+# CHECK: b4([[cell0]]: L0):
+# CHECK-NEXT: PutModuleVariable [[cell0]] variable=g0
+# CHECK: () handler=b5():
+# CHECK-NEXT: = Call v0
+# CHECK-NEXT: = NewObject -, v0 layout=L0 fields=[0]
+}
+
+# The same, and the object is needed on one of the two ways alone, in a block that the handler covers: it is built there.
+function f1 name="neededWhereTheHandlerCovers" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1() handler=b5():
+    v2 = NewObject layout=L0
+    PropDefine v2, v0 key="x" receivers=[L0]
+    v4 = Call v0
+    Branch v1 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b4()
+  b3():
+    Return v0
+  b4() handler=b5():
+    v5 = Call v0, -, v2
+    Return v5
+  b5() role=CatchHandler:
+    v6 = CatchValue
+    Return v6
+# CHECK: b4() handler=b5():
+# CHECK-NEXT: [[cell1]]:{{*}}= NewObject -, v0 layout=L0 fields=[0]
+# CHECK: = Call v0, -, [[cell1]]
+}
+
+# The handler reads an object that is not built. Where another object is built the handler is handed what the first one holds there, not what it held at the head of the block.
+function f2 name="handlerReadsAnObjectThatIsNotBuilt" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = NewObject layout=L0
+    PropDefine v2, v0 key="x" receivers=[L0]
+    Jump -> next b1()
+  b1() handler=b2():
+    PropSet v2, v1 key="x" receivers=[L0]
+    v5 = NewObject layout=L0
+    PropDefine v5, v0 key="x" receivers=[L0]
+    PutModuleVariable v5 variable=g0
+    Return v0
+  b2() role=CatchHandler:
+    v8 = CatchValue
+    v9 = PropGet v2 key="x" receivers=[L0]
+    Return v9
+# CHECK: handler=b2(v1):
+# CHECK-NEXT: = NewObject -, v0 layout=L0 fields=[0]
+}

@@ -12,6 +12,7 @@
 #include "AOTBuiltinTableBindings.h"
 #include "AOTErrorMessages.h"
 #include "AOTModuleHost.h"
+#include "AOTProgramTables.h"
 #include "AOTVector.h"
 #include "ArrayIteratorPrototype.h"
 #include "AsyncFunctionPrototype.h"
@@ -281,6 +282,38 @@ static const ClassesOfStaticTables& classesOfStaticTablesOfFirstRealm(JSGlobalOb
     return classes.get();
 }
 
+BuiltinID findMemberOfNamespaceCreatedWith(JSGlobalObject* realm, const LazyClassStructure& lazyStructure)
+{
+    struct ClassOfNamespace {
+        const LazyClassStructure* lazyStructure;
+        ASCIILiteral holder;
+        ASCIILiteral name;
+    };
+    const ClassOfNamespace classes[] = {
+        { &realm->m_durationStructure, "Temporal"_s, "Duration"_s },
+        { &realm->m_instantStructure, "Temporal"_s, "Instant"_s },
+        { &realm->m_plainDateStructure, "Temporal"_s, "PlainDate"_s },
+        { &realm->m_plainDateTimeStructure, "Temporal"_s, "PlainDateTime"_s },
+        { &realm->m_plainMonthDayStructure, "Temporal"_s, "PlainMonthDay"_s },
+        { &realm->m_plainTimeStructure, "Temporal"_s, "PlainTime"_s },
+        { &realm->m_plainYearMonthStructure, "Temporal"_s, "PlainYearMonth"_s },
+        { &realm->m_zonedDateTimeStructure, "Temporal"_s, "ZonedDateTime"_s },
+#define AOT_CLASS_OF_WEBASSEMBLY(capitalName, lowerName, properName, instanceType, jsName, prototypeBase, featureFlag) { &realm->m_ ## properName ## Structure, "WebAssembly"_s, #jsName ## _s },
+        FOR_EACH_WEBASSEMBLY_CONSTRUCTOR_TYPE(AOT_CLASS_OF_WEBASSEMBLY)
+#undef AOT_CLASS_OF_WEBASSEMBLY
+    };
+    const BuiltinTable& table = BuiltinTable::singleton();
+    for (const ClassOfNamespace& entry : classes) {
+        if (entry.lazyStructure != &lazyStructure)
+            continue;
+        BuiltinName holderName = table.nameOf(byteCast<uint8_t>(entry.holder.span()));
+        BuiltinID holder = holderName ? table.findGlobal(holderName) : BuiltinID();
+        BuiltinName name = holder ? table.nameOf(byteCast<uint8_t>(entry.name.span())) : BuiltinName();
+        return name ? table.findOwnMember(table.canonicalID(holder), name) : BuiltinID();
+    }
+    return { };
+}
+
 BuiltinID findGlobalCreatedWith(JSGlobalObject* realm, const LazyClassStructure& lazyStructure)
 {
     const BuiltinTable& table = BuiltinTable::singleton();
@@ -364,6 +397,8 @@ static ALWAYS_INLINE void forEachInstanceStructureOfEngine(JSGlobalObject* realm
     visitIfCreated(BuiltinClasses::String, realm->stringObjectStructure());
     visitIfCreated(BuiltinClasses::Error, realm->errorStructureConcurrently());
     visitIfCreated(BuiltinClasses::Date, realm->dateStructureConcurrently());
+    visitIfCreated(BuiltinClasses::IntlDateTimeFormat, realm->m_dateTimeFormatStructure.getConcurrently());
+    visitIfCreated(BuiltinClasses::IntlNumberFormat, realm->m_numberFormatStructure.getConcurrently());
 #define AOT_VISIT_TYPED_ARRAY_STRUCTURE(name) visitIfCreated(BuiltinClasses::name##Array, realm->typedArrayStructureConcurrently(Type##name, false));
     FOR_EACH_TYPED_ARRAY_TYPE_EXCLUDING_DATA_VIEW(AOT_VISIT_TYPED_ARRAY_STRUCTURE)
 #undef AOT_VISIT_TYPED_ARRAY_STRUCTURE
@@ -380,11 +415,9 @@ static ALWAYS_INLINE void forEachInstanceStructureOfEngine(JSGlobalObject* realm
 void forEachInstanceStructure(JSGlobalObject* realm, const ScopedLambda<void(BuiltinClassID, Structure*)>& function)
 {
     forEachInstanceStructureOfEngine(realm, function);
-    for (const BuiltinClassBinding& binding : BuiltinBindings::classesOfHost()) {
-        Structure* structure = binding.findInstanceStructure ? binding.findInstanceStructure(realm) : nullptr;
-        if (structure)
-            function(binding.builtinClass, structure);
-    }
+    BuiltinBindings::forEachInstanceStructureOfHost(realm, [&](const BuiltinClassBinding& binding, Structure* structure) {
+        function(binding.builtinClass, structure);
+    });
 }
 
 BuiltinClassID findClassWithInstanceStructure(JSGlobalObject* realm, Structure* structure)
@@ -395,10 +428,10 @@ BuiltinClassID findClassWithInstanceStructure(JSGlobalObject* realm, Structure* 
             found = builtinClass;
     });
     const ClassInfo* info = structure->classInfoForCells();
-    for (const BuiltinClassBinding& binding : BuiltinBindings::classesOfHost()) {
-        if ((!binding.instanceClassInfo || info->isSubClassOf(binding.instanceClassInfo)) && binding.findInstanceStructure && binding.findInstanceStructure(realm) == structure)
+    BuiltinBindings::forEachInstanceStructureOfHost(realm, [&](const BuiltinClassBinding& binding, Structure* original) {
+        if (original == structure && (!binding.instanceClassInfo || info->isSubClassOf(binding.instanceClassInfo)))
             found = binding.builtinClass;
-    }
+    });
     return found;
 }
 
@@ -467,6 +500,8 @@ static ObjectLookup findHiddenRoot(JSGlobalObject* realm, BuiltinID id)
         return findTableOfLoader(realm, &ModuleHost::requireCache);
     if (id == Builtins::ModuleExtensions)
         return findTableOfLoader(realm, &ModuleHost::requireExtensions);
+    if (id == Builtins::ModuleRequirePrototype)
+        return findTableOfLoader(realm, &ModuleHost::requirePrototype);
     if (std::optional<LinkTimeConstant> constant = BuiltinBindings::linkTimeConstantOf(id))
         return asObject(realm->linkTimeConstant(*constant));
     BuiltinID subclassConstructor = findSubclassConstructor(BuiltinTable::singleton(), id);
@@ -769,6 +804,32 @@ JSObject* findExistingObject(JSObject* holder, UniquedStringImpl* key)
     return isValidOffset(offset) ? objectAt(holder, offset) : nullptr;
 }
 
+JSObject* findExistingBuiltin(JSGlobalObject* realm, BuiltinID id)
+{
+    const BuiltinTable& table = BuiltinTable::singleton();
+    if (!table.contains(id) || table.at(id).scope == BuiltinScope::Module)
+        return nullptr;
+    if (id == Builtins::GlobalThis)
+        return realm;
+    VM& vm = realm->vm();
+    const Builtin& builtin = table.at(id);
+    if (builtin.holder) {
+        if (table.isSymbolName(builtin.name) && !table.wellKnownSymbolOf(builtin.name))
+            return nullptr;
+        JSObject* holder = findExistingBuiltin(realm, builtin.holder);
+        return holder ? findExistingObject(holder, table.identifierOf(vm, builtin.name).impl()) : nullptr;
+    }
+    if (BuiltinID subclassConstructor = findSubclassConstructor(table, id)) {
+        JSObject* constructor = findExistingBuiltin(realm, subclassConstructor);
+        return constructor ? constructor->getPrototypeDirect().getObject() : nullptr;
+    }
+    BuiltinID prototypeID = findClassPrototype(table, id);
+    JSObject* prototype = prototypeID ? findExistingHiddenPrototype(realm, builtin.instanceClass) : nullptr;
+    if (!prototype || id == prototypeID)
+        return prototype;
+    return findExistingObject(prototype, vm.propertyNames->constructor.impl());
+}
+
 class ExistingBuiltins {
 public:
     explicit ExistingBuiltins(JSGlobalObject* realm)
@@ -851,11 +912,13 @@ namespace {
 
 class FixedNamesOfBuiltin final : public ImmutablePropertyNames::OutsideNames {
 public:
-    FixedNamesOfBuiltin(VM& vm, BuiltinID holder, std::span<const uint32_t> constantMembers, WritesToBuiltinMembers* writes)
+    FixedNamesOfBuiltin(VM& vm, BuiltinID holder, std::span<const uint32_t> constantMembers, WritesToBuiltinMembers* writes, std::span<const uint32_t> unlockedMembers, bool reflectThrows)
         : m_vm(vm)
         , m_holder(holder)
         , m_closedKeys(BuiltinTable::singleton().closedKeysOf(holder))
         , m_constantMembers(constantMembers)
+        , m_unlockedMembers(unlockedMembers)
+        , m_reflectThrows(reflectThrows)
         , m_writes(writes)
     {
     }
@@ -872,20 +935,32 @@ public:
 
     bool contains(UniquedStringImpl* uid) const final
     {
-        BuiltinName name = BuiltinTable::singleton().nameOf(m_vm, uid);
+        const BuiltinTable& table = BuiltinTable::singleton();
+        BuiltinName name = table.nameOf(m_vm, uid);
+        // The strings of such an object are closed by Part::OtherStrings.
+        if (table.at(m_holder).flags.contains(BuiltinFlag::IsLockedObject)) {
+            if (!uid->isSymbol() || static_cast<SymbolImpl*>(uid)->isPrivate())
+                return false;
+            BuiltinID member = name ? table.findOwnMember(m_holder, name) : BuiltinID();
+            return !member || !ProgramTables::isUnlocked(m_unlockedMembers, member.index());
+        }
         return name && isFixed(name);
     }
 
-    String messageOfRefusal(UniquedStringImpl* uid) const final { return assignmentToLockedBuiltinMessage(memberOfLockedBuiltin(m_holder, uid)); }
-    String messageOfRefusedDeletion(UniquedStringImpl* uid) const final { return deletionFromLockedBuiltinMessage(memberOfLockedBuiltin(m_holder, uid)); }
-    bool refusalAlwaysThrows() const final { return true; }
+    String storeErrorMessage(UniquedStringImpl* uid) const final { return assignmentToLockedBuiltinMessage(m_vm, m_holder, uid, lockedIn()); }
+    String deleteErrorMessage(UniquedStringImpl* uid) const final { return deletionFromLockedBuiltinMessage(m_vm, m_holder, uid, lockedIn()); }
+    bool throwsInSloppyMode() const final { return true; }
+    bool throwsFromReflect() const final { return m_reflectThrows; }
 
-    String messageOfRefusedPrototype() const final
+    String setPrototypeErrorMessage() const final
     {
-        return prototypeChangeOfLockedBuiltinMessage(BuiltinTable::singleton().textOf(m_holder));
+        return prototypeChangeOfLockedBuiltinMessage(BuiltinTable::singleton().textOf(m_holder), lockedIn());
     }
 
 private:
+    // Reflect is told of a refusal in a test run, and nowhere else.
+    LockedIn lockedIn() const { return m_reflectThrows ? LockedIn::TestRun : LockedIn::Executable; }
+
     bool isFixed(BuiltinName name) const
     {
         if (std::ranges::binary_search(m_closedKeys, name))
@@ -897,7 +972,7 @@ private:
         const Builtin& entry = table.at(member);
         if (m_holder == Builtins::GlobalThis && !BuiltinBindings::provides(entry.origin))
             return false;
-        if (member == m_holder || std::ranges::binary_search(table.lockedMembers(), member))
+        if (member == m_holder || (std::ranges::binary_search(table.lockedMembers(), member) && !ProgramTables::isUnlocked(m_unlockedMembers, member.index())))
             return true;
         if (entry.flags.contains(BuiltinFlag::IsOwnPropertyOfInstances) && table.at(m_holder).flags.contains(BuiltinFlag::HasLockedMembers))
             return true;
@@ -908,12 +983,14 @@ private:
     BuiltinID m_holder;
     std::span<const BuiltinName> m_closedKeys;
     std::span<const uint32_t> m_constantMembers;
+    std::span<const uint32_t> m_unlockedMembers;
+    bool m_reflectThrows;
     WritesToBuiltinMembers* m_writes;
 };
 
 } // anonymous namespace
 
-Ref<ImmutablePropertyNames> immutablePropertyNamesOf(VM& vm, BuiltinID holder, std::span<const uint32_t> constantMembers, WritesToBuiltinMembers* writes)
+Ref<ImmutablePropertyNames> immutablePropertyNamesOf(VM& vm, BuiltinID holder, std::span<const uint32_t> constantMembers, WritesToBuiltinMembers* writes, std::span<const uint32_t> unlockedMembers, bool reflectThrows, std::span<const Identifier> openedNames)
 {
     const BuiltinTable& table = BuiltinTable::singleton();
     OptionSet<ImmutablePropertyNames::Part> parts;
@@ -923,16 +1000,19 @@ Ref<ImmutablePropertyNames> immutablePropertyNamesOf(VM& vm, BuiltinID holder, s
         parts.add(ImmutablePropertyNames::Part::Prototype);
 
     IdentifierSet openStrings;
-    if (table.at(holder).flags.contains(BuiltinFlag::IsClosedToOtherNames)) {
+    for (const Identifier& name : openedNames)
+        openStrings.add(name.impl());
+    if (table.at(holder).flags.containsAny({ BuiltinFlag::IsClosedToOtherNames, BuiltinFlag::IsLockedObject })) {
         parts.add(ImmutablePropertyNames::Part::OtherStrings);
         for (BuiltinName name : table.openNamesOf(holder))
             openStrings.add(table.identifierOf(vm, name).impl());
         for (BuiltinID member : table.membersOf(holder)) {
-            if (table.at(member).mutability != BuiltinMutability::AlwaysLocked && !table.at(member).flags.contains(BuiltinFlag::IsOwnPropertyOfInstances))
+            bool isLocked = table.at(member).mutability == BuiltinMutability::AlwaysLocked && !ProgramTables::isUnlocked(unlockedMembers, member.index());
+            if (!isLocked && !table.at(member).flags.contains(BuiltinFlag::IsOwnPropertyOfInstances))
                 openStrings.add(table.identifierOf(vm, table.at(member).name).impl());
         }
     }
-    return ImmutablePropertyNames::create({ }, parts, WTF::move(openStrings), adoptRef(*new FixedNamesOfBuiltin(vm, holder, constantMembers, writes)));
+    return ImmutablePropertyNames::create({ }, parts, WTF::move(openStrings), adoptRef(*new FixedNamesOfBuiltin(vm, holder, constantMembers, writes, unlockedMembers, reflectThrows)));
 }
 
 } // namespace JSC::AOT

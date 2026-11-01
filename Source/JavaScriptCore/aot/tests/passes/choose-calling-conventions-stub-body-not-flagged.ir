@@ -13,7 +13,7 @@ function f1 name="secondCaller" parameters=[{type=anything}] results=[{type=anyt
     v1 = CallDirect v0, v0, v0 function=f2
     Return v1
 }
-function f2 name="fastPath" role=Library enclosingRuntimeFunction=131089 parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+function f2 name="fastPath" role=Library enclosingRuntimeFunction=ArraySortSort parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
     Return v0
 }
-runtimefunction id=131089 function=f2
+runtimefunction id=ArraySortSort function=f2

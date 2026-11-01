@@ -69,7 +69,8 @@ struct CalleeSplit {
 Vector<CalleeSplit> planCalleeSplits(FunctionPassContext&);
 void emitCalleeSplits(FunctionPassContext&, std::span<const CalleeSplit>);
 
-enum class InstanceOfAnswer : uint8_t { Unknown, No, Yes };
+// The last: yes for each object that the value may be, and it may be a primitive.
+enum class InstanceOfAnswer : uint8_t { Unknown, No, Yes, YesIfObject };
 
 struct BuiltinInstanceOfSite {
     ValueSite site;
@@ -104,6 +105,7 @@ struct ForwardedTailCall {
 struct CalledOperandTest {
     ValueSite site;
     uint32_t operandIndex { 0 };
+    TypeID testedType { TypeTable::function };
 };
 
 Vector<CalledOperandTest> planTestsOfCalledOperands(FunctionPassContext&);

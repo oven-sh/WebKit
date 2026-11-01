@@ -93,5 +93,5 @@ function f1 name="link" module=m0 position=51 flags=[IsChecked, HasExplicitName]
 # CALLS: f{{*}}: size=
 # The stub changes the first argument register on x86-64, so the name is moved aside first.
 # X64: instructions: 8, patchpoints: 1
-# ARM64 tests whether the collector is marking, and has its fence in a rare block.
+# arm64 tests whether the collector is marking, and has its fence in a rare block.
 # ARM64: instructions: 8, patchpoints: 1, rare instructions: 2

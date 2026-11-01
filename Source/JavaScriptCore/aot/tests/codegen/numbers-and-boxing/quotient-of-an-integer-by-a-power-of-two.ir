@@ -50,15 +50,11 @@ function f1 name="eighth" module=m0 flags=[IsChecked, HasExplicitName] length=1 
     Return v5
 }
 
-# (a / 8) | 0 of a 32-bit integer rounds toward zero: 7 is added to a negative dividend, then an arithmetic shift divides. The steps work on the widened integer.
+# (a / 8) | 0 of a 32-bit integer rounds toward zero: 7 is added to a negative dividend, then an arithmetic shift divides. All of it in 32 bits.
 # CHECK-LABEL: name="eighth" role=Source
-# CHECK: Int64 b@[[wide]] = SExt32(b@{{*}}, {{*}}:DivideIntegers)
-# CHECK: Int64 b@[[sign]] = SShr(b@[[wide]], $63(b@{{*}}), {{*}}:DivideIntegers)
-# CHECK: Int64 b@[[bias]] = ZShr(b@[[sign]], $61(b@{{*}}), {{*}}:DivideIntegers)
-# CHECK-NEXT: Int64 b@[[biased]] = Add(b@[[wide]], b@[[bias]], {{*}}:DivideIntegers)
-# CHECK: Int64 b@[[quotient]] = SShr(b@[[biased]], $3(b@{{*}}), {{*}}:DivideIntegers)
-# CHECK-NEXT: Int32 b@[[narrow]] = Trunc(b@[[quotient]], {{*}}:DivideIntegers)
-# CHECK-NEXT: Return(b@[[narrow]], Terminal)
+# CHECK-NOT: SExt32
+# CHECK: Int32 b@[[quotient]] = SShr(b@{{*}}, $3(b@{{*}}), {{*}}:DivideIntegers)
+# CHECK-NEXT: Return(b@[[quotient]], Terminal)
 # CHECK-LABEL: end of function
 # NONE-LABEL: name="eighth" role=Source
 # NONE-NOT: Div(
@@ -67,5 +63,6 @@ function f1 name="eighth" module=m0 flags=[IsChecked, HasExplicitName] length=1 
 # NONE-NOT: Patchpoint(
 # NONE-NOT: Branch(
 # NONE-LABEL: end of function
-# X64: instructions: 7, patchpoints: 0
-# ARM64: instructions: 5, patchpoints: 0
+# x86-64 selects between the dividend and the dividend plus 7. ARM64 adds the sign, shifted down to 7, in one instruction.
+# X64: instructions: 4, patchpoints: 0
+# ARM64: instructions: 4, patchpoints: 0

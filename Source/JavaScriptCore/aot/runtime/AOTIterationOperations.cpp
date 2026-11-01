@@ -129,10 +129,74 @@ void initializeIterationWords(Instance& instance)
     instance.iteration.emptyEnumerator = instance.vm->emptyPropertyNameEnumerator();
 }
 
+static uint32_t placeAmongListsWithoutNames(Structure* structure)
+{
+    static_assert(Int32Shape >> 1 == 2 && DoubleShape >> 1 == 3 && ContiguousShape >> 1 == 4 && ArrayWords::numberOfStructuresWithoutNames == 4);
+    return (structure->indexingType() & IndexingShapeMask) >> 1 & (ArrayWords::numberOfStructuresWithoutNames - 1);
+}
+
+// An array without holes and without named properties, on it or on its prototype chain, has an enumerator that only records the number of indexes. Arrays with the same Structure and length share it.
+static JSPropertyNameEnumerator* enumeratorOfListWithoutNames(Instance& instance, JSArray* list)
+{
+    VM& vm = *instance.vm;
+    Structure* structure = list->structure();
+    uint32_t structureID = structure->id().bits();
+    uint32_t place = placeAmongListsWithoutNames(structure);
+    if (instance.arrays.structuresOfListsWithoutNames[place] != structureID || instance.arrays.chainsAboveListsWithoutNames[place] != structure->prototypeChain(vm, instance.globalObject, list))
+        return nullptr;
+    uint32_t length = list->getEnumerableLength();
+    if (!length || length != list->getArrayLength())
+        return nullptr;
+    EnumeratorCacheEntry& entry = instance.objects.enumerators[indexOfCachedEnumerator(structureID, length)];
+    if (entry.structureID == structureID && entry.orderWord == length)
+        return uncheckedDowncast<JSPropertyNameEnumerator>(entry.enumerator);
+    JSPropertyNameEnumerator* enumerator = JSPropertyNameEnumerator::tryCreate(vm, structure, length, 0, PropertyNameArrayBuilder(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude));
+    if (enumerator)
+        entry = { length, structureID, enumerator };
+    return enumerator;
+}
+
+// An object's enumerated keys only change with its Structure, unless it is a dictionary, has elements, or implements its own property lookup. An array only does that for `length`, which no loop enumerates.
+static bool otherNamesRequireAnotherStructure(Structure* structure)
+{
+    if (structure->isDictionary() || hasIndexedProperties(structure->indexingType()))
+        return false;
+    JSType type = structure->typeInfo().type();
+    return !structure->typeInfo().overridesAnyFormOfGetOwnPropertyNames() || type == ArrayType || type == DerivedArrayType;
+}
+
+static void rememberListsWithoutNames(Instance& instance, JSArray* list, JSPropertyNameEnumerator* enumerator)
+{
+    Structure* structure = list->structure();
+    if (!enumerator->indexedLength() || enumerator->sizeOfPropertyNames() || enumerator->cachedStructureID() != structure->id() || structure->isDictionary())
+        return;
+    bool sawPolyProto = false;
+    if (normalizePrototypeChain(instance.globalObject, list, sawPolyProto) == InvalidPrototypeChain || sawPolyProto)
+        return;
+    StructureChain* chain = structure->prototypeChain(*instance.vm, instance.globalObject, list);
+    for (StructureID* above = chain->head(); *above; ++above) {
+        if (!otherNamesRequireAnotherStructure(above->decode()))
+            return;
+    }
+    uint32_t place = placeAmongListsWithoutNames(structure);
+    instance.arrays.structuresOfListsWithoutNames[place] = structure->id().bits();
+    instance.arrays.chainsAboveListsWithoutNames[place] = chain;
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTGetPropertyEnumerator, JSCell*, (Instance* instance, EncodedJSValue object))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTGetPropertyEnumerator);
-    OPERATION_RETURN(scope, enumeratorFor(globalObject, JSValue::decode(object)));
+    JSValue value = JSValue::decode(object);
+    JSArray* list = value.isCell() ? dynamicDowncast<JSArray>(value.asCell()) : nullptr;
+    if (list) {
+        if (JSPropertyNameEnumerator* enumerator = enumeratorOfListWithoutNames(*instance, list))
+            OPERATION_RETURN(scope, enumerator);
+    }
+    JSPropertyNameEnumerator* enumerator = enumeratorFor(globalObject, value);
+    OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+    if (list)
+        rememberListsWithoutNames(*instance, list, enumerator);
+    OPERATION_RETURN(scope, enumerator);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTEnumeratorNext, UGPRPair, (Instance* instance, JSCell* enumerator, EncodedJSValue object, uint64_t position))
@@ -198,7 +262,27 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowNotIterable, void, (Instance* instance
     OPERATION_RETURN(scope);
 }
 
-// What the engine's spread lists in one piece: a text, or a view whose iteration nothing has replaced. A text of 16-bit units makes one element of a surrogate pair.
+// A surrogate pair makes one element. The width of the characters is that of their storage now.
+size_t numberOfElementsSpreadFrom(JSGlobalObject* globalObject, JSString* string)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto text = string->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, 0);
+    size_t count = text->length();
+    if (text->is8Bit())
+        return count;
+    std::span<const char16_t> units = text->span16();
+    for (size_t i = 0; i + 1 < units.size(); ++i) {
+        if (U16_IS_LEAD(units[i]) && U16_IS_TRAIL(units[i + 1])) {
+            --count;
+            ++i;
+        }
+    }
+    return count;
+}
+
+// What the engine's spread lists in one piece: a text, or a view whose iteration nothing has replaced.
 JSC_DEFINE_JIT_OPERATION(operationAOTThrowIfTooLongForList, void, (Instance* instance, JSCell* source))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTThrowIfTooLongForList);
@@ -210,15 +294,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowIfTooLongForList, void, (Instance* ins
         JSString* string = asString(source);
         count = string->length();
         if (count > IndexingHeader::maximumLength && !string->is8Bit()) {
-            auto text = string->view(globalObject);
+            count = numberOfElementsSpreadFrom(globalObject, string);
             OPERATION_RETURN_IF_EXCEPTION(scope);
-            std::span<const char16_t> units = text->span16();
-            for (size_t i = 0; i + 1 < units.size(); ++i) {
-                if (U16_IS_LEAD(units[i]) && U16_IS_TRAIL(units[i + 1])) {
-                    --count;
-                    ++i;
-                }
-            }
         }
     }
     if (count > IndexingHeader::maximumLength)

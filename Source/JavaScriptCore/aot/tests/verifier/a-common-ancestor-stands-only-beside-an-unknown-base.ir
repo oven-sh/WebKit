@@ -1,0 +1,17 @@
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: InvalidLayout 3
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Root" fields=[{key="shown" declared={type=number}}]
+layout L1 kind=Instance name="Between" base=L0 fields=[{key="own1" declared={type=number}}, {key="shown" declared={type=number} flags=[IsInherited] originLayout=L0 originField=0}] flags=[HasHeritage] ownFieldCount=1 flow={baseState=Layout base=L0}
+layout L2 kind=Instance name="AlsoBetween" base=L0 fields=[{key="own2" declared={type=number}}, {key="shown" declared={type=number} flags=[IsInherited] originLayout=L0 originField=0}] flags=[HasHeritage] ownFieldCount=1 flow={baseState=Layout base=L0}
+layout L3 kind=Instance name="Good" base=L0 fields=[{key="own3" declared={type=number}}, {key="shown" declared={type=number} flags=[IsInherited] originLayout=L0 originField=0}] flags=[HasHeritage] ownFieldCount=1 flow={commonAncestor=L0 intermediateClasses=[L1, L2]}
+layout L4 kind=Instance name="BadBesideProvenBase" base=L0 fields=[{key="own4" declared={type=number}}, {key="shown" declared={type=number} flags=[IsInherited] originLayout=L0 originField=0}] flags=[HasHeritage] ownFieldCount=1 flow={baseState=Layout base=L0 commonAncestor=L0}
+layout L5 kind=Instance name="BadWithoutAncestor" base=L0 fields=[{key="own5" declared={type=number}}] flags=[HasHeritage] ownFieldCount=1 flow={intermediateClasses=[L1]}
+layout L6 kind=Instance name="BadOrder" base=L0 fields=[{key="own6" declared={type=number}}, {key="shown" declared={type=number} flags=[IsInherited] originLayout=L0 originField=0}] flags=[HasHeritage] ownFieldCount=1 flow={commonAncestor=L0 intermediateClasses=[L2, L1]}
+
+function f0 name="nothing" results=[{type=undefined}] {
+    v0 = Undefined
+    Return v0
+}

@@ -1,0 +1,48 @@
+# A test run may replace what Map.prototype holds under @@iterator. A walk over a map keeps its own form behind a test of that location, made once where the walk opens, and asks the protocol where the test fails.
+# That holds for a map that is proven pristine too: the proof is about the instance. A walk over a set, whose method no test of this run replaces, has no such test.
+# FORM: Prepared optimizing
+# RUN: pass ExpandIteration
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+replaceablebuiltin member=MapPrototypeSymbolIterator
+
+function f0 name="overAMap" parameters=[{type=Map<number, number, proven, pristine[Names]>}] results=[{type=anything}] {
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b1()
+  b2():
+    Return v5
+}
+# CHECK-LABEL: function f0 name="overAMap"
+# CHECK-NEXT: b0(
+# CHECK-NEXT: [[isUnchanged]]: boolean{{*}} = IsBuiltinLocationUnchanged member=MapPrototypeSymbolIterator
+# CHECK-NEXT: Branch [[isUnchanged]] -> taken [[own]](), notTaken [[asks]]()
+# CHECK: MapNext v0
+# CHECK: = CallDirect {{*}} function={{*}} [isNeverInlined]
+# CHECK: [[own]]():
+# CHECK-NEXT: CollectionTable v0
+# CHECK: [[asks]]() frequency=Unlikely:
+# CHECK-NOT: IsBuiltinLocationUnchanged
+
+function f1 name="overASet" parameters=[{type=Set<number, proven, pristine[Names]>}] results=[{type=anything}] {
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b1()
+  b2():
+    Return v5
+}
+# CHECK-LABEL: function f1 name="overASet"
+# CHECK-NOT: IsBuiltinLocationUnchanged
+# CHECK: SetNext
+# CHECK-NOT: IteratorOpen

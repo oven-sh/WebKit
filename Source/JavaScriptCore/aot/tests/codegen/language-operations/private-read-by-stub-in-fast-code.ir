@@ -11,7 +11,7 @@ function f0 name="inFastCode" captures=[{type=classtoken}] parameters=[{type=any
 }
 # CHECK-LABEL: f0: size=
 # CHECK-NOT: operation operationAOTPrivateGet
-# CHECK: stub PrivateGet x1
+# CHECK: stub PrivateGet.n0 x1
 function f1 name="Holder" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0

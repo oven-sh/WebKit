@@ -249,7 +249,7 @@ globalThis.publish = (read, has, hasOwn, readByKey, hasByKey, hasOwnByKey) => {
     LINE_OF_ANSWERS("getter of the prototype", objects) \
     LINE_OF_ANSWERS("setter alone", objects) \
     LINE_OF_ANSWERS("own value that is undefined", objects) \
-    LINE_OF_ANSWERS("own value beside an element", operations) \
+    LINE_OF_ANSWERS("own value beside an element", objects) \
     "value behind a proxy: read " operations " | in " objects " | hasOwn " operations " | read by key " operations " | in by key " fewOperations " | hasOwn by key " operations " | read by key, twice " operations "\n"
 
 static constexpr OptionWords shellOptions = { "--aotCountsPath=/dev/null"_s, "--useDollarVM=1"_s };

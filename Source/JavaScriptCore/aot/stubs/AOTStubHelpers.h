@@ -87,14 +87,29 @@ void boxExactInt32(StubAssembler&, GPRReg integer, GPRReg result);
 void decodeCell32(StubAssembler&, GPRReg word, GPRReg result);
 // The reference is bits 0 to 31 of word. The bits above are not cleared.
 void encodeCell32(StubAssembler&, GPRReg cell, GPRReg word);
+// The same for a cell that the program passes in. A narrow reference never refers to a cell kept in a frame; a build that validates or checks proofs at run time checks that here.
+void encodeCellOfProgram(StubAssembler&, GPRReg cell, GPRReg word);
 // Gives an Extension one more granule in the room it has. Leaves where granuleBits is more than one bit, where a granule held comes after it, and where the Extension is full.
 void appendGranule(StubAssembler&, GPRReg extension, GPRReg granuleBits, GPRReg scratch, GPRReg secondScratch, JumpList& cannotAppend);
+// How many units of sixteen bytes an Extension with these granules takes. There are at most maxGranulesOfExtensionFromStub.
+constexpr unsigned maxGranulesOfExtensionFromStub = 13;
+void loadUnitsOfExtensionWith(StubAssembler&, GPRReg granuleBits, GPRReg units, GPRReg scratch);
 // The caller has proven that the word is a literal string word.
-void loadLiteralString(StubAssembler&, GPRReg wordAndResult, GPRReg scratch, JumpList& isNotCreated);
+// The instance may lie in the scratch register.
+void loadLiteralString(StubAssembler&, GPRReg wordAndResult, GPRReg scratch, JumpList& isNotCreated, GPRReg instance = instanceGPR);
 void decodeStructureID(CCallHelpers&, GPRReg idAndResult);
 void loadStructure(StubAssembler&, GPRReg cell, GPRReg result);
 void extractBits(StubAssembler&, GPRReg source, unsigned shift, unsigned width, GPRReg result);
 void loadShapeWord(StubAssembler&, GPRReg cell, GPRReg result);
+// In an image that shares its realms, a compiled object may be of another image. Its shape is no index into the tables of this one, so it goes the way of an object that is not compiled.
+// The register holds the shape word of a compiled object.
+void branchUnlessShapeOfThisImage(StubAssembler&, GPRReg shapeWord, JumpList& otherwise);
+// The register holds the closure number of a closure.
+void branchUnlessClosureNumberOfThisImage(StubAssembler&, GPRReg number, JumpList& otherwise);
+// The cell is a compiled object.
+void branchIfObjectOfOtherImage(StubAssembler&, GPRReg cell, JumpList& isOfOtherImage);
+JumpList branchIfNotCompiledObjectOfThisImage(StubAssembler&, GPRReg cell);
+Jump branchIfCompiledObjectOfThisImage(StubAssembler&, GPRReg cell);
 void loadCellVM(StubAssembler&, GPRReg cellAndResult);
 // Overwrites structure.
 Jump branchIfNotOfThisRealm(StubAssembler&, GPRReg structure);

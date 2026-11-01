@@ -1,0 +1,29 @@
+# take(function handler(request) { request.end(); request.body().close(); }); known()
+# `handler` is passed to an unknown function, so its parameter is unknown. All three reads on it, or on what a call on it returns, are listed under that one origin.
+# The read of `take` has a known receiver, the global object.
+# RUN: valueflow-why unknown-receivers
+# CHECK: accesses 4 of unknown receivers 3: written in the program 3, in the library 0
+# CHECK: kinds
+# CHECK: 3{{*}}PropGet: parameter of an escaped function
+# CHECK: shapes
+# CHECK: 3{{*}}PropGet: parameter of an escaped function{{*}}an argument of Source, escaped through host node {{*}}, out of group, by CallGroup
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="take" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return
+}
+function f1 name="handler" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="end"
+    v2 = Call v1, v0
+    v3 = PropGet v0 key="body"
+    v4 = Call v3, v0
+    v5 = PropGet v4 key="close"
+    v6 = Call v5, v4
+    Return
+}

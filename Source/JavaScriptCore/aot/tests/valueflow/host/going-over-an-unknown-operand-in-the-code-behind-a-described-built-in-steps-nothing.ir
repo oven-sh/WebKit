@@ -11,7 +11,7 @@
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
-runtimefunction id=46 function=f1
+runtimefunction id=ArrayConstructorFrom function=f1
 function f0 name="main" kind=Module results=[{type=anything}] {
     v0 = Integer integer=1
     v1 = NewArray v0 contents=anything
@@ -20,7 +20,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v4 = Call v3, v2, v1 calleeKey="from"
     Return
 }
-function f1 name="from" role=Library flags=[HasThis] enclosingRuntimeFunction=46 parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+function f1 name="from" role=Library flags=[HasThis] enclosingRuntimeFunction=ArrayConstructorFrom parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
     v4 = IteratorOpen v1
     v5 = IteratorResume v4
     v6 = ResultAt v5 index=1

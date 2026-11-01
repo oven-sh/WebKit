@@ -759,6 +759,12 @@ static void testDeferredClosures()
     StubRun run = reads.read(objectWithClosure.address());
     AOT_TEST_CHECK(!run.calledOperation && run.result == closure.address());
 
+    // The stub looks up the field's record in the object's layout. This layout lists no field, so the read falls back to the operation, with every operand unchanged.
+    FakeObject<sizeof(CompiledStructure)> structure;
+    LayoutData layout { };
+    structure.at<const LayoutData*>(CompiledStructure::offsetOfLayout()) = &layout;
+    reads.runner.instance().prefix().structureIDBase = structure.address() - PropertyReads::structureID;
+
     FakeTypedObject objectBeforeFirstRead;
     objectBeforeFirstRead.at<uint32_t>(FakeTypedObject::offsetOfField) = uncreatedDeferredClosure;
     reads.runner.recordCallsOf(Entry::operationAOTReadField);
@@ -813,6 +819,12 @@ static void testTypedArrayLengths()
     }
     for (TypedArrayMode mode : { GrowableSharedWastefulTypedArray, GrowableSharedAutoLengthWastefulTypedArray, ResizableNonSharedWastefulTypedArray, ResizableNonSharedAutoLengthWastefulTypedArray })
         AOT_TEST_CHECK(isLeftToOperation(mode, 7));
+
+    reads.file(Slot::createWithoutPayload(std::bit_cast<StructureID>(PropertyReads::structureID), Slot::Kind::TypedArrayLength, Slot::readsByteOffset));
+    view.at<uint64_t>(JSArrayBufferView::offsetOfByteOffset()) = 24;
+    StubRun run = readLength(WastefulTypedArray, 7);
+    AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOf(jsNumber(24)));
+    AOT_TEST_CHECK(isLeftToOperation(ResizableNonSharedWastefulTypedArray, 7));
 }
 
 namespace {
@@ -831,7 +843,8 @@ public:
     static constexpr uint32_t shapeWithDouble = 8;
     static constexpr uint32_t shapeWithNarrowCellInExtension = 9;
     static constexpr uint32_t shapeWithNarrowCellInSecondHalfOfGranule = 10;
-    static constexpr uint32_t highestShape = 10;
+    static constexpr uint32_t shapeWithInt64 = 11;
+    static constexpr uint32_t highestShape = 11;
     static constexpr uint32_t offsetInExtension = 2 * sizeof(uint64_t);
 
     explicit FieldTable(PropertyReads& reads)
@@ -849,6 +862,7 @@ public:
         entryOf(shapeWithEncodedByte) = Entry::create(PropertyReads::name, Entry::Form::Field, Entry::firstEncodedByte + FakeTypedObject::offsetOfField).bits;
         entryOf(shapeWithBoolean) = Entry::create(PropertyReads::name, Entry::Form::Field, Entry::firstBoolean + FakeTypedObject::offsetOfField).bits;
         entryOf(shapeWithDouble) = Entry::create(PropertyReads::name, Entry::Form::Field, Entry::firstDouble + FakeTypedObject::offsetOfField / sizeof(double)).bits;
+        entryOf(shapeWithInt64) = Entry::create(PropertyReads::name, Entry::Form::Field, Entry::firstInt64 + FakeTypedObject::offsetOfField / sizeof(int64_t)).bits;
         entryOf(shapeWithNarrowCellInExtension) = Entry::create(PropertyReads::name, Entry::Form::Field, Entry::firstNarrowCellInExtension + offsetInExtension / sizeof(uint64_t)).bits;
         entryOf(shapeWithNarrowCellInSecondHalfOfGranule) = Entry::create(PropertyReads::name, Entry::Form::Field, Entry::firstNarrowCellInSecondHalfOfGranule + offsetInExtension / sizeof(uint64_t)).bits;
         Instance& instance = reads.runner.instance();
@@ -978,6 +992,19 @@ static void testBooleansAndDoublesFoundInFieldTable()
         withDouble.field() = std::bit_cast<uint64_t>(value);
         AOT_TEST_CHECK(reads.read(withDouble.address()).calledOperation);
     }
+
+    FakeObjectWithShape withInt64(FieldTable::shapeWithInt64);
+    for (int32_t value : { 0, 7, -7, INT32_MAX, INT32_MIN }) {
+        withInt64.field() = static_cast<uint64_t>(static_cast<int64_t>(value));
+        StubRun run = reads.read(withInt64.address());
+        AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOf(jsNumber(value)));
+    }
+    // Beyond int32 it may be a marker.
+    table.field().slot = SlotData::create(FakeTypedObject::offsetOfField, SlotRepresentation::OptionalInt64);
+    for (int64_t value : { static_cast<int64_t>(INT32_MAX) + 1, static_cast<int64_t>(INT32_MIN) - 1, maxIntegerAddedTo, minIntegerAddedTo, absentInteger, undefinedInteger, nullInteger }) {
+        withInt64.field() = static_cast<uint64_t>(value);
+        AOT_TEST_CHECK(reads.read(withInt64.address()).calledOperation);
+    }
 }
 
 // An optional field that is missing reads as undefined without a look into any cache, where the object has no field outside its slot and nothing above it has the name.
@@ -1091,6 +1118,7 @@ static void testInstructionsOfReadsByKindOfField()
         { "an optional boolean"_s, FieldTable::shapeWithEncodedByte, SlotRepresentation::OptionalBoolean, JSValue::ValueTrue, jsBoolean(true), 31 },
         { "a boolean"_s, FieldTable::shapeWithBoolean, SlotRepresentation::Boolean, 1, jsBoolean(true), 32 },
         { "a double"_s, FieldTable::shapeWithDouble, SlotRepresentation::OptionalDouble, std::bit_cast<uint64_t>(0.5), jsDoubleNumber(0.5), 37 },
+        { "a 64-bit integer"_s, FieldTable::shapeWithInt64, SlotRepresentation::OptionalInt64, 7, jsNumber(7), 35 },
         { "a boxed value that is missing"_s, FieldTable::shapeWithValue, SlotRepresentation::JSValue, absent(SlotRepresentation::JSValue), jsUndefined(), 32 },
         { "an optional boolean that is missing"_s, FieldTable::shapeWithEncodedByte, SlotRepresentation::OptionalBoolean, absent(SlotRepresentation::OptionalBoolean), jsUndefined(), 46 },
         { "an integer that is missing"_s, FieldTable::shapeWithInt32, SlotRepresentation::OptionalInt32, absent(SlotRepresentation::OptionalInt32), jsUndefined(), 67 },
@@ -1424,7 +1452,7 @@ public:
         instance.image.fieldRecordIndices = m_recordIndices.data();
 
         kind().isSlim = 1;
-        instance.image.closureFunctionKindsOrigin = std::bit_cast<uintptr_t>(m_functionKinds.data());
+        instance.image.closureFunctionKinds = m_functionKinds.data();
 
         closureWord() = ClosureWord::encode({ CalleeThatReadsItsClosure::distanceFromCode, 1 }, function, { });
         instance.functionTables.closureWords = m_closureWords.data();

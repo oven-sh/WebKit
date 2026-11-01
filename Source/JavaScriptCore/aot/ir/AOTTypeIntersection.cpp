@@ -45,10 +45,13 @@ static void intersectLiterals(Type& result, const Type& a, const Type& b, Litera
     SortedSet<T>& literals = result.*part.literals;
     if (a.primitives & part.widenedBit)
         literals = b.*part.literals;
-    else {
+    else if (b.primitives & part.widenedBit)
         literals = a.*part.literals;
-        if (!(b.primitives & part.widenedBit))
-            literals.intersect(b.*part.literals);
+    else {
+        // The shorter list is copied: each case of a switch intersects the whole union with one literal.
+        bool isFirstShorter = (a.*part.literals).size() <= (b.*part.literals).size();
+        literals = (isFirstShorter ? a : b).*part.literals;
+        literals.intersect((isFirstShorter ? b : a).*part.literals);
     }
     if (!literals.isEmpty())
         result.primitives |= part.literalBit;
@@ -157,6 +160,12 @@ static ClassPart intersectParts(const ClassPart& a, const ClassPart& b, TypeAren
     return result;
 }
 
+// An array keeps its proven storage kind, so no array has two.
+static bool haveDifferentProvenStorage(const ClassPart& a, const ClassPart& b)
+{
+    return a.contentsAreProven && b.contentsAreProven && a.arrayStorage != ArrayStorage::Other && b.arrayStorage != ArrayStorage::Other && a.arrayStorage != b.arrayStorage;
+}
+
 static std::optional<RegExpLiteralSet> intersectRegExpLiterals(const RegExpLiteralSet& a, const RegExpLiteralSet& b)
 {
     if (a.isEmpty() || b.isEmpty())
@@ -212,6 +221,8 @@ static void intersectClasses(Type& result, const Type& a, const Type& b, TypeAre
             result.classes.append(part);
             continue;
         }
+        if (!includesPartner && !includesPart && haveDifferentProvenStorage(part, *partner))
+            continue;
         result.classes.append(intersectParts(includesPartner ? withoutProofs(part) : part, includesPart ? withoutProofs(*partner) : *partner, arena, declared));
     }
     for (const ClassPart& part : b.classes) {
@@ -225,6 +236,39 @@ static void intersectClasses(Type& result, const Type& a, const Type& b, TypeAre
     }
 }
 
+// An object of one of these layouts that is also an instance of one of those built-in classes is an object of a subclass of such a class.
+// If the built-in class part proves more than that the object is an instance, no type expresses both, so a cast returns what lies inside its target.
+static void intersectLayoutsWithClasses(Type& result, const Type& layouts, const Type& classes, TypeArena& arena, bool castsToClasses)
+{
+    if (!layouts.layouts || classes.classes.isEmpty())
+        return;
+    const TypeTable& types = arena.table();
+    const BuiltinTable& builtins = arena.builtins();
+    Vector<LayoutID> kept;
+    for (LayoutID member : membersOf(types, layouts)) {
+        BuiltinClassID builtinClass = builtinClassWrittenAbove(types, member);
+        if (!builtinClass)
+            continue;
+        if (isInsideSomeClassPart(types, member, classes) || (!castsToClasses && mayBeInsideSomeClassPart(types, member, classes))) {
+            kept.append(member);
+            continue;
+        }
+        for (const ClassPart& part : classes.classes) {
+            if (!mayHoldConstructedInstances(builtins, part.builtinClass, builtinClass))
+                continue;
+            if (result.findClassPart(part.builtinClass))
+                continue;
+            if (isRegExpPart(part))
+                result.regExpLiteralSet = classes.regExpLiteralSet;
+            result.classes.append(part);
+        }
+    }
+    if (kept.isEmpty())
+        return;
+    bool keepsAll = kept.size() == membersOf(types, layouts).size();
+    result.layouts = arena.unionOf(result.layouts, keepsAll ? layouts.layouts : arena.intern(LayoutSet::complete(WTF::move(kept))));
+}
+
 static void intersectListedObjects(Type& result, const Type& a, const Type& b, TypeArena& arena, DeclaredParts declared)
 {
     const BuiltinTable& builtins = arena.builtins();
@@ -235,6 +279,8 @@ static void intersectListedObjects(Type& result, const Type& a, const Type& b, T
     intersectBuiltins(result, a, b, arena.table());
     intersectClasses(result, a, b, arena, declared);
     result.layouts = arena.intersectionOf(a.layouts, b.layouts);
+    intersectLayoutsWithClasses(result, a, b, arena, declared == DeclaredParts::FromSecond);
+    intersectLayoutsWithClasses(result, b, a, arena, false);
 }
 
 static void intersectObjects(Type& result, const Type& a, const Type& b, TypeArena& arena, DeclaredParts declared)
@@ -297,11 +343,11 @@ static void subtractLiterals(Type& result, const Type& removed, LiteralPart<T> p
 
 static void subtractCallables(Type& result, const Type& removed, const BuiltinTable& builtins)
 {
-    if (removed.anyFunction)
+    if (removed.anyFunction) {
         result.anyFunction = false;
-    removeAllMatching(result.functions, [&](FunctionID function) {
-        return includesFunction(removed, function);
-    });
+        result.functions.clear();
+    } else
+        result.functions.subtract(removed.functions);
     removeAllMatching(result.builtins, [&](BuiltinID builtin) {
         return includesBuiltin(removed, builtin, builtins);
     });
@@ -310,7 +356,7 @@ static void subtractCallables(Type& result, const Type& removed, const BuiltinTa
 static void subtractClasses(Type& result, const Type& removed, const TypeTable& types)
 {
     auto isInsideRemovedPart = [&](const ClassPart& part) {
-        const ClassPart* partner = removed.findClassPart(part.builtinClass);
+        const ClassPart* partner = findPartHolding(removed, part.builtinClass, types.builtins());
         return partner && isPartSubset(part, *partner, types);
     };
     bool removesOnlyListedRegExps = !removed.regExpLiteralSet.isEmpty();
@@ -332,6 +378,16 @@ static void subtractKnownObjects(Type& result, const Type& removed, TypeArena& a
     subtractCallables(result, removed, arena.builtins());
     subtractClasses(result, removed, arena.table());
     result.layouts = arena.differenceOf(result.layouts, removed.layouts);
+    if (!result.layouts || removed.classes.isEmpty())
+        return;
+    const TypeTable& types = arena.table();
+    Vector<LayoutID> kept;
+    for (LayoutID member : types.at(result.layouts).completeMembers().value()) {
+        if (!isInsideSomeClassPart(types, member, removed))
+            kept.append(member);
+    }
+    if (kept.size() != types.at(result.layouts).written().size())
+        result.layouts = kept.isEmpty() ? LayoutSetID() : arena.intern(LayoutSet::complete(WTF::move(kept)));
 }
 
 Type Type::without(const Type& other, TypeArena& arena) const

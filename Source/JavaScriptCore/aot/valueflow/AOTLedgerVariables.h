@@ -69,6 +69,8 @@ public:
     struct NamespaceObject {
         OptionSet<Actor> open { everyActor };
         bool isCreated { false };
+        // In a reachable body, whether or not the operation ever runs.
+        uint8_t isNamedByOperation { false };
         std::optional<Actor> readerUnderNamesNobodyLists;
     };
 
@@ -95,6 +97,8 @@ public:
         m_readsThroughHolders = WTF::move(reads);
     }
     NamespaceObject& namespaceOf(ModuleID module) LIFETIME_BOUND { return m_namespaces[module.index()]; }
+    void noteOperationNamingNamespaceOf(ModuleID module) { AtomicRef(m_namespaces[module.index()].isNamedByOperation).store(true, std::memory_order_relaxed); }
+    bool isNamespaceNamedByOperation(ModuleID module) const { return m_namespaces[module.index()].isNamedByOperation; }
     void setClassObjectsStoredUnderStaticFieldsAlone(BitVector&& layouts) { m_classObjectsStoredUnderStaticFieldsAlone = WTF::move(layouts); }
 
     // Lists what was handed in by place. Nothing is added behind it.

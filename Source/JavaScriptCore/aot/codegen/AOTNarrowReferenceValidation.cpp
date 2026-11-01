@@ -297,6 +297,22 @@ private:
         return isShift(word, B3::ZShr) && pointerSource(word->child(0)) == sourceOfLow32Bits(pointer);
     }
 
+    // The pointer if the word names a cell, or the word if it is one of the constants: what remains of a decode after the pointer that the word was encoded from has replaced the sum.
+    // An encode selects between the same two, based on the pointer.
+    static bool decodesWordBesideItsPointer(B3::Value* select)
+    {
+        B3::Value* condition = select->child(0);
+        if (condition->numChildren() != 2 || !condition->child(1)->isConstant())
+            return false;
+        B3::Value* asked = sourceOfLow32Bits(condition->child(0));
+        for (unsigned i = 1; i <= 2; ++i) {
+            B3::Value* word = select->child(3 - i);
+            if (isEncodingOf(word, select->child(i)) && asked == sourceOfLow32Bits(word))
+                return true;
+        }
+        return false;
+    }
+
     static B3::Value* wordOf(B3::Value* value, bool* isDisplaced = nullptr)
     {
         for (;;) {
@@ -314,6 +330,8 @@ private:
                 value = value->child(0);
                 continue;
             case B3::Select: {
+                if (decodesWordBesideItsPointer(value))
+                    return value;
                 B3::Value* first = value->child(1);
                 B3::Value* second = value->child(2);
                 if (first->isConstant() || isEncodingOf(second, first))
@@ -731,10 +749,10 @@ private:
         return effects.writes.overlaps(m_heaps.collectorState) && effects.writes.overlaps(m_heaps.weakTableStorage) && effects.reads.overlaps(m_heaps.frameSlots);
     }
 
-    bool savesFrame(B3::Value* safepoint) const
+    static bool savesFrame(B3::Value* safepoint)
     {
-        Typed::ValueID origin = Typed::valueOfOrigin(safepoint->origin());
-        return origin && m_origins.suspensions.get(origin.index());
+        auto* stackmap = safepoint->as<B3::StackmapValue>();
+        return stackmap && stackmap->isSuspension();
     }
 
     static bool usesOnlyBits(B3::Value* user, unsigned child)
@@ -759,6 +777,11 @@ private:
             return !child;
         case B3::Store:
             return child || user->child(0)->type() != B3::Int32;
+        case B3::Patchpoint: {
+            // Without a result and without access to the heap, the code can only compare the word.
+            B3::Effects effects = user->effects();
+            return user->type() == B3::Void && !effects.reads && !effects.writes && !effects.exitsSideways && !effects.terminal;
+        }
         default:
             return false;
         }

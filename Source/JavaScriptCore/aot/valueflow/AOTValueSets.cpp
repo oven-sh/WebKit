@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTSort.h"
+#include "AOTSystemResources.h"
 #include <algorithm>
 #include <wtf/DataLog.h>
 #include <wtf/Locker.h>
@@ -63,13 +64,15 @@ ValueSets::InternedRuns::~InternedRuns()
 
 uint32_t ValueSets::InternedRuns::takeUnits(uint32_t numberOfUnits)
 {
-    RELEASE_ASSERT(numberOfUnits <= unitsPerSegment);
+    if (numberOfUnits > unitsPerSegment) [[unlikely]]
+        exitProgramTooLarge();
     numberOfUnits = static_cast<uint32_t>(roundUpToMultipleOf<unitsPerLine>(numberOfUnits));
     Locker locker { m_lockOfUnits };
     if (m_nextUnit % unitsPerSegment + numberOfUnits > unitsPerSegment)
         m_nextUnit = static_cast<uint32_t>(roundUpToMultipleOf<unitsPerSegment>(m_nextUnit));
     uint32_t segment = m_nextUnit / unitsPerSegment;
-    RELEASE_ASSERT(segment < numberOfSegments);
+    if (segment >= numberOfSegments) [[unlikely]]
+        exitProgramTooLarge();
     if (!m_segments[segment].load(std::memory_order_relaxed))
         m_segments[segment].store(static_cast<char*>(fastAlignedMalloc(64, unitsPerSegment * bytesPerUnit)), std::memory_order_release);
     uint32_t first = m_nextUnit;
@@ -80,10 +83,26 @@ uint32_t ValueSets::InternedRuns::takeUnits(uint32_t numberOfUnits)
 
 uint32_t ValueSets::InternedRuns::allocate(Room& room, size_t numberOfWords)
 {
-    size_t bytes = sizeof(Run) + numberOfWords * sizeof(uint64_t);
-    uint32_t numberOfUnits = static_cast<uint32_t>((bytes + bytesPerUnit - 1) / bytesPerUnit);
+    uint32_t numberOfUnits = unitsOf(numberOfWords);
+    if (numberOfUnits <= mostUnitsHandedOutAgain && room.freeRuns && m_hasFreeRuns.load(std::memory_order_relaxed)) {
+        Vector<uint32_t>& own = room.freeRuns->ofUnits[numberOfUnits];
+        if (own.isEmpty()) {
+            constexpr size_t runsTakenAtOnce = 64;
+            Locker locker { m_lockOfFreeRuns };
+            Vector<uint32_t>& shared = m_freeRuns.ofUnits[numberOfUnits];
+            size_t taken = std::min(shared.size(), runsTakenAtOnce);
+            own.append(shared.span().last(taken));
+            shared.shrink(shared.size() - taken);
+            m_unitsFree -= taken * numberOfUnits;
+        }
+        if (!own.isEmpty())
+            return own.takeLast();
+    }
     if (numberOfUnits > unitsPerChunk / 4)
         return takeUnits(numberOfUnits);
+    // What is made from now on may be freed, and goes by its number: it does not lie among what is kept for good.
+    if (room.endOfChunk <= m_firstThatMayBeFreed && m_firstThatMayBeFreed != UINT32_MAX)
+        room.nextUnit = room.endOfChunk;
     uint32_t first = room.nextUnit;
     if (first % unitsPerLine + std::min(std::max(numberOfUnits, unitsOfHeadAndFirstWord), unitsPerLine) > unitsPerLine)
         first = static_cast<uint32_t>(roundUpToMultipleOf<unitsPerLine>(first));
@@ -157,8 +176,13 @@ uint32_t ValueSets::InternedRuns::intern(Room& room, std::span<const uint64_t> w
     Shard& shard = m_shards[hashOfMembers % numberOfShards];
     Table table = shard.table.load(std::memory_order_acquire);
     size_t position = hash & table.mask();
-    if (uint32_t number = find(table, position, hash, head, words))
+    auto made = [&](uint32_t number) {
+        if (room.runsToKeep) [[unlikely]]
+            room.runsToKeep->append(number);
         return number;
+    };
+    if (uint32_t number = find(table, position, hash, head, words))
+        return made(number);
 
     Room roomBefore = room;
     uint32_t number = allocate(room, words.size());
@@ -172,14 +196,162 @@ uint32_t ValueSets::InternedRuns::intern(Room& room, std::span<const uint64_t> w
         position = hash & table.mask();
     }
     if (uint32_t found = find(table, position, hash, head, words)) {
-        if (roomBefore.endOfChunk == room.endOfChunk)
+        if (roomBefore.nextUnit == room.nextUnit && roomBefore.endOfChunk == room.endOfChunk && unitsOf(words.size()) <= mostUnitsHandedOutAgain) {
+            run.numberOfMembers = Run::isFree;
+            room.freeRuns->ofUnits[unitsOf(words.size())].append(number);
+        } else if (roomBefore.endOfChunk == room.endOfChunk)
             room = roomBefore;
-        return found;
+        return made(found);
     }
     table.slots()[position].store(static_cast<uint64_t>(hash) << 32 | number, std::memory_order_release);
     if (static_cast<size_t>(++shard.size) * 3 > table.numberOfSlots() * 2)
         grow(shard);
-    return number;
+    return made(number);
+}
+
+void ValueSets::InternedRuns::willFreeRuns()
+{
+    size_t numberOfWords = (endOfNumbers() - std::min(m_firstThatMayBeFreed, endOfNumbers())) / 64 + 1;
+    m_isKept = std::make_unique<std::atomic<uint64_t>[]>(numberOfWords);
+}
+
+void ValueSets::InternedRuns::freeRunsOfShard(unsigned numberOfShard)
+{
+    Shard& shard = m_shards[numberOfShard];
+    for (Table table : std::exchange(shard.outgrownTables, { }))
+        fastFree(table.slots());
+    Table previous = shard.table.load(std::memory_order_relaxed);
+    auto isFreed = [&](uint32_t number) {
+        if (number < m_firstThatMayBeFreed)
+            return false;
+        uint32_t bit = number - m_firstThatMayBeFreed;
+        return !(m_isKept[bit / 64].load(std::memory_order_relaxed) >> bit % 64 & 1);
+    };
+    uint32_t numberKept = 0;
+    for (size_t index = 0; index <= previous.mask(); ++index) {
+        uint64_t slot = previous.slots()[index].load(std::memory_order_relaxed);
+        numberKept += slot && !isFreed(static_cast<uint32_t>(slot));
+    }
+    // The run with number 0 has no slot.
+    uint32_t sizeWithoutSlot = shard.size && !numberOfShard ? 1 : 0;
+    if (numberKept + sizeWithoutSlot == shard.size)
+        return;
+    // Under two thirds full, or it would grow at the next run made.
+    Table next = createTable(std::max<unsigned>(6, std::bit_width(static_cast<size_t>(numberKept) * 3 / 2)));
+    Slot* slots = next.slots();
+    size_t mask = next.mask();
+    for (size_t index = 0; index <= previous.mask(); ++index) {
+        uint64_t slot = previous.slots()[index].load(std::memory_order_relaxed);
+        if (!slot)
+            continue;
+        if (isFreed(static_cast<uint32_t>(slot))) {
+            mutableRunAt(static_cast<uint32_t>(slot)).numberOfMembers = Run::isFree;
+            shard.runsJustFreed.append(static_cast<uint32_t>(slot));
+            continue;
+        }
+        size_t position = (slot >> 32) & mask;
+        while (slots[position].load(std::memory_order_relaxed))
+            position = (position + 1) & mask;
+        slots[position].store(slot, std::memory_order_relaxed);
+    }
+    shard.size = numberKept + sizeWithoutSlot;
+    shard.table.store(next, std::memory_order_release);
+    fastFree(previous.slots());
+}
+
+void ValueSets::InternedRuns::didFreeRuns()
+{
+    m_isKept = nullptr;
+    Locker locker { m_lockOfFreeRuns };
+    for (Shard& shard : m_shards) {
+        for (uint32_t number : shard.runsJustFreed)
+            m_unitsFree += unitsOf(freeOrNotAt(number).numberOfWords);
+        // Where at() looks whether a run is free, a freed run waits: whoever still names it has until the next time to be caught.
+#if ASSERT_ENABLED
+        std::swap(shard.runsJustFreed, shard.runsFreedLastTime);
+#endif
+#if !defined(AOT_CATCHES_FREED_SETS)
+        for (uint32_t number : shard.runsJustFreed) {
+            uint32_t units = unitsOf(freeOrNotAt(number).numberOfWords);
+            if (units <= mostUnitsHandedOutAgain)
+                m_freeRuns.ofUnits[units].append(number);
+        }
+        if (!shard.runsJustFreed.isEmpty())
+            m_hasFreeRuns.store(true, std::memory_order_relaxed);
+#endif
+        shard.runsJustFreed = { };
+    }
+}
+
+void ValueSets::keepSetsMadeSoFar()
+{
+    m_lists.keepRunsMadeSoFar();
+    m_groups.keepRunsMadeSoFar();
+    m_blocks.keepRunsMadeSoFar();
+}
+
+void ValueSets::willFreeSets()
+{
+    m_lists.willFreeRuns();
+    m_groups.willFreeRuns();
+    m_blocks.willFreeRuns();
+    for (size_t index = 0; index < static_cast<size_t>(1) << m_bitsOfRememberedByAll; ++index) {
+        m_rememberedByAll[index].key.store(0, std::memory_order_relaxed);
+        m_rememberedByAll[index].resultAndCount.store(0, std::memory_order_relaxed);
+    }
+}
+
+void ValueSets::keep(ValueSetID set)
+{
+    if (!set)
+        return;
+    uint32_t stored = storedSetOf(set);
+    if (holdsOneMember(stored) || !m_lists.keep(stored))
+        return;
+    const Run& run = m_lists.at(stored);
+    if (isShort(run))
+        return;
+    for (uint64_t entry : run.span()) {
+        if (!isGroup(entry)) {
+            m_blocks.keep(blockOf(entry));
+            continue;
+        }
+        if (!m_groups.keep(groupOf(entry)))
+            continue;
+        const uint64_t* words = m_groups.at(groupOf(entry)).words();
+        const uint32_t* block = blocksOfGroup(words);
+        for (uint64_t present = words[0]; present; present &= present - 1, ++block)
+            m_blocks.keep(*block);
+    }
+}
+
+void ValueSets::freeShareOfSets(unsigned share)
+{
+    (share < 64 ? m_lists : share < 128 ? m_groups : m_blocks).freeRunsOfShard(share % 64);
+}
+
+void ValueSets::didFreeSets()
+{
+    m_lists.didFreeRuns();
+    m_groups.didFreeRuns();
+    m_blocks.didFreeRuns();
+}
+
+void ValueSetMaker::forgetWhatIsRemembered()
+{
+    m_rememberedSets.fill({ });
+    m_rememberedEntries.fill({ });
+    m_rememberedBlocks.fill({ });
+    m_setOfRange.clear();
+    m_fullBlock = 0;
+}
+
+void ValueSetMaker::keepSetsToKeep()
+{
+    AOT::sort(m_setsToKeep);
+    removeRepeatedElements(m_setsToKeep);
+    for (uint32_t stored : m_setsToKeep)
+        m_sets.keep(ValueSetID(stored * 2));
 }
 
 size_t ValueSets::InternedRuns::size() const
@@ -218,7 +390,7 @@ void ValueFlowBytesByTable::dump(ASCIILiteral nameOfSum) const
 
 void ValueSets::InternedRuns::addBytesTo(ValueFlowBytesByTable& bytes, ASCIILiteral runs, ASCIILiteral index) const
 {
-    bytes.add(runs, static_cast<size_t>(endOfNumbers()) * bytesPerUnit);
+    bytes.add(runs, bytesMade() - bytesFree(), bytesMade());
     for (const Shard& shard : m_shards) {
         bytes.add(index, shard.size * sizeof(Slot), shard.table.load(std::memory_order_relaxed).numberOfSlots() * sizeof(Slot));
         for (Table table : shard.outgrownTables)
@@ -252,7 +424,8 @@ ValueSets::ValueSets(uint32_t sizeOfUniverse)
     , m_bitsOfRememberedByAll(std::clamp<unsigned>(std::bit_width(sizeOfUniverse), 12, 22) - 2)
     , m_rememberedByAll(std::make_unique<RememberedByAll[]>(static_cast<size_t>(1) << m_bitsOfRememberedByAll))
 {
-    RELEASE_ASSERT(sizeOfUniverse < namesOneMember);
+    if (sizeOfUniverse >= namesOneMember) [[unlikely]]
+        exitProgramTooLarge();
 }
 
 static void forEachBlockOfMembers(uint64_t lowestMembers, std::span<const uint32_t> highMembers, NOESCAPE const Invocable<void(uint32_t place, uint64_t hashOfBlock)> auto& functor)
@@ -344,6 +517,50 @@ std::array<uint64_t, 4> ValueSets::sampleOfBlocks(ValueSetID set) const
         take(place, m_blocks.at(block).hashOfMembers);
     });
     return sample;
+}
+
+void ValueSets::WordsOfBlocks::start(const ValueSets& sets, const Run& run)
+{
+    m_sets = &sets;
+    m_entries = run.span();
+    m_presentPlaces = 0;
+    m_presentWords = 0;
+}
+
+auto ValueSets::WordsOfBlocks::next() -> WordOfMembers
+{
+    for (;;) {
+        if (m_presentWords) {
+            uint32_t first = m_firstOfBlock + static_cast<uint32_t>(std::countr_zero(m_presentWords)) * 64;
+            m_presentWords &= m_presentWords - 1;
+            return { first, *m_word++ };
+        }
+        uint32_t place;
+        uint32_t block;
+        if (m_presentPlaces) {
+            place = m_firstPlace + static_cast<uint32_t>(std::countr_zero(m_presentPlaces));
+            block = *m_block++;
+            m_presentPlaces &= m_presentPlaces - 1;
+        } else {
+            if (m_entries.empty())
+                return { 0, 0 };
+            uint64_t entry = m_entries.front();
+            m_entries = m_entries.subspan(1);
+            if (isGroup(entry)) {
+                const uint64_t* words = m_sets->m_groups.at(groupOf(entry)).words();
+                m_firstPlace = placeOf(entry);
+                m_presentPlaces = words[0];
+                m_block = blocksOfGroup(words);
+                continue;
+            }
+            place = placeOf(entry);
+            block = blockOf(entry);
+        }
+        const uint64_t* words = m_sets->m_blocks.at(block).words();
+        m_firstOfBlock = place * membersPerBlock;
+        m_presentWords = words[0];
+        m_word = words + 1;
+    }
 }
 
 uint32_t ValueSets::blockAt(std::span<const uint64_t> list, uint32_t place) const
@@ -615,6 +832,9 @@ ValueSetMaker::ValueSetMaker(ValueSets& sets)
     , m_rememberedEntries(static_cast<size_t>(1) << bitsOfRememberedEntries)
     , m_rememberedBlocks(static_cast<size_t>(1) << bitsOfRememberedBlocks)
 {
+    m_roomForBlocks.freeRuns = &m_freeRuns[0];
+    m_roomForGroups.freeRuns = &m_freeRuns[1];
+    m_roomForLists.freeRuns = &m_freeRuns[2];
     m_blockAtPlace.fill(0u, roundUpToMultipleOf<ValueSets::placesPerGroup>(sets.sizeOfUniverse() / ValueSets::membersPerBlock + 1));
     m_entryAtGroupOfPlaces.fill(0u, m_blockAtPlace.size() / ValueSets::placesPerGroup);
 }
@@ -1644,6 +1864,20 @@ void ValueSetMaker::appendParts(ValueSetID set, Vector<ValueSetID>& parts)
     }
 }
 
+void ValueSetMaker::appendCoarseParts(ValueSetID set, Vector<ValueSetID>& parts)
+{
+    if (!ValueSets::isComplement(set) && !ValueSets::holdsOneMember(ValueSets::storedSetOf(set)) && set != ValueSets::nothing) {
+        const ValueSets::Run& run = m_sets.m_lists.at(ValueSets::storedSetOf(set));
+        if (!ValueSets::isShort(run) && run.numberOfWords > 1) {
+            // Runs never move, so the span stays valid while the parts are interned.
+            for (uint64_t entry : run.span())
+                parts.append(ValueSetID(internList(singleElementSpan(entry)) * 2));
+            return;
+        }
+    }
+    appendParts(set, parts);
+}
+
 ValueSetID ValueSetMaker::uniteAll(std::span<const ValueSetID> sets)
 {
     if (sets.size() < 3 || std::ranges::any_of(sets, ValueSets::isComplement)) {
@@ -1769,6 +2003,34 @@ uint32_t ValueSetMaker::uniteAllLists(std::span<const ValueSetID> sets)
         m_list.append(entryFor(groupOfPlaces * ValueSets::placesPerGroup, placesPresent, std::span<const uint32_t>(blocks).first(numberOfBlocks)));
     }
     return internList(m_list.span());
+}
+
+NEVER_INLINE void ValueSets::forEachWordOfRun(ValueSetID set, const ScopedLambda<void(uint32_t first, uint64_t bits)>& functor) const
+{
+    const Run& run = m_lists.at(storedSetOf(set));
+    WordOfMembers word { 0, run.lowestMembers };
+    std::span<const uint32_t> highMembers;
+    WordsOfBlocks blocks;
+    bool isStoredAsBlocks = !isShort(run);
+    if (isStoredAsBlocks) {
+        blocks.start(*this, run);
+        word = blocks.next();
+    } else
+        highMembers = highMembersOf(run);
+    for (;;) {
+        if (word.bits)
+            functor(word.first, word.bits);
+        if (!highMembers.empty()) {
+            word = { highMembers.front(), 1 };
+            highMembers = highMembers.subspan(1);
+            continue;
+        }
+        if (!isStoredAsBlocks)
+            return;
+        word = blocks.next();
+        if (!word.bits)
+            return;
+    }
 }
 
 } } } // namespace JSC::AOT::Typed

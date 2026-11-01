@@ -111,8 +111,7 @@ function f2 name="has" module=m0 position=83 flags=[IsChecked, HasExplicitName] 
 # CHECK-NEXT: Int64 b@[[list]] = ArgumentReg(
 # CHECK-NEXT: Int64 b@[[name]] = ArgumentReg(
 # CHECK-NEXT: Int64 b@[[index]] = Patchpoint(b@[[list]]:Register({{*}}), b@[[name]]:Register({{*}}), resultConstraints = Register({{*}}:CallInline)
-# CHECK-NEXT: Double b@[[number]] = IToD(b@[[index]])
-# CHECK-NEXT: Return(b@[[number]], Terminal)
+# CHECK-NEXT: Return(b@[[index]], Terminal)
 # CHECK-LABEL: end of function
 # includes() compares the same result with -1.
 # CHECK-LABEL: name="has" role=Source
@@ -133,10 +132,10 @@ function f2 name="has" module=m0 position=83 flags=[IsChecked, HasExplicitName] 
 # CALLS-NEXT: f3: size=
 # Two moves put the operands into the stub's argument registers.
 # X64-LABEL: name="find" role=Source
-# X64-NEXT: instructions: 6, patchpoints: 1
+# X64-NEXT: instructions: 5, patchpoints: 1
 # X64-LABEL: name="has" role=Source
 # X64-NEXT: instructions: 6, patchpoints: 1
 # ARM64-LABEL: name="find" role=Source
-# ARM64-NEXT: instructions: 6, patchpoints: 1
+# ARM64-NEXT: instructions: 5, patchpoints: 1
 # ARM64-LABEL: name="has" role=Source
 # ARM64-NEXT: instructions: 6, patchpoints: 1

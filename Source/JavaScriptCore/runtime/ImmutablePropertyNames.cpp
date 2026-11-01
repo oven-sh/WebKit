@@ -24,14 +24,15 @@ public:
     }
 
     bool contains(UniquedStringImpl* uid) const final { return m_first->contains(uid) || m_second->contains(uid); }
-    String messageOfRefusal(UniquedStringImpl* uid) const final { return (m_first->contains(uid) ? m_first : m_second)->messageOfRefusal(uid); }
-    String messageOfRefusedDeletion(UniquedStringImpl* uid) const final { return (m_first->contains(uid) ? m_first : m_second)->messageOfRefusedDeletion(uid); }
-    String messageOfRefusedPrototype() const final
+    String storeErrorMessage(UniquedStringImpl* uid) const final { return (m_first->contains(uid) ? m_first : m_second)->storeErrorMessage(uid); }
+    String deleteErrorMessage(UniquedStringImpl* uid) const final { return (m_first->contains(uid) ? m_first : m_second)->deleteErrorMessage(uid); }
+    String setPrototypeErrorMessage() const final
     {
-        String message = m_first->messageOfRefusedPrototype();
-        return message.isNull() ? m_second->messageOfRefusedPrototype() : message;
+        String message = m_first->setPrototypeErrorMessage();
+        return message.isNull() ? m_second->setPrototypeErrorMessage() : message;
     }
-    bool refusalAlwaysThrows() const final { return m_first->refusalAlwaysThrows() || m_second->refusalAlwaysThrows(); }
+    bool throwsInSloppyMode() const final { return m_first->throwsInSloppyMode() || m_second->throwsInSloppyMode(); }
+    bool throwsFromReflect() const final { return m_first->throwsFromReflect() || m_second->throwsFromReflect(); }
     void willWrite(UniquedStringImpl* uid) const final
     {
         m_first->willWrite(uid);

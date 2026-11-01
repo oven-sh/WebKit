@@ -1,4 +1,4 @@
-# Every function has a row in the tables by function, and each function with a closure word a row in the closure tables. Its text stays with the function that its generic entrypoint enters, which for an async function and a generator is the ramp. A function that is only called has neither
+# Every function has a row in the tables by function, and each function with a closure word a row in the closure tables. Its text stays with the function that its generic entrypoint enters, which for an async function and a generator is the ramp. A function that is only called has no row in the closure tables, and its text under its own number: an error that it throws quotes from there. tables-function-texts-of-a-test-run.ir has the test run
 # OPTIONS: disable=pass:InlineCalls
 # RUN: tables
 # RUN(ROWS): tables functions
@@ -51,13 +51,14 @@ function f4 name="yieldsOnce" text={start=127 end=161} flags=[IsGenerator, Takes
 # CHECK-NEXT: functionRecords
 # CHECK-NEXT: functionRecordsByFunction
 # CHECK-NEXT: functionSources
+# CHECK-NEXT: closureFormsBySource
 # CHECK-NEXT: implementedBuiltins
 # CHECK-NEXT: closureFunctionKinds [[closureFunctions]]
 # CHECK-NEXT: functionLengths [[closureFunctions]]
 # CHECK-NEXT: closureCaptureCounts [[closureFunctions]]
 # CHECK-NEXT: functionsWithLargeCounts 0 0
 # CHECK-NEXT: closureCellNumbers [[closureFunctions]]
-# CHECK-NEXT: functionTexts 1 12
+# CHECK-NEXT: functionTexts 1 24
 
 # ROWS: function f1 name="plain" callable=Plain
 # ROWS-NEXT: function f2 name="onlyCalled" callable=Arrow
@@ -70,4 +71,4 @@ function f4 name="yieldsOnce" text={start=127 end=161} flags=[IsGenerator, Takes
 # GENERATOR: function [[entrypoint]] name="yieldsOnce" {{*}} generator {{*}}length=0
 # GENERATOR: [[entrypoint]] {{*}} "function* yieldsOnce() { yield 1 }"
 # CALLED-NOT: name="onlyCalled" {{*}}length=
-# CALLED-NOT: "() => value"
+# CALLED: f2 {{*}} "() => value"

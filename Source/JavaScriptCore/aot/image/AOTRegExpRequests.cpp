@@ -12,10 +12,12 @@
 #include "AOTBuildContext.h"
 #include "AOTBuiltinCalls.h"
 #include "AOTCFG.h"
+#include "AOTCallGraph.h"
 #include "AOTEdgeResults.h"
 #include "AOTFlowResults.h"
 #include "AOTIR.h"
 #include "AOTKnownValue.h"
+#include "AOTLargeVectors.h"
 #include "AOTPhaseTimes.h"
 #include "AOTRegExpFlags.h"
 #include "AOTRegExpRecord.h"
@@ -29,10 +31,14 @@
 #include "AOTVector.h"
 #include <algorithm>
 #include <array>
+#include <functional>
 #include <map>
 #include <optional>
+#include <ranges>
+#include <set>
 #include <tuple>
 #include <utility>
+#include <vector>
 #include <wtf/HashMap.h>
 #include <wtf/Lock.h>
 #include <wtf/Scope.h>
@@ -87,8 +93,13 @@ public:
         FunctionID caller { };
         const Typed::Value* call { nullptr };
         FunctionID declaration { };
+        // A value that the walk cannot tell, of one operation under one call. What is stored under it in one place is read under it in another.
+        ValueID unnamed { };
+        // A list of texts that a built-in has answered, by its place in m_listsOfTexts, counted from 1. Two of them with the same texts are one.
+        uint32_t listOfTexts { 0 };
 
         bool isObjectOrArray() const { return literal || data || declaration; }
+        bool hasElements() const { return isObjectOrArray() || listOfTexts; }
         friend bool operator==(const Constant&, const Constant&) = default;
     };
     using Constants = Vector<Constant, 1>;
@@ -99,12 +110,14 @@ public:
         friend bool operator==(const Pattern&, const Pattern&) = default;
     };
 
-    TextsFromConstants(const Typed::Program& program, Typed::StringArena& strings, BuildContext& context)
+    TextsFromConstants(const Typed::Program& program, const Typed::CallGraph& callGraph, Typed::StringArena& strings, BuildContext& context)
         : m_program(program)
+        , m_callGraph(callGraph)
         , m_strings(strings)
         , m_context(context)
     {
         uint32_t numberOfFunctions = program.functions.size();
+        m_usesOfClosures.grow(numberOfFunctions);
         Vector<CollectedOperation> operations = collectInParallel<CollectedOperation>(context.parallelLoops(), numberOfFunctions, [&](unsigned index, Vector<CollectedOperation>& found) {
             forEachValueListedOrNot(program, FunctionID(index), { Typed::Opcode::PutModuleVariable, Typed::Opcode::CallDirect, Typed::Opcode::NewClosure }, [&](ValueID id, const Typed::Value& value) {
                 if (value.opcode == Typed::Opcode::PutModuleVariable)
@@ -113,16 +126,18 @@ public:
                     found.append(CollectedOperation { value.opcode, value.function().index(), FunctionID(index), id });
             });
         });
-        runTasksInParallel(context.parallelLoops(), {
-            [&] { m_directCalls = groupByCallee(operations.span(), Typed::Opcode::CallDirect, numberOfFunctions); },
-            [&] { m_closures = groupByCallee(operations.span(), Typed::Opcode::NewClosure, numberOfFunctions); },
+        const ParallelLoops& loops = context.parallelLoops();
+        runTasksInParallel(loops, {
+            [&] { m_directCalls = groupByCallee(loops, operations.span(), Typed::Opcode::CallDirect); },
+            [&] { m_closures = groupByCallee(loops, operations.span(), Typed::Opcode::NewClosure); },
             [&] {
-                for (const CollectedOperation& operation : operations) {
+                m_stores = collectInParallel<Store>(loops, operations.size(), [&](unsigned index, Vector<Store>& stores) {
+                    const CollectedOperation& operation = operations[index];
                     if (operation.opcode == Typed::Opcode::PutModuleVariable)
-                        m_stores.append(Store { Typed::VariableID(operation.targetIndex), operation.function, operation.value });
-                }
-                AOT::sort(m_stores, { }, [](const Store& store) {
-                    return std::tuple { store.variable, store.function, store.stored };
+                        stores.append(Store { Typed::VariableID(operation.targetIndex), operation.function, operation.value });
+                });
+                parallelSort(loops, m_stores.mutableSpan(), [](const Store& a, const Store& b) {
+                    return std::tuple { a.variable, a.function, a.stored } < std::tuple { b.variable, b.function, b.stored };
                 });
             },
         });
@@ -146,6 +161,9 @@ public:
         m_worlds = 0;
         m_active.shrink(0);
         m_bindings.shrink(0);
+        m_loopsFollowed.shrink(0);
+        m_valuesInTurn.shrink(0);
+        m_memoriesOfChoices.shrink(0);
         Patterns result;
         explore(call, result);
         return result;
@@ -177,21 +195,23 @@ private:
         ValueID value;
     };
 
-    // A stable counting sort: the input is ordered by (function, value).
-    static Vector<DirectCall> groupByCallee(std::span<const CollectedOperation> operations, Typed::Opcode opcode, uint32_t numberOfFunctions)
+    // The operations of one callee keep the input order, which is sorted by (function, value).
+    static Vector<DirectCall> groupByCallee(const ParallelLoops& loops, std::span<const CollectedOperation> operations, Typed::Opcode opcode)
     {
-        Vector<uint32_t> positions(FillWith { }, numberOfFunctions + 1, 0);
-        for (const CollectedOperation& operation : operations) {
-            if (operation.opcode == opcode)
-                ++positions[operation.targetIndex + 1];
-        }
-        for (uint32_t index = 0; index < numberOfFunctions; ++index)
-            positions[index + 1] += positions[index];
-        Vector<DirectCall> result(positions.last());
-        for (const CollectedOperation& operation : operations) {
-            if (operation.opcode == opcode)
-                result[positions[operation.targetIndex]++] = DirectCall { FunctionID(operation.targetIndex), operation.function, operation.value };
-        }
+        RELEASE_ASSERT(operations.size() <= UINT32_MAX);
+        Vector<uint64_t> order = collectInParallel<uint64_t>(loops, operations.size(), [&](unsigned index, Vector<uint64_t>& found) {
+            if (operations[index].opcode == opcode)
+                found.append(static_cast<uint64_t>(operations[index].targetIndex) << 32 | index);
+        });
+        parallelSort(loops, order.mutableSpan(), std::less<uint64_t> { });
+        Vector<DirectCall> result = createVectorInParallel<DirectCall>(loops, order.size());
+        constexpr size_t callsInShare = 4096;
+        forEachIndexInParallel(loops, static_cast<unsigned>((order.size() + callsInShare - 1) / callsInShare), [&](unsigned share) {
+            for (size_t position = share * callsInShare; position < std::min(order.size(), (share + 1) * callsInShare); ++position) {
+                const CollectedOperation& operation = operations[static_cast<uint32_t>(order[position])];
+                result[position] = DirectCall { FunctionID(operation.targetIndex), operation.function, operation.value };
+            }
+        });
         return result;
     }
 
@@ -210,6 +230,53 @@ private:
         Constants alternatives;
     };
 
+    struct Remembered {
+        Constants values;
+        bool sawEverything;
+        std::optional<Split> split;
+    };
+
+    // The calls that lead to a loop, its function and header, and what is asked for among all that it hands from turn to turn.
+    using NameOfCarried = std::tuple<uint32_t, uint32_t, uint32_t, uint32_t>;
+
+    // What has been read since one object was chosen among several, or since a turn of a loop began. It holds for as long as what was chosen and bound then stands.
+    struct MemoryOfChoice {
+        size_t numberOfBindings;
+        size_t numberOfValuesInTurn;
+        size_t numberOfLoopsFollowed;
+        HashMap<MemoKey, std::unique_ptr<Remembered>> values;
+        std::set<NameOfCarried> loopsLeftAlone;
+    };
+
+    // Every way round the loop passes the header, which takes what one turn hands to the next as parameters and ends by testing one of them.
+    struct Loop {
+        Typed::BlockID header;
+        uint32_t testedParameter { 0 };
+        uint32_t targetThatStays { 0 };
+        // The header, and what runs between two passes of it.
+        BitVector turn;
+        // What runs before the header is passed for the first time. A block may be on both ways.
+        BitVector wayIn;
+        bool isLeftAtHeaderAlone { true };
+    };
+
+    enum class PartOfLoop : uint8_t { WayIn, Turn };
+
+    struct LoopFollowed {
+        const Typed::Value* call;
+        FunctionID function;
+        const Loop* loop;
+        PartOfLoop part;
+    };
+
+    // What a parameter of the header holds in the turn that is being followed. Nothing where the walk cannot tell.
+    struct ValueInTurn {
+        const Typed::Value* call;
+        ValueKey value;
+        Constants values;
+        bool sawEverything;
+    };
+
     void explore(const CallWithUnknownText& call, Patterns& result)
     {
         m_split.reset();
@@ -220,6 +287,8 @@ private:
                 texts.appendIfNotContains(constant.regExp->pattern);
             else if (constant.primitive.kind() == Typed::KnownValue::Kind::String)
                 texts.appendIfNotContains(constant.primitive.asString());
+            else if (constant.unnamed)
+                m_sawEverything = false;
         }
         bool sawEveryText = m_sawEverything && !texts.isEmpty();
 
@@ -238,7 +307,9 @@ private:
             }
         }
 
-        if (m_split) {
+        // One object is chosen at a time so that its text stays with its flags. Where every text and all flags have been seen and one of the two has no alternatives, nothing can come apart.
+        bool hasNothingToKeepTogether = sawEveryText && sawAllFlags && (texts.size() == 1 || flagSets.size() == 1);
+        if (m_split && !hasNothingToKeepTogether) {
             Split split = WTF::move(*m_split);
             for (const Constant& alternative : split.alternatives) {
                 if (++m_worlds > maxAlternatives()) {
@@ -246,7 +317,9 @@ private:
                     return;
                 }
                 m_bindings.append({ split.value, alternative });
+                beginMemoryOfChoice();
                 explore(call, result);
+                m_memoriesOfChoices.removeLast();
                 m_bindings.removeLast();
             }
             return;
@@ -336,13 +409,56 @@ private:
 
     const Constants* recall(const MemoKey& key)
     {
-        auto remembered = m_bindings.isEmpty() ? m_remembered.find(key) : m_remembered.end();
+        auto remembered = holdsForEveryChoice() ? m_remembered.find(key) : m_remembered.end();
         if (remembered == m_remembered.end())
             return nullptr;
         m_sawEverything &= remembered->value->sawEverything;
         if (remembered->value->split)
             m_split = remembered->value->split;
         return &remembered->value->values;
+    }
+
+    // What is read under the choice of one object, or in one turn of a loop, holds there alone.
+    bool holdsForEveryChoice() const { return m_bindings.isEmpty() && m_valuesInTurn.isEmpty(); }
+
+    void beginMemoryOfChoice()
+    {
+        m_memoriesOfChoices.append(makeUniqueWithoutFastMallocCheck<MemoryOfChoice>(MemoryOfChoice { m_bindings.size(), m_valuesInTurn.size(), m_loopsFollowed.size(), { }, { } }));
+    }
+
+    // None where something more has been chosen or bound since the memory began, and none for a value of a loop that has been entered since.
+    MemoryOfChoice* memoryOfChoiceFor(const Activation& activation, const Typed::Function& function, ValueID id)
+    {
+        if (m_memoriesOfChoices.isEmpty())
+            return nullptr;
+        MemoryOfChoice& memory = *m_memoriesOfChoices.last();
+        if (memory.numberOfBindings != m_bindings.size() || memory.numberOfValuesInTurn != m_valuesInTurn.size())
+            return nullptr;
+        return isDefinedInLoopFollowed(activation, function, id, memory.numberOfLoopsFollowed) ? nullptr : &memory;
+    }
+
+    // Where it is noted that a loop cannot be followed, so that it is tried once. Nowhere where that may change with the next thing bound.
+    std::set<NameOfCarried>* loopsLeftAlone()
+    {
+        if (holdsForEveryChoice())
+            return &m_loopsLeftAlone;
+        if (m_memoriesOfChoices.isEmpty())
+            return nullptr;
+        MemoryOfChoice& memory = *m_memoriesOfChoices.last();
+        return memory.numberOfBindings == m_bindings.size() && memory.numberOfValuesInTurn == m_valuesInTurn.size() ? &memory.loopsLeftAlone : nullptr;
+    }
+
+    void beginPartOfLoop(const Activation& activation, const Loop& loop, PartOfLoop part)
+    {
+        m_loopsFollowed.append(LoopFollowed { activation.call, activation.function, &loop, part });
+        if (part == PartOfLoop::Turn)
+            beginMemoryOfChoice();
+    }
+
+    void endPartOfLoop()
+    {
+        if (m_loopsFollowed.takeLast().part == PartOfLoop::Turn)
+            m_memoriesOfChoices.removeLast();
     }
 
     bool mayFollowAnotherValue()
@@ -372,6 +488,12 @@ private:
             if (value == ValueKey { activation.function, id })
                 return { constant };
         }
+        for (const ValueInTurn& bound : m_valuesInTurn.span() | std::views::reverse) {
+            if (bound.call == activation.call && bound.value == ValueKey { activation.function, id }) {
+                m_sawEverything &= bound.sawEverything;
+                return bound.values;
+            }
+        }
         const Typed::Function& function = m_program.at(activation.function);
         if (Typed::KnownValue known = knownValueOf(m_program, function, id); known.isKnown() && !known.isObject())
             return { Constant { known } };
@@ -383,10 +505,18 @@ private:
             return { };
         }
 
-        bool mayRemember = m_bindings.isEmpty();
+        bool mayRemember = holdsForEveryChoice() && !isDefinedInLoopFollowed(activation, function, id);
         MemoKey memoKey { callsLeadingTo(activation), nullptr, activation.function.index(), id.index() };
-        if (const Constants* remembered = recall(memoKey))
+        if (const Constants* remembered = mayRemember ? recall(memoKey) : nullptr)
             return *remembered;
+        if (MemoryOfChoice* memory = memoryOfChoiceFor(activation, function, id)) {
+            if (auto remembered = memory->values.find(memoKey); remembered != memory->values.end()) {
+                m_sawEverything &= remembered->value->sawEverything;
+                if (remembered->value->split)
+                    m_split = remembered->value->split;
+                return remembered->value->values;
+            }
+        }
 
         unsigned walksCutShortBefore = m_walksCutShort;
         bool sawEverythingBefore = std::exchange(m_sawEverything, true);
@@ -399,6 +529,8 @@ private:
             m_split = Split { { activation.function, id }, result };
         if (mayRemember && m_walksCutShort == walksCutShortBefore && m_valuesFollowed <= maxValuesFollowed)
             m_remembered.add(memoKey, makeUniqueWithoutFastMallocCheck<Remembered>(Remembered { result, m_sawEverything, m_split }));
+        else if (MemoryOfChoice* memory = memoryOfChoiceFor(activation, function, id); memory && m_walksCutShort == walksCutShortBefore && m_valuesFollowed <= m_budget)
+            memory->values.add(memoKey, makeUniqueWithoutFastMallocCheck<Remembered>(Remembered { result, m_sawEverything, m_split }));
         m_sawEverything &= sawEverythingBefore;
         if (!m_split)
             m_split = WTF::move(splitBefore);
@@ -413,6 +545,7 @@ private:
         case Typed::Opcode::SharedRegExpLiteral:
             return { Constant { .regExp = Typed::RegExpLiteralInType { value.pattern(), value.regExpFlags().toRaw() } } };
         case Typed::Opcode::NewObject:
+        case Typed::Opcode::NewDictionary:
         case Typed::Opcode::NewArray:
         case Typed::Opcode::NewArrayLike:
         case Typed::Opcode::NewContiguousArray:
@@ -426,11 +559,11 @@ private:
             return fieldsOf(evaluate(activation, value.objectOperand()), value.key());
         case Typed::Opcode::GetArrayElement: {
             Constants arrays = evaluate(activation, value.arrayOperand());
-            return elementsOf(arrays, positionOf(activation, value.positionOperand()));
+            return elementsAt(activation, arrays, value.positionOperand());
         }
         case Typed::Opcode::ElemGet: {
             Constants arrays = evaluate(activation, value.objectOperand());
-            return elementsOf(arrays, positionOf(activation, value.propertyOperand()));
+            return elementsAt(activation, arrays, value.propertyOperand());
         }
         case Typed::Opcode::GetStringLength:
             return lengthsOf(evaluate(activation, value.stringOperand()));
@@ -468,19 +601,33 @@ private:
             return resultsOf(activation, value);
         case Typed::Opcode::CallBuiltin:
         case Typed::Opcode::CallInline:
-            return answersOfBuiltin(activation, value, builtinCallOf(m_program, value));
+            return answersOfBuiltin(activation, id, builtinCallOf(m_program, value));
         case Typed::Opcode::Call:
         case Typed::Opcode::CallMethod: {
             Constants answers;
             bool isBuiltin = false;
             forEachBuiltinCall(value, [&](const Typed::BuiltinCall& call) {
                 if (!std::exchange(isBuiltin, true))
-                    answers = answersOfBuiltin(activation, value, call);
+                    answers = answersOfBuiltin(activation, id, call);
             });
             return isBuiltin ? answers : answersOfMethodOfText(activation, function, value);
         }
         case Typed::Opcode::Substring:
             return substringsOf(activation, function, value);
+        case Typed::Opcode::Increment:
+        case Typed::Opcode::Decrement: {
+            Constants numbers;
+            for (const Constant& constant : evaluate(activation, value.valueOperand())) {
+                Typed::KnownValue number = constant.primitive.isNumber() ? Typed::KnownValue::computedNumber(constant.primitive.asNumber() + (value.opcode == Typed::Opcode::Increment ? 1 : -1)) : Typed::KnownValue();
+                if (!number.isNumber())
+                    m_sawEverything = false;
+                else if (!add(numbers, Constant { number }))
+                    return { };
+            }
+            return numbers;
+        }
+        case Typed::Opcode::Sub:
+            return sumsOrDifferencesOf(activation, function, value, { evaluate(activation, value.leftOperand()), evaluate(activation, value.rightOperand()) });
         case Typed::Opcode::ResultAt:
             return resultsAt(activation, function, value.resultsOperand(), value.index());
         default:
@@ -514,7 +661,7 @@ private:
         }
         m_sawEverything &= !values.isEmpty();
         // What was read under the choice of one object holds for that choice alone.
-        if (m_bindings.isEmpty() && !m_split && m_walksCutShort == walksCutShortBefore)
+        if (holdsForEveryChoice() && !m_split && m_walksCutShort == walksCutShortBefore)
             m_variables.set(variable.index(), ValuesOfVariable { values, m_sawEverything });
         else
             m_variables.remove(variable.index());
@@ -566,6 +713,11 @@ private:
                 continue;
             }
             const Typed::Value* literal = object.literal ? &m_program.at(object.function).at(object.literal) : nullptr;
+            if (literal && literal->opcode == Typed::Opcode::NewDictionary) {
+                if (!addAll(values, valuesWrittenUnder(object, key)))
+                    return { };
+                continue;
+            }
             if (!literal || literal->opcode != Typed::Opcode::NewObject) {
                 m_sawEverything = false;
                 continue;
@@ -576,6 +728,11 @@ private:
                 return layout.fields[field].key == key;
             }) - fields.begin();
             if (index == fields.size()) {
+                if (Constants written = valuesWrittenUnder(object, key); !written.isEmpty()) {
+                    if (!addAll(values, written))
+                        return { };
+                    continue;
+                }
                 const Typed::Function& maker = m_program.at(object.function);
                 ValueID defined;
                 bool isFilledFromOthers = false;
@@ -600,17 +757,32 @@ private:
         return values;
     }
 
-    std::optional<uint32_t> positionOf(const Activation& activation, ValueID id)
+    Constants elementsAt(const Activation& activation, const Constants& arrays, ValueID id)
     {
         bool sawEverythingBefore = std::exchange(m_sawEverything, true);
         Constants positions = evaluate(activation, id);
-        bool isKnown = std::exchange(m_sawEverything, sawEverythingBefore) && positions.size() == 1 && positions[0].primitive.isNumber();
-        if (!isKnown)
-            return std::nullopt;
+        bool sawEveryPosition = std::exchange(m_sawEverything, sawEverythingBefore) && !positions.isEmpty();
+        bool areKeysOfTable = !positions.isEmpty() && std::ranges::all_of(positions, [](const Constant& position) {
+            return position.unnamed || position.primitive.kind() == Typed::KnownValue::Kind::String;
+        });
+        if (areKeysOfTable) {
+            m_sawEverything &= sawEveryPosition;
+            Constants values;
+            for (const Constant& table : arrays) {
+                for (const Constant& position : positions) {
+                    Typed::PropertyKeyID key = position.unnamed ? Typed::PropertyKeyID() : keyNamed(table, position.primitive.asString());
+                    if (!addAll(values, key ? fieldsOf({ table }, key) : table.literal ? valuesWrittenAt(table, position) : Constants()))
+                        return { };
+                }
+            }
+            return values;
+        }
+        if (!sawEveryPosition || positions.size() != 1 || !positions[0].primitive.isNumber())
+            return elementsOf(arrays, std::nullopt);
         double position = positions[0].primitive.asNumber();
         if (position < 0 || position != static_cast<uint32_t>(position))
-            return std::nullopt;
-        return static_cast<uint32_t>(position);
+            return elementsOf(arrays, std::nullopt);
+        return elementsOf(arrays, static_cast<uint32_t>(position));
     }
 
     Constants elementsOf(const Constants& arrays, std::optional<uint32_t> position)
@@ -642,6 +814,495 @@ private:
         return id;
     }
 
+    static ValueID throughChecks(const Typed::Function& function, ValueID id)
+    {
+        for (;;) {
+            switch (function.at(id).opcode) {
+            case Typed::Opcode::Upcast:
+            case Typed::Opcode::Expect:
+            case Typed::Opcode::AssumeType:
+            case Typed::Opcode::CheckInitialized:
+            case Typed::Opcode::FinishObject:
+            case Typed::Opcode::RequireObjectCoercible:
+            case Typed::Opcode::RequireObject:
+                id = function.at(id).operand(0);
+                continue;
+            default:
+                return id;
+            }
+        }
+    }
+
+    // The operation that a value comes of: casts, tests on the way and conversions that leave a number as it is are looked through.
+    ValueID originOf(FunctionID id, const Typed::Function& function, ValueID value)
+    {
+        for (;;) {
+            value = throughChecks(function, value);
+            const Typed::Value& definition = function.at(value);
+            if (definition.opcode == Typed::Opcode::ToNumeric || definition.opcode == Typed::Opcode::ToNumber) {
+                value = definition.valueOperand();
+                continue;
+            }
+            std::optional<BlockParameter> merge = findMerge(id, function, value);
+            std::span<const Typed::Edge> edges = merge ? cfgOf(id).incomingEdges(merge->block) : std::span<const Typed::Edge>();
+            if (edges.size() != 1)
+                return value;
+            Typed::IncomingValue incoming = incomingValueOf(function, edges[0], merge->index);
+            ValueID arriving = incoming.kind == Typed::IncomingValue::Kind::Argument ? incoming.argument : operandNarrowedOnEdge(function, incoming.result);
+            if (!arriving)
+                return value;
+            value = arriving;
+        }
+    }
+
+    Constants evaluateOrName(const Activation& activation, ValueID id)
+    {
+        bool sawEverythingBefore = std::exchange(m_sawEverything, true);
+        Constants values = evaluate(activation, id);
+        bool isKnown = std::exchange(m_sawEverything, sawEverythingBefore) && !values.isEmpty();
+        if (isKnown)
+            return values;
+        Constant unnamed = literalIn(activation, ValueID());
+        unnamed.unnamed = originOf(activation.function, m_program.at(activation.function), id);
+        if (!add(values, unnamed))
+            return { };
+        return values;
+    }
+
+    // An object or an array is written through what holds it.
+    enum class HolderKind : uint8_t {
+        Literal,
+        Variable,
+        Capture,
+        EnvironmentField,
+        Member,
+        Parameter,
+    };
+
+    struct Holder {
+        HolderKind kind;
+        uint32_t first;
+        uint32_t second { 0 };
+        friend auto operator<=>(const Holder&, const Holder&) = default;
+    };
+
+    struct WritingOperation {
+        Holder holder;
+        FunctionID function;
+        ValueID operation;
+    };
+
+    struct WrittenPlace {
+        ValueID container;
+        Typed::PropertyKeyID key { };
+        ValueID position { };
+        ValueID stored;
+        bool appends { false };
+    };
+
+    static constexpr Typed::OpcodeSet writingOpcodes { Typed::Opcode::PutSlot, Typed::Opcode::PropSet, Typed::Opcode::ElemSet, Typed::Opcode::PutArrayElement, Typed::Opcode::AppendElement, Typed::Opcode::CallBuiltin, Typed::Opcode::CallInline };
+    static constexpr Typed::OpcodeSet madeOrReturnedBy { Typed::Opcode::NewObject, Typed::Opcode::NewDictionary, Typed::Opcode::NewArray, Typed::Opcode::NewContiguousArray, Typed::Opcode::CallDirect };
+    static constexpr Typed::OpcodeSet holdingOpcodes { Typed::Opcode::PutModuleVariable, Typed::Opcode::NewClosure, Typed::Opcode::NewObject, Typed::Opcode::PutEnvironmentField, Typed::Opcode::PutSlot, Typed::Opcode::PropSet, Typed::Opcode::PropDefine, Typed::Opcode::CallDirect };
+
+    std::optional<WrittenPlace> placeWrittenBy(const Typed::Value& value) const
+    {
+        switch (value.opcode) {
+        case Typed::Opcode::PutSlot:
+        case Typed::Opcode::PropSet:
+            return WrittenPlace { .container = value.objectOperand(), .key = value.key(), .stored = value.valueOperand() };
+        case Typed::Opcode::ElemSet:
+            return WrittenPlace { .container = value.objectOperand(), .position = value.propertyOperand(), .stored = value.valueOperand() };
+        case Typed::Opcode::PutArrayElement:
+            return WrittenPlace { .container = value.arrayOperand(), .position = value.positionOperand(), .stored = value.valueOperand() };
+        case Typed::Opcode::AppendElement:
+            return WrittenPlace { .container = value.arrayOperand(), .stored = value.valueOperand(), .appends = true };
+        case Typed::Opcode::CallBuiltin:
+        case Typed::Opcode::CallInline: {
+            const BuiltinTable& table = m_program.builtins();
+            const BuiltinOverload& overload = table.at(value.overload());
+            if (overload.mode != BuiltinCallMode::Call || table.canonicalID(overload.builtin) != Builtins::ArrayPrototypePush)
+                return std::nullopt;
+            Typed::BuiltinCall call = builtinCallOf(m_program, value);
+            if (call.form != Typed::BuiltinCallForm::Whole || !call.receiver || call.arguments.size() != 1)
+                return std::nullopt;
+            return WrittenPlace { .container = call.receiver, .stored = call.arguments[0], .appends = true };
+        }
+        default:
+            return std::nullopt;
+        }
+    }
+
+    std::optional<Holder> holderOf(FunctionID id, const Typed::Function& function, ValueID container) const
+    {
+        container = throughChecks(function, container);
+        const Typed::Value& value = function.at(container);
+        switch (value.opcode) {
+        case Typed::Opcode::NewObject:
+        case Typed::Opcode::NewDictionary:
+        case Typed::Opcode::NewArray:
+        case Typed::Opcode::NewContiguousArray:
+            return Holder { HolderKind::Literal, id.index(), container.index() };
+        case Typed::Opcode::GetModuleVariable:
+            return Holder { HolderKind::Variable, value.variable().index() };
+        case Typed::Opcode::GetCapture:
+            return Holder { HolderKind::Capture, sourceOf(value.function()).index(), value.index() };
+        case Typed::Opcode::GetEnvironmentField:
+            return Holder { HolderKind::EnvironmentField, value.layout().index(), value.field() };
+        case Typed::Opcode::GetSlot:
+        case Typed::Opcode::GetSlotOrUndefined:
+        case Typed::Opcode::PropGet:
+            return Holder { HolderKind::Member, value.key().index() };
+        case Typed::Opcode::Parameter: {
+            size_t index = function.blocks.first().parameters.find(container);
+            if (index == notFound)
+                return std::nullopt;
+            return Holder { HolderKind::Parameter, id.index(), static_cast<uint32_t>(index) };
+        }
+        default:
+            return std::nullopt;
+        }
+    }
+
+    // An operation that hands an object or an array to a holder. `held` is the operation that makes it, or a call that returns it.
+    struct Holding {
+        FunctionID function;
+        ValueID held;
+        Holder holder;
+        ValueID operation;
+
+        friend bool operator==(const Holding&, const Holding&) = default;
+    };
+
+    void forEachHoldingBy(FunctionID id, const Typed::Function& function, ValueID operation, const Typed::Value& use, NOESCAPE const Invocable<void(const Holding&)> auto& functor) const
+    {
+        auto hold = [&](ValueID operand, Holder holder) {
+            if (!operand)
+                return;
+            ValueID held = throughChecks(function, operand);
+            if (madeOrReturnedBy.contains(function.at(held).opcode))
+                functor(Holding { id, held, holder, operation });
+        };
+        switch (use.opcode) {
+        case Typed::Opcode::PutModuleVariable:
+            hold(use.valueOperand(), Holder { HolderKind::Variable, use.variable().index() });
+            break;
+        case Typed::Opcode::NewClosure: {
+            std::span<const ValueID> captures = use.capturesOperands();
+            for (uint32_t index = 0; index < captures.size() && use.function().index() < m_program.functions.size(); ++index)
+                hold(captures[index], Holder { HolderKind::Capture, sourceOf(use.function()).index(), index });
+            break;
+        }
+        case Typed::Opcode::NewObject: {
+            const Typed::Layout& layout = m_program.at(use.layout());
+            std::span<const uint32_t> fields = use.fields();
+            std::span<const ValueID> values = use.valuesOperands();
+            for (size_t index = 0; index < std::min(fields.size(), values.size()); ++index) {
+                hold(values[index], Holder { HolderKind::EnvironmentField, use.layout().index(), fields[index] });
+                hold(values[index], Holder { HolderKind::Member, layout.fields[fields[index]].key.index() });
+            }
+            break;
+        }
+        case Typed::Opcode::PutEnvironmentField:
+            hold(use.valueOperand(), Holder { HolderKind::EnvironmentField, use.layout().index(), use.field() });
+            break;
+        case Typed::Opcode::PutSlot:
+        case Typed::Opcode::PropSet:
+        case Typed::Opcode::PropDefine:
+            hold(use.valueOperand(), Holder { HolderKind::Member, use.key().index() });
+            break;
+        case Typed::Opcode::CallDirect: {
+            std::span<const ValueID> arguments = use.argumentsOperands();
+            for (uint32_t index = 0; index < arguments.size(); ++index)
+                hold(arguments[index], Holder { HolderKind::Parameter, use.function().index(), index });
+            break;
+        }
+        default:
+            break;
+        }
+    }
+
+    void findWritesAndHoldings()
+    {
+        if (m_hasFoundWritesAndHoldings)
+            return;
+        m_hasFoundWritesAndHoldings = true;
+        const ParallelLoops& loops = m_context.parallelLoops();
+        unsigned numberOfFunctions = m_program.functions.size();
+        m_writingOperations = collectInParallel<WritingOperation>(loops, numberOfFunctions, [&](unsigned index, Vector<WritingOperation>& found) {
+            FunctionID id(index);
+            const Typed::Function& function = m_program.at(id);
+            forEachValueListedOrNot(m_program, id, writingOpcodes, [&](ValueID operation, const Typed::Value& value) {
+                std::optional<WrittenPlace> place = placeWrittenBy(value);
+                std::optional<Holder> holder = place ? holderOf(id, function, place->container) : std::nullopt;
+                if (holder)
+                    found.append(WritingOperation { *holder, id, operation });
+            });
+        });
+        m_holdings = collectInParallel<Holding>(loops, numberOfFunctions, [&](unsigned index, Vector<Holding>& found) {
+            FunctionID id(index);
+            const Typed::Function& function = m_program.at(id);
+            forEachValueListedOrNot(m_program, id, holdingOpcodes, [&](ValueID operation, const Typed::Value& use) {
+                forEachHoldingBy(id, function, operation, use, [&](const Holding& holding) {
+                    found.append(holding);
+                });
+            });
+        });
+        parallelSort(loops, m_writingOperations.mutableSpan(), [](const WritingOperation& a, const WritingOperation& b) {
+            return std::tuple { a.holder, a.function, a.operation } < std::tuple { b.holder, b.function, b.operation };
+        });
+        parallelSort(loops, m_holdings.mutableSpan(), [](const Holding& a, const Holding& b) {
+            return std::tuple { a.function, a.held, a.holder, a.operation } < std::tuple { b.function, b.held, b.holder, b.operation };
+        });
+    }
+
+    Vector<Holding, 4> holdingsOf(const Constant& container)
+    {
+        findWritesAndHoldings();
+        Vector<Holding, 4> holdings { Holding { container.function, container.literal, Holder { HolderKind::Literal, container.function.index(), container.literal.index() }, container.literal } };
+        auto addHoldingsOf = [&](FunctionID function, ValueID held) {
+            auto placeOf = [](const Holding& holding) {
+                return std::pair { holding.function, holding.held };
+            };
+            for (const Holding& holding : std::ranges::equal_range(m_holdings, std::pair { function, held }, { }, placeOf)) {
+                bool isKnown = holding.holder.kind != HolderKind::Parameter && holdings.containsIf([&](const Holding& other) {
+                    return other.holder == holding.holder;
+                });
+                if (!isKnown)
+                    holdings.append(holding);
+            }
+        };
+        addHoldingsOf(container.function, container.literal);
+        const Typed::Function& maker = m_program.at(container.function);
+        bool isReturned = container.call && std::ranges::any_of(maker.blocks, [&](const Typed::Block& block) {
+            return block.terminator.kind == Typed::TerminatorKind::Return && block.terminator.valueOperand() && throughChecks(maker, block.terminator.valueOperand()) == container.literal;
+        });
+        if (isReturned)
+            addHoldingsOf(container.caller, idOf(container.caller, *container.call));
+        return holdings;
+    }
+
+    // `where` is read as a literal is: the function, the call under which it runs, and for `literal` the operation that writes.
+    struct Write {
+        Constant where;
+        Typed::PropertyKeyID key { };
+        Constant position { };
+        ValueID stored;
+    };
+
+    struct Contents {
+        Vector<Write> writes;
+        Vector<Write> appends;
+        bool knowsOrderOfAppends { true };
+    };
+
+    static constexpr uint64_t notListed = std::numeric_limits<uint64_t>::max();
+
+    // By value: the place of its block in reverse post order, and below it the place of the value in the block.
+    const Vector<uint64_t>& placesIn(FunctionID id)
+    {
+        return m_places.ensure(id.index(), [&] {
+            const Typed::Function& function = m_program.at(id);
+            const Typed::CFG& cfg = cfgOf(id);
+            Vector<uint64_t> places;
+            places.fill(notListed, function.values.size());
+            for (uint32_t block = 0; block < function.blocks.size(); ++block) {
+                if (!cfg.isReachable(Typed::BlockID(block)))
+                    continue;
+                uint64_t place = static_cast<uint64_t>(cfg.reversePostOrderIndex(Typed::BlockID(block))) << 32;
+                for (ValueID value : function.blocks[block].values)
+                    places[value.index()] = place++;
+            }
+            return places;
+        }).iterator->value;
+    }
+
+    Typed::BlockID blockAt(FunctionID id, uint64_t place) { return cfgOf(id).reversePostOrder()[place >> 32]; }
+
+    ValueID idOf(FunctionID function, const Typed::Value& value) const { return ValueID(static_cast<uint32_t>(&value - m_program.at(function).values.span().data())); }
+
+    // One store of the source may stand on two arms, of which one runs.
+    bool isOtherArmOf(const Write& a, const Write& b)
+    {
+        if (a.where.function != b.where.function || a.where.call != b.where.call)
+            return false;
+        const Typed::Function& function = m_program.at(a.where.function);
+        if (function.at(a.where.literal).position != function.at(b.where.literal).position || function.at(a.where.literal).inlineFrame != function.at(b.where.literal).inlineFrame)
+            return false;
+        const Vector<uint64_t>& places = placesIn(a.where.function);
+        Typed::BlockID blockOfA = blockAt(a.where.function, places[a.where.literal.index()]);
+        Typed::BlockID blockOfB = blockAt(a.where.function, places[b.where.literal.index()]);
+        const Typed::CFG& cfg = cfgOf(a.where.function);
+        return blockOfA != blockOfB && !cfg.blocksReachableFrom(blockOfA, { }).get(blockOfB.index()) && !cfg.blocksReachableFrom(blockOfB, { }).get(blockOfA.index());
+    }
+
+    void addWrites(Contents& contents, const Constant& container, const Activation& activation, ValueID operation)
+    {
+        if (placesIn(activation.function)[operation.index()] == notListed)
+            return;
+        WrittenPlace place = *placeWrittenBy(m_program.at(activation.function).at(operation));
+        bool writesContainer = evaluate(activation, place.container).containsIf([&](const Constant& written) {
+            return written.function == container.function && written.literal == container.literal && (!written.call || !container.call || written.call == container.call);
+        });
+        if (!writesContainer)
+            return;
+        Write write { .where = literalIn(activation, operation), .key = place.key, .stored = place.stored };
+        if (place.appends) {
+            bool isCounted = contents.appends.containsIf([&](const Write& other) {
+                return isOtherArmOf(write, other);
+            });
+            if (!isCounted)
+                contents.appends.append(write);
+            return;
+        }
+        if (!place.position) {
+            contents.writes.append(write);
+            return;
+        }
+        for (const Constant& position : evaluateOrName(activation, place.position)) {
+            write.position = position;
+            contents.writes.append(write);
+        }
+    }
+
+    void putAppendsInOrder(Contents& contents)
+    {
+        struct Place {
+            FunctionID function;
+            uint64_t outer;
+            uint64_t inner;
+        };
+        auto placeOf = [&](const Write& write) {
+            uint64_t place = placesIn(write.where.function)[write.where.literal.index()];
+            if (!write.where.call)
+                return Place { write.where.function, place, 0 };
+            return Place { write.where.caller, placesIn(write.where.caller)[idOf(write.where.caller, *write.where.call).index()], place };
+        };
+        for (const Write& write : contents.appends)
+            contents.knowsOrderOfAppends &= placeOf(write).function == placeOf(contents.appends[0]).function && placeOf(write).outer != notListed;
+        AOT::stableSort(contents.appends, [&](const Write& a, const Write& b) {
+            return std::tuple { placeOf(a).outer, placeOf(a).inner } < std::tuple { placeOf(b).outer, placeOf(b).inner };
+        });
+    }
+
+    // What is written into an object or an array after it was made, wherever that is done. It is found once for all walks: with a budget of its own, under no choice of an object and inside no other value.
+    const Contents& contentsOf(const Constant& container)
+    {
+        auto [entry, isNew] = m_contents.try_emplace(std::tuple { container.function.index(), container.literal.index(), container.call });
+        if (!isNew) {
+            if (entry->second)
+                return *entry->second;
+            ++m_walksCutShort;
+            return m_contentsBeingFound;
+        }
+        SetForScope budget(m_budget, maxValuesFollowed);
+        SetForScope testsBeingAnswered(m_testsBeingAnswered, 0u);
+        unsigned valuesFollowedBefore = std::exchange(m_valuesFollowed, 0);
+        unsigned walksCutShortBefore = m_walksCutShort;
+        bool sawEverythingBefore = m_sawEverything;
+        auto bindingsBefore = std::exchange(m_bindings, { });
+        auto loopsFollowedBefore = std::exchange(m_loopsFollowed, { });
+        auto valuesInTurnBefore = std::exchange(m_valuesInTurn, { });
+        auto activeBefore = std::exchange(m_active, { });
+        std::optional<Split> splitBefore = std::exchange(m_split, std::nullopt);
+
+        auto contents = makeUniqueWithoutFastMallocCheck<Contents>();
+        for (const Holding& holding : holdingsOf(container)) {
+            for (const WritingOperation& operation : std::ranges::equal_range(m_writingOperations, holding.holder, { }, &WritingOperation::holder)) {
+                if (holding.holder.kind == HolderKind::Parameter) {
+                    Activation caller { holding.function };
+                    addWrites(*contents, container, Activation { operation.function, &caller, &m_program.at(holding.function).at(holding.operation) }, operation.operation);
+                    continue;
+                }
+                if (operation.function == container.function) {
+                    addWrites(*contents, container, WhereMade(container).activation, operation.operation);
+                    continue;
+                }
+                bool isCalledDirectly = false;
+                for (const DirectCall& call : std::ranges::equal_range(m_directCalls, operation.function, { }, &DirectCall::callee)) {
+                    isCalledDirectly = true;
+                    Activation caller { call.caller };
+                    addWrites(*contents, container, Activation { operation.function, &caller, &m_program.at(call.caller).at(call.call) }, operation.operation);
+                }
+                if (!isCalledDirectly)
+                    addWrites(*contents, container, Activation { operation.function }, operation.operation);
+            }
+        }
+        putAppendsInOrder(*contents);
+
+        m_valuesFollowed = valuesFollowedBefore;
+        m_walksCutShort = walksCutShortBefore;
+        m_sawEverything = sawEverythingBefore;
+        m_bindings = WTF::move(bindingsBefore);
+        m_loopsFollowed = WTF::move(loopsFollowedBefore);
+        m_valuesInTurn = WTF::move(valuesInTurnBefore);
+        m_active = WTF::move(activeBefore);
+        m_split = WTF::move(splitBefore);
+        entry->second = WTF::move(contents);
+        return *entry->second;
+    }
+
+    Constants valuesWritten(const Constant& container, NOESCAPE const Invocable<bool(const Write&)> auto& isRead)
+    {
+        Constants values;
+        for (const Write& write : contentsOf(container).writes) {
+            if (isRead(write) && !addAll(values, evaluateOrName(WhereMade(write.where).activation, write.stored)))
+                return { };
+        }
+        return values;
+    }
+
+    Constants valuesWrittenUnder(const Constant& object, Typed::PropertyKeyID key)
+    {
+        const Typed::PropertyKey& name = m_program.at(key);
+        Constant text;
+        if (name.kind == Typed::PropertyKeyKind::Text && name.text)
+            text.primitive = Typed::KnownValue::string(name.text);
+        return valuesWritten(object, [&](const Write& write) {
+            if (write.position.unnamed)
+                m_sawEverything = false;
+            return write.key ? write.key == key : text.primitive.isKnown() && write.position == text;
+        });
+    }
+
+    // The key under which the object itself holds or is given a member of that name.
+    Typed::PropertyKeyID keyNamed(const Constant& object, StringID text)
+    {
+        auto isNamed = [&](Typed::PropertyKeyID key) {
+            const Typed::PropertyKey& name = m_program.at(key);
+            return name.kind == Typed::PropertyKeyKind::Text && name.text == text;
+        };
+        if (const Typed::DataNode::Object* data = object.data ? object.data->tryAs<Typed::DataNode::Object>() : nullptr) {
+            for (const Typed::DataMember& member : data->members) {
+                if (isNamed(member.key))
+                    return member.key;
+            }
+        }
+        if (!object.literal)
+            return { };
+        const Typed::Value& literal = m_program.at(object.function).at(object.literal);
+        if (literal.opcode == Typed::Opcode::NewObject) {
+            const Typed::Layout& layout = m_program.at(literal.layout());
+            for (uint32_t field : literal.fields()) {
+                if (isNamed(layout.fields[field].key))
+                    return layout.fields[field].key;
+            }
+        }
+        if (literal.opcode != Typed::Opcode::NewObject && literal.opcode != Typed::Opcode::NewDictionary)
+            return { };
+        for (const Write& write : contentsOf(object).writes) {
+            if (write.key && isNamed(write.key))
+                return write.key;
+        }
+        return { };
+    }
+
+    Constants valuesWrittenAt(const Constant& array, const Constant& position)
+    {
+        return valuesWritten(array, [&](const Write& write) {
+            return !write.key && write.position == position;
+        });
+    }
+
     struct MappedArray {
         Constant source;
         ValueID stored;
@@ -670,7 +1331,7 @@ private:
         WhereMade whereMade(array);
         Constants sources = evaluate(whereMade.activation, sourceOperand);
         Constants callbacks = isMappedByCallback ? evaluate(whereMade.activation, callback) : Constants();
-        if (sources.size() != 1 || !sources[0].isObjectOrArray())
+        if (sources.size() != 1 || !sources[0].hasElements())
             return std::nullopt;
         MappedArray mapped { sources[0], { }, { }, { } };
 
@@ -730,11 +1391,15 @@ private:
 
     size_t sizeOf(const Constant& array)
     {
+        if (array.listOfTexts)
+            return m_listsOfTexts[array.listOfTexts - 1].size();
         if (const Typed::DataNode::Array* data = array.data ? array.data->tryAs<Typed::DataNode::Array>() : nullptr)
             return data->elements.size();
         const Typed::Value* literal = array.literal ? &m_program.at(array.function).at(array.literal) : nullptr;
-        if (literal && literal->opcode == Typed::Opcode::NewArray && literal->holes().empty())
-            return literal->elementsOperands().size();
+        if (literal && literal->opcode == Typed::Opcode::NewArray && literal->holes().empty()) {
+            const Contents& contents = contentsOf(array);
+            return contents.knowsOrderOfAppends ? literal->elementsOperands().size() + contents.appends.size() : notFound;
+        }
         if (literal && literal->opcode == Typed::Opcode::NewContiguousArray)
             return elementsOfLongLiteral(array).size();
         if (literal && (literal->opcode == Typed::Opcode::NewArrayLike || isCall(literal->opcode))) {
@@ -746,11 +1411,18 @@ private:
 
     Constants elementOf(const Constant& array, size_t index)
     {
+        if (array.listOfTexts)
+            return { Constant { Typed::KnownValue::string(m_listsOfTexts[array.listOfTexts - 1][index]) } };
         if (array.data)
             return { constantOf(array.data->as<Typed::DataNode::Array>().elements[index]) };
         const Typed::Value& literal = m_program.at(array.function).at(array.literal);
-        if (literal.opcode == Typed::Opcode::NewArray)
-            return evaluate(WhereMade(array).activation, literal.elementsOperands()[index]);
+        if (literal.opcode == Typed::Opcode::NewArray) {
+            size_t sizeWhenMade = literal.elementsOperands().size();
+            if (index < sizeWhenMade)
+                return evaluate(WhereMade(array).activation, literal.elementsOperands()[index]);
+            const Write& write = contentsOf(array).appends[index - sizeWhenMade];
+            return evaluate(WhereMade(write.where).activation, write.stored);
+        }
         if (literal.opcode == Typed::Opcode::NewContiguousArray)
             return evaluate(WhereMade(array).activation, elementsOfLongLiteral(array)[index]);
 
@@ -781,34 +1453,85 @@ private:
         return lengths;
     }
 
+    using TextsWhereBlocksEnd = std::map<std::pair<ValueID, Typed::BlockID>, Constants>;
+
     Constants textsBuiltUpTo(const Activation& activation, const Typed::Function& function, ValueID builder, ValueID end)
     {
+        uint64_t place = placesIn(activation.function)[end.index()];
+        if (place == notListed)
+            return { };
+        TextsWhereBlocksEnd remembered;
+        return textsBuiltIn(activation, function, builder, blockAt(activation.function, place), end, remembered);
+    }
+
+    // What the builder holds in front of `end`, and without an end where the block ends. The builder may have been begun blocks ago.
+    Constants textsBuiltIn(const Activation& activation, const Typed::Function& function, ValueID builder, Typed::BlockID block, ValueID end, TextsWhereBlocksEnd& remembered)
+    {
+        if (!end) {
+            if (auto known = remembered.find({ builder, block }); known != remembered.end())
+                return known->second;
+        }
         if (!mayFollowAnotherValue())
             return { };
+        std::optional<BlockParameter> merge = findMerge(activation.function, function, builder);
+        bool arrivesAsParameter = merge && merge->block == block;
+        bool isBegunHere = !merge && function.at(block).values.contains(builder);
+        if (isBegunHere && function.at(builder).opcode != Typed::Opcode::StringBuilderBegin)
+            return { };
         Vector<Constants, 8> parts;
-        const Typed::Block* blockOfBuilder = nullptr;
-        if (std::optional<BlockParameter> merge = findMerge(activation.function, function, builder)) {
-            blockOfBuilder = &function.at(merge->block);
+        if (!isBegunHere) {
+            // A block that is asked for again while it is walked lies on a way round that nobody follows.
+            if (!end)
+                remembered.emplace(std::pair { builder, block }, Constants());
             const Typed::CFG& cfg = cfgOf(activation.function);
             Constants before;
-            for (Typed::Edge edge : cfg.incomingEdges(merge->block)) {
-                if (edge.from >= merge->block || isRuledOut(activation, function, cfg, edge))
+            for (Typed::Edge edge : cfg.incomingEdges(block)) {
+                if (!cfg.isReachable(edge.from) || isOffTheWayFollowed(activation, block, edge))
                     continue;
-                Typed::IncomingValue incoming = incomingValueOf(function, edge, merge->index);
-                if (incoming.kind != Typed::IncomingValue::Kind::Argument || !addAll(before, textsBuiltUpTo(activation, function, incoming.argument, ValueID())))
+                if (cfg.reversePostOrderIndex(edge.from) >= cfg.reversePostOrderIndex(block) && !liesInFrontOfHeaderFollowed(activation, block))
+                    continue;
+                if (isRuledOut(activation, function, cfg, edge))
+                    continue;
+                ValueID arriving = builder;
+                if (arrivesAsParameter) {
+                    Typed::IncomingValue incoming = incomingValueOf(function, edge, merge->index);
+                    if (incoming.kind != Typed::IncomingValue::Kind::Argument)
+                        return { };
+                    arriving = incoming.argument;
+                }
+                if (!addAll(before, textsWhereEdgeBegins(activation, function, arriving, edge, block, remembered)))
                     return { };
             }
             parts.append(WTF::move(before));
-        } else if (function.at(builder).opcode == Typed::Opcode::StringBuilderBegin) {
-            for (const Typed::Block& block : function.blocks) {
-                if (block.values.contains(builder))
-                    blockOfBuilder = &block;
-            }
         }
-        if (!blockOfBuilder)
-            return { };
+        Constants texts = textsAppendedIn(activation, function, builder, block, end, WTF::move(parts));
+        if (!end)
+            remembered.insert_or_assign(std::pair { builder, block }, texts);
+        return texts;
+    }
 
-        for (ValueID id : blockOfBuilder->values) {
+    // A block that both the way into a loop and the way round it pass. The way round comes to it from below.
+    bool liesInFrontOfHeaderFollowed(const Activation& activation, Typed::BlockID block) const
+    {
+        return m_loopsFollowed.containsIf([&](const LoopFollowed& followed) {
+            return followed.part == PartOfLoop::Turn && followed.call == activation.call && followed.function == activation.function && followed.loop->turn.get(block.index()) && followed.loop->wayIn.get(block.index());
+        });
+    }
+
+    // What the builder holds where the edge leaves its block. `to` is the block that the edge leads to.
+    Constants textsWhereEdgeBegins(const Activation& activation, const Typed::Function& function, ValueID builder, Typed::Edge edge, Typed::BlockID to, TextsWhereBlocksEnd& remembered)
+    {
+        if (const Loop* loop = loopTestedAt(activation.function, function, edge.from); loop && !loop->turn.get(to.index())) {
+            if (std::optional<Constants> texts = textsBehindLoop(activation, function, builder, *loop))
+                return WTF::move(*texts);
+        }
+        return textsBuiltIn(activation, function, builder, edge.from, ValueID(), remembered);
+    }
+
+    // `parts` is what the builder holds where the block begins. The answer is what it holds in front of `end`, and without an end where the block ends.
+    Constants textsAppendedIn(const Activation& activation, const Typed::Function& function, ValueID builder, Typed::BlockID block, ValueID end, Vector<Constants, 8>&& parts)
+    {
+        for (ValueID id : function.at(block).values) {
             const Typed::Value& value = function.at(id);
             if (id == builder || !Typed::OperandPosition::builder(value.opcode) || value.builderOperand() != builder)
                 continue;
@@ -819,6 +1542,7 @@ private:
                 parts.append(Constants { Constant { Typed::KnownValue::string(value.string()) } });
                 break;
             case Typed::Opcode::StringBuilderAppendString:
+            case Typed::Opcode::StringBuilderAppendValue:
                 parts.append(evaluate(activation, value.valueOperand()));
                 break;
             default:
@@ -931,13 +1655,278 @@ private:
                 for (uint32_t index = 0; index < parameters.size(); ++index)
                     result.append(BlockParameter { parameters[index], Typed::BlockID(block), index });
             }
-            AOT::stableSort(result, { }, &BlockParameter::parameter);
+            AOT::stableSortInLine(result, { }, &BlockParameter::parameter);
             return result;
         }).iterator->value;
         auto found = std::ranges::lower_bound(sortedParameters, parameter, { }, &BlockParameter::parameter);
         if (found == sortedParameters.end() || found->parameter != parameter)
             return std::nullopt;
         return *found;
+    }
+
+    static constexpr Typed::OpcodeSet testsOfCounters { Typed::Opcode::Less, Typed::Opcode::LessEq, Typed::Opcode::Greater, Typed::Opcode::GreaterEq };
+
+    const Loop* loopTestedAt(FunctionID id, const Typed::Function& function, Typed::BlockID header)
+    {
+        const Typed::CFG& cfg = cfgOf(id);
+        const Typed::Block& block = function.at(header);
+        const Typed::Terminator& terminator = block.terminator;
+        if (!cfg.hasCycle() || (terminator.kind != Typed::TerminatorKind::TestAndBranch && terminator.kind != Typed::TerminatorKind::Branch) || terminator.targets.size() != 2)
+            return nullptr;
+        const Typed::Value& test = function.at(terminator.conditionOperand());
+        if (!testsOfCounters.contains(test.opcode))
+            return nullptr;
+        size_t testedParameter = block.parameters.find(throughChecks(function, test.leftOperand()));
+        if (testedParameter == notFound)
+            testedParameter = block.parameters.find(throughChecks(function, test.rightOperand()));
+        if (testedParameter == notFound)
+            return nullptr;
+        return m_loops.ensure(static_cast<uint64_t>(id.index()) << 32 | header.index(), [&]() -> std::unique_ptr<Loop> {
+            BitVector atHeader(function.blocks.size());
+            atHeader.set(header.index());
+            BitVector comesBack(function.blocks.size());
+            Vector<Typed::BlockID, 16> worklist { header };
+            while (!worklist.isEmpty()) {
+                for (Typed::BlockID before : cfg.predecessors(worklist.takeLast())) {
+                    if (before != header && cfg.isReachable(before) && !comesBack.set(before.index()))
+                        worklist.append(before);
+                }
+            }
+            auto loop = makeUniqueWithoutFastMallocCheck<Loop>();
+            loop->header = header;
+            loop->testedParameter = static_cast<uint32_t>(testedParameter);
+            unsigned targetsThatStay = 0;
+            for (uint32_t index = 0; index < 2; ++index) {
+                Typed::BlockID target = terminator.targets[index].block;
+                if (target != header && !comesBack.get(target.index()))
+                    continue;
+                ++targetsThatStay;
+                loop->targetThatStays = index;
+                if (target != header)
+                    loop->turn = cfg.blocksReachableFrom(target, atHeader);
+            }
+            if (targetsThatStay != 1)
+                return nullptr;
+            loop->turn.ensureSize(function.blocks.size());
+            loop->turn.filter(comesBack);
+            for (size_t index : loop->turn) {
+                for (Typed::BlockID next : cfg.successors(Typed::BlockID(index)))
+                    loop->isLeftAtHeaderAlone &= next == header || loop->turn.get(next.index()) || Typed::wayOutOf(function.at(next).terminator.kind) == Typed::WayOut::Abnormal;
+            }
+            loop->turn.set(header.index());
+            loop->wayIn = cfg.blocksReachableFrom(Typed::entryBlock, atHeader);
+            return loop;
+        }).iterator->value.get();
+    }
+
+    // evaluate() has put the parameter itself on top of the values that are being walked. Below it lies whoever reads it.
+    bool isReadInTurn(const Activation& activation, const Typed::Function& function, const Loop& loop)
+    {
+        if (m_active.size() < 2)
+            return !activation.call && activation.function == m_subject.function && loop.turn.get(m_subject.block.index());
+        auto [call, reader, value] = m_active[m_active.size() - 2];
+        if (call != activation.call || reader != activation.function)
+            return false;
+        if (std::optional<BlockParameter> merge = findMerge(reader, function, value))
+            return loop.turn.get(merge->block.index());
+        uint64_t place = placesIn(reader)[value.index()];
+        return place != notListed && loop.turn.get(blockAt(reader, place).index());
+    }
+
+    // It is read along the part that is followed, and holds for that part alone.
+    bool isDefinedInLoopFollowed(const Activation& activation, const Typed::Function& function, ValueID id, size_t firstLoop = 0)
+    {
+        Typed::BlockID block;
+        for (const LoopFollowed& followed : m_loopsFollowed.span().subspan(std::min(firstLoop, m_loopsFollowed.size()))) {
+            if (followed.call != activation.call || followed.function != activation.function)
+                continue;
+            if (!block) {
+                std::optional<BlockParameter> merge = findMerge(activation.function, function, id);
+                uint64_t place = placesIn(activation.function)[id.index()];
+                if (!merge && place == notListed)
+                    return false;
+                block = merge ? merge->block : blockAt(activation.function, place);
+            }
+            if (followed.loop->turn.get(block.index()))
+                return true;
+        }
+        return false;
+    }
+
+    // While a loop is followed, what arrives at a block of it comes along the part that is followed.
+    bool isOffTheWayFollowed(const Activation& activation, Typed::BlockID block, Typed::Edge edge) const
+    {
+        return m_loopsFollowed.containsIf([&](const LoopFollowed& followed) {
+            if (followed.call != activation.call || followed.function != activation.function || !followed.loop->turn.get(block.index()))
+                return false;
+            return !(followed.part == PartOfLoop::WayIn ? followed.loop->wayIn : followed.loop->turn).get(edge.from.index());
+        });
+    }
+
+    struct ValuesAtHeader {
+        Constants values;
+        bool sawEverything { false };
+    };
+
+    // Of all parameters of the header, or of one alone.
+    Vector<ValuesAtHeader, 4> valuesArrivingAtHeader(const Activation& activation, const Typed::Function& function, const Loop& loop, PartOfLoop part, std::optional<uint32_t> only = std::nullopt)
+    {
+        beginPartOfLoop(activation, loop, part);
+        Vector<ValuesAtHeader, 4> arriving(function.at(loop.header).parameters.size());
+        for (uint32_t index = only.value_or(0); index < (only ? *only + 1 : arriving.size()); ++index) {
+            bool sawEverythingBefore = std::exchange(m_sawEverything, true);
+            for (Typed::Edge edge : cfgOf(activation.function).incomingEdges(loop.header)) {
+                if (isOffTheWayFollowed(activation, loop.header, edge))
+                    continue;
+                Typed::IncomingValue incoming = incomingValueOf(function, edge, index);
+                if (!addAll(arriving[index].values, incoming.kind == Typed::IncomingValue::Kind::Argument ? evaluate(activation, incoming.argument) : Constants()))
+                    break;
+            }
+            arriving[index].sawEverything = std::exchange(m_sawEverything, sawEverythingBefore) && !arriving[index].values.isEmpty();
+        }
+        endPartOfLoop();
+        return arriving;
+    }
+
+    // How far the two sides of the test are apart, where both are one number.
+    std::optional<double> distanceTested(const Activation& activation, const Typed::Value& test)
+    {
+        bool sawEverythingBefore = m_sawEverything;
+        Constants left = evaluate(activation, test.leftOperand());
+        Constants right = evaluate(activation, test.rightOperand());
+        m_sawEverything = sawEverythingBefore;
+        if (left.size() != 1 || right.size() != 1 || !left[0].primitive.isNumber() || !right[0].primitive.isNumber())
+            return std::nullopt;
+        return std::abs(left[0].primitive.asNumber() - right[0].primitive.asNumber());
+    }
+
+    NameOfCarried nameOf(const Activation& activation, const Loop& loop, uint32_t carried) { return { callsLeadingTo(activation), activation.function.index(), loop.header.index(), carried }; }
+
+    // A loop over a list that the walk knows hands a value from row to row: the value of one turn comes of the value of the turn before and of that turn's row. Each turn is walked as any
+    // other code is, with the parameters of the header known, and the test of the header says which pass of it is the last. `atHeader` is told at each pass whether the loop goes on, and
+    // answers whether it can still tell what it is after. `carried` names that among all that the loop hands on.
+    std::optional<Vector<ValuesAtHeader, 4>> followLoop(const Activation& activation, const Typed::Function& function, const Loop& loop, uint32_t carried, NOESCAPE const Invocable<bool(bool goesOn)> auto& atHeader)
+    {
+        bool isBeingFollowed = m_loopsFollowed.containsIf([&](const LoopFollowed& followed) {
+            return followed.loop == &loop && followed.call == activation.call;
+        });
+        NameOfCarried name = nameOf(activation, loop, carried);
+        std::set<NameOfCarried>* leftAlone = loopsLeftAlone();
+        if (isBeingFollowed || (leftAlone && leftAlone->contains(name)))
+            return std::nullopt;
+
+        const Typed::Block& header = function.at(loop.header);
+        const Typed::Value& test = function.at(header.terminator.conditionOperand());
+        size_t numberOfValuesInTurnBefore = m_valuesInTurn.size();
+        bool isLeft = false;
+        bool isShortOfBudget = false;
+        std::optional<double> distanceBefore;
+        // Most loops count up to what nobody knows. That shows before anything else that they hand on is looked at.
+        Vector<ValuesAtHeader, 4> arriving = valuesArrivingAtHeader(activation, function, loop, PartOfLoop::WayIn, loop.testedParameter);
+        m_valuesInTurn.append(ValueInTurn { activation.call, { activation.function, header.parameters[loop.testedParameter] }, arriving[loop.testedParameter].values, arriving[loop.testedParameter].sawEverything });
+        bool canAnswerTest = answerOf(activation, function, header.terminator.conditionOperand()) != Typed::KnownBoolean::Unknown;
+        m_valuesInTurn.shrink(numberOfValuesInTurnBefore);
+        if (canAnswerTest)
+            arriving = valuesArrivingAtHeader(activation, function, loop, PartOfLoop::WayIn);
+        std::optional<Split> splitBefore = m_split;
+        while (canAnswerTest && mayFollowAnotherValue()) {
+            m_valuesInTurn.shrink(numberOfValuesInTurnBefore);
+            for (uint32_t index = 0; index < arriving.size(); ++index)
+                m_valuesInTurn.append(ValueInTurn { activation.call, { activation.function, header.parameters[index] }, arriving[index].values, arriving[index].sawEverything });
+
+            Typed::KnownBoolean answer = answerOf(activation, function, header.terminator.conditionOperand());
+            if (answer == Typed::KnownBoolean::Unknown)
+                break;
+            if ((answer == Typed::KnownBoolean::True) == !!loop.targetThatStays) {
+                isLeft = atHeader(false);
+                break;
+            }
+
+            // Two turns say how far a turn gets and what it costs. A loop that the walk cannot go round to its end is left alone.
+            std::optional<double> distance = distanceTested(activation, test);
+            if (!distance || (distanceBefore && *distance >= *distanceBefore))
+                break;
+            unsigned valuesFollowedBefore = m_valuesFollowed;
+            if (!atHeader(true))
+                break;
+            arriving = valuesArrivingAtHeader(activation, function, loop, PartOfLoop::Turn);
+            isShortOfBudget = distanceBefore && *distance / (*distanceBefore - *distance) * (m_valuesFollowed - valuesFollowedBefore) > m_budget - std::min(m_budget, m_valuesFollowed);
+            if (isShortOfBudget)
+                break;
+            distanceBefore = distance;
+        }
+        m_valuesInTurn.shrink(numberOfValuesInTurnBefore);
+        // The choice of an object in one turn is no choice for the others.
+        m_split = WTF::move(splitBefore);
+        if (isLeft) {
+            m_sawEverything &= loop.isLeftAtHeaderAlone;
+            return arriving;
+        }
+        // Another walk may come here with more left to spend.
+        if (leftAlone && !isShortOfBudget && m_valuesFollowed <= m_budget)
+            leftAlone->insert(name);
+        return std::nullopt;
+    }
+
+    // What a parameter of the header holds where the loop has been left.
+    std::optional<Constants> valuesBehindLoop(const Activation& activation, const Typed::Function& function, const Loop& loop, uint32_t asked)
+    {
+        std::optional<Vector<ValuesAtHeader, 4>> arriving = followLoop(activation, function, loop, asked, [&](bool) {
+            return true;
+        });
+        if (!arriving)
+            return std::nullopt;
+        if (arriving->at(asked).values.isEmpty()) {
+            if (std::set<NameOfCarried>* leftAlone = loopsLeftAlone())
+                leftAlone->insert(nameOf(activation, loop, asked));
+            return std::nullopt;
+        }
+        m_sawEverything &= arriving->at(asked).sawEverything;
+        return WTF::move(arriving->at(asked).values);
+    }
+
+    // What a builder that was begun in front of the loop holds where the loop has been left: each turn appends to what the turn before has left.
+    std::optional<Constants> textsBehindLoop(const Activation& activation, const Typed::Function& function, ValueID builder, const Loop& loop)
+    {
+        std::optional<BlockParameter> merge = findMerge(activation.function, function, builder);
+        if (merge && loop.turn.get(merge->block.index()))
+            return std::nullopt;
+        bool isUsedInLoop = false;
+        for (size_t block : loop.turn) {
+            isUsedInLoop |= std::ranges::any_of(function.at(Typed::BlockID(block)).values, [&](ValueID id) {
+                return Typed::OperandPosition::builder(function.at(id).opcode) && function.at(id).builderOperand() == builder;
+            });
+        }
+        if (!isUsedInLoop)
+            return std::nullopt;
+        const Typed::CFG& cfg = cfgOf(activation.function);
+        auto textsArrivingAlong = [&](PartOfLoop part, TextsWhereBlocksEnd& remembered) {
+            beginPartOfLoop(activation, loop, part);
+            Constants texts;
+            for (Typed::Edge edge : cfg.incomingEdges(loop.header)) {
+                if (!cfg.isReachable(edge.from) || isOffTheWayFollowed(activation, loop.header, edge))
+                    continue;
+                if (!addAll(texts, textsWhereEdgeBegins(activation, function, builder, edge, loop.header, remembered)))
+                    break;
+            }
+            endPartOfLoop();
+            return texts;
+        };
+        TextsWhereBlocksEnd rememberedOnWayIn;
+        Constants texts = textsArrivingAlong(PartOfLoop::WayIn, rememberedOnWayIn);
+        constexpr uint32_t firstNameOfBuilder = 1u << 31;
+        std::optional<Vector<ValuesAtHeader, 4>> arriving = followLoop(activation, function, loop, firstNameOfBuilder | builder.index(), [&](bool goesOn) {
+            texts = textsAppendedIn(activation, function, builder, loop.header, ValueID(), { WTF::move(texts) });
+            if (goesOn && !texts.isEmpty()) {
+                TextsWhereBlocksEnd rememberedInTurn;
+                rememberedInTurn.emplace(std::pair { builder, loop.header }, WTF::move(texts));
+                texts = textsArrivingAlong(PartOfLoop::Turn, rememberedInTurn);
+            }
+            return !texts.isEmpty();
+        });
+        if (!arriving)
+            return std::nullopt;
+        return texts;
     }
 
     Constants valuesArrivingAt(const Activation& activation, const Typed::Function& function, ValueID parameter)
@@ -947,14 +1936,25 @@ private:
             return { };
         if (location->block == Typed::entryBlock)
             return argumentsFor(activation, function, location->index);
+        if (const Loop* loop = loopTestedAt(activation.function, function, location->block); loop && !isReadInTurn(activation, function, *loop)) {
+            if (std::optional<Constants> values = valuesBehindLoop(activation, function, *loop, location->index))
+                return WTF::move(*values);
+        }
         const Typed::CFG& cfg = cfgOf(activation.function);
         Constants values;
         for (Typed::Edge edge : cfg.incomingEdges(location->block)) {
-            if (isRuledOut(activation, function, cfg, edge))
+            if (isOffTheWayFollowed(activation, location->block, edge) || isRuledOut(activation, function, cfg, edge))
                 continue;
             Typed::IncomingValue incoming = incomingValueOf(function, edge, location->index);
             if (incoming.kind == Typed::IncomingValue::Kind::Argument) {
                 if (!addAll(values, evaluate(activation, incoming.argument)))
+                    break;
+                continue;
+            }
+            // Where the inline form of a built-in is done, it has answered what the built-in answers.
+            const Typed::Terminator& terminator = function.at(edge.from).terminator;
+            if (terminator.kind == Typed::TerminatorKind::TryCallInline && !edge.isHandlerEdge() && !edge.targetIndex && !incoming.result.resultIndex) {
+                if (!addAll(values, answersOfBuiltin(activation, ValueID(), builtinCallOf(m_program, terminator))))
                     break;
                 continue;
             }
@@ -978,6 +1978,8 @@ private:
     {
         if (constant.regExp || constant.isObjectOrArray())
             return type.withOnlyObjects().isNever() ? Typed::KnownBoolean::False : Typed::KnownBoolean::Unknown;
+        if (constant.unnamed)
+            return evaluateTypeTest(m_program, m_program.typeOf(m_program.at(constant.function), constant.unnamed), type);
         return constant.primitive.isKnown() && !constant.primitive.isObject() ? evaluateTypeTest(m_program, constant.primitive, type) : Typed::KnownBoolean::Unknown;
     }
 
@@ -1054,10 +2056,16 @@ private:
                 return { };
             return evaluate(*activation.caller, arguments[index]);
         }
-        // Other operations may enter the function too.
-        m_sawEverything = false;
+        // Other operations may enter the function too, unless the call graph has found that nothing but direct calls names it.
+        m_sawEverything &= m_callGraph.entrySet(activation.function) == Typed::EntrySet::DirectCallers;
         Constants values;
         for (const DirectCall& call : std::ranges::equal_range(m_directCalls, activation.function, { }, &DirectCall::callee)) {
+            // Nothing can be followed any more, and a function may have thousands of callers.
+            if (m_valuesFollowed >= m_budget) {
+                ++m_valuesFollowed;
+                ++m_walksCutShort;
+                break;
+            }
             std::span<const ValueID> arguments = m_program.at(call.caller).at(call.call).argumentsOperands();
             if (numberOfParameters == arguments.size() && !addAll(values, evaluate(Activation { call.caller }, arguments[index])))
                 return { };
@@ -1270,7 +2278,7 @@ private:
                 continue;
             for (BuiltinOverloadID overload : table.overloadIDsOf(table.canonicalID(member))) {
                 if (table.at(overload).mode == BuiltinCallMode::Call)
-                    return answersOfBuiltin(activation, call, Typed::BuiltinCall { overload, Typed::BuiltinCallForm::Whole, 0, receiver, call.argumentsOperands() });
+                    return answersOfBuiltin(activation, idOf(activation.function, call), Typed::BuiltinCall { overload, Typed::BuiltinCallForm::Whole, 0, receiver, call.argumentsOperands() });
             }
         }
         return { };
@@ -1337,12 +2345,56 @@ private:
         return isWithinLimits;
     }
 
+    struct UseOfClosure {
+        ValueID closure;
+        ValueID use;
+        friend bool operator==(const UseOfClosure&, const UseOfClosure&) = default;
+        friend auto operator<=>(const UseOfClosure&, const UseOfClosure&) = default;
+    };
+
+    // The body of a module makes thousands of closures in hundreds of thousands of values, and the walk asks for the uses of its closures again and again.
+    const Vector<UseOfClosure>& usesOfClosuresIn(FunctionID maker)
+    {
+        std::unique_ptr<Vector<UseOfClosure>>& uses = m_usesOfClosures[maker.index()];
+        if (uses)
+            return *uses;
+        uses = makeUniqueWithoutFastMallocCheck<Vector<UseOfClosure>>();
+        const Typed::Function& function = m_program.at(maker);
+        for (uint32_t index = 0; index < function.values.size(); ++index) {
+            ValueID id(index);
+            const Typed::Value& use = function.at(id);
+            auto note = [&](ValueID operand) {
+                ValueID closure = throughCasts(function, operand);
+                if (function.at(closure).opcode == Typed::Opcode::NewClosure)
+                    uses->append({ closure, id });
+            };
+            if (use.opcode == Typed::Opcode::Call || use.opcode == Typed::Opcode::CallResolved)
+                note(use.calleeOperand());
+            else if (use.opcode == Typed::Opcode::CallDirect) {
+                for (ValueID operand : use.argumentsOperands())
+                    note(operand);
+            }
+            forEachBuiltinCall(use, [&](const Typed::BuiltinCall& call) {
+                if (call.form != Typed::BuiltinCallForm::Whole)
+                    return;
+                for (const BuiltinCallback& callback : m_program.builtins().at(call.overload).flow.callbacks) {
+                    if (ValueID callee = call.operandAt(callback.callee))
+                        note(callee);
+                }
+            });
+        }
+        AOT::sort(*uses);
+        uses->shrink(std::ranges::unique(*uses).begin() - uses->begin());
+        return *uses;
+    }
+
     bool addArgumentsGivenToClosures(Constants& values, FunctionID callee, uint32_t parameter)
     {
         for (const DirectCall& closure : std::ranges::equal_range(m_closures, sourceOf(callee), { }, &DirectCall::callee)) {
             const Typed::Function& maker = m_program.at(closure.caller);
             Activation inMaker { closure.caller };
-            for (const Typed::Value& use : maker.values) {
+            for (const UseOfClosure& useOfClosure : std::ranges::equal_range(usesOfClosuresIn(closure.caller), closure.call, { }, &UseOfClosure::closure)) {
+                const Typed::Value& use = maker.at(useOfClosure.use);
                 if (callsValue(maker, use, closure.call)) {
                     std::span<const ValueID> arguments = use.argumentsOperands();
                     if (!addAll(values, evaluate(inMaker, parameter < arguments.size() ? arguments[parameter] : ValueID())))
@@ -1471,7 +2523,8 @@ private:
         return summary.sourceIsPattern ? literal.pattern : m_strings.intern(StringView(summary.source));
     }
 
-    Constants answersOfBuiltin(const Activation& activation, const Typed::Value& value, const Typed::BuiltinCall& call)
+    // `id` is the operation that calls. A terminator that calls has none.
+    Constants answersOfBuiltin(const Activation& activation, ValueID id, const Typed::BuiltinCall& call)
     {
         const BuiltinTable& table = m_program.builtins();
         const BuiltinOverload& overload = table.at(call.overload);
@@ -1481,7 +2534,7 @@ private:
         if (overload.mode == BuiltinCallMode::Get && callee == Builtins::ArrayPrototypeLength) {
             Constants lengths;
             for (const Constant& receiver : evaluate(activation, call.receiver)) {
-                size_t size = receiver.isObjectOrArray() ? sizeOf(receiver) : notFound;
+                size_t size = receiver.hasElements() ? sizeOf(receiver) : notFound;
                 if (size == notFound)
                     m_sawEverything = false;
                 else if (!add(lengths, Constant { Typed::KnownValue::number(static_cast<double>(size)) }))
@@ -1501,7 +2554,7 @@ private:
         if (callee == Builtins::RegExp)
             return createdBy(activation, call);
         if (overload.mode == BuiltinCallMode::Call && callee == Builtins::ArrayPrototypeMap && !call.arguments.empty())
-            return { literalIn(activation, ValueID(static_cast<uint32_t>(&value - m_program.at(activation.function).values.span().data()))) };
+            return id ? Constants { literalIn(activation, id) } : Constants();
         if (overload.mode == BuiltinCallMode::Call && callee == Builtins::ObjectFreeze && call.arguments.size() == 1)
             return evaluate(activation, call.arguments[0]);
         if (overload.mode == BuiltinCallMode::Call && callee == Builtins::ArrayPrototypeJoin && call.arguments.size() <= 1) {
@@ -1510,7 +2563,8 @@ private:
         }
         if (overload.mode == BuiltinCallMode::Call && callee == Builtins::StringRaw && !call.arguments.empty())
             return rawTextsOf(activation, call.arguments);
-        bool dependsOnOperandsAlone = table.at(callee).flags.contains(BuiltinFlag::IsDeterministic) || callee == Builtins::NumberPrototypeToString;
+        // split() makes a new list each time. The texts in it depend on the operands alone.
+        bool dependsOnOperandsAlone = table.at(callee).flags.contains(BuiltinFlag::IsDeterministic) || callee == Builtins::NumberPrototypeToString || callee == Builtins::StringPrototypeSplit;
         if (overload.mode != BuiltinCallMode::Call || !dependsOnOperandsAlone || !call.receiver)
             return { };
 
@@ -1647,6 +2701,18 @@ private:
         return created;
     }
 
+    // The texts together are no longer than the operands they were cut from, which are within the limit.
+    Constant listOf(std::span<const String> texts)
+    {
+        Vector<StringID> list(texts.size(), [&](size_t index) {
+            return m_strings.intern(StringView(texts[index]));
+        });
+        auto [known, isNew] = m_placesOfListsOfTexts.try_emplace(std::vector<StringID>(list.begin(), list.end()), static_cast<uint32_t>(m_listsOfTexts.size() + 1));
+        if (isNew)
+            m_listsOfTexts.append(WTF::move(list));
+        return Constant { .listOfTexts = known->second };
+    }
+
     Constants answersOf(BuiltinID callee, Vector<Constants, 4>&& operands)
     {
         Constants answers;
@@ -1670,9 +2736,12 @@ private:
                 return std::nullopt;
             if (!m_scratchRealm)
                 m_scratchRealm.emplace();
-            std::optional<Typed::ScratchRealm::Answer> answer = m_scratchRealm->call(m_program, callee, choice[0].primitive, arguments.span().subspan(1));
+            Vector<String> listOfTexts;
+            std::optional<Typed::ScratchRealm::Answer> answer = m_scratchRealm->call(m_program, callee, choice[0].primitive, arguments.span().subspan(1), &listOfTexts);
             if (!answer)
                 return std::nullopt;
+            if (answer->text.isNull() && !answer->primitive.isKnown())
+                return listOf(listOfTexts.span());
             if (answer->text.isNull())
                 return Constant { answer->primitive };
             if (m_context.exceeds(LimitID::RegExpCandidateTextLength, answer->text.sizeInBytes(), m_subject))
@@ -1682,11 +2751,28 @@ private:
         return answers;
     }
 
+    Constants sumsOrDifferencesOf(const Activation&, const Typed::Function& function, const Typed::Value& value, std::array<Constants, 2>&& operands)
+    {
+        Constants numbers;
+        addAnswerForEachChoice(numbers, operands, [&](std::span<const Constant> choice) -> std::optional<Constant> {
+            if (!choice[0].primitive.isNumber() || !choice[1].primitive.isNumber())
+                return std::nullopt;
+            Typed::KnownValue number = Typed::evaluateOperation(m_program, function, value, { choice[0].primitive, choice[1].primitive });
+            return number.isNumber() ? std::optional(Constant { number }) : std::nullopt;
+        });
+        return numbers;
+    }
+
     Constants concatenate(const Activation& activation, const Typed::Value& value)
     {
         Vector<Constants, 8> operands;
         for (uint32_t index = 0; index < value.numberOfOperands(); ++index)
             operands.append(evaluate(activation, value.operand(index)));
+        auto holdsNumbers = [](const Constants& constants) {
+            return !constants.isEmpty() && std::ranges::all_of(constants, [](const Constant& constant) { return constant.primitive.isNumber(); });
+        };
+        if (value.opcode == Typed::Opcode::Add && operands.size() == 2 && holdsNumbers(operands[0]) && holdsNumbers(operands[1]))
+            return sumsOrDifferencesOf(activation, m_program.at(activation.function), value, { WTF::move(operands[0]), WTF::move(operands[1]) });
 
         Constants texts;
         addAnswerForEachChoice(texts, operands.span(), [&](std::span<const Constant> choice) -> std::optional<Constant> {
@@ -1708,18 +2794,13 @@ private:
     }
 
     const Typed::Program& m_program;
+    const Typed::CallGraph& m_callGraph;
     Typed::StringArena& m_strings;
     BuildContext& m_context;
     // The walk summarizes a RegExp that it has put together itself, at whatever depth it stands.
     WTF::StackCheck m_stackCheck { Thread::currentSingleton().stack(), regExpCompilerStackSize + 16 * KB };
     Subject m_subject;
     std::map<std::pair<uint32_t, const Typed::Value*>, uint32_t> m_chainsOfCalls;
-    struct Remembered {
-        Constants values;
-        bool sawEverything;
-        std::optional<Split> split;
-    };
-
     unsigned m_valuesFollowed { 0 };
     unsigned m_walksCutShort { 0 };
     unsigned m_worlds { 0 };
@@ -1727,9 +2808,17 @@ private:
     bool m_sawEverything { true };
     std::optional<Split> m_split;
     Vector<std::pair<ValueKey, Constant>, 4> m_bindings;
+    Vector<LoopFollowed, 2> m_loopsFollowed;
+    Vector<ValueInTurn, 8> m_valuesInTurn;
+    Vector<std::unique_ptr<MemoryOfChoice>, 2> m_memoriesOfChoices;
+    HashMap<uint64_t, std::unique_ptr<Loop>, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_loops;
+    std::set<NameOfCarried> m_loopsLeftAlone;
+    Vector<Vector<StringID>> m_listsOfTexts;
+    std::map<std::vector<StringID>, uint32_t> m_placesOfListsOfTexts;
     Vector<Store> m_stores;
     Vector<DirectCall> m_directCalls;
     Vector<DirectCall> m_closures;
+    Vector<std::unique_ptr<Vector<UseOfClosure>>> m_usesOfClosures;
     Vector<FunctionID, 2> m_functionsOfMap;
     HashMap<uint64_t, Vector<ValueID>, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_longLiterals;
     std::optional<Typed::ScratchRealm> m_scratchRealm;
@@ -1737,6 +2826,12 @@ private:
     UncheckedKeyHashMap<uint32_t, ValuesOfVariable, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_variables;
     HashMap<uint32_t, std::unique_ptr<Typed::CFG>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_cfgs;
     HashMap<uint32_t, Vector<BlockParameter>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_blockParameters;
+    HashMap<uint32_t, Vector<uint64_t>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_places;
+    bool m_hasFoundWritesAndHoldings { false };
+    Vector<WritingOperation> m_writingOperations;
+    Vector<Holding> m_holdings;
+    std::map<std::tuple<uint32_t, uint32_t, const Typed::Value*>, std::unique_ptr<Contents>> m_contents;
+    Contents m_contentsBeingFound;
 };
 
 } // anonymous namespace
@@ -1825,7 +2920,7 @@ static void addCandidates(const Typed::Program& program, BuildContext& context, 
     StringView text = program.strings.viewOf(pattern, buffer);
     for (OptionSet<Yarr::Flags> flagSet : flagSets) {
         const RegExpSummary& summary = context.regExpSummaries().summaryOf(pattern, flagSet, text);
-        if (summary.isValid() && summary.atom.isNull())
+        if (summary.isValid())
             found.append(FoundRegExp { origin, pattern, flagSet, site });
     }
 }
@@ -1862,12 +2957,12 @@ static void collectCandidates(CollectionInputs& inputs, const Typed::BuiltinCall
     inputs.callsWithUnknownText.append(CallWithUnknownText { site, block, call.arguments[0], call.arguments.size() > 1 ? call.arguments[1] : ValueID(), WTF::move(flagSets), flags.isComplete });
 }
 
-static void addCandidatesFromConstants(const Typed::Program& program, Typed::StringArena& strings, BuildContext& context, Vector<CallWithUnknownText>&& calls, Vector<FoundRegExp>& found)
+static void addCandidatesFromConstants(const Typed::Program& program, const Typed::CallGraph& callGraph, Typed::StringArena& strings, BuildContext& context, Vector<CallWithUnknownText>&& calls, Vector<FoundRegExp>& found)
 {
     if (calls.isEmpty())
         return;
     AOT::sort(calls, { }, &CallWithUnknownText::site);
-    TextsFromConstants constants(program, strings, context);
+    TextsFromConstants constants(program, callGraph, strings, context);
     for (const CallWithUnknownText& call : calls) {
         TextsFromConstants::Patterns known = constants.patternsOf(call);
         RegExpRequestOrigin origin = known.sawEveryText || known.patterns.size() == 1 ? RegExpRequestOrigin::Evaluated : RegExpRequestOrigin::Candidate;
@@ -1944,7 +3039,7 @@ static void internMetadataStrings(RegExpRequest& request, const Typed::Program& 
     });
 }
 
-RegExpRequests collectRegExpRequests(const Typed::Program& program, const Typed::FlowResults& flow, Typed::StringArena& strings, BuildContext& context)
+RegExpRequests collectRegExpRequests(const Typed::Program& program, const Typed::FlowResults& flow, const Typed::CallGraph& callGraph, Typed::StringArena& strings, BuildContext& context)
 {
     PhaseTimes times(context, PassID::CollectRegExpLiterals);
     CollectionInputs inputs { program, flow, context };
@@ -1952,7 +3047,7 @@ RegExpRequests collectRegExpRequests(const Typed::Program& program, const Typed:
         collectFromFunction(inputs, FunctionID(index), foundInFunction);
     });
     times.didFinish("collect from functions"_s);
-    addCandidatesFromConstants(program, strings, context, WTF::move(inputs.callsWithUnknownText), found);
+    addCandidatesFromConstants(program, callGraph, strings, context, WTF::move(inputs.callsWithUnknownText), found);
     times.didFinish("addCandidatesFromConstants"_s);
     parallelSort(context.parallelLoops(), found.mutableSpan(), [](const FoundRegExp& a, const FoundRegExp& b) {
         return std::tuple { a.origin, a.pattern, a.flags.toRaw(), a.site } < std::tuple { b.origin, b.pattern, b.flags.toRaw(), b.site };

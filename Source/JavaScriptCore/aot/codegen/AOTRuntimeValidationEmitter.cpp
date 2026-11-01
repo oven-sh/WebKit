@@ -8,7 +8,9 @@
 
 #if ENABLE(AOT)
 
+#include "AOTAccessEmitter.h"
 #include "AOTBarrierEmitter.h"
+#include "AOTClosureTestEmitter.h"
 #include "AOTConversionEmitter.h"
 #include "AOTEffectSummaries.h"
 #include "AOTEffectsOfOperands.h"
@@ -17,10 +19,20 @@
 #include "AOTRepresentation.h"
 #include "AOTRepresentationRules.h"
 #include "AOTResultRules.h"
+#include "AOTStubRegisters.h"
+#include "AOTTypeTestEmitter.h"
+#include "AOTTypeTestPlan.h"
 #include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
+#include "AOTWrittenFunction.h"
+#include "AllowMacroScratchRegisterUsage.h"
+#include "B3CheckValue.h"
+#include "B3StackmapGenerationParams.h"
+#include "CCallHelpers.h"
 #include <algorithm>
 #include <utility>
+#include <wtf/SetForScope.h>
+#include <wtf/SharedTask.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -30,8 +42,9 @@ RuntimeValidationEmitter::RuntimeValidationEmitter(CodeGenerator& generator)
 {
 }
 
-void RuntimeValidationEmitter::validateParameters(BlockID, const Block& block)
+void RuntimeValidationEmitter::validateParameters(BlockID id, const Block& block)
 {
+    inheritCheckedClassProofs(id);
     for (ValueID parameter : block.parameters) {
         if (hasRegister(representationOf(parameter)))
             checkValue(parameter, get(parameter));
@@ -50,6 +63,7 @@ void RuntimeValidationEmitter::inheritCheckedClassProofs(BlockID block)
 {
     if (block == m_blockOfCheckedClassProofs)
         return;
+    m_passedTypeTests.shrink(0);
     if (m_checkedClassProofsAtEnd.isEmpty())
         m_checkedClassProofsAtEnd.grow(analyses().cfg().numNodes());
     if (m_blockOfCheckedClassProofs)
@@ -73,7 +87,7 @@ void RuntimeValidationEmitter::validateOperandsOf(const OperationContext& contex
         }
         if (operand != ownedValue && generator().isValidatedWhereLookedAt(operand) && user.operandUses(operandIndex).contains(OperandUse::Inspects))
             checkIsSpecified(operand);
-        if (operand == ownedValue || generator().isValidatedWhereLookedAt(operand) || isDeferredClosure(m_function, operand))
+        if (operand == ownedValue || generator().isValidatedWhereLookedAt(operand) || isDeferredClosure(m_function, operand) || emitter<AccessEmitter>().leavesKeyToRead(operand))
             return;
         // The bits of a value are those it was made with, and they were looked at there. What its type says about the heap may have changed since.
         const Type& type = typeOf(operand);
@@ -86,12 +100,15 @@ void RuntimeValidationEmitter::validateOperandsOf(const OperationContext& contex
         }
         if (type.environment && representationOf(operand) == Representation::Cell)
             checkIsNotReleased(context, in<CellPointer>(operand), type.environment);
-        checkRetainedOperand(context, user, operand, operandIndex);
-        checkIsNoFrameArray(context, user, operand, operandIndex);
+        bool mustNotBeFrameArray = refusesFrameArray(user, operand, operandIndex);
+        if (!checkRetainedOperand(context, user, operand, operandIndex, mustNotBeFrameArray) && mustNotBeFrameArray)
+            checkIsNotFrameCell(context, get(operand), std::nullopt, filterOfRefusedFrameArray(user));
     });
     Effects effects = context.effects().onAnyEdge();
-    if (effects.mayRunOtherCode() || !effects.writes.containsOnly(heapsUnrelatedToClassProofs))
+    if (effects.mayRunOtherCode() || !effects.writes.containsOnly(heapsUnrelatedToClassProofs)) {
         m_checkedClassProofs.clear();
+        m_passedTypeTests.shrink(0);
+    }
 }
 
 void RuntimeValidationEmitter::validateOperands(const OperationContext& context)
@@ -125,7 +142,7 @@ void RuntimeValidationEmitter::checkAssumedType(const ValueContext& value)
     const Type& type = m_program.at(value->provenType());
     if (type.isNever() || !hasTestableBits(source) || type.opaque || type.environment || !type.functions.isEmpty())
         return;
-    checkHasType(value.id(), get(source), type, ValidationFailureKind::AssumedType);
+    checkHasType(value.id(), get(source), value->provenType(), ValidationFailureKind::AssumedType, source);
 }
 
 // The shape comes first: the slot of an object that is no receiver holds anything.
@@ -141,11 +158,17 @@ void RuntimeValidationEmitter::validateSlotAccess(const OperationContext& contex
 
 void RuntimeValidationEmitter::checkGuardIsAvailable(const OperationContext& context, ValueID guard, uint32_t operandIndex)
 {
-    Use::Kind kind = context.valueID() ? Use::Kind::Operand : Use::Kind::TerminatorOperand;
-    if (analyses().guardStateAt(guard, Use { kind, context.block(), context.valueID(), operandIndex, 0 }) != GuardState::Unavailable || analyses().escape().gaveUp())
+    Use use { context.valueID() ? Use::Kind::Operand : Use::Kind::TerminatorOperand, context.block(), context.valueID(), operandIndex, 0 };
+    if (analyses().guardStateAt(guard, use) != GuardState::Unavailable || analyses().escape().gaveUp())
         return;
     if (context.valueID() && findReadsKeptForValidation(m_function).get(context.valueID().index()))
         return;
+    // The passes removed a test based on the summaries of the time. Since then a call may have replaced operations in a callee's own body, and its summary may cover more than they did.
+    if (inputs().effectsByOperandTypes) {
+        FunctionAnalyses finer(AnalysisContext { build(), m_program, &inputs().flow, inputs().effectsByOperandTypes, m_id }, m_function);
+        if (finer.guardStateAt(guard, use) != GuardState::Unavailable)
+            return;
+    }
     fail(context, InternalErrorKind::GuardNotAvailable);
 }
 
@@ -154,64 +177,67 @@ static bool callsOutlinedBody(const Program& program, const Value& user)
     return user.opcode == Opcode::CallDirect && program.at(user.function()).role == FunctionRole::OutlinedBody;
 }
 
-// Of everything whose type an array fits, only arrays lie in frames in a validating build.
 static bool mayBeArray(const Type& type)
 {
     return type.anyObject || type.findClassPart(BuiltinClasses::Array);
 }
 
-void RuntimeValidationEmitter::checkRetainedOperand(const OperationContext& context, const Value& user, ValueID operand, uint32_t operandIndex)
+// Returns whether the check refuses an array in a frame too.
+bool RuntimeValidationEmitter::checkRetainedOperand(const OperationContext& context, const Value& user, ValueID operand, uint32_t operandIndex, bool refusesFrameArray)
 {
-    // checkIsNoFrameArray() asks more of these.
-    if (callsOutlinedBody(m_program, user) || mayBeArray(typeOf(operand)))
-        return;
+    if (callsOutlinedBody(m_program, user))
+        return false;
+    // Such a function records whatever it was entered through. Of a function object in a frame the list keeps where it lay, and its readers follow nothing outside the cage of the heap: FunctionTables::closureOnHeapOf().
+    if (user.opcode == Opcode::RecordCallee && recordsCalleeOnlyOnceRenamed(m_program, m_id))
+        return false;
+    FrameCellFilter asked = mayBeArray(typeOf(operand)) ? FrameCellFilter::AllButArrays : FrameCellFilter::All;
+    auto checkStaysOutOfUnknownMemory = [&] {
+        if (!mayLeakFramePointer(m_program, &inputs().flow, m_function, user, operandIndex))
+            return false;
+        checkIsNotFrameCell(context, get(operand), std::nullopt, refusesFrameArray ? FrameCellFilter::All : asked);
+        return refusesFrameArray;
+    };
     const OperandInfo& info = operandInfoOf(user.opcode, operandIndex);
-    if (!info.uses.contains(OperandUse::Retains)) {
-        if (effectRuleOf(user.opcode) == EffectRule::Access && mayLeakFramePointer(m_program, &inputs().flow, m_function, user, operandIndex))
-            checkIsNotFrameCell(context, get(operand), std::nullopt);
-        return;
-    }
+    if (!info.uses.contains(OperandUse::Retains))
+        return effectRuleOf(user.opcode) == EffectRule::Access && checkStaysOutOfUnknownMemory();
     switch (info.retainedIn) {
     case RetainedIn::UnknownMemory:
-        if (mayLeakFramePointer(m_program, &inputs().flow, m_function, user, operandIndex))
-            checkIsNotFrameCell(context, get(operand), std::nullopt);
-        return;
+        return checkStaysOutOfUnknownMemory();
     case RetainedIn::Operand: {
         ValueID retainer = user.operand(*info.retainingOperand);
         RELEASE_ASSERT(retainer);
-        checkIsNotFrameCell(context, get(operand), get(retainer));
-        return;
+        checkIsNotFrameCell(context, get(operand), get(retainer), asked);
+        return false;
     }
     case RetainedIn::Result:
-        return;
+        return false;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-void RuntimeValidationEmitter::checkRetainedOperand(const OperationContext& context, const Terminator& user, ValueID operand, uint32_t operandIndex)
+bool RuntimeValidationEmitter::checkRetainedOperand(const OperationContext& context, const Terminator& user, ValueID operand, uint32_t operandIndex, bool)
 {
     // An outlined body is a part of the function that calls it, and may hand back what lies in the frame of that function.
     if (m_function.role == FunctionRole::OutlinedBody || !mayLeakFramePointer(m_program, &inputs().flow, m_function, user, operandIndex))
-        return;
+        return false;
     std::optional<uint32_t> numberOfResults = numberOfResultsOf(m_program, m_function, m_function.at(operand));
     if (!numberOfResults) {
         checkIsNotFrameCell(context, get(operand), std::nullopt);
-        return;
+        return true;
     }
     for (uint32_t index = 0; index < *numberOfResults; ++index)
         checkIsNotFrameCell(context, generator().resultAt(operand, index), std::nullopt);
+    return false;
 }
 
-void RuntimeValidationEmitter::checkIsNoFrameArray(const OperationContext& context, const Value& user, ValueID operand, uint32_t operandIndex)
+bool RuntimeValidationEmitter::refusesFrameArray(const Value& user, ValueID operand, uint32_t operandIndex)
 {
-    if (mayBeArray(typeOf(operand)) && !mayBeGivenFrameArray(m_program, &inputs().flow, m_function, user, operandIndex))
-        checkIsNotFrameCell(context, get(operand), std::nullopt);
+    return mayBeArray(typeOf(operand)) && !mayBeGivenFrameArray(m_program, &inputs().flow, m_function, user, operandIndex);
 }
 
-void RuntimeValidationEmitter::checkIsNoFrameArray(const OperationContext& context, const Terminator& user, ValueID operand, uint32_t)
+bool RuntimeValidationEmitter::refusesFrameArray(const Terminator& user, ValueID operand, uint32_t)
 {
-    if (m_function.role != FunctionRole::OutlinedBody && mayBeArray(typeOf(operand)) && !numberOfResultsOf(m_program, m_function, m_function.at(operand)) && user.kind != TerminatorKind::ReturnCall)
-        checkIsNotFrameCell(context, get(operand), std::nullopt);
+    return m_function.role != FunctionRole::OutlinedBody && mayBeArray(typeOf(operand)) && !numberOfResultsOf(m_program, m_function, m_function.at(operand)) && user.kind != TerminatorKind::ReturnCall;
 }
 
 void RuntimeValidationEmitter::validateResult(const ValueContext& value)
@@ -234,14 +260,16 @@ static constexpr uint64_t bitsOfHeaderThatOnlyTheProgramChanges = ~(uint64_t { 0
     | static_cast<uint64_t>(IndexingTypeLockIsHeld | IndexingTypeLockHasParked) << (JSCell::indexingTypeAndMiscOffset() * 8));
 
 // Something to read where the operand holds no object: the code of the image never changes.
-Pointer RuntimeValidationEmitter::addressOfObjectOrOfCode(Operand operand)
+Pointer RuntimeValidationEmitter::addressOfObjectOrOfCode(Operand operand, ComparedCells compared)
 {
     Pointer code = loadImmutablePointer(AOT_INSTANCE_OFFSET(image.code));
     Integer bits(operand.value);
     Condition isCellOrEmpty = operand.is<CellPointer>() ? boolean(true) : isCell(operand.as<Boxed>());
     Pointer cell = select(logicalAnd(isCellOrEmpty, isNotZero(bits)), Pointer(operand.value), code);
     Word32 type(m_out.load8ZeroExt32(m_out.address(m_heaps.JSCell_header, cell.value(), JSCell::typeInfoTypeOffset())));
-    return select(aboveOrEqual(type, word32(ObjectType)), cell, code);
+    static_assert(DerivedArrayType == ArrayType + 1);
+    Condition isCompared = compared == ComparedCells::Objects ? aboveOrEqual(type, word32(ObjectType)) : belowOrEqual(sub(type, word32(ArrayType)), word32(DerivedArrayType - ArrayType));
+    return select(isCompared, cell, code);
 }
 
 Integer RuntimeValidationEmitter::headerAt(Pointer address)
@@ -255,8 +283,9 @@ Integer RuntimeValidationEmitter::wordBehindHeaderAt(Pointer address)
     return Integer(m_out.load64(m_out.address(m_heaps.JSObject_butterfly, address.value(), JSObject::butterflyOffset())));
 }
 
-// B3 keeps what it has loaded from the header of a cell, and from the word behind it, across a call of which AOTHeaps::mayConvertCells() says no.
-RuntimeValidationEmitter::OperandCells RuntimeValidationEmitter::captureOperandCells(const OperationContext& context)
+// B3 keeps what it loaded from a cell's header, and from the word after it, across a call for which AOTHeaps::mayConvertCells() is false,
+// and the word after an array's header across a call for which AOTHeaps::mayReplaceStorageOfArrays() is false.
+RuntimeValidationEmitter::OperandCells RuntimeValidationEmitter::captureOperandCells(const OperationContext& context, ComparedCells compared)
 {
     OperandCells result;
     if (!context.valueID())
@@ -267,8 +296,8 @@ RuntimeValidationEmitter::OperandCells RuntimeValidationEmitter::captureOperandC
         Operand bits = get(operand);
         if (!bits.is<CellPointer>() && !bits.is<Boxed>())
             return;
-        Pointer address = addressOfObjectOrOfCode(bits);
-        result.append({ context.valueID(), operand, address, headerAt(address), wordBehindHeaderAt(address) });
+        Pointer address = addressOfObjectOrOfCode(bits, compared);
+        result.append({ context.valueID(), operand, address, compared == ComparedCells::Objects ? std::optional<Integer>(headerAt(address)) : std::nullopt, wordBehindHeaderAt(address) });
     });
     return result;
 }
@@ -287,8 +316,9 @@ void RuntimeValidationEmitter::checkCellsWereNotConverted(const OperandCells& be
     forgetsLoads->setGenerator([](CCallHelpers&, const B3::StackmapGenerationParams&) { });
 
     for (const OperandCell& cell : beforeCall) {
-        Condition hasSameHeader = equal(headerAt(cell.address), cell.header);
-        Condition isAsBefore = logicalAnd(hasSameHeader, equal(wordBehindHeaderAt(cell.address), cell.wordBehindHeader));
+        Condition isAsBefore = equal(wordBehindHeaderAt(cell.address), cell.wordBehindHeader);
+        if (cell.header)
+            isAsBefore = logicalAnd(equal(headerAt(cell.address), *cell.header), isAsBefore);
         failUnless(isAsBefore, ValidationFailureKind::OperationConvertedCell, get(cell.operand), cell.operation);
     }
 }
@@ -303,7 +333,7 @@ static uint64_t bitsOfHeapsIn(const LocationMasks& locations)
     return bits;
 }
 
-RuntimeValidationEmitter::PhotographedOperands RuntimeValidationEmitter::photographOperands(const OperationContext& context, const Effects& effectsOfCall)
+RuntimeValidationEmitter::PhotographedOperands RuntimeValidationEmitter::photographOperands(const OperationContext& context, const Effects& effectsOfCall, ValueID alsoPerformed)
 {
     PhotographedOperands result;
     uint64_t writtenByCall = bitsOfHeapsIn(effectsOfCall.writes);
@@ -325,15 +355,22 @@ RuntimeValidationEmitter::PhotographedOperands RuntimeValidationEmitter::photogr
         return result;
     }
 
-    const Value& operation = m_function.at(context.valueID());
     EffectSummaries unknownSummaries;
     EffectContext effectContext { m_program, unknownSummaries };
     uint64_t heapsOfObjects = bitsOfHeapsIn(LocationMasks { perObjectHeaps });
-    operation.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
-        // As the passes ask it: an operation that names the operands it writes leaves the objects of the others alone.
-        uint64_t writtenThroughOperand = bitsOfHeapsIn(memoryAccessedThrough(effectContext, m_function, operation, operandIndex, context.effects()).writes);
-        photograph(operand, writtenByCall & (writtenThroughOperand | ~heapsOfObjects));
-    });
+    auto photographOperandsOf = [&](ValueID performed, ValueID madeByCall) {
+        const Value& operation = m_function.at(performed);
+        operation.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+            if (madeByCall && sameObjectThroughCasts(m_function, operand).valueInFrontOfFacts() == madeByCall)
+                return;
+            // As the passes ask it: an operation that names the operands it writes leaves the objects of the others alone.
+            uint64_t writtenThroughOperand = bitsOfHeapsIn(memoryAccessedThrough(effectContext, m_function, operation, operandIndex, analyses().effectsOf(performed)).writes);
+            photograph(operand, writtenByCall & (writtenThroughOperand | ~heapsOfObjects));
+        });
+    };
+    photographOperandsOf(context.valueID(), ValueID());
+    if (alsoPerformed)
+        photographOperandsOf(alsoPerformed, context.valueID());
     return result;
 }
 
@@ -366,7 +403,7 @@ void RuntimeValidationEmitter::validateExit(const TerminatorContext& terminator)
 {
     validateOperands(terminator);
     if (terminator.kind() == TerminatorKind::Unreachable)
-        reportUnreachable({ });
+        reportUnreachable({ }, terminator->cutBy());
     if (m_framePointers.isEmpty())
         return;
 
@@ -393,14 +430,78 @@ void RuntimeValidationEmitter::validateExit(const TerminatorContext& terminator)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+// The report prints only the class of what was found. It reads the class from a boxed value or a cell, and is told the representation of anything else.
+static uint32_t encodeReportedFailure(ValidationFailureKind kind, Operand found)
+{
+    bool isRead = found.representation == Representation::JSValue || found.representation == Representation::Cell || found.representation == Representation::Cell32;
+    return ReportedFailure::encode(kind, isRead ? Representation::Unchosen : found.representation);
+}
+
 void RuntimeValidationEmitter::failUnless(Condition condition, ValidationFailureKind kind, Operand found, ValueID id)
 {
+    if (condition.value()->isInt32(1))
+        return;
+    // Decoding takes blocks, and only the report needs what comes of it.
+    if (found.representation == Representation::Cell32) {
+        LBasicBlock doesNotHold = newBlock();
+        LBasicBlock continuation = newBlock();
+        m_out.branch(condition.value(), normalEdge(continuation), rareEdge(doesNotHold));
+        m_out.appendTo(doesNotHold);
+        reportFailure(kind, found, id);
+        m_out.appendTo(continuation);
+        return;
+    }
+
+    if (!m_reportGenerator) {
+        m_reportGenerator = createSharedTask<B3::StackmapGeneratorFunction>([stubCalls = &m_records.stubCalls](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+            AllowMacroScratchRegisterUsage allowScratch(jit);
+            for (unsigned index = 0; index < 4; ++index) {
+                const B3::ValueRep& argument = params[index];
+                GPRReg destination = operationArgumentGPR(index + 1);
+                if (argument.isConstant()) {
+                    jit.move(CCallHelpers::TrustedImm64(argument.value()), destination);
+                    continue;
+                }
+                RELEASE_ASSERT(!index);
+                if (argument.isGPR())
+                    jit.move(argument.gpr(), destination);
+                else
+                    jit.load64(params.code().addressInFrame(argument.offsetFromFP()), destination);
+            }
+            stubCalls->reportChangedRegister(jit);
+        });
+    }
+    LValue arguments[] { reportedValueOf(found).value(), m_out.constInt64(encodeReportedFailure(kind, found)), m_out.constInt64(m_id.index()), m_out.constInt64(id.index()) };
+    B3::CheckValue* check = m_out.checkIsZero(logicalNot(condition).value());
+    for (LValue argument : arguments)
+        check->append(B3::ConstrainedValue(argument, B3::ValueRep::ColdAny));
+    check->setGenerator(m_reportGenerator);
+}
+
+void RuntimeValidationEmitter::failUnlessHasType(Operand operand, const TypeTestPlan& plan, ValidationFailureKind kind, ValueID id, TypeID typeThatRunTimeTests)
+{
+    SetForScope passesChangedClosures(emitter<ClosureTestEmitter>().passesChangedClosures(), true);
+    if (std::optional<Condition> condition = emitter<TypeTestEmitter>().tryEmitAsOneCondition(operand, plan, CodeShape::Fast)) {
+        failUnless(*condition, kind, operand, id);
+        return;
+    }
+    if (typeThatRunTimeTests) {
+        Integer hasType = callWithoutSite<Integer>(RuntimeOperation::ValueHasType, { reportedValueOf(operand), word32(static_cast<int32_t>(typeThatRunTimeTests.index())) });
+        failUnless(isNotZero(hasType), kind, operand, id);
+        return;
+    }
     LBasicBlock doesNotHold = newBlock();
     LBasicBlock continuation = newBlock();
-    m_out.branch(condition.value(), normalEdge(continuation), rareEdge(doesNotHold));
+    OperationEmitter::branchOnType(operand, plan, { normalEdge(continuation), rareEdge(doesNotHold) });
     m_out.appendTo(doesNotHold);
-    reportFailure(kind, found, id);
+    reportFailure(kind, operand, id);
     m_out.appendTo(continuation);
+}
+
+void RuntimeValidationEmitter::branchOnType(Operand operand, const TypeTestPlan& plan, BranchTargets targets)
+{
+    SetForScope passesChangedClosures(emitter<ClosureTestEmitter>().passesChangedClosures(), true);
+    OperationEmitter::branchOnType(operand, plan, targets);
 }
 
 // The operation looks closer than generated code can, and returns where the statement holds.
@@ -410,7 +511,7 @@ void RuntimeValidationEmitter::askOperationUnless(Condition condition, Validatio
     LBasicBlock continuation = newBlock();
     m_out.branch(condition.value(), normalEdge(continuation), rareEdge(isUndecided));
     m_out.appendTo(isUndecided);
-    Operand arguments[] { reportedValueOf(found), word32(static_cast<int32_t>(kind)), word32(m_id.index()), word32(id.index()) };
+    Operand arguments[] { reportedValueOf(found), reportedFailure(kind, found), word32(m_id.index()), word32(id.index()) };
     callWithoutSite(RuntimeOperation::ReportValidationFailure, arguments, Representation::Void, { .isOnRarePath = true, .reportMayReturn = true });
     m_out.jump(continuation);
     m_out.appendTo(continuation);
@@ -419,6 +520,11 @@ void RuntimeValidationEmitter::askOperationUnless(Condition condition, Validatio
 void RuntimeValidationEmitter::checkPrecondition(const ValueContext& value, Condition holds)
 {
     failUnless(holds, ValidationFailureKind::OperationPreconditionBroken, { }, value.id());
+}
+
+void RuntimeValidationEmitter::checkClaim(std::optional<CellPointer> about, Condition holds)
+{
+    failUnless(holds, ValidationFailureKind::OperationPreconditionBroken, about ? Operand(*about) : Operand(), generator().operationBeingGenerated());
 }
 
 void RuntimeValidationEmitter::checkBindingIsStored(const ValueContext& value, Condition isStored)
@@ -439,17 +545,21 @@ void RuntimeValidationEmitter::reportFailure(ValidationFailureKind kind, Operand
 
 void RuntimeValidationEmitter::callReport(ValidationFailureKind kind, Operand found, ValueID id)
 {
-    Operand arguments[] { reportedValueOf(found), word32(static_cast<int32_t>(kind)), word32(m_id.index()), word32(id.index()) };
+    Operand arguments[] { reportedValueOf(found), reportedFailure(kind, found), word32(m_id.index()), word32(id.index()) };
     callWithoutSite(RuntimeOperation::ReportValidationFailure, arguments, Representation::Void, { .isOnRarePath = true });
 }
 
 // The caller ends the block.
-void RuntimeValidationEmitter::reportUnreachable(ValueID id)
+void RuntimeValidationEmitter::reportUnreachable(ValueID id, PassID cutBy)
 {
-    callReport(ValidationFailureKind::UnreachableValue, { }, id);
+    callReport(ValidationFailureKind::UnreachableValue, cutBy == PassID::None ? Operand() : Operand(boxedConstant(jsNumber(static_cast<int32_t>(cutBy)))), id);
 }
 
-// The report prints only the class of what was found, which the IR already gives for everything but a cell.
+Word32 RuntimeValidationEmitter::reportedFailure(ValidationFailureKind kind, Operand found)
+{
+    return word32(static_cast<int32_t>(encodeReportedFailure(kind, found)));
+}
+
 Boxed RuntimeValidationEmitter::reportedValueOf(Operand found)
 {
     switch (found.representation) {

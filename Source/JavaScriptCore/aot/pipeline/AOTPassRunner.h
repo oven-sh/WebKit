@@ -14,6 +14,7 @@
 #include "AOTPass.h"
 #include "AOTProgramAnalyses.h"
 #include "AOTResultRuleMonotonicity.h"
+#include "AOTThreads.h"
 #include "AOTVector.h"
 #include "AOTVerifier.h"
 #include <array>
@@ -37,6 +38,8 @@ namespace JSC { namespace AOT { namespace Typed {
 // The passes whose changes may give this pass something to do.
 const PassSet& passesEnabling(PassID);
 const PassSet& passesThatCanWaitBehind(PassID changer);
+// The passes that do not wait past the end of the rounds.
+const PassSet& impatientPasses();
 // False for a pass that may have something to do in any body.
 bool hasTriggers(PassID);
 // The passes that may have something to do in such a body.
@@ -59,9 +62,10 @@ public:
     template<typename Functor> auto runProgramPassWithoutEditor(PassID, Program&, ProgramAnalyses&, const Functor&, BodiesAreChanged = BodiesAreChanged::Anyhow) -> std::invoke_result_t<Functor>;
     template<typename Functor> auto runAnalysis(PassID, const Program&, const Functor&) -> std::invoke_result_t<Functor>;
     // The analysis may not use the runner. What runs beside it may: it runs other analyses.
-    template<typename Functor, typename Beside> auto runAnalysisBeside(PassID, const Program&, const Functor&, const Beside&) -> std::invoke_result_t<Functor>;
+    // With a lower priority, the concurrent task only gets the threads that the analysis leaves idle.
+    template<typename Functor, typename Beside> auto runAnalysisBeside(PassID, const Program&, const Functor&, const Beside&, TaskPriority priorityOfBeside = TaskPriority::Foreground) -> std::invoke_result_t<Functor>;
     // The first step of the analysis runs alone, and what runs beside the second step finds what it has made.
-    template<typename First, typename Second, typename Beside> auto runAnalysisInTwoSteps(PassID, const Program&, const First&, const Second&, const Beside&) -> std::invoke_result_t<Second>;
+    template<typename First, typename Second, typename Beside> auto runAnalysisInTwoSteps(PassID, const Program&, const First&, const Second&, const Beside&, TaskPriority priorityOfBeside = TaskPriority::Foreground) -> std::invoke_result_t<Second>;
     // Not in a run that stops or prints after a pass: there the order of the analyses shows.
     bool mayRunAnalysesTogether() const;
 
@@ -162,6 +166,25 @@ private:
             passesWithWork.set(static_cast<unsigned>(pass));
             if (recordsChangers) [[unlikely]]
                 notes->changersSinceLastRun[static_cast<unsigned>(pass)] |= passesEnabling(pass);
+        }
+
+        bool isImpatient(PassID pass) const
+        {
+            return passesThatWait.get(static_cast<unsigned>(pass)) && impatientPasses().contains(pass);
+        }
+
+        bool giveWorkToImpatientPasses(const PassBits& passes)
+        {
+            bool gaveWork = false;
+            impatientPasses().forEach([&](PassID pass) {
+                unsigned index = static_cast<unsigned>(pass);
+                if (!passes.get(index) || !passesThatWait.get(index))
+                    return;
+                passesThatWait.clear(index);
+                passesWithWork.set(index);
+                gaveWork = true;
+            });
+            return gaveWork;
         }
 
         void setContents(const BodyContents& newContents, const Function& function)
@@ -297,7 +320,7 @@ private:
     enum class MayChangeBodies : bool { No, Yes };
     std::optional<PassTimer> beginProgramPass(PassID, const Program&, MayChangeBodies = MayChangeBodies::No);
     void endProgramPass(PassID, const Program&, PassTimer, PassOutcome);
-    void runTogether(NOESCAPE const ScopedLambda<void()>&, NOESCAPE const ScopedLambda<void()>&) const;
+    void runTogether(NOESCAPE const ScopedLambda<void()>&, NOESCAPE const ScopedLambda<void()>&, TaskPriority secondPriority) const;
     bool canVerify(IRForm form) const { return form != IRForm::Placed || m_verifierInputs.placed; }
     void verifyAfterProgramPass(const PassDescriptor&, const Program&) const;
 
@@ -376,13 +399,13 @@ auto PassRunner::runAnalysis(PassID id, const Program& program, const Functor& f
 }
 
 template<typename Functor, typename Beside>
-auto PassRunner::runAnalysisBeside(PassID id, const Program& program, const Functor& functor, const Beside& beside) -> std::invoke_result_t<Functor>
+auto PassRunner::runAnalysisBeside(PassID id, const Program& program, const Functor& functor, const Beside& beside, TaskPriority priorityOfBeside) -> std::invoke_result_t<Functor>
 {
-    return runAnalysisInTwoSteps(id, program, [] { }, functor, beside);
+    return runAnalysisInTwoSteps(id, program, [] { }, functor, beside, priorityOfBeside);
 }
 
 template<typename First, typename Second, typename Beside>
-auto PassRunner::runAnalysisInTwoSteps(PassID id, const Program& program, const First& first, const Second& second, const Beside& beside) -> std::invoke_result_t<Second>
+auto PassRunner::runAnalysisInTwoSteps(PassID id, const Program& program, const First& first, const Second& second, const Beside& beside, TaskPriority priorityOfBeside) -> std::invoke_result_t<Second>
 {
     using Result = std::invoke_result_t<Second>;
     RELEASE_ASSERT(mayRunAnalysesTogether());
@@ -397,7 +420,7 @@ auto PassRunner::runAnalysisInTwoSteps(PassID id, const Program& program, const 
         result = second();
     }, [&] {
         beside();
-    });
+    }, priorityOfBeside);
     endProgramPass(id, program, *timer, PassOutcome::Unchanged);
     return WTF::move(*result);
 }

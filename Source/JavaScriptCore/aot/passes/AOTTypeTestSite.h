@@ -21,6 +21,7 @@
 #include <wtf/Noncopyable.h>
 #include <wtf/OptionSet.h>
 #include <wtf/PrintStream.h>
+#include <wtf/ScopedLambda.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/text/ASCIILiteral.h>
 
@@ -78,6 +79,8 @@ public:
 
     bool mayHaveFailed(const Value& test, BlockID at) const;
     bool mayHaveFailedTestOf(ValueID subject, BlockID at) const;
+    bool leavesOpen(const Value& testOfMemberConditions, BlockID at, NOESCAPE const ScopedLambda<bool(const MemberConditionRecord&)>& isStateOfProgram) const;
+    bool mayHaveFailedOverStateOfProgram(BlockID at, NOESCAPE const ScopedLambda<bool(const MemberConditionRecord&)>& isStateOfProgram) const;
 
 private:
     TestConditions m_conditions;
@@ -223,10 +226,12 @@ struct PlannedAccess {
     AccessTests tests;
 };
 
+enum class TestSiteCandidates : bool { All, AccessesToObjectsMadeHere };
+
 class TestSiteReporter {
     WTF_MAKE_NONCOPYABLE(TestSiteReporter);
 public:
-    explicit TestSiteReporter(FunctionPassContext&);
+    explicit TestSiteReporter(FunctionPassContext&, TestSiteCandidates = TestSiteCandidates::All);
 
     FunctionPassContext& context() const { return m_context; }
     const Program& program() const { return m_context.program; }
@@ -245,6 +250,8 @@ public:
     bool mayHaveFailedTestOf(ValueID) const;
     // Whether a rule has reported tests for the use in this round.
     bool isClaimed(ValueID use) const { return m_isClaimed.get(use.index()); }
+    // No rule after this one reports tests for the use in this round.
+    void claimUse() { m_isClaimed.set(m_use.index()); }
     // The use is looked at again in the next round, or behind the rounds if this one is the last.
     void putOffUse() { m_context.hasUsesAwaitingExpansion = true; }
     // Whatever the rule reports here is taken away again: collectTestSites() says why.
@@ -256,20 +263,14 @@ public:
     void report(std::span<const Value> tests, const Effects& effectsWhenPassed, TestOutcome = TestOutcome::IsExpectedToPass);
     void report(std::initializer_list<Value> tests, const Effects& effectsWhenPassed, TestOutcome outcome = TestOutcome::IsExpectedToPass) { report(std::span<const Value> { tests.begin(), tests.size() }, effectsWhenPassed, outcome); }
 
-    void forEachCandidate(NOESCAPE const Invocable<void(const Value&)> auto& functor)
+    // The operations among these that no rule has claimed, in block order.
+    void forEachCandidate(const OpcodeSet& operations, NOESCAPE const Invocable<void(const Value&)> auto& functor)
     {
-        const CFG& cfg = m_context.analyses.cfg();
-        const BlockFrequencies& frequencies = m_context.analyses.blockFrequencies();
-        for (BlockID block : cfg.reversePostOrder()) {
-            if (frequencies.classOf(block).predicted() == BlockFrequency::Rare && !isWrittenInCatchClause(block))
+        for (const Candidate& candidate : candidates()) {
+            if (!operations.contains(candidate.operation) || m_isClaimed.quickGet(candidate.use.index()))
                 continue;
-            const BlockValues& values = m_context.function.at(block).values;
-            for (uint32_t index = 0; index < values.size(); ++index) {
-                if (m_isClaimed.get(values[index].index()) || m_awaitsExpansion.get(values[index].index()))
-                    continue;
-                moveTo(m_rule, values[index], { block, index });
-                functor(m_context.function.at(values[index]));
-            }
+            moveTo(m_rule, candidate.use, candidate.point);
+            functor(m_context.function.at(candidate.use));
         }
     }
 
@@ -279,11 +280,23 @@ public:
     TestSites takeSites() { return WTF::move(m_sites); }
 
 private:
+    struct Candidate {
+        ValueID use;
+        ProgramPoint point;
+        Opcode operation;
+    };
+
+    // Most values of a function belong to operations that no rule handles, and each rule walks the function.
+    std::span<const Candidate> candidates() LIFETIME_BOUND;
     const FailedConditions& failedConditions() const;
     bool hasFailedTest(std::span<const Value> tests) const;
     bool isWrittenInCatchClause(BlockID);
+    bool isStateOfProgram(const MemberConditionRecord&) const;
+    bool mayRunEveryTimeBehindFailedTest(BlockID);
+    bool isAccessToObjectMadeHere(const Value&) const;
 
     FunctionPassContext& m_context;
+    TestSiteCandidates m_wantedCandidates { TestSiteCandidates::All };
     TestSiteRuleID m_rule { TestSiteRuleID::Operator };
     ValueID m_use;
     ProgramPoint m_point;
@@ -291,6 +304,7 @@ private:
     mutable bool m_hasFailedEarlierTest { false };
     BitVector m_isClaimed;
     BitVector m_awaitsExpansion;
+    std::optional<Vector<Candidate, 32>> m_candidates;
     TestSites m_sites;
     mutable std::optional<FailedConditions> m_failedConditions;
     Vector<PlannedAccess> m_plannedAccesses;
@@ -298,6 +312,7 @@ private:
     BlockID m_blockOfHeatClass;
     bool m_blockIsCold { false };
     std::optional<BitVector> m_blocksOfCatchClauses;
+    std::optional<bool> m_testsStateOfProgram;
 };
 
 class TestSiteRewriter {
@@ -353,6 +368,7 @@ FOR_EACH_AOT_TEST_SITE_RULE(AOT_DECLARE_TEST_SITE_RULE)
 #undef AOT_DECLARE_TEST_SITE_RULE
 
 std::span<const TestSiteRule> testSiteRules();
+Expected<bool> asksForMoreThanLayoutsTell(const Program&, const Function&, const TypeArena&, const Value& test);
 const TestSiteRule& ruleOf(TestSiteRuleID);
 
 } } } // namespace JSC::AOT::Typed

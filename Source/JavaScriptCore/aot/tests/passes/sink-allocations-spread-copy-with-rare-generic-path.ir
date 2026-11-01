@@ -1,0 +1,35 @@
+# const copy = { ...source, b: given }; return copy.a + copy.b;
+# The spread copies field by field when the source has the expected key order, and calls CopyDataProperties on a rare path, which needs the object in memory.
+# The code after the two paths meet is duplicated for the rare path, so the common path allocates nothing.
+# FORM: Prepared
+# RUN: pass SinkAllocations SinkAllocations
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Record" fields=[{key="a" declared={type=i32} flags=[IsRequired, IsEnforced] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="b" declared={type=i32} flags=[IsRequired, IsEnforced] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+
+function f0 name="copyIsOnlyRead" parameters=[{type=L0}, {type=i32}] results=[{type=anything}] {
+    v2 = NewObject layout=L0
+    v3 = HasKeyOrder v0 layout=L0 fields=[0, 1]
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4: guard):
+    v5 = GetSlot v0, v4 key="a" receivers=[L0] level=Expected
+    v6 = GetSlot v0, v4 key="b" receivers=[L0] level=Expected
+    PutSlotOrAdd v2, -, v5 key="a" receivers=[L0] level=Proven
+    PutSlotOrAdd v2, -, v6 key="b" receivers=[L0] level=Proven
+    Jump -> next b3()
+  b2() frequency=Rare:
+    CopyDataProperties v2, v0
+    Jump -> next b3()
+  b3():
+    PutSlotOrAdd v2, -, v1 key="b" receivers=[L0] level=Proven
+    v11 = FinishObject v2
+    v12 = PropGet v11 key="a" receivers=[L0]
+    v13 = PropGet v11 key="b" receivers=[L0]
+    v14 = Add v12, v13
+    Return v14
+# CHECK: b0(
+# CHECK-NOT: NewObject
+# CHECK: frequency=Rare:
+# CHECK-NEXT: = NewObject layout=L0
+# CHECK-NEXT: CopyDataProperties
+}

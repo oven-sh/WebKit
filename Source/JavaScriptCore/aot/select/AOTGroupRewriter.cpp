@@ -147,16 +147,35 @@ bool GroupRewriter::isRootListed() const
     return !m_expansion && !m_session.m_isErasedFromBlock.get(m_group.root.index());
 }
 
+bool GroupRewriter::canStandBehindCast(ValueID id)
+{
+    if (id != m_group.root || numberOfResultsOf(m_session.m_context.program(), function(), function().at(id)))
+        return false;
+    return std::ranges::none_of(analyses().useLists().usesOf(id), [&](const Use& use) {
+        return use.kind == Use::Kind::TerminatorOperand && function().at(use.block).terminator.isConditionalBranch();
+    });
+}
+
 void GroupRewriter::retype(ValueID id)
 {
     SelectionContext& context = m_session.m_context;
     TypeArena& types = context.pass().types;
-    Value& value = function().edit(id);
-    TypeID computed = resultTypeOf(context.program(), function(), value, types);
-    if (computed == value.type)
+    TypeID known = function().at(id).type;
+    TypeID computed = resultTypeOf(context.program(), function(), function().at(id), types);
+    if (computed == known)
         return;
-    context.didRetype(id, types.at(value.type), types.at(computed));
-    value.type = computed;
+    // Where the rewrite only says less of the same value, its old type still holds. Declared results, parameters and fields rest on it.
+    if (types.at(known).isSubsetOf(types.at(computed), context.program()) && !types.at(known).isNever() && canStandBehindCast(id)) {
+        ValueID rewritten = insert(Value(function().at(id)));
+        function().edit(id).becomeAssumeType(rewritten, Proven::byRulesBehindChecks(known));
+        context.m_didKeepType = true;
+        analyses().didChangeBlock(state().block);
+        computed = resultTypeOf(context.program(), function(), function().at(id), types);
+        if (computed == known)
+            return;
+    }
+    context.didRetype(id, types.at(known), types.at(computed));
+    function().edit(id).type = computed;
 }
 
 void GroupRewriter::finishMembers()

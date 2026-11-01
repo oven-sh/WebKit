@@ -869,12 +869,16 @@ static void checkManyKeyOrdersOnOneLayout(LoadedProgram& program)
     const LayoutData& layout = layoutNamed(program, "Bag"_s);
     AOT_TEST_CHECK(declaredFieldsOf(program, layout).size() == numberOfBagFields && !layout.keysAreNeverEnumerated);
     Costs costsBefore = costsOf(program);
+    uint64_t limitHitsBefore = limitHitsOf(program.vm(), LimitID::KeyOrdersPerLayout);
+    uint64_t structuresMadeBefore = 0;
 
     CreationOrder order;
     std::iota(order.begin(), order.end(), 0);
     unsigned numberStoredOutOfLine = 0;
     for (unsigned count = 0; count < numberOfOrders; ++count) {
         Object* bag = createBag(program, order, [](Object&, const FieldData&, uint64_t) { });
+        if (!count)
+            structuresMadeBefore = valueOf(program.vm(), RuntimeCounterID::CompiledStructuresMade);
         AOT_TEST_CHECK(isCompiledObject(bag) && bag->shapeWord() == shapeWordOf(layout.shape) && !bag->hasExtraProperties());
         Object::KeyOrderStorage storage;
         AOT_TEST_CHECK(std::ranges::equal(bag->keyOrder(program.state(), storage), order));
@@ -886,6 +890,9 @@ static void checkManyKeyOrdersOnOneLayout(LoadedProgram& program)
     }
 
     AOT_TEST_CHECK(numberStoredOutOfLine >= numberOfOrders - maxKeyOrdersPerLayout && numberStoredOutOfLine < numberOfOrders);
+    // An object asks for a number until it is refused one, and gets at most one Structure made for it, however many fields follow.
+    AOT_TEST_CHECK(limitHitsOf(program.vm(), LimitID::KeyOrdersPerLayout) == limitHitsBefore + numberStoredOutOfLine);
+    AOT_TEST_CHECK(valueOf(program.vm(), RuntimeCounterID::CompiledStructuresMade) <= structuresMadeBefore + numberStoredOutOfLine);
     Costs costsAfter = costsOf(program);
     AOT_TEST_CHECK(costsAfter.keyOrdersStoredOutOfLine >= costsBefore.keyOrdersStoredOutOfLine + numberStoredOutOfLine);
     costsAfter.keyOrdersStoredOutOfLine = costsBefore.keyOrdersStoredOutOfLine;
@@ -991,13 +998,19 @@ static void checkTransitionTableGrows(LoadedProgram& program)
     constexpr uint32_t initialMask = 1023;
     AOT_TEST_CHECK(program.instance().objects.keyOrderTransitionMask == initialMask);
 
+    // Compiled code steps to the next key of an order in the image without the table, so such a step has no entry there.
     Vector<KeyOrderTransition> seen;
+    Vector<KeyOrderTransition> seenInsideOrdersOfImage;
+    const KeyOrderTable& keyOrders = program.state().objects->keyOrders;
     CreationOrder order;
     std::iota(order.begin(), order.end(), 0);
     for (unsigned count = 0; count < numberOfOrders; ++count) {
         createBag(program, order, [&](Object& bag, const FieldData& field, uint64_t wordsBefore) {
             AOT_TEST_CHECK(!bag.hasOutOfLineKeyOrder());
-            seen.append({ wordsBefore & orderCountAndShapeMask, slotKeyFor(field.slot.offset, field.isOutOfLine()), bag.orderWord() & orderAndCountMask });
+            KeyOrderTransition step { wordsBefore & orderCountAndShapeMask, slotKeyFor(field.slot.offset, field.isOutOfLine()), bag.orderWord() & orderAndCountMask };
+            std::optional<uint32_t> insideOrderOfImage = keyOrders.stepInsideOrderOfImage(bag.layout(), static_cast<uint32_t>(wordsBefore), bag.indexOf(field));
+            AOT_TEST_CHECK(!insideOrderOfImage || *insideOrderOfImage == step.orderAndCountAfter);
+            (insideOrderOfImage ? seenInsideOrdersOfImage : seen).append(step);
         });
         AOT_TEST_CHECK(std::ranges::next_permutation(order).found);
     }
@@ -1008,6 +1021,9 @@ static void checkTransitionTableGrows(LoadedProgram& program)
         const KeyOrderTransition* found = findTransition(program, expected.orderAndShapeWordsBefore, expected.key);
         AOT_TEST_CHECK(found && found->orderAndCountAfter == expected.orderAndCountAfter);
     }
+    AOT_TEST_CHECK(!seenInsideOrdersOfImage.isEmpty());
+    for (const KeyOrderTransition& step : seenInsideOrdersOfImage)
+        AOT_TEST_CHECK(!findTransition(program, step.orderAndShapeWordsBefore, step.key));
 
     uint64_t wordsOfOtherShape = static_cast<uint64_t>(shapeWordOf(layoutNamed(program, "Mutable"_s).shape)) << 32 | (seen[0].orderAndShapeWordsBefore & UINT32_MAX);
     AOT_TEST_CHECK(!findTransition(program, wordsOfOtherShape, seen[0].key) && !findTransition(program, seen[0].orderAndShapeWordsBefore, outOfLineSlotKey - 8));

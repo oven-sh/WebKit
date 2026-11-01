@@ -338,16 +338,57 @@ private:
     FlowScopeEntry entryOf(FunctionID function) { return m_entries.get(function); }
     FlowScopeEntry entryByUseOf(FunctionID function) { return m_entriesByUse.get(function); }
 
+    FlowScopeEntry entryAtCall(FunctionID caller, ValueID site, VariableID subject)
+    {
+        FlowScopeFrame* frame = findFrame(caller);
+        return frame ? entryAt(*frame, site) : laterOf(entryOf(caller), subject ? entryByStoresTo(subject) : unknownScopeEntry);
+    }
+
+    FlowScopeEntry meetOfCallsOfList(uint32_t list)
+    {
+        FlowScopeEntry entry = neverScopeEntry;
+        for (uint32_t position : entriesOfGroup(m_index.calls.firstCallOfList, m_index.calls.callsOfListsByList, list)) {
+            const FlowScopeCallOfList& call = m_index.calls.callsOfLists[position];
+            entry = meet(entry, entryAtCall(call.caller, call.site, call.subject));
+            if (entry.state == FlowScopeEntryState::Unknown)
+                break;
+        }
+        return entry;
+    }
+
+    // The calls of a list of many callees say the same of each member. Their meet is kept, and didLowerEntryOf() lowers it with the callers: an entry is only ever lowered, so what it was before adds nothing to the meet.
+    FlowScopeEntry entryByCallsOfList(uint32_t list)
+    {
+        auto known = m_entriesByCallsOfLists.find(list);
+        if (known == m_entriesByCallsOfLists.end())
+            return m_entriesByCallsOfLists.add(list, meetOfCallsOfList(list)).iterator->value;
+        RELEASE_ASSERT(!m_index.inputs.build.options().verifiesAfterEveryPass || known->value == meetOfCallsOfList(list));
+        return known->value;
+    }
+
+    void didLowerEntryOf(FunctionID caller)
+    {
+        for (const FlowScopeCallOfList& call : entriesOfGroup(m_index.calls.firstCallOfListByCaller, m_index.calls.callsOfLists, caller.index())) {
+            auto known = m_entriesByCallsOfLists.find(call.calleeList);
+            if (known != m_entriesByCallsOfLists.end())
+                known->value = meet(known->value, entryAtCall(call.caller, call.site, call.subject));
+        }
+    }
+
     FlowScopeEntry entryByCallsOf(FunctionID function)
     {
         if (m_index.calls.functionsEnteredByHost.get(function.index()))
             return unknownScopeEntry;
         FlowScopeEntry entry = neverScopeEntry;
-        for (const FlowScopeCall& call : m_index.calls.callsOf(function)) {
-            FlowScopeFrame* frame = findFrame(call.caller);
-            entry = meet(entry, frame ? entryAt(*frame, call.site) : laterOf(entryOf(call.caller), call.subject ? entryByStoresTo(call.subject) : unknownScopeEntry));
+        for (const FlowScopeCall& call : entriesOfGroup(m_index.calls.firstByCallee, m_index.calls.byCallee, function.index())) {
+            entry = meet(entry, entryAtCall(call.caller, call.site, call.subject));
             if (entry.state == FlowScopeEntryState::Unknown)
-                break;
+                return entry;
+        }
+        for (uint32_t list : entriesOfGroup(m_index.calls.firstListByCallee, m_index.calls.listsByCallee, function.index())) {
+            entry = meet(entry, entryByCallsOfList(list));
+            if (entry.state == FlowScopeEntryState::Unknown)
+                return entry;
         }
         return entry;
     }
@@ -564,7 +605,7 @@ private:
 
     void recordReadsOfStoredFunctions()
     {
-        AOT::sort(m_storedFunctions, { }, &StoredFunction::location);
+        AOT::sortInLine(m_storedFunctions, { }, &StoredFunction::location);
         m_functionsTakenOut = m_storedFunctions;
         auto recordReader = [&](const FlowScopeLocationAccess& read, uint32_t first, uint32_t count) {
             FlowScopeFrame* frame = findFrame(read.function);
@@ -608,7 +649,7 @@ private:
             for (const FlowModuleValueRead& read : operationsOn(m_index.moduleValueReads, exporter))
                 recordReader(FlowScopeLocationAccess { m_functionsTakenOut[first].location, read.function, read.value }, first, count);
         }
-        AOT::sort(m_storedFunctionReaders, { }, [](const StoredFunctionReader& read) {
+        AOT::sortInLine(m_storedFunctionReaders, { }, [](const StoredFunctionReader& read) {
             return std::tuple(read.reader, read.first);
         });
     }
@@ -643,13 +684,23 @@ private:
             entry.value = neverScopeEntry;
             m_queue.append(entry.key);
         }
-        AOT::sort(m_queue, std::greater { });
+        AOT::sortInLine(m_queue, std::greater { });
         HashSet<FunctionID> waiting;
         for (FunctionID function : m_queue)
             waiting.add(function);
+        const FlowScopeCalls& calls = m_index.calls;
+        // The members of each list of many callees that have left the queue since a caller of the list last looked. All others wait, or have no entry.
+        HashMap<uint32_t, Vector<FunctionID>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> membersThatLeftQueue;
+        auto queueAgain = [&](FunctionID function) {
+            auto callee = m_entries.find(function);
+            if (callee != m_entries.end() && callee->value != unknownScopeEntry && waiting.add(function).isNewEntry)
+                m_queue.append(function);
+        };
         for (size_t next = 0; next < m_queue.size(); ++next) {
             FunctionID function = m_queue[next];
             waiting.remove(function);
+            for (uint32_t list : entriesOfGroup(calls.firstListByCallee, calls.listsByCallee, function.index()))
+                membersThatLeftQueue.add(list, Vector<FunctionID>()).iterator->value.append(function);
             FlowScopeEntry current = entryOf(function);
             if (current == unknownScopeEntry)
                 continue;
@@ -657,13 +708,18 @@ private:
             if (refined == current)
                 continue;
             m_entries.set(function, refined);
-            for (const FlowScopeCall& call : m_index.calls.callsBy(function)) {
-                auto callee = m_entries.find(call.callee);
-                if (callee != m_entries.end() && callee->value != unknownScopeEntry && waiting.add(call.callee).isNewEntry)
-                    m_queue.append(call.callee);
+            didLowerEntryOf(function);
+            for (const FlowScopeCall& call : entriesOfGroup(calls.firstByCaller, calls.byCaller, function.index()))
+                queueAgain(call.callee);
+            for (const FlowScopeCallOfList& call : entriesOfGroup(calls.firstCallOfListByCaller, calls.callsOfLists, function.index())) {
+                Vector<FunctionID> members = membersThatLeftQueue.take(call.calleeList);
+                AOT::sort(members);
+                for (FunctionID member : members)
+                    queueAgain(member);
             }
         }
         m_queue.shrink(0);
+        m_entriesByCallsOfLists.clear();
     }
 
     bool completesBeforeReturn(FlowScopeFrame& frame, ValueID value)
@@ -783,13 +839,23 @@ private:
             FunctionID function = followed[next];
             if (followed.size() > mostCallersToFollow || m_index.calls.functionsEnteredByHost.get(function.index()) || !anyPrecedes(stores, entryOf(function)))
                 return false;
-            for (const FlowScopeCall& call : m_index.calls.callsOf(function)) {
+            bool precedesCallsInFrames = true;
+            m_index.calls.forEachCallOf(function, [&](const FlowScopeCall& call) {
                 if (FlowScopeFrame* frame = findFrame(call.caller)) {
-                    if (!anyPrecedes(stores, entryAt(*frame, call.site)))
-                        return false;
-                } else if (!followed.contains(call.caller))
+                    if (!anyPrecedes(stores, entryAt(*frame, call.site))) {
+                        precedesCallsInFrames = false;
+                        return IterationStatus::Done;
+                    }
+                } else if (!followed.contains(call.caller)) {
                     followed.append(call.caller);
-            }
+                    // The next turn gives up.
+                    if (followed.size() > mostCallersToFollow)
+                        return IterationStatus::Done;
+                }
+                return IterationStatus::Continue;
+            });
+            if (!precedesCallsInFrames)
+                return false;
         }
         return true;
     }
@@ -971,6 +1037,7 @@ private:
     HashMap<FunctionID, FlowScopeEntry> m_entries;
     HashMap<FunctionID, FlowScopeEntry> m_entriesByUse;
     HashMap<VariableID, FlowScopeEntry> m_entriesByStores;
+    HashMap<uint32_t, FlowScopeEntry, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_entriesByCallsOfLists;
     Vector<FunctionID> m_queue;
     Vector<StoredFunction> m_storedFunctions;
     HashMap<std::pair<FlowScopeFrame*, ValueID>, std::unique_ptr<Vector<ReachedUse>>> m_usesReachedFromConstructors;

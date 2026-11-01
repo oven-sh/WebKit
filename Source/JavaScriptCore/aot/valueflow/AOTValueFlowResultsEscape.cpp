@@ -17,6 +17,7 @@
 #include "AOTEffectsOfOperands.h"
 #include "AOTFlowResults.h"
 #include "AOTFlowSinkEquations.h"
+#include "AOTHeldOperands.h"
 #include "AOTProgramCaches.h"
 #include "AOTResultRules.h"
 #include "AOTThreads.h"
@@ -25,6 +26,9 @@
 #include "AOTVector.h"
 #include <optional>
 #include <wtf/Atomics.h>
+#include <wtf/HashMap.h>
+#include <wtf/Hasher.h>
+#include <wtf/Lock.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -82,6 +86,83 @@ struct SinkRule {
 struct CollectedRules {
     Vector<BaseUses> baseUses;
     Vector<SinkRule> dependencies;
+};
+
+// A node for the parameters that take one operand of a call with many callees: its uses are the union of theirs.
+// The operand depends on that one node, and calls with the same callees share it. n calls of any of n functions would be n * n rules otherwise.
+// The transforms of an argument distribute over a union, so every other node gets the same uses either way.
+class ParameterUnions {
+public:
+    explicit ParameterUnions(uint32_t firstNode)
+        : m_firstNode(firstNode)
+    {
+    }
+
+    uint32_t nodeFor(Vector<uint32_t>&& parameters)
+    {
+        Hasher hasher;
+        for (uint32_t parameter : parameters)
+            add(hasher, parameter);
+
+        Locker locker { m_lock };
+        auto& unions = m_unionsByHash.add(hasher.hash(), Vector<uint32_t, 1> { }).iterator->value;
+        for (uint32_t index : unions) {
+            if (m_parameters[index] == parameters)
+                return m_firstNode + index;
+        }
+        unions.append(m_parameters.size());
+        m_parameters.append(WTF::move(parameters));
+        return m_firstNode + unions.last();
+    }
+
+    // Where one operand of a call with many callees goes. It follows from the set of callees and from the place of the operand in the call, so it is worked out once for all calls of the set.
+    struct ParametersOfOperand {
+        bool isPassedToUnknownParameter { false };
+        uint32_t node { noNode };
+
+        friend bool operator==(const ParametersOfOperand&, const ParametersOfOperand&) = default;
+    };
+
+    static std::optional<uint64_t> keyOf(CalleeSetID callees, Opcode opcode, uint32_t operandIndex, bool isCalledValue, bool flagOfCall)
+    {
+        constexpr uint32_t opcodeBits = 12;
+        constexpr uint32_t operandBits = 18;
+        if (!callees || TypeTable::isProvisional(callees) || static_cast<uint32_t>(opcode) >> opcodeBits || operandIndex >> operandBits)
+            return std::nullopt;
+        return static_cast<uint64_t>(callees.index()) << 32 | static_cast<uint64_t>(opcode) << (operandBits + 2) | static_cast<uint64_t>(operandIndex) << 2 | static_cast<uint64_t>(isCalledValue) << 1 | static_cast<uint64_t>(flagOfCall);
+    }
+
+    std::optional<ParametersOfOperand> find(uint64_t key)
+    {
+        Locker locker { m_lock };
+        auto known = m_parametersOfOperands.find(key);
+        return known == m_parametersOfOperands.end() ? std::nullopt : std::optional(known->value);
+    }
+
+    void remember(uint64_t key, ParametersOfOperand parameters)
+    {
+        Locker locker { m_lock };
+        m_parametersOfOperands.add(key, parameters);
+    }
+
+    uint32_t size() const { return m_parameters.size(); }
+
+    CollectedRules rules() const
+    {
+        CollectedRules rules;
+        for (uint32_t index = 0; index < m_parameters.size(); ++index) {
+            for (uint32_t parameter : m_parameters[index])
+                rules.dependencies.append(SinkRule { m_firstNode + index, SinkDependency { parameter, parameter, SinkTransform::Same } });
+        }
+        return rules;
+    }
+
+private:
+    uint32_t m_firstNode;
+    Lock m_lock;
+    Vector<Vector<uint32_t>> m_parameters;
+    UncheckedKeyHashMap<uint64_t, Vector<uint32_t, 1>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_unionsByHash;
+    UncheckedKeyHashMap<uint64_t, ParametersOfOperand, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_parametersOfOperands;
 };
 
 } // anonymous namespace
@@ -399,7 +480,7 @@ static OperandUses usesBesideDeclaredOnes(const Value& user, uint32_t operandInd
     return uses;
 }
 
-static void collectRulesOfBody(const Program& program, const FlowResults& flow, const OperandNodes& nodes, FunctionID id, CollectedRules& rules)
+static void collectRulesOfBody(const Program& program, const FlowResults& flow, const OperandNodes& nodes, ParameterUnions& parameterUnions, FunctionID id, CollectedRules& rules)
 {
     const Function& function = program.at(id);
     EffectSummaries unknownSummaries;
@@ -488,6 +569,48 @@ static void collectRulesOfBody(const Program& program, const FlowResults& flow, 
         if (uint32_t result = nodeOf(call); result != noNode)
             rules.dependencies.append(SinkRule { subject, SinkDependency { result, parameter, SinkTransform::IfReturned } });
     };
+    AOT_THRESHOLD(size_t, minCalleesOfParameterUnion, 16);
+    bool checksAnswers = program.propertyAccessCache() && program.propertyAccessCache()->checksAnswers;
+    auto passToEach = [&](uint32_t subject, std::span<const FunctionID> callees, ValueID call, bool isInCycle, std::optional<uint64_t> keyOfOperand, NOESCAPE const auto& forEachEntryParameter) {
+        if (callees.size() < minCalleesOfParameterUnion) {
+            for (FunctionID callee : callees) {
+                forEachEntryParameter(callee, [&](std::optional<uint32_t> entryParameter) {
+                    passTo(subject, callee, entryParameter, call, isInCycle);
+                });
+            }
+            return;
+        }
+        auto findParameters = [&] {
+            Vector<uint32_t> parameters;
+            ParameterUnions::ParametersOfOperand found;
+            for (FunctionID callee : callees) {
+                forEachEntryParameter(callee, [&](std::optional<uint32_t> entryParameter) {
+                    if (!entryParameter || !nodes.hasNodesOf(callee))
+                        found.isPassedToUnknownParameter = true;
+                    else
+                        parameters.append(nodes.entryParameter(callee, *entryParameter));
+                });
+            }
+            if (!parameters.isEmpty())
+                found.node = parameterUnions.nodeFor(WTF::move(parameters));
+            return found;
+        };
+        std::optional<ParameterUnions::ParametersOfOperand> found = keyOfOperand ? parameterUnions.find(*keyOfOperand) : std::nullopt;
+        RELEASE_ASSERT(!found || !checksAnswers || *found == findParameters());
+        if (!found) {
+            found = findParameters();
+            if (keyOfOperand)
+                parameterUnions.remember(*keyOfOperand, *found);
+        }
+        if (found->isPassedToUnknownParameter)
+            addUses(subject, OperandUses::all());
+        if (found->node == noNode)
+            return;
+        uint32_t parameter = found->node;
+        addDependency(subject, parameter, isInCycle ? SinkTransform::RepeatedArgument : SinkTransform::Argument);
+        if (uint32_t result = nodeOf(call); result != noNode)
+            rules.dependencies.append(SinkRule { subject, SinkDependency { result, parameter, SinkTransform::IfReturned } });
+    };
     auto visitOperandOfCall = [&](ValueID callID, uint32_t operandIndex, uint32_t subject, const CalleeList& callees, bool isInCycle) {
         const Value& call = function.at(callID);
         OperandUses declaredUses = declaredBehaviorOf(call.opcode, operandIndex).uses;
@@ -508,19 +631,21 @@ static void collectRulesOfBody(const Program& program, const FlowResults& flow, 
             return;
         }
 
+        CalleeSetID setOfCallees = calleeSetOfCall(program, call);
         if (isCalledValue) {
             addUses(subject, usesOfCalledValue);
-            for (FunctionID callee : functions->value()) {
+            std::optional<unsigned> newTarget = OperandPosition::newTarget(call.opcode);
+            passToEach(subject, functions->value(), callID, isInCycle, ParameterUnions::keyOf(setOfCallees, call.opcode, operandIndex, true, newTarget && !call.operand(*newTarget)), [&](FunctionID callee, const auto& pass) {
                 for (uint32_t entryParameter : entryParametersOfCalledValue(program.at(callee), call))
-                    passTo(subject, callee, entryParameter, callID, isInCycle);
-            }
+                    pass(entryParameter);
+            });
             return;
         }
         addUses(subject, OperandUse::Inspects);
-        for (FunctionID callee : functions->value()) {
+        passToEach(subject, functions->value(), callID, isInCycle, ParameterUnions::keyOf(setOfCallees, call.opcode, operandIndex, false, isHeldOperand(call, operandIndex)), [&](FunctionID callee, const auto& pass) {
             if (!isDroppedBy(program.at(callee), call, operandIndex))
-                passTo(subject, callee, entryParameterOf(program.at(callee), call, operandIndex), callID, isInCycle);
-        }
+                pass(entryParameterOf(program.at(callee), call, operandIndex));
+        });
     };
     auto followFieldOfEnvironment = [&](const Value& user, uint32_t operandIndex, uint32_t subject) {
         switch (user.opcode) {
@@ -751,10 +876,9 @@ static void collectRulesOfBody(const Program& program, const FlowResults& flow, 
     rules.dependencies.removeAllMatching(isAboutNodeNobodyAsksFor);
 }
 
-static SinkEquations buildEquations(const OperandNodes& nodes, const Vector<CollectedRules>& collected, const ParallelLoops& loops)
+static SinkEquations buildEquations(uint32_t numberOfNodes, const Vector<CollectedRules>& collected, const ParallelLoops& loops)
 {
     constexpr uint32_t nodesPerShare = 1 << 14;
-    uint32_t numberOfNodes = nodes.size();
     unsigned numberOfShares = (numberOfNodes + nodesPerShare - 1) / nodesPerShare;
     auto forEachShare = [&](const Invocable<void(unsigned share, uint32_t first, uint32_t end)> auto& functor) {
         forEachIndexInParallel(loops, numberOfShares, [&](unsigned share) {
@@ -835,14 +959,16 @@ void computeOperandSummaries(const Program& program, FlowResults& results, Build
     unsigned numberOfFunctions = program.functions.size();
     OperandNodes nodes = numberNodes(program, loops);
     Vector<CollectedRules> collected(numberOfFunctions);
+    ParameterUnions parameterUnions(nodes.size());
     {
         ProgramCaches caches(program, build);
         forEachIndexInParallel(loops, numberOfFunctions, largeFunctions(program, loops).span(), [&](unsigned index) {
             if (program.functions[index].hasBody())
-                collectRulesOfBody(program, results, nodes, FunctionID(index), collected[index]);
+                collectRulesOfBody(program, results, nodes, parameterUnions, FunctionID(index), collected[index]);
         });
     }
-    SinkEquations equations = buildEquations(nodes, collected, loops);
+    collected.append(parameterUnions.rules());
+    SinkEquations equations = buildEquations(nodes.size() + parameterUnions.size(), collected, loops);
     build.destroyLater(WTF::move(collected));
     solveSinkEquations(equations, collectNodesAskedFor(program, nodes, loops).span(), loops);
 

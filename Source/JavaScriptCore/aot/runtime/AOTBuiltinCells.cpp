@@ -28,6 +28,7 @@
 #include "AOTSchemaRuntimeOperations.h"
 #include "AOTState.h"
 #include "AOTVector.h"
+#include "BuiltinNames.h"
 #include "DeferTermination.h"
 #include "GetterSetter.h"
 #include "GlobalObjectMethodTable.h"
@@ -105,10 +106,11 @@ BuiltinCells::BuiltinCells(State& state)
     m_instance.builtinBindings.nativeFunctionsOfHost = BuiltinBindings::nativeFunctionsOfHost().data();
 }
 
-static bool isImmutableLocation(const BuiltinTable& table, std::span<const uint32_t> constantMembers, BuiltinID builtin)
+static bool isImmutableLocation(const BuiltinTable& table, const ProgramTables& tables, BuiltinID builtin)
 {
     if (table.at(builtin).mutability == BuiltinMutability::AlwaysLocked)
-        return true;
+        return !ProgramTables::isUnlocked(tables.unlockedBuiltinMembers(), builtin.index());
+    std::span<const uint32_t> constantMembers = tables.constantBuiltinMembers();
     auto holderAndID = [&](BuiltinID id) {
         return std::pair { table.at(id).holder, id };
     };
@@ -172,6 +174,7 @@ JSObject* BuiltinCells::findKnownObject(BuiltinID id) const
 }
 
 static void lockMemberOfLockedHolder(JSGlobalObject*, JSObject* holder, UniquedStringImpl* key, JSObject* member);
+static void lockObjectNamedByGlobalObject(JSGlobalObject*, BuiltinID, JSObject*);
 
 // A holder adds some members when the program first reads them, which shows in the order of its keys. Compiled code that asks for such an object reads nothing:
 // where the image has a word for the read, and it is empty, the object is made beside the holder, which takes it when the read comes.
@@ -187,9 +190,10 @@ std::expected<JSCell*, BuiltinLookupFailure> BuiltinCells::findInKnownHolder(Bui
     Identifier name = table.identifierOf(vm, table.at(key.builtin()).name);
     if (!reportsCreationOfMember(holder, name.impl()) || isValidOffset(holder->getDirectOffset(vm, name)))
         return findInHolder(realm, key, holder);
-    for (const MemberMadeAhead& made : m_membersMadeAhead) {
-        if (made.holder == holder && made.key == name)
-            return static_cast<JSCell*>(made.member);
+    // Whichever image of the realm made it.
+    for (Instance* instance = realm->aotInstance(); instance; instance = instance->above) {
+        if (JSObject* member = instance->state ? instance->state->builtinCells->memberMadeAhead(holder, name.impl()) : nullptr)
+            return static_cast<JSCell*>(member);
     }
     auto made = makeMemberOfStaticTable(realm, key, holder);
     if (!made || !(*made)->isObject())
@@ -199,6 +203,15 @@ std::expected<JSCell*, BuiltinLookupFailure> BuiltinCells::findInKnownHolder(Bui
     m_membersMadeAhead.append(MemberMadeAhead { holder, name, asObject(*made) });
     lockMemberOfLockedHolder(realm, holder, name.impl(), asObject(*made));
     return made;
+}
+
+JSObject* BuiltinCells::memberMadeAhead(JSObject* holder, UniquedStringImpl* key) const
+{
+    for (const MemberMadeAhead& made : m_membersMadeAhead) {
+        if (made.holder == holder && made.key.impl() == key)
+            return made.member;
+    }
+    return nullptr;
 }
 
 JSObject* BuiltinCells::takeMemberMadeAhead(JSObject* holder, UniquedStringImpl* key)
@@ -276,6 +289,7 @@ bool BuiltinCells::didLock(BuiltinID id, JSObject* object)
 {
     if (!m_lockedObjects.add(id.index(), object).isNewEntry)
         return false;
+    m_lockedBuiltins.set(id.index());
     m_builtinsOfLockedObjects.add(object, id.index());
     m_state.immortalCells->add(object);
     return true;
@@ -347,7 +361,7 @@ JSCell* BuiltinCells::cell(uint32_t number)
     if (JSCell* filledDuringLookup = m_cells[number])
         return filledDuringLookup;
 
-    bool isImmutable = isImmutableLocation(table, m_tables.constantBuiltinMembers(), key->builtin());
+    bool isImmutable = isImmutableLocation(table, m_tables, key->builtin());
     if (!found) {
         // Compiled code tests what it has looked up against the cell of a built-in that the realm may lack, and reads through it only behind the test.
         if (isImmutable && BuiltinBindings::provides(table.at(key->builtin()).origin) && !table.has(BuiltinMark::MayBeAbsent, key->builtin())) {
@@ -408,14 +422,17 @@ JSValue BuiltinCells::fillValue(JSGlobalObject* realm, BuiltinCellKey key)
 
     const BuiltinTable& table = BuiltinTable::singleton();
     const Builtin& member = table.at(key.builtin());
-    JSCell* holder = findObject(member.holder);
+    // The host keeps its private globals on the global object, each under the private name of the engine that is spelled as the member is.
+    bool isPrivateGlobal = member.holder == Builtins::PrivateGlobals;
+    PrivateSymbolImpl* privateName = isPrivateGlobal ? vm.propertyNames->builtinNames().lookUpPrivateName(table.identifierOf(vm, member.name)) : nullptr;
+    JSCell* holder = isPrivateGlobal ? (privateName ? realm : nullptr) : findObject(member.holder);
     if (!holder) {
         if (!BuiltinBindings::provides(member.origin))
             exitForWantOfHost(table, key.builtin());
         dataLogLn("AOT: the holder of the built-in value ", table.textOf(key.builtin()), " (key ", key.encoded(), ") is not in this realm");
         CRASH();
     }
-    JSValue value = asObject(holder)->get(realm, table.identifierOf(vm, member.name));
+    JSValue value = asObject(holder)->get(realm, privateName ? Identifier::fromUid(*privateName) : table.identifierOf(vm, member.name));
     RETURN_IF_EXCEPTION(scope, { });
     // What the host ran may have read the member too.
     if (JSValue filledDuringRead = JSValue::decode(*word))
@@ -478,13 +495,21 @@ void BuiltinCells::willWrite(BuiltinID member, UniquedStringImpl* key)
         return;
     unsigned attributes = 0;
     JSValue held = holder->getDirect(*m_instance.vm, key, attributes);
-    if (!held || !held.isCell() || attributes & PropertyAttribute::CustomAccessorOrValue)
+    if (!held || !held.isCell() || attributes & PropertyAttribute::CustomValue)
         return;
     auto fill = [&](BuiltinCellKey cellKey, JSCell* cell) {
         std::optional<uint32_t> number = cell ? numberOf(cellKey) : std::nullopt;
         if (number && !m_isUnavailable.get(*number))
             fillAndKeepAlive(*number, cell);
     };
+    // Native code without a function object: `URL.prototype.href`. The function that stands for it is made when somebody asks, out of what the holder has then.
+    if (attributes & PropertyAttribute::CustomAccessor) {
+        for (BuiltinCellKey cellKey : { BuiltinCellKey::getter(member), BuiltinCellKey::setter(member) }) {
+            if (numberOf(cellKey))
+                fill(cellKey, findInHolder(m_instance.globalObject, cellKey, holder).value_or(nullptr));
+        }
+        return;
+    }
     if (!(attributes & PropertyAttribute::Accessor)) {
         fill(BuiltinCellKey::object(member), held.asCell());
         return;
@@ -578,8 +603,15 @@ void BuiltinCells::didLoadModule(RuntimeModuleID module, JSObject* exports)
 
 void BuiltinCells::didLoadNativeModule(RuntimeModuleID module, JSObject* exports)
 {
-    if (BuiltinID root = BuiltinTable::singleton().namespaceOf(module))
-        didLock(root, exports);
+    const BuiltinTable& table = BuiltinTable::singleton();
+    BuiltinID root = table.namespaceOf(module);
+    if (!root)
+        return;
+    // "node:process" exports the object that the global object names, and a program may come to it by the module first. Only noted as locked it would never be:
+    // whoever comes to lock it finds the note.
+    if (table.isUnder(root, Builtins::GlobalThis))
+        lockObjectNamedByGlobalObject(m_instance.globalObject, root, exports);
+    didLock(root, exports);
 }
 
 void BuiltinCells::didCreateMember(JSObject* holder, UniquedStringImpl* key, JSObject* created)
@@ -622,19 +654,36 @@ void BuiltinCells::fillAndKeepAlive(uint32_t number, JSCell* cell)
     m_cells[number] = cell;
 }
 
+// What happens to a realm concerns every image that it runs.
+template<typename Functor>
+static ALWAYS_INLINE void forEachInstanceOf(JSGlobalObject* realm, const Functor& functor)
+{
+    Instance* first = realm->aotInstance();
+    if (!first)
+        return;
+    if (!first->above) [[likely]] {
+        functor(*first);
+        return;
+    }
+    Instance::forEachOf(realm, functor);
+}
+
 void hostDidLoadBuiltinModule(JSGlobalObject* realm, uint32_t module, JSValue exports)
 {
-    Instance* instance = Instance::of(realm);
-    if (!instance || !instance->state || !exports.isObject() || module >= BuiltinTable::singleton().moduleCount())
+    if (!exports.isObject() || module >= BuiltinTable::singleton().moduleCount())
         return;
-    instance->state->builtinCells->didLoadModule(RuntimeModuleID(module), asObject(exports));
+    forEachInstanceOf(realm, [&](Instance& instance) {
+        if (instance.state)
+            instance.state->builtinCells->didLoadModule(RuntimeModuleID(module), asObject(exports));
+    });
 }
 
 void hostDidReplaceProperty(JSGlobalObject* realm, UniquedStringImpl* key)
 {
-    Instance* instance = Instance::of(realm);
-    if (instance && instance->state)
-        instance->state->builtinCells->forgetValuesNamed(key);
+    forEachInstanceOf(realm, [&](Instance& instance) {
+        if (instance.state)
+            instance.state->builtinCells->forgetValuesNamed(key);
+    });
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTFillBuiltinValue, EncodedJSValue, (Instance* instance, uint32_t cellKey))
@@ -687,15 +736,27 @@ static void noteNameOfLockedObject(JSObject* object, BuiltinID id)
     namesOfLockedObjects().set(object, id);
 }
 
-void didRefuseChange(JSGlobalObject* realm, JSObject* object, UniquedStringImpl* keyOrNull, RefusedChange change)
+// The cells of a program know what was locked for it. Without a program the table was locked.
+static BuiltinID builtinOfLockedObject(const Instance* instanceOfObject, JSObject* object)
+{
+    State* state = instanceOfObject ? instanceOfObject->state : nullptr;
+    if (BuiltinID id = state && state->builtinCells ? state->builtinCells->builtinOfLockedObject(object) : BuiltinID())
+        return id;
+    Locker locker { namesOfLockedObjectsLock };
+    return namesOfLockedObjects().get(object);
+}
+
+static Instance* instanceOfRealmOf(JSObject* object)
+{
+    JSGlobalObject* realm = object->realm();
+    return realm ? Instance::of(realm) : nullptr;
+}
+
+void didRejectWrite(JSGlobalObject* realm, JSObject* object, UniquedStringImpl* keyOrNull, RejectedWrite change)
 {
     if (!refusedChangeListener) [[likely]]
         return;
-    BuiltinID id;
-    {
-        Locker locker { namesOfLockedObjectsLock };
-        id = namesOfLockedObjects().get(object);
-    }
+    BuiltinID id = builtinOfLockedObject(instanceOfRealmOf(object), object);
     if (!id)
         return;
     String holder = BuiltinTable::singleton().textOf(id);
@@ -705,31 +766,50 @@ void didRefuseChange(JSGlobalObject* realm, JSObject* object, UniquedStringImpl*
         return id == Builtins::GlobalThis ? String(keyOrNull) : makeString(holder, '.', StringView(keyOrNull));
     };
     switch (change) {
-    case RefusedChange::Store:
+    case RejectedWrite::Store:
         return refusedChangeListener(realm, makeString("Cannot assign to "_s, member()));
-    case RefusedChange::Definition:
+    case RejectedWrite::Definition:
         return refusedChangeListener(realm, makeString("Cannot define "_s, member()));
-    case RefusedChange::Deletion:
+    case RejectedWrite::Deletion:
         return refusedChangeListener(realm, makeString("Cannot delete "_s, member()));
-    case RefusedChange::Prototype:
+    case RejectedWrite::Prototype:
         return refusedChangeListener(realm, makeString("Cannot change the prototype of "_s, holder));
     }
 }
 
-String messageOfRefusalByLockedObject(JSGlobalObject*, JSObject* object, UniquedStringImpl* key, RefusedChange change)
+static bool admitsReplacedBuiltins(const Instance&);
+
+String lockedObjectErrorMessage(JSGlobalObject*, JSObject* object, UniquedStringImpl* key, RejectedWrite change)
 {
-    JSGlobalObject* realm = object->realm();
-    Instance* instance = realm ? Instance::of(realm) : nullptr;
-    State* state = instance ? instance->state : nullptr;
-    BuiltinID id = state && state->builtinCells ? state->builtinCells->builtinOfLockedObject(object) : BuiltinID();
-    if (!id) {
-        Locker locker { namesOfLockedObjectsLock };
-        id = namesOfLockedObjects().get(object);
-    }
+    Instance* instance = instanceOfRealmOf(object);
+    BuiltinID id = builtinOfLockedObject(instance, object);
     if (!id)
         return { };
-    String member = memberOfLockedBuiltin(id, key);
-    return change == RefusedChange::Deletion ? deletionFromLockedBuiltinMessage(member) : assignmentToLockedBuiltinMessage(member);
+    LockedIn lockedIn = instance && admitsReplacedBuiltins(*instance) ? LockedIn::TestRun : LockedIn::Executable;
+    VM& vm = object->vm();
+    return change == RejectedWrite::Deletion ? deletionFromLockedBuiltinMessage(vm, id, key, lockedIn) : assignmentToLockedBuiltinMessage(vm, id, key, lockedIn);
+}
+
+String refusedSpyMessage(JSGlobalObject* globalObject, JSObject* object, UniquedStringImpl* key)
+{
+    ImmutablePropertyNames* names = object->structure()->listedImmutablePropertyNames();
+    String message = names ? names->storeErrorMessage(key) : lockedObjectErrorMessage(globalObject, object, key, RejectedWrite::Store);
+    constexpr ASCIILiteral start = "Cannot assign to "_s;
+    if (!message.startsWith(start))
+        return { };
+    return makeString("Cannot spy on "_s, StringView(message).substring(start.length()));
+}
+
+static bool admitsReplacedBuiltins(const Instance& instance)
+{
+    return hasFlag(instance.options().admitted(), AdmittedCode::ReplacedBuiltins);
+}
+
+bool reflectThrowsOnLockedProperty(JSObject* lockedObject)
+{
+    JSGlobalObject* realm = lockedObject->realm();
+    Instance* instance = realm ? Instance::of(realm) : nullptr;
+    return instance && admitsReplacedBuiltins(*instance);
 }
 
 // Every realm of the VM, with an instance or without: text that is evaluated in any of them reaches the objects of the program.
@@ -852,6 +932,13 @@ static bool isLockedByTable(const BuiltinTable& table, BuiltinID holder)
     return hasMemberLockedByTable(table, holder) || table.at(holder).flags.contains(BuiltinFlag::IsLockedObject);
 }
 
+// The lowest program of the realm whose build knew the run. An image that holds the library alone was built for every run: it rests on no lock that a run can open, and says nothing about what this one opens.
+static Instance* firstInstanceOfRun(JSGlobalObject* realm)
+{
+    Instance* first = realm->aotInstance();
+    return first && first->program->holdsLibraryAlone() && first->above ? first->above : first;
+}
+
 namespace {
 
 // Locks a built-in object that the realm has created, and what hangs on it and is there already.
@@ -866,6 +953,8 @@ public:
         : m_vm(*instance.vm)
         , m_realm(instance.globalObject)
         , m_tables(instance.tables())
+        , m_instance(instance)
+        , m_isTestRun(admitsReplacedBuiltins(instance))
         , m_cells(instance.state ? instance.state->builtinCells.get() : nullptr)
         , m_builtinsToLock(builtinsToLock)
         , m_lockedWithoutCells(lockedWithoutCells)
@@ -883,15 +972,17 @@ public:
             return;
         makeImmutable(table, id, object);
 
-        for (BuiltinID member : table.membersOf(id)) {
-            const Builtin& entry = table.at(member);
-            BuiltinID target = entry.sameObjectAs ? entry.sameObjectAs : member;
+        const Builtin& holder = table.at(id);
+        uint32_t memberIndex = holder.firstMember.index();
+        for (const Builtin& entry : table.memberEntriesOf(id)) {
+            BuiltinID target = entry.sameObjectAs ? entry.sameObjectAs : BuiltinID(memberIndex);
+            ++memberIndex;
             if (!m_builtinsToLock.quickGet(target.index()) || hasLocked(target))
                 continue;
             if (JSObject* existing = findOrCreateMember(table, object, entry.name, target))
                 lock(target, existing);
         }
-        if (BuiltinID inherited = table.at(id).inheritsFrom) {
+        if (BuiltinID inherited = holder.inheritsFrom) {
             if (JSObject* prototype = object->getPrototypeDirect().getObject())
                 lock(inherited, prototype);
         }
@@ -920,30 +1011,58 @@ private:
         return m_cells->didLock(id, object);
     }
 
+    Vector<Identifier, 2> namesOpenedOn(BuiltinID id) const
+    {
+        Vector<Identifier, 2> names;
+        auto appendNamesOf = [&](const Instance& instance) {
+            std::span<const uint32_t> openedNames = instance.tables().openedNames();
+            for (size_t index = 0; index + 1 < openedNames.size(); index += 2) {
+                if (openedNames[index] == (id.index() | ProgramTables::openedName))
+                    names.append(Identifier::fromString(m_vm, instance.program->text().view(StringID(openedNames[index + 1] & ~ProgramTables::openedName)).toString()));
+            }
+        };
+        appendNamesOf(m_instance);
+        if (const Instance* first = firstInstanceOfRun(m_realm); first && first != &m_instance)
+            appendNamesOf(*first);
+        return names;
+    }
+
     void makeImmutable(const BuiltinTable& table, BuiltinID id, JSObject* object)
     {
-        if (table.at(id).flags.contains(BuiltinFlag::IsLockedObject)) {
+        Vector<Identifier, 2> openedNames = namesOpenedOn(id);
+        bool isWholeObject = table.at(id).flags.contains(BuiltinFlag::IsLockedObject);
+        // A test may ask whether Object.prototype can be extended. Locked by its names it answers as in plain Bun, and takes as little.
+        if (isWholeObject && !m_isTestRun) {
             lockObject(m_vm, id, object);
             if (m_cells)
                 m_cells->didLockEveryPropertyOf(object);
             return;
         }
         std::span<const uint32_t> constantMembers = constantMembersOf(table, m_tables, id);
-        bool hasFixedNames = hasMemberLockedByTable(table, id) || !constantMembers.empty();
+        bool hasFixedNames = isWholeObject || hasMemberLockedByTable(table, id) || !constantMembers.empty();
         bool tellsOfWrites = m_cells && m_cells->holdersThatTellOfWrites().get(id.index());
         // A holder may only lie on the path to what is locked.
         if (!hasFixedNames && !tellsOfWrites)
             return;
-        if (object->makePropertiesImmutable(m_vm, immutablePropertyNamesOf(m_vm, id, constantMembers, m_cells).get())) [[likely]]
+        if (object->makePropertiesImmutable(m_vm, immutablePropertyNamesOf(m_vm, id, constantMembers, m_cells, unlockedMembers(), m_isTestRun, openedNames.span()).get())) [[likely]]
             return;
         if (hasFixedNames)
             crashOnBuiltinHolder(id, "cannot be made immutable"_s);
         m_cells->cannotHearOfWritesTo(id);
     }
 
+    std::span<const uint32_t> unlockedMembers() const
+    {
+        if (m_cells && !m_cells->membersUnlockedInRealm().empty())
+            return m_cells->membersUnlockedInRealm();
+        return m_tables.unlockedBuiltinMembers();
+    }
+
     VM& m_vm;
     JSGlobalObject* m_realm;
     const ProgramTables& m_tables;
+    const Instance& m_instance;
+    const bool m_isTestRun;
     BuiltinCells* m_cells;
     const BitVector& m_builtinsToLock;
     BitVector* m_lockedWithoutCells;
@@ -960,7 +1079,6 @@ static void lockPrototypeOfClass(BuiltinLocker& locker, BuiltinClassID builtinCl
 
 static void lockExistingBuiltins(BuiltinLocker& locker, JSGlobalObject* realm)
 {
-    locker.lock(Builtins::GlobalThis, realm);
     // No name need lead from the global object to a prototype whose instances exist: the name of the class is created at its first read.
     forEachHiddenPrototype(realm, [&](BuiltinClassID builtinClass, JSObject* prototype) {
         lockPrototypeOfClass(locker, builtinClass, prototype);
@@ -971,6 +1089,7 @@ static void lockExistingBuiltins(BuiltinLocker& locker, JSGlobalObject* realm)
     forEachCreatedClassOfGlobal(realm, [&](BuiltinID member, JSObject* constructor) {
         locker.lock(member, constructor);
     });
+    locker.lock(Builtins::GlobalThis, realm);
 }
 
 // Whoever makes the Structure of the instances of a class that names it reports it: the engine a LazyClassStructure, the host any other. The prototype object and the constructor are there by then.
@@ -980,7 +1099,7 @@ static bool isCreatedWithReportedStructure(const BuiltinTable& table, BuiltinID 
     if (!builtinClass || (table.at(builtinClass).prototype != holder && table.at(builtinClass).constructor != holder))
         return false;
     return std::ranges::any_of(BuiltinBindings::classesOfHost(), [&](const BuiltinClassBinding& binding) {
-        return binding.builtinClass == builtinClass && binding.findInstanceStructure;
+        return binding.builtinClass == builtinClass && binding.namesInstanceStructure;
     });
 }
 
@@ -989,7 +1108,7 @@ static void lockHoldersOfProgram(BuiltinLocker& locker, JSGlobalObject* realm, c
 {
     const BuiltinTable& table = BuiltinTable::singleton();
     auto lockCreated = [&](BuiltinID holder) {
-        if (locker.hasLocked(holder) || isLockedByTable(table, holder) || table.isUnder(holder, Builtins::GlobalThis) || isCreatedWithReportedStructure(table, holder))
+        if (locker.hasLocked(holder) || table.isUnder(holder, Builtins::GlobalThis) || isLockedByTable(table, holder) || isCreatedWithReportedStructure(table, holder))
             return;
         if (JSObject* object = findOrCreateObject(realm, holder)) {
             locker.lock(holder, object);
@@ -1015,6 +1134,20 @@ static void lockBuiltins(Instance& instance)
         return;
     }
     BuiltinCells& cells = *instance.state->builtinCells;
+    // What the first program of the realm leaves open stays open: its build knows of every file that the programs share and of Bun's own code, which a later build does not see.
+    Instance* first = firstInstanceOfRun(realm);
+    if (instance.program->holdsLibraryAlone()) {
+        // It locks what that program locks, which comes behind it.
+        if (first != &instance)
+            cells.setMembersUnlockedInRealm(Vector<uint32_t>(first->tables().unlockedBuiltinMembers()));
+    } else if (first && first != &instance && first->state) {
+        toLock.builtins.filter(first->state->builtinCells->builtinsToLock());
+        Vector<uint32_t> unlocked(instance.tables().unlockedBuiltinMembers());
+        unlocked.append(first->tables().unlockedBuiltinMembers());
+        std::ranges::sort(unlocked);
+        unlocked.shrink(std::ranges::unique(unlocked).begin() - unlocked.begin());
+        cells.setMembersUnlockedInRealm(WTF::move(unlocked));
+    }
     cells.setBuiltinsToLock(WTF::move(toLock.builtins), WTF::move(toLock.holdersThatTellOfWrites));
     BuiltinLocker locker(instance);
     lockExistingBuiltins(locker, realm);
@@ -1044,12 +1177,13 @@ void lockBuiltinsOfTable(JSGlobalObject* realm)
     scope.assertNoException();
 }
 
-static Instance* findInstanceThatLocks(JSGlobalObject* realm)
+template<typename Functor>
+static ALWAYS_INLINE void forEachInstanceThatLocks(JSGlobalObject* realm, const Functor& functor)
 {
-    Instance* instance = Instance::of(realm);
-    if (!instance || !instance->state || instance->state->builtinCells->builtinsToLock().isEmpty())
-        return nullptr;
-    return instance;
+    forEachInstanceOf(realm, [&](Instance& instance) {
+        if (instance.state && !instance.state->builtinCells->builtinsToLock().isEmpty())
+            functor(instance);
+    });
 }
 
 static void validateClassWithInstanceStructure(JSGlobalObject* realm, Structure* structure, BuiltinClassID answer)
@@ -1085,12 +1219,17 @@ static BuiltinID findPrototypeMember(const BuiltinTable& table, BuiltinID constr
     return { };
 }
 
+static void didCreateClass(Instance*, JSGlobalObject*, const LazyClassStructure&, Structure*, JSObject* prototype, JSObject* constructor);
+
 void didCreateClass(JSGlobalObject* realm, const LazyClassStructure& lazyStructure, Structure* structure, JSObject* prototype, JSObject* constructor)
 {
-    Instance* instance = findInstanceThatLocks(realm);
-    if (!instance)
-        return;
+    forEachInstanceThatLocks(realm, [&](Instance& instance) {
+        didCreateClass(&instance, realm, lazyStructure, structure, prototype, constructor);
+    });
+}
 
+static void didCreateClass(Instance* instance, JSGlobalObject* realm, const LazyClassStructure& lazyStructure, Structure* structure, JSObject* prototype, JSObject* constructor)
+{
     const BuiltinTable& table = BuiltinTable::singleton();
     BuiltinClassID builtinClass = findClassWithInstanceStructure(realm, structure);
     if (validatesRuntime(realm->vm())) [[unlikely]]
@@ -1098,6 +1237,8 @@ void didCreateClass(JSGlobalObject* realm, const LazyClassStructure& lazyStructu
     if (builtinClass)
         instance->didCreateInstanceStructure(builtinClass, structure);
     BuiltinID constructorID = findGlobalCreatedWith(realm, lazyStructure);
+    if (!constructorID)
+        constructorID = findMemberOfNamespaceCreatedWith(realm, lazyStructure);
     BuiltinID prototypeID;
     if (constructorID) {
         constructorID = table.canonicalID(constructorID);
@@ -1124,60 +1265,159 @@ void didCreateStaticProperty(JSObject* holder, UniquedStringImpl* key, JSValue v
     if (!value || !value.isObject())
         return;
     JSGlobalObject* realm = holder->realm();
-    if (Instance* created = Instance::of(realm); created && created->state) {
-        created->state->builtinCells->didCreateMember(holder, key, asObject(value));
-        created->state->builtinFamilies->locationWatch->didCreateMember(holder, key, asObject(value));
-    }
+    forEachInstanceOf(realm, [&](Instance& created) {
+        if (!created.state)
+            return;
+        created.state->builtinCells->didCreateMember(holder, key, asObject(value));
+        created.state->builtinFamilies->locationWatch->didCreateMember(holder, key, asObject(value));
+    });
     lockMemberOfLockedHolder(realm, holder, key, asObject(value));
 }
 
 static void lockMemberOfLockedHolder(JSGlobalObject* realm, JSObject* holder, UniquedStringImpl* key, JSObject* made)
 {
-    Instance* instance = findInstanceThatLocks(realm);
-    if (!instance)
-        return;
+    forEachInstanceThatLocks(realm, [&](Instance& instance) {
+        const BuiltinTable& table = BuiltinTable::singleton();
+        BuiltinID holderID = holder == realm ? Builtins::GlobalThis : instance.state->builtinCells->builtinOfLockedObject(holder);
+        BuiltinName name = holderID ? table.nameOf(realm->vm(), key) : BuiltinName();
+        BuiltinID member = name ? table.findOwnMember(holderID, name) : BuiltinID();
+        if (!member)
+            return;
+        instance.state->builtinCells->didMakeMember(member, made);
+        BuiltinLocker locker(instance);
+        locker.lock(member, made);
+    });
+}
 
-    const BuiltinTable& table = BuiltinTable::singleton();
-    BuiltinID holderID = holder == realm ? Builtins::GlobalThis : instance->state->builtinCells->builtinOfLockedObject(holder);
-    BuiltinName name = holderID ? table.nameOf(realm->vm(), key) : BuiltinName();
-    BuiltinID member = name ? table.findOwnMember(holderID, name) : BuiltinID();
-    if (!member)
-        return;
-    instance->state->builtinCells->didMakeMember(member, made);
-    BuiltinLocker locker(*instance);
-    locker.lock(member, made);
+static void lockObjectNamedByGlobalObject(JSGlobalObject* realm, BuiltinID id, JSObject* object)
+{
+    forEachInstanceThatLocks(realm, [&](Instance& instance) {
+        BuiltinLocker locker(instance);
+        locker.lock(id, object);
+    });
 }
 
 JSObject* takeStaticPropertyMadeAhead(JSObject* holder, UniquedStringImpl* key)
 {
-    Instance* instance = Instance::of(holder->realm());
-    return instance && instance->state ? instance->state->builtinCells->takeMemberMadeAhead(holder, key) : nullptr;
+    JSObject* taken = nullptr;
+    forEachInstanceOf(holder->realm(), [&](Instance& instance) {
+        if (JSObject* member = instance.state ? instance.state->builtinCells->takeMemberMadeAhead(holder, key) : nullptr)
+            taken = member;
+    });
+    return taken;
+}
+
+// The host makes the constructor of such a class where somebody first asks for it, by the name of the class or through an instance.
+static void awaitConstructorOfClass(Instance& instance, BuiltinClassID builtinClass, JSObject* prototype)
+{
+    BuiltinCells& cells = *instance.state->builtinCells;
+    BuiltinID constructor = BuiltinTable::singleton().at(builtinClass).constructor;
+    if (constructor && prototype && cells.builtinsToLock().get(constructor.index()) && !cells.hasLocked(constructor))
+        cells.awaitConstructor(prototype, constructor);
+}
+
+void hostDidCreateConstructor(JSGlobalObject* realm, JSObject* constructor)
+{
+    if (!realm->aotInstance())
+        return;
+    JSObject* prototype = findExistingObject(constructor, realm->vm().propertyNames->prototype.impl());
+    if (!prototype)
+        return;
+    const BuiltinTable& table = BuiltinTable::singleton();
+    forEachInstanceThatLocks(realm, [&](Instance& instance) {
+        BuiltinCells& cells = *instance.state->builtinCells;
+        BuiltinID id = cells.takeAwaitedConstructor(prototype);
+        // A program that came to the realm behind the Structure found the prototype object there.
+        if (BuiltinID prototypeID = id ? BuiltinID() : cells.builtinOfLockedObject(prototype)) {
+            BuiltinClassID builtinClass = table.at(prototypeID).instanceClass;
+            if (builtinClass && table.at(builtinClass).prototype == prototypeID)
+                id = table.at(builtinClass).constructor;
+        }
+        if (!id)
+            return;
+        BuiltinLocker locker(instance);
+        locker.lock(id, constructor);
+    });
 }
 
 void hostDidCreateStructure(JSGlobalObject* realm, Structure* structure)
 {
-    Instance* instanceOfRealm = Instance::of(realm);
-    if (!instanceOfRealm)
+    if (!realm->aotInstance())
         return;
     BuiltinClassID builtinClass = findClassWithInstanceStructure(realm, structure);
-    if (builtinClass)
-        instanceOfRealm->didCreateInstanceStructure(builtinClass, structure);
-    Instance* instance = findInstanceThatLocks(realm);
-    if (!instance)
-        return;
-    if (validatesRuntime(realm->vm())) [[unlikely]]
-        validateClassWithInstanceStructure(realm, structure, builtinClass);
-    if (!builtinClass)
-        return;
-    BuiltinLocker locker(*instance);
-    lockPrototypeOfClass(locker, builtinClass, structure->storedPrototypeObject());
-    markPristine(realm->vm(), builtinClass, structure);
+    if (builtinClass) {
+        forEachInstanceOf(realm, [&](Instance& instance) {
+            instance.didCreateInstanceStructure(builtinClass, structure);
+        });
+    }
+    forEachInstanceThatLocks(realm, [&](Instance& instance) {
+        if (validatesRuntime(realm->vm())) [[unlikely]]
+            validateClassWithInstanceStructure(realm, structure, builtinClass);
+        BuiltinLocker locker(instance);
+        JSObject* prototype = structure->storedPrototypeObject();
+        if (!builtinClass) {
+            // The host need not say where it keeps the Structure: the instances say which class they are of.
+            const ClassInfo* info = structure->classInfoForCells();
+            BuiltinClassID classOfInstances = BuiltinBindings::classOf(info);
+            if (!classOfInstances || BuiltinBindings::instanceClassInfoOf(classOfInstances) != info)
+                return;
+            lockPrototypeOfClass(locker, classOfInstances, prototype);
+            awaitConstructorOfClass(instance, classOfInstances, prototype);
+            return;
+        }
+        lockPrototypeOfClass(locker, builtinClass, prototype);
+        awaitConstructorOfClass(instance, builtinClass, prototype);
+        markPristine(realm->vm(), builtinClass, structure);
+    });
+}
+
+void hostDidCreateObjectOfGlobal(JSGlobalObject* realm, UniquedStringImpl* key, JSObject* object)
+{
+    if (realm->aotInstance())
+        lockMemberOfLockedHolder(realm, realm, key, object);
+}
+
+namespace {
+
+class FoldedMembersOfHostObject final : public ImmutablePropertyNames::OutsideNames {
+public:
+    FoldedMembersOfHostObject(ASCIILiteral holder, LockedIn lockedIn)
+        : m_holder(holder)
+        , m_lockedIn(lockedIn)
+    {
+    }
+
+    // The names are listed.
+    bool contains(UniquedStringImpl*) const final { return false; }
+    String storeErrorMessage(UniquedStringImpl* uid) const final { return assignmentToFoldedMemberMessage(makeString(m_holder, '.', StringView(uid)), m_lockedIn); }
+    String deleteErrorMessage(UniquedStringImpl* uid) const final { return deletionOfFoldedMemberMessage(makeString(m_holder, '.', StringView(uid)), m_lockedIn); }
+    bool throwsInSloppyMode() const final { return true; }
+    bool throwsFromReflect() const final { return m_lockedIn == LockedIn::TestRun; }
+
+private:
+    ASCIILiteral m_holder;
+    LockedIn m_lockedIn;
+};
+
+} // anonymous namespace
+
+void hostDidFillObjectWithFoldedMembers(JSGlobalObject* realm, JSObject* object, ASCIILiteral holder, std::span<const ASCIILiteral> names)
+{
+    VM& vm = realm->vm();
+    IdentifierSet folded;
+    for (ASCIILiteral name : names)
+        folded.add(Identifier::fromString(vm, name).impl());
+    Instance* instance = realm->aotInstance();
+    LockedIn lockedIn = instance && admitsReplacedBuiltins(*instance) ? LockedIn::TestRun : LockedIn::Executable;
+    Ref<ImmutablePropertyNames> closed = ImmutablePropertyNames::create(WTF::move(folded), { }, { }, adoptRef(*new FoldedMembersOfHostObject(holder, lockedIn)));
+    RELEASE_ASSERT(object->makePropertiesImmutable(vm, closed.get()));
 }
 
 void hostDidCreateNodeModule(JSGlobalObject* realm, JSObject* constructor)
 {
-    if (Instance* instance = findInstanceThatLocks(realm))
-        BuiltinLocker(*instance).lock(Builtins::NodeModule, constructor);
+    forEachInstanceThatLocks(realm, [&](Instance& instance) {
+        BuiltinLocker(instance).lock(Builtins::NodeModule, constructor);
+    });
 }
 
 void markOriginalStructuresPristine(VM& vm, JSGlobalObject* realm)
@@ -1221,9 +1461,12 @@ void didInstallBuiltins(Instance& instance)
 
 void hostDidCreateRealm(JSGlobalObject* realm)
 {
-    if (Instance* instance = Instance::of(realm))
-        didInstallBuiltins(*instance);
-    else if (locksBuiltins(realm))
+    if (realm->aotInstance()) {
+        Instance::forEachOf(realm, [](Instance& instance) {
+            didInstallBuiltins(instance);
+        });
+        RuntimeHooks::installDeferredWatchpoints(realm);
+    } else if (locksBuiltins(realm))
         lockBuiltinsOfTable(realm);
 }
 

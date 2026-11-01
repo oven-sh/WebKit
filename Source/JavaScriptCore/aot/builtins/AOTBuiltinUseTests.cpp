@@ -22,19 +22,31 @@ static BuiltinUseInputs inputsOf(FunctionPassContext& context, std::span<const V
     return { context.program, context.function, context.types, context.inputs.flow, context.analyses.effectContext(), nullptr, passedTests, !context.build.options().obfuscates() };
 }
 
+static bool callsMemberReadUnderTest(const TestSiteReporter& reporter, const Value& call)
+{
+    if (call.opcode != Opcode::Call || !call.calleeKey())
+        return false;
+    ValueID read = sameObjectThroughCasts(reporter.function(), call.calleeOperand()).valueInFrontOfFacts();
+    return reporter.function().at(read).opcode == Opcode::PropGet && reporter.isClaimed(read);
+}
+
 void reportBuiltinUseTests(TestSiteReporter& reporter)
 {
     BuiltinUseInputs inputs = inputsOf(reporter.context(), { });
     inputs.identities = &reporter.context().analyses;
-    reporter.forEachCandidate([&](const Value& candidate) {
+    reporter.forEachCandidate(builtinUseOpcodes, [&](const Value& candidate) {
         if (!builtinUseOpcodes.contains(candidate.opcode))
             return;
         BuiltinUsePlan plan = planBuiltinUse(inputs, reporter.use(), reporter.point());
         if (!plan || plan.isProven())
             return;
         bool staysTailCall = plan.kind == BuiltinUseKind::LibraryCall && !plan.assumedResult;
-        if (tailCallRequirementOf(reporter.function(), reporter.point().block, reporter.use()) && !staysTailCall)
+        if (tailCallRequirementOf(reporter.function(), reporter.point().block, reporter.use()) && !staysTailCall) {
+            // Where the tests of the read pass, the callee is the built-in, and ResolveBuiltins gives the tail call up in the next round. A test for another callee would send that path to the call by value.
+            if (callsMemberReadUnderTest(reporter, candidate))
+                reporter.claimUse();
             return;
+        }
 
         Vector<Value, 4> tests = createTestsOf(plan);
         bool hasFailedTest = std::ranges::any_of(tests, [&](const Value& test) {

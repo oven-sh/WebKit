@@ -19,12 +19,14 @@
 #include <algorithm>
 #include <optional>
 #include <wtf/BitVector.h>
+#include <wtf/HashMap.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr OpcodeSet birthStoresBySlot { Opcode::PutSlot, Opcode::PutSlotOrAdd };
 static constexpr OpcodeSet birthStoresByName { Opcode::PropSet, Opcode::PropDefine };
 static constexpr OpcodeSet finishingOperations { Opcode::FinishBirth, Opcode::TryFinishBirth };
+static constexpr OpcodeSet slotAccessesBehindGuards { Opcode::GetSlot, Opcode::GetSlotOrUndefined, Opcode::PutSlot, Opcode::PutSlotOrAdd };
 
 static constexpr OpcodeSet operationsThatKeepObjectPrivate {
     Opcode::PutSlot, Opcode::PutSlotOrAdd, Opcode::GetSlot, Opcode::GetSlotOrUndefined, Opcode::IsSlotFilled, Opcode::ShapeTest, Opcode::HasNoExtraProperties, Opcode::HasNoFieldOutsideSlot,
@@ -51,6 +53,7 @@ public:
         collectObjects();
         if (m_objects.isEmpty())
             return PassOutcome::Unchanged;
+        m_marksMayComeBack = storesMarkerInPlaceOfRawValueSomewhere();
 
         Vector<std::optional<States>> atEnd(m_function.blocks.size());
         for (BlockID block : m_cfg.reversePostOrder()) {
@@ -103,6 +106,7 @@ private:
         bool isFinished { false };
         bool isReachableByOthers { true };
         bool wasSeenByOthers { true };
+        bool wasFoundFinishedByTest { false };
 
         void meet(const State& other)
         {
@@ -112,6 +116,7 @@ private:
             mayHoldMoreThanIsListed |= other.mayHoldMoreThanIsListed;
             isAlive &= other.isAlive;
             isFinished &= other.isFinished;
+            wasFoundFinishedByTest = isFinished && (wasFoundFinishedByTest || other.wasFoundFinishedByTest);
             isReachableByOthers |= other.isReachableByOthers;
             wasSeenByOthers |= other.wasSeenByOthers;
         }
@@ -123,16 +128,19 @@ private:
             isFinished = false;
             isReachableByOthers = true;
             wasSeenByOthers = true;
+            wasFoundFinishedByTest = false;
         }
     };
     using States = Vector<State, 4>;
 
     std::optional<uint32_t> numberOf(PropertyKeyID key) const
     {
-        size_t number = key ? m_keys.find(key) : notFound;
-        if (number == notFound)
+        if (!key)
             return std::nullopt;
-        return static_cast<uint32_t>(number);
+        auto found = m_numberOfKey.find(key);
+        if (found == m_numberOfKey.end())
+            return std::nullopt;
+        return found->value;
     }
 
     bool isFilled(LayoutID layout, const BitVector& stored) const
@@ -200,6 +208,25 @@ private:
         return state;
     }
 
+    // What isFilled() says of stateAtBirth(), without sets over the keys of all objects of the function.
+    bool isFilledWhenBorn(const Value& allocation) const
+    {
+        LayoutID layout = allocation.layout();
+        const Layout& fields = m_program.at(layout);
+        std::span<const uint32_t> listed = allocation.fields();
+        std::span<const ValueID> values = allocation.variadicOperands();
+        BitVector stored(fields.fields.size());
+        for (size_t index = 0; index < listed.size(); ++index) {
+            if (!holdsRawValueFromBirth(m_program, { layout, listed[index] }) || (index < values.size() && !mayBeMarker(values[index])))
+                stored.quickSet(listed[index]);
+        }
+        for (uint32_t field = 0; field < fields.fields.size(); ++field) {
+            if (isFilledAtBirth(m_program, { layout, field }) && (!fields.fields[field].key || !stored.quickGet(field)))
+                return false;
+        }
+        return true;
+    }
+
     bool mayStoreMarkerInPlaceOfRawValue(const Value& storeBySlot) const
     {
         if (!mayBeMarker(storeBySlot.operand(OperandIndex::PutSlot::value)))
@@ -243,7 +270,7 @@ private:
         const Layout& fields = m_program.at(layout);
         for (uint32_t field = 0; field < fields.fields.size(); ++field) {
             PropertyKeyID key = fields.fields[field].key;
-            if (key && isFilledAtBirth(m_program, { layout, field }) && !m_keys.contains(key))
+            if (key && isFilledAtBirth(m_program, { layout, field }) && m_numberOfKey.add(key, m_keys.size()).isNewEntry)
                 m_keys.append(key);
         }
     }
@@ -316,6 +343,10 @@ private:
             numberKeysOf(allocation.layout());
             hasSuchAllocation = true;
         });
+        forEachStoreIntoLiteralMadeElsewhere([&](ValueID, LayoutID layout) {
+            numberKeysOf(layout);
+            hasSuchAllocation = true;
+        });
         if (!hasSuchAllocation)
             return;
         for (BlockID block : m_cfg.reversePostOrder()) {
@@ -332,9 +363,10 @@ private:
             addObject(m_allocatedThis, WTF::move(layoutsOfThis));
         }
         forEachAllocationWithSuchFields([&](ValueID id, const Value& allocation) {
-            if (!isFilled(allocation.layout(), stateAtBirth(allocation).stored))
+            if (!isFilledWhenBorn(allocation))
                 addObject(id, { allocation.layout() });
         });
+        addLiteralsFilledHere();
         if (m_objects.isEmpty())
             return;
         bool hasFoundParameter = true;
@@ -353,6 +385,52 @@ private:
                 }
             }
         }
+    }
+
+    // `(function (E) { E.A = 0; E.B = 1; })(E || (E = {}))`: the literal is filled through a parameter, and behind a join where the function has been inlined.
+    void forEachStoreIntoLiteralMadeElsewhere(NOESCAPE const Invocable<void(ValueID receiver, LayoutID)> auto& functor) const
+    {
+        for (BlockID block : m_cfg.reversePostOrder()) {
+            for (ValueID id : m_function.at(block).values) {
+                const Value& value = m_function.at(id);
+                if ((!birthStoresBySlot.contains(value.opcode) && !birthStoresByName.contains(value.opcode)) || !value.receivers())
+                    continue;
+                // Flow names the functions that fill.
+                if (!value.accessSite() || m_context.inputs.flow.seesOnlyFinishedObjects(value.accessSite()))
+                    continue;
+                // A store by name may list only what has been seen to arrive.
+                auto layouts = m_program.at(value.receivers()).all();
+                if (!layouts)
+                    continue;
+                ValueID receiver;
+                for (LayoutID layout : *layouts) {
+                    if (m_program.at(layout).kind != LayoutKind::Record || !hasFieldsFilledAtBirth(m_program, layout))
+                        continue;
+                    if (!receiver)
+                        receiver = m_context.analyses.identityOf(value.objectOperand());
+                    if (m_function.at(receiver).opcode != Opcode::NewObject)
+                        functor(receiver, layout);
+                }
+            }
+        }
+    }
+
+    void addLiteralsFilledHere()
+    {
+        forEachStoreIntoLiteralMadeElsewhere([&](ValueID receiver, LayoutID layout) {
+            if (std::optional<uint32_t> object = objectDefinedBy(receiver)) {
+                if (m_isMadeElsewhere.get(*object) && !m_layouts[*object].contains(layout))
+                    m_layouts[*object].append(layout);
+                return;
+            }
+            m_isMadeElsewhere.set(m_objects.size());
+            addObject(receiver, { layout });
+        });
+    }
+
+    State stateOfObjectMadeElsewhere() const
+    {
+        return { BitVector(m_keys.size()), BitVector(m_keys.size()), BitVector(m_keys.size()), true, true, false, true, true };
     }
 
     void forEachAllocationWithSuchFields(NOESCAPE const Invocable<void(ValueID, const Value&)> auto& functor) const
@@ -400,7 +478,7 @@ private:
                 if (edge.block != block)
                     continue;
                 for (uint32_t index = 0; index < target.parameters.size(); ++index) {
-                    if (std::optional<uint32_t> parameter = objectDefinedBy(target.parameters[index]))
+                    if (std::optional<uint32_t> parameter = objectDefinedBy(target.parameters[index]); parameter && !m_isMadeElsewhere.get(*parameter))
                         functor(predecessor, *parameter, *objectNamedBy(edge.arguments[index]));
                 }
             }
@@ -411,7 +489,7 @@ private:
     {
         BitVector isFinishedOnSomeWay(m_objects.size());
         forEachArrival(block, [&](BlockID predecessor, uint32_t object, uint32_t arriving) {
-            if (atEnd[predecessor.index()] && (*atEnd[predecessor.index()])[arriving].isFinished)
+            if (atEnd[predecessor.index()] && (*atEnd[predecessor.index()])[arriving].isFinished && !(*atEnd[predecessor.index()])[arriving].wasFoundFinishedByTest)
                 isFinishedOnSomeWay.quickSet(object);
         });
         forEachArrival(block, [&](BlockID predecessor, uint32_t object, uint32_t arriving) {
@@ -455,6 +533,8 @@ private:
                 states[object] = nothingKnown();
             else if (comesAroundLoop.quickGet(object))
                 states[object].forgetWhatLoopMayUndo();
+            if (m_isMadeElsewhere.get(object) && m_function.at(block).parameters.contains(m_objects[object]))
+                states[object] = stateOfObjectMadeElsewhere();
         }
         return states;
     }
@@ -486,13 +566,39 @@ private:
         return facts.find(Proof::NoFieldOutsideSlot, object) || facts.find(Proof::BirthFieldsFilled, object);
     }
 
+    bool storesMarkerInPlaceOfRawValueSomewhere() const
+    {
+        return std::ranges::any_of(m_cfg.reversePostOrder(), [&](BlockID block) {
+            return std::ranges::any_of(m_function.at(block).values, [&](ValueID id) {
+                return birthStoresBySlot.contains(m_function.at(id).opcode) && mayStoreMarkerInPlaceOfRawValue(m_function.at(id));
+            });
+        });
+    }
+
+    bool isBehindTestThatFoundNoMark(const Value& access) const
+    {
+        ValueID guard = access.guardOperand();
+        if (!guard || m_marksMayComeBack)
+            return false;
+        const GuardFact* fact = m_context.analyses.guardFacts(guard).find(Proof::BirthFieldsFilled, m_context.analyses.identityOf(guardedOperandOf(access)));
+        return fact && !fact->origins.isEmpty() && std::ranges::all_of(fact->origins, [&](const GuardOrigin& origin) {
+            return origin.source == GuardSource::Test && m_function.at(origin.test).opcode == Opcode::HasBirthFieldsFilled;
+        });
+    }
+
     void walk(BlockID id, States& states)
     {
         const Block& block = m_function.at(id);
         for (uint32_t index = 0; index < block.values.size(); ++index) {
             const Value& value = m_function.at(block.values[index]);
             if (std::optional<uint32_t> born = objectDefinedBy(block.values[index]))
-                states[*born] = stateAtBirth(value);
+                states[*born] = m_isMadeElsewhere.get(*born) ? stateOfObjectMadeElsewhere() : stateAtBirth(value);
+            if (slotAccessesBehindGuards.contains(value.opcode)) {
+                if (std::optional<uint32_t> object = objectNamedBy(guardedOperandOf(value)); object && !states[*object].isFinished && isBehindTestThatFoundNoMark(value)) {
+                    states[*object].isFinished = true;
+                    states[*object].wasFoundFinishedByTest = true;
+                }
+            }
             Effects effects = m_context.analyses.effectsOf(block.values[index]).onAnyEdge();
             value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
                 std::optional<uint32_t> object = objectNamedBy(operand);
@@ -604,13 +710,16 @@ private:
     Function& m_function;
     const CFG& m_cfg;
     BitVector m_isObject;
+    BitVector m_isMadeElsewhere;
     Vector<ValueID, 4> m_objects;
     Vector<Layouts, 4> m_layouts;
     Vector<PropertyKeyID, 16> m_keys;
+    HashMap<PropertyKeyID, uint32_t> m_numberOfKey;
     Vector<Insertion, 4> m_insertions;
     Vector<ValueID, 4> m_testsOfUnfinishedObjects;
     ValueID m_allocatedThis;
     bool m_thisMayHaveBeenSeen { false };
+    bool m_marksMayComeBack { false };
 };
 
 } // anonymous namespace

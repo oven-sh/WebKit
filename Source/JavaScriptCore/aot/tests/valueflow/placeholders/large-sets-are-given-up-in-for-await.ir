@@ -1,0 +1,9 @@
+# The program of protocols/for-await.ir where a value may hold one layout or callee: every set that holds more is given up, so the untracked object arrives wherever a rule expects a built-in, a closure or a container.
+# The solve ends with a result all the same, and the program with the results applied is valid
+# OPTIONS: limit=MaxValueFlowSetMembers:1
+# STATISTIC: MaxValueFlowSetMembersHits >= 1
+# RUN: valueflow-solve
+# CHECK: functions
+# RUN(APPLY): valueflow-apply
+# APPLY: function f0
+# PROGRAM-OF: ../protocols/for-await.ir

@@ -2061,6 +2061,94 @@ public:
         }
     }
 
+    void minOrSecondDouble(FPRegisterID src, FPRegisterID dest)
+    {
+        minOrSecondDouble(dest, src, dest);
+    }
+
+    void minOrSecondDouble(FPRegisterID op1, FPRegisterID op2, FPRegisterID dest)
+    {
+        // dest = op1 < op2 ? op1 : op2
+        if (supportsAVX())
+            m_assembler.vminsd_rrr(op2, op1, dest);
+        else {
+            if (op1 != dest && op2 == dest) {
+                moveDouble(op2, fpTempRegister);
+                moveDouble(op1, dest);
+                m_assembler.minsd_rr(fpTempRegister, dest);
+                return;
+            }
+            moveDouble(op1, dest);
+            m_assembler.minsd_rr(op2, dest);
+        }
+    }
+
+    void minOrSecondFloat(FPRegisterID src, FPRegisterID dest)
+    {
+        minOrSecondFloat(dest, src, dest);
+    }
+
+    void minOrSecondFloat(FPRegisterID op1, FPRegisterID op2, FPRegisterID dest)
+    {
+        // dest = op1 < op2 ? op1 : op2
+        if (supportsAVX())
+            m_assembler.vminss_rrr(op2, op1, dest);
+        else {
+            if (op1 != dest && op2 == dest) {
+                moveDouble(op2, fpTempRegister);
+                moveDouble(op1, dest);
+                m_assembler.minss_rr(fpTempRegister, dest);
+                return;
+            }
+            moveDouble(op1, dest);
+            m_assembler.minss_rr(op2, dest);
+        }
+    }
+
+    void maxOrSecondDouble(FPRegisterID src, FPRegisterID dest)
+    {
+        maxOrSecondDouble(dest, src, dest);
+    }
+
+    void maxOrSecondDouble(FPRegisterID op1, FPRegisterID op2, FPRegisterID dest)
+    {
+        // dest = op1 > op2 ? op1 : op2
+        if (supportsAVX())
+            m_assembler.vmaxsd_rrr(op2, op1, dest);
+        else {
+            if (op1 != dest && op2 == dest) {
+                moveDouble(op2, fpTempRegister);
+                moveDouble(op1, dest);
+                m_assembler.maxsd_rr(fpTempRegister, dest);
+                return;
+            }
+            moveDouble(op1, dest);
+            m_assembler.maxsd_rr(op2, dest);
+        }
+    }
+
+    void maxOrSecondFloat(FPRegisterID src, FPRegisterID dest)
+    {
+        maxOrSecondFloat(dest, src, dest);
+    }
+
+    void maxOrSecondFloat(FPRegisterID op1, FPRegisterID op2, FPRegisterID dest)
+    {
+        // dest = op1 > op2 ? op1 : op2
+        if (supportsAVX())
+            m_assembler.vmaxss_rrr(op2, op1, dest);
+        else {
+            if (op1 != dest && op2 == dest) {
+                moveDouble(op2, fpTempRegister);
+                moveDouble(op1, dest);
+                m_assembler.maxss_rr(fpTempRegister, dest);
+                return;
+            }
+            moveDouble(op1, dest);
+            m_assembler.maxss_rr(op2, dest);
+        }
+    }
+
     void subDouble(FPRegisterID src, FPRegisterID dest)
     {
         subDouble(dest, src, dest);
@@ -3627,6 +3715,11 @@ public:
     void ret()
     {
         m_assembler.ret();
+    }
+
+    void retAndPop(uint16_t bytesPoppedBehindReturnAddress)
+    {
+        m_assembler.ret(bytesPoppedBehindReturnAddress);
     }
 
     void compare8(RelationalCondition cond, Address left, TrustedImm32 right, RegisterID dest)

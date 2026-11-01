@@ -1,0 +1,73 @@
+# Each function is called once by `f.call(self, 1.5)`, and entered once more in the way that its name says. It returns new.target.
+# A way that names no receiver hands on undefined as `this`, beside `self`. A bound function hands on what it was bound to, whatever it is called on. A getter sees the receiver of the read, which need not be its holder.
+# A construction hands on a new object, and as new.target the function itself or the one that Reflect.construct names.
+# RUN: valueflow-apply
+# CHECK: name="plainCall" {{*}}thisType={type=undefined|L0} {{*}}results=[{type=undefined}]
+# CHECK: name="callWithoutOperands" {{*}}thisType={type=undefined|L0} {{*}}results=[{type=undefined}]
+# CHECK: name="applyWithoutOperands" {{*}}thisType={type=undefined|L0} {{*}}results=[{type=undefined}]
+# CHECK: name="boundWithoutOperands" {{*}}thisType={type=undefined|L0} {{*}}results=[{type=undefined}]
+# CHECK: name="reflectApplyWithUndefined" {{*}}thisType={type=undefined|L0} {{*}}results=[{type=undefined}]
+# CHECK: name="proxyWithoutTraps" {{*}}thisType={type=undefined|L0} {{*}}results=[{type=undefined}]
+# CHECK: name="method" {{*}}thisType={type=L0|L2} {{*}}results=[{type=undefined}]
+# CHECK: name="boundThenCalledAsMethod" {{*}}thisType={type=L0|L1} {{*}}results=[{type=undefined}]
+# CHECK: name="getterReadForANumber" {{*}}thisType={type=fractional|L0|L3} {{*}}results=[{type=undefined}]
+# CHECK: name="constructed" {{*}}thisType={type=object} {{*}}results=[{type=undefined|f10}]
+# CHECK: name="constructedForAnother" {{*}}thisType={type=object} {{*}}results=[{type=undefined|f12}]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Self"
+layout L1 name="Handler"
+layout L2 name="Holder" fields=[{key="method" declared={type=anything} flags=[IsRequired]}]
+layout L3 name="HolderOfGetter"
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewObject layout=L0
+    v1 = NewObject layout=L1
+    v2 = Builtin builtin=FunctionPrototypeCall
+    v3 = Double number=1.5
+    v4 = NewArray v3 contents=anything
+    v5 = Undefined
+# REPEAT: i = 1..11
+    v%(i*2+4) = NewClosure function=f%(i)
+    v%(i*2+5) = Call v2, v%(i*2+4), v0, v3
+# END REPEAT
+    v28 = Call v6, -, v3
+    v29 = Call v2, v8
+    v30 = Builtin builtin=FunctionPrototypeApply
+    v31 = Call v30, v10
+    v32 = Builtin builtin=FunctionPrototypeBind
+    v33 = Call v32, v12
+    v34 = Call v33, -, v3
+    v35 = Builtin builtin=ReflectApply
+    v36 = Call v35, -, v14, v5, v4
+    v37 = Builtin builtin=Proxy
+    v38 = Construct v37, -, v16, v1
+    v39 = Call v38, -, v3
+    v40 = NewObject -, v18 layout=L2 fields=[0]
+    v41 = PropGet v40 key="method"
+    v42 = Call v41, v40, v3 calleeKey="method"
+    v43 = Call v32, v20, v1
+    v44 = NewObject -, v43 layout=L2 fields=[0]
+    v45 = PropGet v44 key="method"
+    v46 = Call v45, v44, v3 calleeKey="method"
+    v47 = NewObject layout=L3
+    v48 = FinishObject v47
+    DefineGetter v48, v22 key="x"
+    v50 = PropGet v48 key="x"
+    v51 = Builtin builtin=ReflectGet
+    v52 = String string="x"
+    v53 = Call v51, -, v48, v52, v3
+    v54 = Construct v24, -, v3
+    v55 = Builtin builtin=ReflectConstruct
+    v56 = NewClosure function=f12
+    v57 = Call v55, -, v26, v4, v56
+    Return
+}
+# REPEAT: i = 1..11 ; way = plainCall callWithoutOperands applyWithoutOperands boundWithoutOperands reflectApplyWithUndefined proxyWithoutTraps method boundThenCalledAsMethod getterReadForANumber constructed constructedForAnother
+function f%(i) name="%(way)" flags=[HasThis, HasNewTarget] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+    Return v1
+}
+# END REPEAT
+function f12 name="another" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    Return
+}

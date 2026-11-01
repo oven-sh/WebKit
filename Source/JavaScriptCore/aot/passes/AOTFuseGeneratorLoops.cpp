@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTBuiltinIDs.h"
 #include "AOTCodeSizeEstimate.h"
 #include "AOTCoroutines.h"
 #include "AOTEscapeAnalysis.h"
@@ -16,12 +17,14 @@
 #include "AOTIRBuilder.h"
 #include "AOTInlineCopy.h"
 #include "AOTLiveness.h"
+#include "AOTObservableOperations.h"
 #include "AOTRegionCloner.h"
 #include "AOTResultRules.h"
 #include "AOTRuleSupport.h"
 #include "AOTSSARepair.h"
 #include "AOTSort.h"
 #include "AOTSummarizeForInlining.h"
+#include "AOTValueIdentity.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <array>
@@ -221,7 +224,7 @@ static Origin visibleOriginOf(const Program& program, const Function& function, 
         const InlineFrame& frame = function.inlineFrames[origin.inlineFrame];
         if (!frame.callee || !program.at(frame.callee).isHiddenInStackTraces())
             break;
-        origin = { frame.callPosition, frame.parent };
+        origin = { frame.callPosition, frame.parent, frame.isTailCall, frame.callIsPartOfConstruction };
     }
     return origin;
 }
@@ -447,6 +450,8 @@ static void fuseGenerator(FunctionPassContext& pass, IRBuilder& builder, const F
         // The next cut, if it is in the same block, leaves only what follows it in front of this site.
         bool isAfterCutInBlock = position + 1 < cuts.size() && cuts[position + 1].point.block == cut.point.block;
         uint32_t firstIndexOfHead = isAfterCutInBlock ? cuts[position + 1].point.index + 1 : 0;
+        // The copy of the body runs in its place. If the copy never returns, nothing remains of the site.
+        explainOperationThatGoes(function, steps[cut.index], InPlaceOfOperation::ItsExpansion);
         siteCuts[cut.index] = beginCut(cut);
         // Every cycle the merge creates passes through the block in front of a site. A hint in enter or leave would keep jumps from being threaded through them.
         if (std::ranges::none_of(function.at(builder.currentBlock()).values.subspan(firstIndexOfHead), [&](ValueID id) { return function.at(id).opcode == Opcode::LoopHint; }))
@@ -485,7 +490,7 @@ static void fuseGenerator(FunctionPassContext& pass, IRBuilder& builder, const F
     }
 
     RegionCloner cloner(builder, body);
-    uint32_t firstFrame = appendInlineFrames(function, InlineFrame { .callee = candidate.body.body, .callPosition = originOfBody.position, .parent = originOfBody.inlineFrame, .module = body.module }, body);
+    uint32_t firstFrame = appendInlineFrames(function, InlineFrame { .callee = candidate.body.body, .callPosition = originOfBody.position, .parent = originOfBody.inlineFrame, .isTailCall = originOfBody.isTailCall, .module = body.module }, body);
     builder.setOrigin(origin);
     builder.moveToEndOf(start);
     const auto& parameters = body.at(entryBlock).parameters;
@@ -857,6 +862,36 @@ PassOutcome fuseGeneratorLoops(FunctionPassContext& pass)
 
 // StartGeneratorsAtFirstStep.
 
+// A step at the head of a loop is the first step exactly when the loop is entered. Returns the entering edges, or nothing if an edge may arrive either way.
+static Vector<Edge, 2> findEdgesToFirstStep(FunctionAnalyses& analyses, const Function& function, ValueID step, BlockID creation, std::optional<Edge> edgeToProtocol)
+{
+    ValueLocation location = analyses.useLists().locationOf(step);
+    const Block& block = function.at(location.block);
+    const CFG& cfg = analyses.cfg();
+    // The entering edges get a copy of everything before the step.
+    if (numberOfSharedExplicitParameters(function, cfg, location.block) != block.parameters.size())
+        return { };
+    for (ValueID id : block.values.span().first(location.index)) {
+        if (function.at(id).opcode != Opcode::LoopHint && (function.at(id).numberOfOperands() || !analyses.hasNoEffects(id)))
+            return { };
+    }
+
+    BitVector barrier;
+    barrier.set(creation.index());
+    if (edgeToProtocol && cfg.blocksReachableFrom(targetOf(function, *edgeToProtocol).block, barrier).get(location.block.index()))
+        return { };
+    BitVector blocksAfterStep = cfg.blocksReachableFrom(location.block, barrier);
+    Vector<Edge, 2> enteringEdges;
+    for (Edge edge : cfg.incomingEdges(location.block)) {
+        if (analyses.dominates(step, pointBeforeTerminatorOf(function, edge.from)))
+            continue;
+        if (edge.isHandlerEdge() || blocksAfterStep.get(edge.from.index()))
+            return { };
+        enteringEdges.append(edge);
+    }
+    return enteringEdges;
+}
+
 static PassOutcome startAtFirstStep(FunctionPassContext& pass, IRBuilder& builder, const EscapeAnalysis& escape, ValueID generator)
 {
     Function& function = pass.function;
@@ -932,7 +967,11 @@ static PassOutcome startAtFirstStep(FunctionPassContext& pass, IRBuilder& builde
     bool savesFrame = std::ranges::any_of(function.blocks, [&](const Block& block) {
         return std::ranges::any_of(block.values, [&](ValueID id) { return maySuspend(function.at(id).opcode); });
     });
-    if (!isKnownToBeFirst && savesFrame)
+    // The edges that enter a loop start the body themselves, so what it is started with is not live in the loop.
+    Vector<Edge, 2> enteringEdges;
+    if (!isKnownToBeFirst && firstSteps.size() == 1)
+        enteringEdges = findEdgesToFirstStep(analyses, function, firstSteps[0], location.block, edgeToProtocol);
+    if (!isKnownToBeFirst && enteringEdges.isEmpty() && savesFrame)
         return PassOutcome::Unchanged;
 
     BitVector erased;
@@ -944,13 +983,33 @@ static PassOutcome startAtFirstStep(FunctionPassContext& pass, IRBuilder& builde
         builder.applyInsertions();
     }
 
+    SSARepair repair(builder, analyses);
     for (ValueID site : firstSteps) {
         Value step(function.at(site));
         ValueID stepped = step.generatorOperand();
         builder.setOrigin(step.origin());
-        IRBuilder::Expansion expansion = builder.beginExpansion(analyses.useLists().pointOf(site));
+        ProgramPoint point = analyses.useLists().pointOf(site);
+        Vector<ValueID, 2> constantsUsedAfterStep;
+        for (ValueID id : function.at(point.block).values.span().first(enteringEdges.isEmpty() ? 0 : point.index)) {
+            if (std::ranges::any_of(analyses.useLists().usesOf(id), [&](const Use& use) { return use.kind != Use::Kind::Operand || use.user != site; }))
+                constantsUsedAfterStep.append(id);
+        }
+        IRBuilder::Expansion expansion = builder.beginExpansion(point);
         std::optional<BlockID> resumes;
-        if (!isKnownToBeFirst)
+        if (!enteringEdges.isEmpty()) {
+            resumes = builder.currentBlock();
+            BlockID first = builder.addBlock(function.at(*resumes).frequency);
+            for (ValueID parameter : Vector<ValueID, 2>(function.at(*resumes).parameters.span()))
+                repair.addDefinition(repair.addVariable(parameter), builder.addParameter(first, function.at(parameter).type));
+            for (Edge edge : enteringEdges) {
+                Target target(targetOf(function, edge));
+                target.block = first;
+                builder.redirectEdge(edge, WTF::move(target));
+            }
+            builder.moveToEndOf(first);
+            for (ValueID id : constantsUsedAfterStep)
+                repair.addDefinition(repair.addVariable(id), builder.append(Value(function.at(id))));
+        } else if (!isKnownToBeFirst)
             resumes = builder.emitBranch(builder.append(Opcode::IsGeneratorUnstarted, { stepped })).notTaken;
         builder.append(Opcode::MarkGeneratorRunning, { stepped });
         ValueID value = builder.append(Value(start));
@@ -963,6 +1022,86 @@ static PassOutcome startAtFirstStep(FunctionPassContext& pass, IRBuilder& builde
         ValueID valueOfStep = builder.append(makeResultAt(resumed, static_cast<uint32_t>(StepGeneratorResult::Value)));
         builder.endExpansion(expansion, { { valueOfStep, builder.append(makeResultAt(resumed, static_cast<uint32_t>(StepGeneratorResult::Status))) } });
     }
+    repair.run();
+    return PassOutcome::Changed;
+}
+
+// The program never gets hold of a generator that goes nowhere but into an iterator helper, so nothing tells which object it inherits from.
+static bool isHeldOnlyByIteratorHelper(FunctionPassContext& pass, const EscapeAnalysis& escape, ValueID generator)
+{
+    const Function& function = pass.function;
+    std::optional<ObjectID> object = escape.objectDefinedBy(generator);
+    std::optional<GeneratorBodyDescription> description = describeGeneratorBody(pass.program, function, generator);
+    if (!object || !description)
+        return false;
+
+    const Function& body = pass.program.at(description->body);
+    if (!body.hasBody() || description->generatorParameter >= body.at(entryBlock).parameters.size())
+        return false;
+    ValueID generatorParameter = body.at(entryBlock).parameters[description->generatorParameter];
+    bool bodyOnlySuspends = std::ranges::all_of(body.blocks, [&](const Block& block) {
+        bool onlySuspends = true;
+        for (ValueID id : block.values) {
+            const Value& value = body.at(id);
+            value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+                if (operand == generatorParameter)
+                    onlySuspends &= value.opcode == Opcode::IsGeneratorRunning || (value.opcode == Opcode::YieldBySavingFrame && operandIndex == OperandIndex::YieldBySavingFrame::generator);
+            });
+        }
+        block.forEachChildOutsideValues([&](ValueID child) {
+            onlySuspends &= !child || child != generatorParameter;
+        });
+        return onlySuspends;
+    });
+    if (!bodyOnlySuspends)
+        return false;
+
+    return std::ranges::all_of(escape.usesOf(*object), [&](const ObjectUse& objectUse) {
+        const Use& use = objectUse.use;
+        if (use.kind == Use::Kind::EdgeArgument)
+            return true;
+        if (use.kind != Use::Kind::Operand)
+            return false;
+        const Value& user = function.at(use.user);
+        if (isCastWithoutTest(user.opcode))
+            return true;
+        switch (user.opcode) {
+        case Opcode::CallDirect:
+            return use.user == description->startAtCreation && use.operandIndex == OperandIndex::CallDirect::arguments + description->generatorParameter;
+        case Opcode::CallBuiltin:
+            return pass.program.builtins().at(user.overload()).builtin == Builtins::LinkTimeConstantIteratorHelperCreate && use.operandIndex == OperandIndex::CallBuiltin::arguments;
+        // The other two checks ask for the Structure of a prototype object of its own.
+        case Opcode::StepGenerator:
+            return use.operandIndex == OperandIndex::StepGenerator::generator && (user.check() == GeneratorStepCheck::None || user.check() == GeneratorStepCheck::IsGenerator);
+        case Opcode::ResumeGenerator:
+            return use.operandIndex == OperandIndex::ResumeGenerator::generator;
+        case Opcode::IsGeneratorSuspendedAtStart:
+        case Opcode::IsGeneratorUnstarted:
+        case Opcode::MarkGeneratorRunning:
+        case Opcode::TakeGeneratorStepStatus:
+            return true;
+        default:
+            return false;
+        }
+    });
+}
+
+// Such a generator inherits from %GeneratorPrototype% itself: its function makes no prototype object and no Structure for it.
+static PassOutcome dropCalleesOfHiddenGenerators(FunctionPassContext& pass)
+{
+    const EscapeAnalysis& escape = pass.analyses.escapeWithLiveInstances();
+    if (escape.gaveUp())
+        return PassOutcome::Unchanged;
+    Vector<ValueID, 4> hidden;
+    for (ValueID generator : listValues(pass.analyses, Opcode::NewGenerator)) {
+        if (pass.function.at(generator).calleeOperand() && isHeldOnlyByIteratorHelper(pass, escape, generator))
+            hidden.append(generator);
+    }
+    if (hidden.isEmpty())
+        return PassOutcome::Unchanged;
+    for (ValueID generator : hidden)
+        pass.function.edit(generator, ValueEdit::Definition).setOperand(OperandIndex::NewGenerator::callee, ValueID());
+    pass.analyses.didChangeValues();
     return PassOutcome::Changed;
 }
 
@@ -973,7 +1112,7 @@ PassOutcome startGeneratorsAtFirstStep(FunctionPassContext& pass)
         return PassOutcome::Unchanged;
 
     IRBuilder builder(pass.analyses.context(), pass.function, pass.types, &pass.analyses);
-    PassOutcome outcome = PassOutcome::Unchanged;
+    PassOutcome outcome = dropCalleesOfHiddenGenerators(pass);
     BitVector isTried;
     for (;;) {
         const EscapeAnalysis& escape = pass.analyses.escapeWithLiveInstances();

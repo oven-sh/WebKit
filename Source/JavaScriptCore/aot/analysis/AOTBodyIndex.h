@@ -16,6 +16,7 @@
 #include <array>
 #include <atomic>
 #include <bit>
+#include <memory>
 #include <optional>
 #include <span>
 #include <wtf/Atomics.h>
@@ -35,9 +36,8 @@ uint64_t stampOfEntry(const Function&);
 
 class IndexedValue {
 public:
-    static constexpr unsigned bitsOfOpcode = 10;
-    static constexpr unsigned bitsOfBlock = 22;
-    static_assert(numberOfEnumerators<Opcode> <= 1u << bitsOfOpcode);
+    static constexpr unsigned bitsOfOpcode = std::bit_width(numberOfEnumerators<Opcode> - 1u);
+    static constexpr unsigned bitsOfBlock = 32 - bitsOfOpcode;
 
     IndexedValue() = default;
     IndexedValue(ValueID value, Opcode opcode, BlockID block)
@@ -148,20 +148,22 @@ private:
         bool isPending { false };
     };
 
-    template<size_t size> struct Counts {
+    // `words` lies as the words of an EnumeratorBitSet do.
+    template<size_t size, typename Word = uint64_t> struct Counts {
+        static constexpr unsigned bitsPerWord = sizeof(Word) * 8;
         void add(unsigned index)
         {
             if (!counts[index]++)
-                words[index / 64] |= 1ull << (index % 64);
+                words[index / bitsPerWord] |= static_cast<Word>(1) << (index % bitsPerWord);
         }
         void remove(unsigned index)
         {
             if (!--counts[index])
-                words[index / 64] &= ~(1ull << (index % 64));
+                words[index / bitsPerWord] &= ~(static_cast<Word>(1) << (index % bitsPerWord));
         }
 
         std::array<uint32_t, size> counts { };
-        std::array<uint64_t, (size + 63) / 64> words { };
+        std::array<Word, (size + bitsPerWord - 1) / bitsPerWord> words { };
     };
 
     void countAnew(const Function&);
@@ -180,7 +182,7 @@ private:
     Vector<CountedBlock> m_blocks;
     // The opcode that a listed value was counted with, and whether its result was of the type never.
     Vector<uint16_t> m_wordOfValue;
-    Counts<numberOfEnumerators<Opcode>> m_opcodes;
+    Counts<numberOfEnumerators<Opcode>, OpcodeSet::Word> m_opcodes;
     Counts<numberOfEnumerators<TerminatorKind>> m_terminators;
     Counts<8> m_traits;
     uint32_t m_numberOfNeverValues { 0 };
@@ -252,15 +254,20 @@ public:
         friend bool operator==(const RecordStamps&, const RecordStamps&) = default;
     };
 
+    using OpcodeWords = std::array<OpcodeSet::Word, sizeof(OpcodeSet) / sizeof(OpcodeSet::Word)>;
+    static constexpr size_t numberOfFirstOpcodeWords = std::min<size_t>(std::tuple_size_v<OpcodeWords>, 56 / sizeof(OpcodeSet::Word));
+    static constexpr size_t numberOfLaterOpcodeWords = std::tuple_size_v<OpcodeWords> - numberOfFirstOpcodeWords;
+
     struct HotRow {
         TerminatorKindSet terminators() const { return std::bit_cast<TerminatorKindSet>(static_cast<uint64_t>(terminatorBits)); }
 
-        OpcodeSet opcodes;
+        std::array<OpcodeSet::Word, numberOfFirstOpcodeWords> firstOpcodeWords { };
         uint16_t terminatorBits { 0 };
-        bool isComplete { false };
-        bool listsAllValues { false };
-        bool holdsExpectedTypes { false };
-        bool listsParameters { false };
+        bool isComplete : 1 { false };
+        bool listsAllValues : 1 { false };
+        bool holdsExpectedTypes : 1 { false };
+        bool listsParameters : 1 { false };
+        bool holdsLaterOpcodes : 1 { false };
         OptionSet<BodyTrait> traits;
     };
     static_assert(sizeof(TerminatorKindSet) == sizeof(uint64_t) && numberOfEnumerators<TerminatorKind> <= 16);
@@ -284,12 +291,14 @@ public:
         MallocSpan<uint32_t> names;
         std::array<uint32_t, 3> endOfNames { };
         uint8_t stateOfNames { 0 };
+        std::array<OpcodeSet::Word, numberOfLaterOpcodeWords> laterOpcodeWords { };
     };
 
     struct Row {
         explicit Row(const Function&, BodyIDs = BodyIDs::MayBeProvisional);
 
         void applyRemaps(const TypeRemap&, const FunctionRemap&, const Function* functionWithChangedRecord);
+        void setOpcodes(const OpcodeSet&);
 
         HotRow hot;
         ColdRow cold;
@@ -300,6 +309,8 @@ public:
     void growTo(size_t numberOfFunctions) { growTo(numberOfFunctions, State::Unknown); }
     void didAddFunctionsUpTo(size_t numberOfFunctions) { growTo(numberOfFunctions, State::GivenOut); }
     void forgetAll() { m_states.fill(static_cast<uint8_t>(State::Unknown)); }
+    // forgetAll(), and the tables go too, for where nobody asks for a long time. growTo() brings them back.
+    void letGoOfRows(BuildContext&);
     void didGiveOutAll() { m_states.fill(static_cast<uint8_t>(State::GivenOut)); }
     void didEndAllEdits();
 
@@ -316,30 +327,52 @@ public:
     {
         if (!ensureRow(program, id))
             return nullptr;
-        const HotRow& row = m_hotRows[id.index()];
+        const HotRow& row = hotRowOfKnown(id);
         return row.isComplete ? &row : nullptr;
     }
 
     std::optional<BodyContents> contentsOf(FunctionID id)
     {
-        if (!isKnown(id) || !m_hotRows[id.index()].isComplete)
+        if (!isKnown(id) || !hotRowOfKnown(id).isComplete)
             return std::nullopt;
-        const HotRow& row = m_hotRows[id.index()];
-        BodyContents contents { row.opcodes, row.terminators(), row.traits };
+        const HotRow& row = hotRowOfKnown(id);
+        BodyContents contents { opcodesOf(id, row), row.terminators(), row.traits };
         if (row.listsParameters)
             contents.opcodes.add(Opcode::Parameter);
         return contents;
     }
 
-    std::span<const IndexedValue> listedValuesOf(FunctionID id) const { return m_coldRows[id.index()].listedValues.span(); }
-    std::span<const TerminatorKind> terminatorKindsOf(FunctionID id) const { return m_coldRows[id.index()].terminatorKinds.span(); }
+    std::span<const IndexedValue> listedValuesOf(FunctionID id) const { return m_storedRows[id.index()] ? m_storedRows[id.index()]->cold.listedValues.span() : std::span<const IndexedValue>(); }
+    std::span<const TerminatorKind> terminatorKindsOf(FunctionID id) const { return m_storedRows[id.index()] ? m_storedRows[id.index()]->cold.terminatorKinds.span() : std::span<const TerminatorKind>(); }
 
     std::optional<RowOfBody> rowOf(const Program& program, FunctionID id)
     {
         const HotRow* row = hotRowOf(program, id);
         if (!row)
             return std::nullopt;
-        return RowOfBody { row->opcodes, row->terminators(), listedValuesOf(id), row->listsAllValues, row->holdsExpectedTypes };
+        return RowOfBody { opcodesOf(id, *row), row->terminators(), listedValuesOf(id), row->listsAllValues, row->holdsExpectedTypes };
+    }
+
+    bool holdsAnyOf(FunctionID id, const HotRow& row, const OpcodeSet& wanted) const
+    {
+        OpcodeWords wantedWords = std::bit_cast<OpcodeWords>(wanted);
+        OpcodeSet::Word common = 0;
+        for (size_t i = 0; i < numberOfFirstOpcodeWords; ++i)
+            common |= row.firstOpcodeWords[i] & wantedWords[i];
+        if (numberOfLaterOpcodeWords && !common && row.holdsLaterOpcodes) {
+            for (size_t i = 0; i < numberOfLaterOpcodeWords; ++i)
+                common |= m_storedRows[id.index()]->cold.laterOpcodeWords[i] & wantedWords[numberOfFirstOpcodeWords + i];
+        }
+        return common;
+    }
+
+    OpcodeSet opcodesOf(FunctionID id, const HotRow& row) const
+    {
+        OpcodeWords words { };
+        std::ranges::copy(row.firstOpcodeWords, words.begin());
+        if (numberOfLaterOpcodeWords && row.holdsLaterOpcodes)
+            std::ranges::copy(m_storedRows[id.index()]->cold.laterOpcodeWords, words.begin() + numberOfFirstOpcodeWords);
+        return std::bit_cast<OpcodeSet>(words);
     }
 
     size_t numberOfValuesIn(const Program& program, FunctionID id)
@@ -372,9 +405,9 @@ public:
 
     std::optional<NamesInBody> namesIn(const Program& program, FunctionID id)
     {
-        if (!hotRowOf(program, id))
+        if (!hotRowOf(program, id) || !m_storedRows[id.index()])
             return std::nullopt;
-        ColdRow& row = m_coldRows[id.index()];
+        ColdRow& row = m_storedRows[id.index()]->cold;
         AtomicRef<uint8_t> state(row.stateOfNames);
         uint8_t seen = state.load(std::memory_order_acquire);
         if (seen != static_cast<uint8_t>(State::Known)) {
@@ -390,7 +423,7 @@ public:
     {
         if (!namesIn(program, id))
             return std::nullopt;
-        return m_coldRows[id.index()].listedNames.span();
+        return m_storedRows[id.index()]->cold.listedNames.span();
     }
 
     void check(const Program&, const ParallelLoops&) const;
@@ -416,14 +449,23 @@ private:
         return true;
     }
 
+    struct StoredRow {
+        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(StoredRow);
+
+        HotRow hot;
+        ColdRow cold;
+    };
+
+    static const HotRow& hotRowWithoutBody(RecordFacts);
+    const HotRow& hotRowOfKnown(FunctionID id) const { return m_storedRows[id.index()] ? m_storedRows[id.index()]->hot : hotRowWithoutBody(m_denseRows[id.index()].facts); }
+
     static RecordStamps computeRecordStamps(const Function& function) { return { stampOfRecord(function), stampOfEntry(function) }; }
     void store(FunctionID, Row&&);
     void growTo(size_t numberOfFunctions, State);
     AtomicRef<uint8_t> stateOf(FunctionID id) { return AtomicRef(m_states[id.index()]); }
 
     const ParallelLoops* m_loops { nullptr };
-    Vector<HotRow> m_hotRows;
-    Vector<ColdRow> m_coldRows;
+    Vector<std::unique_ptr<StoredRow>> m_storedRows;
     Vector<DenseRow> m_denseRows;
     Vector<RecordStamps> m_recordStamps;
     Vector<uint8_t> m_hasRecordStamps;
@@ -441,7 +483,7 @@ void forEachListedValue(const Program& program, FunctionID id, const OpcodeSet& 
 {
     const Function& function = program.functions[id.index()];
     if (const BodyIndex::HotRow* row = hotRowOf(program, id)) {
-        if (!row->opcodes.intersects(wanted))
+        if (!program.bodyIndex()->holdsAnyOf(id, *row, wanted))
             return;
         BlockID block;
         uint32_t indexInBlock = 0;
@@ -471,7 +513,7 @@ template<typename Functor>
 void forEachListedName(const Program& program, FunctionID id, const OpcodeSet& wanted, const Functor& functor)
 {
     if (const BodyIndex::HotRow* row = hotRowOf(program, id)) {
-        if (!row->opcodes.intersects(wanted))
+        if (!program.bodyIndex()->holdsAnyOf(id, *row, wanted))
             return;
         if (std::optional<std::span<const IndexedName>> names = program.bodyIndex()->listedNamesIn(program, id)) {
             std::span<const IndexedValue> listedValues = program.bodyIndex()->listedValuesOf(id);
@@ -524,7 +566,7 @@ void forEachValueListedOrNot(const Program& program, FunctionID id, const Opcode
     ASSERT(!wanted.contains(Opcode::Parameter));
     const Function& function = program.functions[id.index()];
     if (const BodyIndex::HotRow* row = hotRowOf(program, id); row && row->listsAllValues) {
-        if (!row->opcodes.intersects(wanted))
+        if (!program.bodyIndex()->holdsAnyOf(id, *row, wanted))
             return;
         Vector<ValueID, 16> found;
         for (IndexedValue listed : program.bodyIndex()->listedValuesOf(id)) {
@@ -548,7 +590,7 @@ bool anyListedValue(const Program& program, FunctionID id, const OpcodeSet& want
 {
     const Function& function = program.functions[id.index()];
     if (const BodyIndex::HotRow* row = hotRowOf(program, id)) {
-        if (!row->opcodes.intersects(wanted))
+        if (!program.bodyIndex()->holdsAnyOf(id, *row, wanted))
             return false;
         for (IndexedValue listed : program.bodyIndex()->listedValuesOf(id)) {
             if (wanted.contains(listed.opcode()) && predicate(listed.value(), function.at(listed.value())))
@@ -590,14 +632,14 @@ bool anyValueListedOrNot(const Program& program, FunctionID id, const OpcodeSet&
 inline bool mayListValueWith(const Program& program, FunctionID id, const OpcodeSet& wanted)
 {
     const BodyIndex::HotRow* row = hotRowOf(program, id);
-    return !row || row->opcodes.intersects(wanted);
+    return !row || program.bodyIndex()->holdsAnyOf(id, *row, wanted);
 }
 
 inline bool mayHoldValueWith(const Program& program, FunctionID id, const OpcodeSet& wanted)
 {
     ASSERT(!wanted.contains(Opcode::Parameter));
     const BodyIndex::HotRow* row = hotRowOf(program, id);
-    return !row || !row->listsAllValues || row->opcodes.intersects(wanted);
+    return !row || !row->listsAllValues || program.bodyIndex()->holdsAnyOf(id, *row, wanted);
 }
 
 inline bool mayHoldExpectedTypes(const Program& program, FunctionID id)

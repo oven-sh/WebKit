@@ -193,8 +193,12 @@ struct StaticsPlan {
     uint32_t endWordFilledWithFiles { 0 };
     uint32_t offsetOfFilledFiles { 0 };
     Vector<std::optional<uint32_t>> moduleValueOffsets;
+    // The word follows the module's value.
+    BitVector modulesWithRequireCacheValue;
     Vector<std::optional<uint32_t>> freeCellOffsets;
     Vector<ModuleBuiltinCell> moduleBuiltinCells;
+    // The namespace object of a module of the run time, whose value word holds what require() answers.
+    Vector<std::optional<uint32_t>> moduleNamespaceOffsets;
     Vector<uint32_t> roots;
     Vector<StaticsRange> clearedEachCollection;
     uint32_t distanceFromArrayProfileToLastArray { 0 };
@@ -246,13 +250,16 @@ struct GlobalBindingKey {
 struct PlacedGlobalBinding {
     GlobalBindingKey key;
     bool isStoredByName { false };
+    // Of a read: the program also stores under the name through a binding. Such a read looks at the location alone.
+    bool isStoredThroughBinding { false };
 };
 
 struct GlobalBindingTable {
     static constexpr uint32_t seesScriptBindingsFlag = 1u << 31;
     static constexpr uint32_t isStoredByNameFlag = 1u << 30;
     static constexpr uint32_t isForTypeOfFlag = 1u << 29;
-    static constexpr uint32_t identifierMask = isForTypeOfFlag - 1;
+    static constexpr uint32_t isStoredThroughBindingFlag = 1u << 28;
+    static constexpr uint32_t identifierMask = isStoredThroughBindingFlag - 1;
 
     JS_EXPORT_PRIVATE void dump(PrintStream&, const Program&) const;
 
@@ -286,6 +293,7 @@ struct FunctionNumbering {
     Vector<ClosureIdentity> closureIdentities;
     Vector<uint32_t> closureCellNumbers;
     ClosureFunctionRange closureFunctions;
+    Vector<FunctionID> closureFormsBySource;
 };
 
 struct ResolvedSites {
@@ -331,6 +339,9 @@ public:
     uint32_t sizeOfStatics() const { return m_statics.size; }
     bool hasModuleValue(ModuleID id) const { return m_statics.moduleValueOffsets[id.index()].has_value(); }
     uint32_t moduleValueOffset(ModuleID id) const { return m_statics.moduleValueOffsets[id.index()].value(); }
+    bool hasRequireCacheValue(ModuleID id) const { return m_statics.modulesWithRequireCacheValue.get(id.index()); }
+    uint32_t requireCacheValueOffset(ModuleID id) const { return moduleValueOffset(id) + sizeof(EncodedJSValue); }
+    std::optional<uint32_t> moduleNamespaceOffset(ModuleID id) const { return m_statics.moduleNamespaceOffsets[id.index()]; }
     std::optional<uint32_t> freeCellOffset(LayoutID id) const { return id.index() < m_statics.freeCellOffsets.size() ? m_statics.freeCellOffsets[id.index()] : std::nullopt; }
     JS_EXPORT_PRIVATE std::optional<uint32_t> moduleBuiltinCellOffset(BuiltinID, ModuleID) const;
 
@@ -368,6 +379,10 @@ public:
     // 0 means the function has no cell in the closure table.
     uint32_t closureCellNumber(FunctionID id) const { return id.index() < m_functions.closureCellNumbers.size() ? m_functions.closureCellNumbers[id.index()] : 0; }
     ClosureFunctionRange closureFunctions() const { return m_functions.closureFunctions; }
+    // What closure words, requests for closures and the stubs have for a function that closures are made of.
+    JS_EXPORT_PRIVATE uint32_t closureNumberOf(FunctionID entrypoint) const;
+    // ProgramTables::closureFormsOf().
+    std::span<const FunctionID> closureFormsBySource() const { return m_functions.closureFormsBySource.span(); }
 
     const RequestTable& requests() const { return m_resolvedSites.requests; }
     const PlacedPropertyRuns& propertyRuns() const { return m_resolvedSites.propertyRuns; }
@@ -446,9 +461,11 @@ enum class NameHasColumn : bool { No, Yes };
 JS_EXPORT_PRIVATE std::optional<uint32_t> findRecordOfStoredField(const Program&, const Placement&, const Function&, const Value&, NameHasColumn);
 // Of a store that has such a record: in every layout of the receiver the slot lies in the cell and holds any value as it is, and the type of the field is that of any value.
 bool storedFieldTakesAnyValue(const Program&, const Placement&, const Function&, const Value&);
+bool storedFieldAcceptsAnyNumber(const Program&, const Placement&, const Function&, const Value&);
 JS_EXPORT_PRIVATE unsigned numberOfSiteCachesUsedBy(const Program&, const Placement&, const Function&, const Value&);
 // Nothing reads what a site that runs at most once would remember, so it has no cache.
 JS_EXPORT_PRIVATE bool mayReadSiteCachesAgain(FunctionAnalyses&, BlockID);
+bool usesItsSiteCaches(FunctionAnalyses&, const Value&, BlockID);
 // Caches and their states are numbered in the order of the program's text: module, function as written, the form of it that holds the site.
 struct SiteCachePosition {
     uint32_t module { 0 };
@@ -464,7 +481,10 @@ struct SiteCacheRequest {
     FunctionID function;
     ValueID value;
     bool runsAtMostOnce { false };
+    ValueID sharesCacheOf { };
 };
+// Copies that a pass made of one operation, whose receivers are one value or come from one place in the text, remember in one cache.
+JS_EXPORT_PRIVATE bool mayShareSiteCache(const Function&, const Value&, const Value&);
 // The requests of one function, in front of the step that writes the requests of runs of stores or behind it.
 void collectSiteCacheRequests(const Program&, const Placement&, const FlowResults&, const Heat&, BuildContext&, FunctionID, bool needsWeights, Vector<SiteCacheRequest>&);
 // With requests by function: what collectSiteCacheRequests() gave for each function with a body. No value has got another number since.
@@ -517,6 +537,8 @@ private:
 
 // The table of modules keeps the path of a file in pieces: see ModuleDirectoryData. The pieces have to be strings of the program before its strings are numbered.
 JS_EXPORT_PRIVATE void internPiecesOfModulePaths(Program&);
+// An obfuscated executable says nothing about its sources: a module whose path the program can neither read nor find it by is named by its number. In front of internPiecesOfModulePaths().
+JS_EXPORT_PRIVATE void hidePathsOfModules(Program&, const FlowResults&, const BuildContext&);
 Placement numberAndEncode(ProgramEditor&, const PlacementInputs&, BuildContext&, NOESCAPE const ScopedLambda<void()>& readBodiesBesideCollectingSites, BodyScansForPlacement* = nullptr);
 JS_EXPORT_PRIVATE void checkPlacement(const Program&, const PlacementInputs&, const Placement&, const SiteCaches&, BuildContext&);
 

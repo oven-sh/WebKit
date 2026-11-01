@@ -392,28 +392,11 @@ static void testLargeSetsAreGivenUp()
     checkAnswers({ "disable=flow:ConstantBuiltinLocations"_s, "limit=MaxValueFlowSetMembers:1"_s, "validate"_s });
 }
 
-static void testEdgeBudgetIsUsedUp()
-{
-    checkAnswers({ "disable=flow:ConstantBuiltinLocations"_s, "limit=MaxValueFlowEdgesLogged:1"_s });
-    checkAnswers({ "disable=flow:ConstantBuiltinLocations"_s, "limit=MaxValueFlowEdgesLogged:200"_s });
-    checkAnswers({ "disable=flow:ConstantBuiltinLocations"_s, "limit=MaxValueFlowEdgesLogged:1"_s, "validate"_s });
-}
-
-static void testWithoutPassesThatReadStamps()
-{
-    checkAnswers({ "disable=flow:ConstantBuiltinLocations,pass:ResolveCalls"_s, "limit=MaxValueFlowEdgesLogged:200"_s });
-    checkAnswers({ "disable=flow:ConstantBuiltinLocations,pass:PlaceTypeTests"_s, "limit=MaxValueFlowEdgesLogged:200"_s });
-    checkAnswers({ "disable=flow:ConstantBuiltinLocations,pass:ResolveAccesses"_s, "limit=MaxValueFlowEdgesLogged:200"_s });
-    checkAnswers({ "disable=flow:ConstantBuiltinLocations,pass:ComputeEffectSummaries"_s, "limit=MaxValueFlowEdgesLogged:200"_s });
-}
-
 std::span<const NativeTest> flowWorkLimitProgramTests()
 {
     static constexpr NativeTest tests[] = {
         { "flow-work-limit-program/within-limit"_s, testWithinLimit },
         { "flow-work-limit-program/large-sets-are-given-up"_s, testLargeSetsAreGivenUp },
-        { "flow-work-limit-program/edge-budget-is-used-up"_s, testEdgeBudgetIsUsedUp },
-        { "flow-work-limit-program/without-passes-that-read-stamps"_s, testWithoutPassesThatReadStamps },
     };
     return tests;
 }

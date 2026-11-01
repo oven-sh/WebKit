@@ -10,6 +10,7 @@
 #include "AOTThreads.h"
 #include "AOTThreshold.h"
 #include "AOTValueFlowLog.h"
+#include "AOTValueFlowNumberLists.h"
 #include "AOTValueSets.h"
 #include "AOTVector.h"
 #include <array>
@@ -38,6 +39,7 @@ public:
         uint32_t nodesFlowingIntoCoveredNodes { 0 };
         uint32_t nodesRetired { 0 };
         uint32_t edgesStraightIntoCoveredNodes { 0 };
+        uint64_t edgesRemoved { 0 };
         Seconds rows;
         Seconds waving;
     };
@@ -47,16 +49,22 @@ public:
 
     uint32_t numberOfNodes() const { return m_numberOfNodes; }
     size_t numberOfEdges() const { return m_numberOfEdges; }
-    std::span<const ValueSetID> values() const LIFETIME_BOUND { return m_value.first(m_numberOfNodes); }
-    ValueSetID valueOf(ValueFlowNodeID node) const { return m_value[node.index()]; }
-    void replaceValueAfterSolving(ValueFlowNodeID node, ValueSetID value) { m_value[node.index()] = value; }
+    ValueSetID valueOf(ValueFlowNodeID node) const { return m_hasReleasedRows ? m_value[node.index()] : ValueSetID(m_rows[node.index()].value); }
+    // For the solver, which asks outside solve() alone. The rows are the place for it: whoever asks for it has asked for the value, or is about to.
+    ValueSetID seenByReadersOf(ValueFlowNodeID node) const { return ValueSetID(m_rows[node.index()].seenOrFirstArrivalPlusOne); }
+    void setSeenByReadersOf(ValueFlowNodeID node, ValueSetID seen) { m_rows[node.index()].seenOrFirstArrivalPlusOne = seen.index(); }
+    void replaceValueAfterSolving(ValueFlowNodeID node, ValueSetID value)
+    {
+        RELEASE_ASSERT(m_hasReleasedRows);
+        m_value[node.index()] = value;
+    }
     ValueSetID maskOf(ValueFlowNodeID node) const { return m_masks[m_gates[node.index()].mask].admitted; }
     ValueFlowMaskKind maskKindOf(ValueFlowNodeID node) const { return m_masks[m_gates[node.index()].mask].kind; }
     ValueSetID familyObjectsOf(ValueFlowNodeID node) const { return m_masks[m_gates[node.index()].mask].familyObjects; }
     void forEachSuccessor(ValueFlowNodeID node, NOESCAPE const Invocable<void(ValueFlowNodeID)> auto& functor) const
     {
         RELEASE_ASSERT(!m_hasReleasedSolvingState);
-        forEachOther(m_successors[node.index()], [&](uint32_t successor) {
+        forEachSuccessor(node.index(), [&](uint32_t successor) {
             functor(ValueFlowNodeID(successor));
         });
     }
@@ -68,7 +76,7 @@ public:
                 functor(ValueFlowNodeID(m_predecessorsInRows[index]));
             return;
         }
-        forEachOther(m_predecessors[node.index()], [&](uint32_t predecessor) {
+        forEachPredecessor(node.index(), [&](uint32_t predecessor) {
             functor(ValueFlowNodeID(predecessor));
         });
     }
@@ -81,6 +89,8 @@ public:
     // A retired node lists no more of what arrives at it. `taking` gets what is carried to it whether that arrives before a node on the way is retired or after: all but what comes out of a covered node or a node made for a placeholder.
     void handOnWhatArrivesAtRetiredNodesTo(ValueFlowNodeID taking, IsMadeForPlaceholder, const void* context);
     void keepOutOfNodesMadeForPlaceholders(ValueSetID keptOut, ValueFlowNodeID covered, IsMadeForPlaceholder, const void* context);
+    // Among the nodes that `keptOut` stays out of, one that holds what was stored through the placeholder lists a stand-in, so that the store leaves a trace.
+    void listInsteadOfWhatIsKeptOut(ValueSetID objects, ValueFlowObjectID insteadOfObjects, ValueSetID strings, ValueFlowObjectID insteadOfStrings, IsMadeForPlaceholder holdsWhatWasStored);
     bool isRetired(ValueFlowNodeID node) const { return node.index() < m_numberOfNodes && (m_gates[node.index()].flags & IsRetired); }
     struct StoppedPlaceholder {
         ValueFlowNodeID node;
@@ -107,6 +117,15 @@ public:
 
     void addInitialEdges(std::span<const ValueFlowEdge> edges) { addEdges(edges); }
     size_t addEdges(std::span<const ValueFlowEdge>);
+    // The graph itself connects the predecessors of a retired node to the covered node.
+    bool isCoveredNode(ValueFlowNodeID node) const
+    {
+        return std::ranges::any_of(m_coverings, [&](const Covering& covering) {
+            return covering.covered == node.index();
+        });
+    }
+    // What the edges have carried stays where it is. Each has been through a solve() and comes out of no constant. One that is listed twice is removed once.
+    void removeEdges(std::span<const ValueFlowEdge>);
     bool hasAdded(ValueFlowEdge edge) const
     {
         RELEASE_ASSERT(!m_hasReleasedSolvingState);
@@ -116,16 +135,10 @@ public:
             if (edge.to.index() >= m_numberOfNodes)
                 return false;
             willUse(edge.to.index());
-            const Links& predecessors = m_predecessors[edge.to.index()];
-            if (predecessors.count > mostPredecessorsScanned)
-                return m_shards[shardOf(edge.to.index())]->edgesOutOfConstantsIntoNodesWithManyPredecessors.contains(edge);
-            return predecessors.contains(edge.from.index());
+            return m_shards[shardOf(edge.to.index())]->predecessors.contains(m_predecessors[edge.to.index()], edge.from.index());
         }
         willUse(edge.from.index());
-        const Links& successors = m_successors[edge.from.index()];
-        if (successors.count > mostSuccessorsScanned)
-            return m_shards[shardOf(edge.from.index())]->edgesOfNodesWithManySuccessors.contains(edge);
-        return successors.contains(edge.to.index());
+        return m_shards[shardOf(edge.from.index())]->successors.contains(m_successors[edge.from.index()], edge.to.index());
     }
 
     ALWAYS_INLINE void prefetchLinksThatHold(ValueFlowEdge edge) const
@@ -145,16 +158,10 @@ public:
         uint32_t node = isOutOfConstant ? to : from;
         uint32_t other = isOutOfConstant ? from : to;
         willUse(node);
-        const Links& links = isOutOfConstant ? m_predecessors[node] : m_successors[node];
-        if (links.count <= 2)
-            return (links.count && links.two[0] == other) || (links.count == 2 && links.two[1] == other) ? EdgeLookup::Present : EdgeLookup::Absent;
-        static_assert(mostPredecessorsScanned == mostSuccessorsScanned);
-        if (links.count <= mostSuccessorsScanned)
-            __builtin_prefetch(links.block);
-        else if (isOutOfConstant)
-            m_shards[shardOf(node)]->edgesOutOfConstantsIntoNodesWithManyPredecessors.prefetch(edge);
-        else
-            m_shards[shardOf(node)]->edgesOfNodesWithManySuccessors.prefetch(edge);
+        uint32_t list = isOutOfConstant ? m_predecessors[node] : m_successors[node];
+        if (ValueFlowNumberLists::isAllInName(list))
+            return ValueFlowNumberLists::nameHolds(list, other) ? EdgeLookup::Present : EdgeLookup::Absent;
+        (isOutOfConstant ? m_shards[shardOf(node)]->predecessors : m_shards[shardOf(node)]->successors).prefetch(list);
         return EdgeLookup::NeedsHasAdded;
     }
 
@@ -164,10 +171,8 @@ public:
     void prefetchToStartWithValueOf(ValueFlowNodeID node, ValueFlowNodeID other) const
     {
         __builtin_prefetch(&m_rows[other.index()]);
-        __builtin_prefetch(&m_value[other.index()]);
         __builtin_prefetch(&m_gates[node.index()], 1);
         __builtin_prefetch(&m_rows[node.index()], 1);
-        __builtin_prefetch(&m_value[node.index()], 1);
     }
     bool hasNodesJustRetired() const;
     void connectPredecessorsOfNodesJustRetired();
@@ -179,7 +184,10 @@ public:
 
     const Counters& counters() const { return m_counters; }
     void addBytesTo(ValueFlowBytesByTable&) const;
+    // Every member that holds a set is listed there.
+    void keepSetsHeld(ValueSets&);
     void giveBackMostRoomOfListsOfOneRound();
+    void giveBackRoomOfEmptyLists();
 
 private:
     class Team;
@@ -223,65 +231,18 @@ private:
 
     struct Row {
         uint64_t low;
-        uint32_t set;
-        uint32_t firstArrivalPlusOne;
+        uint32_t value;
+        // Of a node with HasArrivals, which is so inside a wave alone: its first arrival. What its readers have seen waits in the list of nodes with arrivals.
+        uint32_t seenOrFirstArrivalPlusOne;
     };
-
-    struct Links {
-        const uint32_t* begin() const LIFETIME_BOUND { return count <= 2 ? two : block; }
-        ALWAYS_INLINE bool contains(uint32_t other) const
-        {
-            const uint32_t* others = begin();
-            for (uint32_t index = 0; index < count; ++index) {
-                if (others[index] == other)
-                    return true;
-            }
-            return false;
-        }
-
-        union {
-            uint32_t two[2];
-            uint32_t* block;
-        };
-        uint32_t count;
-        uint32_t older;
+    enum StateInSolve : uint8_t {
+        HasMoved = 1 << 0,
+        HasArrivals = 1 << 1,
     };
-
-    class Arena {
-        WTF_MAKE_NONCOPYABLE(Arena);
-    public:
-        Arena() = default;
-        ~Arena() { release(); }
-
-        uint32_t* allocate(uint32_t numberOfWords);
-        void free(uint32_t* block, uint32_t numberOfWords);
-        void release();
-        size_t memoryInBytes() const { return m_bytes; }
-
-    private:
-        std::array<uint32_t*, 32> m_free { };
-        uint32_t* m_next { nullptr };
-        uint32_t* m_end { nullptr };
-        Vector<void*> m_slabs;
-        size_t m_bytes { 0 };
-    };
-
-    class EdgeSet {
-    public:
-        bool add(ValueFlowEdge);
-        bool contains(ValueFlowEdge) const;
-        void prefetch(ValueFlowEdge) const;
-        size_t bytesInUse() const { return m_size * sizeof(uint64_t); }
-        size_t memoryInBytes() const { return m_slots.sizeInBytes(); }
-
-    private:
-        static uint64_t keyOf(ValueFlowEdge edge) { return static_cast<uint64_t>(edge.from.index()) << 32 | edge.to.index(); }
-        size_t firstPositionOf(uint64_t key) const { return key * 0x9e3779b97f4a7c15ull >> std::countl_zero(m_slots.span().size() - 1); }
-        void grow();
-
-        MallocSpan<uint64_t> m_slots;
-        size_t m_size { 0 };
-    };
+    struct Worker;
+    // What a message carries beside the low members: nothing where all members are low, else the value.
+    uint32_t setIn(const Row&, Worker&) const;
+    uint32_t setIn(const Row& row) const { return row.value && !m_sets.isSubset(ValueSetID(row.value), m_lowMembers) ? row.value : 0; }
 
     struct Mask {
         ValueSetID admitted { ValueSets::anything };
@@ -314,18 +275,10 @@ private:
 
     struct Worker;
 
-    static void forEachOther(const Links& links, NOESCAPE const Invocable<void(uint32_t)> auto& functor)
-    {
-        const uint32_t* others = links.begin();
-        for (uint32_t index = 0; index < links.older; ++index)
-            functor(others[index]);
-        for (uint32_t index = links.count; index-- > links.older;)
-            functor(others[index]);
-    }
+    void forEachSuccessor(uint32_t node, NOESCAPE const Invocable<void(uint32_t)> auto& functor) const { m_shards[shardOf(node)]->successors.forEach(m_successors[node], functor); }
+    void forEachPredecessor(uint32_t node, NOESCAPE const Invocable<void(uint32_t)> auto& functor) const { m_shards[shardOf(node)]->predecessors.forEach(m_predecessors[node], functor); }
 
     static constexpr uint32_t numberOfLowMembers = 64;
-    static constexpr uint32_t mostSuccessorsScanned = 8;
-    static constexpr uint32_t mostPredecessorsScanned = 8;
 
     static constexpr unsigned numberOfShards = 64;
     static constexpr unsigned shardOf(uint32_t node) { return node >> 6 & (numberOfShards - 1); }
@@ -339,33 +292,33 @@ private:
         uint32_t set;
         uint32_t nextPlusOne;
     };
+    struct NodeWithArrivals {
+        uint32_t node;
+        uint32_t seen;
+    };
     struct Arrivals {
-        Vector<uint32_t> nodes;
+        Vector<NodeWithArrivals> nodes;
         Vector<Arrival> list;
     };
     struct alignas(128) Shard {
         WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Shard);
 
-        Arena blocksOfSuccessors;
-        Arena blocksOfPredecessors;
-        EdgeSet edgesOfNodesWithManySuccessors;
-        EdgeSet edgesOutOfConstantsIntoNodesWithManyPredecessors;
+        // An edge out of a constant is kept with the predecessors of its target alone.
+        ValueFlowNumberLists successors;
+        ValueFlowNumberLists predecessors;
         Vector<ValueFlowEdge> listedEdgesOutOfConstants;
         Arrivals arrivals;
         std::array<std::array<Vector<Message>, numberOfShards>, 2> messages;
-        Vector<uint32_t> nodesWithRecentSuccessors;
-        Vector<uint32_t> nodesWithRecentPredecessors;
         Vector<std::pair<uint32_t, uint32_t>> placeholdersStopped;
     };
 
-    static void addLink(Arena&, Links&, uint32_t other);
     uint64_t lowMembersOf(ValueSetID, ValueSetMaker&) const;
     void pass(uint32_t node, uint32_t numberOfMask, uint64_t& low, uint64_t& lowInNoSet, ValueSetID& set, Worker&);
-    void hold(uint32_t node, uint64_t low, ValueSetID value, Worker&);
+    void hold(uint32_t node, uint64_t low, ValueSetID value);
     void startWithValueOf(ValueFlowNodeID, ValueFlowNodeID other, Worker&);
     void takeArrival(Arrivals&, const Message&);
     void takeArrivals(Arrivals&, std::span<const Message>);
-    void evaluate(uint32_t node, Arrivals&, Worker&, NOESCAPE const Invocable<void(const Message&)> auto& leave);
+    void evaluate(NodeWithArrivals, Arrivals&, Worker&, NOESCAPE const Invocable<void(const Message&)> auto& leave);
     void evaluateAll(Arrivals&, Worker&, NOESCAPE const Invocable<void(const Message&)> auto& leave);
     void runWave(Team&);
     using ShardsInOrder = std::array<uint8_t, numberOfShards>;
@@ -385,7 +338,6 @@ private:
     bool addSuccessorIfAbsent(ValueFlowEdge);
     bool addEdgeOutOfConstantIfAbsent(ValueFlowEdge);
     bool addEdgeIfAbsent(ValueFlowEdge);
-    void willHaveManyPredecessors(Shard&, uint32_t node);
     void addPredecessor(Shard&, ValueFlowEdge);
     bool isConstant(uint32_t node) const { return m_isConstant[node / 64].load(std::memory_order_relaxed) >> node % 64 & 1; }
     unsigned shardThatKeeps(ValueFlowEdge edge) const { return shardOf(isConstant(edge.from.index()) ? edge.to.index() : edge.from.index()); }
@@ -425,8 +377,8 @@ private:
     size_t m_capacity { 0 };
     ArrayByNode<Gate> m_gates;
     ArrayByNode<Row> m_rows;
-    ArrayByNode<Links> m_successors;
-    ArrayByNode<Links> m_predecessors;
+    ArrayByNode<uint32_t> m_successors;
+    ArrayByNode<uint32_t> m_predecessors;
     ArrayByNode<uint32_t> m_firstPredecessorInRows;
     ArrayByNode<uint32_t> m_predecessorsInRows;
     ArrayByNode<ValueSetID> m_value;
@@ -446,6 +398,13 @@ private:
     ValueSetID m_allButKeptOutOfNodesMadeForPlaceholders { ValueSets::anything };
     uint64_t m_lowMembersKeptOutOfNodesMadeForPlaceholders { 0 };
     uint32_t m_coveredNodeThatTakesWhatIsKeptOut { 0 };
+    IsMadeForPlaceholder m_holdsWhatWasStoredThroughPlaceholder { nullptr };
+    ValueSetID m_objectsWithStandIn { ValueSets::nothing };
+    ValueSetID m_stringsWithStandIn { ValueSets::nothing };
+    uint64_t m_lowObjectsWithStandIn { 0 };
+    uint64_t m_lowStringsWithStandIn { 0 };
+    uint64_t m_standInForObjects { 0 };
+    uint64_t m_standInForStrings { 0 };
     // A byte a node: the 64 nodes that stand side by side in one shard fill a cache line, so no two shards write to one line.
     ArrayByNode<uint8_t> m_hasMoved;
     static_assert(numberOfShards <= 64);
@@ -453,8 +412,6 @@ private:
 
     Vector<uint8_t> m_isNewEdge;
     size_t m_numberOfEdges { 0 };
-    size_t m_numberOfOlderEdges { 0 };
-    size_t m_numberOfRecentEdges { 0 };
     Vector<ValueFlowEdge> m_edgesNotInLists;
     Vector<ValueFlowEdge> m_edgesOfSolve;
     Vector<Vector<uint32_t>> m_indicesBySource;
@@ -471,6 +428,8 @@ private:
     bool m_hasLeftMessagesWithShards { false };
     bool m_hasSolved { false };
     bool m_hasReleasedSolvingState { false };
+    bool m_hasReleasedRows { false };
+    size_t m_numberOfNodesWithBitsOfCoverings { 0 };
     bool m_keepsPredecessors { false };
 
     Vector<std::unique_ptr<Worker>> m_workers;

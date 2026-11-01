@@ -99,6 +99,8 @@ private:
     Vector<LoopInduction> m_loops;
 };
 
+// `for (; i < n; i++) { while (i < n && ..) i++; }`: a variable that a loop inside steps too has a direction and no step. Nobody keeps the answer.
+LoopInduction findInductionThroughLoopsInside(FunctionAnalyses&, const NaturalLoop&);
 LoopExits exitsOf(FunctionAnalyses&, const NaturalLoop&, BlockID testingBlock);
 bool isInvariantIn(FunctionAnalyses&, const NaturalLoop&, ValueID);
 void dumpInductionVariable(PrintStream&, const InductionVariable&);

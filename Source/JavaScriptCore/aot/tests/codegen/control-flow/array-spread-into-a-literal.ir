@@ -79,16 +79,15 @@ function f1 name="withLast" module=m0 flags=[IsChecked, HasExplicitName] length=
     Return v5
 }
 
-# `[...list, last]` reads the length of the list first and allocates the new array with room for length + 1 elements, so that it never grows. One call appends all elements of the list: no iterator steps through them.
+# `[...list, last]` reads the length of the list first. One call makes the new array with room for length + 1 elements and fills it from the list: no iterator steps, and it never grows.
 # A second call appends the last element.
 # CHECK-LABEL: name="withLast" role=Source
 # CHECK-NEXT: BB#0:
 # CHECK: Int32 b@[[length]] = Load(b@{{*}}, offset = -8, ControlDependent|Reads:Butterfly_publicLength, {{*}}:GetArrayLength)
 # CHECK-NEXT: Int64 b@[[wideLength]] = ZExt32(b@[[length]]
 # CHECK: Int64 b@[[capacity]] = Add(b@[[wideLength]], $1(
-# CHECK: Int64 b@{{*}} = Patchpoint(b@{{*}}:Register({{*}}:NewArray)
-# CHECK: Int64 b@[[array]] = Phi(
-# CHECK-NEXT: Patchpoint(b@[[array]]:Register({{*}}), b@[[list]]:Register({{*}}:AppendElements)
+# CHECK: Int64 b@[[array]] = Patchpoint(b@[[list]]:Register({{*}}), b@{{*}}:Register({{*}}:NewArray)
+# CHECK-NOT: :AppendElements)
 # CHECK: Patchpoint(b@[[array]]:Register({{*}}:AppendElement)
 # CHECK-NEXT: Return(b@[[array]], Terminal)
 # CHECK-LABEL: end of function

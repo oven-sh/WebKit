@@ -64,41 +64,29 @@ function f1 name="triple" module=m0 flags=[IsChecked, HasExplicitName] length=3 
     Return v4
 }
 
-# The list gets storage for integers. A stub allocates it with room for three, and the site boxes each integer and stores it.
+# The list gets storage for integers. One stub takes the three integers as they are, allocates the list, and boxes and stores them.
 # CHECK-LABEL: name="triple" role=Source
 # CHECK-NEXT: BB#0:
-# CHECK: Int64 b@[[list]] = Patchpoint($771(b@{{*}}):Register({{*}}), resultConstraints = Register({{*}}), {{*}}:NewArray)
-# CHECK-NEXT: Branch(b@[[list]], Terminal, {{*}}:NewArray)
-# CHECK-NEXT: Successors: Then:#[[fill]], Else:Rare:#[[slow]]
-# CHECK-NEXT: BB#[[fill]]:
-# CHECK: Int64 b@[[storage]] = Load(b@[[list]], offset = 8, ControlDependent|Reads:JSObject_butterfly, {{*}}:NewArray)
-# CHECK-NEXT: Store(b@{{*}}, b@[[storage]], ControlDependent|Writes:indexedInt32Properties_0, {{*}}:NewArray)
-# CHECK-NEXT: Store(b@{{*}}, b@[[storage]], offset = 8, ControlDependent|Writes:indexedInt32Properties_1, {{*}}:NewArray)
-# CHECK-NEXT: Store(b@{{*}}, b@[[storage]], offset = 16, ControlDependent|Writes:indexedInt32Properties_2, {{*}}:NewArray)
-# CHECK: Return(
-# CHECK: BB#[[slow]]:
-# CHECK: Patchpoint($3(b@{{*}}):ColdAny, b@{{*}}:ColdAny, $5(b@{{*}}):ColdAny, {{*}}:NewArray)
+# CHECK: Int64 b@[[list]] = Patchpoint(b@{{*}}:Register({{*}}), b@{{*}}:Register({{*}}), b@{{*}}:Register({{*}}), resultConstraints = Register({{*}}), {{*}}:NewArray)
+# CHECK-NEXT: Return(b@[[list]], Terminal)
 # CHECK-LABEL: end of function
-# No integer becomes a double, and the length is not stored here: the stub did.
+# No integer is boxed or becomes a double here, and nothing is stored here.
 # NONE-LABEL: name="triple" role=Source
 # NONE-NOT: IToD(
-# NONE-NOT: Butterfly_publicLength
+# NONE-NOT: Store(
+# NONE-NOT: Branch(
 # NONE-NOT: Reads:JSCell
 # NONE-LABEL: end of function
 # CALLS: f1: size=
-# CALLS-NEXT: operation operationAOTNewArrayWithIndexingType x1
-# CALLS-NEXT: stub NewArrayWithLength.Int32 x1
+# CALLS-NEXT: stub ArrayLiteralWithInt32.n3 x1
 # CALLS-NOT: stub
 # CALLS-NOT: operation
 # CALLS: f{{*}}: size=
-# The path for a stub that returns nothing, because its free list is empty, is rare, and its code lies behind the return.
 # AIR-LABEL: name="triple" role=Source
-# AIR: BranchTest64 Zero,
-# AIR-NEXT: Successors: Rare:#[[slow]], #
-# AIR: Ret64
-# AIR-NEXT: BB#[[slow]]:
+# AIR-NOT: Branch
 # AIR: Patch &Patchpoint0
+# AIR-NOT: Branch
 # AIR-LABEL: end of function
-# X64: instructions: 16, patchpoints: 1, rare instructions: 6
-# ARM64 boxes with one addition that extends, and stores two of the three as a pair.
-# ARM64: instructions: 12, patchpoints: 1, rare instructions: 5
+# Five of the eight move the parameters into the registers of the stub.
+# X64: instructions: 8, patchpoints: 1
+# ARM64: instructions: 8, patchpoints: 1

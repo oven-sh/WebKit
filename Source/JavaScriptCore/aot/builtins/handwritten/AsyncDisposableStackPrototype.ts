@@ -1,4 +1,5 @@
-export function adopt(value, onAsyncDispose) {
+export function adopt(value, onAsyncDispose)
+{
     "use strict";
 
     if (!$isAsyncDisposableStack(this))
@@ -17,7 +18,8 @@ export function adopt(value, onAsyncDispose) {
 }
 
 $overriddenName = "defer";
-export function deferMethod(onAsyncDispose) {
+export function deferMethod(onAsyncDispose)
+{
     "use strict";
 
     if (!$isAsyncDisposableStack(this))
@@ -34,7 +36,8 @@ export function deferMethod(onAsyncDispose) {
     return undefined;
 }
 
-export function disposeAsync() {
+export function disposeAsync()
+{
     "use strict";
 
     var promise = $newPromise();
@@ -113,7 +116,8 @@ export function disposeAsync() {
     return promise;
 }
 
-export function move() {
+export function move()
+{
     "use strict";
 
     if (!$isAsyncDisposableStack(this))
@@ -131,7 +135,8 @@ export function move() {
     return newAsyncDisposableStack;
 }
 
-export function use(value) {
+export function use(value)
+{
     "use strict";
 
     if (!$isAsyncDisposableStack(this))

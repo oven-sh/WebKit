@@ -153,7 +153,7 @@ static FunctionID functionNamed(LoadedProgram& program, ASCIILiteral name)
     const ProgramTables& tables = programTables();
     const uint64_t* closureWords = FunctionTables::of(program.vm()).words;
     for (uint32_t index = tables.closureFunctions.first; index < tables.closureFunctions.end; ++index) {
-        if (closureWords[index] && writtenFunctionName(FunctionID(index)) == name)
+        if (closureWords[tables.closureNumberOf(index)] && writtenFunctionName(FunctionID(index)) == name)
             return FunctionID(index);
     }
     failNativeTest(__FILE__, __LINE__, name.characters());
@@ -346,7 +346,7 @@ bool Fixture::tryCopyByMap(Object* target, Object* source, std::initializer_list
 {
     State& state = m_program.state();
     MappedCopy& copy = state.objects->caches->assignmentPlans.mappedCopyAt(target->orderAndShapeWords(), source->orderAndShapeWords(), excludedRunNumberPlusOne);
-    state.instance.allocation.copiesWithoutFrame[AllocationWords::placeOfCopyWithoutFrame(target->orderAndShapeWords(), source->orderAndShapeWords(), excludedRunNumberPlusOne)] = nullptr;
+    state.instance.copiesWithoutFrame()[AllocationWords::placeOfCopyWithoutFrame(target->orderAndShapeWords(), source->orderAndShapeWords(), excludedRunNumberPlusOne)] = nullptr;
     copy = { };
     copy.mayTakeNoFrame = mayTakeNoFrame == MayTakeNoFrame::Yes;
     copy.targetWords = target->orderAndShapeWords();
@@ -653,7 +653,7 @@ static void checkAssignmentTestsEachClosure(LoadedProgram& program)
     const LayoutData& layout = typedLayout(program);
     const FieldData& field = typedField(program, "fn"_s);
     std::span<const RuntimeCellTest> tests = layoutsOf(program).typeOf(field).cellTests();
-    AOT_TEST_CHECK(tests.size() == 1 && tests[0].kind == CellTestKind::IsClosureOf && tests[0].function() == functionNamed(program, "callback"_s));
+    AOT_TEST_CHECK(tests.size() == 1 && tests[0].kind == CellTestKind::IsClosureOf && closureFunctionWithNumber(tests[0].closureNumber()) == functionNamed(program, "callback"_s));
 
     JSCell* accepted = program.state().objects->closures.closure(vm, functionNamed(program, "callback"_s));
     JSCell* refused = program.state().objects->closures.closure(vm, functionNamed(program, "otherCallback"_s));

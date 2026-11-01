@@ -310,7 +310,7 @@ static void printCellTest(const TablesContext& context, const RuntimeCellTest& t
         printBuiltinCell(context, test.builtinCellNumber());
         break;
     case CellTestKind::IsClosureOf:
-        context.printer.print(test.function());
+        context.printer.print(FunctionID(context.tables.closureFunctionWithNumber(test.closureNumber())));
         break;
     case CellTestKind::IsSymbol:
         printIdentifier(context, test.symbolKeyNumber());
@@ -320,6 +320,9 @@ static void printCellTest(const TablesContext& context, const RuntimeCellTest& t
         break;
     case CellTestKind::IsNamespaceOf:
         context.printer.print(test.module());
+        break;
+    case CellTestKind::CarriesBrandOfClass:
+        context.out.print(test.rankOfClass());
         break;
     }
     context.out.print(")");
@@ -368,7 +371,8 @@ static void printFieldRecords(const TablesContext& context, ASCIILiteral keyword
         line.flag("slotHoldsUndefinedAndNull"_s, field.slotHoldsUndefinedAndNull);
         if (field.slot.representation() != SlotRepresentation::DeferredClosure)
             continue;
-        line.field("function"_s, layout.deferredClosureOf(field));
+        uint32_t closureNumber = layout.deferredClosureNumberOf(field);
+        line.field("function"_s, closureNumber == UINT32_MAX ? FunctionID() : FunctionID(context.tables.closureFunctionWithNumber(closureNumber)));
         if (field.flags & fieldDeferredClosureCapturesEnvironment)
             line.field("environment"_s, layout.closureEnvironmentSlotOf(field));
     }
@@ -432,7 +436,7 @@ static void printEnvironmentRecord(const TablesContext& context, const Environme
 {
     RecordLine(context, "environment"_s).field("shape"_s, environment.shape).field("index"_s, LayoutID(environment.index)).field("kind"_s, environment.kind).string("name"_s, environment.name).field("size"_s, environment.size);
     for (const VariableData& variable : environment.describedVariables())
-        RecordLine(context, "  variable"_s).identifier("name"_s, variable.name).field("slot"_s, variable.slot);
+        RecordLine(context, "  variable"_s).string("name"_s, variable.name == VariableData::noName ? context.program.strings.emptyString().index() : variable.name).field("slot"_s, variable.slot);
     printReferences(context, referenceTableOf(environment));
 }
 
@@ -478,6 +482,12 @@ static void printClassRecord(const TablesContext& context, const LayoutData& lay
     for (const MemberGuardData& guard : layout.memberGuards()) {
         RecordLine(context, "  guard"_s).identifier("name"_s, guard.name).field("kind"_s, nameOf(guard.kind())).field("side"_s, guard.side()).field("bit"_s, guard.bit);
         printSetsOfGuard(context, layout.aggregatesOf(guard));
+    }
+    if (data.namesOfFieldsOffset) {
+        const uint32_t* names = context.tables.at<uint32_t>(data.namesOfFieldsOffset);
+        RecordLine(context, "  namesOfFields"_s).list("names"_s, unsafeMakeSpan(names, 1 + static_cast<size_t>(*names)).subspan(1), [&](uint32_t number) {
+            printIdentifier(context, number);
+        });
     }
     if (data.subclassesOffset) {
         const uint32_t* subclasses = context.tables.at<uint32_t>(data.subclassesOffset);
@@ -572,11 +582,16 @@ static void printFunctions(const TablesContext& context)
             .field("arguments"_s, static_cast<uint32_t>(bound.numberOfBoundArguments)).field("targetClosureSlot"_s, bound.targetClosureSlot())
             .field("constructs"_s, !!bound.constructs).field("firstArgumentSlot"_s, static_cast<uint32_t>(bound.firstArgumentSlot)).field("capturedArguments"_s, static_cast<uint32_t>(bound.numberOfCapturedArguments));
     }
-    for (const ConstructEntrypointData& entrypoint : tables.constructEntrypoints())
-        RecordLine(context, "constructEntrypoint"_s).field("function"_s, FunctionID(entrypoint.function)).field("entrypoint"_s, FunctionID(entrypoint.constructEntrypoint())).field("allocatesThis"_s, !!(entrypoint.constructEntrypointAndFlag & ConstructEntrypointData::allocatesThis));
+    for (const ConstructEntrypointData& entrypoint : tables.constructEntrypoints()) {
+        if (entrypoint.constructEntrypointAndFlag == ConstructEntrypointData::onlyReturns) {
+            RecordLine(context, "constructEntrypoint"_s).field("function"_s, FunctionID(tables.closureFunctionWithNumber(entrypoint.function))).word("onlyReturns"_s);
+            continue;
+        }
+        RecordLine(context, "constructEntrypoint"_s).field("function"_s, FunctionID(tables.closureFunctionWithNumber(entrypoint.function))).field("entrypoint"_s, FunctionID(tables.closureFunctionWithNumber(entrypoint.constructEntrypoint()))).field("allocatesThis"_s, !!(entrypoint.constructEntrypointAndFlag & ConstructEntrypointData::allocatesThis));
+    }
     forEachTailCallPlace(tables.placesOfTailCalls(), [&](const TailCallPlace& place) {
         RecordLine(context, "placeOfTailCall"_s).field("function"_s, FunctionID(place.function)).field("callee"_s, place.callee == TailCallPlace::noCallee ? std::optional<FunctionID>() : FunctionID(place.callee))
-            .field("line"_s, place.line).field("column"_s, place.column);
+            .field("line"_s, place.line).field("column"_s, place.column).field("isWhereThisIsMade"_s, place.isWhereThisIsMade);
         return IterationStatus::Continue;
     });
 }
@@ -594,17 +609,73 @@ static void printFunctionTraces(const TablesContext& context)
             .flag("async"_s, trace.isAsync).flag("rejectsOnThrow"_s, trace.rejectsOnThrow).flag("namedByOwner"_s, trace.isNamedByOwner)
             .flag("nakedConstructor"_s, trace.isNakedConstructor).flag("namedByComputedKey"_s, trace.isNamedByComputedKey);
     }
+    for (uint32_t index = 0; index < context.tables.numberOfFunctions(); ++index) {
+        for (uint32_t form : context.tables.closureFormsOf(index))
+            context.out.println("closureForm f", form, " source=f", index);
+    }
+}
+
+static void printTextPrintedInPlace(const TablesContext& context)
+{
+    std::span modules = context.tables.modulesWithTextPrintedInPlace();
+    std::span bytes = context.tables.textPrintedInPlace();
+    if (modules.empty())
+        return;
+    context.out.println("printed in place, from the start of ", bytes[0] ? "the file" : "the text");
+    auto texts = context.tables.functionTexts();
+    for (size_t index = 0; index + 1 < modules.size(); ++index) {
+        Vector<TextPrintedInPlace> pieces = TextPrintedInPlace::readAll(bytes.subspan(modules[index].start, modules[index + 1].start - modules[index].start));
+        for (const TextPrintedInPlace& piece : pieces) {
+            if (piece.isCopy)
+                context.out.println("printed m", modules[index].module, " ", piece.start, "..", piece.end, " copy=", piece.startOfCopied, "..", piece.endOfCopied, piece.isInBrackets ? " inBrackets" : "");
+            else if (isFromPrinter(piece) && !bytes[0] && !texts.empty()) {
+                Vector<Latin1Character> printed;
+                appendTextFromPrinter(printed, byteCast<Latin1Character>(context.bytes.subspan(texts[0].textOffset)), piece, pieces.span());
+                context.out.println("printed m", modules[index].module, " ", piece.start, "..", piece.end, " from the printer in ", piece.bytes.size(), " bytes \"", StringView(printed.subspan(1, printed.size() - 2)), "\"");
+            } else
+                context.out.println("printed m", modules[index].module, " ", piece.start, "..", piece.end, " \"", StringView(byteCast<Latin1Character>(piece.bytes)), "\"");
+        }
+    }
 }
 
 static void printFunctionTexts(const TablesContext& context)
 {
+    printTextPrintedInPlace(context);
     auto texts = context.tables.functionTexts();
     if (texts.empty())
         return;
     auto entries = unsafeMakeSpan(context.tables.at<FunctionTextEntry>(texts[0].entriesOffset), texts[0].numberOfEntries);
     auto text = byteCast<Latin1Character>(context.bytes.subspan(texts[0].textOffset));
-    for (const FunctionTextEntry& entry : entries)
-        context.out.println("f", entry.function, " ", entry.start, "..", entry.end, " \"", StringView(text.subspan(entry.start, entry.end - entry.start)), "\"");
+    for (const FunctionTextEntry& entry : entries) {
+        uint32_t start = entry.start;
+        uint32_t end = entry.end;
+        context.out.println("f", static_cast<uint32_t>(entry.function), " ", start, "..", end, " \"", StringView(text.subspan(start, end - start)), "\"");
+    }
+    for (const ConstructorLineData& constructor : context.tables.constructorLines())
+        context.out.println("constructor f", constructor.function, " linesOfTextAbove=", constructor.linesOfTextAbove);
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+    auto modules = unsafeMakeSpan(context.tables.at<PiecesOfModule>(texts[0].modulesWithPiecesOffset), texts[0].numberOfModulesWithPieces + 1);
+    for (size_t index = 0; index + 1 < modules.size(); ++index) {
+        const uint8_t* cursor = context.tables.at<uint8_t>(texts[0].piecesOffset) + modules[index].start;
+        const uint8_t* end = context.tables.at<uint8_t>(texts[0].piecesOffset) + modules[index + 1].start;
+        PieceOfKeptText piece;
+        uint64_t cut = 0;
+        while (cursor < end) {
+            if (*cursor & 1) {
+                piece = PieceOfKeptText::read(cursor, piece);
+                cut = piece.start;
+                context.out.print("piece m", modules[index].module, " ", piece.start, "..", piece.end, " line=", piece.line, " column=", piece.column);
+                if (piece.startOfWhole != piece.start || piece.endOfWhole != piece.end)
+                    context.out.print(" of=", piece.startOfWhole, "..", piece.endOfWhole);
+                context.out.println();
+                continue;
+            }
+            cut += readVarint(cursor) >> 1;
+            uint64_t columns = readVarint(cursor);
+            context.out.println("cut ", cut, " lines=", columns & 1 ? readVarint(cursor) : 0, " columns=", columns >> 1);
+        }
+    }
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 }
 
 static void printModuleRecords(const TablesContext& context)
@@ -660,7 +731,7 @@ static void printModuleExportRecord(const TablesContext& context, uint32_t index
         line.field("indirectExport"_s, moduleExport.indirectExport);
         break;
     }
-    line.flag("deferred"_s, moduleExport.isDeferred).flag("fromStarExport"_s, moduleExport.isFromStarExport);
+    line.flag("deferred"_s, moduleExport.isDeferred).flag("fromStarExport"_s, moduleExport.isFromStarExport).flag("droppedWhileEmpty"_s, moduleExport.isDroppedWhileEmpty);
 }
 
 static void printModules(const TablesContext& context)
@@ -719,8 +790,16 @@ static void printModules(const TablesContext& context)
     for (uint32_t index = 0; index < requiredNames.size(); ++index)
         RecordLine(context, "requiredName"_s, index).field("exporter"_s, requiredNames[index].exporterModule()).identifier("name"_s, requiredNames[index].name).flag("mayBeAbsent"_s, requiredNames[index].mayBeAbsent);
     for (const ExportStatementData& statement : tables.exportStatements())
-        RecordLine(context, "exportStatement"_s).field("requiredName"_s, statement.requiredName).field("exportName"_s, statement.exportNameString()).field("specifier"_s, statement.specifierString());
+        RecordLine(context, "exportStatement"_s).field("requiredName"_s, statement.requiredName).field("exportName"_s, statement.exportNameString()).field("specifier"_s, statement.specifierString()).flag("dropsExportIfAbsent"_s, statement.dropsExportIfAbsent);
+    for (const AmbiguousExportData& ambiguous : tables.ambiguousExports())
+        RecordLine(context, "ambiguousExport"_s).field("module"_s, ModuleID(ambiguous.module)).field("name"_s, ambiguous.nameString());
+    for (const SourceStampData& stamp : tables.sourceStamps())
+        RecordLine(context, "sourceStamp"_s).field("module"_s, ModuleID(stamp.module)).field("low"_s, stamp.low).field("high"_s, stamp.high);
     for (const ModuleFailureData& failure : tables.moduleFailures()) {
+        if (failure.isLoadOfModule()) {
+            RecordLine(context, "loadFailure"_s).field("module"_s, failure.importerModule()).field("failure"_s, failure.failureOfLoad().index());
+            continue;
+        }
         if (failure.isAskedByExportStatement()) {
             RecordLine(context, "failure"_s).field("exportSpecifier"_s, failure.exportSpecifierString()).field("exportName"_s, failure.specifierString());
             continue;
@@ -729,6 +808,20 @@ static void printModules(const TablesContext& context)
     }
     RecordLine(context, "modulesByPath"_s).list("modules"_s, ModuleNumbers(tables.modulesByPath(), tables.modules().size()), [&](uint32_t module) {
         context.printer.print(ModuleID(module));
+    });
+    for (const UncompiledModuleData& uncompiled : tables.modulesOfUncompiledCode()) {
+        if (uncompiled.typeAttribute != UncompiledModuleData::noTypeAttribute)
+            RecordLine(context, "typeAttribute"_s).field("module"_s, ModuleID(uncompiled.module)).field("type"_s, StringID(uncompiled.typeAttribute));
+    }
+    uint32_t moduleWithNamedVariables = 0;
+    forEachNamedVariable(tables.namedVariables(), [&](size_t) {
+        ++moduleWithNamedVariables;
+    }, [&](const NamedVariableData& variable) {
+        RecordLine(context, "namedVariable"_s).field("group"_s, moduleWithNamedVariables - 1).field("name"_s, variable.nameString())
+            .flag("isNarrow"_s, variable.place() == NamedVariableData::Place::NarrowWord).flag("isClosure"_s, variable.place() == NamedVariableData::Place::Closure);
+    });
+    forEachNamedCapture(tables.namedCaptures(), [&](const NamedCaptureData& capture) {
+        RecordLine(context, "namedCapture"_s).field("function"_s, FunctionID(capture.function)).field("slot"_s, capture.slot).field("name"_s, capture.nameString());
     });
     for (const CompiledRuntimeModuleData& runtimeModule : tables.compiledRuntimeModules())
         RecordLine(context, "runtimeModule"_s).field("id"_s, RuntimeModuleID(runtimeModule.registryID)).field("module"_s, ModuleID(runtimeModule.module));
@@ -861,7 +954,7 @@ static void printDirectEvalRequest(const TablesContext& context, uint32_t offset
     for (const EvalBindingData& binding : unsafeMakeSpan(request.bindings, request.numberOfBindings)) {
         RecordLine(context, "  binding"_s).identifier("name"_s, binding.name).field("kind"_s, static_cast<EvalBindingKind>(binding.kind)).field("depth"_s, static_cast<uint32_t>(binding.depth))
             .field("operand"_s, optionalIDInImage<uint32_t>(binding.operand)).field("function"_s, optionalIDInImage<uint32_t>(binding.function))
-            .field("setter"_s, optionalIDInImage<uint32_t>(binding.setter)).identifier("privateKey"_s, binding.privateKey).field("slot"_s, binding.slot).field("type"_s, binding.type);
+            .field("setter"_s, optionalIDInImage<uint32_t>(binding.setter)).identifier("privateKey"_s, binding.privateKey).field("slot"_s, binding.slot);
     }
 }
 
@@ -901,6 +994,9 @@ static void printRequest(const TablesContext& context, const RequestRecord& reco
         },
         [&](const CollectionDataRecord&) {
             printCollectionDataRequest(context, offset);
+        },
+        [&](const FormatPatternRecord& pattern) {
+            RecordLine(context, "request"_s, offset).word("FormatPattern"_s).field("words"_s, static_cast<uint32_t>(pattern.words.size()));
         });
 }
 
@@ -1031,6 +1127,10 @@ static void printConstants(const TablesContext& context)
     }
     for (uint32_t member : tables.constantBuiltinMembers())
         RecordLine(context, "constantBuiltinMember"_s).field("member"_s, BuiltinID(member));
+    for (uint32_t member : tables.unlockedBuiltinMembers())
+        RecordLine(context, "unlockedBuiltinMember"_s).field("member"_s, BuiltinID(member & ~ProgramTables::unlockedBuiltinMember));
+    for (size_t index = 0; index + 1 < tables.openedNames().size(); index += 2)
+        RecordLine(context, "openedName"_s).field("holder"_s, BuiltinID(tables.openedNames()[index] & ~ProgramTables::openedName)).string("name"_s, tables.openedNames()[index + 1] & ~ProgramTables::openedName);
     auto bigIntConstants = tables.bigIntConstants();
     for (uint32_t number = 0; number < bigIntConstants.size(); ++number)
         RecordLine(context, "bigInt"_s, number).string("digits"_s, bigIntConstants[number]);

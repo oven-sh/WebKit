@@ -18,8 +18,11 @@
 #include "AOTObject.h"
 #include "AOTObjectInternal.h"
 #include "AOTObjectModel.h"
+#include "AOTObjectModelCaches.h"
+#include "AOTPendingStars.h"
 #include "AOTPropertyCaches.h"
 #include "AOTPropertyListCache.h"
+#include "AOTRuntimeFunctions.h"
 #include "AOTSlimClosure.h"
 #include "AOTState.h"
 #include "AOTStaticFields.h"
@@ -27,6 +30,7 @@
 #include "DeferGC.h"
 #include "DeferTermination.h"
 #include "JSCInlines.h"
+#include "ObjectConstructor.h"
 #include "TopExceptionScope.h"
 #include <algorithm>
 #include <optional>
@@ -60,7 +64,7 @@ bool Object::structureGuaranteesAbsence(Structure* structure, UniquedStringImpl*
         return false;
     if (parseIndex(*name) || PropertyName(name).isPrivateName())
         return false;
-    State& state = *Instance::of(structure->realm())->state;
+    State& state = *structure->realm()->aotInstance()->instanceWithShape(compiled->layout().shape).state;
     if (state.objects->layouts.field(structure->vm(), compiled->layout(), name))
         return false;
     if (!compiled->hasExtraProperties())
@@ -83,14 +87,18 @@ struct OrderedKey {
     unsigned attributes;
 };
 
-static bool extraPropertiesNeedGenericPath(JSObject* extra, Elements elements = Elements::NeedGenericPath)
+static bool extraPropertiesAreWalkedDirectly(JSObject* extra, Elements elements)
 {
     Structure* structure = extra->structure();
-    return extra->type() != FinalObjectType
-        || (elements == Elements::AreLeftOut ? extra->canHaveExistingOwnIndexedGetterSetterProperties() : JSC::hasIndexedProperties(extra->indexingType()))
-        || structure->hasAnyKindOfGetterSetterProperties()
-        || structure->isUncacheableDictionary()
-        || extra->hasNonReifiedStaticProperties();
+    return extra->type() == FinalObjectType
+        && (elements == Elements::AreLeftOut ? !extra->canHaveExistingOwnIndexedGetterSetterProperties() : !JSC::hasIndexedProperties(extra->indexingType()))
+        && !structure->hasAnyKindOfGetterSetterProperties()
+        && !extra->hasNonReifiedStaticProperties();
+}
+
+static bool extraPropertiesNeedGenericPath(JSObject* extra, Elements elements = Elements::NeedGenericPath)
+{
+    return !extraPropertiesAreWalkedDirectly(extra, elements) || extra->structure()->isUncacheableDictionary();
 }
 
 // A walk hands out values, a store that asks nobody writes them, and neither runs code. So they are not for an object that is asked to prepare itself first.
@@ -213,12 +221,15 @@ static Result visitKeysInOrder(VM& vm, const Object& typed, JSObject* extra, std
 
 static Presence compiledObjectHasProperty(const Object& typed, UniquedStringImpl* name)
 {
-    if (const FieldData* field = typed.fieldNamed(typed.state(), name)) {
+    State& state = typed.state();
+    if (const FieldData* field = typed.fieldNamed(state, name)) {
         bool defersClosure = field->slot.representation() == SlotRepresentation::DeferredClosure;
         if (defersClosure ? typed.isInSlot(*field) : typed.readInline(*field) || typed.read(*field))
             return Presence::Present;
     } else
-        typed.state().objects->layouts.didReadAbsentField(typed.vm(), typed.layout(), name);
+        state.objects->layouts.didReadAbsentField(*state.instance.vm, typed.layout(), name);
+    if (std::optional<Object*> source = sourceOfPendingBinding(typed.vm(), typed, name))
+        return *source ? Presence::Present : Presence::Absent;
     JSObject* extra = typed.extraProperties();
     if (!extra)
         return Presence::Absent;
@@ -305,6 +316,9 @@ Result forEachOwnPropertyAsCreated(VM& vm, JSObject* object, const Visitor& visi
         return Result::NeedsGenericPath;
     bool isStopped = false;
     JSObject* extra = typed->extraProperties();
+    // A second object that holds nothing but elements has no name for a walk that leaves them out.
+    if (extra && elements == Elements::AreLeftOut && extra->structure() == typed->instance().realm.extraPropertiesWithElementsStructure)
+        extra = nullptr;
     if (!extra) {
         unsigned attributes = typed->attributesOfPublicFields();
         bool isListed = typed->forEachFieldAsProperty([&](UniquedStringImpl& name, JSValue value) {
@@ -331,11 +345,349 @@ Result forEachOwnPropertyAsCreated(VM& vm, JSObject* object, const Visitor& visi
         });
         return isStopped ? Result::Stopped : Result::Completed;
     }
-    if (extraPropertiesNeedGenericPath(extra, elements))
+    // A walk runs no code, so a dictionary that has lost a name is as good as any. Only a list kept for its Structure does not last.
+    if (!extraPropertiesAreWalkedDirectly(extra, elements))
         return Result::NeedsGenericPath;
-    if (auto result = tryVisitCachedList(vm, *typed, extra, visitor))
-        return *result;
+    if (!extra->structure()->isUncacheableDictionary()) {
+        if (auto result = tryVisitCachedList(vm, *typed, extra, visitor))
+            return *result;
+    }
     return visitKeysInOrder(vm, *typed, extra, std::nullopt, visitor);
+}
+
+bool hasGetterToCall(JSObject* object)
+{
+    const Object& typed = *uncheckedDowncast<Object>(object);
+    if (!typed.compiledStructure().isCopiedByWords() && std::ranges::any_of(typed.layout().fields(), &FieldData::isAccessor))
+        return true;
+    return typed.hasExtraProperties() && typed.extraProperties()->structure()->hasAnyKindOfGetterSetterProperties();
+}
+
+namespace {
+
+// What says where the properties of a compiled object lie. A dictionary changes without a new Structure, and so does a key order that belongs to one object.
+struct PlacesOfProperties {
+    explicit PlacesOfProperties(const Object& object)
+        : structure(object.structureID())
+        , orderWord(object.orderWord())
+        , extra(object.extraProperties())
+        , structureOfExtra(extra ? extra->structureID() : StructureID())
+    {
+    }
+
+    bool areStill(const Object& object) const
+    {
+        JSObject* now = object.extraProperties();
+        return object.structureID() == structure && object.orderWord() == orderWord && !object.hasKeyOrderOfItsOwn() && now == extra && (!now || (now->structureID() == structureOfExtra && !now->structure()->isDictionary()));
+    }
+
+    StructureID structure;
+    uint32_t orderWord;
+    JSObject* extra;
+    StructureID structureOfExtra;
+};
+
+}
+
+// An object that has nothing but fields: every key of its order lies in its slot, and the program holds the names. One walk, with no list in between.
+static Result readFieldsCallingGetters(JSGlobalObject* globalObject, Object& typed, Vector<UniquedStringImpl*, 8>& names, MarkedArgumentBuffer& values, const GetterWalkHooks& hooks)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    State& state = typed.state();
+    RuntimeLayoutTable& layouts = state.objects->layouts;
+    const LayoutData& layout = typed.layout();
+    if (hooks.refusesProtoName && layouts.field(vm, layout, vm.propertyNames->underscoreProto.impl()))
+        return Result::NeedsGenericPath;
+    std::span<const FieldData> fields = layout.fields();
+    // A getter may make a new order, which may move the table of orders.
+    Vector<uint16_t, 32> order;
+    typed.forEachFieldInKeyOrder(state, [&](uint16_t index) {
+        order.append(index);
+    });
+    PlacesOfProperties places(typed);
+    bool isAsListed = true;
+    for (bool wantsSymbols : { false, true }) {
+        if (wantsSymbols && !layout.hasFieldsWithSymbolKeys)
+            break;
+        for (uint16_t index : order) {
+            const FieldData& field = fields[index];
+            if (field.isPrivate() || !(wantsSymbols ? layouts.hasSymbolKey(field) : layouts.hasStringKey(field)))
+                continue;
+            UniquedStringImpl* name = layouts.nameOf(vm, field);
+            if (hooks.isLeftOut && (*hooks.isLeftOut)(name))
+                continue;
+            JSValue value;
+            if (isAsListed) {
+                if (typed.attributesOf(field) & PropertyAttribute::DontEnum)
+                    continue;
+                value = typed.read(field);
+                ASSERT(value);
+                if (value && field.isAccessor()) {
+                    if (hooks.willRunCode)
+                        (*hooks.willRunCode)();
+                    RETURN_IF_EXCEPTION(scope, Result::Stopped);
+                    value = uncheckedDowncast<GetterSetter>(value)->callGetter(globalObject, &typed);
+                    RETURN_IF_EXCEPTION(scope, Result::Stopped);
+                    isAsListed = places.areStill(typed) && (!hooks.mayReadAhead || (*hooks.mayReadAhead)());
+                }
+            }
+            // Nothing lies where the list says: the object is asked.
+            if (!value) {
+                isAsListed = false;
+                if (hooks.willRunCode)
+                    (*hooks.willRunCode)();
+                RETURN_IF_EXCEPTION(scope, Result::Stopped);
+                PropertySlot slot(&typed, PropertySlot::InternalMethodType::GetOwnProperty);
+                bool has = Object::getOwnPropertySlot(&typed, globalObject, PropertyName(name), slot);
+                RETURN_IF_EXCEPTION(scope, Result::Stopped);
+                if (!has || slot.attributes() & PropertyAttribute::DontEnum)
+                    continue;
+                value = slot.getValue(globalObject, PropertyName(name));
+                RETURN_IF_EXCEPTION(scope, Result::Stopped);
+            }
+            names.append(name);
+            values.appendWithCrashOnOverflow(value);
+        }
+    }
+    return Result::Completed;
+}
+
+Result readOwnPropertiesCallingGetters(JSGlobalObject* globalObject, JSObject* object, Vector<RefPtr<UniquedStringImpl>, 32>& heldNames, Vector<UniquedStringImpl*, 8>& names, MarkedArgumentBuffer& values, GetterWalkHooks hooks)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Object* typed = compiledObjectOrNull(object);
+    if (!typed || hasFieldPreparedBeforeLookups(vm, *typed))
+        return Result::NeedsGenericPath;
+    if (!typed->hasExtraProperties())
+        RELEASE_AND_RETURN(scope, readFieldsCallingGetters(globalObject, *typed, names, values, hooks));
+    JSObject* extra = typed->extraProperties();
+    if (extra && (extra->type() != FinalObjectType || JSC::hasIndexedProperties(extra->indexingType()) || extra->hasNonReifiedStaticProperties()))
+        return Result::NeedsGenericPath;
+    State& state = typed->state();
+    RuntimeLayoutTable& layouts = state.objects->layouts;
+    Vector<OrderedKey, 32> ordered;
+    if (extra)
+        ordered = collectKeysInOrder(vm, *typed, extra);
+    else {
+        std::span<const FieldData> fields = typed->layout().fields();
+        typed->forEachFieldInKeyOrder(state, [&](uint16_t index) {
+            const FieldData& field = fields[index];
+            if (!field.isPrivate() && (layouts.hasStringKey(field) || layouts.hasSymbolKey(field)) && typed->isInSlot(field))
+                ordered.append(OrderedKey { layouts.nameOf(vm, field), &field, invalidOffset, typed->attributesOf(field) });
+        });
+    }
+    if (hooks.refusesProtoName && std::ranges::contains(ordered, vm.propertyNames->underscoreProto.impl(), &OrderedKey::name))
+        return Result::NeedsGenericPath;
+    // The program holds the name of a field.
+    for (const OrderedKey& key : ordered) {
+        if (!key.field)
+            heldNames.append(key.name);
+    }
+    // A getter may change the object in any way. Where it has moved something, what follows is asked for by name.
+    PlacesOfProperties places(*typed);
+    bool isAsListed = true;
+    for (bool wantsSymbols : { false, true }) {
+        if (wantsSymbols && !extra && !typed->layout().hasFieldsWithSymbolKeys)
+            break;
+        for (const OrderedKey& key : ordered) {
+            if (key.name->isSymbol() != wantsSymbols || (wantsSymbols && PropertyName(key.name).isPrivateName()) || (hooks.isLeftOut && (*hooks.isLeftOut)(key.name)))
+                continue;
+            JSValue value;
+            if (isAsListed && !(key.attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue)) {
+                if (key.attributes & PropertyAttribute::DontEnum)
+                    continue;
+                value = key.field ? typed->read(*key.field) : extra->getDirect(key.offsetInExtraProperties);
+                ASSERT(value);
+            } else if (isAsListed && key.attributes & PropertyAttribute::Accessor) {
+                if (key.attributes & PropertyAttribute::DontEnum)
+                    continue;
+                if (hooks.willRunCode)
+                    (*hooks.willRunCode)();
+                RETURN_IF_EXCEPTION(scope, Result::Stopped);
+                JSValue accessor = key.field ? typed->read(*key.field) : extra->getDirect(key.offsetInExtraProperties);
+                ASSERT(accessor);
+                if (accessor) {
+                    value = uncheckedDowncast<GetterSetter>(accessor)->callGetter(globalObject, object);
+                    RETURN_IF_EXCEPTION(scope, Result::Stopped);
+                    isAsListed = places.areStill(*typed) && (!hooks.mayReadAhead || (*hooks.mayReadAhead)());
+                }
+            }
+            // It is not as listed, or nothing lies where the list says: the object is asked.
+            if (!value) {
+                if (hooks.willRunCode)
+                    (*hooks.willRunCode)();
+                RETURN_IF_EXCEPTION(scope, Result::Stopped);
+                PropertySlot slot(object, PropertySlot::InternalMethodType::GetOwnProperty);
+                bool has = object->methodTable()->getOwnPropertySlot(object, globalObject, PropertyName(key.name), slot);
+                RETURN_IF_EXCEPTION(scope, Result::Stopped);
+                if (!has || slot.attributes() & PropertyAttribute::DontEnum)
+                    continue;
+                value = slot.isTaintedByOpaqueObject() ? object->get(globalObject, PropertyName(key.name)) : slot.getValue(globalObject, PropertyName(key.name));
+                RETURN_IF_EXCEPTION(scope, Result::Stopped);
+                isAsListed = false;
+            }
+            names.append(key.name);
+            values.appendWithCrashOnOverflow(value);
+        }
+    }
+    return Result::Completed;
+}
+
+static bool newObjectsTakeStoresAsDefinitions(JSGlobalObject* globalObject)
+{
+    return !globalObject->objectPrototype()->structure()->hasReadOnlyOrGetterSetterPropertiesExcludingProto();
+}
+
+static NEVER_INLINE void fillGetterSourceList(JSGlobalObject* globalObject, GetterSourceList& list, const Object& typed, JSObject* extra)
+{
+    VM& vm = globalObject->vm();
+    list.structure = typed.structureID();
+    list.orderWord = typed.orderWord();
+    list.extraPropertiesStructure = extra ? extra->structureID() : StructureID();
+    list.structureOfCopy = nullptr;
+    list.properties.shrink(0);
+    if (hasFieldPreparedBeforeLookups(vm, typed))
+        return;
+    // A dictionary changes and releases names without a new Structure.
+    if (extra && (extra->type() != FinalObjectType || extra->structure()->isDictionary() || JSC::hasIndexedProperties(extra->indexingType()) || extra->hasNonReifiedStaticProperties()))
+        return;
+    State& state = typed.state();
+    RuntimeLayoutTable& layouts = state.objects->layouts;
+    Vector<OrderedKey, 32> ordered;
+    if (extra)
+        ordered = collectKeysInOrder(vm, typed, extra);
+    else {
+        std::span<const FieldData> fields = typed.layout().fields();
+        typed.forEachFieldInKeyOrder(state, [&](uint16_t index) {
+            const FieldData& field = fields[index];
+            if (!field.isPrivate() && (layouts.hasStringKey(field) || layouts.hasSymbolKey(field)) && typed.isInSlot(field))
+                ordered.append(OrderedKey { layouts.nameOf(vm, field), &field, invalidOffset, typed.attributesOf(field) });
+        });
+    }
+    Vector<UniquedStringImpl*, 8> names;
+    for (bool wantsSymbols : { false, true }) {
+        for (const OrderedKey& key : ordered) {
+            if (key.name->isSymbol() != wantsSymbols || PropertyName(key.name).isPrivateName())
+                continue;
+            if (key.attributes & (PropertyAttribute::CustomAccessor | PropertyAttribute::CustomValue) || key.name == vm.propertyNames->underscoreProto.impl())
+                return;
+            bool isEnumerable = !(key.attributes & PropertyAttribute::DontEnum);
+            list.properties.append({ key.name, key.field, key.offsetInExtraProperties, isEnumerable ? static_cast<PropertyOffset>(names.size()) : invalidOffset, !!(key.attributes & PropertyAttribute::Accessor) });
+            if (isEnumerable)
+                names.append(key.name);
+        }
+    }
+    Structure* empty = globalObject->objectStructureForObjectConstructor();
+    if (names.isEmpty() || names.size() > empty->inlineCapacity())
+        return;
+    MarkedArgumentBuffer values;
+    for (size_t index = 0; index < names.size(); ++index)
+        values.appendWithCrashOnOverflow(jsUndefined());
+    JSFinalObject* model = constructEmptyObject(vm, empty);
+    model->putOwnDataPropertyBatching(vm, names.mutableSpan().data(), values.data(), names.size());
+    Structure* structure = model->structure();
+    if (structure->isDictionary())
+        return;
+    for (size_t index = 0; index < names.size(); ++index) {
+        if (structure->get(vm, names[index]) != static_cast<PropertyOffset>(index))
+            return;
+    }
+    list.structureOfCopy = structure;
+}
+
+// A getter has moved something, or has put something on Object.prototype that a store meets. What was read in front of it is in the copy that was begun, and went there while a store was a definition.
+static NEVER_INLINE JSObject* finishCopyByName(JSGlobalObject* globalObject, JSObject* object, std::span<const GetterSourceList::Property> properties, size_t numberRead, JSFinalObject* begun, JSValue valueOfNext, NewObjectTakes takes, const ScopedLambda<bool(UniquedStringImpl*)>* isLeftOut, JSObject* unseenTarget)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* copy = unseenTarget ? unseenTarget : constructEmptyObject(globalObject);
+    Vector<UniquedStringImpl*, 8> names;
+    MarkedArgumentBuffer values;
+    for (const GetterSourceList::Property& property : properties.first(numberRead)) {
+        JSValue value = isValidOffset(property.offsetInCopy) ? begun->getDirect(property.offsetInCopy) : JSValue();
+        if (!value)
+            continue;
+        names.append(property.name);
+        values.appendWithCrashOnOverflow(value);
+    }
+    if (!names.isEmpty()) {
+        Object* record = compiledObjectOrNull(copy);
+        if (!record)
+            copy->putOwnDataPropertyBatching(vm, names.mutableSpan().data(), values.data(), names.size());
+        else if (!storePropertiesInOrder(vm, *record, names.mutableSpan(), { values.data(), values.size() })) {
+            for (size_t index = 0; index < names.size(); ++index) {
+                PutPropertySlot slot(copy, true);
+                copy->putInline(globalObject, PropertyName(names[index]), values.at(index), slot);
+                RETURN_IF_EXCEPTION(scope, nullptr);
+            }
+        }
+    }
+    for (size_t index = numberRead; index < properties.size(); ++index) {
+        PropertyName name(properties[index].name);
+        if (isLeftOut && (*isLeftOut)(name.uid()))
+            continue;
+        JSValue value = std::exchange(valueOfNext, JSValue());
+        if (!value) {
+            PropertySlot slot(object, PropertySlot::InternalMethodType::GetOwnProperty);
+            bool has = object->methodTable()->getOwnPropertySlot(object, globalObject, name, slot);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            if (!has || slot.attributes() & PropertyAttribute::DontEnum)
+                continue;
+            value = slot.isTaintedByOpaqueObject() ? object->get(globalObject, name) : slot.getValue(globalObject, name);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+        }
+        if (takes == NewObjectTakes::Stores) {
+            PutPropertySlot slot(copy, true);
+            copy->putInline(globalObject, name, value, slot);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+        } else
+            copy->putDirect(vm, name, value);
+    }
+    return copy;
+}
+
+JSObject* tryCopyCallingGetters(JSGlobalObject* globalObject, JSObject* object, NewObjectTakes takes, const ScopedLambda<bool(UniquedStringImpl*)>* isLeftOut, JSObject* unseenTarget)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Object& typed = *uncheckedDowncast<Object>(object);
+    if (typed.structure()->realm() != globalObject || (takes == NewObjectTakes::Stores && !newObjectsTakeStoresAsDefinitions(globalObject)))
+        return nullptr;
+    // Nothing that the lists go by says what such an object holds now.
+    if (typed.hasKeyOrderOfItsOwn())
+        return nullptr;
+    JSObject* extra = typed.extraProperties();
+    PlacesOfProperties places(typed);
+    GetterSourceList& list = typed.state().objects->caches->getterSources.placeFor(places.structure, places.orderWord);
+    if (!list.isFor(places.structure, places.orderWord, places.structureOfExtra)) [[unlikely]]
+        fillGetterSourceList(globalObject, list, typed, extra);
+    if (!list.structureOfCopy)
+        return nullptr;
+    // A getter may copy another object, which may take the place of the list, and may collect, which empties it. The Structure of the second object holds the names.
+    Vector<GetterSourceList::Property, 8> properties(list.properties);
+    EnsureStillAliveScope namesScope(extra ? extra->structure() : nullptr);
+    JSFinalObject* copy = JSFinalObject::create(vm, list.structureOfCopy);
+    for (size_t index = 0; index < properties.size(); ++index) {
+        const GetterSourceList::Property& property = properties[index];
+        if (!isValidOffset(property.offsetInCopy) || (isLeftOut && (*isLeftOut)(property.name)))
+            continue;
+        JSValue value = property.field ? typed.read(*property.field) : extra->getDirect(property.offsetInExtraProperties);
+        if (!value) [[unlikely]]
+            RELEASE_AND_RETURN(scope, finishCopyByName(globalObject, object, properties.span(), index, copy, JSValue(), takes, isLeftOut, unseenTarget));
+        if (property.isGetter) {
+            value = uncheckedDowncast<GetterSetter>(value)->callGetter(globalObject, object);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            if (!places.areStill(typed) || (takes == NewObjectTakes::Stores && !newObjectsTakeStoresAsDefinitions(globalObject))) [[unlikely]]
+                RELEASE_AND_RETURN(scope, finishCopyByName(globalObject, object, properties.span(), index, copy, value, takes, isLeftOut, unseenTarget));
+        }
+        copy->putDirectOffset(vm, property.offsetInCopy, value);
+    }
+    // The Structure names what was left out too.
+    if (isLeftOut)
+        RELEASE_AND_RETURN(scope, finishCopyByName(globalObject, object, properties.span(), properties.size(), copy, JSValue(), takes, isLeftOut, unseenTarget));
+    return copy;
 }
 
 bool hasOwnEnumerableProperty(JSGlobalObject* globalObject, JSObject* object)
@@ -468,6 +820,43 @@ Presence tryGetOwnValue(JSObject* object, UniquedStringImpl* name, JSValue& valu
     return typed.hasExtraProperties() ? Presence::Unknown : Presence::Absent;
 }
 
+static void findDescriptorFields(VM& vm, RuntimeLayoutTable& layouts, const LayoutData& layout, DescriptorFields& found)
+{
+    const CommonIdentifiers& names = *vm.propertyNames;
+    std::array<UniquedStringImpl*, 6> keys { names.enumerable.impl(), names.configurable.impl(), names.value.impl(), names.writable.impl(), names.get.impl(), names.set.impl() };
+    found.layout = &layout;
+    for (size_t index = 0; index < keys.size(); ++index) {
+        found.fields[index] = layouts.field(vm, layout, keys[index]);
+        if (!found.fields[index])
+            layouts.didReadAbsentField(vm, layout, keys[index]);
+    }
+}
+
+bool tryReadDescriptorMembers(JSObject* object, DescriptorMembers& members)
+{
+    ASSERT(isCompiledObject(object));
+    const Object& typed = *uncheckedDowncast<Object>(object);
+    State& state = typed.state();
+    const LayoutData& layout = typed.layout();
+    DescriptorFields& known = state.objects->caches->descriptorFields[layout.shape % ObjectModelCaches::numberOfDescriptorFields];
+    if (known.layout != &layout) [[unlikely]]
+        findDescriptorFields(*state.instance.vm, state.objects->layouts, layout, known);
+    bool hasExtraProperties = typed.hasExtraProperties();
+    for (size_t index = 0; index < members.size(); ++index) {
+        JSValue value;
+        if (const FieldData* field = known.fields[index]) {
+            if (field->isAccessor()) [[unlikely]]
+                return false;
+            value = typed.readInline(*field);
+        }
+        // The property may lie among the extra properties.
+        if (!value && hasExtraProperties) [[unlikely]]
+            return false;
+        members[index] = value;
+    }
+    return true;
+}
+
 void putDirect(VM& vm, JSObject* object, PropertyName name, JSValue value, unsigned attributes)
 {
     ASSERT(isCompiledObject(object));
@@ -531,10 +920,36 @@ bool wouldPerformFastPut(VM& vm, JSObject* target)
     return isCompiledObject(target) ? testIntegrity(target, Integrity::NonExtensible) == Presence::Absent : target->isStructureExtensible();
 }
 
+enum class TargetIs : bool { MaybeSeen, Unseen };
+
+// What the getters give is read into an ordinary object, which is assigned like any other.
+static NEVER_INLINE bool tryAssignReadingFirst(VM& vm, Object& target, JSObject* source)
+{
+    JSGlobalObject* globalObject = target.structure()->realm();
+    if (target.getPrototypeDirect() != JSValue(globalObject->objectPrototype()) || !wouldPerformFastPut(vm, &target))
+        return tryAssignCallingGetters(globalObject, &target, source);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* read = tryCopyCallingGetters(globalObject, source, NewObjectTakes::Stores, nullptr, &target);
+    RETURN_IF_EXCEPTION(scope, true);
+    if (read == &target)
+        return true;
+    if (!read)
+        RELEASE_AND_RETURN(scope, tryAssignCallingGetters(globalObject, &target, source));
+    if (tryAssignOrdinaryObjectAsBefore(vm, target.state(), target, read) || target.tryAssignPropertiesOf(vm, read))
+        return true;
+    scope.release();
+    objectAssignGeneric(globalObject, vm, &target, read);
+    return true;
+}
+
+template<TargetIs targetIs>
 static bool tryAssignInOrderOfCreation(VM& vm, Object& target, JSObject* source)
 {
     if (source == &target || !isCompiledObject(source))
         return false;
+    // A walk that runs no code takes no getter, and goes a long way to find one.
+    if (hasGetterToCall(source))
+        return targetIs == TargetIs::Unseen ? tryAssignReadingFirst(vm, target, source) : tryAssignCallingGetters(target.structure()->realm(), &target, source);
     Vector<UniquedStringImpl*, 8> names;
     MarkedArgumentBuffer values;
     EnsureStillAliveScope sourceScope(source);
@@ -557,19 +972,101 @@ static bool tryAssignInOrderOfCreation(VM& vm, Object& target, JSObject* source)
         DeferTerminationForAWhile deferTermination(vm);
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         JSGlobalObject* realm = target.structure()->realm();
-        holder->forEachOwnIndexedProperty<>([&](unsigned index, JSValue value) {
-            Object::putByIndex(&target, realm, index, value, true);
+        // Where the second object holds nothing but elements the fields go by a plan. No code runs, so the order of the names and the elements does not show.
+        Object& from = *uncheckedDowncast<Object>(source);
+        Instance& instance = from.instance();
+        bool didAssignFields = holder->structure() == instance.realm.extraPropertiesWithElementsStructure && tryAssignFieldsLeavingElementsOut(vm, target, from);
+        if (didAssignFields && !target.hasExtraProperties() && target.layout().extraPropertiesSlot() && !target.structure()->mayBePrototype() && !target.layout().isClass() && instance.state->tables.addedNames().empty()) {
+            if (JSFinalObject* elements = tryCopyWithElements(vm, holder)) {
+                target.setExtraProperties(vm, elements, instance.state->objects->structures.withExtraProperties(vm, target.compiledStructure(), nullptr));
+                return true;
+            }
+        }
+        // Nothing intercepts a store, so where the target has no elements to keep the attributes of, a store is a definition.
+        bool mayDefine = !elementsOfTarget || !JSC::hasIndexedProperties(elementsOfTarget->indexingType());
+        holder->forEachOwnElement<>([&](unsigned index, JSValue value) {
+            if (!mayDefine || !tryDefineElementOfCompiledObject(&instance, &target, index, value))
+                Object::putByIndex(&target, realm, index, value, true);
             scope.assertNoException();
             return IterationStatus::Continue;
         });
+        if (didAssignFields)
+            return true;
     }
     return storePropertiesInOrder(vm, target, names.mutableSpan(), { values.data(), values.size() });
+}
+
+static bool takesStoresWithoutCode(VM& vm, JSObject* target)
+{
+    if (isCompiledObject(target))
+        return wouldPerformFastPut(vm, target);
+    auto* ordinary = dynamicDowncast<JSFinalObject>(target);
+    return ordinary && ordinary->canPerformFastPutInlineExcludingProto() && ordinary->isStructureExtensible();
+}
+
+static void storeInOrder(JSGlobalObject* globalObject, JSObject* target, Vector<UniquedStringImpl*, 8>& names, MarkedArgumentBuffer& values)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (takesStoresWithoutCode(vm, target)) {
+        Object* record = compiledObjectOrNull(target);
+        if (!record) {
+            target->putOwnDataPropertyBatching(vm, names.mutableSpan().data(), values.data(), names.size());
+            return;
+        }
+        if (storePropertiesInOrder(vm, *record, names.mutableSpan(), { values.data(), values.size() }))
+            return;
+    }
+    for (size_t index = 0; index < names.size(); ++index) {
+        PutPropertySlot slot(target, true);
+        target->putInline(globalObject, PropertyName(names[index]), values.at(index), slot);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+}
+
+bool tryAssignCallingGetters(JSGlobalObject* globalObject, JSObject* target, JSObject* source)
+{
+    VM& vm = globalObject->vm();
+    if (source == target || !isCompiledObject(source) || !hasGetterToCall(source) || !takesStoresWithoutCode(vm, target))
+        return false;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Vector<RefPtr<UniquedStringImpl>, 32> heldNames;
+    Vector<UniquedStringImpl*, 8> names;
+    MarkedArgumentBuffer values;
+    // A getter may look at the target, so it finds there what stands in front of it.
+    auto storeWhatIsRead = [&] {
+        if (names.isEmpty())
+            return;
+        storeInOrder(globalObject, target, names, values);
+        names.shrink(0);
+        values.clear();
+    };
+    ScopedLambda<void()> willRunCode = storeWhatIsRead;
+    // A store that runs code may change what the source holds.
+    auto takesStores = [&] {
+        return takesStoresWithoutCode(vm, target);
+    };
+    ScopedLambda<bool()> mayReadAhead = takesStores;
+    // A store under __proto__ goes to the setter on Object.prototype and gives the target other objects above it.
+    Result result = readOwnPropertiesCallingGetters(globalObject, source, heldNames, names, values, { .willRunCode = &willRunCode, .mayReadAhead = &mayReadAhead, .refusesProtoName = true });
+    RETURN_IF_EXCEPTION(scope, true);
+    if (result != Result::Completed)
+        return false;
+    scope.release();
+    storeWhatIsRead();
+    return true;
 }
 
 bool tryAssign(VM& vm, JSObject* compiledTarget, JSObject* source)
 {
     Object* typed = compiledObjectOrNull(compiledTarget);
-    return typed && (typed->tryAssignPropertiesOf(vm, source) || tryAssignInOrderOfCreation(vm, *typed, source));
+    return typed && (typed->tryAssignPropertiesOf(vm, source) || tryAssignInOrderOfCreation<TargetIs::MaybeSeen>(vm, *typed, source));
+}
+
+bool tryAssignToUnseenTarget(VM& vm, JSObject* compiledTarget, JSObject* source)
+{
+    Object* typed = compiledObjectOrNull(compiledTarget);
+    return typed && (typed->tryAssignPropertiesOf(vm, source) || tryAssignInOrderOfCreation<TargetIs::Unseen>(vm, *typed, source));
 }
 
 void didBecomePrototype(VM& vm, JSObject* object)

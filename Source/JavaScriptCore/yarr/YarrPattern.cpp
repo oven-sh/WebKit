@@ -80,6 +80,72 @@ public:
         m_characterWidths = CharacterClassWidths::Unknown;
     }
 
+    size_t size() const
+    {
+        return m_matches8.size() + m_ranges8.size() + m_matches32.size() + m_ranges32.size();
+    }
+
+    // Adds the characters of `characterClass` that `excluded` doesn't have, in time proportional to size(). A set operation
+    // goes through every code point of both sets: a million steps for [\S].
+    void appendDifference(const CharacterClass& characterClass, const CharacterClassConstructor& excluded)
+    {
+        ASSERT(m_setOp == CharacterClassSetOp::Default);
+        ASSERT(!m_isCaseInsensitive);
+
+        // Matches and ranges are each in order. This gives both, by where they begin.
+        auto forEachInOrder = [](const Vector<char32_t>& matches, const Vector<CharacterRange>& ranges, auto&& functor) {
+            size_t matchesIndex = 0;
+            size_t rangesIndex = 0;
+            while (matchesIndex < matches.size() || rangesIndex < ranges.size()) {
+                if (rangesIndex == ranges.size() || (matchesIndex < matches.size() && matches[matchesIndex] < ranges[rangesIndex].begin)) {
+                    functor(matches[matchesIndex], matches[matchesIndex]);
+                    ++matchesIndex;
+                } else {
+                    functor(ranges[rangesIndex].begin, ranges[rangesIndex].end);
+                    ++rangesIndex;
+                }
+            }
+        };
+
+        auto appendDifferenceOfTables = [&](const Vector<char32_t>& matches, const Vector<CharacterRange>& ranges,
+            const Vector<char32_t>& excludedMatches, const Vector<CharacterRange>& excludedRanges,
+            Vector<char32_t>& destMatches, Vector<CharacterRange>& destRanges) {
+
+            // `excluded` isn't coalesced, so a match can be inside a range.
+            Vector<CharacterRange> holes;
+            forEachInOrder(excludedMatches, excludedRanges, [&](char32_t begin, char32_t end) {
+                if (!holes.isEmpty() && begin <= holes.last().end)
+                    holes.last().end = std::max(holes.last().end, end);
+                else
+                    holes.append(CharacterRange(begin, end));
+            });
+
+            auto add = [&](char32_t begin, char32_t end) {
+                if (begin == end)
+                    addSorted(destMatches, begin);
+                else
+                    addSortedRange(destRanges, begin, end);
+            };
+
+            size_t firstHole = 0;
+            forEachInOrder(matches, ranges, [&](char32_t begin, char32_t end) {
+                while (firstHole < holes.size() && holes[firstHole].end < begin)
+                    ++firstHole;
+                char32_t next = begin;
+                for (size_t i = firstHole; i < holes.size() && holes[i].begin <= end; ++i) {
+                    if (holes[i].begin > next)
+                        add(next, holes[i].begin - 1);
+                    next = std::max<char32_t>(next, holes[i].end + 1);
+                }
+                if (next <= end)
+                    add(next, end);
+            });
+        };
+
+        appendDifferenceOfTables(characterClass.m_matches8, characterClass.m_ranges8, excluded.m_matches8, excluded.m_ranges8, m_matches8, m_ranges8);
+        appendDifferenceOfTables(characterClass.m_matches32, characterClass.m_ranges32, excluded.m_matches32, excluded.m_ranges32, m_matches32, m_ranges32);
+    }
+
     void LEGACY_NODELETE combiningSetOp(CharacterClassSetOp setOp)
     {
         ASSERT(m_setOp == CharacterClassSetOp::Default || m_setOp == setOp);
@@ -2246,6 +2312,7 @@ public:
 
         ErrorCode error = ErrorCode::NoError;
         alternative->m_hasFixedSize = true;
+        alternative->m_firstFrameSlot = currentCallFrameSize.value();
         CheckedUint32 currentInputPosition = initialInputPosition;
 
         for (unsigned i = 0; i < alternative->m_terms.size(); ++i) {
@@ -2387,6 +2454,7 @@ public:
         }
 
         alternative->m_minimumSize = currentInputPosition - initialInputPosition;
+        alternative->m_callFrameSize = currentCallFrameSize.value();
         newCallFrameSize = currentCallFrameSize.value();
         return error;
     }
@@ -2460,11 +2528,7 @@ public:
         // may run even when the pattern declares capturing subpatterns, and a capturing group wrapping
         // a fixed string (e.g. "(t0)") may be treated as that string. Backreferences and named groups
         // can still observe captures even in match-only mode, so keep the conservative bail for them.
-        bool ignoreCaptures = m_pattern.m_executionMode != ExecutionMode::IncludeSubpatterns
-            && !m_pattern.m_containsBackreferences
-            && !m_pattern.m_hasNamedCaptureGroups
-            && !m_pattern.m_numDuplicateNamedCaptureGroups
-            && !m_pattern.m_containsLookbehinds;
+        bool ignoreCaptures = !capturesAreObservable();
 
         auto& alternatives = m_pattern.m_body->m_alternatives;
         bool hasObservableCaptures = m_pattern.m_numSubpatterns && !ignoreCaptures;
@@ -2617,6 +2681,204 @@ public:
         }
     }
 
+    // (?:[0-9]|[a-z]|_) matches what (?:[0-9a-z_]) matches. Where two of the alternatives match the same character, backtracking
+    // from the first to the second only gets to the same state again.
+    //
+    // Only alternatives next to each other are merged, so the order in which the others are tried stays. A run of nothing but
+    // literals is left to the passes that are made for lists of strings.
+    //
+    // charClass() can take time in proportion to the square of what it is given, so a long run becomes several classes.
+    static constexpr size_t maximumSizeOfMergedClass = 1024;
+
+    static size_t sizeOfCharacterClass(const CharacterClass& characterClass)
+    {
+        return characterClass.m_matches8.size() + characterClass.m_ranges8.size() + characterClass.m_matches32.size() + characterClass.m_ranges32.size();
+    }
+
+    void mergeSingleCharacterAlternatives()
+    {
+        mergeSingleCharacterAlternatives(*m_pattern.m_body);
+    }
+
+    void mergeSingleCharacterAlternatives(PatternDisjunction& disjunction)
+    {
+        if (!isSafeToRecurse()) [[unlikely]]
+            return;
+
+        for (auto& alternative : disjunction.m_alternatives) {
+            for (auto& term : alternative->m_terms) {
+                if (term.type == PatternTerm::Type::ParenthesesSubpattern || term.type == PatternTerm::Type::ParentheticalAssertion)
+                    mergeSingleCharacterAlternatives(*term.parentheses.disjunction);
+            }
+        }
+
+        // How the search for the start of a match is compiled depends on the alternatives of the body.
+        if (&disjunction == m_pattern.m_body)
+            return;
+
+        auto singleCharacterTerm = [](PatternAlternative& alternative) -> PatternTerm* {
+            if (alternative.m_terms.size() != 1)
+                return nullptr;
+            PatternTerm& term = alternative.m_terms[0];
+            if (term.quantityType != QuantifierType::FixedCount || term.quantityMaxCount != 1)
+                return nullptr;
+            if (term.type == PatternTerm::Type::PatternCharacter)
+                return &term;
+            if (term.type == PatternTerm::Type::CharacterClass && !term.invert() && !term.characterClass->hasStrings())
+                return &term;
+            return nullptr;
+        };
+
+        auto& alternatives = disjunction.m_alternatives;
+        size_t kept = 0;
+        for (size_t begin = 0; begin < alternatives.size();) {
+            size_t end = begin + 1;
+            PatternTerm* first = singleCharacterTerm(*alternatives[begin]);
+            bool hasCharacterClass = first && first->type == PatternTerm::Type::CharacterClass;
+            if (first) {
+                auto sizeOfTerm = [](PatternTerm& term) {
+                    return term.type == PatternTerm::Type::CharacterClass ? sizeOfCharacterClass(*term.characterClass) : 1;
+                };
+                size_t size = sizeOfTerm(*first);
+                for (; end < alternatives.size(); ++end) {
+                    PatternTerm* term = singleCharacterTerm(*alternatives[end]);
+                    if (!term || term->m_currentFlags != first->m_currentFlags || term->matchDirection() != first->matchDirection())
+                        break;
+                    size += sizeOfTerm(*term);
+                    if (size > maximumSizeOfMergedClass)
+                        break;
+                    hasCharacterClass |= term->type == PatternTerm::Type::CharacterClass;
+                }
+            }
+
+            bool merges = end - begin > 1 && hasCharacterClass;
+            if (merges) {
+                CharacterClassConstructor merged(first->ignoreCase(), m_pattern.compileMode());
+                for (size_t i = begin; i < end; ++i) {
+                    PatternTerm& term = alternatives[i]->m_terms[0];
+                    if (term.type == PatternTerm::Type::PatternCharacter)
+                        merged.putChar(term.patternCharacter);
+                    else
+                        merged.append(term.characterClass);
+                }
+                auto characterClass = merged.charClass();
+                CharacterClass* used = characterClass->m_anyCharacter ? m_pattern.anyCharacterClass() : characterClass.get();
+                *first = PatternTerm(used, false, first->m_currentFlags, first->matchDirection());
+                m_pattern.m_userCharacterClasses.append(WTF::move(characterClass));
+            }
+
+            for (size_t i = begin, keptEnd = merges ? begin + 1 : end; i < keptEnd; ++i, ++kept) {
+                if (kept != i)
+                    alternatives[kept] = WTF::move(alternatives[i]);
+            }
+            begin = end;
+        }
+        alternatives.shrink(kept);
+        alternatives.last()->m_isLastAlternative = true;
+    }
+
+    // checkForTerminalParentheses() explains why a greedy * or + group at the end of the pattern needs no state from earlier
+    // iterations: nothing after it can fail, so nothing backtracks into an iteration that has matched. That is as true of the last
+    // term of each of its alternatives: what comes after it is the end of the iteration, and then another iteration or none. It
+    // is also true of the last term of a group that runs once and is itself in such a position. In
+    //     /(?:\w+|(?:\[[^\]]*\])+|:\w+(?:\(|\w|\))*)*/
+    // all three groups that repeat are.
+    //
+    // One thing after such a group can fail: an enclosing group rejects an iteration that matched the empty string. Then this
+    // group has matched the empty string too, so none of its iterations has completed, and it has nothing else to try.
+    //
+    // Unlike isTerminal this does not change the frame, and the interpreter does not look at it. There, backtracking into a
+    // terminal group is a crash.
+    void markTailLoops()
+    {
+        for (auto& alternative : m_pattern.m_body->m_alternatives)
+            markTailLoops(*alternative);
+    }
+
+    void markTailLoops(PatternAlternative& alternative)
+    {
+        if (!isSafeToRecurse()) [[unlikely]]
+            return;
+        if (alternative.m_terms.isEmpty())
+            return;
+        PatternTerm& term = alternative.m_terms.last();
+        if (term.type != PatternTerm::Type::ParenthesesSubpattern || term.matchDirection() != Forward || term.parentheses.isCopy || term.parentheses.isStringList)
+            return;
+
+        if (term.quantityMaxCount != 1) {
+            // A failed iteration leaves the captures it has set. Only a ParenContext puts back those of the iteration before.
+            bool hasObservableCaptures = (term.capture() || term.containsAnyCaptures()) && capturesAreObservable();
+            if (term.quantityType != QuantifierType::Greedy || term.quantityMinCount > 1 || term.quantityMaxCount != quantifyInfinite || hasObservableCaptures)
+                return;
+            term.parentheses.isTailLoop = true;
+            matchRunsInTailLoop(*term.parentheses.disjunction);
+        }
+
+        for (auto& nested : term.parentheses.disjunction->m_alternatives)
+            markTailLoops(*nested);
+    }
+
+    // In the tail loop /(?:--|[\w-]|\\.)*/, take a character of [\w-] that no earlier alternative can start with: one of \w. There
+    // the earlier alternatives fail and [\w-] matches, which is an iteration. So after [\w-] has matched, a run of \w can be matched
+    // without going around the loop: /(?:--|[\w-]\w*|\\.)*/. Nothing backtracks into a tail loop, so nothing can tell how many
+    // iterations matched the run. (A set of first characters that is too large only makes the run shorter.)
+    void matchRunsInTailLoop(PatternDisjunction& disjunction)
+    {
+        // What the alternatives so far can start with.
+        std::optional<CharacterClassConstructor> starts;
+        std::optional<OptionSet<Flags>> flags;
+
+        // An alternative costs time in proportion to the sizes of `starts` and of its class. That would be N * N for a loop of N
+        // alternatives, and a class like \p{L} is large for its five characters of source. So the pass has this much to spend,
+        // about seven times what /(?:--|\p{L}|\p{N}|\\.)*/u takes. The alternatives that are left stay as they were written.
+        size_t budget = 1 << 14;
+
+        for (auto& alternative : disjunction.m_alternatives) {
+            if (alternative->m_terms.isEmpty())
+                return;
+            PatternTerm& first = alternative->m_terms[0];
+            bool isCharacter = first.type == PatternTerm::Type::PatternCharacter;
+            bool isCharacterClass = first.type == PatternTerm::Type::CharacterClass && !first.characterClass->hasStrings();
+            if ((!isCharacter && !isCharacterClass) || first.quantityType != QuantifierType::FixedCount || !first.quantityMaxCount || first.matchDirection() != Forward)
+                return;
+            if (!flags) {
+                flags = first.m_currentFlags;
+                starts.emplace(first.ignoreCase(), m_pattern.compileMode());
+            } else if (*flags != first.m_currentFlags)
+                return;
+
+            size_t cost = starts->size() + 1;
+            if (isCharacterClass)
+                cost += sizeOfCharacterClass(*first.characterClass);
+            if (cost > budget)
+                return;
+            budget -= cost;
+
+            if (isCharacterClass && !first.invert() && alternative->m_terms.size() == 1 && first.quantityMaxCount == 1) {
+                // Both sets are closed under case folding already, if the pattern ignores case.
+                CharacterClassConstructor run(false, CompileMode::UnicodeSets);
+                run.appendDifference(*first.characterClass, *starts);
+                auto runClass = run.charClass();
+                if (!runClass->m_matches8.isEmpty() || !runClass->m_ranges8.isEmpty() || !runClass->m_matches32.isEmpty() || !runClass->m_ranges32.isEmpty()) {
+                    CharacterClass* used = runClass->m_anyCharacter ? m_pattern.anyCharacterClass() : runClass.get();
+                    PatternTerm runTerm(used, false, first.m_currentFlags, Forward);
+                    runTerm.quantify(quantifyInfinite, QuantifierType::Greedy);
+                    starts->append(first.characterClass);
+                    alternative->m_terms.append(runTerm); // `first` is gone.
+                    m_pattern.m_userCharacterClasses.append(WTF::move(runClass));
+                    continue;
+                }
+            }
+
+            if (isCharacter)
+                starts->putChar(first.patternCharacter);
+            else if (first.invert())
+                starts->appendInverted(first.characterClass);
+            else
+                starts->append(first.characterClass);
+        }
+    }
+
     // Auto-possessification optimization
     //
     // "Possessive Quantifier" is yet another quantifier type supported in non-JS RegExp engines (e.g. PCRE2).
@@ -2637,6 +2899,192 @@ public:
     // can never be a character that `T` matches is effectively possessive. Once `T` has matched greedily, giving characters back
     // can never let `U` match (a given-back position still holds a `T` character, which `U` rejects), so all of the backtracking the
     // engine would do into `T` is futile. We mark such a `T` so the JIT can skip generating (and running) that dead backtracking.
+
+    struct TermsBehindGroup {
+        const PatternAlternative* alternative;
+        unsigned index;
+        const TermsBehindGroup* outer;
+    };
+    using TermsInOrder = Vector<const PatternTerm*, 16>;
+    static constexpr unsigned maxTermsBehindLazyRun = 64;
+
+    static bool isTakenOnce(const PatternTerm& group)
+    {
+        return group.quantityType == QuantifierType::FixedCount && group.quantityMinCount == 1 && group.quantityMaxCount == 1 && !group.parentheses.isCopy;
+    }
+
+    static bool isOneUnit(const PatternTerm& term)
+    {
+        return (term.type == PatternTerm::Type::PatternCharacter || term.type == PatternTerm::Type::CharacterClass) && term.matchDirection() == Forward && term.m_matchedSet != CharacterSetID::Unknown;
+    }
+
+    static bool isRunWithoutUpperBound(const PatternTerm& term)
+    {
+        return isOneUnit(term) && term.quantityType != QuantifierType::FixedCount && !term.quantityMinCount && term.quantityMaxCount == quantifyInfinite;
+    }
+
+    // The terms that a match goes through from a place on, up to the end of the pattern or of the lookahead. A group that is taken once and has one alternative gives its terms.
+    bool collectTermsBehind(const PatternAlternative* alternative, unsigned index, const TermsBehindGroup* outer, TermsInOrder& terms)
+    {
+        if (!isSafeToRecurse()) [[unlikely]]
+            return false;
+        for (;;) {
+            for (; index < alternative->m_terms.size(); ++index) {
+                const PatternTerm& term = alternative->m_terms[index];
+                if (term.type == PatternTerm::Type::ParenthesesSubpattern && isTakenOnce(term) && term.matchDirection() == Forward && term.parentheses.disjunction->m_alternatives.size() == 1) {
+                    TermsBehindGroup behind { alternative, index + 1, outer };
+                    return collectTermsBehind(term.parentheses.disjunction->m_alternatives[0].get(), 0, &behind, terms);
+                }
+                if (terms.size() == maxTermsBehindLazyRun)
+                    return false;
+                terms.append(&term);
+            }
+            if (!outer)
+                return true;
+            alternative = outer->alternative;
+            index = outer->index;
+            outer = outer->outer;
+        }
+    }
+
+    // Whether the search from the term on depends on the position alone, and the JIT counts no turns in it: it gives a match up by their number.
+    static bool dependsOnPositionAlone(const PatternTerm& term)
+    {
+        switch (term.type) {
+        case PatternTerm::Type::NumberedBackReference:
+        case PatternTerm::Type::NamedBackReference:
+        case PatternTerm::Type::DotStarEnclosure:
+            return false;
+        case PatternTerm::Type::ParenthesesSubpattern:
+            if (term.quantityMaxCount != 1 || term.parentheses.isCopy)
+                return false;
+            [[fallthrough]];
+        case PatternTerm::Type::ParentheticalAssertion:
+            return std::ranges::all_of(term.parentheses.disjunction->m_alternatives, [](auto& alternative) {
+                return std::ranges::all_of(alternative->m_terms, dependsOnPositionAlone);
+            });
+        default:
+            return true;
+        }
+    }
+
+    static bool isSubset(const CharacterSet& inner, const CharacterSet& outer)
+    {
+        auto candidate = outer.ranges.begin();
+        for (auto [begin, end] : inner.ranges) {
+            while (candidate != outer.ranges.end() && candidate->second < begin)
+                ++candidate;
+            if (candidate == outer.ranges.end() || candidate->first > begin || candidate->second < end)
+                return false;
+        }
+        return true;
+    }
+
+    template<typename Functor>
+    static void forEachRangeOfDifference(const CharacterSet& set, const CharacterSet& without, const Functor& functor)
+    {
+        auto cut = without.ranges.begin();
+        for (auto [begin, end] : set.ranges) {
+            while (cut != without.ranges.end() && cut->second < begin)
+                ++cut;
+            bool reachesEnd = false;
+            for (auto next = cut; next != without.ranges.end() && next->first <= end && !reachesEnd; ++next) {
+                if (next->first > begin)
+                    functor(begin, next->first - 1);
+                reachesEnd = next->second >= end;
+                begin = next->second + 1;
+            }
+            if (!reachesEnd)
+                functor(begin, end);
+        }
+    }
+
+    // .*?\] stops at the first ], as [^\]]*\] does, unless what stands behind the ] fails there and matches behind a later ]. That cannot be
+    // - where nothing stands behind it: the pattern, or the lookahead, which is not gone back into, ends there;
+    // - where another run without an upper bound stands behind it that takes all the first run takes, and the ]. Entered behind a later ], it has only ends that it had behind the
+    //   first, and the search from an end depends on the position alone. Steps of one unit may stand between the two: where one fails, the first run cannot go on, and no earlier step can
+    //   take that unit behind a later ], so each step holds the run, the ] and the step in front of it.
+    // The run that stops there never goes back, and \[.*?\].*?# no longer walks to the end of the line from every ].
+    bool stopsAtFirstEnd(const PatternTerm& run, const TermsInOrder& behind)
+    {
+        auto& sets = m_pattern.m_firstFollowSets;
+        if (behind.isEmpty() || !isOneUnit(*behind[0]) || behind[0]->quantityType != QuantifierType::FixedCount || behind[0]->quantityMaxCount != 1)
+            return false;
+        if (behind.size() == 1)
+            return true;
+        const CharacterSet& members = sets.set(run.m_matchedSet);
+        const CharacterSet& end = sets.set(behind[0]->m_matchedSet);
+        auto holdsRunAndEnd = [&](const PatternTerm& term) {
+            return isSubset(members, sets.set(term.m_matchedSet)) && isSubset(end, sets.set(term.m_matchedSet));
+        };
+        unsigned next = 1;
+        while (next < behind.size() && isOneUnit(*behind[next]) && behind[next]->quantityType == QuantifierType::FixedCount)
+            ++next;
+        if (next == behind.size() || !isRunWithoutUpperBound(*behind[next]) || !holdsRunAndEnd(*behind[next]))
+            return false;
+        for (unsigned step = 1; step < next; ++step) {
+            if (!holdsRunAndEnd(*behind[step]) || !isSubset(sets.set(behind[step]->m_matchedSet), sets.set(behind[next]->m_matchedSet)))
+                return false;
+            if (step > 1 && !isSubset(sets.set(behind[step - 1]->m_matchedSet), sets.set(behind[step]->m_matchedSet)))
+                return false;
+        }
+        return std::ranges::all_of(behind.span().subspan(next + 1), [](const PatternTerm* term) {
+            return dependsOnPositionAlone(*term);
+        });
+    }
+
+    bool replaceLazyRunsThatStopAtFirstEnd(PatternDisjunction& disjunction, const TermsBehindGroup* outer)
+    {
+        if (!isSafeToRecurse()) [[unlikely]]
+            return false;
+        bool hasReplaced = false;
+        auto& sets = m_pattern.m_firstFollowSets;
+        for (auto& alternative : disjunction.m_alternatives) {
+            for (unsigned i = 0; i < alternative->m_terms.size(); ++i) {
+                PatternTerm& term = alternative->m_terms[i];
+                if (term.matchDirection() != Forward)
+                    continue;
+                if (term.type == PatternTerm::Type::ParentheticalAssertion) {
+                    hasReplaced |= replaceLazyRunsThatStopAtFirstEnd(*term.parentheses.disjunction, nullptr);
+                    continue;
+                }
+                if (term.type == PatternTerm::Type::ParenthesesSubpattern) {
+                    // What stands behind a run in a repeated group depends on the turn.
+                    if (isTakenOnce(term)) {
+                        TermsBehindGroup behind { alternative.get(), i + 1, outer };
+                        hasReplaced |= replaceLazyRunsThatStopAtFirstEnd(*term.parentheses.disjunction, &behind);
+                    }
+                    continue;
+                }
+                if (!isRunWithoutUpperBound(term) || term.quantityType != QuantifierType::NonGreedy)
+                    continue;
+                TermsInOrder behind;
+                if (!collectTermsBehind(alternative.get(), i + 1, outer, behind) || !stopsAtFirstEnd(term, behind))
+                    continue;
+                CharacterClassConstructor membersButEnd(false, m_pattern.compileMode());
+                bool hasMembers = false;
+                forEachRangeOfDifference(sets.set(term.m_matchedSet), sets.set(behind[0]->m_matchedSet), [&](char32_t begin, char32_t end) {
+                    membersButEnd.putRange(begin, end);
+                    hasMembers = true;
+                });
+                if (!hasMembers)
+                    continue;
+                auto characterClass = membersButEnd.charClass();
+                term.type = PatternTerm::Type::CharacterClass;
+                term.characterClass = characterClass.get();
+                term.m_invert = false;
+                term.quantityType = QuantifierType::Greedy;
+                m_pattern.m_userCharacterClasses.append(WTF::move(characterClass));
+                hasReplaced = true;
+            }
+        }
+        return hasReplaced;
+    }
+
+    bool replaceLazyRunsThatStopAtFirstEnd()
+    {
+        return !m_pattern.eitherUnicode() && replaceLazyRunsThatStopAtFirstEnd(*m_pattern.m_body, nullptr);
+    }
 
     void optimizePossessiveQuantifiers()
     {
@@ -2760,6 +3208,76 @@ public:
                 allAlternativesStartWithBOL = false;
         }
         return allAlternativesStartWithBOL;
+    }
+
+    bool capturesAreObservable() const
+    {
+        return m_pattern.m_executionMode == ExecutionMode::IncludeSubpatterns
+            || m_pattern.m_containsBackreferences
+            || m_pattern.m_hasNamedCaptureGroups
+            || m_pattern.m_numDuplicateNamedCaptureGroups
+            || m_pattern.m_containsLookbehinds;
+    }
+
+    // Returns true if the disjunction can always match the empty string: some alternative has only
+    // terms that may be skipped. An assertion may fail, so it is not such a term.
+    bool dropMinimumOfGroupsThatCanAlwaysMatchEmpty(PatternDisjunction& disjunction)
+    {
+        if (!isSafeToRecurse()) [[unlikely]] {
+            m_error = ErrorCode::TooManyDisjunctions; // What setupOffsets() reports for the same pattern.
+            return false;
+        }
+
+        bool canAlwaysMatchEmpty = false;
+        for (auto& alternative : disjunction.m_alternatives) {
+            bool allTermsCanBeSkipped = true;
+            for (auto& term : alternative->m_terms) {
+                bool canBeSkipped = false;
+                switch (term.type) {
+                case PatternTerm::Type::PatternCharacter:
+                case PatternTerm::Type::CharacterClass:
+                case PatternTerm::Type::NumberedBackReference:
+                case PatternTerm::Type::NamedBackReference:
+                    canBeSkipped = !term.quantityMinCount;
+                    break;
+                case PatternTerm::Type::ParentheticalAssertion:
+                    dropMinimumOfGroupsThatCanAlwaysMatchEmpty(*term.parentheses.disjunction);
+                    break;
+                case PatternTerm::Type::ParenthesesSubpattern: {
+                    bool bodyCanAlwaysMatchEmpty = dropMinimumOfGroupsThatCanAlwaysMatchEmpty(*term.parentheses.disjunction);
+                    if (bodyCanAlwaysMatchEmpty
+                        && term.quantityMinCount
+                        && term.quantityMaxCount == quantifyInfinite
+                        && term.quantityType == QuantifierType::Greedy
+                        && term.matchDirection() == Forward
+                        && !((term.capture() || term.containsAnyCaptures()) && capturesAreObservable()))
+                        term.quantityMinCount = 0;
+                    canBeSkipped = bodyCanAlwaysMatchEmpty || !term.quantityMinCount;
+                    break;
+                }
+                default:
+                    break;
+                }
+                allTermsCanBeSkipped &= canBeSkipped;
+            }
+            canAlwaysMatchEmpty |= allTermsCanBeSkipped;
+        }
+        return canAlwaysMatchEmpty;
+    }
+
+    // /(?:X)+/ and /(?:X)*/ match the same text when X can always match the empty string. All that
+    // the minimum adds is a required iteration that may be empty, and what follows an empty
+    // iteration is /(?:X)*/ at the same index. So /(?:X)+/ tries the end positions of /(?:X)*/ in
+    // the same order, some of them twice. They differ in the captures that an empty iteration sets,
+    // which is why those must not be observable. This does not hold for a non-greedy quantifier,
+    // which would rather stop before the first iteration, or for a maximum, which the empty
+    // iteration counts against.
+    //
+    // YarrJIT handles an empty iteration of a group without a minimum. With a minimum it leaves
+    // the whole match to the interpreter: see m_abortExecution.
+    void dropMinimumOfGroupsThatCanAlwaysMatchEmpty()
+    {
+        dropMinimumOfGroupsThatCanAlwaysMatchEmpty(*m_pattern.m_body);
     }
 
     void recomputeStartsWithBOL()
@@ -4056,18 +4574,23 @@ ErrorCode YarrPattern::compile(StringView patternString)
             return error;
     }
 
+    constructor.dropMinimumOfGroupsThatCanAlwaysMatchEmpty();
+    constructor.mergeSingleCharacterAlternatives();
     constructor.recomputeStartsWithBOL();
     constructor.checkForTerminalParentheses();
     constructor.optimizeDotStarWrappedExpressions();
     constructor.optimizeBOL();
     constructor.factorAndWrapAlternatives();
     constructor.optimizePossessiveQuantifiers();
+    constructor.markTailLoops();
 
     if (hasError(constructor.error()))
         return constructor.error();
 
     if (m_analysis == PatternAnalysis::Performed) {
         computeFirstFollowSets(*this, constructor.stackCheck());
+        if (constructor.replaceLazyRunsThatStopAtFirstEnd())
+            computeFirstFollowSets(*this, constructor.stackCheck());
         analyzeBacktracking(*this, constructor.stackCheck());
     }
 
@@ -4358,6 +4881,9 @@ void PatternTerm::dump(PrintStream& out, YarrPattern* thisPattern, unsigned nest
 
         if (parentheses.isTerminal)
             out.print(",terminal");
+
+        if (parentheses.isTailLoop)
+            out.print(",tail-loop");
 
         if (parentheses.isStringList)
             out.print(",string-list");

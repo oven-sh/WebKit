@@ -69,10 +69,10 @@ public:
     Effects effects;
 
     bool isLoopPoll { false };
-    // A loop poll that also throws an error which an earlier operation of the loop could not throw by itself. It stays in every version of its loop.
-    bool throwsWhatIsOwed { false };
-    // Of a loop poll: nothing on the likely paths of the loop runs other code of the program or goes on for long, so many turns may pass between two polls.
-    bool turnsAreShort { false };
+    // For a loop poll: the loop's likely paths call no other code of the program and run no long operation, so many iterations may pass between two polls.
+    bool iterationsAreShort { false };
+    // Emits no code and has no result. It only keeps its children live up to this point.
+    bool onlyKeepsChildrenAlive { false };
     std::optional<PureFunction> pureFunction;
     ClientTag clientTag;
 

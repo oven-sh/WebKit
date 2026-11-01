@@ -39,8 +39,11 @@ static uint8_t numberOfRegisterParameters(const Function& function)
 {
     switch (entryConventionOf(function)) {
     case EntryConvention::Direct:
-    case EntryConvention::GenericBuffer:
         return 0;
+    case EntryConvention::GenericBuffer: {
+        size_t numberOfArguments = function.length + (function.creator.as<CreatorRecord::Entrypoint>().takesNewTarget ? 1 : 0);
+        return static_cast<uint8_t>(std::min<size_t>(numberOfArguments, numberOfArgumentGPRs));
+    }
     case EntryConvention::GenericRegisters: {
         size_t numberOfArguments = function.parameters.size() + (function.newTargetParameterIndex() ? 1 : 0);
         return static_cast<uint8_t>(std::min<size_t>(numberOfArguments, numberOfArgumentGPRs));
@@ -124,6 +127,12 @@ uint32_t EntryEmitter::indexOfFirstArgumentInList() const
     return m_indexOfFirstArgumentInList;
 }
 
+uint32_t EntryEmitter::numberOfArgumentsAlwaysInList() const
+{
+    RELEASE_ASSERT(m_argumentCount.value() && !m_indexOfFirstArgumentInList);
+    return numberOfRegisterParameters(m_function);
+}
+
 static uint32_t stackWordsPassedBy(const CodeGenerationInputs& inputs, const Value& tailCall)
 {
     if (tailCall.opcode == Opcode::CallDirect)
@@ -161,9 +170,9 @@ static uint8_t argumentsBorrowedBy(const FlowResults& flow, FunctionID id, const
         return 0;
 
     uint8_t borrowed = 0;
-    unsigned numberOfArguments = std::min<unsigned>(entrypoint.numberOfPositionalParameters(), ClosureWord::numberOfBorrowedArguments);
-    for (unsigned argument = 0; argument < numberOfArguments; ++argument) {
-        if (flow.framePointerSummary(id, entrypoint.firstParameterIndex() + argument).uses.containsOnly(usesOfBorrowedParameter))
+    for (unsigned argument = 0; argument < ClosureWord::numberOfBorrowedArguments; ++argument) {
+        // An argument without a parameter is unused.
+        if (argument >= entrypoint.numberOfPositionalParameters() || flow.framePointerSummary(id, entrypoint.firstParameterIndex() + argument).uses.containsOnly(usesOfBorrowedParameter))
             borrowed |= 1u << argument;
     }
     return borrowed;

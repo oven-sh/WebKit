@@ -9,11 +9,11 @@
 variable g0 name="exports" module=m1 declared={type=anything} initialization=Undefined
 variable g1 name="default" module=m2 declared={type=anything}
 module m0 path="/main.mjs" displayPath="main.mjs" body=f0 requests=[{target=m2 completes=true}]
-module m1 path="/value.cjs" displayPath="value.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports body=f1 exportsVariable=g0
+module m1 path="/value.cjs" displayPath="value.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g0
 module m2 path="#2" displayPath="value.cjs" exportRule=CommonJs body=f2 requests=[{target=m1 kind=Require completes=true}] syntheticExports=[{name="default" variable=g1}]
 entry module=m0
 # CHECK: module m0 {{*}}flags=[EvaluatesItself] body=f0
-# CHECK: module m1 path="/value.cjs" displayPath="value.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports exportsVariable=g0
+# CHECK: module m1 path="/value.cjs" displayPath="value.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports exportsVariable=g0
 # CHECK: module m2 {{*}}flags=[EvaluatesItself] exportRule=CommonJs body=f2
 
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {

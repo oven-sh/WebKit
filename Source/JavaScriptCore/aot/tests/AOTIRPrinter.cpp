@@ -108,14 +108,14 @@ static std::optional<InvalidPart> findInvalidStorage(const Instruction& instruct
     return std::nullopt;
 }
 
-static void printOrigin(IRPrinter& printer, const Instruction& instruction)
+static void printOrigin(IRPrinter& printer, const Instruction& instruction, std::optional<uint32_t> reported = std::nullopt)
 {
     uint32_t inlineFrame = printer.printsEngineFields() ? instruction.inlineFrame : 0;
     bool isTailCall = printer.printsEngineFields() && instruction.isTailCall;
     bool isPartOfConstruction = printer.printsEngineFields() && instruction.isPartOfConstruction;
     if (!instruction.hasPosition() && !inlineFrame && !isTailCall && !isPartOfConstruction)
         return;
-    printer.out().print(" @"_s, instruction.hasPosition() ? instruction.position : 0u);
+    printer.out().print(" @"_s, reported ? *reported : instruction.hasPosition() ? instruction.position : 0u);
     if (inlineFrame)
         printer.out().print(":"_s, inlineFrame);
     if (isTailCall)
@@ -225,6 +225,12 @@ static void printLinesOf(IRPrinter& printer, ProgramList list)
     case ProgramList::ModuleFailures:
         printLines(printer, list, program.moduleFailures);
         return;
+    case ProgramList::AmbiguousExports:
+        printLines(printer, list, program.ambiguousExports);
+        return;
+    case ProgramList::SourceStamps:
+        printLines(printer, list, program.sourceStamps);
+        return;
     case ProgramList::EvalScopes:
         printLines(printer, list, program.evalScopes);
         return;
@@ -243,6 +249,12 @@ static void printLinesOf(IRPrinter& printer, ProgramList list)
     case ProgramList::WebAssemblyModules:
         printLines(printer, list, program.webAssemblyModules);
         return;
+    case ProgramList::ReplaceableBuiltins:
+        printLines(printer, list, program.replaceableBuiltins);
+        return;
+    case ProgramList::OpenedNames:
+        printLines(printer, list, program.openedNames);
+        return;
     case ProgramList::Bytes:
     case ProgramList::Words:
     case ProgramList::Strings:
@@ -250,6 +262,7 @@ static void printLinesOf(IRPrinter& printer, ProgramList list)
     case ProgramList::Types:
     case ProgramList::ClassParts:
     case ProgramList::DeclaredTypes:
+    case ProgramList::DeclaredCaptures:
     case ProgramList::Fields:
     case ProgramList::StaticFields:
     case ProgramList::ModuleRequests:
@@ -440,10 +453,12 @@ void IRPrinter::printValue(const Function& function, ValueID id)
         }
         m_out.print("]"_s);
     }
-    printOrigin(*this, value);
-    if (auto written = function.writtenPositionOf(id))
+    const ConstructionStart* construction = printsEngineFields() ? nullptr : findStartOfConstruction(m_program, function, value);
+    bool isShownAtStart = construction && construction->isShownAtStart;
+    printOrigin(*this, value, isShownAtStart ? std::optional<uint32_t>(construction->start) : std::nullopt);
+    if (auto written = isShownAtStart ? std::optional<uint32_t>(value.position) : function.writtenPositionOf(id))
         m_out.print(" @"_s, *written);
-    else if (const ConstructionStart* construction = printsEngineFields() ? nullptr : findStartOfConstruction(m_program, function, value)) {
+    else if (construction) {
         m_out.print(" @"_s, construction->start);
         // The word stands behind a pair of positions.
         if (construction->isForCallers && value.hasPosition())
@@ -659,10 +674,32 @@ void IRPrinter::print(RuntimeModuleID id)
         printInvalid("runtimemodule"_s, id.index());
 }
 
+StringView tokenOf(const BuiltinTable& builtins, RuntimeFunctionID id)
+{
+    std::span<const RuntimeFunctionData> functions = builtins.runtimeFunctions();
+    auto found = std::ranges::lower_bound(functions, id.index(), { }, [](const RuntimeFunctionData& function) { return function.id.index(); });
+    if (found == functions.end() || found->id != id)
+        return { };
+    return byteCast<Latin1Character>(builtinTableRuntimeFunctionTokens[found - functions.begin()]);
+}
+
+RuntimeFunctionID runtimeFunctionFromToken(const BuiltinTable& builtins, StringView token)
+{
+    BuiltinTexts tokens = builtinTableRuntimeFunctionTokens;
+    for (size_t i = 0; i < tokens.size(); ++i) {
+        if (token == StringView(byteCast<Latin1Character>(tokens[i])))
+            return builtins.runtimeFunctions()[i].id;
+    }
+    return { };
+}
+
 void IRPrinter::print(RuntimeFunctionID id)
 {
-    if (!printNumber(m_out, m_program.builtins(), id))
+    StringView token = tokenOf(m_program.builtins(), id);
+    if (token.isNull())
         printInvalid("runtimefunction"_s, id.index());
+    else
+        m_out.print(token);
 }
 
 static void dumpLayouts(IRPrinter& printer, const LayoutSet& layouts)

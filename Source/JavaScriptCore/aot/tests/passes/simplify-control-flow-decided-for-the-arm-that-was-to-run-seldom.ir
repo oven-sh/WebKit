@@ -59,3 +59,31 @@ function f3 name="armThatOnlyARareWayLeadsToAsWell" parameters=[{type=string}, {
 # CHECK-NEXT: = CallDirect v0 function=f0
 # CHECK: b4() frequency=Rare:
 }
+
+function f4 name="armThatAlwaysGoesOnToWhatIsRarerStill" parameters=[{type=string}, {type=boolean}] results=[{type=anything}] {
+    Branch v1 -> taken b1(), notTaken b5()
+  b1():
+    v2 = TypeTest v0 testedType=number
+    Branch v2 -> taken b2(), notTaken b3()
+  b2():
+    Return v0
+  b3() frequency=Unlikely:
+    v3 = CallDirect v0 function=f0
+    Jump -> next b4()
+  b4() frequency=Rare:
+    v4 = CallDirect v0 function=f0
+    Branch v1 -> taken b6(), notTaken b7()
+  b5() frequency=Rare:
+    v5 = CallDirect v1 function=f0
+    Jump -> next b4()
+  b6() frequency=Rare:
+    Return v4
+  b7() frequency=Rare:
+    Return v0
+# CHECK: b3():
+# CHECK: b4():
+# CHECK-NEXT: = CallDirect v0 function=f0
+# CHECK: b5() frequency=Rare:
+# CHECK: b6() frequency=Rare:
+# CHECK: b7() frequency=Rare:
+}

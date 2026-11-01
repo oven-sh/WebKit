@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTCoroutines.h"
 #include "AOTEdgeResults.h"
 #include "AOTFrameAllocationPointers.h"
 #include "AOTFunctionAnalyses.h"
@@ -108,7 +109,7 @@ static void forEachValueFedBy(const Function& function, const Use& use, NOESCAPE
     }
 }
 
-Vector<ProgramPoint> findRejoinPoints(FunctionAnalyses& analyses, NOESCAPE const ScopedLambda<bool(ValueID)>& mayCallUnknownCode, NOESCAPE const ScopedLambda<bool(ProgramPoint)>& mayRejoinAt)
+Vector<ProgramPoint> findRejoinPoints(FunctionAnalyses& analyses, NOESCAPE const ScopedLambda<bool(ValueID)>& mayCallUnknownCode, NOESCAPE const ScopedLambda<bool(ProgramPoint)>& mayRejoinAt, const BitVector* requestedBlocks)
 {
     const Program& program = analyses.program();
     const Function& function = analyses.function();
@@ -126,6 +127,8 @@ Vector<ProgramPoint> findRejoinPoints(FunctionAnalyses& analyses, NOESCAPE const
 
     Vector<uint32_t, 32> endOfEarlierReads;
     for (BlockID block : cfg.reversePostOrder()) {
+        if (requestedBlocks && !requestedBlocks->get(block.index()))
+            continue;
         const Block& contents = function.at(block);
         if (contents.isHandlerBlock() || (loops && loops->headerOf(block)))
             addHead(block);
@@ -167,7 +170,7 @@ Vector<ProgramPoint> findRejoinPoints(FunctionAnalyses& analyses, NOESCAPE const
         }
     }
 
-    AOT::sort(points, { }, [&](ProgramPoint point) {
+    AOT::sortInLine(points, { }, [&](ProgramPoint point) {
         return std::pair { cfg.reversePostOrderIndex(point.block), point.index };
     });
     return points;
@@ -359,10 +362,52 @@ void GenericCopy::computeRegion(Extent extent)
     m_untestedRejoins.removeAllMatching(isCopied);
 }
 
+BitVector GenericCopy::computeBlocksReachingBackEdges() const
+{
+    const CFG& cfg = m_analyses.cfg();
+    const NaturalLoops& loops = m_analyses.naturalLoops();
+    BitVector reachesBackEdge(m_function.blocks.size());
+    BitVector isVisited(m_function.blocks.size());
+    Vector<BlockID, 16> visited;
+    Vector<BlockID, 16> worklist;
+    for (BlockID header : m_entries) {
+        const NaturalLoop* loop = loops.headerOf(header);
+        if (!loop)
+            continue;
+        worklist.append(header);
+        while (!worklist.isEmpty()) {
+            for (Edge edge : cfg.incomingEdges(worklist.takeLast())) {
+                if (edge.from == header || !loops.belongsTo(edge.from, *loop))
+                    continue;
+                if (!edge.isHandlerEdge() && std::ranges::binary_search(m_redirectedEdges, std::pair { edge.from.index(), edge.targetIndex }))
+                    continue;
+                if (!isVisited.add(edge.from.index()))
+                    continue;
+                visited.append(edge.from);
+                worklist.append(edge.from);
+            }
+        }
+        for (BlockID block : visited) {
+            isVisited.quickClear(block.index());
+            const Block& contents = m_function.at(block);
+            bool isOnBackEdge = contents.values.isEmpty() && contents.terminator.kind == TerminatorKind::Jump && contents.terminator.next().block == header;
+            if (!isOnBackEdge || m_isRejoinBlock.get(header.index()))
+                reachesBackEdge.quickSet(block.index());
+        }
+        visited.shrink(0);
+    }
+    return reachesBackEdge;
+}
+
 bool GenericCopy::addsLoopEntry(BlockID block) const
 {
     if (!m_analyses.isInCycle(block))
         return false;
+    // The copy is entered at the header's copy, so leaving it here would make the loop irreducible.
+    if (!m_reachesBackEdge)
+        m_reachesBackEdge = computeBlocksReachingBackEdges();
+    if (m_reachesBackEdge->get(block.index()))
+        return true;
     const CFG& cfg = m_analyses.cfg();
     const NaturalLoops& loops = m_analyses.naturalLoops();
     const Block& contents = m_function.at(block);
@@ -415,9 +460,33 @@ bool GenericCopy::mergesAllocationThatSinksWithItsCopyAt(BlockID block) const
     });
 }
 
+// A loop is only fused with a generator that has one creation. The call of a ramp becomes a creation once it is inlined.
+bool GenericCopy::mergesGeneratorWithItsCopyAt(BlockID block) const
+{
+    const UseLists& useLists = m_analyses.useLists();
+    auto createsGenerator = [&](const Value& value) {
+        if (value.opcode == Opcode::NewGenerator)
+            return true;
+        if (value.opcode != Opcode::CallDirect)
+            return false;
+        const Function& callee = m_context.program.at(value.function());
+        const CreatorRecord::Coroutine* record = coroutineOf(callee);
+        return callee.role == FunctionRole::CoroutineRamp && record && record->kind == CoroutineKind::Generator;
+    };
+    return std::ranges::any_of(m_analyses.liveness().liveAtHead(block), [&](ValueID value) {
+        ValueID identity = m_analyses.identityOf(value);
+        if (!createsGenerator(m_function.at(identity)))
+            return false;
+        BlockID definingBlock = useLists.blockOf(identity);
+        return definingBlock && isInRegion(definingBlock);
+    });
+}
+
 bool GenericCopy::canLeaveCopyAt(BlockID block) const
 {
     if (m_keepsAllocationsApart.get(block.index()) && mergesAllocationWithItsCopyAt(block))
+        return false;
+    if (mergesGeneratorWithItsCopyAt(block))
         return false;
     return !addsLoopEntry(block) && RegionCloner::canMergeAt(m_analyses, m_isInRegion, block);
 }
@@ -518,6 +587,7 @@ auto GenericCopy::plan(uint64_t maxBlocks) -> Extent
 auto GenericCopy::plan(uint64_t maxBlocks, NOESCAPE const RegionCloner::LivenessSource& livenessInsideCopiedBlocks) -> Extent
 {
     RELEASE_ASSERT(!m_cloner);
+    AOT::sortInLine(m_redirectedEdges);
     if (m_starts.isEmpty()) {
         if (tryPlan(Extent::OnlyCopiedBlocks, maxBlocks, livenessInsideCopiedBlocks))
             return Extent::OnlyCopiedBlocks;
@@ -913,7 +983,7 @@ void GenericCopy::addVariablesTo(SSARepair& repair)
     AOT::sort(values);
     removeRepeatedElements(values);
 
-    AOT::stableSort(m_otherDefinitions, { }, &OtherDefinition::inTypedCode);
+    AOT::stableSortInLine(m_otherDefinitions, { }, &OtherDefinition::inTypedCode);
     std::span<const OtherDefinition> remaining = m_otherDefinitions.span();
     for (ValueID value : values) {
         std::optional<SSARepair::Variable> variable = repair.findVariable(value);

@@ -128,7 +128,7 @@ MemoryAccess memoryAccessOf(const Function&, const Value& value)
             return { };
     }
 
-    return { isRead ? MemoryAccess::Kind::Read : MemoryAccess::Kind::Write, location, base, stored };
+    return { isRead ? MemoryAccess::Kind::Read : MemoryAccess::Kind::Write, location, base, stored, storedOperand.value_or(0) };
 }
 
 static LocationStability stabilityOfFlow(const LocationFlow& flow, CreationStore creationStore)
@@ -201,9 +201,9 @@ bool holdsDeclaredTypeOnlyBehindEntry(const LocationFlow& flow)
     return flow.initialization == InitializationState::StoredBeforeEveryRead && !flow.isUnchangedDuringActivation;
 }
 
-bool holdsDeclaredTypeOnlyBehindEntry(const LocationFlow& flow, bool calleeIsPredicted)
+bool holdsDeclaredTypeOnlyBehindEntryOfCopy(const LocationFlow& flow)
 {
-    return flow.initialization == InitializationState::StoredBeforeEveryRead && (calleeIsPredicted || !flow.isUnchangedDuringActivation);
+    return flow.initialization == InitializationState::StoredBeforeEveryRead;
 }
 
 bool liesInCopyOfPredictedCallee(const Function& function, uint32_t inlineFrame)
@@ -230,7 +230,8 @@ const LocationFlow* flowOfVariableReadBy(const Program& program, const Value& va
 bool holdsDeclaredTypeOnlyBehindEntry(const Program& program, const Function& function, const Value& read)
 {
     const LocationFlow* flow = flowOfVariableReadBy(program, read);
-    return flow && holdsDeclaredTypeOnlyBehindEntry(*flow, liesInCopyOfPredictedCallee(function, read.inlineFrame));
+    UNUSED_PARAM(function);
+    return flow && (read.inlineFrame ? holdsDeclaredTypeOnlyBehindEntryOfCopy(*flow) : holdsDeclaredTypeOnlyBehindEntry(*flow));
 }
 
 bool namesFactOrGivesWordThatMayBeAnything(const Value& read)
@@ -277,6 +278,7 @@ LocationStability stabilityOf(const Program& program, const Value& access, const
     case AbstractHeap::AllocatorState:
     case AbstractHeap::RuntimeState:
     case AbstractHeap::ValidationState:
+    case AbstractHeap::CalleesInFrames:
         return LocationStability::Unknown;
     }
     RELEASE_ASSERT_NOT_REACHED();

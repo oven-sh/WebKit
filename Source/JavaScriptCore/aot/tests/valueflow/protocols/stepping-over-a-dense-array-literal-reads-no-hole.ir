@@ -1,0 +1,127 @@
+# for (const each of list) each()
+# [member] . [member, , member] . list[3] = member . new Set([member]) . a list handed to a library function that grows it with an intrinsic . a function that is handed the first and the third
+# RUN: valueflow-why values=f0:v8 values=f0:v16 values=f0:v26 values=f0:v36 values=f0:v46 values=f2:v7
+# CHECK: Call
+# CHECK: operand 0 {{*}} 1 members: f1
+# CHECK: Call
+# CHECK: operand 0 {{*}} 2 members: primitive0 f1
+# CHECK: Call
+# CHECK: operand 0 {{*}} 2 members: primitive0 f1
+# CHECK: Call
+# CHECK: operand 0 {{*}} 1 members: f1
+# CHECK: Call
+# CHECK: operand 0 {{*}} 2 members: primitive0 f1
+# CHECK: Call
+# CHECK: operand 0 {{*}} 2 members: primitive0 f1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewArray v0 contents=anything
+    v2 = IteratorOpen v1
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = IteratorResume v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Branch v5 -> taken b3(), notTaken b2()
+  b2():
+    v7 = Undefined
+    v8 = Call v6
+    Jump -> next b1()
+  b3():
+    v9 = NewArray v0, v0 contents=anything holes=[1]
+    v10 = IteratorOpen v9
+    Jump -> next b4()
+  b4():
+    LoopHint
+    v12 = IteratorResume v10
+    v13 = ResultAt v12
+    v14 = ResultAt v12 index=1
+    Branch v13 -> taken b6(), notTaken b5()
+  b5():
+    v15 = Undefined
+    v16 = Call v14
+    Jump -> next b4()
+  b6():
+    v17 = NewArray v0 contents=anything
+    v18 = Integer integer=3
+    ElemSet v17, v18, v0
+    v20 = IteratorOpen v17
+    Jump -> next b7()
+  b7():
+    LoopHint
+    v22 = IteratorResume v20
+    v23 = ResultAt v22
+    v24 = ResultAt v22 index=1
+    Branch v23 -> taken b9(), notTaken b8()
+  b8():
+    v25 = Undefined
+    v26 = Call v24
+    Jump -> next b7()
+  b9():
+    v27 = Builtin builtin=Set
+    v28 = NewArray v0 contents=anything
+    v29 = Construct v27, -, v28
+    v30 = IteratorOpen v29
+    Jump -> next b10()
+  b10():
+    LoopHint
+    v32 = IteratorResume v30
+    v33 = ResultAt v32
+    v34 = ResultAt v32 index=1
+    Branch v33 -> taken b12(), notTaken b11()
+  b11():
+    v35 = Undefined
+    v36 = Call v34
+    Jump -> next b10()
+  b12():
+    v37 = NewArray v0 contents=anything
+    v38 = NewClosure function=f3
+    v39 = Call v38, -, v37
+    v40 = IteratorOpen v37
+    Jump -> next b13()
+  b13():
+    LoopHint
+    v42 = IteratorResume v40
+    v43 = ResultAt v42
+    v44 = ResultAt v42 index=1
+    Branch v43 -> taken b15(), notTaken b14()
+  b14():
+    v45 = Undefined
+    v46 = Call v44
+    Jump -> next b13()
+  b15():
+    v47 = NewClosure function=f2
+    v48 = Call v47, -, v1
+    v49 = Call v47, -, v17
+    Return
+}
+function f1 name="member" results=[{type=anything}] {
+    Return
+}
+function f2 name="callEach" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b3(), notTaken b2()
+  b2():
+    v6 = Undefined
+    v7 = Call v5
+    Jump -> next b1()
+  b3():
+    Return
+}
+function f3 name="grow" role=Library parameters=[{type=Array}] results=[{type=anything}] {
+  b0(v0: Array):
+    v1 = Integer integer=3
+    GrowNewArray v0, v1
+    Return
+}

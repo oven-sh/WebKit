@@ -60,7 +60,7 @@
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
-runtimefunction id=64 function=f1
+runtimefunction id=ArrayPrototypeMap function=f1
 function f0 name="main" kind=Module results=[{type=anything}] {
     v0 = Integer integer=1
     v1 = NewArray v0 contents=anything
@@ -71,7 +71,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v6 = Call v5
     Return
 }
-function f1 name="map" role=Library flags=[HasThis] enclosingRuntimeFunction=64 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+function f1 name="map" role=Library flags=[HasThis] enclosingRuntimeFunction=ArrayPrototypeMap parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
     v3 = Builtin builtin=LinkTimeConstantPromiseResolve
     v4 = Call v3, -, v1, v2
     Return v4

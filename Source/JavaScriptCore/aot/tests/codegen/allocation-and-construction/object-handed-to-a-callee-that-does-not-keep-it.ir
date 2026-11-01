@@ -102,4 +102,4 @@ function f2 name="square" module=m0 position=120 flags=[IsChecked, HasExplicitNa
 # CALLS-NOT: operation
 # CALLS: f{{*}}: size=
 # X64: instructions: 14, patchpoints: 1, rare instructions: 2
-# ARM64: instructions: 17, patchpoints: 1, rare instructions: 3
+# ARM64: instructions: 17, patchpoints: 1, rare instructions: 2

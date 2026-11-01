@@ -88,18 +88,12 @@ void emitDropSpilledArgumentRegisters(CCallHelpers& jit)
 
 void emitReturnDroppingSpilledArgumentRegisters(CCallHelpers& jit)
 {
+#if CPU(X86_64)
+    jit.retAndPop(sizeOfSpilledArgumentRegisters);
+#else
     emitDropSpilledArgumentRegisters(jit);
     jit.ret();
-}
-
-void emitCallFromArgumentListFrame(CCallHelpers& jit, const ScopedLambda<void()>& emitJumpToCallee)
-{
-#if CPU(ARM64)
-    jit.loadPtr(argumentListReturnAddress(), CCallHelpers::linkRegister);
-#else
-    jit.push(argumentListReturnAddress());
 #endif
-    emitJumpToCallee();
 }
 
 void emitDropArgumentListFrames(CCallHelpers& jit, GPRReg scratch)
@@ -163,6 +157,27 @@ void emitMoveStackWordsToArgumentListFrame(CCallHelpers& jit, unsigned numberOfW
     jit.moveDoubleTo64(parkedStackWordFPR, stackWordGPR);
     jit.moveDoubleTo64(parkedListReturnAddressFPR, listReturnAddressGPR);
 #endif
+}
+
+// Follows emitFindListFrameRecord().
+void emitFindStackPointerOfArgumentListFrame(CCallHelpers& jit, GPRReg result, GPRReg scratch, unsigned numberOfWords, unsigned bytesAboveFrameRecord)
+{
+    ASSERT(noOverlap(result, scratch, instanceGPR, fp));
+    jit.move(fp, result);
+    jit.loadPtr(Address(result, CallFrame::returnPCOffset()), scratch);
+    Jump isNotOnListFrame = jit.branchPtr(CCallHelpers::NotEqual, scratch, argumentListReturnAddress());
+    Label nextFrame = jit.label();
+    jit.loadPtr(Address(result, CallFrame::callerFrameOffset()), result);
+    jit.loadPtr(Address(result, CallFrame::returnPCOffset()), scratch);
+    jit.branchPtr(CCallHelpers::Equal, scratch, argumentListReturnAddress()).linkTo(nextFrame, &jit);
+    if (bytesAboveFrameRecord) {
+        Jump reusesListFrame = jit.jump();
+        isNotOnListFrame.link(&jit);
+        jit.addPtr(TrustedImm32(bytesAboveFrameRecord), result);
+        reusesListFrame.link(&jit);
+    } else
+        isNotOnListFrame.link(&jit);
+    jit.subPtr(TrustedImm32(static_cast<int32_t>(WTF::roundUpToMultipleOf<stackAlignmentBytes()>(numberOfWords * sizeOfStackWord))), result);
 }
 
 } } // namespace JSC::AOT

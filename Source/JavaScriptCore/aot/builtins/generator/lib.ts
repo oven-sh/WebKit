@@ -417,6 +417,10 @@ export const functionsConvertedUnderNamesOnly: UseSpec = { use: "Role", role: "F
 export const onlyBoxedPrimitivesConverted: UseSpec = { use: "Role", role: "OnlyBoxedPrimitivesAreConverted" };
 // The protocols run on the operand and on what it holds. What those hold in turn is taken out and stored, and nothing is run on it.
 export const contentsOfContentsOnlyStored: UseSpec = { use: "Role", role: "ContentsOfContentsAreOnlyStored" };
+// console.log prints `[Function: f]` or `[class C extends B]` for a function, whatever lies on it: it lists no key of a function, reads no value and runs no getter. Members that it looks for by name it looks for on a function too.
+export const functionsOnlyNamed: UseSpec = { use: "Role", role: "FunctionsAreOnlyNamed" };
+// console.log prints the target of a proxy and asks no trap, wherever it meets the proxy. A text with a "%" in it among the operands converts the operand behind it, and that asks the traps.
+export const proxiesPrintedAsTargets: UseSpec = { use: "Role", role: "ProxiesArePrintedAsTheirTargets" };
 export const ownPropertyTraps: readonly UseSpec[] = [
   { use: "Runs", protocols: ["OwnKeys"] },
   { use: "Role", role: "KeysAreNotListed" },
@@ -771,6 +775,8 @@ export const whenBuildAdmitsRuntimeCode: ConditionSpec = { buildAdmitsRuntimeCod
 export const whenCallRunsOtherCode: ConditionSpec = { callRunsOtherCode: true };
 // The entry answers an object that the table does not describe, and native code acts when a property of that object is stored or defined.
 export const whenObjectNobodyKnowsIsWritten: ConditionSpec = { objectNobodyKnowsIsWritten: true };
+export const whenTestsReplaceBuiltins: ConditionSpec = { testsReplaceBuiltins: true };
+export const whenProgramStores = (member: BuiltinPath): ConditionSpec => ({ programStores: member });
 
 // The target of a build decides which of the types it is: every run of an executable sees the same one.
 export type TypeByPlatform = Readonly<Record<TargetPlatform, TableType>>;
@@ -1188,8 +1194,10 @@ const classColumnKeys = [
   "lockedObjects",
   "lockedMembers",
   "closedToOtherNames",
+  "prototypeListsAllMembers",
   "openNamesOfPrototype",
   "openNamesOfConstructor",
+  "namesReadByNativeCodeOnPrototype",
   "hasConstructor",
   "hasPrototype",
   "constructorHoldsPrototype",
@@ -1491,8 +1499,12 @@ export interface HostObjectOptions {
   otherNames?: PlaceLike | readonly PlaceLike[];
   /** Of whatever is stored or defined under any key the object keeps a string, which code that the stored value names may make. */
   keepsStringsOfStoredValues?: boolean;
+  /** The names under which native code lays an accessor of its own. Whoever asks for the description of one gets two functions of native code. */
+  nativeAccessors?: readonly string[];
   /** By the index of an internal field: what native code does with what code of the library stores there. */
   internalFields?: Readonly<Record<number, readonly HostUseSpec[]>>;
+  /** The systems on which native code makes the object. Without it: all of them. */
+  platforms?: readonly TargetPlatform[];
 }
 
 // An object that native code makes by itself and hands to code of the library or of the program.
@@ -1514,6 +1526,8 @@ export const hostObject = (cell: string, options: HostObjectOptions): Declaratio
         uses,
       })),
       keepsStringsOfStoredValues: options.keepsStringsOfStoredValues ?? false,
+      nativeAccessors: options.nativeAccessors ?? [],
+      platforms: options.platforms ?? targetPlatforms,
     },
   ];
 };
@@ -1544,6 +1558,8 @@ export function hostFunction(
       fields: [],
       internalFields: [],
       keepsStringsOfStoredValues: false,
+      nativeAccessors: [],
+      platforms: targetPlatforms,
     },
   ];
 }

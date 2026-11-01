@@ -1,0 +1,29 @@
+# A for-in loop over a list in cold code stays one loop
+# FORM: Prepared optimizing
+# OPTIONS: heat=EverythingIsCold check=VerifyEachPass
+# RUN: pass ExpandOwnKeys
+# STATISTIC: OwnKeyWalksExpanded = 0
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="reads" parameters=[{type=Array<number>}] results=[{type=undefined}] {
+  b0(v0: Array<number>):
+    v1 = ForInOpen v0
+    v2 = Integer integer=0
+    Jump -> next b1(v2)
+  b1(v3: int[0, 8589934591]):
+    LoopHint
+    v5 = ForInStep v1, v0 position=v3
+    v6 = ResultAt v5 index=0
+    v7 = ResultAt v5 index=1
+    v8 = ResultAt v5 index=2
+    Branch v6 -> taken b3(), notTaken b2()
+  b2():
+    v9 = ElemGet v0, v7
+    v10 = Integer integer=1
+    v11 = Add v8, v10
+    Jump -> next b1(v11)
+  b3():
+    Return
+}

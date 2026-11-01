@@ -12,7 +12,8 @@
 #   (globalThis as any).answer = [make, counter, counter.count, counter.step, counter.label, counter.owner];
 # }
 # FORM: AsRead
-# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls disable-in=0:1
+# The strings of the program stand for strings that are made at run time: flow does not say which they are.
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls,flow:LiteralValues disable-in=0:1
 # RUN: lower-to-b3 optimized f1
 # REQUIRES: unsanitized-code
 # RUN(NONE): lower-to-b3 optimized f1
@@ -157,4 +158,4 @@ function f3 module=m0 position=6 kind=Initializer flags=[HasThis, IsChecked, IsH
 # CALLS: f{{*}}: size=
 # The four values are constants, and this half still gets them by a call of the other half.
 # X64: instructions: 13, patchpoints: 2, rare instructions: 3
-# ARM64: instructions: 14, patchpoints: 2, rare instructions: 5
+# ARM64: instructions: 14, patchpoints: 2, rare instructions: 4

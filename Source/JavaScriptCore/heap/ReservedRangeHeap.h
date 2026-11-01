@@ -15,6 +15,7 @@
 #include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/OSAllocator.h>
+#include <wtf/StdLibExtras.h>
 #include <wtf/Vector.h>
 #include <wtf/text/ASCIILiteral.h>
 
@@ -44,14 +45,27 @@ public:
         OSAllocator::Usage usage { OSAllocator::UnknownUsage };
         Placement placement { Placement::Anywhere };
         InitialAccess initialAccess { InitialAccess::ReadWrite };
+        // Of a range that is reserved whole without access. malloc finds a segment full by failing, and then it returns the free memory of the whole process to the system.
+        size_t firstSegmentSize { 0 };
     };
 
     static ReservedRangeHeap* tryCreate(const Request&);
     // Null where none of the multiples of the alignment that were drawn is free.
     static void* tryReserveRandomWindow(size_t, size_t alignment, OSAllocator::Usage, bool isWritable);
+    // Every window that is drawn lies between these two. What code knows by a constant address lies outside.
+#if ASAN_ENABLED
+    // Below lie the shadow of the address sanitizer and AOT::CheckedFrameCells::startOfRange.
+    static constexpr uintptr_t lowestRandomAddress = 33 * 1024 * GB;
+#else
+    static constexpr uintptr_t lowestRandomAddress = 64 * GB;
+#endif
+    static constexpr uintptr_t highestRandomAddress = 124 * 1024 * GB;
 
     uintptr_t start() const { return m_start; }
     size_t size() const { return m_size; }
+    // For a system that charges writable memory when access is given, used or not. malloc then gets a range whole and commits what it uses.
+    JS_EXPORT_PRIVATE static void setCommitsOnDemand(bool);
+
     size_t initialSegmentSize() const { return m_initialSegmentSize; }
     size_t reservedSize() const { return m_reservedSize.load(std::memory_order_relaxed); }
     bool contains(const void* pointer) const { return std::bit_cast<uintptr_t>(pointer) - m_start < m_size; }
@@ -82,7 +96,7 @@ private:
         void* mallocArena { nullptr };
     };
 
-    ReservedRangeHeap(uintptr_t start, size_t, const Backing&, const Request&);
+    ReservedRangeHeap(uintptr_t start, size_t, size_t reservedSize, const Backing&, const Request&);
     ~ReservedRangeHeap() = delete;
 
     static uintptr_t tryReserve(size_t, const Request&);
@@ -104,6 +118,8 @@ private:
     const size_t m_initialSegmentSize;
     const BackEnd m_backEnd;
     const bool m_isGrowable;
+    // All of the range is reserved, and a new segment only gets access.
+    const bool m_isReservedWhole;
     const OSAllocator::Usage m_usage;
     const ASCIILiteral m_name;
     std::atomic<void*> m_mallocHeap;

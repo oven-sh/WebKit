@@ -1,4 +1,4 @@
-# A validating build tests the one key order that flow has proven for every object of a layout: another order reaches an Unreachable, which reports the failure
+# A validating build tests the one key order that flow has proven for every object of a layout: another order reaches an Unreachable, which reports the failure and the pass that is written on it
 # FORM: Prepared
 # OPTIONS: heat=EverythingIsHot validate
 # RUN: pass ExpandOwnKeys
@@ -11,7 +11,7 @@ function f0 name="oneProvenOrder" parameters=[{type=L0}] results=[{type=anything
     Return v1
 # CHECK: [[hasOrder]]: boolean = HasKeyOrder v0 layout=L0 fields=[1, 0]
 # CHECK-NEXT: Branch [[hasOrder]] -> taken
-# CHECK: Unreachable
+# CHECK: Unreachable cutBy=ExpandOwnKeys
 # CHECK: = GetSlot v0, {{*}} key="b" receivers=[L0]
 # CHECK-NEXT: = GetSlot v0, {{*}} key="a" receivers=[L0]
 # CHECK-NOT: CallBuiltin

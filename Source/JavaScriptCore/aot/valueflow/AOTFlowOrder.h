@@ -13,6 +13,7 @@
 #include "AOTVector.h"
 #include <array>
 #include <optional>
+#include <tuple>
 #include <wtf/BitVector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -59,6 +60,23 @@ struct FlowCall {
     friend auto operator<=>(const FlowCall&, const FlowCall&) = default;
 };
 
+// A call with many callees. Calls with the same callees share the list: n calls of any of n functions would be n * n FlowCalls.
+struct FlowCallOfList {
+    FunctionID caller;
+    ValueID site;
+    uint32_t calleeList { 0 };
+
+    friend auto operator<=>(const FlowCallOfList&, const FlowCallOfList&) = default;
+};
+
+// Who calls whom, sorted by caller and site. A function that somebody else may enter is called by `host`.
+struct FlowCallsOfProgram {
+    Vector<FlowCall> calls;
+    Vector<FlowCallOfList> callsOfLists;
+    Vector<Vector<FunctionID>> calleeLists;
+    FunctionID host;
+};
+
 struct FlowStaticFieldAccess {
     VariableID variable;
     FunctionID function;
@@ -77,10 +95,34 @@ struct FlowOrderInputs {
     bool hostRunsWaitingJobs { false };
     Vector<FlowModuleLoad> moduleLoads;
     Vector<FlowCall> calls;
+    Vector<FlowCallOfList> callsOfLists;
+    Vector<Vector<FunctionID>> calleeLists;
     Vector<FlowStaticFieldAccess> staticFieldAccesses;
     BitVector staticFieldsOfEscapedClasses;
 
     FunctionID host() const { return FunctionID(program.functions.size()); }
+
+    // Every call, by caller and site, but those of a list that the second functor leaves out.
+    void forEachCall(NOESCAPE const Invocable<void(const FlowCall&)> auto& functor, NOESCAPE const Invocable<bool(const FlowCallOfList&)> auto& visitsCallees) const
+    {
+        size_t next = 0;
+        auto visitCallsOfListsBefore = [&](const FlowCall* call) {
+            for (; next < callsOfLists.size(); ++next) {
+                const FlowCallOfList& callOfList = callsOfLists[next];
+                if (call && std::tuple(call->caller, call->site) <= std::tuple(callOfList.caller, callOfList.site))
+                    return;
+                if (!visitsCallees(callOfList))
+                    continue;
+                for (FunctionID callee : calleeLists[callOfList.calleeList])
+                    functor(FlowCall { callOfList.caller, callOfList.site, callee });
+            }
+        };
+        for (const FlowCall& call : calls) {
+            visitCallsOfListsBefore(&call);
+            functor(call);
+        }
+        visitCallsOfListsBefore(nullptr);
+    }
 };
 
 FlowModuleOrder computeModuleOrder(const FlowOrderInputs&);

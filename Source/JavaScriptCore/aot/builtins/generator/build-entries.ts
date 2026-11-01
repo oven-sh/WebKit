@@ -116,7 +116,6 @@ const prototypeName = "prototype";
 const constructorName = "constructor";
 const objectPrototypePath: BuiltinPath = "Object.prototype";
 const compilerHelpersPath: BuiltinPath = "%CompilerHelpers%";
-const platformsWithoutOwnPropertyDump: readonly TargetPlatform[] = ["Windows", "FreeBSD", "Android"];
 const listColumns: ReadonlySet<string> = new Set<keyof EntryColumns>([
   "usesFeature",
   "loads",
@@ -390,8 +389,16 @@ function createClassObjects(
     : null;
   builtinClass.constructor = classConstructor;
   builtinClass.prototype = prototype;
+  const { namesReadByNativeCodeOnPrototype } = declaration.columns;
+  if (namesReadByNativeCodeOnPrototype !== undefined && prototype !== null) {
+    builder.namesReadByNativeCode.set(prototype, {
+      names: namesReadByNativeCodeOnPrototype.map(name => builder.internComponent(name)),
+      namesOnlyInspected: [],
+    });
+  }
   if (classConstructor !== null) classConstructor.instanceClass = builtinClass;
   if (prototype !== null) prototype.instanceClass = builtinClass;
+  if (prototype !== null && declaration.columns.prototypeListsAllMembers) addFlag(prototype, "ListsAllMembers");
   for (const [sides, flag] of [
     [lockedObjects, "IsLockedObject"],
     [lockedMembers, "HasLockedMembers"],
@@ -479,6 +486,9 @@ function registerModules({ builder, sorted }: EntryContext): void {
       listsAllExports,
       isPublic,
       namespace,
+      exportsHoldingModuleObject: declaration.exports
+        .filter(({ holder }) => holder === "ModuleObject")
+        .map(({ name }) => builder.internComponent(name)),
       exportsHeldByNamespace: declaration.exportsHeldByNamespace.map(name => builder.internComponent(name)),
     };
     if (!builder.addModule(module)) builder.problems.add(source, `the module ${specifier} is declared twice`);
@@ -1048,24 +1058,13 @@ function finishEntries(context: EntryContext): void {
 
 function checkOwnPropertyLists({ builder, ownPropertyLists }: EntryContext): void {
   for (const [holder, { declaration }] of ownPropertyLists) {
-    const { isOpen, properties } = declaration;
-    for (const { name } of properties.filter(property => property.isCreatedInSomeRuns)) {
+    for (const { name } of declaration.properties.filter(property => property.isCreatedInSomeRuns)) {
       const member = holder.members.find(candidate => candidate.name === builder.internComponent(name));
       if (member === undefined || (!isObjectKind(member.kind) && member.mutability === "ChangesOnItsOwn")) continue;
       builder.problems.add(
         builder.sourceOf(member),
         `${member.text} is created in some runs only, so it is a property or an accessor that changes on its own`,
       );
-    }
-    if (isOpen) continue;
-    const listed = new Set<ModelName>(properties.map(({ name }) => builder.internComponent(name)));
-    for (const member of holder.members) {
-      if (listed.has(member.name) || member.flags.includes("IsOwnPropertyOfInstances")) continue;
-      // The namespace of a module binds `default` to the object, which has no such property.
-      if (member.flags.includes("IsDefaultExport")) continue;
-      if (member.platforms.every(platform => platformsWithoutOwnPropertyDump.includes(platform))) continue;
-      const source = builder.sourceOf(member);
-      builder.problems.add(source, `${member.text} is declared and own-properties.txt does not have it`);
     }
   }
 }
@@ -1340,10 +1339,12 @@ export function buildFunctions(builder: ModelBuilder, declarations: readonly Sou
       compareBytes(keyOfFunction(left.declaration.function), keyOfFunction(right.declaration.function)),
   );
   const functionsById = new Map<number, ModelFunction>();
+  const functionsByToken = new Map<string, ModelFunction>();
   for (const { declaration, source } of functions) {
     const { file, name } = declaration.function;
     const runtimeFunction: MutableFunction = {
       id: declaration.id,
+      token: tokenOf([file.slice(file.lastIndexOf("/") + 1), name]),
       role: declaration.role,
       file,
       name,
@@ -1365,5 +1366,14 @@ export function buildFunctions(builder: ModelBuilder, declarations: readonly Sou
       continue;
     }
     functionsById.set(declaration.id, runtimeFunction);
+    const namesake = functionsByToken.get(runtimeFunction.token);
+    if (namesake !== undefined) {
+      builder.problems.add(
+        source,
+        `${file}: ${name} has the token ${runtimeFunction.token}, as ${namesake.name} in ${namesake.file}`,
+      );
+      continue;
+    }
+    functionsByToken.set(runtimeFunction.token, runtimeFunction);
   }
 }

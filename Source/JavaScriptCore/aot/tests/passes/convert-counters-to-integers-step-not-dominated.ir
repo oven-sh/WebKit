@@ -6,23 +6,25 @@
 # CHECK: outcome: Unchanged
 
 module m0 path="main.js" displayPath="main.js"
-function f0 name="stepAboveTheTest" parameters=[{type=i32}] results=[{type=undefined}] {
-    v1 = Integer integer=0
-    v2 = Integer integer=1
-    Jump -> next b1(v1)
-  b1(v3):
+function f0 name="stepAboveTheTestIsHandedOnAroundIt" parameters=[{type=i32}, {type=boolean}] results=[{type=undefined}] {
+    v2 = Integer integer=0
+    v3 = Integer integer=1
+    Jump -> next b1(v2)
+  b1(v4):
     LoopHint
-    v5 = Add v3, v2
-    v6 = Less v3, v0
-    Branch v6 -> taken b2(), notTaken b3()
+    v6 = Add v4, v3
+    Branch v1 -> taken b1(v6), notTaken b2()
   b2():
-    Jump -> next b1(v5)
+    v7 = Less v4, v0
+    Branch v7 -> taken b3(), notTaken b4()
   b3():
+    Jump -> next b1(v6)
+  b4():
     Return
-# CHECK: b1(v3: int|whole):
-# CHECK: v5: int|whole = Add v3, v2
-# CHECK: Branch v6 -> taken b2(), notTaken b3()
-# CHECK-NEXT: b2():
+# CHECK: b1(v4: int|whole):
+# CHECK: v6: int|whole = Add v4, v3
+# CHECK: Branch v7 -> taken b3(), notTaken b4()
+# CHECK-NEXT: b3():
 }
 
 function f1 name="stepBelowTheJoinOfBothEdges" parameters=[{type=i32}, {type=boolean}] results=[{type=undefined}] {

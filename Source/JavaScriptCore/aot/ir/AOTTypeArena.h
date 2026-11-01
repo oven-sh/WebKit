@@ -211,6 +211,9 @@ public:
     TypeID intern(Type&&);
     LayoutSetID intern(LayoutSet&&);
     CalleeSetID intern(CalleeSet&&);
+    // What intern() of the same record would answer, without hashing it, if this arena holds the storage of the id. n tasks of a worker that intern the same long set need not hash it n times.
+    std::optional<LayoutSetID> useAgain(LayoutSetID);
+    std::optional<CalleeSetID> useAgain(CalleeSetID);
     PropertyKeyID intern(const PropertyKey&);
 
     Type adopt(const Type& fromOtherArena);
@@ -271,6 +274,9 @@ public:
 
     void markCurrentAnswersUnshareable() { ++m_unshareableEventCount; }
     uint64_t unshareableEventCount() const { return m_unshareableEventCount; }
+    // Each use gives a record of this phase its place among the first uses of the task. A hit in a memo of this arena is an event too, so that nothing which hangs on it is shared,
+    // but it gives no record a place: whoever skips a computation that only has such hits changes nothing.
+    uint64_t useCountOfRecordsOfPhase() const { return m_useCountOfRecordsOfPhase; }
 
 private:
     enum class LayoutSetOperation : uint8_t { Union, Intersection, Difference };
@@ -282,6 +288,7 @@ private:
     template<typename Record, typename RecordID> RecordID internCanonical(Record&&);
     template<typename Record, typename RecordID> std::optional<RecordID> useExistingIn(TypeInterningPhase::Storage&, const Record&, uint32_t hash);
     template<typename Record, typename RecordID> RecordID didUse(TypeInterningPhase::Storage&, uint32_t position);
+    template<typename Record, typename RecordID> std::optional<RecordID> useAgainInStorage(RecordID);
 
     bool hasLeasedStorage(uint32_t number) const;
     bool shouldCacheResult(LayoutSetID, LayoutSetID) const;
@@ -300,6 +307,7 @@ private:
     TypeMemo m_intersections;
     UncheckedKeyHashMap<LayoutSetID, LayoutSetID> m_adoptedLayoutSets;
     uint64_t m_unshareableEventCount { 0 };
+    uint64_t m_useCountOfRecordsOfPhase { 0 };
 };
 
 class ScratchTypeArena {

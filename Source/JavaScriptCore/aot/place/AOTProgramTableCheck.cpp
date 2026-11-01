@@ -16,6 +16,7 @@
 #include "AOTObjectVisiting.h"
 #include "AOTPropertyCachesFront.h"
 #include "AOTRuntimeType.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
 #include "AOTTypeTestPlan.h"
 #include "AOTVector.h"
@@ -176,8 +177,11 @@ static void checkModuleTables(const TableCheck& check)
         && (linkPlanRoots.empty() ? check.tables.linkPlanStepsOfRoots().empty() : linkPlanRoots.back().module == numberOfModules && linkPlanRoots.back().firstStep == check.tables.linkPlanStepsOfRoots().size());
     check.expect(everyPlanIsInBounds, ProgramTableRule::TableOutOfBounds);
 
-    bool listsUncompiledCode = std::ranges::all_of(check.tables.modulesOfUncompiledCode(), [&](uint32_t module) {
-        return module < numberOfModules && modules[module].isUncompiledCode();
+    bool listsUncompiledCode = std::ranges::is_sorted(check.tables.modulesOfUncompiledCode(), { }, &UncompiledModuleData::module) && std::ranges::all_of(check.tables.modulesOfUncompiledCode(), [&](const UncompiledModuleData& entry) {
+        if (entry.module >= numberOfModules || !modules[entry.module].isUncompiledCode())
+            return false;
+        StringID typeAttribute = check.program.modules[entry.module].typeAttribute;
+        return entry.typeAttribute == (typeAttribute ? typeAttribute.index() : UncompiledModuleData::noTypeAttribute);
     }) && static_cast<size_t>(std::ranges::count_if(modules.first(numberOfModules), &ModuleData::isUncompiledCode)) == check.tables.modulesOfUncompiledCode().size();
     check.expect(listsUncompiledCode, ProgramTableRule::TableOutOfBounds);
 
@@ -234,20 +238,58 @@ static void checkSortedTables(const TableCheck& check)
     check.expect(std::ranges::all_of(check.tables.staticsOfImportedFiles(), [&](uint32_t file) {
         return file + 1 < check.tables.staticsOfFiles().size();
     }), ProgramTableRule::TableOutOfBounds);
+    checkAscending(check.tables.importsOfHeldFiles(), &ImportOfHeldFileData::key);
+    bool everyVariableExists = true;
+    bool endsWhereAModuleEnds = forEachNamedVariable(check.tables.namedVariables(), [](size_t) { }, [&](const NamedVariableData& variable) {
+        if (variable.name >= check.program.strings.size())
+            everyVariableExists = false;
+        else if (variable.place() == NamedVariableData::Place::Closure)
+            everyVariableExists &= variable.function().index() < check.program.functions.size();
+        else
+            everyVariableExists &= variable.offset() + (variable.place() == NamedVariableData::Place::NarrowWord ? sizeof(uint32_t) : sizeof(uint64_t)) <= check.tables.instanceSizes.sizeOfStatics;
+    });
+    check.expect(endsWhereAModuleEnds && everyVariableExists, ProgramTableRule::TableOutOfBounds);
+    bool everyCaptureExists = true;
+    bool endsWhereAFunctionEnds = forEachNamedCapture(check.tables.namedCaptures(), [&](const NamedCaptureData& capture) {
+        everyCaptureExists &= capture.name < check.program.strings.size() && capture.function >= check.tables.closureFunctions.first && capture.function < check.tables.closureFunctions.end;
+    });
+    check.expect(endsWhereAFunctionEnds && everyCaptureExists, ProgramTableRule::TableOutOfBounds);
     checkAscending(check.tables.compiledRuntimeModules(), &CompiledRuntimeModuleData::registryID);
+    checkAscending(check.tables.stateOfLibraryModules(), [](const StateOfLibraryModuleData& state) { return static_cast<uint64_t>(state.moduleAndKind) << 32 | state.first; });
+    check.expect(std::ranges::all_of(check.tables.stateOfLibraryModules(), [&](const StateOfLibraryModuleData& state) {
+        uint64_t end = static_cast<uint64_t>(state.first) + state.count;
+        switch (state.kind()) {
+        case StateOfLibraryModuleData::Kind::Classes:
+            return end <= check.tables.numberOfLayoutIndices;
+        case StateOfLibraryModuleData::Kind::Closures:
+            return end <= check.tables.numberOfClosureCells;
+        case StateOfLibraryModuleData::Kind::Variables:
+            return end <= check.tables.instanceSizes.sizeOfStatics;
+        }
+        return false;
+    }), ProgramTableRule::TableOutOfBounds);
     checkAscending(check.tables.compiledRuntimeFunctions(), &CompiledRuntimeFunctionData::id);
 
     check.expect(isStrictlyAscending(check.tables.builtinCells(), std::identity { }) && isStrictlyAscending(check.tables.eagerBuiltinCells(), std::identity { }), ProgramTableRule::TableNotSorted);
     check.expect(check.tables.eagerBuiltinCells().empty() || check.tables.eagerBuiltinCells().back() < check.tables.builtinCells().size(), ProgramTableRule::TableOutOfBounds);
 
     const BuiltinTable& builtins = check.program.builtins();
-    bool everyMemberExists = std::ranges::all_of(check.tables.constantBuiltinMembers(), [&](uint32_t member) {
-        return builtins.contains(BuiltinID(member));
+    std::span<const uint32_t> openedNames = check.tables.openedNames();
+    bool everyMemberExists = std::ranges::all_of(check.tables.constantAndUnlockedBuiltinMembers().first(check.tables.numberOfWordsBelow(ProgramTables::openedName)), [&](uint32_t member) {
+        return builtins.contains(BuiltinID(member & ~ProgramTables::unlockedBuiltinMember));
     });
-    if (check.expect(everyMemberExists, ProgramTableRule::TableOutOfBounds)) {
+    bool everyOpenedNameExists = !(openedNames.size() % 2);
+    for (size_t index = 0; everyOpenedNameExists && index < openedNames.size(); index += 2)
+        everyOpenedNameExists = builtins.contains(BuiltinID(openedNames[index] & ~ProgramTables::openedName)) && (openedNames[index + 1] & ~ProgramTables::openedName) < check.program.strings.size();
+    if (check.expect(everyMemberExists && everyOpenedNameExists, ProgramTableRule::TableOutOfBounds)) {
         checkAscending(check.tables.constantBuiltinMembers(), [&](uint32_t member) {
             return std::pair { builtins.at(BuiltinID(member)).holder, BuiltinID(member) };
         });
+        check.expect(isStrictlyAscending(check.tables.unlockedBuiltinMembers(), std::identity { }), ProgramTableRule::TableNotSorted);
+        // Compiled code takes the one kind for constants and tests the other.
+        check.expect(std::ranges::none_of(check.tables.constantBuiltinMembers(), [&](uint32_t member) {
+            return ProgramTables::isUnlocked(check.tables.unlockedBuiltinMembers(), member);
+        }), ProgramTableRule::TableOutOfBounds);
     }
     checkModuleTables(check);
 }
@@ -263,7 +305,7 @@ static void checkListedFunctions(const TableCheck& check)
         check.expect(!boundEntrypoint || std::ranges::binary_search(check.tables.boundFunctions(), boundEntrypoint.index(), { }, &BoundFunctionData::function), ProgramTableRule::FunctionNotListed, { }, id);
         auto* entrypoint = function.creator.tryAs<CreatorRecord::Entrypoint>();
         bool hasConstructEntrypoint = function.role == FunctionRole::GenericEntrypoint && entrypoint && entrypoint->constructEntrypoint;
-        check.expect(!hasConstructEntrypoint || std::ranges::binary_search(check.tables.constructEntrypoints(), id.index(), { }, &ConstructEntrypointData::function), ProgramTableRule::FunctionNotListed, { }, id);
+        check.expect(!hasConstructEntrypoint || std::ranges::binary_search(check.tables.constructEntrypoints(), check.encoder.placement.closureNumberOf(id), { }, &ConstructEntrypointData::function), ProgramTableRule::FunctionNotListed, { }, id);
     }
     for (size_t index = 0; index < check.program.layouts.size(); ++index) {
         FunctionID constructor = check.program.layouts[index].constructor;
@@ -302,6 +344,8 @@ static void checkClassRecord(const TableCheck& check, const LayoutData& layout, 
         if (check.expect(areClasses, ProgramTableRule::TableOutOfBounds, id))
             check.expect(isStrictlyAscending(subclasses, std::identity { }), ProgramTableRule::TableNotSorted, id);
     }
+    if (uint32_t offset = layout.classData().namesOfFieldsOffset)
+        check.expect(layout.classData().instancesCarryBrand && check.tryGetCountedWords(offset).size() == check.program.at(id).fields.size(), ProgramTableRule::TableOutOfBounds, id);
     bool guardsAreSorted = isStrictlyAscending(layout.memberGuards(), [](const MemberGuardData& guard) {
         return std::tuple { guard.side(), guard.kind(), static_cast<uint32_t>(guard.name) };
     });
@@ -374,8 +418,8 @@ static void checkFieldTable(const TableCheck& check)
 {
     const uint32_t highestObjectShape = check.tables.firstEnvironmentShape - 1;
     const uint32_t typeOfAnyValue = check.encoder.typeOffset(TypeTable::anything);
-    const auto numberOfColumns = static_cast<uint32_t>(std::min<uint64_t>(check.encoder.identifiers.count(), FieldTableEntry::maxName + 1));
-    if (!check.expect(check.tables.numberOfFieldTableRows == highestObjectShape && highestObjectShape <= check.tables.fieldTable().size() && check.tables.fieldRecordIndices().size() == check.tables.fieldTable().size() - highestObjectShape, ProgramTableRule::TableOutOfBounds))
+    const uint32_t numberOfColumns = check.encoder.identifiers.countWithFieldTableColumn();
+    if (!check.expect(check.tables.numberOfFieldTableColumns == numberOfColumns && numberOfColumns <= FieldTableEntry::maxName + 1 && check.tables.numberOfFieldTableRows == highestObjectShape && highestObjectShape <= check.tables.fieldTable().size() && check.tables.fieldRecordIndices().size() == check.tables.fieldTable().size() - highestObjectShape, ProgramTableRule::TableOutOfBounds))
         return;
     auto entries = check.tables.fieldTableEntries();
     auto isRowInBounds = [&](uint32_t row) {
@@ -400,7 +444,7 @@ static void checkFieldTable(const TableCheck& check)
         if (check.tables.hasLayoutForShape(shape)) {
             const LayoutData& layout = check.tables.layoutForShape(shape);
             for (const FieldData& field : layout.fields()) {
-                if (!FieldTableEntry::hasColumn(field.name))
+                if (!check.tables.hasFieldTableColumn(field.name))
                     continue;
                 ++numberOfFieldsFound;
                 uint32_t index = row + field.name;
@@ -451,9 +495,14 @@ static ExpectedRuntimeType computeExpectedRuntimeType(const TableEncoder& encode
     case TypeTestVerdict::NeverPasses:
         return { .id = id };
     case TypeTestVerdict::NeedsTest:
-        // A function without a generic entrypoint has no closures, so its test has no record.
+        // A function without a generic entrypoint has no closures, and a class without a rank has no instances, so their tests have no record.
         plan.cellTests.removeAllMatching([&](const CellTest& test) {
+            if (test.kind == CellTestKind::CarriesBrandOfClass)
+                return !encoder.placement.rankOfClass(test.classLayout);
             return test.kind == CellTestKind::IsClosureOf && !encoder.findEntrypoint(test.function);
+        });
+        AOT::stableSort(plan.cellTests.mutableSpan(), { }, [&](const CellTest& test) -> int64_t {
+            return test.kind == CellTestKind::IsClosureOf ? static_cast<int64_t>(encoder.placement.closureNumberOf(encoder.findEntrypoint(test.function))) : -1;
         });
         // In a plan, String says that some string passes. In a record it says that every string passes.
         uint16_t primitives = plan.stringLiterals.isEmpty() ? plan.passingPrimitives : (plan.passingPrimitives & ~Primitive::String) | Primitive::LiteralString;
@@ -489,13 +538,15 @@ static bool isEncodingOf(const TableCheck& check, const RuntimeCellTest& encoded
     case CellTestKind::IsBuiltinCell:
         return check.encoder.placement.builtinCell(test.builtin) == encoded.builtinCellNumber();
     case CellTestKind::IsClosureOf:
-        return encoded.function() == check.encoder.findEntrypoint(test.function);
+        return encoded.closureNumber() == check.encoder.placement.closureNumberOf(check.encoder.findEntrypoint(test.function));
     case CellTestKind::IsSymbol:
         return encoded.symbolKeyNumber() == check.encoder.identifierNumber(test.symbol, "the symbol that a type test compares with"_s);
     case CellTestKind::SharingModeIs:
         return encoded.operand == static_cast<uint32_t>(test.sharingMode);
     case CellTestKind::IsNamespaceOf:
         return encoded.module() == test.module;
+    case CellTestKind::CarriesBrandOfClass:
+        return check.encoder.placement.rankOfClass(test.classLayout) == encoded.rankOfClass();
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -508,6 +559,9 @@ static bool isEncodingOf(const TableCheck& check, const RuntimeType& encoded, co
     if (integers && (integers->first != expected.integers->minimum || integers->second != expected.integers->maximum))
         return false;
     if (!std::ranges::equal(encoded.literalStrings(), expected.literalStrings.span(), { }, { }, &StringID::index))
+        return false;
+    size_t numberOfTestsOfMoreThanOneFunction = std::ranges::count_if(expected.cellTests, [](const CellTest& test) { return test.kind != CellTestKind::IsClosureOf; });
+    if (encoded.numberOfTestsOfMoreThanOneFunctionIfFew != std::min<size_t>(RuntimeType::hasManyTestsOfMoreThanOneFunction, numberOfTestsOfMoreThanOneFunction))
         return false;
     return std::ranges::equal(encoded.cellTests(), expected.cellTests, [&](const RuntimeCellTest& cellTest, const CellTest& test) {
         return isEncodingOf(check, cellTest, test);

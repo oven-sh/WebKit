@@ -62,6 +62,7 @@ public:
     void generateResultAt(const ValueContext&);
 
     Boxed callValue(const OperationContext&, const ValueCall&, const CallOptions& = { });
+    static CallPosition positionOf(const OperationContext& context, const CallOptions& options = { }) { return options.isTailCall || context.origin().isTailCall ? CallPosition::Tail : CallPosition::Ordinary; }
     Boxed callByConvention(const OperationContext&, const ConventionCall&, const CallOptions& = { });
     Boxed constructValue(const OperationContext&, ConstructSyntax, Boxed callee, Boxed newTarget, std::span<const ValueID> arguments, std::optional<ThrowSite> siteThatNamesCallee = std::nullopt);
     Boxed superConstructWithList(const OperationContext&, Boxed parent, Boxed newTarget, Word32 count, Pointer list);
@@ -70,7 +71,8 @@ public:
     Operand callDirect(const OperationContext&, FunctionID, std::span<const Operand> arguments, const CallOptions& = { });
 
     void tailCallByConvention(const OperationContext&, const ConventionCall&);
-    void requireCallableBeforeTailCall(const OperationContext&, Boxed callee, std::optional<ThrowSite> siteThatNamesCallee = std::nullopt);
+    void requireCallable(const OperationContext&, Boxed callee, std::optional<ThrowSite> siteThatNamesCallee, bool isAtTailCall);
+    void requireCallableBeforeTailCall(const OperationContext& context, Boxed callee, std::optional<ThrowSite> siteThatNamesCallee = std::nullopt) { requireCallable(context, callee, siteThatNamesCallee, true); }
     void requireCallableBeforeTailCall(const ValueContext&, Boxed callee, Boxed thisValue);
     void didEmitTailCall();
     // Says what the program calls the callee, where it calls it anything.
@@ -103,6 +105,8 @@ private:
     struct PlacedArguments {
         Vector<B3::ConstrainedValue, 8> inRegisters;
         Vector<LValue, 4> onStack;
+        // CallingConventions::letsGoOfParameter().
+        Vector<LValue, 1> letGoByCallee;
         uint32_t stackWordsToReserve { 0 };
         uint16_t entry { primaryEntry };
     };
@@ -119,6 +123,8 @@ private:
 
     PlacedArguments placeArguments(FunctionID callee, const ArgumentLocations&, std::span<const Operand>, OmittedArguments);
     PlacedArguments placeConventionArguments(const ConventionCall&);
+    void markArgumentsLetGoByCallee(B3::PatchpointValue*, const PlacedArguments&);
+    static void emitClearOfReleasedRegisters(CCallHelpers&, const B3::StackmapGenerationParams&, const RegisterSet& among);
     NativeCallExpectation expectationOf(const OperationContext&, CalledBuiltin);
     std::span<const BuiltinID> builtinsCalledByNativeCode();
 

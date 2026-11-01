@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTInstance.h"
 #include "AOTLimits.h"
 #include "AOTRecordTypes.h"
 #include "AOTRuntimeTable.h"
@@ -18,6 +19,7 @@
 #include "AOTStubHelpers.h"
 #include "AOTStubRegisters.h"
 #include "AOTThreshold.h"
+#include "JSGlobalObject.h"
 #include "JSString.h"
 #include <unicode/utf16.h>
 #include <wtf/text/StringImpl.h>
@@ -41,6 +43,7 @@ StubSignature signatureOfFlattenString(StubKey) { return signatureOfCharactersIn
 StubSignature signatureOfStringsAreEqual(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::T11), gprOf(StubRegister::T12) }); }
 StubSignature signatureOfDistinctStringsAreEqual(StubKey key) { return signatureOfStringsAreEqual(key); }
 StubSignature signatureOfCompareStrings(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::T11), gprOf(StubRegister::T12) }); }
+StubSignature signatureOfStringLocaleCompare(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2) }); }
 StubSignature signatureOfStringCodePointAt(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2) }); }
 StubSignature signatureOfFindCharacter8(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::A0), gprOf(StubRegister::A1), gprOf(StubRegister::A2), gprOf(StubRegister::A3) }); }
 StubSignature signatureOfStringBuilderAppendString(StubKey) { return StubSignature::withoutResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2) }); }
@@ -656,6 +659,121 @@ void generateCompareStrings(StubAssembler& jit)
 
     oneIsRope.link(&jit);
     jit.callOperationAndReturn(Entry::operationAOTCompareStrings, { .saves = Saves::CallerSavedRegisters, .secondArgumentIn = first, .thirdArgumentIn = second });
+}
+
+// As FTL's compileStringLocaleCompare(): two flat 8-bit strings are ordered here where ASCII characters with a weight decide at the first level. The operation orders all others.
+void generateStringLocaleCompare(StubAssembler& jit)
+{
+    static_assert(areDistinctOnEveryISA(StubRegister::R0, StubRegister::A1, StubRegister::A2, StubRegister::A3, StubRegister::A4, StubRegister::A5, StubRegister::T9, StubRegister::T12, StubRegister::T13));
+    static_assert(gprOf(StubRegister::A1) == operationArgumentGPR(1) && gprOf(StubRegister::A2) == operationArgumentGPR(2));
+    constexpr int32_t wordSize = sizeof(uint64_t);
+    const GPRReg left = jit.operand(0);
+    const GPRReg right = jit.operand(1);
+    // The impls until the characters are loaded.
+    const GPRReg leftCharacters = jit.allocateScratch(StubRegister::A3);
+    const GPRReg rightCharacters = jit.allocateScratch(StubRegister::A4);
+    const GPRReg commonLength = jit.allocateScratch(StubRegister::A5);
+    const GPRReg index = jit.allocateScratch(StubRegister::T9);
+    const GPRReg leftUnit = jit.allocateScratch(StubRegister::T12);
+    const GPRReg rightUnit = jit.allocateScratch(StubRegister::T13);
+    const GPRReg weights = jit.result();
+    // Only while words are compared.
+    const GPRReg nonASCIIBits = weights;
+
+    JumpList isEqual;
+    JumpList slowPath;
+    JumpList comparesBytes;
+    JumpList commonPartIsEqual;
+
+    isEqual.append(jit.branchPtr(CCallHelpers::Equal, left, right));
+    jit.loadPtr(Address(left, JSString::offsetOfValue()), leftCharacters);
+    jit.loadPtr(Address(right, JSString::offsetOfValue()), rightCharacters);
+    jit.or64(leftCharacters, rightCharacters, index);
+    slowPath.append(jit.branchTestPtr(CCallHelpers::NonZero, index, TrustedImm32(JSString::isRopeInPointer)));
+    isEqual.append(jit.branchPtr(CCallHelpers::Equal, leftCharacters, rightCharacters));
+    // Set when the default collator is made, which the operation does, and never cleared.
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject)), index);
+    slowPath.append(jit.branchTest8(CCallHelpers::Zero, Address(index, JSGlobalObject::offsetOfCanDoASCIIUCADUCETLocaleCompare())));
+    jit.load32(Address(leftCharacters, StringImpl::flagsOffset()), leftUnit);
+    jit.load32(Address(rightCharacters, StringImpl::flagsOffset()), rightUnit);
+    jit.and32(rightUnit, leftUnit);
+    slowPath.append(jit.branchTest32(CCallHelpers::Zero, leftUnit, TrustedImm32(StringImpl::flagIs8Bit())));
+    jit.load32(Address(leftCharacters, StringImpl::lengthMemoryOffset()), commonLength);
+    jit.load32(Address(rightCharacters, StringImpl::lengthMemoryOffset()), rightUnit);
+    Jump leftIsNotLonger = jit.branch32(CCallHelpers::BelowOrEqual, commonLength, rightUnit);
+    jit.move(rightUnit, commonLength);
+    leftIsNotLonger.link(&jit);
+    jit.loadPtr(Address(leftCharacters, StringImpl::dataOffset()), leftCharacters);
+    jit.loadPtr(Address(rightCharacters, StringImpl::dataOffset()), rightCharacters);
+    jit.move(TrustedImm32(0), index);
+
+    // Skips the equal ASCII words. The bytes decide about a word that holds anything else.
+    comparesBytes.append(jit.branch32(CCallHelpers::Below, commonLength, TrustedImm32(wordSize)));
+    jit.move(TrustedImm64(0x8080808080808080ll), nonASCIIBits);
+    Label wordLoop = jit.label();
+    jit.load64(BaseIndex(leftCharacters, index, CCallHelpers::TimesOne), leftUnit);
+    jit.load64(BaseIndex(rightCharacters, index, CCallHelpers::TimesOne), rightUnit);
+    comparesBytes.append(jit.branchTest64(CCallHelpers::NonZero, leftUnit, nonASCIIBits));
+    comparesBytes.append(jit.branchTest64(CCallHelpers::NonZero, rightUnit, nonASCIIBits));
+    Jump wordsDiffer = jit.branch64(CCallHelpers::NotEqual, leftUnit, rightUnit);
+    jit.add32(TrustedImm32(wordSize), index);
+    jit.add32(TrustedImm32(wordSize), index, leftUnit);
+    jit.branch32(CCallHelpers::BelowOrEqual, leftUnit, commonLength).linkTo(wordLoop, &jit);
+    comparesBytes.append(jit.jump());
+    wordsDiffer.link(&jit);
+    jit.xor64(rightUnit, leftUnit);
+    jit.countTrailingZeros64(leftUnit, leftUnit);
+    jit.urshift64(TrustedImm32(3), leftUnit);
+    jit.add64(leftUnit, index);
+
+    comparesBytes.link(&jit);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(collation.ducetLevel1Weights)), weights);
+    commonPartIsEqual.append(jit.branch32(CCallHelpers::AboveOrEqual, index, commonLength));
+    Label byteLoop = jit.label();
+    jit.load8(BaseIndex(leftCharacters, index, CCallHelpers::TimesOne), leftUnit);
+    jit.load8(BaseIndex(rightCharacters, index, CCallHelpers::TimesOne), rightUnit);
+    Jump bytesDiffer = jit.branch32(CCallHelpers::NotEqual, leftUnit, rightUnit);
+    slowPath.append(jit.branch32(CCallHelpers::AboveOrEqual, leftUnit, TrustedImm32(0x80)));
+    Label advance = jit.label();
+    jit.add32(TrustedImm32(1), index);
+    jit.branch32(CCallHelpers::Below, index, commonLength).linkTo(byteLoop, &jit);
+    commonPartIsEqual.append(jit.jump());
+
+    // No weight: a control character or no ASCII. The same weight: a letter in both cases.
+    bytesDiffer.link(&jit);
+    jit.load8(BaseIndex(weights, leftUnit, CCallHelpers::TimesOne), leftUnit);
+    jit.load8(BaseIndex(weights, rightUnit, CCallHelpers::TimesOne), rightUnit);
+    slowPath.append(jit.branchTest32(CCallHelpers::Zero, leftUnit));
+    slowPath.append(jit.branchTest32(CCallHelpers::Zero, rightUnit));
+    jit.branch32(CCallHelpers::Equal, leftUnit, rightUnit).linkTo(advance, &jit);
+    Jump leftIsGreater = jit.branch32(CCallHelpers::Above, leftUnit, rightUnit);
+    returnResult(jit, TrustedImm64(-1));
+    leftIsGreater.link(&jit);
+    returnResult(jit, TrustedImm32(1));
+
+    // The longer string comes last if it goes on with a character that has a weight. Strings of one length differ in case at most.
+    commonPartIsEqual.link(&jit);
+    jit.loadPtr(Address(left, JSString::offsetOfValue()), leftUnit);
+    jit.loadPtr(Address(right, JSString::offsetOfValue()), rightUnit);
+    jit.load32(Address(leftUnit, StringImpl::lengthMemoryOffset()), leftUnit);
+    jit.load32(Address(rightUnit, StringImpl::lengthMemoryOffset()), rightUnit);
+    slowPath.append(jit.branch32(CCallHelpers::Equal, leftUnit, rightUnit));
+    Jump leftIsLonger = jit.branch32(CCallHelpers::Above, leftUnit, rightUnit);
+    jit.load8(BaseIndex(rightCharacters, commonLength, CCallHelpers::TimesOne), rightUnit);
+    jit.load8(BaseIndex(weights, rightUnit, CCallHelpers::TimesOne), rightUnit);
+    slowPath.append(jit.branchTest32(CCallHelpers::Zero, rightUnit));
+    returnResult(jit, TrustedImm64(-1));
+    leftIsLonger.link(&jit);
+    jit.load8(BaseIndex(leftCharacters, commonLength, CCallHelpers::TimesOne), leftUnit);
+    jit.load8(BaseIndex(weights, leftUnit, CCallHelpers::TimesOne), leftUnit);
+    slowPath.append(jit.branchTest32(CCallHelpers::Zero, leftUnit));
+    returnResult(jit, TrustedImm32(1));
+
+    isEqual.link(&jit);
+    returnResult(jit, TrustedImm32(0));
+
+    slowPath.link(&jit);
+    jit.callOperationAndReturn(Entry::operationAOTStringLocaleCompare, { });
 }
 
 // The index of the first unit from position on that equals codeUnit, or -1. Only bits 0 to 31 of length, codeUnit and position count.

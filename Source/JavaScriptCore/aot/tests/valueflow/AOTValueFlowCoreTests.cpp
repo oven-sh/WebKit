@@ -15,7 +15,7 @@
 #include "AOTValueSets.h"
 #include "AOTVector.h"
 #include <array>
-#include <wtf/BitVector.h>
+#include <bit>
 #include <wtf/HashMap.h>
 #include <wtf/Threading.h>
 #include <wtf/WeakRandom.h>
@@ -30,18 +30,34 @@ std::span<const NativeTest> valueFlowCoreTests();
 
 namespace {
 
+// Not a BitVector: with assertions on, that compares two of them bit by bit as well, which took most of six minutes in a debug build.
 class PlainSet {
 public:
     explicit PlainSet(uint32_t sizeOfUniverse)
         : m_sizeOfUniverse(sizeOfUniverse)
+        , m_words(FillWith { }, (sizeOfUniverse + 63) / 64, 0)
     {
-        m_bits.ensureSize(sizeOfUniverse);
     }
 
-    bool contains(uint32_t member) const { return m_bits.quickGet(member); }
-    bool add(uint32_t member) { return !m_bits.quickSet(member); }
-    uint32_t size() const { return m_bits.bitCount(); }
+    bool contains(uint32_t member) const { return m_words[member / 64] >> member % 64 & 1; }
+
+    bool add(uint32_t member)
+    {
+        bool isNew = !contains(member);
+        m_words[member / 64] |= 1ull << member % 64;
+        return isNew;
+    }
+
+    uint32_t size() const
+    {
+        uint32_t size = 0;
+        for (uint64_t word : m_words)
+            size += std::popcount(word);
+        return size;
+    }
+
     uint32_t sizeOfUniverse() const { return m_sizeOfUniverse; }
+    uint64_t wordAt(uint32_t index) const { return index < m_words.size() ? m_words[index] : 0; }
 
     bool unite(const PlainSet& other, const PlainSet* mask = nullptr)
     {
@@ -53,11 +69,11 @@ public:
         return hasGrown;
     }
 
-    friend bool operator==(const PlainSet& first, const PlainSet& second) { return first.m_bits == second.m_bits; }
+    friend bool operator==(const PlainSet& first, const PlainSet& second) { return first.m_words == second.m_words; }
 
 private:
     uint32_t m_sizeOfUniverse;
-    BitVector m_bits;
+    Vector<uint64_t> m_words;
 };
 
 } // anonymous namespace
@@ -316,12 +332,7 @@ static Vector<std::pair<uint32_t, uint64_t>> hashesOfBlocksOf(const PlainSet& pl
         uint64_t hash = 0;
         bool hasMember = false;
         for (uint32_t word = 0; word < ValueSets::membersPerBlock / 64; ++word) {
-            uint64_t bits = 0;
-            for (uint32_t bit = 0; bit < 64; ++bit) {
-                uint32_t member = place * ValueSets::membersPerBlock + word * 64 + bit;
-                if (member < plain.sizeOfUniverse() && plain.contains(member))
-                    bits |= 1ull << bit;
-            }
+            uint64_t bits = plain.wordAt(place * (ValueSets::membersPerBlock / 64) + word);
             if (!bits)
                 continue;
             hasMember = true;
@@ -434,7 +445,13 @@ static void valueSetsOfBothFormsAgreeWithPlainSets()
     for (auto& [set, plain] : pool)
         check(set, plain);
 
-    for (unsigned round = 0; round < 1500; ++round) {
+    // Without optimization all the rounds take minutes, and a test that prints nothing for five is killed.
+#ifdef NDEBUG
+    constexpr unsigned numberOfRounds = 1500;
+#else
+    constexpr unsigned numberOfRounds = 300;
+#endif
+    for (unsigned round = 0; round < numberOfRounds; ++round) {
         auto [first, firstPlain] = pool[random.getUint32(pool.size())];
         auto [second, secondPlain] = pool[random.getUint32(pool.size())];
         auto [third, thirdPlain] = pool[random.getUint32(pool.size())];
@@ -1332,7 +1349,7 @@ static void valueFlowRoundsAgreeWithAnAnalysisObjectByObject()
             ValueSets sets(program.numberOfObjects);
             makeToyFunctions(sets, program);
             ValueFlowSolver solver(input, sets, runToyRule, loops, way.rounds);
-            AOT_TEST_CHECK(solver.solve());
+            solver.solve();
             for (uint32_t node = 0; node < program.numberOfNodes(); ++node)
                 AOT_TEST_CHECK(holdsTheSame(sets, solver.possibleValuesOf(ValueFlowNodeID(node)), expected.values[node]));
             for (uint32_t function = 0; function < program.numberOfFunctions; ++function)
@@ -1423,44 +1440,12 @@ static void whatATurnMakesAndReachesRunsInThatTurn()
         ValueSets sets(program.numberOfObjects);
         makeToyFunctions(sets, program);
         ValueFlowSolver solver(input, sets, runToyRule, loops);
-        AOT_TEST_CHECK(solver.solve());
+        solver.solve();
         for (uint32_t function = 0; function < program.numberOfFunctions; ++function)
             AOT_TEST_CHECK(solver.isReached(FunctionID(function)));
         AOT_TEST_CHECK(sets.contains(solver.possibleValuesOf(program.node(host, 3)), ValueFlowObjectID(4u)));
         for (const ValueFlowSolver::Round& round : solver.rounds())
             AOT_TEST_CHECK(round.turns <= 1);
-    }
-    toyProgram = nullptr;
-}
-
-static void valueFlowSolveStopsAtTheLimitOnLoggedEdges()
-{
-    WeakRandom random(7);
-    ToyProgram program = makeToyProgram(random);
-    toyProgram = &program;
-    ValueFlowSolverInput input;
-    input.numberOfNodes = program.numberOfNodes();
-    input.edges = program.edges.span();
-    input.statements = program.statements.span();
-    input.operands = program.operands.span();
-    input.ranges = program.ranges.span();
-
-    ParallelLoops loops(2);
-    uint64_t edgesLogged;
-    {
-        ValueSets sets(program.numberOfObjects);
-        makeToyFunctions(sets, program);
-        ValueFlowSolver solver(input, sets, runToyRule, loops);
-        AOT_TEST_CHECK(solver.solve());
-        edgesLogged = solver.counters().edgesLogged;
-        AOT_TEST_CHECK(edgesLogged > 4);
-    }
-    for (uint64_t limit : { static_cast<uint64_t>(0), static_cast<uint64_t>(1), edgesLogged / 2, edgesLogged - 1, edgesLogged }) {
-        input.mostEdgesLogged = limit;
-        ValueSets sets(program.numberOfObjects);
-        makeToyFunctions(sets, program);
-        ValueFlowSolver solver(input, sets, runToyRule, loops);
-        AOT_TEST_CHECK(solver.solve() == (limit == edgesLogged));
     }
     toyProgram = nullptr;
 }
@@ -1499,7 +1484,7 @@ static void valueFlowSolverFindsObjectsOutsideDeclaredTypes()
     input.ranges = ranges;
 
     ValueFlowSolver solver(input, sets, [](const ValueFlowStatement&, ValueFlowRuleContext&) { }, loops);
-    AOT_TEST_CHECK(solver.solve());
+    solver.solve();
     AOT_TEST_CHECK(solver.possibleValuesOf(takingStranger) == setOf({ 0, 3, 5 }));
     AOT_TEST_CHECK(solver.possibleValuesOf(takingPlaceholders) == setOf({ 2, 3, 4 }));
     AOT_TEST_CHECK(solver.holdsObjectOutsideFamily(takingStranger) && !solver.holdsObjectOutsideFamily(takingPlaceholders));
@@ -1533,14 +1518,14 @@ static void whatAShorterWayOfARuleLeavesOutIsFound()
         {
             ValueSets sets(4);
             ValueFlowSolver solver(input, sets, addsTheSameOnBothWays, loops, ValueFlowSolver::Rounds::Due);
-            AOT_TEST_CHECK(solver.solve());
+            solver.solve();
             AOT_TEST_CHECK(!solver.addedByGeneralRules().isAnything());
             AOT_TEST_CHECK(!solver.numberOfRunsThatWereNotDueAndAdded());
         }
         {
             ValueSets sets(4);
             ValueFlowSolver solver(input, sets, leavesOutTheFirstResult, loops, ValueFlowSolver::Rounds::Due);
-            AOT_TEST_CHECK(solver.solve());
+            solver.solve();
             AOT_TEST_CHECK(solver.addedByGeneralRules().nodesThatHoldMore == 1);
             AOT_TEST_CHECK(solver.addedByGeneralRules().firstNodesThatHoldMore.size() == 1 && solver.addedByGeneralRules().firstNodesThatHoldMore[0] == statements[0].result);
             AOT_TEST_CHECK(!solver.numberOfRunsThatWereNotDueAndAdded());
@@ -1548,7 +1533,7 @@ static void whatAShorterWayOfARuleLeavesOutIsFound()
         {
             ValueSets sets(4);
             ValueFlowSolver solver(input, sets, leavesOutTheFirstResult, loops, ValueFlowSolver::Rounds::DueWithoutCheck);
-            AOT_TEST_CHECK(solver.solve());
+            solver.solve();
             AOT_TEST_CHECK(!solver.addedByGeneralRules().isAnything());
             AOT_TEST_CHECK(solver.possibleValuesOf(statements[0].result) == ValueSets::nothing);
         }
@@ -1592,11 +1577,107 @@ static void whatIsAskedLastIsAnsweredWhenNothingElseIsDue()
         ValueSets sets(numberOfObjects);
         runsOfStatementThatAsksLast = 0;
         ValueFlowSolver solver(input, sets, rule, loops, ValueFlowSolver::Rounds::DueWithoutCheck);
-        AOT_TEST_CHECK(solver.solve());
+        solver.solve();
         AOT_TEST_CHECK(sets.size(solver.possibleValuesOf(statements[0].result)) == numberOfObjects);
         AOT_TEST_CHECK(solver.possibleValuesOf(statements[1].result) == solver.possibleValuesOf(statements[0].result));
         AOT_TEST_CHECK(solver.rounds().size() > numberOfObjects);
         AOT_TEST_CHECK(runsOfStatementThatAsksLast == 2);
+    }
+}
+
+static std::atomic<uint32_t> firstOfLowestObjects;
+
+// The graph keeps the sixty-four lowest objects of a set as bits of one word, and finds the set of a word in a table by that word.
+static void aNodeMayHoldAllOfTheLowestObjects()
+{
+    static constexpr uint32_t numberOfLowestObjects = 64;
+    ValueFlowStatement statement;
+    statement.function = FunctionID(0u);
+    statement.result = ValueFlowNodeID(0u);
+    ValueFlowBodyRange ranges[2];
+    ranges[1].statement = ranges[1].statementLeavingBody = 1;
+
+    ValueFlowSolverInput input;
+    input.numberOfNodes = 1;
+    input.statements = std::span(&statement, 1);
+    input.ranges = ranges;
+
+    ValueFlowRule rule = [](const ValueFlowStatement& statement, ValueFlowRuleContext& context) {
+        uint32_t next = firstOfLowestObjects;
+        context.forEachMember(context.valueOf(statement.result), [&](ValueFlowObjectID) {
+            ++next;
+        });
+        if (next < numberOfLowestObjects)
+            context.add(statement.result, context.maker().of(ValueFlowObjectID(next)));
+    };
+    for (uint32_t first : { 0u, 1u }) {
+        ParallelLoops loops(1);
+        ValueSets sets(numberOfLowestObjects);
+        firstOfLowestObjects = first;
+        ValueFlowSolver solver(input, sets, rule, loops, ValueFlowSolver::Rounds::DueWithoutCheck);
+        solver.solve();
+        AOT_TEST_CHECK(sets.size(solver.possibleValuesOf(statement.result)) == numberOfLowestObjects - first);
+    }
+}
+
+static std::atomic<unsigned> runsOfReaderOfGrowingSet;
+static std::atomic<unsigned> connectionsOfReaderOfGrowingSet;
+
+// The statements that cost most are handed to the threads first. They were picked for that by being due, and a statement that waits is still due:
+// so the one kind of statement that it pays most to let wait ran in every round.
+static void aStatementThatMakesManyConnectionsWaitsLikeAnyOtherThatRunsOften()
+{
+    static constexpr uint32_t numberOfObjects = 256;
+    static constexpr uint32_t growing = 0;
+    static constexpr uint32_t taken = 1;
+    static constexpr uint32_t handedOn = 2;
+    static constexpr uint32_t firstOfRow = 3;
+    Vector<ValueFlowStatement> statements(numberOfObjects + 1);
+    for (uint32_t index = 0; index < statements.size(); ++index) {
+        statements[index].function = FunctionID(0u);
+        statements[index].result = ValueFlowNodeID(index < numberOfObjects ? firstOfRow + index : taken);
+    }
+    ValueFlowBodyRange ranges[2];
+    ranges[1].statement = ranges[1].statementLeavingBody = statements.size();
+
+    ValueFlowSolverInput input;
+    input.numberOfNodes = firstOfRow + numberOfObjects;
+    input.statements = statements.span();
+    input.ranges = ranges;
+
+    // Each statement of the row runs when the one in front of it has, a round later, and gives the set one more member: so something else is due in every round. The last statement takes all that the set holds.
+    ValueFlowRule rule = [](const ValueFlowStatement& statement, ValueFlowRuleContext& context) {
+        if (statement.result.index() >= firstOfRow) {
+            uint32_t position = statement.result.index() - firstOfRow;
+            if (position && !context.meet(context.valueOf(ValueFlowNodeID(statement.result.index() - 1)), ValueSets::anything))
+                return;
+            context.add(statement.result, context.maker().of(ValueFlowObjectID(position)));
+            context.add(ValueFlowNodeID(growing), context.maker().of(ValueFlowObjectID(position)));
+            return;
+        }
+        ++runsOfReaderOfGrowingSet;
+        context.add(statement.result, context.valueOf(ValueFlowNodeID(growing)));
+        for (unsigned connection = 0; connection < connectionsOfReaderOfGrowingSet; ++connection)
+            context.connect(ValueFlowNodeID(taken), ValueFlowNodeID(handedOn));
+    };
+    for (unsigned numberOfThreads : { 1u, 4u }) {
+        unsigned runsWithFewConnections = 0;
+        for (unsigned connections : { 1u, 5000u }) {
+            ParallelLoops loops(numberOfThreads);
+            ValueSets sets(numberOfObjects);
+            runsOfReaderOfGrowingSet = 0;
+            connectionsOfReaderOfGrowingSet = connections;
+            ValueFlowSolver solver(input, sets, rule, loops, ValueFlowSolver::Rounds::DueWithoutCheck);
+            solver.solve();
+            AOT_TEST_CHECK(sets.size(solver.possibleValuesOf(ValueFlowNodeID(growing))) == numberOfObjects);
+            AOT_TEST_CHECK(solver.possibleValuesOf(ValueFlowNodeID(handedOn)) == solver.possibleValuesOf(ValueFlowNodeID(growing)));
+            AOT_TEST_CHECK(solver.rounds().size() >= numberOfObjects);
+            AOT_TEST_CHECK(runsOfReaderOfGrowingSet < numberOfObjects / 4);
+            if (connections == 1)
+                runsWithFewConnections = runsOfReaderOfGrowingSet;
+            else
+                AOT_TEST_CHECK(runsOfReaderOfGrowingSet == runsWithFewConnections);
+        }
     }
 }
 
@@ -1660,11 +1741,100 @@ static void aMakerThatIsGivenBackWaitsForItsThread()
     AOT_TEST_CHECK(&pool.take() == &mine);
 }
 
+static void numbersTakenOutOfListsAreGoneAndTheOthersStay()
+{
+    // One number is in the name of the list, up to sixteen stand side by side, more are dealt out over eight lists, and those again.
+    for (uint32_t size : { 1u, 2u, 3u, 4u, 5u, 6u, 7u, 12u, 13u, 16u, 17u, 40u, 300u, 5000u }) {
+        for (uint32_t step : { 1u, 2u, 3u, 7u }) {
+            ValueFlowNumberLists lists;
+            uint32_t list = 0;
+            uint32_t other = 0;
+            auto numberAt = [](uint32_t index) { return index * 2654435761u >> 3; };
+            for (uint32_t index = 0; index < size; ++index) {
+                AOT_TEST_CHECK(lists.add(list, numberAt(index)));
+                AOT_TEST_CHECK(lists.add(other, numberAt(index) ^ 1));
+            }
+            AOT_TEST_CHECK(!lists.remove(list, numberAt(size)));
+            uint32_t left = size;
+            for (uint32_t index = 0; index < size; index += step, --left) {
+                AOT_TEST_CHECK(lists.remove(list, numberAt(index)));
+                AOT_TEST_CHECK(!lists.remove(list, numberAt(index)));
+                AOT_TEST_CHECK(!lists.contains(list, numberAt(index)));
+            }
+            uint32_t seen = 0;
+            lists.forEach(list, [&](uint32_t) { ++seen; });
+            AOT_TEST_CHECK(seen == left && lists.numberOfNumbers() == left + size);
+            for (uint32_t index = 0; index < size; ++index) {
+                AOT_TEST_CHECK(lists.contains(list, numberAt(index)) == !!(index % step));
+                AOT_TEST_CHECK(lists.contains(other, numberAt(index) ^ 1));
+            }
+            // What was given back is taken again.
+            size_t memory = lists.memoryInBytes();
+            for (uint32_t index = 0; index < size; index += step)
+                AOT_TEST_CHECK(lists.add(list, numberAt(index)));
+            AOT_TEST_CHECK(lists.numberOfNumbers() == 2 * size && lists.memoryInBytes() <= memory + 64 * sizeof(uint32_t));
+            for (uint32_t index = 0; index < size; ++index)
+                AOT_TEST_CHECK(lists.remove(list, numberAt(index)));
+            AOT_TEST_CHECK(size > 16 || !list);
+            AOT_TEST_CHECK(lists.numberOfNumbers() == size);
+        }
+    }
+}
+
+static void anEdgeTakenOutOfTheGraphCarriesNoMore()
+{
+    ParallelLoops loops(1);
+    ValueSets sets(16);
+    Vector<std::unique_ptr<ValueSetMaker>> makers(1, [&](size_t) {
+        return makeUnique<ValueSetMaker>(sets);
+    });
+    auto setOf = [&](std::initializer_list<uint32_t> members) {
+        Vector<ValueFlowObjectID> list;
+        for (uint32_t member : members)
+            list.append(ValueFlowObjectID(member));
+        return makers[0]->of(list.span());
+    };
+    // early -> source, late -> source, source -> old, source -> current
+    ValueFlowGraph graph(loops, makers.span());
+    ValueFlowNodeID early = graph.addNodes(5);
+    ValueFlowNodeID late(early.index() + 1);
+    ValueFlowNodeID source(early.index() + 2);
+    ValueFlowNodeID old(early.index() + 3);
+    ValueFlowNodeID current(early.index() + 4);
+    graph.makeConstant(early, setOf({ 3 }));
+    graph.makeConstant(late, setOf({ 5 }));
+    Vector<ValueFlowNodeID> moved;
+    ValueFlowEdge first[] = { { early, source }, { source, old }, { source, current } };
+    AOT_TEST_CHECK(graph.addEdges(first) == 3);
+    graph.solve(moved);
+    AOT_TEST_CHECK(graph.valueOf(old) == setOf({ 3 }) && graph.valueOf(current) == setOf({ 3 }));
+
+    ValueFlowEdge removed[] = { { source, old } };
+    ValueFlowEdge listedTwice[] = { removed[0], removed[0] };
+    graph.removeEdges(listedTwice);
+    AOT_TEST_CHECK(!graph.hasAdded(removed[0]) && graph.counters().edgesRemoved == 1);
+    bool isPredecessor = false;
+    graph.forEachPredecessor(old, [&](ValueFlowNodeID predecessor) {
+        isPredecessor |= predecessor == source;
+    });
+    AOT_TEST_CHECK(!isPredecessor);
+    ValueFlowEdge second[] = { { late, source } };
+    AOT_TEST_CHECK(graph.addEdges(second) == 1);
+    graph.solve(moved);
+    AOT_TEST_CHECK(graph.valueOf(old) == setOf({ 3 }) && graph.valueOf(current) == setOf({ 3, 5 }));
+
+    // Whoever wants it again adds it as a new edge, and it brings all that its source holds.
+    AOT_TEST_CHECK(graph.addEdges(removed) == 1);
+    graph.solve(moved);
+    AOT_TEST_CHECK(graph.valueOf(old) == setOf({ 3, 5 }));
+}
+
 #define FOR_EACH_AOT_VALUE_FLOW_CORE_TEST(v) \
+    v(numbersTakenOutOfListsAreGoneAndTheOthersStay) v(anEdgeTakenOutOfTheGraphCarriesNoMore) \
     v(valueSetsAgreeWithPlainSets) v(valueSetsOfFewAndOfManyBlocksAgreeWithPlainSets) v(valueSetsOfSeveralGroupsOfBlocksAgreeWithPlainSets) v(valueSetsOfBothFormsAgreeWithPlainSets) v(valueSetsAreTheSameFromEveryThread) v(sampleOfBlocksDependsOnTheMembersAlone) v(valueFlowGraphFindsTheLeastSolution) v(whatTheGraphHoldsDoesNotHangOnTheOrderOfTheEdges) v(rowsOfNodesInsideOneShardAreWalkedInOneWave) \
     v(masksTreatPlaceholdersByTheirKind) v(nodesThatPlaceholdersCoverAreRetired) v(theCallerMayConnectWhatLeadsIntoRetiredNodes) v(whatACoveredNodeHoldsIsNotSentToItAgain) \
     v(valueFlowGraphSolvesLongChainsAndWideLevelsOnThreads) v(valueFlowRoundsAgreeWithAnAnalysisObjectByObject) v(whatATurnMakesAndReachesRunsInThatTurn) \
-    v(valueFlowSolveStopsAtTheLimitOnLoggedEdges) v(valueFlowSolverFindsObjectsOutsideDeclaredTypes) v(whatAShorterWayOfARuleLeavesOutIsFound) v(whatIsAskedLastIsAnsweredWhenNothingElseIsDue) v(numbersByKeyAgreeWithAHashMap) v(aMakerThatIsGivenBackWaitsForItsThread)
+    v(valueFlowSolverFindsObjectsOutsideDeclaredTypes) v(whatAShorterWayOfARuleLeavesOutIsFound) v(whatIsAskedLastIsAnsweredWhenNothingElseIsDue) v(aNodeMayHoldAllOfTheLowestObjects) v(aStatementThatMakesManyConnectionsWaitsLikeAnyOtherThatRunsOften) v(numbersByKeyAgreeWithAHashMap) v(aMakerThatIsGivenBackWaitsForItsThread)
 
 std::span<const NativeTest> valueFlowCoreTests()
 {

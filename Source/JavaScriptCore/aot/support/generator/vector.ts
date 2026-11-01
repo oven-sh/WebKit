@@ -52,7 +52,33 @@ const growthDeclarations = `    template<FailureAction> bool reserveCapacitySlow
     {
         return movesAsBytes<T> && sizeof(T) <= std::numeric_limits<uint16_t>::max() && minCapacity <= std::numeric_limits<uint8_t>::max() && Base::inlineBufferOffset() <= std::numeric_limits<uint8_t>::max();
     }
-    static constexpr VectorLayout layout() { return { static_cast<uint16_t>(sizeof(T)), static_cast<uint8_t>(minCapacity), static_cast<uint8_t>(Base::inlineBufferOffset()) }; }
+    // The first buffer of a list has room for minCapacity elements or 32 bytes, whichever is less: most lists stay short, and a build keeps millions of them.
+    static constexpr size_t smallestCapacity() { return std::min<size_t>(minCapacity, std::max<size_t>(32 / sizeof(T), 1)); }
+    static constexpr bool growsAsBytesAndIsMended()
+    {
+        return isMendedAfterMovingAsBytes<T> && sizeof(T) <= std::numeric_limits<uint16_t>::max() && minCapacity <= std::numeric_limits<uint8_t>::max() && Base::inlineBufferOffset() <= std::numeric_limits<uint8_t>::max();
+    }
+public:
+    VectorWords& wordsOfListThatMovesAsBytes()
+        requires (!inlineCapacity && movesAsBytes<T>)
+    {
+        return Base::words();
+    }
+
+    void mendAfterMovingAsBytes(ptrdiff_t distance)
+        requires (!!inlineCapacity && movesAsBytesAndMayBeMended<T>)
+    {
+        char* inlineBuffer = reinterpret_cast<char*>(&Base::words()) + Base::inlineBufferOffset();
+        if (Base::words().buffer != inlineBuffer - distance)
+            return;
+        Base::words().buffer = inlineBuffer;
+        if constexpr (!movesAsBytes<T>) {
+            for (T& element : *this)
+                JSC::AOT::mendAfterMovingAsBytes(element, distance);
+        }
+    }
+private:
+    static constexpr VectorLayout layout() { return { static_cast<uint16_t>(sizeof(T)), static_cast<uint8_t>(smallestCapacity()), static_cast<uint8_t>(Base::inlineBufferOffset()) }; }
 `;
 
 const conversions = `
@@ -123,6 +149,89 @@ inline constexpr bool movesAsBytes = (std::is_trivially_move_constructible_v<T> 
 template<typename First, typename Second>
 inline constexpr bool movesAsBytes<std::pair<First, Second>> = movesAsBytes<First> && movesAsBytes<Second>;
 
+template<typename T, size_t size>
+inline constexpr bool movesAsBytes<T[size]> = movesAsBytes<T>;
+
+// Without an inline buffer a list holds no address of its own.
+template<typename T, typename OverflowHandler, size_t minCapacity, typename Malloc>
+inline constexpr bool movesAsBytes<Vector<T, 0, OverflowHandler, minCapacity, Malloc>> = true;
+
+#if COMPILER(CLANG) && __has_builtin(__builtin_structured_binding_size)
+IGNORE_CLANG_WARNINGS_BEGIN("c++26-extensions")
+template<typename T>
+auto membersMoveAsBytes(T& record)
+{
+    auto& [...members] = record;
+    return std::bool_constant<(true && ... && (!std::is_reference_v<decltype(members)> && movesAsBytes<std::remove_cv_t<decltype(members)>>))> { };
+}
+IGNORE_CLANG_WARNINGS_END
+
+// An aggregate has no constructor of its own that could note where it stands.
+template<typename T>
+    requires (std::is_aggregate_v<T> && std::is_class_v<T> && !(std::is_trivially_move_constructible_v<T> && std::is_trivially_destructible_v<T>) && !VectorTraits<T>::canMoveWithMemcpy && requires { __builtin_structured_binding_size(T); })
+inline constexpr bool movesAsBytes<T> = decltype(membersMoveAsBytes(std::declval<T&>()))::value;
+#endif
+
+// What holds a list with an inline buffer: it moves as bytes, and then each such list that stood in its inline buffer is pointed at where that is now.
+// Not under ASAN, which forbids reading the unused part of an inline buffer.
+template<typename T>
+inline constexpr bool isMendedAfterMovingAsBytes = false;
+
+template<typename T>
+inline constexpr bool movesAsBytesAndMayBeMended = movesAsBytes<T> || isMendedAfterMovingAsBytes<T>;
+
+template<typename T>
+void mendAfterMovingAsBytes(T& moved, ptrdiff_t distance);
+
+#if !ASAN_ENABLED && COMPILER(CLANG) && __has_builtin(__builtin_structured_binding_size)
+template<typename T, size_t size>
+inline constexpr bool isMendedAfterMovingAsBytes<T[size]> = isMendedAfterMovingAsBytes<T>;
+
+template<typename First, typename Second>
+inline constexpr bool isMendedAfterMovingAsBytes<std::pair<First, Second>> = !movesAsBytes<std::pair<First, Second>> && movesAsBytesAndMayBeMended<First> && movesAsBytesAndMayBeMended<Second>;
+
+template<typename T, size_t inlineCapacity, typename OverflowHandler, size_t minCapacity, typename Malloc>
+    requires (!!inlineCapacity)
+inline constexpr bool isMendedAfterMovingAsBytes<Vector<T, inlineCapacity, OverflowHandler, minCapacity, Malloc>> = movesAsBytesAndMayBeMended<T>;
+
+IGNORE_CLANG_WARNINGS_BEGIN("c++26-extensions")
+template<typename T>
+auto membersMoveAsBytesAndMayBeMended(T& record)
+{
+    auto& [...members] = record;
+    return std::bool_constant<(true && ... && (!std::is_reference_v<decltype(members)> && (movesAsBytes<std::remove_cv_t<decltype(members)>> || (!std::is_const_v<decltype(members)> && isMendedAfterMovingAsBytes<decltype(members)>))))> { };
+}
+
+template<typename T>
+    requires (std::is_aggregate_v<T> && std::is_class_v<T> && !movesAsBytes<T> && requires { __builtin_structured_binding_size(T); })
+inline constexpr bool isMendedAfterMovingAsBytes<T> = decltype(membersMoveAsBytesAndMayBeMended(std::declval<T&>()))::value;
+
+template<typename T>
+ALWAYS_INLINE void mendAfterMovingAsBytes(T& moved, ptrdiff_t distance)
+{
+    static_assert(isMendedAfterMovingAsBytes<T>);
+    if constexpr (std::is_array_v<T>) {
+        for (auto& element : moved)
+            mendAfterMovingAsBytes(element, distance);
+    } else if constexpr (requires { moved.mendAfterMovingAsBytes(distance); })
+        moved.mendAfterMovingAsBytes(distance);
+    else {
+        auto& [...members] = moved;
+        ([&] {
+            if constexpr (!movesAsBytes<std::remove_cv_t<decltype(members)>>)
+                mendAfterMovingAsBytes(members, distance);
+        }(), ...);
+    }
+}
+IGNORE_CLANG_WARNINGS_END
+#endif
+
+#if COMPILER(CLANG) && !OS(WINDOWS) && (CPU(X86_64) || CPU(ARM64))
+#define AOT_KEEPS_CALLERS_REGISTERS __attribute__((preserve_most))
+#else
+#define AOT_KEEPS_CALLERS_REGISTERS
+#endif
+
 struct VectorWords {
     void* buffer;
     unsigned capacity;
@@ -135,18 +244,20 @@ struct VectorLayout {
     uint8_t inlineBufferOffset; // Zero without an inline buffer: no vector is its own buffer.
 };
 
+// AOTSystemResources.h
+[[noreturn]] void exitProgramTooLarge();
+
 template<typename Malloc>
 ALWAYS_INLINE void allocateVectorBufferInline(VectorWords& vector, size_t newCapacity, size_t elementSize)
 {
-    constexpr size_t maxCapacity = std::numeric_limits<unsigned>::max();
-    if (newCapacity > maxCapacity || newCapacity * elementSize > maxCapacity >> 1)
-        CRASH();
+    if (newCapacity > std::numeric_limits<unsigned>::max()) [[unlikely]]
+        exitProgramTooLarge();
     vector.buffer = Malloc::malloc(newCapacity * elementSize);
     vector.capacity = newCapacity;
 }
 
 template<typename Malloc>
-NEVER_INLINE void allocateVectorBuffer(VectorWords& vector, size_t newCapacity, size_t elementSize)
+NEVER_INLINE AOT_KEEPS_CALLERS_REGISTERS void allocateVectorBuffer(VectorWords& vector, size_t newCapacity, size_t elementSize)
 {
     allocateVectorBufferInline<Malloc>(vector, newCapacity, elementSize);
 }
@@ -162,10 +273,17 @@ NEVER_INLINE void reserveVectorCapacity(VectorWords& vector, size_t newCapacity,
         Malloc::free(oldBuffer);
 }
 
+// A short list doubles.
+template<typename Malloc>
+constexpr size_t nextVectorCapacity(size_t capacity)
+{
+    return capacity < 16 ? 2 * capacity : Malloc::nextCapacity(capacity);
+}
+
 template<typename Malloc>
 NEVER_INLINE void expandVectorCapacity(VectorWords& vector, size_t newMinCapacity, VectorLayout layout)
 {
-    reserveVectorCapacity<Malloc>(vector, std::max(newMinCapacity, std::max(static_cast<size_t>(layout.minCapacity), Malloc::nextCapacity(vector.capacity))), layout);
+    reserveVectorCapacity<Malloc>(vector, std::max(newMinCapacity, std::max(static_cast<size_t>(layout.minCapacity), nextVectorCapacity<Malloc>(vector.capacity))), layout);
 }
 
 template<typename Malloc>
@@ -326,6 +444,11 @@ ${specifiers}Vector<T, inlineCapacity, OverflowHandler, minCapacity, Malloc>::${
     member("NEVER_INLINE bool ", "expandCapacity(size_t newMinCapacity)") +
       asBytes("expandVectorCapacity<Malloc>(Base::words(), newMinCapacity, layout())", "true"),
   );
+  text = replaceExactly(
+    text,
+    "std::max(static_cast<size_t>(minCapacity), Malloc::nextCapacity(capacity()))",
+    "std::max(smallestCapacity(), nextVectorCapacity<Malloc>(capacity()))",
+  );
   const expandCapacityAroundPointer = member("NEVER_INLINE T* ", "expandCapacity(size_t newMinCapacity, T* ptr)") + checkedAction;
   text = replaceExactly(
     text,
@@ -344,8 +467,29 @@ ${specifiers}Vector<T, inlineCapacity, OverflowHandler, minCapacity, Malloc>::${
     `${reserveCapacity}    return reserveCapacitySlowCase<action>(newCapacity);
 }
 
-${member("NEVER_INLINE bool ", "reserveCapacitySlowCase(size_t newCapacity)")}${asBytes("reserveVectorCapacity<Malloc>(Base::words(), newCapacity, layout())", "true")}`,
+${member("NEVER_INLINE bool ", "reserveCapacitySlowCase(size_t newCapacity)")}${asBytes("reserveVectorCapacity<Malloc>(Base::words(), newCapacity, layout())", "true")}    if constexpr (action == FailureAction::Crash && growsAsBytesAndIsMended()) {
+        char* oldBuffer = reinterpret_cast<char*>(begin());
+        reserveVectorCapacity<Malloc>(Base::words(), newCapacity, layout());
+        ptrdiff_t distance = reinterpret_cast<char*>(begin()) - oldBuffer;
+        for (T& element : *this)
+            JSC::AOT::mendAfterMovingAsBytes(element, distance);
+        return true;
+    }
+`,
   );
+
+  for (const declaration of [
+    "bool expandCapacity(size_t newMinCapacity);",
+    "T* expandCapacity(size_t newMinCapacity, T*);",
+    "bool appendSlowCase(U&&);",
+    "bool appendSlowCaseByValue(T);",
+    "bool constructAndAppendSlowCaseOutOfLine(SlowArgs...);",
+    "bool reserveCapacitySlowCase(size_t newCapacity);",
+  ]) {
+    text = replaceExactly(text, `> ${declaration}`, `> AOT_KEEPS_CALLERS_REGISTERS ${declaration}`);
+  }
+  text = replaceExactly(text, "\nNEVER_INLINE bool Vector<", Array(5).fill("\nNEVER_INLINE AOT_KEEPS_CALLERS_REGISTERS bool Vector<"));
+  text = replaceExactly(text, "\nNEVER_INLINE T* Vector<", "\nNEVER_INLINE AOT_KEEPS_CALLERS_REGISTERS T* Vector<");
 
   return license + head + text.replace(/\n+$/, "") + tail;
 }

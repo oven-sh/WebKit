@@ -1039,6 +1039,11 @@ static ObjectPropertyCondition setupAdaptiveWatchpoint(JSGlobalObject* globalObj
     ObjectPropertyCondition condition = generateConditionForSelfEquivalence(vm, nullptr, base, ident.impl());
     RELEASE_ASSERT(condition.requiredValue() == functionValue);
 
+#if ENABLE(AOT)
+    if (vm.hasCompiledCode() && AOT::RuntimeHooks::defersWatchpoints(globalObject))
+        return condition;
+#endif
+
     bool isWatchable = condition.isWatchable(PropertyCondition::EnsureWatchability);
     RELEASE_ASSERT(isWatchable); // We allow this to install the necessary watchpoints.
 
@@ -1058,6 +1063,11 @@ static ObjectPropertyCondition setupAbsenceAdaptiveWatchpoint(JSGlobalObject* gl
     RELEASE_ASSERT(slot.isUnset());
     RELEASE_ASSERT(base->getPrototypeDirect() == (prototype ? JSValue(prototype) : jsNull()));
     ObjectPropertyCondition condition = ObjectPropertyCondition::absence(vm, globalObject, base, propertyName.uid(), prototype);
+
+#if ENABLE(AOT)
+    if (vm.hasCompiledCode() && AOT::RuntimeHooks::defersWatchpoints(globalObject))
+        return condition;
+#endif
 
     bool isWatchable = condition.isWatchable(PropertyCondition::EnsureWatchability);
     RELEASE_ASSERT(isWatchable); // We allow this to install the necessary watchpoints.
@@ -2303,14 +2313,16 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
         });
 #endif
 
-    m_performProxyObjectHasFunction.set(vm, this, uncheckedDowncast<JSFunction>(linkTimeConstant(LinkTimeConstant::performProxyObjectHas)));
-    m_performProxyObjectHasByValFunction.set(vm, this, uncheckedDowncast<JSFunction>(linkTimeConstant(LinkTimeConstant::performProxyObjectHasByVal)));
-    m_performProxyObjectGetFunction.set(vm, this, uncheckedDowncast<JSFunction>(linkTimeConstant(LinkTimeConstant::performProxyObjectGet)));
-    m_performProxyObjectGetByValFunction.set(vm, this, uncheckedDowncast<JSFunction>(linkTimeConstant(LinkTimeConstant::performProxyObjectGetByVal)));
-    m_performProxyObjectSetStrictFunction.set(vm, this, uncheckedDowncast<JSFunction>(linkTimeConstant(LinkTimeConstant::performProxyObjectSetStrict)));
-    m_performProxyObjectSetSloppyFunction.set(vm, this, uncheckedDowncast<JSFunction>(linkTimeConstant(LinkTimeConstant::performProxyObjectSetSloppy)));
-    m_performProxyObjectSetByValStrictFunction.set(vm, this, uncheckedDowncast<JSFunction>(linkTimeConstant(LinkTimeConstant::performProxyObjectSetByValStrict)));
-    m_performProxyObjectSetByValSloppyFunction.set(vm, this, uncheckedDowncast<JSFunction>(linkTimeConstant(LinkTimeConstant::performProxyObjectSetByValSloppy)));
+    if (!vm.hasCompiledCode()) {
+        m_performProxyObjectHasFunction.set(vm, this, uncheckedDowncast<JSFunction>(linkTimeConstant(LinkTimeConstant::performProxyObjectHas)));
+        m_performProxyObjectHasByValFunction.set(vm, this, uncheckedDowncast<JSFunction>(linkTimeConstant(LinkTimeConstant::performProxyObjectHasByVal)));
+        m_performProxyObjectGetFunction.set(vm, this, uncheckedDowncast<JSFunction>(linkTimeConstant(LinkTimeConstant::performProxyObjectGet)));
+        m_performProxyObjectGetByValFunction.set(vm, this, uncheckedDowncast<JSFunction>(linkTimeConstant(LinkTimeConstant::performProxyObjectGetByVal)));
+        m_performProxyObjectSetStrictFunction.set(vm, this, uncheckedDowncast<JSFunction>(linkTimeConstant(LinkTimeConstant::performProxyObjectSetStrict)));
+        m_performProxyObjectSetSloppyFunction.set(vm, this, uncheckedDowncast<JSFunction>(linkTimeConstant(LinkTimeConstant::performProxyObjectSetSloppy)));
+        m_performProxyObjectSetByValStrictFunction.set(vm, this, uncheckedDowncast<JSFunction>(linkTimeConstant(LinkTimeConstant::performProxyObjectSetByValStrict)));
+        m_performProxyObjectSetByValSloppyFunction.set(vm, this, uncheckedDowncast<JSFunction>(linkTimeConstant(LinkTimeConstant::performProxyObjectSetByValSloppy)));
+    }
 
     if (Options::exposeProfilersOnGlobalObject()) {
 #if ENABLE(SAMPLING_PROFILER)
@@ -2369,6 +2381,11 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
 #undef CREATE_WEBASSEMBLY_PROTOTYPE
     }
 #endif // ENABLE(WEBASSEMBLY)
+
+#if ENABLE(AOT)
+    if (vm.hasCompiledCode())
+        AOT::RuntimeHooks::willWatchBuiltins(this);
+#endif
 
     // Detect property change.
     installObjectPropertyChangeAdaptiveWatchpoint(setupAdaptiveWatchpoint(this, arrayIteratorPrototype, vm.propertyNames->next), m_arrayIteratorProtocolWatchpointSet);
@@ -2470,6 +2487,11 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
     }
 
     installSaneChainWatchpoints();
+
+#if ENABLE(AOT)
+    if (vm.hasCompiledCode())
+        AOT::RuntimeHooks::didWatchBuiltins(this);
+#endif
 
     // Unfortunately, the prototype objects of the builtin objects can be touched from concurrent compilers. So eagerly initialize them only if we use JIT.
     if (Options::useJIT()) {
@@ -2981,10 +3003,13 @@ private:
     Vector<JSGlobalObject*>& m_affectedRealms;
 };
 
+// Neither prototype can get an indexed property or another prototype. Object.prototype may still take a named one: a compiled test run locks it by a list of names.
 bool prototypesOfOrdinaryArraysAreLocked(JSGlobalObject* realm)
 {
-    Structure* arrayPrototype = realm->arrayPrototype()->structure();
-    return arrayPrototype->hasImmutableIndexedProperties() && arrayPrototype->hasImmutablePrototype() && realm->objectPrototype()->structure()->hasImmutableProperties();
+    auto isLocked = [](Structure* structure) {
+        return structure->hasImmutableIndexedProperties() && structure->hasImmutablePrototype();
+    };
+    return isLocked(realm->arrayPrototype()->structure()) && isLocked(realm->objectPrototype()->structure());
 }
 
 } // end private namespace for helpers for JSGlobalObject::haveABadTime()
@@ -2995,6 +3020,11 @@ void JSGlobalObject::fireWatchpointAndMakeAllArrayStructuresSlowPut(VM& vm)
 {
     if (isHavingABadTime())
         return;
+
+#if ENABLE(AOT)
+    if (aotInstance()) [[unlikely]]
+        AOT::RuntimeHooks::stopBecauseRealmHasABadTime();
+#endif
 
     // This must happen first, because the compiler thread may race with haveABadTime.
     // Let R_BT, W_BT <- Read/Fire the watchpoint, R_SC, W_SC <- Read/clear the structure cache.
@@ -3674,6 +3704,14 @@ void JSGlobalObject::tryInstallSpeciesWatchpoint(JSObject* prototype, JSObject* 
     RELEASE_ASSERT(!speciesWatchpointSet.isBeingWatched());
     speciesWatchpointSet.touch(vm, "Set up species watchpoint.");
 
+#if ENABLE(AOT)
+    if (vm.hasCompiledCode() && AOT::RuntimeHooks::deferWatchpoint(this, constructorCondition, speciesWatchpointSet, AOT::RuntimeHooks::DeferredWatchpointKind::PropertyChange)) {
+        constexpr bool watchesStructure = std::is_same_v<SpeciesWatchpoint, ObjectAdaptiveStructureWatchpoint>;
+        AOT::RuntimeHooks::deferWatchpoint(this, speciesCondition, speciesWatchpointSet, watchesStructure ? AOT::RuntimeHooks::DeferredWatchpointKind::Structure : AOT::RuntimeHooks::DeferredWatchpointKind::PropertyChange);
+        return;
+    }
+#endif
+
     constructorWatchpoint = makeUnique<ObjectPropertyChangeAdaptiveWatchpoint<InlineWatchpointSet>>(this, constructorCondition, speciesWatchpointSet);
     constructorWatchpoint->install(vm);
 
@@ -3879,6 +3917,10 @@ void JSGlobalObject::installSetPrototypeWatchpoint(SetPrototype* setPrototype)
 
 void JSGlobalObject::installObjectAdaptiveStructureWatchpoint(const ObjectPropertyCondition& key, InlineWatchpointSet& watchpointSet)
 {
+#if ENABLE(AOT)
+    if (m_vm->hasCompiledCode() && AOT::RuntimeHooks::deferWatchpoint(this, key, watchpointSet, AOT::RuntimeHooks::DeferredWatchpointKind::Structure))
+        return;
+#endif
     auto watchpoint = makeUniqueRef<ObjectAdaptiveStructureWatchpoint>(this, key, watchpointSet);
     watchpoint->install(*m_vm);
     m_installedObjectAdaptiveStructureWatchpoints.append(WTF::move(watchpoint));
@@ -3886,6 +3928,10 @@ void JSGlobalObject::installObjectAdaptiveStructureWatchpoint(const ObjectProper
 
 void JSGlobalObject::installObjectPropertyChangeAdaptiveWatchpoint(const ObjectPropertyCondition& key, InlineWatchpointSet& watchpointSet)
 {
+#if ENABLE(AOT)
+    if (m_vm->hasCompiledCode() && AOT::RuntimeHooks::deferWatchpoint(this, key, watchpointSet, AOT::RuntimeHooks::DeferredWatchpointKind::PropertyChange))
+        return;
+#endif
     auto watchpoint = makeUniqueRef<ObjectPropertyChangeAdaptiveWatchpoint<InlineWatchpointSet>>(this, key, watchpointSet);
     watchpoint->install(*m_vm);
     m_installedObjectPropertyChangeAdaptiveWatchpoints.append(WTF::move(watchpoint));

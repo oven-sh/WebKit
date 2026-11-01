@@ -450,7 +450,7 @@ std::pair<StaticsPlan, LiteralSites> placeStatics(const PlacementContext& contex
                 break;
             }
         }
-        AOT::sort(order);
+        AOT::sortInLine(order);
         bool isFilledAtProgramEntry = true;
         auto finishVariablesFilledAtProgramEntry = [&] {
             if (std::exchange(isFilledAtProgramEntry, false))
@@ -516,8 +516,19 @@ std::pair<StaticsPlan, LiteralSites> placeStatics(const PlacementContext& contex
         }
     };
     auto placeModuleValues = [&] {
-        plan.moduleValueOffsets = Vector<std::optional<uint32_t>>(program.modules.size(), [&](size_t index) {
-            return hasValueWord(context, ModuleID(index)) ? std::optional(allocateRoot()) : std::nullopt;
+        for (const RequireEdgeUse& use : sites.requireEdges) {
+            if (requireReadsModuleValue(program, program.at(use.edge.target)) && requireAddsToRequireCache(program, use.edge.referrer, use.edge.target))
+                plan.modulesWithRequireCacheValue.set(use.edge.target.index());
+        }
+        plan.moduleValueOffsets = Vector<std::optional<uint32_t>>(program.modules.size(), [&](size_t index) -> std::optional<uint32_t> {
+            if (!hasValueWord(context, ModuleID(index)))
+                return std::nullopt;
+            uint32_t offset = allocateRoot();
+            if (plan.modulesWithRequireCacheValue.get(index)) {
+                uint32_t requireCacheValueOffset = allocateRoot();
+                RELEASE_ASSERT(requireCacheValueOffset == offset + staticsWordSize);
+            }
+            return offset;
         });
     };
     auto placeGuardWords = [&] {
@@ -539,6 +550,14 @@ std::pair<StaticsPlan, LiteralSites> placeStatics(const PlacementContext& contex
     auto placeModuleBuiltinCells = [&] {
         for (const ModuleBuiltinUse& use : sites.moduleBuiltins)
             plan.moduleBuiltinCells.append({ use.builtin, use.module, allocateRoot() });
+    };
+    auto placeModuleNamespaces = [&] {
+        plan.moduleNamespaceOffsets.fill(std::nullopt, program.modules.size());
+        for (ModuleID module : sites.moduleNamespaces) {
+            ModuleKind kind = program.at(module).kind;
+            if (kind == ModuleKind::Runtime || kind == ModuleKind::RuntimeSource)
+                plan.moduleNamespaceOffsets[module.index()] = allocateRoot();
+        }
     };
     // The table of constant data begins with these nodes, in this order.
     auto placeStorageInImage = [&] {
@@ -564,8 +583,10 @@ std::pair<StaticsPlan, LiteralSites> placeStatics(const PlacementContext& contex
         && placeRegion(placeModuleValues)
         && placeRegion(placeGuardWords)
         && placeRegion(placeModuleBuiltinCells)
+        && placeRegion(placeModuleNamespaces)
         && placeRegion([&] { literals.sharedStorageOffsets = allocateEach(sites.copyOnWriteArrays.size(), allocateRoot); })
         && placeRegion(placeStorageInImage)
+        && placeRegion([&] { literals.cellOffsetsOfDataMadeOnce = allocateEach(sites.dataMadeOnce.size(), allocateRoot); })
         && placeRegion([&] { literals.regExpCellOffsets = allocateEach(sites.regExpLiterals.size(), allocateRoot); })
         && placeRegion([&] { literals.templateObjectOffsets = allocateEach(sites.templateObjects.size(), allocateRoot); })
         && placeRegion([&] { literals.profiledLiteralOffsets = allocateEach(sites.profiledArrayLiterals.size(), allocateWord); })

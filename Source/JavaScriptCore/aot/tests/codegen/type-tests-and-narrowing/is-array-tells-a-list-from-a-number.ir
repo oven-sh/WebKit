@@ -105,7 +105,7 @@ function f1 name="first" module=m0 flags=[IsChecked, HasExplicitName] length=1 t
 # CHECK-NOT: Rare:#
 # CHECK: BB#[[list]]:
 # CHECK-NEXT: Predecessors: #0
-# CHECK-NEXT: Int64 b@[[storage]] = Load(b@[[value]], offset = 8, ControlDependent|Reads:JSObject_butterfly
+# CHECK-NEXT: Int64 b@[[storage]] = Load(b@[[value]], offset = 8, ControlDependent|Reads:JSArray_butterfly
 # CHECK-NEXT: Int32 b@{{*}} = Load(b@[[storage]], offset = -8, ControlDependent|Reads:Butterfly_publicLength
 # CHECK-LABEL: end of function
 # NONE-LABEL: name="first" role=Source

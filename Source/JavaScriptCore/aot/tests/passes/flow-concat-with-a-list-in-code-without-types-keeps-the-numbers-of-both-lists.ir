@@ -1,0 +1,205 @@
+# -- source: main.js
+# const xs = [1, 2, 3, 4, 5, 6, 7, 8];
+# function withList(i) { const b = xs.concat(xs); return (b[i & 3] ?? 0) + (b[2] ?? 0); }
+# function withLargeNumber(i) { const b = xs.concat(5000000000); return (b[i & 3] ?? 0) + (b[8] ?? 0); }
+# function withParsed(i) { const b = xs.concat(JSON.parse("7000000000")); return (b[i & 3] ?? 0) + (b[8] ?? 0); }
+# globalThis.answer = withList(globalThis.input | 0) + withLargeNumber(globalThis.input | 0) + withParsed(globalThis.input | 0);
+# -- end of source
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN: pipeline FinishBirths
+# CHECK-LABEL: name="withList"
+# CHECK: provenType=Array<int[1, 8], proven
+# CHECK: = HasArrayStorage {{*}} arrayStorage=Int32
+# CHECK-NOT: ConvertToDoubleStorage
+# CHECK-LABEL: name="withLargeNumber"
+# CHECK: provenType=Array<undefined|int[1, 5000000000], proven
+# CHECK: = HasArrayStorage {{*}} arrayStorage=Double
+# CHECK-LABEL: name="withParsed"
+# CHECK: provenType=Array<anything, proven
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+data d0 root=Array{contents=number elements=[Number{value=1}, Number{value=2}, Number{value=3}, Number{value=4}, Number{value=5}, Number{value=6}, Number{value=7}, Number{value=8}]} module=m0
+variable g0 name="xs" module=m0 declared={type=undefined|null|absent|Array<number> flags=[IsExpected]} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v4 = NewClosure function=f3 @0
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v6 = Data data=d0 @11
+    v7 = Convert v6 declared={type=undefined|null|Array<number> flags=[IsExpected]} @11
+    PutModuleVariable v7 variable=g0 @6
+    v9 = Builtin builtin=GlobalThis @340
+    v10 = PropGet v9 key="globalThis" [isFreeName] @340
+    v11 = Convert v10 declared={type=builtin(GlobalThis) flags=[IsExpected]} @340
+    v12 = Builtin builtin=GlobalThis @369
+    v13 = PropGet v12 key="globalThis" [isFreeName] @369
+    v14 = Convert v13 declared={type=builtin(GlobalThis) flags=[IsExpected]} @369
+    v15 = PropGet v14 key="input" @369
+    v16 = Convert v15 declared={type=i32 flags=[IsExpected]} @369
+    v17 = Integer @388
+    v18 = BitOr v16, v17 @369
+    v19 = Call v1, -, v18 calleeName="withList" @360
+    v20 = Convert v19 declared={type=number flags=[IsExpected]} @360
+    v21 = Builtin builtin=GlobalThis @409
+    v22 = PropGet v21 key="globalThis" [isFreeName] @409
+    v23 = Convert v22 declared={type=builtin(GlobalThis) flags=[IsExpected]} @409
+    v24 = PropGet v23 key="input" @409
+    v25 = Convert v24 declared={type=i32 flags=[IsExpected]} @409
+    v26 = Integer @428
+    v27 = BitOr v25, v26 @409
+    v28 = Call v3, -, v27 calleeName="withLargeNumber" @393
+    v29 = Convert v28 declared={type=number flags=[IsExpected]} @393
+    v30 = Add v20, v29 @360
+    v31 = Builtin builtin=GlobalThis @444
+    v32 = PropGet v31 key="globalThis" [isFreeName] @444
+    v33 = Convert v32 declared={type=builtin(GlobalThis) flags=[IsExpected]} @444
+    v34 = PropGet v33 key="input" @444
+    v35 = Convert v34 declared={type=i32 flags=[IsExpected]} @444
+    v36 = Integer @463
+    v37 = BitOr v35, v36 @444
+    v38 = Call v5, -, v37 calleeName="withParsed" @433
+    v39 = Convert v38 declared={type=number flags=[IsExpected]} @433
+    v40 = Add v30, v39 @360
+    PropSet v11, v40 key="answer" @340
+    v42 = Undefined @340
+    Return v42 @340
+}
+function f1 name="withList" module=m0 position=37 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32 flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: i32):
+    Jump -> next b1() @37
+  b1():
+    v1 = GetModuleVariable variable=g0 @70
+    v2 = CheckInitialized v1 name="xs" @70
+    v3 = PropGet v2 key="concat" @70
+    v4 = Convert v3 declared={type=undefined|null|function flags=[IsExpected]} @70
+    v5 = GetModuleVariable variable=g0 @82 @80
+    v6 = CheckInitialized v5 name="xs" @82 @80
+    v7 = Call v4, v2, v6 calleeKey="concat" calleeName="xs.concat" @73
+    v8 = Convert v7 declared={type=undefined|null|Array<number> flags=[IsExpected]} @70
+    v9 = Integer integer=3 @99
+    v10 = BitAnd v0, v9 @95
+    v11 = ElemGet v8, v10 @93
+    v12 = Convert v11 declared={type=number flags=[IsExpected]} @93
+    v13 = TypeTest v12 testedType=undefined|null @93
+    Branch v13 -> taken b2(| 0), notTaken b4(| 0) @93
+  b2(v14):
+    Jump -> next b3() @93
+  b3():
+    v15 = Integer @105
+    Jump -> next b5(v15) @105
+  b4(v16):
+    Jump -> next b5(v16) @93
+  b5(v17):
+    v18 = Integer integer=2 @111
+    v19 = ElemGet v8, v18 @111
+    v20 = Convert v19 declared={type=number flags=[IsExpected]} @111
+    v21 = TypeTest v20 testedType=undefined|null @111
+    Branch v21 -> taken b6(| 0), notTaken b8(| 0) @111
+  b6(v22):
+    Jump -> next b7() @111
+  b7():
+    v23 = Integer @119
+    Jump -> next b9(v23) @119
+  b8(v24):
+    Jump -> next b9(v24) @111
+  b9(v25):
+    v26 = Add v17, v25 @85
+    v27 = Convert v26 declared={type=number flags=[IsExpected]} @85
+    Return v27 @85
+}
+function f2 name="withLargeNumber" module=m0 position=125 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32 flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: i32):
+    Jump -> next b1() @125
+  b1():
+    v1 = GetModuleVariable variable=g0 @165
+    v2 = CheckInitialized v1 name="xs" @165
+    v3 = PropGet v2 key="concat" @165
+    v4 = Convert v3 declared={type=undefined|null|function flags=[IsExpected]} @165
+    v5 = Integer integer=5000000000 @175
+    v6 = Call v4, v2, v5 calleeKey="concat" calleeName="xs.concat" @168
+    v7 = Convert v6 declared={type=undefined|null|Array<number> flags=[IsExpected]} @165
+    v8 = Integer integer=3 @202
+    v9 = BitAnd v0, v8 @198
+    v10 = ElemGet v7, v9 @196
+    v11 = Convert v10 declared={type=number flags=[IsExpected]} @196
+    v12 = TypeTest v11 testedType=undefined|null @196
+    Branch v12 -> taken b2(| 0), notTaken b4(| 0) @196
+  b2(v13):
+    Jump -> next b3() @196
+  b3():
+    v14 = Integer @208
+    Jump -> next b5(v14) @208
+  b4(v15):
+    Jump -> next b5(v15) @196
+  b5(v16):
+    v17 = Integer integer=8 @214
+    v18 = ElemGet v7, v17 @214
+    v19 = Convert v18 declared={type=number flags=[IsExpected]} @214
+    v20 = TypeTest v19 testedType=undefined|null @214
+    Branch v20 -> taken b6(| 0), notTaken b8(| 0) @214
+  b6(v21):
+    Jump -> next b7() @214
+  b7():
+    v22 = Integer @222
+    Jump -> next b9(v22) @222
+  b8(v23):
+    Jump -> next b9(v23) @214
+  b9(v24):
+    v25 = Add v16, v24 @188
+    v26 = Convert v25 declared={type=number flags=[IsExpected]} @188
+    Return v26 @188
+}
+function f3 name="withParsed" module=m0 position=228 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32 flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: i32):
+    Jump -> next b1() @228
+  b1():
+    v1 = GetModuleVariable variable=g0 @263
+    v2 = CheckInitialized v1 name="xs" @263
+    v3 = PropGet v2 key="concat" @263
+    v4 = Convert v3 declared={type=undefined|null|function flags=[IsExpected]} @263
+    v5 = Builtin builtin=JSON @273
+    v6 = PropGet v5 key="parse" @273
+    v7 = Convert v6 declared={type=builtin(JSONParse) flags=[IsExpected]} @273
+    v8 = String string="7000000000" @284
+    v9 = Call v7, v5, v8 calleeKey="parse" calleeName="JSON.parse" @278
+    v10 = Call v4, v2, v9 calleeKey="concat" calleeName="xs.concat" @266
+    v11 = Convert v10 declared={type=undefined|null|Array<number> flags=[IsExpected]} @263
+    v12 = Integer integer=3 @314
+    v13 = BitAnd v0, v12 @310
+    v14 = ElemGet v11, v13 @308
+    v15 = Convert v14 declared={type=number flags=[IsExpected]} @308
+    v16 = TypeTest v15 testedType=undefined|null @308
+    Branch v16 -> taken b2(| 0), notTaken b4(| 0) @308
+  b2(v17):
+    Jump -> next b3() @308
+  b3():
+    v18 = Integer @320
+    Jump -> next b5(v18) @320
+  b4(v19):
+    Jump -> next b5(v19) @308
+  b5(v20):
+    v21 = Integer integer=8 @326
+    v22 = ElemGet v11, v21 @326
+    v23 = Convert v22 declared={type=number flags=[IsExpected]} @326
+    v24 = TypeTest v23 testedType=undefined|null @326
+    Branch v24 -> taken b6(| 0), notTaken b8(| 0) @326
+  b6(v25):
+    Jump -> next b7() @326
+  b7():
+    v26 = Integer @334
+    Jump -> next b9(v26) @334
+  b8(v27):
+    Jump -> next b9(v27) @326
+  b9(v28):
+    v29 = Add v20, v28 @300
+    v30 = Convert v29 declared={type=number flags=[IsExpected]} @300
+    Return v30 @300
+}
+function f4 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]

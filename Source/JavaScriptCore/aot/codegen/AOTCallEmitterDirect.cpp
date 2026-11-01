@@ -17,6 +17,7 @@
 #include "AOTPlacement.h"
 #include "AOTShapeTestEmitter.h"
 #include "AOTVector.h"
+#include "AOTWrittenFunction.h"
 #include "B3UpsilonValue.h"
 #include "B3ValueInlines.h"
 #include <array>
@@ -36,9 +37,12 @@ CallEmitter::PlacedArguments CallEmitter::placeArguments(FunctionID function, co
     unsigned numberOfGPRs = 0;
     for (size_t i = 0; i < arguments.size(); ++i) {
         const ArgumentLocation& location = locations.parameters[i];
-        RELEASE_ASSERT(arguments[i].representation == location.representation);
+        RELEASE_ASSERT(isPassedAs(arguments[i].representation, location.representation));
         // Null where the callee may find anything: nothing is put there.
         LValue argument = arguments[i].value;
+        // A number, a boolean or a narrow reference is nothing that the collector takes for a pointer.
+        if (argument && argument->type() == B3::Int64 && !argument->hasInt64() && inputs().conventions.letsGoOfParameter(function, i))
+            placed.letGoByCallee.append(argument);
         switch (location.kind) {
         case ArgumentLocation::Kind::None:
             break;
@@ -101,7 +105,9 @@ void CallEmitter::generateCallDirect(const ValueContext& value)
     }
 
     PlacedArguments placed = placeArguments(function, locations, arguments.span(), OmittedArguments::MayBeOmitted);
-    CallOptions options { .constructs = value->isConstruction(), .callsOwnFunctionObject = value->callsOwnFunctionObject(), .hasLandingOfMisfit = generator().calleeTestsResultOf(value) };
+    // A call that enters such a function without its function object records nothing, and an earlier call by value from this frame may have recorded another function object of the function.
+    bool entersWithoutFunctionObject = !value->calleeIsKeptInFrame() && recordsCalleeOnlyOnceRenamed(m_program, function) && writtenFunctionOf(m_program, function) != writtenFunctionOf(m_program, value->inlineFrame ? m_function.inlineFrames[value->inlineFrame].callee : m_id);
+    CallOptions options { .keptCalleePlusOne = value->calleeIsKeptInFrame() ? m_records.sites.addKeptCallee(m_function, value->position, value->inlineFrame) : 0, .constructs = value->isConstruction(), .callsOwnFunctionObject = value->callsOwnFunctionObject() || entersWithoutFunctionObject, .hasLandingOfMisfit = generator().calleeTestsResultOf(value), .callerSuspendsAtReturn = value.isAwaitedAtOnce() };
     if (const Function& callee = m_program.at(function); options.constructs && callee.kind == FunctionKind::Plain && callee.role != FunctionRole::ConstructBody)
         options.constructedCallee = function;
     B3::PatchpointValue* call = emitCall(value, CallTarget::function(function, placed.entry), placed, locations.results.span(), options);
@@ -144,6 +150,7 @@ void CallEmitter::generateCallTable(const ValueContext& value)
 
     ArgumentLocations locations = inputs().conventions.locationsOf(m_program, function);
     Vector<Operand, 8> arguments = operandsOf(value->argumentsOperands(), locations);
+    checkIsCompiledObjectOf(arguments[0].as<CellPointer>(), value->receivers());
     Word32 shapeWord = emitter<ShapeTestEmitter>().shapeWordOf(arguments[0].as<CellPointer>());
     Pointer row = offsetBy(Pointer(m_instance), signExtended(shapeWord), WTF::fastLog2(static_cast<unsigned>(sizeof(uint32_t))));
     ptrdiff_t offsetOfRow = InstanceLayout::offsetOfMethodTable(inputs().instanceSizes) + static_cast<ptrdiff_t>(*selectorOffset * sizeof(uint32_t));
@@ -152,6 +159,10 @@ void CallEmitter::generateCallTable(const ValueContext& value)
     Pointer entry = offsetBy(code, zeroExtended(codeOffset), WTF::fastLog2(static_cast<unsigned>(codeOffsetUnit)));
 
     PlacedArguments placed = placeArguments(function, locations, arguments.span(), OmittedArguments::MustBePassed);
+    if (value.returnCall()) {
+        emitTailCall(value, CallTarget::address(entry.value()), placed);
+        return;
+    }
     B3::PatchpointValue* call = emitCall(value, CallTarget::address(entry.value()), placed, locations.results.span(), { });
     defineResultsOfCall(value, locations.results.span(), call);
 }

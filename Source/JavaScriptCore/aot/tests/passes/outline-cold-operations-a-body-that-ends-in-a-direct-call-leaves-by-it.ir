@@ -2,7 +2,7 @@
 # FORM: Selected
 # OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot
 # RUN: pass OutlineColdOperations
-# STATISTIC: OutlinedBodiesCreated = 2
+# STATISTIC: OutlinedBodiesCreated = 3
 # CHECK: outcome: Changed
 
 module m0 path="main.js" displayPath="main.js"
@@ -33,6 +33,19 @@ function f1 name="addsFirst" parameters=[{type=number}, {type=anything}] results
 function f2 name="callee" kind=Arrow captures=[{type=i32}] parameters=[{type=i32}] results=[{type=i32}] {
     Return v1
 }
+function f3 name="readsTheCaptureBehindACast" parameters=[{type=number}, {type=undefined|f2}, {type=i32}] results=[{type=i32}] {
+    Switch v0 cases=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), case b7(), case b8(), case b9(), case b10(), case b11(), case b12(), case b13(), case b14(), case b15(), case b16(), otherwise b17()
+# REPEAT: i = 1..16
+  b%(i)() frequency=Rare:
+    v%(i*4-1) = Specified @9
+    v%(i*4) = AssumeType v1, v%(i*4-1) provenType=f2 @9
+    v%(i*4+1) = GetCapture v%(i*4) function=f2 @9
+    v%(i*4+2) = CallDirect v%(i*4+1), v2 function=f2 @9
+    Return v%(i*4+2)
+# END REPEAT
+  b17():
+    Return v2
+}
 # CHECK-LABEL: role=OutlinedBody
 # CHECK: = GetCapture
 # CHECK-NEXT: [[call]]: i32 = CallDirect {{*}} function=f2
@@ -41,3 +54,9 @@ function f2 name="callee" kind=Arrow captures=[{type=i32}] parameters=[{type=i32
 # CHECK: = Add
 # CHECK: [[other]]: i32 = CallDirect {{*}} function=f2
 # CHECK-NEXT: Return [[other]]
+# A cast that a decided test left has no code.
+# CHECK-LABEL: role=OutlinedBody
+# CHECK: = AssumeType
+# CHECK-NEXT: = GetCapture
+# CHECK-NEXT: [[third]]: i32 = CallDirect {{*}} function=f2
+# CHECK-NEXT: ReturnCall [[third]]

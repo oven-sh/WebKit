@@ -13,6 +13,7 @@
 #include "PropertySlot.h"
 #include <optional>
 #include <span>
+#include <wtf/ScopedLambda.h>
 
 namespace WTF {
 class UniquedStringImpl;
@@ -36,7 +37,7 @@ struct BuiltinClassBinding {
     BuiltinClassID builtinClass { };
     const ClassInfo* instanceClassInfo { nullptr };
     JSObject* (*findPrototype)(JSGlobalObject*) { nullptr };
-    Structure* (*findInstanceStructure)(JSGlobalObject*) { nullptr };
+    bool namesInstanceStructure { false };
 };
 
 struct BuiltinCachedGetterBinding {
@@ -100,6 +101,8 @@ struct BuiltinDirectFunctionBinding {
     std::array<BuiltinDirectValue, maxParameterCount> parameters { };
     uint8_t parameterCount { 0 };
     bool returnsFields { false };
+    // Returns a double in the floating-point return register. It cannot fail.
+    bool returnsNumber { false };
     uint16_t offsetOfNativeObject { 0 };
 };
 
@@ -117,6 +120,8 @@ struct BuiltinHostNumberBinding {
 
 struct BuiltinBindingSet {
     std::span<const BuiltinClassBinding> classes { };
+    // Stores the Structure of the instances of each of the classes that names it and whose Structure the realm has made, at the index of the class. One function for all: every start of a program asks.
+    void (*findInstanceStructures)(JSGlobalObject*, std::span<Structure*>) { nullptr };
     std::span<const BuiltinCachedGetterBinding> cachedGetters { };
     std::span<const BuiltinCustomGetterBinding> customGetters { };
     std::span<const BuiltinDirectFunctionBinding> directFunctions { };
@@ -160,6 +165,8 @@ class BuiltinBindings {
 public:
     JS_EXPORT_PRIVATE static void registerHost(const BuiltinBindingSet&);
     JS_EXPORT_PRIVATE static bool hasHost();
+    // A host lists the native helpers of the engine among its direct functions. A program without a host calls this before it compiles or runs anything.
+    JS_EXPORT_PRIVATE static void bindNativeHelpersOfEngine();
     static bool provides(BuiltinOrigin);
 
     static const ClassInfo* instanceClassInfoOf(BuiltinClassID);
@@ -167,6 +174,7 @@ public:
     static BuiltinClassID classOf(const ClassInfo*);
     static JSObject* findPrototype(JSGlobalObject*, BuiltinClassID);
     static std::span<const BuiltinClassBinding> classesOfHost();
+    static void forEachInstanceStructureOfHost(JSGlobalObject*, const ScopedLambda<void(const BuiltinClassBinding&, Structure*)>&);
     static std::optional<uint32_t> cachedValueOffsetOf(BuiltinOverloadID);
     static std::optional<uint32_t> cachedValueOffsetOf(const ClassInfo*, WTF::UniquedStringImpl* getterName);
     static GetValueFunc::Ptr customGetterOf(BuiltinOverloadID);

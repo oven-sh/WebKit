@@ -13,6 +13,7 @@
 #include "AOTEffectsDeclared.h"
 #include "AOTEffectsOfAccesses.h"
 #include "AOTIR.h"
+#include "AOTTypedArrayKinds.h"
 #include "AOTVector.h"
 #include <algorithm>
 
@@ -254,6 +255,12 @@ static bool joinsTextsThatFitInString(const Program& program, const Function& fu
     return texts.fitInString();
 }
 
+// Only a BigInt is allocated, and only an out-of-range position, or a view whose length may change, calls the runtime operation.
+static bool readsNumberInsideView(const Value& value)
+{
+    return value.opcode == Opcode::GetTypedArrayElement && value.isInsideView() && hasInlineElementAccess(value.typedArrayType());
+}
+
 static Effects refinedEffectsOf(const Program& program, const Function& function, const Value& value, const Effects& declared)
 {
     if (createsNamespaceFromTables(program, value))
@@ -268,6 +275,11 @@ static Effects refinedEffectsOf(const Program& program, const Function& function
     if (resolvesNoRope(program, function, value, declared)) {
         effects = Effects::none();
         effects.reads = declared.reads;
+    }
+    if (readsNumberInsideView(value)) {
+        effects = Effects::none();
+        effects.reads = declared.reads;
+        effects.reads.remove(AbstractHeapSet { AbstractHeap::AllocatorState });
     }
     if (std::optional<unsigned> position = OperandPosition::position(value.opcode)) {
         bool isInsideLength = (Value::opcodesWithIsInBounds.contains(value.opcode) && value.isInBounds()) || (Value::opcodesWithIsPresent.contains(value.opcode) && value.isPresent());
@@ -329,7 +341,7 @@ static bool isDescribedByRowAlone(Opcode opcode)
     return opcodes.contains(opcode);
 }
 
-static void describeEffectsInto(const Program& program, const Function& function, const Value& value, EffectDescription& description)
+static void describeEffectsInto(const Program& program, const Function& function, const Value& value, EffectDescription& description, const EffectSummaries* summaries = nullptr)
 {
     Effects declared = declaredEffectsOf(program, value);
     if (isDescribedByRowAlone(value.opcode)) {
@@ -347,7 +359,7 @@ static void describeEffectsInto(const Program& program, const Function& function
         describeAccess(program, function, value, declared, description);
         break;
     case EffectRule::Call:
-        describeCall(program, function, value, declared, description);
+        describeCall(program, function, value, declared, description, summaries);
         break;
     case EffectRule::Builtin:
         describeBuiltinCall(program, function, value, declared, description);
@@ -380,10 +392,10 @@ static void describeEffectsInto(const Program& program, const Function& function
     }
 }
 
-EffectDescription describeEffects(const Program& program, const Function& function, const Value& value)
+EffectDescription describeEffects(const Program& program, const Function& function, const Value& value, const EffectSummaries* summaries)
 {
     EffectDescription description;
-    describeEffectsInto(program, function, value, description);
+    describeEffectsInto(program, function, value, description, summaries);
     return description;
 }
 
@@ -410,15 +422,42 @@ EffectDescription describeCodeRunBy(const Program& program, const Function& func
     return description;
 }
 
+static ALWAYS_INLINE void mergeEffectsOnCall(const EffectContext& context, std::span<const FunctionID> functions, EffectsOnEdges& effects, bool& namesFunctionWithoutBody)
+{
+    for (FunctionID function : functions) {
+        if (context.program.at(function).hasBody())
+            CalleeSummary(context, function)->mergeOnCallInto(effects);
+        else
+            namesFunctionWithoutBody = true;
+    }
+}
+
+static NEVER_INLINE void mergeEffectsOnCallOfLongList(const EffectContext& context, std::span<const FunctionID> functions, EffectsOnEdges& effects, bool& namesFunctionWithoutBody)
+{
+    AnswersForCalleeLists* answers = context.summaries.answersForCalleeLists();
+    if (!answers) {
+        mergeEffectsOnCall(context, functions, effects, namesFunctionWithoutBody);
+        return;
+    }
+    AnswersForCalleeLists::EffectsOnCall onCall = answers->effectsOnCall(functions, [&] {
+        AnswersForCalleeLists::EffectsOnCall computed;
+        mergeEffectsOnCall(context, functions, computed.effects, computed.namesFunctionWithoutBody);
+        return computed;
+    });
+    effects.merge(onCall.effects);
+    namesFunctionWithoutBody = onCall.namesFunctionWithoutBody;
+}
+
 EffectsOnEdges resolveEffects(const EffectContext& context, const EffectDescription& description)
 {
     EffectsOnEdges result = description.own;
     bool namesFunctionWithoutBody = false;
-    for (FunctionID function : description.functions) {
-        if (context.program.at(function).hasBody())
-            result.merge(CalleeSummary(context, function)->onCall());
+    // Most descriptions name no function.
+    if (!description.functions.isEmpty()) {
+        if (description.functions.size() < AnswersForCalleeLists::fewestCallees) [[likely]]
+            mergeEffectsOnCall(context, description.functions.span(), result, namesFunctionWithoutBody);
         else
-            namesFunctionWithoutBody = true;
+            mergeEffectsOnCallOfLongList(context, description.functions.span(), result, namesFunctionWithoutBody);
     }
     static_assert(Effects::unknownCode().mayThrow);
     if (description.own.normal.maySuspend)

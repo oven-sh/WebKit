@@ -72,12 +72,14 @@ function f1 name="put" module=m0 flags=[IsChecked, HasExplicitName] length=3 thi
 }
 
 # An optional number travels in a floating-point register, where undefined is one pattern of bits among the NaNs. `value as number` promises a number: one comparison of the bits sends undefined away, and a number is stored as it is.
+# Undefined becomes the one NaN, a constant, which is stored in line too.
 # CHECK-LABEL: name="put" role=Source
 # CHECK: Int64 b@[[bits]] = BitwiseCast(b@[[value]], {{*}}:TypeTest)
 # CHECK: Int32 b@[[isNumber]] = LessThan(b@[[bits]], {{*}}:TypeTest)
 # CHECK: Branch(b@[[isNumber]], Terminal, {{*}}:TypeTest)
 # CHECK-NEXT: Successors: Then:#{{*}}, Else:Rare:#{{*}}
 # CHECK: Store(b@[[value]], b@{{*}}, ControlDependent|Writes:TypedArrayElements, {{*}}:PutTypedArrayElement)
+# CHECK: Store({{*}}, b@{{*}}, ControlDependent|Writes:TypedArrayElements, {{*}}:PutTypedArrayElement)
 # CHECK-LABEL: end of function
 # The number is never boxed, compared with itself or replaced.
 # NONE-LABEL: name="put" role=Source
@@ -85,6 +87,6 @@ function f1 name="put" module=m0 flags=[IsChecked, HasExplicitName] length=3 thi
 # NONE-NOT: Select(
 # NONE-NOT: Double b@{{*}} = Phi(
 # NONE-LABEL: end of function
-# The arm for undefined calls, so its moves follow the calling convention.
-# X64: instructions: 10, patchpoints: 1, rare instructions: 8
-# ARM64: instructions: 13, patchpoints: 1, rare instructions: 8
+# Both arms call for a view whose length may change, so those moves follow the calling convention.
+# X64: instructions: 10, patchpoints: 1, rare instructions: 17
+# ARM64: instructions: 12, patchpoints: 1, rare instructions: 19

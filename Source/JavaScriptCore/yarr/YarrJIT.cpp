@@ -1090,6 +1090,26 @@ class YarrGenerator final : public YarrJITInfo {
         }
     }
 
+    // For where a new attempt to match the body starts: nothing can backtrack into the last attempt, so its contexts are dead.
+    // Backtracking has freed all of them but those that a lookaround allocated before it succeeded, since nothing backtracks
+    // into a lookaround that has matched. A search that keeps them runs out of stack after some number of start positions.
+    void releaseAllParenContexts()
+    {
+        if (!m_lookaroundsAllocateParenContexts)
+            return;
+#if ENABLE(YARR_JIT_REGEXP_TEST_INLINE)
+        ASSERT(m_executionMode != ExecutionMode::InlineTest);
+#endif
+        CCallHelpers::Address frame = frameAddress();
+        ASSERT(frame.base == GPRInfo::callFrameRegister);
+        m_jit.addPtr(MacroAssembler::TrustedImm32(frame.offset), frame.base, m_regs.regT0);
+        m_jit.move(m_regs.regT0, MacroAssembler::stackPointerRegister);
+        if (m_regs.freelistRegister != InvalidGPRReg)
+            m_jit.move(MacroAssembler::TrustedImmPtr(nullptr), m_regs.freelistRegister);
+        else
+            m_jit.storePtr(MacroAssembler::TrustedImmPtr(nullptr), MacroAssembler::Address(m_regs.matchingContext, MatchingContextHolder::offsetOfFreeList()));
+    }
+
     void storeBeginAndMatchAmountToParenContext(MacroAssembler::RegisterID beginGPR, MacroAssembler::RegisterID matchAmountGPR, MacroAssembler::RegisterID parenContextGPR)
     {
         static_assert(ParenContext::beginOffset() + 4 == ParenContext::matchAmountOffset());
@@ -1117,7 +1137,110 @@ class YarrGenerator final : public YarrJITInfo {
     static_assert(directCopySlotThreshold >= slotsPerLoopIteration);
 #endif
 
+    // Each alternative of a group has frame slots of its own, one range after the other. To backtrack into an iteration, only
+    // the slots of the alternative that matched it are needed. In /(?:\w|<a big alternative>)*/ that is none for most
+    // iterations. So in a group with several alternatives, an alternative that has matched stores which slots are its own, next
+    // to its return address, and only those are saved and restored. What it stores has the lifetime of the return address.
+    //
+    // It is stored in the slot that the interpreter uses for BackTrackInfoAlternative, which the JIT has no other use for. That is
+    // the first slot of the group's interior, so an enclosing group saves and restores it like any other.
+#if CPU(ARM64)
+    // emitFrameSlotsTransfer() copies a slot in about 1.25 instructions, emitLiveFrameSlotsTransfer() in 4.
+    static constexpr unsigned minInteriorSlotsToTrackLive = 16;
+    static constexpr unsigned liveSlotCopyCostRatio = 3;
+#else
+    static constexpr unsigned minInteriorSlotsToTrackLive = directCopySlotThreshold;
+#endif
+    static_assert(YarrStackSpaceForBackTrackInfoAlternative == 1);
+
+    static unsigned liveFrameSlotsLocation(PatternTerm* term) { return term->frameLocation + YarrStackSpaceForBackTrackInfoParentheses; }
+
+    // Not counting the slot at liveFrameSlotsLocation().
+    static unsigned interiorFrameSlots(PatternTerm* term) { return term->parentheses.disjunction->m_callFrameSize - liveFrameSlotsLocation(term) - 1; }
+
+    // Only of a term compiled to ParenthesesSubpatternBegin/End.
+    static bool tracksLiveFrameSlots(PatternTerm* term)
+    {
+        PatternDisjunction* disjunction = term->parentheses.disjunction;
+        if (disjunction->m_alternatives.size() < 2 || interiorFrameSlots(term) < minInteriorSlotsToTrackLive)
+            return false;
+        // What an alternative says are its slots is what gets copied. If that is not inside the group, copy all of the group's.
+        for (auto& alternative : disjunction->m_alternatives) {
+            bool isInside = alternative->m_firstFrameSlot > liveFrameSlotsLocation(term) && alternative->m_firstFrameSlot <= alternative->m_callFrameSize && alternative->m_callFrameSize <= disjunction->m_callFrameSize;
+            ASSERT(isInside);
+            if (!isInside)
+                return false;
+        }
+        return true;
+    }
+
+    // A group that does not track them. A few slots are copied in less time than it takes to find out.
+    static bool skipsFrameSlotsOfFirstIteration(PatternTerm* term)
+    {
+        return term->parentheses.disjunction->m_callFrameSize - liveFrameSlotsLocation(term) >= directCopySlotThreshold;
+    }
+
+    // Low half: how many slots. High half: how many bytes of other slots are between liveFrameSlotsLocation() and the first of them.
+    static uint64_t encodeLiveFrameSlots(unsigned slotsBefore, unsigned count) { return static_cast<uint64_t>(slotsBefore * sizeof(uintptr_t)) << 32 | count; }
+
+    static uint64_t liveFrameSlotsAfterMatching(PatternTerm* term, PatternAlternative* alternative)
+    {
+        unsigned count = alternative->m_callFrameSize - alternative->m_firstFrameSlot;
+#if CPU(ARM64)
+        if (count * liveSlotCopyCostRatio >= interiorFrameSlots(term))
+            return encodeLiveFrameSlots(0, interiorFrameSlots(term));
+#endif
+        return encodeLiveFrameSlots(alternative->m_firstFrameSlot - liveFrameSlotsLocation(term) - 1, count);
+    }
+
     enum class FrameSlotTransfer : bool { Save, Restore };
+
+    // For a group that tracksLiveFrameSlots(): copies the slot at liveFrameSlotsLocation() and the slots it names.
+    // A slot has the same index in the save area as emitFrameSlotsTransfer() gives it.
+    // contextGPR is preserved. The other three are clobbered.
+    void emitLiveFrameSlotsTransfer(FrameSlotTransfer direction, MacroAssembler::RegisterID contextGPR, MacroAssembler::RegisterID framePointerGPR, MacroAssembler::RegisterID countGPR, MacroAssembler::RegisterID offsetGPR, PatternTerm* term)
+    {
+        ASSERT(noOverlap(contextGPR, framePointerGPR, countGPR, offsetGPR, GPRInfo::callFrameRegister));
+        ASSERT(tracksLiveFrameSlots(term));
+
+        bool isSave = direction == FrameSlotTransfer::Save;
+        const ptrdiff_t contextSaveAreaOffset = ParenContext::savedFrameOffset(m_parenContextSizes);
+        MacroAssembler::Address inFrame = frameAddress().withOffset(liveFrameSlotsLocation(term) * sizeof(uintptr_t));
+        MacroAssembler::Address inContext(contextGPR, contextSaveAreaOffset);
+
+        m_jit.load64(isSave ? inFrame : inContext, countGPR);
+#if CPU(ARM64)
+        MacroAssembler::Jump allAreLive = m_jit.branch32(MacroAssembler::Equal, countGPR, MacroAssembler::TrustedImm32(interiorFrameSlots(term)));
+#endif
+        m_jit.store64(countGPR, isSave ? inContext : inFrame);
+        MacroAssembler::Jump noneAreLive = m_jit.branchTest32(MacroAssembler::Zero, countGPR);
+        m_jit.urshift64(countGPR, MacroAssembler::TrustedImm32(32), offsetGPR);
+        m_jit.zeroExtend32ToWord(countGPR, countGPR);
+
+        // From both pointers, the live slots are at indices 1 to count.
+        m_jit.addPtr(MacroAssembler::TrustedImmPtr(static_cast<intptr_t>(inFrame.offset)), inFrame.base, framePointerGPR);
+        m_jit.addPtr(offsetGPR, framePointerGPR);
+        m_jit.addPtr(MacroAssembler::TrustedImmPtr(contextSaveAreaOffset), contextGPR);
+        m_jit.addPtr(offsetGPR, contextGPR);
+        MacroAssembler::BaseIndex frameSlot(framePointerGPR, countGPR, MacroAssembler::TimesEight);
+        MacroAssembler::BaseIndex contextSlot(contextGPR, countGPR, MacroAssembler::TimesEight);
+        MacroAssembler::Label loopHead(&m_jit);
+        if (isSave)
+            m_jit.transferPtr(frameSlot, contextSlot);
+        else
+            m_jit.transferPtr(contextSlot, frameSlot);
+        m_jit.branchSub32(MacroAssembler::NonZero, MacroAssembler::TrustedImm32(1), countGPR).linkTo(loopHead, &m_jit);
+        m_jit.subPtr(offsetGPR, contextGPR);
+        m_jit.subPtr(MacroAssembler::TrustedImmPtr(contextSaveAreaOffset), contextGPR);
+
+#if CPU(ARM64)
+        MacroAssembler::Jump done = m_jit.jump();
+        allAreLive.link(&m_jit);
+        emitFrameSlotsTransfer(direction, contextGPR, framePointerGPR, countGPR, liveFrameSlotsLocation(term), term->parentheses.disjunction->m_callFrameSize);
+        done.link(&m_jit);
+#endif
+        noneAreLive.link(&m_jit);
+    }
 
     // Copy frame slots [firstSlot, lastSlot) between the frame and the ParenContext save area. The
     // save area is indexed relative to firstSlot (i.e. frame slot firstSlot maps to save-area slot
@@ -1221,9 +1344,9 @@ class YarrGenerator final : public YarrJITInfo {
     }
 
     // On return matchAmountGPR holds the pre-iteration matchAmount for the caller to increment.
-    void saveParenContext(MacroAssembler::RegisterID parenContextReg, MacroAssembler::RegisterID matchAmountGPR, MacroAssembler::RegisterID scratchGPR, unsigned firstSubpattern, unsigned lastSubpattern, unsigned subpatternBaseFrameLocation, bool savesReturnAddress, unsigned lastSlot)
+    void saveParenContext(MacroAssembler::RegisterID parenContextReg, MacroAssembler::RegisterID matchAmountGPR, MacroAssembler::RegisterID scratchGPR, MacroAssembler::RegisterID scratch2GPR, unsigned firstSubpattern, unsigned lastSubpattern, unsigned subpatternBaseFrameLocation, bool savesReturnAddress, PatternTerm* term)
     {
-        ASSERT(noOverlap(parenContextReg, matchAmountGPR, scratchGPR, m_regs.index, GPRInfo::callFrameRegister));
+        ASSERT(noOverlap(parenContextReg, matchAmountGPR, scratchGPR, scratch2GPR, m_regs.index, GPRInfo::callFrameRegister));
 
         BitVector duplicateNamedCaptureGroups;
         bool hasNamedCaptures = m_pattern.hasDuplicateNamedCaptureGroups();
@@ -1231,7 +1354,17 @@ class YarrGenerator final : public YarrJITInfo {
         // Save only this group's own interior slots [base+4, lastSlot); a group's
         // sibling/ancestor slots are never touched by its iterations, so they do not need to be
         // snapshotted.
-        emitFrameSlotsTransfer(FrameSlotTransfer::Save, parenContextReg, matchAmountGPR, scratchGPR, subpatternBaseFrameLocation + YarrStackSpaceForBackTrackInfoParentheses, lastSlot);
+        if (tracksLiveFrameSlots(term))
+            emitLiveFrameSlotsTransfer(FrameSlotTransfer::Save, parenContextReg, matchAmountGPR, scratchGPR, scratch2GPR, term);
+        else {
+            // There is no iteration before the first, so there is nothing to backtrack into.
+            MacroAssembler::Jump isFirstIteration;
+            if (skipsFrameSlotsOfFirstIteration(term))
+                isFirstIteration = m_jit.branchTest32(MacroAssembler::Zero, frameAddress().withOffset((subpatternBaseFrameLocation + BackTrackInfoParentheses::matchAmountIndex()) * sizeof(uintptr_t)));
+            emitFrameSlotsTransfer(FrameSlotTransfer::Save, parenContextReg, matchAmountGPR, scratchGPR, subpatternBaseFrameLocation + YarrStackSpaceForBackTrackInfoParentheses, term->parentheses.disjunction->m_callFrameSize);
+            if (isFirstIteration.isSet())
+                isFirstIteration.link(&m_jit);
+        }
 
         // Save-at-BEGIN: snapshot the pre-iteration index and matchAmount.
         loadFromFrame(subpatternBaseFrameLocation + BackTrackInfoParentheses::matchAmountIndex(), matchAmountGPR);
@@ -1263,16 +1396,25 @@ class YarrGenerator final : public YarrJITInfo {
     }
 
     // On return matchAmountGPR holds the restored matchAmount, so the caller can use it without reloading from the frame.
-    void restoreParenContext(MacroAssembler::RegisterID parenContextReg, MacroAssembler::RegisterID matchAmountGPR, MacroAssembler::RegisterID scratchGPR, unsigned firstSubpattern, unsigned lastSubpattern, unsigned subpatternBaseFrameLocation, bool savesReturnAddress, unsigned lastSlot)
+    void restoreParenContext(MacroAssembler::RegisterID parenContextReg, MacroAssembler::RegisterID matchAmountGPR, MacroAssembler::RegisterID scratchGPR, MacroAssembler::RegisterID scratch2GPR, unsigned firstSubpattern, unsigned lastSubpattern, unsigned subpatternBaseFrameLocation, bool savesReturnAddress, PatternTerm* term)
     {
-        ASSERT(noOverlap(parenContextReg, matchAmountGPR, scratchGPR, m_regs.index, GPRInfo::callFrameRegister));
+        ASSERT(noOverlap(parenContextReg, matchAmountGPR, scratchGPR, scratch2GPR, m_regs.index, GPRInfo::callFrameRegister));
 
         BitVector duplicateNamedCaptureGroups;
         bool hasNamedCaptures = m_pattern.hasDuplicateNamedCaptureGroups();
 
         // Copy this group's own interior slots back first (this clobbers matchAmountGPR), then load
         // matchAmount into matchAmountGPR so it stays live for the caller.
-        emitFrameSlotsTransfer(FrameSlotTransfer::Restore, parenContextReg, matchAmountGPR, scratchGPR, subpatternBaseFrameLocation + YarrStackSpaceForBackTrackInfoParentheses, lastSlot);
+        if (tracksLiveFrameSlots(term))
+            emitLiveFrameSlotsTransfer(FrameSlotTransfer::Restore, parenContextReg, matchAmountGPR, scratchGPR, scratch2GPR, term);
+        else {
+            MacroAssembler::Jump wasFirstIteration;
+            if (skipsFrameSlotsOfFirstIteration(term))
+                wasFirstIteration = m_jit.branchTest32(MacroAssembler::Zero, MacroAssembler::Address(parenContextReg, ParenContext::matchAmountOffset()));
+            emitFrameSlotsTransfer(FrameSlotTransfer::Restore, parenContextReg, matchAmountGPR, scratchGPR, subpatternBaseFrameLocation + YarrStackSpaceForBackTrackInfoParentheses, term->parentheses.disjunction->m_callFrameSize);
+            if (wasFirstIteration.isSet())
+                wasFirstIteration.link(&m_jit);
+        }
 
         loadBeginAndMatchAmountFromParenContext(parenContextReg, m_regs.index, matchAmountGPR);
         storeToFrame(m_regs.index, subpatternBaseFrameLocation + BackTrackInfoParentheses::beginIndex());
@@ -3133,6 +3275,10 @@ class YarrGenerator final : public YarrJITInfo {
         bool m_isDeadCode { false };
 #if defined(YARR_FOR_IMAGE)
         InputClaims m_claims;
+        // See planForFailedRuns().
+        bool m_skipsStartsBehindFailedRun { false };
+        std::optional<unsigned> m_failedRunSlot;
+        MacroAssembler::Jump m_hasFailedFromHere;
 #endif
 
         // Currently used in the case of some of the more complex management of
@@ -3156,6 +3302,9 @@ class YarrGenerator final : public YarrJITInfo {
 #else
         ReturnAddressSite m_returnAddress;
 #endif
+
+        // In a NestedAlternativeNext/End of a group that tracksLiveFrameSlots(): liveFrameSlotsAfterMatching() the previous alternative.
+        std::optional<uint64_t> m_liveFrameSlots;
 
         BoyerMooreInfo* m_bmInfo { nullptr };
         MaskedAlternativeInfo* m_maskedAltInfo { nullptr };
@@ -4787,8 +4936,10 @@ class YarrGenerator final : public YarrJITInfo {
 #if defined(YARR_FOR_IMAGE)
 
         bool savesStartIndex = savesStartIndexInsteadOfCount(op);
-        if (op.m_claims.isInNonBacktrackingAlternative || savesStartIndex) {
-            if (savesStartIndex)
+        if (op.m_claims.isInNonBacktrackingAlternative || savesStartIndex || goesBackByIndex(op)) {
+            if (goesBackByIndex(op))
+                storeToFrame(m_regs.index, term->frameLocation + BackTrackInfoPatternCharacter::beginIndex());
+            else if (savesStartIndex && !op.m_skipsStartsBehindFailedRun)
                 saveIndexReachedAt(op, term->frameLocation + BackTrackInfoPatternCharacter::beginIndex());
             if (isLatin1(ch) || m_charSize != CharSize::Char8) {
                 MacroAssembler::JumpList endsRun;
@@ -4800,6 +4951,8 @@ class YarrGenerator final : public YarrJITInfo {
                     m_jit.jump(nextCharacter);
                 endsRun.link(&m_jit);
             }
+            if (goesBackByIndex(op))
+                storeToFrame(m_regs.index, term->frameLocation + BackTrackInfoPatternCharacter::matchAmountIndex());
             defineReentryLabel(op);
             return;
         }
@@ -4874,15 +5027,21 @@ class YarrGenerator final : public YarrJITInfo {
         if (m_backtrackingState.isEmpty())
             return;
         if (op.m_claims.isInNonBacktrackingAlternative) {
-            restoreIndexFromMatchStart(op);
+            if (!op.m_skipsStartsBehindFailedRun)
+                restoreIndexFromMatchStart(op);
             return;
         }
 #endif
         m_backtrackingState.link(*this, op);
 
 #if defined(YARR_FOR_IMAGE)
+        if (goesBackByIndex(op)) {
+            goBackByIndex(op, term->frameLocation + BackTrackInfoPatternCharacter::beginIndex(), term->frameLocation + BackTrackInfoPatternCharacter::matchAmountIndex());
+            return;
+        }
         if (savesStartIndexInsteadOfCount(op)) {
-            restoreIndexReachedAt(op, term->frameLocation + BackTrackInfoPatternCharacter::beginIndex());
+            if (!op.m_skipsStartsBehindFailedRun)
+                restoreIndexReachedAt(op, term->frameLocation + BackTrackInfoPatternCharacter::beginIndex());
             m_backtrackingState.fallthrough();
             return;
         }
@@ -4986,6 +5145,14 @@ class YarrGenerator final : public YarrJITInfo {
             m_jit.jump(op.m_reentry);
             nonGreedyFailures.link(&m_jit);
         }
+#if defined(YARR_FOR_IMAGE)
+        if (op.m_failedRunSlot)
+            storeToFrame(m_regs.index, *op.m_failedRunSlot);
+        if (op.m_skipsStartsBehindFailedRun) {
+            m_backtrackingState.fallthrough();
+            return;
+        }
+#endif
 
         if (m_decodeSurrogatePairs && !U_IS_BMP(ch)) {
             // subtract countRegister*2 for non-BMP characters
@@ -5487,6 +5654,22 @@ class YarrGenerator final : public YarrJITInfo {
         return true;
     }
 
+    // A greedy run of planForFailedRuns() that gives its units back one at a time keeps where it began and where it stopped, and no count.
+    bool goesBackByIndex(const YarrOp& op) const
+    {
+        return op.m_skipsStartsBehindFailedRun && op.m_term->quantityType == QuantifierType::Greedy && !op.m_term->possessive() && !op.m_claims.isInNonBacktrackingAlternative;
+    }
+
+    void goBackByIndex(YarrOp& op, unsigned beginSlot, unsigned endSlot)
+    {
+        MacroAssembler::Jump hasGivenEverythingBack = m_jit.branch32(MacroAssembler::Equal, m_regs.index, frameAddress().withOffset(beginSlot * sizeof(void*)));
+        m_jit.sub32(MacroAssembler::TrustedImm32(1), m_regs.index);
+        m_jit.jump(op.m_reentry);
+        hasGivenEverythingBack.link(&m_jit);
+        loadFromFrame(endSlot, m_regs.index);
+        m_backtrackingState.fallthrough();
+    }
+
     bool savesStartIndexInsteadOfCount(const YarrOp& op) const
     {
         const PatternTerm& term = *op.m_term;
@@ -5518,8 +5701,10 @@ class YarrGenerator final : public YarrJITInfo {
 #if defined(YARR_FOR_IMAGE)
 
         bool savesStartIndex = savesStartIndexInsteadOfCount(op);
-        if (needsNoMatchCount(op) || savesStartIndex) {
-            if (savesStartIndex)
+        if (needsNoMatchCount(op) || savesStartIndex || goesBackByIndex(op)) {
+            if (goesBackByIndex(op))
+                storeToFrame(m_regs.index, term->frameLocation + BackTrackInfoCharacterClass::beginIndex());
+            else if (savesStartIndex && !op.m_skipsStartsBehindFailedRun)
                 saveIndexReachedAt(op, term->frameLocation + BackTrackInfoCharacterClass::beginIndex());
             MacroAssembler::JumpList endsRun;
             MacroAssembler::JumpList endsRunAfterOneUnit;
@@ -5543,6 +5728,8 @@ class YarrGenerator final : public YarrJITInfo {
                 m_jit.sub32(MacroAssembler::TrustedImm32(1), m_regs.index);
             }
             endsRun.link(&m_jit);
+            if (goesBackByIndex(op))
+                storeToFrame(m_regs.index, term->frameLocation + BackTrackInfoCharacterClass::matchAmountIndex());
             defineReentryLabel(op);
             return;
         }
@@ -5675,7 +5862,8 @@ class YarrGenerator final : public YarrJITInfo {
         if (m_backtrackingState.isEmpty())
             return;
         if (op.m_claims.isInNonBacktrackingAlternative) {
-            restoreIndexFromMatchStart(op);
+            if (!op.m_skipsStartsBehindFailedRun)
+                restoreIndexFromMatchStart(op);
             return;
         }
         RELEASE_ASSERT(!needsNoMatchCount(op));
@@ -5683,8 +5871,13 @@ class YarrGenerator final : public YarrJITInfo {
         m_backtrackingState.link(*this, op);
 
 #if defined(YARR_FOR_IMAGE)
+        if (goesBackByIndex(op)) {
+            goBackByIndex(op, term->frameLocation + BackTrackInfoCharacterClass::beginIndex(), term->frameLocation + BackTrackInfoCharacterClass::matchAmountIndex());
+            return;
+        }
         if (savesStartIndexInsteadOfCount(op)) {
-            restoreIndexReachedAt(op, term->frameLocation + BackTrackInfoCharacterClass::beginIndex());
+            if (!op.m_skipsStartsBehindFailedRun)
+                restoreIndexReachedAt(op, term->frameLocation + BackTrackInfoCharacterClass::beginIndex());
             m_backtrackingState.fallthrough();
             return;
         }
@@ -5846,6 +6039,14 @@ class YarrGenerator final : public YarrJITInfo {
                 m_jit.sub32(MacroAssembler::TrustedImm32(1), m_regs.index);
         }
         nonGreedyFailures.link(&m_jit);
+#if defined(YARR_FOR_IMAGE)
+        if (op.m_failedRunSlot)
+            storeToFrame(m_regs.index, *op.m_failedRunSlot);
+        if (op.m_skipsStartsBehindFailedRun) {
+            m_backtrackingState.fallthrough();
+            return;
+        }
+#endif
 
         // Restore the frontier to where this term began. With per-match widths
         // (unicode) the distance is not derivable from the match count, so it is
@@ -6031,6 +6232,10 @@ class YarrGenerator final : public YarrJITInfo {
         YarrOp& op = m_ops[opIndex];
         PatternTerm* term = op.m_term;
 
+#if defined(YARR_FOR_IMAGE)
+        if (op.m_failedRunSlot)
+            op.m_hasFailedFromHere = m_jit.branch32(MacroAssembler::LessThanOrEqual, m_regs.index, frameAddress().withOffset(*op.m_failedRunSlot * sizeof(void*)));
+#endif
         switch (term->type) {
         case PatternTerm::Type::PatternCharacter:
             switch (term->quantityType) {
@@ -6100,6 +6305,16 @@ class YarrGenerator final : public YarrJITInfo {
         }
     }
     void backtrackTerm(size_t opIndex)
+    {
+        backtrackTermByType(opIndex);
+#if defined(YARR_FOR_IMAGE)
+        // Nothing has been taken, so this goes back as the run does once it has given everything up.
+        if (m_ops[opIndex].m_hasFailedFromHere.isSet())
+            m_backtrackingState.append(m_ops[opIndex].m_hasFailedFromHere);
+#endif
+    }
+
+    void backtrackTermByType(size_t opIndex)
     {
         YarrOp& op = m_ops[opIndex];
         PatternTerm* term = op.m_term;
@@ -6615,6 +6830,10 @@ class YarrGenerator final : public YarrJITInfo {
 #endif
                     unsigned parenthesesFrameLocation = term->frameLocation;
                     op.m_returnAddress = storeToFrameWithPatch(parenthesesFrameLocation + BackTrackInfoParentheses::returnAddressIndex());
+#if ENABLE(YARR_JIT_ALL_PARENS_EXPRESSIONS)
+                    if (op.m_liveFrameSlots)
+                        m_jit.store64(MacroAssembler::TrustedImm64(*op.m_liveFrameSlots), frameAddress().withOffset(liveFrameSlotsLocation(term) * sizeof(uintptr_t)));
+#endif
                 }
 
                 if (term->quantityType != QuantifierType::FixedCount && !term->quantityMinCount && !m_ops[op.m_previousOp].m_alternative->m_minimumSize) {
@@ -6719,6 +6938,10 @@ class YarrGenerator final : public YarrJITInfo {
 #endif
                     unsigned parenthesesFrameLocation = term->frameLocation;
                     op.m_returnAddress = storeToFrameWithPatch(parenthesesFrameLocation + BackTrackInfoParentheses::returnAddressIndex());
+#if ENABLE(YARR_JIT_ALL_PARENS_EXPRESSIONS)
+                    if (op.m_liveFrameSlots)
+                        m_jit.store64(MacroAssembler::TrustedImm64(*op.m_liveFrameSlots), frameAddress().withOffset(liveFrameSlotsLocation(term) * sizeof(uintptr_t)));
+#endif
                 }
 
 #if !defined(YARR_FOR_IMAGE)
@@ -6835,7 +7058,7 @@ class YarrGenerator final : public YarrJITInfo {
             case YarrOpCode::ParenthesesSubpatternTerminalBegin: {
                 PatternTerm* term = op.m_term;
 #if !defined(YARR_FOR_IMAGE)
-                ASSERT(!term->capture());
+                ASSERT(!term->capture() || !shouldRecordSubpatterns());
 #else
                 ASSERT(!term->capture() || term->possessive());
 #endif
@@ -7053,6 +7276,9 @@ class YarrGenerator final : public YarrJITInfo {
 
                 storeToFrame(MacroAssembler::TrustedImm32(0), parenthesesFrameLocation + BackTrackInfoParentheses::matchAmountIndex());
                 storeToFrame(MacroAssembler::TrustedImmPtr(nullptr), parenthesesFrameLocation + BackTrackInfoParentheses::parenContextHeadIndex());
+                // There is no iteration before the first. This says what to copy, so unlike the return address it is never left unset.
+                if (tracksLiveFrameSlots(term))
+                    storeToFrame(MacroAssembler::TrustedImm32(0), liveFrameSlotsLocation(term));
 
                 // NonGreedy with min == 0: initially skip the subpattern (set beginIndex = -1
                 // and jump to end); on backtrack we re-enter here to try matching it. With
@@ -7075,7 +7301,7 @@ class YarrGenerator final : public YarrJITInfo {
                 // Save-at-BEGIN. saveParenContext leaves the pre-iteration matchAmount
                 // in regT2 (countTemporary) for the increment below.
                 bool savesReturnAddress = term->parentheses.disjunction->m_alternatives.size() > 1;
-                saveParenContext(newParenContextReg, /* matchAmountGPR */ countTemporary, /* scratchGPR */ m_regs.regT3, term->parentheses.subpatternId, term->parentheses.lastSubpatternId, parenthesesFrameLocation, savesReturnAddress, term->parentheses.disjunction->m_callFrameSize);
+                saveParenContext(newParenContextReg, /* matchAmountGPR */ countTemporary, /* scratchGPR */ m_regs.regT3, /* scratch2GPR */ currParenContextReg, term->parentheses.subpatternId, term->parentheses.lastSubpatternId, parenthesesFrameLocation, savesReturnAddress, term);
 
                 // Bump matchAmount: the just-pushed context captured the pre-increment value.
                 m_jit.add32(MacroAssembler::TrustedImm32(1), countTemporary);
@@ -7209,9 +7435,14 @@ class YarrGenerator final : public YarrJITInfo {
             // several points; all of them converge here, index at the first
             // alternative's claimed frontier, before alternative 0's terms. Route
             // on the match-start character now so every path is dispatched.
-            if (op.m_op == YarrOpCode::BodyAlternativeBegin && op.m_bodyDispatch) {
-                generateBodyDispatch(op);
-                bindBodyDispatchEntry(*op.m_bodyDispatch, 0);
+            if (op.m_op == YarrOpCode::BodyAlternativeBegin) {
+#if ENABLE(YARR_JIT_ALL_PARENS_EXPRESSIONS)
+                releaseAllParenContexts();
+#endif
+                if (op.m_bodyDispatch) {
+                    generateBodyDispatch(op);
+                    bindBodyDispatchEntry(*op.m_bodyDispatch, 0);
+                }
             }
 
             ++opIndex;
@@ -7875,9 +8106,8 @@ class YarrGenerator final : public YarrJITInfo {
                     // With a minimum of zero, any number of iterations is accepted.
                     // Just accepting and returning back to the forward matching path.
                     m_backtrackingState.linkTo(endOp.m_reentry, &m_jit);
-#if defined(YARR_FOR_IMAGE)
+                    // What ParenthesesSubpatternTerminalEnd took goes on to the term before the group.
                     m_backtrackingState.append(op.m_jumps);
-#endif
                     break;
                 }
 
@@ -7893,7 +8123,7 @@ class YarrGenerator final : public YarrJITInfo {
 #endif
                 break;
             }
-            case YarrOpCode::ParenthesesSubpatternTerminalEnd:
+            case YarrOpCode::ParenthesesSubpatternTerminalEnd: {
 #if defined(YARR_FOR_IMAGE)
                 if (op.m_term->possessive()) {
                     if (!m_backtrackingState.isEmpty()) {
@@ -7909,10 +8139,20 @@ class YarrGenerator final : public YarrJITInfo {
                 }
 
 #endif
-                // We should never be backtracking to here (hence the 'terminal' in the name).
-                ASSERT(m_backtrackingState.isEmpty());
+                // We should never be backtracking to here (hence the 'terminal' in the name), unless an enclosing group
+                // rejects an iteration that matched the empty string. See YarrPatternConstructor::markTailLoops().
+                PatternTerm* term = op.m_term;
+                ASSERT(m_backtrackingState.isEmpty() || term->parentheses.isTailLoop);
+                if (!term->quantityMinCount) {
+                    // None of this group's iterations has completed, and the one it tried has failed. It has nothing else to try.
+                    m_backtrackingState.takeBacktracksToJumpList(m_ops[op.m_previousOp].m_jumps, &m_jit);
+                } else {
+                    // A group that has matched at least once has not matched the empty string.
+                    m_backtrackingState.takeBacktracksToJumpList(m_abortExecution, &m_jit);
+                }
                 m_backtrackingState.append(op.m_jumps);
                 break;
+            }
 
             // YarrOpCode::ParenthesesSubpatternFixedCountBegin/End
             //
@@ -7984,7 +8224,7 @@ class YarrGenerator final : public YarrJITInfo {
                 // matchAmount in regT2, which survives freeParenContext below, so we skip
                 // reloading it from the frame.
                 bool savesReturnAddress = term->parentheses.disjunction->m_alternatives.size() > 1;
-                restoreParenContext(currParenContextReg, /* matchAmountGPR */ countTemporary, /* scratchGPR */ m_regs.regT3, term->parentheses.subpatternId, term->parentheses.lastSubpatternId, parenthesesFrameLocation, savesReturnAddress, term->parentheses.disjunction->m_callFrameSize);
+                restoreParenContext(currParenContextReg, /* matchAmountGPR */ countTemporary, /* scratchGPR */ m_regs.regT3, /* scratch2GPR */ newParenContextReg, term->parentheses.subpatternId, term->parentheses.lastSubpatternId, parenthesesFrameLocation, savesReturnAddress, term);
 
                 m_jit.loadPtr(MacroAssembler::Address(currParenContextReg, ParenContext::nextOffset()), newParenContextReg);
                 freeParenContext(currParenContextReg);
@@ -8324,7 +8564,8 @@ class YarrGenerator final : public YarrJITInfo {
                 alternativeEndOpCode = YarrOpCode::NestedAlternativeEnd;
             }
 #if !defined(YARR_FOR_IMAGE)
-        } else if (term->parentheses.isTerminal) {
+        // Tail loops need empty iterations to bail out to the interpreter. Image code handles empty iterations itself, so it doesn't use tail loops.
+        } else if (term->parentheses.isTerminal || term->parentheses.isTailLoop) {
 #else
         } else if (term->parentheses.isTerminal || (term->possessive() && term->parentheses.disjunction->m_minimumSize)) {
 #endif
@@ -8349,6 +8590,7 @@ class YarrGenerator final : public YarrJITInfo {
                     // iteration took) or backtrackable inner content (needs to roll
                     // state back across iterations) — use the ParenContext path.
                     m_containsNestedSubpatterns = true;
+                    m_lookaroundsAllocateParenContexts |= m_isInLookaround;
                     m_usesT2 = true;
                     parenthesesBeginOpCode = YarrOpCode::ParenthesesSubpatternBegin;
                     parenthesesEndOpCode = YarrOpCode::ParenthesesSubpatternEnd;
@@ -8363,6 +8605,7 @@ class YarrGenerator final : public YarrJITInfo {
             } else {
                 // Greedy/NonGreedy quantifiers: use generic ParenContext-based nodes.
                 m_containsNestedSubpatterns = true;
+                m_lookaroundsAllocateParenContexts |= m_isInLookaround;
                 parenthesesBeginOpCode = YarrOpCode::ParenthesesSubpatternBegin;
                 parenthesesEndOpCode = YarrOpCode::ParenthesesSubpatternEnd;
 
@@ -8426,6 +8669,9 @@ class YarrGenerator final : public YarrJITInfo {
             return dispatch && isInlineLiteralAlternative(*alternatives[i]);
         };
         bool everyAlternativeInline = dispatch && std::ranges::all_of(alternatives, [&](auto& alternative) { return isInlineLiteralAlternative(*alternative); });
+#if ENABLE(YARR_JIT_ALL_PARENS_EXPRESSIONS)
+        bool tracksLiveSlots = parenthesesBeginOpCode == YarrOpCode::ParenthesesSubpatternBegin && tracksLiveFrameSlots(term);
+#endif
         for (unsigned i = 0; i < alternatives.size(); ++i) {
             if (emittedInline(i) && !(everyAlternativeInline && !i))
                 continue;
@@ -8474,6 +8720,10 @@ class YarrGenerator final : public YarrJITInfo {
             thisOp.m_previousOp = lastOpIndex;
             thisOp.m_term = term;
             thisOp.m_dispatch = dispatch;
+#if ENABLE(YARR_JIT_ALL_PARENS_EXPRESSIONS)
+            if (tracksLiveSlots)
+                thisOp.m_liveFrameSlots = liveFrameSlotsAfterMatching(term, nestedAlternative);
+#endif
         }
         YarrOp& lastOp = m_ops.last();
         ASSERT(lastOp.m_op == alternativeNextOpCode);
@@ -8646,6 +8896,8 @@ class YarrGenerator final : public YarrJITInfo {
     {
         PatternAlternative* mirrored = destination.addNewAlternative(source.m_firstSubpatternId, Backward);
         mirrored->m_minimumSize = source.m_minimumSize;
+        mirrored->m_firstFrameSlot = source.m_firstFrameSlot;
+        mirrored->m_callFrameSize = source.m_callFrameSize;
         mirrored->m_lastSubpatternId = source.m_lastSubpatternId;
         mirrored->m_hasFixedSize = source.m_hasFixedSize;
         mirrored->m_containsBOL = source.m_containsBOL;
@@ -8754,6 +9006,8 @@ class YarrGenerator final : public YarrJITInfo {
     {
         PatternAlternative* copy = destination.addNewAlternative(source.m_firstSubpatternId, source.matchDirection());
         copy->m_minimumSize = source.m_minimumSize;
+        copy->m_firstFrameSlot = source.m_firstFrameSlot;
+        copy->m_callFrameSize = source.m_callFrameSize;
         copy->m_lastSubpatternId = source.m_lastSubpatternId;
         copy->m_hasFixedSize = source.m_hasFixedSize;
         copy->m_containsBOL = source.m_containsBOL;
@@ -8892,6 +9146,7 @@ class YarrGenerator final : public YarrJITInfo {
         // The Begin op has already placed the index register at the assertion point.
         MatchDirection enclosingDirection = m_direction;
         m_direction = bodyDirection;
+        bool wasInLookaround = std::exchange(m_isInLookaround, true);
         if (bodyDirection == Backward || enclosingDirection == Backward)
             checkedOffset = 0;
 
@@ -8933,6 +9188,7 @@ class YarrGenerator final : public YarrJITInfo {
 
         // The End op is back in the enclosing direction.
         m_direction = enclosingDirection;
+        m_isInLookaround = wasInLookaround;
 
         size_t parenEnd = m_ops.size();
         appendOp(YarrOpCode::ParentheticalAssertionEnd);
@@ -10757,7 +11013,9 @@ class YarrGenerator final : public YarrJITInfo {
         storeToFrame(m_regs.regT0, frameLocation);
         m_jit.popToRestore(m_regs.regT0);
         MacroAssembler::JumpList done;
-        if (required.greatestDistance <= greatestRequiredTextDistance) {
+        // A pattern that counts turns can run out of them at a place that the text rules out, as the JIT does: makes an attempt at every place. A text that is absent still answers, since giving up answers as no match does.
+        bool movesStart = !m_containsNestedSubpatterns;
+        if (movesStart && required.greatestDistance <= greatestRequiredTextDistance) {
             m_jit.sub32(MacroAssembler::TrustedImm32(required.greatestDistance), m_regs.index);
             MacroAssembler::Jump isBehindStart = m_jit.branch32(MacroAssembler::GreaterThan, m_regs.index, m_regs.regT0);
             m_jit.move(m_regs.regT0, m_regs.index);
@@ -10783,7 +11041,7 @@ class YarrGenerator final : public YarrJITInfo {
         m_jit.popToRestore(m_regs.regT0);
         generateFailReturn();
         done.link(&m_jit);
-        if (required.knowsUnitsInFront) {
+        if (movesStart && required.knowsUnitsInFront) {
             loadFromFrame(frameLocation, m_regs.regT0);
             m_jit.sub32(MacroAssembler::TrustedImm32(static_cast<int32_t>(claimed) - static_cast<int32_t>(required.leastDistance)), m_regs.regT0);
             generateWalkBackOver(required.asciiMembersInFront, required.allNonASCIICanStandInFront);
@@ -10863,17 +11121,121 @@ class YarrGenerator final : public YarrJITInfo {
         bool hasStartSearch = hasSelectiveStartSearch();
         m_requiredTexts.removeAllMatching([&](const RequiredText& required) {
             if (required.isAllThatMatchesAtEndHold)
-                return false;
+                return m_containsNestedSubpatterns;
             // An attempt that fails within a few units costs less than the code of a search: what pays is a text behind a run.
             return hasStartSearch || required.greatestDistance == required.leastDistance || required.leastDistance > greatestRequiredTextDistance || !canGenerateSharedRoutine(SharedRoutine { requiredTextRoutine(required) });
         });
-        if (!m_requiredTexts.isEmpty() && m_requiredTexts[0].isSilentOnSomeRepeatedAlternative)
+        if (!m_requiredTexts.isEmpty() && (m_requiredTexts[0].isSilentOnSomeRepeatedAlternative || m_requiredTexts[0].allowsEmptyMatchAtEnd))
             m_requiredTexts.clear();
         if (m_requiredTexts.isEmpty())
             return;
         dataLogLnIf(Options::verboseRegExpCompilation(), "Searches for ", m_requiredTexts.size(), " texts that every match holds");
         m_requiredTextFrameLocation = m_callFrameSizeInBytes / sizeof(void*);
         m_callFrameSizeInBytes = alignCallFrameSizeInBytes(m_requiredTextFrameLocation + m_requiredTexts.size() + (m_requiredTexts.size() > 1 ? 1 : 0));
+    }
+
+    // \[.+?\]\(# on a line of a thousand brackets walks from every bracket to the end of the line: the time grows with the square of the length. But once a run without an upper bound has
+    // tried every end up to where its members stop, and the rest has failed at each, a later attempt that enters the run at or in front of that place has only ends that have failed.
+    // That holds where the rest of the search depends on the position alone: no back reference up to the end of the alternative, or of the lookahead that the run lies in, which is never
+    // gone back into. And where each attempt enters the run further right than the one before: nothing but steps of a fixed width stand in front of it, so it is the first choice of
+    // its alternative and in no repeated group.
+    // A pattern with one repeated alternative pays nothing for it: the run that has failed leaves the index where it stopped, not where it began, and the code that goes on to the next
+    // attempt, which counts from the index, skips the starts that have no chance.
+    // With several alternatives a start that one of them has ruled out is still open to the others. There the run keeps the place in a slot of the frame, and fails at once where it is
+    // entered at or in front of it. A greedy run writes the slot when it stops, which is only right if it is sure to go through all its ends: not in a lookahead.
+    // The JIT counts the turns of repeated groups in the attempts that are left out here, and gives a match up by their number.
+    void planForFailedRuns()
+    {
+        if (m_failureReason || m_pattern.eitherUnicode() || m_pattern.sticky() || m_executionMode == ExecutionMode::InlineTest || m_containsNestedSubpatterns)
+            return;
+        auto isRepeatedAlternative = [](const YarrOp& op) {
+            return (op.m_op == YarrOpCode::BodyAlternativeBegin || op.m_op == YarrOpCode::BodyAlternativeNext) && !op.m_alternative->onceThrough();
+        };
+        bool hasOneAlternative = std::ranges::count_if(m_ops, isRepeatedAlternative) == 1;
+        if (!hasOneAlternative && m_frameMode == FrameMode::Omitted)
+            return;
+        auto canFail = [](const YarrOp& op) {
+            if (op.m_op != YarrOpCode::Term)
+                return false;
+            switch (op.m_term->type) {
+            case PatternTerm::Type::NumberedForwardReference:
+            case PatternTerm::Type::NamedForwardReference:
+                return false;
+            case PatternTerm::Type::PatternCharacter:
+            case PatternTerm::Type::CharacterClass:
+                return op.m_term->quantityType == QuantifierType::FixedCount && op.m_term->quantityMaxCount;
+            default:
+                return true;
+            }
+        };
+        auto dependsOnMoreThanPosition = [](const YarrOp& op) {
+            if (op.m_op != YarrOpCode::Term)
+                return false;
+            PatternTerm::Type type = op.m_term->type;
+            return type == PatternTerm::Type::NumberedBackReference || type == PatternTerm::Type::NamedBackReference || type == PatternTerm::Type::DotStarEnclosure;
+        };
+        unsigned slots = 0;
+        unsigned firstSlot = m_callFrameSizeInBytes / sizeof(void*);
+        for (size_t head = 0; head < m_ops.size(); ++head) {
+            if (!isRepeatedAlternative(m_ops[head]))
+                continue;
+            size_t end = m_ops[head].m_nextOp;
+            bool isInLookahead = false;
+            for (size_t i = head + 1; i < end; ++i) {
+                YarrOp& op = m_ops[i];
+                if (preservesClaim(i))
+                    continue;
+                bool isLookaheadWithOneAlternative = op.m_term && op.m_term->type == PatternTerm::Type::ParentheticalAssertion && op.m_direction == Forward && op.m_term->matchDirection() == Forward
+                    && op.m_term->parentheses.disjunction->m_alternatives.size() == 1;
+                // Where a negative lookahead fails to match, the search goes on from the index.
+                if (op.m_op == YarrOpCode::ParentheticalAssertionBegin && isLookaheadWithOneAlternative && !(hasOneAlternative && op.m_term->invert())) {
+                    isInLookahead = true;
+                    end = op.m_nextOp;
+                    continue;
+                }
+                if (op.m_op == YarrOpCode::SimpleNestedAlternativeBegin && isInLookahead && isLookaheadWithOneAlternative)
+                    continue;
+                if (!isCountedAtom(op) || op.m_direction != Forward || op.m_term->quantityMaxCount != quantifyInfinite)
+                    break;
+                auto rest = m_ops.span().subspan(i + 1, end - i - 1);
+                if (std::ranges::none_of(rest, canFail) || std::ranges::any_of(rest, dependsOnMoreThanPosition))
+                    break;
+                bool isGreedy = op.m_term->quantityType == QuantifierType::Greedy;
+                // Behind runs that never go back, an attempt goes one way up to the last run and enters it no further left than the attempt before. That run keeps its place in a slot.
+                if (hasOneAlternative && !isInLookahead && op.m_term->possessive() && m_frameMode != FrameMode::Omitted) {
+                    size_t lastRun = 0;
+                    for (size_t j = i + 1; j < end; ++j) {
+                        const YarrOp& next = m_ops[j];
+                        if (next.m_op != YarrOpCode::Term || next.m_direction != Forward || (next.m_term->type != PatternTerm::Type::PatternCharacter && next.m_term->type != PatternTerm::Type::CharacterClass))
+                            break;
+                        if (next.m_term->quantityType == QuantifierType::FixedCount)
+                            continue;
+                        if (next.m_term->quantityMaxCount != quantifyInfinite)
+                            break;
+                        lastRun = j;
+                        if (!next.m_term->possessive())
+                            break;
+                    }
+                    if (lastRun && std::ranges::any_of(m_ops.span().subspan(lastRun + 1, end - lastRun - 1), canFail))
+                        m_ops[lastRun].m_failedRunSlot = firstSlot + slots++;
+                }
+                if (!hasOneAlternative) {
+                    if (!isGreedy || !isInLookahead)
+                        op.m_failedRunSlot = firstSlot + slots++;
+                    break;
+                }
+                // The index has to be where the run stopped when the search comes back to it.
+                if (op.m_claims.isInNonBacktrackingAlternative && std::ranges::any_of(rest, isCountedAtom))
+                    break;
+                if (isGreedy && !op.m_claims.isInNonBacktrackingAlternative && (needsNoMatchCount(op) || (op.m_term->possessive() && !savesStartIndexInsteadOfCount(op))))
+                    break;
+                op.m_skipsStartsBehindFailedRun = true;
+                break;
+            }
+            head = m_ops[head].m_nextOp - 1;
+        }
+        if (slots)
+            m_callFrameSizeInBytes = alignCallFrameSizeInBytes(firstSlot + slots);
     }
 
     // At the head of the repeated alternatives, with the first one's input claimed. The first attempt begins with the searches. Defines where a new attempt comes in: it makes one comparison as long as every text is known to lie ahead.
@@ -12044,6 +12406,7 @@ public:
 #if CPU(X86_64) || CPU(ARM64)
         planRequiredTextSearches();
 #endif
+        planForFailedRuns();
 #endif
 
         if (Options::dumpDisassembly() || Options::dumpRegExpDisassembly()) [[unlikely]]
@@ -12152,6 +12515,12 @@ public:
             storeToFrame(m_regs.index, m_pattern.initialStartFrameLocation());
             storeToFrame(m_regs.index, m_pattern.noNewlineBeforeFrameLocation());
         }
+#if defined(YARR_FOR_IMAGE)
+        for (const YarrOp& op : m_ops) {
+            if (op.m_failedRunSlot)
+                storeToFrame(MacroAssembler::TrustedImm32(-1), *op.m_failedRunSlot);
+        }
+#endif
 
         generate();
         if (m_disassembler)
@@ -12604,6 +12973,11 @@ public:
 
     void defineReentryLabel(YarrOp& op)
     {
+#if defined(YARR_FOR_IMAGE)
+        // A greedy run has just stopped. It is entered again only after every end from here down has failed.
+        if (op.m_failedRunSlot && op.m_term->quantityType == QuantifierType::Greedy)
+            storeToFrame(m_regs.index, *op.m_failedRunSlot);
+#endif
         op.m_reentry = m_jit.label();
         if (Options::traceRegExpJITExecution()) [[unlikely]] {
             GPRReg indexReg = m_regs.index;
@@ -12679,8 +13053,10 @@ private:
     // Frame offset (in slots) for internal subpattern output storage
     unsigned m_internalSubpatternOutputOffsetInFrame { 0 };
     const CanonicalMode m_canonicalMode;
+    bool m_isInLookaround { false };
 #if ENABLE(YARR_JIT_ALL_PARENS_EXPRESSIONS)
     bool m_containsNestedSubpatterns { false };
+    bool m_lookaroundsAllocateParenContexts { false };
     ParenContextSizes m_parenContextSizes;
 #endif
 #if ENABLE(YARR_JIT_UNICODE_EXPRESSIONS) && ENABLE(YARR_JIT_UNICODE_CAN_INCREMENT_INDEX_FOR_NON_BMP)

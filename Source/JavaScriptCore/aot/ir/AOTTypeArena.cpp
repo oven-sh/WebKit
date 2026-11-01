@@ -584,22 +584,22 @@ const Record& TypeInterningPhase::recordAt(const TypeInterningPhase* phase, IDTy
     return storage->recordsOf<Record>().records[position];
 }
 
-const Type& TypeTable::provisionalAt(TypeID id) const
+NEVER_INLINE const Type& TypeTable::provisionalAt(TypeID id) const
 {
     return TypeInterningPhase::recordAt<Type>(phaseOfProvisionalIDs(), id);
 }
 
-const LayoutSet& TypeTable::provisionalAt(LayoutSetID id) const
+NEVER_INLINE const LayoutSet& TypeTable::provisionalAt(LayoutSetID id) const
 {
     return TypeInterningPhase::recordAt<LayoutSet>(phaseOfProvisionalIDs(), id);
 }
 
-const CalleeSet& TypeTable::provisionalAt(CalleeSetID id) const
+NEVER_INLINE const CalleeSet& TypeTable::provisionalAt(CalleeSetID id) const
 {
     return TypeInterningPhase::recordAt<CalleeSet>(phaseOfProvisionalIDs(), id);
 }
 
-const PropertyKey& TypeTable::provisionalAt(PropertyKeyID id) const
+NEVER_INLINE const PropertyKey& TypeTable::provisionalAt(PropertyKeyID id) const
 {
     return TypeInterningPhase::recordAt<PropertyKey>(phaseOfProvisionalIDs(), id);
 }
@@ -794,6 +794,7 @@ template<typename Record, typename RecordID>
 RecordID TypeArena::didUse(TypeInterningPhase::Storage& storage, uint32_t position)
 {
     ++m_unshareableEventCount;
+    ++m_useCountOfRecordsOfPhase;
     RecordID id = TypeTable::provisionalID<RecordID>(storage.number, position);
     uint32_t& lastLease = storage.recordsOf<Record>().lastLease[position];
     if (lastLease != storage.lease) {
@@ -806,6 +807,24 @@ RecordID TypeArena::didUse(TypeInterningPhase::Storage& storage, uint32_t positi
     }
     return id;
 }
+
+template<typename Record, typename RecordID>
+std::optional<RecordID> TypeArena::useAgainInStorage(RecordID id)
+{
+    if (!TypeTable::isProvisional(id))
+        return id;
+    // A new arena holds no storage yet. intern() leases one here for any record that is not final.
+    if (m_storages.isEmpty() && m_phase)
+        m_storages.append(&m_phase->leaseStorage());
+    for (TypeInterningPhase::Storage* storage : m_storages) {
+        if (storage->number == TypeTable::storageNumberOf(id))
+            return didUse<Record, RecordID>(*storage, TypeTable::positionOf(id));
+    }
+    return std::nullopt;
+}
+
+std::optional<LayoutSetID> TypeArena::useAgain(LayoutSetID id) { return useAgainInStorage<LayoutSet, LayoutSetID>(id); }
+std::optional<CalleeSetID> TypeArena::useAgain(CalleeSetID id) { return useAgainInStorage<CalleeSet, CalleeSetID>(id); }
 
 template<typename Record, typename RecordID>
 std::optional<RecordID> TypeArena::useExistingIn(TypeInterningPhase::Storage& storage, const Record& record, uint32_t hash)

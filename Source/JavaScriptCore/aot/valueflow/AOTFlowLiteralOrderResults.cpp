@@ -9,11 +9,13 @@
 #if ENABLE(AOT)
 
 #include "AOTCFG.h"
+#include "AOTFlowSiteData.h"
 #include "AOTNameClass.h"
 #include "AOTSchemaOperandIndexes.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
 #include <wtf/Deque.h>
+#include <wtf/HashSet.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -48,8 +50,16 @@ struct Literal {
     Vector<LiteralPiece, 4> pieces;
 };
 
+struct CopiedLiteral {
+    LayoutID layout;
+    KeyOrder order;
+
+    friend bool operator==(const CopiedLiteral&, const CopiedLiteral&) = default;
+};
+
 struct CopiedObjects {
     Vector<LayoutID, 2> layouts;
+    Vector<CopiedLiteral, 1> literals;
     bool mayHaveNoKeys { false };
 };
 
@@ -59,6 +69,7 @@ struct LiteralCreation {
     Vector<CopiedObjects, 1> copies;
     LiteralKeyOrders orders;
     bool hasOrdersLeftOut { false };
+    bool hasUnknownOrder { false };
 };
 
 } // anonymous namespace
@@ -121,8 +132,9 @@ static void collectLiteralsOf(const ValueFlowResultInputs& inputs, FunctionID id
     forEachOperation([&](ValueID value, const Value& operation) {
         if (!literalPieceOperations.contains(operation.opcode))
             return;
-        auto literal = std::ranges::find(literalsOfFunction, operation.operand(literalOperandOfPiece), &Literal::allocation);
-        if (literal != literalsOfFunction.end())
+        ValueID allocation = operation.operand(literalOperandOfPiece);
+        auto literal = std::ranges::lower_bound(literalsOfFunction, allocation, { }, &Literal::allocation);
+        if (literal != literalsOfFunction.end() && literal->allocation == allocation)
             literal->pieces.append(describePiece(value, operation));
     });
 }
@@ -142,19 +154,66 @@ struct LiteralOrderSolver {
     Vector<Vector<uint32_t>> readersOfLayout = Vector<Vector<uint32_t>>(layouts.size());
     Vector<LiteralKeyOrders> literalOrdersOfLayout = Vector<LiteralKeyOrders>(layouts.size());
     BitVector hasOrdersUnread { };
+    FunctionID functionOfCopies { };
+    Vector<const ValueFlowStatement*> copiesBySite { };
 
     const LayoutFlow& flowOf(LayoutID layout) const { return layouts[layout.index()].flow; }
     LayoutID provenBaseOf(LayoutID layout) const { return flowOf(layout).baseState == BaseState::Layout ? flowOf(layout).base : LayoutID(); }
+
+    // Literals are looked at function by function, and one function may copy thousands of times.
+    const ValueFlowStatement* findCopy(FunctionID function, ValueID copy)
+    {
+        if (functionOfCopies != function) {
+            functionOfCopies = function;
+            copiesBySite.shrink(0);
+            for (const ValueFlowStatement& statement : inputs.bodies().statementsOf(function.index())) {
+                if (statement.kind == ValueFlowStatementKind::Operation && statement.opcode == Opcode::CopyDataProperties)
+                    copiesBySite.append(&statement);
+            }
+            AOT::stableSort(copiesBySite, { }, &ValueFlowStatement::site);
+        }
+        auto found = std::ranges::lower_bound(copiesBySite, copy, { }, &ValueFlowStatement::site);
+        return found != copiesBySite.end() && (*found)->site == copy ? *found : nullptr;
+    }
+
+    // `const defaults: O = { a: 1, b: 2 }` beside `const options: Partial<O> = { b: 5 }`: one layout with two orders. Where no object of the layout gets a field once it is created,
+    // a literal has the order that it lists itself.
+    std::optional<KeyOrder> orderListedBy(ValueFlowObjectID object, LayoutID id) const
+    {
+        const ValueFlowUniverse& universe = inputs.universe();
+        const ValueFlowSite* site = universe.siteOf(object);
+        if (!site || site->layout != id || flowOf(id).baseState != BaseState::None || flowOf(id).fieldCreation != FieldCreation::OnlyAtConstruction)
+            return std::nullopt;
+        const Vector<Field>& fields = program.at(id).fields;
+        std::optional<KeyOrder> order;
+        auto list = [&](std::span<const uint32_t> listed) {
+            bool hasOnlyConstantKeys = std::ranges::all_of(listed, [&](uint32_t field) {
+                return !!fields[field].key;
+            });
+            if (!hasOnlyConstantKeys)
+                return;
+            order = KeyOrder(listed.size(), [&](size_t index) {
+                return fields[listed[index]].key;
+            });
+        };
+        const Value& operation = program.at(universe.functionOf(object)).at(site->value);
+        if (site->origin == ValueFlowSiteOrigin::Operation && !site->ordinal && operation.opcode == Opcode::NewObject)
+            list(operation.fields());
+        else if (site->origin == ValueFlowSiteOrigin::DataNode) {
+            forEachDataNodeInPreorder(program.at(operation.data()).root, [&](uint32_t ordinal, const DataNode& node) {
+                if (ordinal == site->ordinal)
+                    list(fieldsFilledBy(program, program.at(id), node.as<DataNode::Object>()).span());
+            });
+        }
+        return order;
+    }
 
     CopiedObjects objectsCopiedBy(FunctionID function, ValueID copy)
     {
         const ValueFlowUniverse& universe = inputs.universe();
         CopiedObjects copied;
-        std::span<const ValueFlowStatement> statements = inputs.bodies().statementsOf(function.index());
-        auto statement = std::ranges::find_if(statements, [&](const ValueFlowStatement& candidate) {
-            return candidate.kind == ValueFlowStatementKind::Operation && candidate.site == copy;
-        });
-        if (statement == statements.end()) {
+        const ValueFlowStatement* statement = findCopy(function, copy);
+        if (!statement) {
             copied.mayHaveNoKeys = true;
             return copied;
         }
@@ -169,7 +228,11 @@ struct LiteralOrderSolver {
             if (kind != ValueFlowObjectKind::Site && kind != ValueFlowObjectKind::Instance)
                 return;
             LayoutID layout = universe.layoutOf(object);
-            if (layout && hasObjectsThatCodeAlters(program.at(layout).kind))
+            if (!layout || !hasObjectsThatCodeAlters(program.at(layout).kind))
+                return;
+            if (std::optional<KeyOrder> order = orderListedBy(object, layout))
+                appendIfAbsent(copied.literals, CopiedLiteral { layout, WTF::move(*order) });
+            else
                 copied.layouts.append(layout);
         });
         AOT::sort(copied.layouts);
@@ -289,18 +352,25 @@ struct LiteralOrderSolver {
     LiteralKeyOrders copyInto(const LiteralKeyOrders& orders, const CopiedObjects& copied, const Value& copy)
     {
         LiteralKeyOrders result;
-        for (LayoutID source : copied.layouts) {
-            for (const KeyOrder& sourceOrder : ordersOf(source)) {
-                for (const KeyOrder& order : orders) {
-                    KeyOrder extended = order;
-                    for (PropertyKeyID key : sourceOrder) {
-                        PropertyKeyKind kind = kindOfKey[key.index()];
-                        if ((kind == PropertyKeyKind::Text || isSymbolKind(kind)) && isCopied(source, key, copy))
-                            appendIfAbsent(extended, key);
-                    }
-                    appendIfAbsent(result, WTF::move(extended));
+        auto copyInOrder = [&](LayoutID source, const KeyOrder& sourceOrder) {
+            for (const KeyOrder& order : orders) {
+                KeyOrder extended = order;
+                for (PropertyKeyID key : sourceOrder) {
+                    PropertyKeyKind kind = kindOfKey[key.index()];
+                    if ((kind == PropertyKeyKind::Text || isSymbolKind(kind)) && isCopied(source, key, copy))
+                        appendIfAbsent(extended, key);
                 }
+                appendIfAbsent(result, WTF::move(extended));
             }
+        };
+        for (const CopiedLiteral& literal : copied.literals) {
+            copyInOrder(literal.layout, literal.order);
+            if (result.size() > maxOrders)
+                return result;
+        }
+        for (LayoutID source : copied.layouts) {
+            for (const KeyOrder& sourceOrder : ordersOf(source))
+                copyInOrder(source, sourceOrder);
             if (result.size() > maxOrders)
                 return result;
         }
@@ -330,23 +400,47 @@ struct LiteralOrderSolver {
         const Vector<Field>& fields = program.at(allocation.layout()).fields;
         KeyOrder keysAtAllocation;
         for (uint32_t field : allocation.fields()) {
-            if (!fields[field].key)
+            if (!fields[field].key) {
+                creation.hasUnknownOrder = true;
                 return false;
+            }
             keysAtAllocation.append(fields[field].key);
         }
 
         LiteralKeyOrders orders { WTF::move(keysAtAllocation) };
+        // The keys of an order with many keys, indexed by order: a literal may define thousands. Empty means not listed yet.
+        using KeySet = UncheckedKeyHashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
+        constexpr size_t maxKeysForLinearSearch = 16;
+        Vector<KeySet, 2> keysOfLongOrders;
+        auto define = [&](size_t index, PropertyKeyID key) {
+            KeyOrder& order = orders[index];
+            if (order.size() <= maxKeysForLinearSearch) {
+                appendIfAbsent(order, key);
+                return;
+            }
+            if (keysOfLongOrders.size() <= index)
+                keysOfLongOrders.grow(index + 1);
+            KeySet& keys = keysOfLongOrders[index];
+            if (keys.isEmpty()) {
+                for (PropertyKeyID listed : order)
+                    keys.add(listed.index());
+            }
+            if (keys.add(key.index()).isNewEntry)
+                order.append(key);
+        };
         size_t nextCopy = 0;
         for (const LiteralPiece& piece : literal.pieces) {
             switch (piece.kind) {
             case PieceKind::DefinesUnknownProperty:
+                creation.hasUnknownOrder = true;
                 return false;
             case PieceKind::DefinesKey:
-                for (KeyOrder& order : orders)
-                    appendIfAbsent(order, piece.key);
+                for (size_t index = 0; index < orders.size(); ++index)
+                    define(index, piece.key);
                 break;
             case PieceKind::CopiesProperties:
                 orders = copyInto(orders, creation.copies[nextCopy++], function.at(piece.operation));
+                keysOfLongOrders.clear();
                 break;
             }
             if (orders.size() > maxOrders) {
@@ -397,6 +491,17 @@ struct LiteralOrderSolver {
         }
     }
 
+    // A literal's definitions run in sequence, each once, so a literal without a spread has one order: its source order.
+    bool listsOrderOfEveryObject(LayoutID id) const
+    {
+        if (!layouts[id.index()].createsFieldsOnlyInLiterals || hasOrdersUnread.get(id.index()) || creationsOfLayout[id.index()].isEmpty())
+            return false;
+        return std::ranges::all_of(creationsOfLayout[id.index()], [&](uint32_t index) {
+            const LiteralCreation& creation = creations[index];
+            return creation.copies.isEmpty() && !creation.hasOrdersLeftOut && !creation.hasUnknownOrder;
+        });
+    }
+
     Vector<KeyOrder> sortedOrdersOf(LayoutID id) const
     {
         Vector<const KeyOrder*> listedOrders;
@@ -404,7 +509,7 @@ struct LiteralOrderSolver {
             for (const KeyOrder& order : creations[creation].orders)
                 listedOrders.append(&order);
         }
-        AOT::sort(listedOrders, [](const KeyOrder* a, const KeyOrder* b) {
+        AOT::sortInLine(listedOrders, [](const KeyOrder* a, const KeyOrder* b) {
             return std::ranges::lexicographical_compare(*a, *b);
         });
 
@@ -438,8 +543,11 @@ void computeLiteralKeyOrders(const ValueFlowResultInputs& inputs, ValueFlowHeapV
     LiteralOrderSolver solver { inputs, heap, WTF::move(kindsOfKeys), tables.application->layouts };
     solver.collectCreations();
     solver.solve();
-    for (uint32_t index = 0; index < solver.layouts.size(); ++index)
+    for (uint32_t index = 0; index < solver.layouts.size(); ++index) {
         solver.layouts[index].literalKeyOrders = solver.sortedOrdersOf(LayoutID(index));
+        if (solver.listsOrderOfEveryObject(LayoutID(index)))
+            solver.layouts[index].flow.fieldCreation = FieldCreation::OnlyBeforeObjectIsFinished;
+    }
 }
 
 } } } // namespace JSC::AOT::Typed

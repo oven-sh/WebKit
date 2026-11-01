@@ -131,6 +131,7 @@ struct SitePosition {
     uint32_t constructionStartLine { 0 };
     uint32_t constructionStartColumn { 0 };
     bool startIsForCallers { false };
+    bool startIsWhereWritten { false };
 };
 
 struct InlineFrame {
@@ -173,8 +174,8 @@ struct SiteDescription {
     Vector<SitePosition> positions;
     Vector<InlineFrame> inlineFrames;
     Vector<FlaggedSite> flaggedSites;
-    // In rising order. A site without code stands for the call that an inline frame has taken the place of.
-    Vector<uint32_t> callsOfOwnFunctionObjects;
+    // Sorted by site. A site without code stands for a call that an inline frame replaced.
+    Vector<std::pair<uint32_t, CalleeOfSite>> calleesOfSites;
     // In rising order of the sites. The callee is an index into CodeBody::callees.
     Vector<ConstructedCallee> constructedCallees;
     Vector<SiteHandler> handlers;

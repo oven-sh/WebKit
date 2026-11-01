@@ -16,6 +16,8 @@
 
 namespace JSC { namespace AOT {
 
+struct FieldReadRegisters;
+
 inline constexpr StubRegister slotHeaderRegister = StubRegister::T12;
 inline constexpr StubRegister slotPayloadRegister = StubRegister::T13;
 inline constexpr StubRegister slotNameRegister = stubImmediateRegister;
@@ -170,6 +172,8 @@ struct FieldTableProbe {
     bool answersAbsent { false };
     // For a probe that returns what it reads.
     std::optional<CallerFrame> answersMissingFields { };
+    // With boundName: the entry that is expected, of the form InlineValue or OutOfLineValue. One comparison with the whole entry then stands for the name and the form.
+    std::optional<uint32_t> expectedEntry { };
 };
 
 // Reads a field of a compiled object that is in its slot in the cell into result, which may be any of the probe's registers, and goes on with finish, which leaves the stub.
@@ -281,7 +285,10 @@ enum class KindOfProbedSlot : uint8_t { IsInHeader, IsInT10 };
 // `in` of a receiver whose slot leaves the answer to an object above it is `in` of that object: it becomes the receiver, and the stub goes on at asksReceiver.
 void returnPresenceBySlot(StubAssembler&, PresenceQuestion, const ProbedSlot&, GPRReg receiver, Label asksReceiver, JumpList& isUnknown, KindOfProbedSlot = KindOfProbedSlot::IsInHeader);
 
-void loadStaticsBase(StubAssembler&, GPRReg staticsBase, GPRReg roundedSizeOfStatics);
+void loadStaticsBase(StubAssembler&, GPRReg staticsBase, GPRReg roundedSizeOfStatics, GPRReg instance = instanceGPR);
+// Of the instance that holds the variable of a slot. The registers may hold the slot: it is read first.
+// Where realms are shared the variable may be of another image: the read that follows finds literal text through the instance of that image, which is kept in the scratch register for numbers.
+void loadStaticsBaseOfVariable(StubAssembler&, const CachedSlot&, GPRReg staticsBase, GPRReg scratch, FieldReadRegisters&);
 void markStaticsCard(StubAssembler&, GPRReg staticsBase, GPRReg roundedSizeOfStatics, GPRReg offsetInStatics);
 
 // What filled a site was not in the field table: an access that the table answers never gets as far as a fill.

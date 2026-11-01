@@ -48,7 +48,10 @@ struct CountedLoop {
     bool boundIsSafe { false };
     bool counterRangeIsSafe { false };
     bool relationHoldsOnEntry { false };
+    // The loop may also be entered in front of a later turn, with its counter where it stands then. What is asked in front of the loop is asked of the counter itself.
+    bool isEnteredOnAnyTurn { false };
 
+    Value* counterOnEntry() const { return isEnteredOnAnyTurn ? inductionVariable : start; }
     Value* testedValue() const { return isTopTested ? inductionVariable : next; }
     Type type() const;
     Signedness signedness() const { return isUnsigned() ? Signedness::Unsigned : Signedness::Signed; }

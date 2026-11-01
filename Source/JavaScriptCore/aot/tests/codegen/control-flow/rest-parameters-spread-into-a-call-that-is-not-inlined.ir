@@ -70,12 +70,11 @@ function f2 name="forward" module=m0 position=16 flags=[HasRestParameter, IsChec
     ReturnCall v4 casts=[{declared={type=number site=w7}}, {declared={type=number site=w5}}]
 }
 
-# Where `forward` stays a function of its own, its rest parameter arrives as an array that the caller made. `add(...values)` reads the variable `add` and leaves through the stub that calls with a list of arguments,
-# as a tail call: the elements are not read here, and the known callee is not called directly.
+# Where `forward` stays a function of its own, its rest parameter arrives as an array that the caller made. `add(...values)` hands that array to the function that reads the arguments of `add` out of a list,
+# as a tail call: neither the elements nor the variable `add` are read here.
 # CHECK-LABEL: name="forward" role=Source
 # CHECK-NEXT: BB#0:
-# CHECK: Int64 b@[[callee]] = Patchpoint({{*}}Reads:{{*}}ModuleVariables{{*}}:GetModuleVariable)
-# CHECK: Int64 b@[[values]] = ArgumentReg(
-# CHECK: Patchpoint(b@[[values]]:Register({{*}}), b@[[callee]]:Register({{*}}), $10(b@{{*}}):Register({{*}}), runsWithoutFrame, resultConstraints = WarmAny, Terminal|ExitsSideways
+# CHECK-NEXT: Int64 b@[[values]] = ArgumentReg(
+# CHECK-NEXT: Patchpoint(b@[[values]]:Register({{*}}), runsWithoutFrame, resultConstraints = WarmAny, Terminal|ExitsSideways{{*}}:CallDirect)
 # CHECK-NOT: BB#
 # CHECK-LABEL: end of function

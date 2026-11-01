@@ -190,7 +190,7 @@ static void checkEffectsCover(const StubCatalog& catalog, const StubRecording& r
     for (size_t index : recording.operationsCalled)
         AOT_TEST_CHECK(effectsOf(static_cast<Entry>(index)).isSubsetOf(effects));
     for (const StubReference& reference : recording.references) {
-        if (reference.kind != StubReference::Kind::ReturnedAddress)
+        if (reference.kind != StubReference::Kind::ReturnedAddress && reference.kind != StubReference::Kind::PollAfterOperation)
             AOT_TEST_CHECK(catalog.effectsOf(reference.target).isSubsetOf(effects));
     }
 }
@@ -255,6 +255,8 @@ static void checkPreservingCallSummary(const StubCatalog& catalog, StubKey key)
     const StubSummary& summary = catalog.summaryOf(key);
     RegisterSet callProtocolRegisters = macroClobberedRegisters();
     callProtocolRegisters.merge(resultAndImmediateRegisters(summary.signature));
+    for (GPRReg reg : registersThatPreservingCallsTakeArgumentsIn())
+        callProtocolRegisters.add(reg, IgnoreVectors);
     if (preservingCallShapes[key.form()].saves == OperationCall::Saves::CallerSavedGPRs)
         callProtocolRegisters.merge(RegisterSet::allFPRs());
     AOT_TEST_CHECK(callProtocolRegisters.subsumes(summary.clobbered));

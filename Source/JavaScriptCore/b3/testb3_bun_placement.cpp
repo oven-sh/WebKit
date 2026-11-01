@@ -10,6 +10,7 @@
 
 #include "B3BlockRarity.h"
 #include "B3CycleForest.h"
+#include "B3EliminateDeadCode.h"
 #include "B3EstimateFrequencies.h"
 #include "B3FixSSA.h"
 #include "B3SinkValues.h"
@@ -329,6 +330,97 @@ static void testSinkValuesKeepsLoads()
     }
 }
 
+static void testSinkValuesReadsStackSlotWhereWaysMeet()
+{
+    enum class Form : uint8_t { Plain, ReadStandsOneBlockAbove, WriteBehindOneRead, WriteBelowUpsilon, OtherOffset, OtherSlot, SecondUser, NoStackSlot, OneWayBringsNoRead };
+    struct Case {
+        Form form;
+        unsigned remainingLoads;
+    };
+    const Case cases[] = {
+        { Form::Plain, 1 },
+        { Form::ReadStandsOneBlockAbove, 1 },
+        { Form::WriteBehindOneRead, 2 },
+        { Form::WriteBelowUpsilon, 2 },
+        { Form::OtherOffset, 2 },
+        { Form::OtherSlot, 2 },
+        { Form::SecondUser, 2 },
+        { Form::NoStackSlot, 2 },
+        { Form::OneWayBringsNoRead, 1 },
+    };
+    for (const Case& testCase : cases) {
+        Form form = testCase.form;
+        Procedure proc;
+        Graph graph { proc };
+        BasicBlock* root = proc.addBlock();
+        BasicBlock* left = proc.addBlock();
+        BasicBlock* belowLeft = proc.addBlock();
+        BasicBlock* right = proc.addBlock();
+        BasicBlock* join = proc.addBlock();
+        auto arguments = cCallArgumentValues<int64_t, int64_t, int64_t*>(proc, root);
+        Air::StackSlot* slot = proc.addStackSlot(2 * sizeof(int64_t));
+        Air::StackSlot* otherSlot = proc.addStackSlot(2 * sizeof(int64_t));
+        auto address = [&](BasicBlock* block, Air::StackSlot* stackSlot) -> Value* {
+            return form == Form::NoStackSlot ? arguments[2] : block->appendNew<SlotBaseValue>(proc, Origin(), stackSlot);
+        };
+        for (Air::StackSlot* stackSlot : { slot, otherSlot }) {
+            graph.store(root, arguments[1], address(root, stackSlot), 0, firstHeap);
+            graph.store(root, graph.int64(root, 7), address(root, stackSlot), 8, firstHeap);
+        }
+        Value* met = graph.phi(join, Int64);
+        graph.branch(root, arguments[0], left, right);
+
+        Value* readOnLeft = graph.load(left, Int64, address(left, slot), 0, firstHeap);
+        if (form == Form::WriteBehindOneRead)
+            graph.store(left, graph.int64(left, 9), address(left, slot), 0, firstHeap);
+        graph.upsilon(form == Form::WriteBelowUpsilon ? left : belowLeft, readOnLeft, met);
+        if (form == Form::Plain) {
+            // Read and Upsilon in one block.
+            left->values().removeFirst(readOnLeft);
+            belowLeft->values().insert(0, readOnLeft);
+            Value* base = readOnLeft->lastChild();
+            left->values().removeFirst(base);
+            belowLeft->values().insert(0, base);
+        }
+        if (form == Form::WriteBelowUpsilon)
+            graph.store(belowLeft, graph.int64(belowLeft, 9), address(belowLeft, slot), 0, firstHeap);
+        graph.jump(left, belowLeft);
+        graph.jump(belowLeft, join);
+
+        Value* broughtOnRight = form == Form::OneWayBringsNoRead ? arguments[1]
+            : graph.load(right, Int64, address(right, form == Form::OtherSlot ? otherSlot : slot), form == Form::OtherOffset ? 8 : 0, firstHeap);
+        graph.upsilon(right, broughtOnRight, met);
+        graph.jump(right, join);
+
+        Value* result = met;
+        if (form == Form::SecondUser)
+            result = graph.make(join, Add, met, graph.make(join, Sub, readOnLeft, readOnLeft));
+        graph.ret(join, result);
+        if (form == Form::SecondUser) {
+            // The read has to stand above both of its users.
+            left->values().removeFirst(readOnLeft);
+            root->values().insert(root->size() - 1, readOnLeft);
+            Value* base = readOnLeft->lastChild();
+            left->values().removeFirst(base);
+            root->values().insert(root->size() - 2, base);
+        }
+
+        proc.resetReachability();
+        bool isMoved = testCase.remainingLoads == 1 && form != Form::OneWayBringsNoRead;
+        CHECK_EQ(sinkValues(proc), isMoved);
+        eliminateDeadCode(proc);
+        CHECK_EQ(numberOfValues(proc, Load), testCase.remainingLoads);
+        CHECK_EQ(numberOfValues(proc, Phi), isMoved ? 0u : 1u);
+        CHECK_EQ(numberOfValues(join, Load), isMoved ? 1u : 0u);
+        int64_t memory[2] = { 0, 0 };
+        auto code = compileProc(proc);
+        for (int64_t goesLeft : { 1, 0 }) {
+            int64_t expected = !goesLeft && form == Form::OtherOffset ? 7 : 5;
+            CHECK_EQ(invoke<int64_t>(*code, goesLeft, 5, memory), expected);
+        }
+    }
+}
+
 static void testSinkValuesKeepsOpaque()
 {
     Procedure proc;
@@ -437,6 +529,53 @@ static void testSinkValuesMovesInductionStepToFirstUse()
     auto code = compileProc(proc);
     CHECK_EQ(invoke<int64_t>(*code, 4, elements), 15);
     CHECK_EQ(invoke<int64_t>(*code, 1, elements), 1);
+}
+
+// for (link = first; link; link = link->next) sum += link->value;
+static void testSinkValuesSinksPointerChasingLoadBelowOtherLoads()
+{
+    struct Link {
+        int64_t value;
+        Link* next;
+    };
+    enum class Between : uint8_t { Addition, Store, Nothing };
+    for (Between between : { Between::Addition, Between::Store, Between::Nothing }) {
+        Procedure proc;
+        Graph graph { proc };
+        BasicBlock* root = proc.addBlock();
+        BasicBlock* loop = proc.addBlock(10);
+        BasicBlock* latch = proc.addBlock(9);
+        BasicBlock* exit = proc.addBlock();
+        Value* link = graph.phi(loop, Int64);
+        Value* sum = graph.phi(loop, Int64);
+        graph.upsilon(root, cCallArgumentValues<Link*>(proc, root)[0], link);
+        graph.upsilon(root, graph.int64(root, 0), sum);
+        graph.jump(root, loop);
+        Value* value = graph.load(loop, Int64, link, 0, firstHeap);
+        Value* total = between == Between::Nothing ? graph.make(loop, Add, value, sum) : nullptr;
+        Value* next = graph.load(loop, Int64, link, 8, secondHeap);
+        if (between == Between::Store)
+            graph.store(loop, value, link, 0, firstHeap);
+        if (!total)
+            total = graph.make(loop, Add, value, sum);
+        graph.branch(loop, next, latch, exit);
+        graph.upsilon(latch, next, link);
+        graph.upsilon(latch, total, sum);
+        graph.jump(latch, loop);
+        graph.ret(exit, total);
+        proc.resetReachability();
+        validate(proc);
+
+        CHECK_EQ(sinkValues(proc), between == Between::Addition);
+        validate(proc);
+        CHECK_EQ(loop->values().find(total) < loop->values().find(next), between != Between::Store);
+        Link last { 4, nullptr };
+        Link middle { 2, &last };
+        Link first { 1, &middle };
+        auto code = compileProc(proc);
+        CHECK_EQ(invoke<int64_t>(*code, &first), 7);
+        CHECK_EQ(invoke<int64_t>(*code, &last), 4);
+    }
 }
 
 // Whether a cycle with two entries is ordered is asked in the middle of the phase, and the answer reads every value of every block.
@@ -1341,10 +1480,12 @@ void addBunPlacementTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testSinkValuesKeepsAddressThatIsAlsoStored());
     RUN(testSinkValuesSinksWithinIrreducibleCycle());
     RUN(testSinkValuesKeepsLoads());
+    RUN(testSinkValuesReadsStackSlotWhereWaysMeet());
     RUN(testSinkValuesKeepsOpaque());
     RUN(testSinkValuesDoesNotSinkIntoLoop());
     RUN(testSinkValuesDoesNotSinkFromPreHeaderIntoLoop());
     RUN(testSinkValuesMovesInductionStepToFirstUse());
+    RUN(testSinkValuesSinksPointerChasingLoadBelowOtherLoads());
     RUN(testSinkValuesMovesInductionStepBeforeAskingAboutIrreducibleCycle());
     RUN(testValidateRefusesNullEntryInBlock());
     RUN(testSinkValuesLeavesInductionStepAboveAccessThatTakesItAsAddress());

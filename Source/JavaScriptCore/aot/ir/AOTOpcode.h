@@ -27,9 +27,14 @@ constexpr bool mustBeDefinition(OperandKind kind)
     return kind == OperandKind::Results || kind == OperandKind::IteratorState || kind == OperandKind::Enumerator;
 }
 
+template<typename E> struct WordOfEnumeratorBitSet { using Type = uint64_t; };
+
 template<typename E, unsigned count>
 class EnumeratorBitSet {
 public:
+    using Word = typename WordOfEnumeratorBitSet<E>::Type;
+    static constexpr unsigned bitsPerWord = sizeof(Word) * 8;
+
     constexpr EnumeratorBitSet() = default;
     constexpr EnumeratorBitSet(std::initializer_list<E> enumerators)
     {
@@ -37,12 +42,12 @@ public:
             add(enumerator);
     }
 
-    constexpr void add(E enumerator) { m_words[static_cast<unsigned>(enumerator) / 64] |= 1ull << (static_cast<unsigned>(enumerator) % 64); }
-    constexpr bool contains(E enumerator) const { return m_words[static_cast<unsigned>(enumerator) / 64] >> (static_cast<unsigned>(enumerator) % 64) & 1; }
+    constexpr void add(E enumerator) { m_words[static_cast<unsigned>(enumerator) / bitsPerWord] |= static_cast<Word>(1) << (static_cast<unsigned>(enumerator) % bitsPerWord); }
+    constexpr bool contains(E enumerator) const { return m_words[static_cast<unsigned>(enumerator) / bitsPerWord] >> (static_cast<unsigned>(enumerator) % bitsPerWord) & 1; }
     constexpr bool isEmpty() const
     {
-        uint64_t all = 0;
-        for (uint64_t word : m_words)
+        Word all = 0;
+        for (Word word : m_words)
             all |= word;
         return !all;
     }
@@ -67,7 +72,7 @@ public:
     }
     constexpr bool intersects(const EnumeratorBitSet& other) const
     {
-        uint64_t common = 0;
+        Word common = 0;
         for (size_t i = 0; i < m_words.size(); ++i)
             common |= m_words[i] & other.m_words[i];
         return common;
@@ -76,15 +81,15 @@ public:
     constexpr void forEach(const Functor& functor) const
     {
         for (size_t i = 0; i < m_words.size(); ++i) {
-            for (uint64_t word = m_words[i]; word; word &= word - 1)
-                functor(static_cast<E>(i * 64 + std::countr_zero(word)));
+            for (Word word = m_words[i]; word; word &= word - 1)
+                functor(static_cast<E>(i * bitsPerWord + std::countr_zero(word)));
         }
     }
 
     friend constexpr bool operator==(const EnumeratorBitSet&, const EnumeratorBitSet&) = default;
 
 private:
-    std::array<uint64_t, (count + 63) / 64> m_words { };
+    std::array<Word, (count + bitsPerWord - 1) / bitsPerWord> m_words { };
 };
 
 using OpcodeSet = EnumeratorBitSet<Opcode, numberOfEnumerators<Opcode>>;

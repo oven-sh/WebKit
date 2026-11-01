@@ -1,0 +1,53 @@
+# A type with more members than a compiled parser takes is not parsed by type: the parser would read a plain object, refuse it, and the source would be parsed again.
+# FORM: AsRead
+# OPTIONS: report=Declines limit=MaxParsedObjectMembers:2 only-passes=ResolveBuiltins,SelectTypedResults
+# RUN: pipeline SelectTypedResults
+# STATISTIC: TypedResultsSelected = 1
+# CHECK: decline TypedResultNotSelected f1 v{{*}} None [0] reason=TargetHasNoTypedPart
+# CHECK-NEXT: decline TypedResultNotSelected f2 v{{*}} None [0] reason=TargetHasNoTypedPart
+# CHECK-NOT: decline TypedResultNotSelected
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Wide" fields=[{key="a" declared={type=number}}, {key="b" declared={type=number}}, {key="c" declared={type=number}}]
+layout L1 name="AtTheLimit" fields=[{key="x" declared={type=number}}, {key="y" declared={type=number}}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="text" [isFreeName]
+    v2 = ToString v1
+    v3 = PropGet v0 key="sink" [isFreeName]
+    v4 = CallDirect v2 function=f1
+    v5 = Call v3, -, v4
+    v6 = CallDirect v2 function=f2
+    v7 = Call v3, -, v6
+    v8 = CallDirect v2 function=f3
+    v9 = Call v3, -, v8
+    Return
+}
+
+function f1 name="overTheLimit" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = Builtin builtin=JSONParse
+    v2 = Call v1, -, v0
+    v3 = Convert v2 declared={type=undefined|null|L0} illTypedCause=FromLooseType
+    Return v3
+# CHECK-NOT: JSONSourceOpen
+# CHECK: = CallBuiltin -, v0, {{*}} overload=JSONParse/0
+}
+
+function f2 name="listOfObjectsOverTheLimit" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = Builtin builtin=JSONParse
+    v2 = Call v1, -, v0
+    v3 = Convert v2 declared={type=undefined|null|Array<L0>} illTypedCause=FromLooseType
+    Return v3
+# CHECK-NOT: JSONSourceOpen
+# CHECK: = CallBuiltin -, v0, {{*}} overload=JSONParse/0
+}
+
+function f3 name="atTheLimit" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = Builtin builtin=JSONParse
+    v2 = Call v1, -, v0
+    v3 = Convert v2 declared={type=undefined|null|L1} illTypedCause=FromLooseType
+    Return v3
+# CHECK: = JSONSourceOpen v0
+}

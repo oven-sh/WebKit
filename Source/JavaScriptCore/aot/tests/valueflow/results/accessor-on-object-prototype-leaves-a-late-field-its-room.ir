@@ -1,0 +1,67 @@
+# function install(target) { Object.defineProperties(target, { id: { get, set } }); }
+# install(Object.prototype); install(State.prototype);
+# function Type() {}    const made = new Type(); made.id = 1; publish(made)
+# Object.prototype takes no new name in a compiled program: the definition throws, so no accessor comes to stand there, and `id` gets its field in Type.
+# A library that installs on what it is handed asks this of every prototype object it may be handed, and one such object would take the name of each method it installs from every layout of the program.
+# An accessor on the prototype object of the class does take the name: a store to `id` of a State runs the setter, and State gets no field.
+# RUN: valueflow-apply
+# CHECK: layout L0 kind=Instance name="Type" constructor=f1 fields=[{key="id" {{*}}flags=[IsAddedLate
+# CHECK: layout L2 kind=Instance name="State" constructor=f4
+# CHECK-NOT: fields=[{key="id"
+# CHECK: function f0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Type" constructor=f1 flags=[IsConstructorFunction]
+layout L1 name="PropertyDescriptor" fields=[{key="get" declared={type=anything}}, {key="set" declared={type=anything}}]
+layout L2 kind=Instance name="State" constructor=f4 flags=[IsConstructorFunction]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = Integer integer=1
+    v3 = NewClosure function=f5
+    v4 = Builtin builtin=ObjectPrototype
+    v5 = Call v3, -, v4
+    v6 = NewClosure function=f4
+    v7 = PropGet v6 key="prototype"
+    v8 = Call v3, -, v7
+    v9 = NewClosure function=f1
+    v10 = Construct v9
+    PropSet v10, v2 key="id" mode=Strict
+    v12 = Call v1, -, v10
+    v13 = Construct v6
+    PropSet v13, v2 key="id" mode=Strict
+    v15 = Call v1, -, v13
+    Return
+}
+function f1 name="Type" module=m0 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = Undefined
+    Return v1
+}
+function f2 name="get" module=m0 kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = Integer integer=7
+    Return v1
+}
+function f3 name="set" module=m0 kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = Undefined
+    Return v2
+}
+function f4 name="State" module=m0 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = Undefined
+    Return v1
+}
+function f5 name="install" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewDictionary
+    v2 = NewObject layout=L1
+    v3 = NewClosure function=f2
+    PropDefine v2, v3 key="get"
+    v5 = NewClosure function=f3
+    PropDefine v2, v5 key="set"
+    v7 = FinishObject v2
+    PropDefine v1, v7 key="id"
+    v9 = Builtin builtin=Object
+    v10 = Builtin builtin=ObjectDefineProperties
+    v11 = Call v10, v9, v0, v1
+    Return v11
+}

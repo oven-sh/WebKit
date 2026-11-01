@@ -11,6 +11,7 @@
 #include "AOTBuiltinTable.h"
 #include "AOTCFG.h"
 #include "AOTDerivedFunctions.h"
+#include "AOTTypeRelations.h"
 #include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -65,6 +66,11 @@ BuiltinID singleBuiltinFunction(const Program& program, const Type& type)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+bool calleeVersionIsFor(const Function& version, FunctionID callee)
+{
+    return version.role == FunctionRole::CalleeVersion && !(version.derivation.parameter & (isForAnyFunctionBit | isForBuiltinBit)) && version.derivation.node == callee.index();
+}
+
 bool canHaveCalleeVersion(const Program& program, FunctionID id, uint32_t entryParameter)
 {
     const Function& function = program.at(id);
@@ -105,8 +111,14 @@ Function buildCalleeVersion(const DerivedFunctionKey& key, DerivedFunctionInputs
     Type type = isForAnyFunction ? Type::function() : key.parameter & isForBuiltinBit ? Type::forBuiltin(BuiltinID(key.node)) : Type::forFunction(FunctionID(key.node));
     if (key.parameter & mayBeNullishBit)
         type = type.withPrimitives(program.at(parameter.type).primitives & Primitive::UndefinedOrNull);
-    if (isForAnyFunction)
-        type = program.at(parameter.type).intersectWith(type, inputs.types);
+    if (isForAnyFunction) {
+        // Met with `function`, a built-in object that is no function is named `function`, which is outside the type the body was typed with. No caller passes one.
+        Type received = program.at(parameter.type);
+        removeAllMatching(received.builtins, [&](BuiltinID builtin) {
+            return !isCallableBuiltin(program.builtins(), builtin);
+        });
+        type = received.intersectWith(type, inputs.types);
+    }
     parameter.type = inputs.types.intern(type);
     parameter.setExpected({ });
     *version.declaredEntryParameter(entryParameter) = DeclaredType(Proven::byPosition(parameter.type));

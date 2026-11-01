@@ -138,7 +138,7 @@ private:
                 add(m_pointProofs, location.block, location.placement == ValuePlacement::Parameter ? 0 : location.index + 1, proof.condition);
         }
         for (PlacedProofs* list : { &m_edgeProofs, &m_pointProofs })
-            AOT::stableSort(list->sorted, { }, [](const PlacedProof& proof) { return std::pair { proof.block.index(), proof.place }; });
+            AOT::stableSortInLine(list->sorted, { }, [](const PlacedProof& proof) { return std::pair { proof.block.index(), proof.place }; });
     }
 
     // Nobody asks for a condition behind its last requirement.
@@ -1042,7 +1042,7 @@ static PassOutcome simplifyGuardLists(FunctionPassContext& context)
 
 static PassOutcome foldInstanceTestsOfTypedObjects(FunctionPassContext& context)
 {
-    if (context.build.validates() || !context.analyses.opcodesOfValues().contains(Opcode::BelongsToInstance))
+    if (!context.analyses.opcodesOfValues().contains(Opcode::BelongsToInstance))
         return PassOutcome::Unchanged;
 
     Function& function = context.function;
@@ -1066,13 +1066,25 @@ static PassOutcome foldInstanceTestsOfTypedObjects(FunctionPassContext& context)
         return PassOutcome::Unchanged;
 
     IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
+    bool keepsTests = context.build.validates();
     for (BlockID block : blocks) {
         ValueID test = function.at(block).terminator.conditionOperand();
         replaceBranchWithJumpToTaken(builder, function, block, [&] {
             return builder.append(Opcode::AllGuards, { });
         });
-        eraseTest(builder, function, block, test);
+        if (!keepsTests) {
+            eraseTest(builder, function, block, test);
+            continue;
+        }
+        // A validating build still performs the test, and compares its result with the one the type implies.
+        builder.setOrigin(function.at(test).origin());
+        ProgramPoint end = pointBeforeTerminatorOf(function, block);
+        Value boolean = IRBuilder::make(Opcode::Boolean);
+        boolean.setBoolean(true);
+        ValueID constant = builder.insertBefore(end, WTF::move(boolean));
+        builder.insertBefore(end, IRBuilder::make(Opcode::ValidateSameValue, { test, constant }));
     }
+    builder.applyInsertions();
     // The builder sees the jumps that it emits, not the branches that were taken away for them.
     context.analyses.didChangeControlFlow();
     builder.emptyUnreachableBlocks();
@@ -1083,6 +1095,10 @@ static PassOutcome foldInstanceTestsOfTypedObjects(FunctionPassContext& context)
 PassOutcome eliminateGuards(FunctionPassContext& context)
 {
     PassOutcome outcome = foldInstanceTestsOfTypedObjects(context);
+    if (askWhetherComparedPositionsAreInBounds(context, ComparedPositions::HaveTests) == PassOutcome::Changed) {
+        context.analyses.didChangeControlFlow();
+        outcome = PassOutcome::Changed;
+    }
     outcome |= eliminateRedundantBranches(context);
     outcome |= simplifyGuardLists(context);
     // The analyses were told of every edit, so whatever they hold was made behind the last one.

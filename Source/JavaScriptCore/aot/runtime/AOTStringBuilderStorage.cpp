@@ -586,9 +586,11 @@ void StringBuilderStorage::rollBack(uint32_t length)
 
 StringBuilderStorage* StackStringBuilder::moveToStorage(JSGlobalObject* globalObject, Instance& instance, const Latin1Character* cursor)
 {
-    if (isOnStack()) {
+    if (isOnStack() || holdsOneString()) {
+        JSString* first = holdsOneString() ? oneString : nullptr;
         storage = StringBuilderStorage::acquire(instance);
-        if (storage->append(globalObject, charactersOnStack(cursor)) == StringBuilderStorage::AppendResult::Failed) [[unlikely]] {
+        bool failed = first && storage->append(globalObject, first) == StringBuilderStorage::AppendResult::Failed;
+        if (failed || storage->append(globalObject, charactersOnStack(cursor)) == StringBuilderStorage::AppendResult::Failed) [[unlikely]] {
             storage->release(instance);
             return nullptr;
         }
@@ -602,6 +604,15 @@ StringBuilderStorage* StackStringBuilder::moveToStorage(JSGlobalObject* globalOb
     }
     storage->m_position = static_cast<uint32_t>(position);
     return storage;
+}
+
+Latin1Character* StackStringBuilder::holdOneString(JSString* string)
+{
+    ASSERT(isOnStack());
+    oneString = string;
+    limit = buffer;
+    lengthOrigin = std::bit_cast<Latin1Character*>(std::bit_cast<uintptr_t>(&buffer[0]) - string->length());
+    return buffer;
 }
 
 Latin1Character* StackStringBuilder::didChangeStorage(JSGlobalObject* globalObject)
@@ -719,6 +730,8 @@ JSString* StringBuilderStorage::createStringFromBuffer(JSGlobalObject* globalObj
 JSString* StackStringBuilder::finish(JSGlobalObject* globalObject, Instance& instance, const Latin1Character* cursor, StringBuilderStorage::StringUse use)
 {
     VM& vm = globalObject->vm();
+    if (holdsOneString() && cursor == buffer)
+        return oneString;
     if (!isOnStack()) {
         if (!moveToStorage(globalObject, instance, cursor)) [[unlikely]]
             return nullptr;
@@ -887,9 +900,11 @@ ALWAYS_INLINE std::optional<StringKeyCache::Lookup> StringBuilderStorage::tryFin
     return lookup;
 }
 
-ALWAYS_INLINE JSString* StringBuilderStorage::finishWithNewKey(Instance& instance, unsigned hash)
+ALWAYS_INLINE JSString* StringBuilderStorage::finishWithNewKey(JSGlobalObject* globalObject, Instance& instance, unsigned hash)
 {
     JSString* key = instance.state->stringKeys->makeKey(*instance.vm, std::span<const Latin1Character> { m_characters, m_position }, hash);
+    if (!key) [[unlikely]]
+        throwOutOfMemory(globalObject);
     m_position = 0;
     returnToPool(instance);
     return key;
@@ -1027,6 +1042,8 @@ static JSString* tryConcatenateShortKey(VM& vm, Instance& instance, std::span<co
     if (JSString* index = tryCreateIndexKey(vm, instance, key.span()))
         return index;
     JSString* string = keys.findOrAdd(vm, key.span());
+    if (!string) [[unlikely]]
+        return nullptr;
     StringKeyCache::KeyByParts parts;
     if (parts.tryTake(keys.cageBase(), primitives))
         keys.cacheKeyByParts(parts, string);
@@ -1084,7 +1101,7 @@ static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES finish
 static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES finishStringBuilderWithNewKey(Instance* instance, JSCell* builder, uint32_t hash)
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTStringBuilderFinish);
-    OPERATION_RETURN(scope, uncheckedDowncast<StringBuilderStorage>(builder)->finishWithNewKey(*instance, hash));
+    OPERATION_RETURN(scope, uncheckedDowncast<StringBuilderStorage>(builder)->finishWithNewKey(globalObject, *instance, hash));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTStringBuilderFinish, JSCell*, (Instance* instance, JSCell* builder, uint32_t isLikelyKey))
@@ -1114,7 +1131,10 @@ static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES finish
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTStackStringBuilderFinish);
     std::span<const Latin1Character> characters = reinterpret_cast<StackStringBuilder*>(builder)->charactersOnStack(byteCast<Latin1Character>(cursor));
-    OPERATION_RETURN(scope, instance->state->stringKeys->makeKey(vm, characters, hash, { }));
+    JSString* key = instance->state->stringKeys->makeKey(vm, characters, hash, { });
+    if (!key) [[unlikely]]
+        throwOutOfMemoryError(globalObject, scope);
+    OPERATION_RETURN(scope, key);
 }
 
 static OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES finishTextOnStackWithCalls(Instance*, uint8_t* builder, uint8_t* cursor, uint32_t isLikelyKey);
@@ -1199,7 +1219,10 @@ static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES concat
             return { key, nullptr };
         case StringKeyCache::Lookup::Absent: {
             AOT_OPERATION_BEGIN(instance, Entry::operationAOTConcatenate);
-            return { keys.makeKey(vm, characters.span(), hash, keys.lastLookupByParts(), stringUse(isLikelyKey) == StringBuilderStorage::StringUse::LikelyName), nullptr };
+            if (JSString* made = keys.makeKey(vm, characters.span(), hash, keys.lastLookupByParts(), stringUse(isLikelyKey) == StringBuilderStorage::StringUse::LikelyName)) [[likely]]
+                return { made, nullptr };
+            throwOutOfMemoryError(globalObject, scope);
+            OPERATION_RETURN(scope, static_cast<JSCell*>(nullptr));
         }
         case StringKeyCache::Lookup::AbsentIndex:
             break;
@@ -1255,6 +1278,13 @@ JSC_DEFINE_JIT_OPERATION(operationAOTConcatenate, JSCell*, (Instance* instance, 
     if (key) [[likely]]
         return { key, nullptr };
     [[clang::musttail]] return concatenateShortKey(instance, count, parts, isLikelyKey);
+}
+
+// The stub ConcatenateKeyOfPair has looked for the pair. An operation begins in its own frame, so this one leaves by a tail call as the others do.
+JSC_DEFINE_JIT_OPERATION(operationAOTConcatenatePair, JSCell*, (Instance* instance, uint32_t isLikelyKey, const EncodedJSValue* parts, uint32_t))
+{
+    instance->state->stringKeys->lastLookupByParts().takePair(parts[0], parts[1]);
+    [[clang::musttail]] return concatenateShortKey(instance, 2, parts, isLikelyKey);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStringBuilderBegin, JSCell*, (Instance* instance))
@@ -1484,10 +1514,17 @@ static NEVER_INLINE OperationReturnType<uint8_t*> JIT_OPERATION_ATTRIBUTES appen
     constexpr Entry entry = Entry::operationAOTStackStringBuilderAppendStringRange;
     AOT_OPERATION_BEGIN(instance, entry);
     auto& stackBuilder = *reinterpret_cast<StackStringBuilder*>(builder);
+    // `"" + text.slice(start, end)` is the slice.
+    JSString* base = cellArgument<JSString>(string, entry);
+    if (stackBuilder.isOnStack() && byteCast<Latin1Character>(cursor) == stackBuilder.buffer && start >= 0 && start < end && static_cast<unsigned>(end) <= base->length()) {
+        JSString* range = jsSubstring(globalObject, base, start, end - start);
+        OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+        OPERATION_RETURN(scope, byteCast<uint8_t>(stackBuilder.holdOneString(range)));
+    }
     StringBuilderStorage* storage = stackBuilder.moveToStorage(globalObject, *instance, byteCast<Latin1Character>(cursor));
     if (!storage) [[unlikely]]
         OPERATION_RETURN(scope, nullptr);
-    appendStringRange(globalObject, *storage, cellArgument<JSString>(string, entry), start, end, entry);
+    appendStringRange(globalObject, *storage, base, start, end, entry);
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
     OPERATION_RETURN(scope, byteCast<uint8_t>(stackBuilder.didChangeStorage(globalObject)));
 }
@@ -1509,7 +1546,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStackStringBuilderAppendStringRange, uint8_
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStackStringBuilderDiscard, void, (Instance* instance, uint8_t* builder))
 {
     auto& stackBuilder = *reinterpret_cast<StackStringBuilder*>(builder);
-    if (!stackBuilder.isOnStack())
+    if (!stackBuilder.isOnStack() && !stackBuilder.holdsOneString())
         stackBuilder.storage->release(*instance);
 }
 

@@ -297,6 +297,14 @@ BuiltinTableIDRange<BuiltinID> BuiltinTable::membersOf(BuiltinID holder) const
     return { object.firstMember, object.memberCount };
 }
 
+std::span<const Builtin> BuiltinTable::memberEntriesOf(BuiltinID holder) const
+{
+    const Builtin& object = at(holder);
+    if (!object.memberCount)
+        return { };
+    return m_data.builtins.subspan(object.firstMember.index(), object.memberCount);
+}
+
 BuiltinID BuiltinTable::findOwnMember(BuiltinID holder, BuiltinName name) const
 {
     const Builtin& object = at(holder);
@@ -402,10 +410,17 @@ bool BuiltinTable::mayDefineOnNewInstances(BuiltinClassID builtinClass, BuiltinN
     return false;
 }
 
-BuiltinTypeID BuiltinTable::typeOfNameDefinedOnNewInstances(BuiltinClassID declaringClass, BuiltinName name) const
+// A class below defines what the classes above define. The lowest class that lists the name says what its constructor leaves there.
+BuiltinTypeID BuiltinTable::typeOfNameDefinedOnNewInstances(BuiltinClassID builtinClass, BuiltinName name) const
 {
-    const BuiltinResultProperty* found = findRecord(at(declaringClass).typesOfNamesDefinedOnNewInstances, &BuiltinResultProperty::name, name);
-    return found ? found->type : BuiltinTypeID();
+    for (BuiltinClassID current = builtinClass; current; current = at(current).parent) {
+        const BuiltinClass& entry = at(current);
+        if (const BuiltinResultProperty* found = findRecord(entry.typesOfNamesDefinedOnNewInstances, &BuiltinResultProperty::name, name))
+            return found->type;
+        if (std::ranges::binary_search(entry.namesDefinedOnNewInstances, name))
+            return { };
+    }
+    return { };
 }
 
 bool BuiltinTable::definesCharactersOnNewInstances(BuiltinClassID builtinClass) const

@@ -54,13 +54,15 @@ public:
     static bool preventExtensions(JSObject*, JSGlobalObject*);
     static bool customHasInstance(JSObject*, JSGlobalObject*, JSValue);
 
-    FunctionKindData kind() const { return functionKindData(function()); }
-    std::span<const uint64_t> captures() const { return { reinterpret_cast<const uint64_t*>(this + 1), captureCountsOf(function()).captures }; }
-    unsigned numberOfReferences() const { return captureCountsOf(function()).references; }
+    uint32_t closureNumber() const { return ClosureWord::closureNumberOf(m_entry); }
+    FunctionKindData kind() const { return kindOfClosureNumber(closureNumber()); }
+    std::span<const uint64_t> captures() const { return { reinterpret_cast<const uint64_t*>(this + 1), captureCountsOfClosureNumber(closureNumber()).captures }; }
+    unsigned numberOfReferences() const { return captureCountsOfClosureNumber(closureNumber()).references; }
     JSCell* environment() const { return numberOfReferences() ? std::bit_cast<JSCell*>(captures()[0]) : nullptr; }
-    FunctionID function() const { return FunctionID(ClosureWord::functionOf(m_entry)); }
+    FunctionID function() const { return functionOfClosureWord(m_entry); }
     uint64_t entry() const { return m_entry; }
-    State& state() const { return State::of(structure()->realm()); }
+    void markRenamed() { m_entry |= 1ULL << ClosureWord::isRenamedBit; }
+    State& state() const;
     const LayoutData* classData() const;
     bool isLazyClassObject() const;
     // Nothing was ever stored in, defined on or deleted from a closure that has the Structure it was made with, so its name and its length are those of its function.
@@ -81,6 +83,9 @@ public:
     void setNameProperty(VM&, JSString*, unsigned attributes);
 
 private:
+    bool isSeenAtOnceToBeNoConstructor() const;
+    const LayoutData* classDataInOwnImage() const;
+    bool isLazyClassObjectInOwnImage() const;
     Closure(VM& vm, Structure* structure, NativeExecutable* executable, uint64_t entry)
         : Base(vm, executable, structure->realm(), structure)
         , m_entry(entry)

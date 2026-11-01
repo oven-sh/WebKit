@@ -122,5 +122,5 @@ function f1 name="apply" module=m0 flags=[HasExplicitName] length=3 thisType={ty
 # CHECK: Equal(b@[[subject]], $4(
 # CHECK: Equal(b@[[subject]], $5(
 # CHECK-LABEL: end of function
-# X64: instructions: 33, patchpoints: 1
-# ARM64: instructions: 32, patchpoints: 1
+# X64: instructions: 36, patchpoints: 1
+# ARM64: instructions: 35, patchpoints: 1

@@ -40,6 +40,41 @@ struct PendingMove {
     Use use;
 };
 
+class ObjectsInBits {
+public:
+    class Iterator {
+    public:
+        explicit Iterator(BitVector::iterator position)
+            : m_position(position)
+        {
+        }
+
+        ObjectID operator*() const { return ObjectID(*m_position); }
+
+        Iterator& operator++()
+        {
+            ++m_position;
+            return *this;
+        }
+
+        friend bool operator==(const Iterator& a, const Iterator& b) { return a.m_position == b.m_position; }
+
+    private:
+        BitVector::iterator m_position;
+    };
+
+    explicit ObjectsInBits(const BitVector& bits LIFETIME_BOUND)
+        : m_bits(bits)
+    {
+    }
+
+    Iterator begin() const { return Iterator(m_bits.begin()); }
+    Iterator end() const { return Iterator(m_bits.end()); }
+
+private:
+    const BitVector& m_bits;
+};
+
 class FramePlanner {
     WTF_MAKE_NONCOPYABLE(FramePlanner);
 public:
@@ -48,7 +83,7 @@ public:
     FramePlan run();
 
 private:
-    ObjectSet candidates() const { return ObjectSet(m_isCandidate); }
+    ObjectsInBits candidates() const { return ObjectsInBits(m_isCandidate); }
     ValueID allocationOf(ObjectID object) const { return m_escape.at(object).definition; }
     const Value& definitionOf(ObjectID object) const LIFETIME_BOUND { return m_function.at(allocationOf(object)); }
     bool isCandidate(ObjectID object) const { return m_isCandidate.get(object.index()); }
@@ -202,15 +237,6 @@ static bool isValueOfDeferringField(const Program& program, const Value& user, u
     });
 }
 
-// A validating build reads the header of every object and closure that a proof names, and a cell of a frame may have none. An array has its header wherever it lies.
-static bool staysOnHeapForValidation(const Program& program, const BuildContext& build, const Value& allocation)
-{
-    bool readsHeaders = build.validates() || build.recordedOptions().has(TestingSwitch::CheckProofsAtRunTime);
-    if (!readsHeaders || arrayAllocationsWithStorage.contains(allocation.opcode))
-        return false;
-    return allocation.opcode != Opcode::NewObject || !program.at(allocation.layout()).isEnvironment();
-}
-
 // A conversion, a test against `prototype` and the like read members of the function, which makes it an object with properties.
 static bool treatsOperandAsObject(Opcode opcode, uint32_t operandIndex)
 {
@@ -335,10 +361,38 @@ bool FramePlanner::mayGiveFrameCell(ValueID value) const
     return false;
 }
 
+static bool meansCellMayOutliveFrame(AllocationHeapCause cause)
+{
+    switch (cause) {
+    case AllocationHeapCause::Escapes:
+    case AllocationHeapCause::SeveralLiveInstances:
+    case AllocationHeapCause::HasUntrackedAlias:
+    case AllocationHeapCause::LiveAcrossSuspension:
+    case AllocationHeapCause::LiveAtReturnCall:
+    case AllocationHeapCause::HeldByHeapCell:
+    case AllocationHeapCause::HeldAcrossIterations:
+    case AllocationHeapCause::SeenByNativeCode:
+        return true;
+    case AllocationHeapCause::None:
+    case AllocationHeapCause::NotTracked:
+    case AllocationHeapCause::HasNoFrameForm:
+    case AllocationHeapCause::ChangedByUse:
+    case AllocationHeapCause::ClosureIsNotOnlyCalled:
+    case AllocationHeapCause::LayoutDefersClosures:
+    case AllocationHeapCause::FieldsCreatedLater:
+    case AllocationHeapCause::ExceedsLimit:
+    case AllocationHeapCause::MaterializationDoesNotPay:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 void FramePlanner::moveToHeap(ObjectID object, AllocationHeapCause cause, std::optional<Use> use, LimitID limit)
 {
     FrameDecision& decision = m_decisions[object.index()];
     if (decision.storage == AllocationStorage::Heap)
+        return;
+    if (m_build.isSabotaged(Sabotage::CellsThatAreKeptLieInFrames) && meansCellMayOutliveFrame(cause) && !isArray(object))
         return;
     decision.storage = AllocationStorage::Heap;
     decision.isLent = false;
@@ -384,7 +438,7 @@ void FramePlanner::collectCandidates()
                 m_plan.count(StatisticID::EmptyArgumentListsShared);
                 continue;
             }
-            if (value.storage() != AllocationStorage::Heap || staysOnHeapForValidation(m_program, m_build, value))
+            if (value.storage() != AllocationStorage::Heap)
                 continue;
             if (arrayAllocationsWithStorage.contains(value.opcode) && !canLieInFrame(m_program, m_build, value))
                 continue;
@@ -538,7 +592,7 @@ bool FramePlanner::keepClosureUntilItLeaves(ObjectID closure)
     BlockID blockOfDefinition = useLists.blockOf(definition);
     if (!willHaveLongFormsInLine(blockOfDefinition))
         return false;
-    std::span<const ObjectUse> knownUses = m_escape.usesOf(closure);
+    ObjectUses knownUses = m_escape.usesOf(closure);
     // A stack trace lists a call under the name of the function object that ran, and what leaves is another function object.
     bool isListedUnderItsOwnName = m_program.at(writtenFunctionOf(m_program, m_function.at(definition).function())).has(FunctionCapabilities::RecordsCalleeOnceRenamed);
     bool isLent = false;
@@ -553,7 +607,8 @@ bool FramePlanner::keepClosureUntilItLeaves(ObjectID closure)
         // A use that keeps the closure in a cell, gives it back or passes it on makes another way to it, which is not among the uses of the value.
         bool staysInFrame = use.kind == Use::Kind::Operand && known != knownUses.end() && (!known->isEscape || effectRuleOf(m_function.at(use.user).opcode) == EffectRule::Call) && !isPassedOnByBranch(use);
         if (staysInFrame && known->uses.containsOnly(usesOfBorrowedParameter) && checkUse(closure, *known) == AllocationHeapCause::None) {
-            if (isListedUnderItsOwnName && known->uses.containsAny({ OperandUse::Calls, OperandUse::CallsPerElement, OperandUse::CallsRepeatedly }))
+            // What is left of a call that was copied into this function is the word that keeps its callee.
+            if (isListedUnderItsOwnName && (known->uses.containsAny({ OperandUse::Calls, OperandUse::CallsPerElement, OperandUse::CallsRepeatedly }) || m_function.at(use.user).opcode == Opcode::KeepCalleeInFrame))
                 usesThatRunIt.append(use);
             isBorrowed = true;
             continue;
@@ -595,8 +650,12 @@ bool FramePlanner::keepClosureUntilItLeaves(ObjectID closure)
 Expected<bool> FramePlanner::mayFindBorrowingCallee(const Value& call, uint32_t operandIndex) const
 {
     auto borrows = [&](FunctionID id) {
-        std::optional<uint32_t> entryParameter = entryParameterOf(m_program.at(id), call, operandIndex);
-        return entryParameter && m_flow->framePointerSummary(id, *entryParameter).uses.containsOnly(usesOfBorrowedParameter);
+        const Function& callee = m_program.at(id);
+        if (std::optional<uint32_t> entryParameter = entryParameterOf(callee, call, operandIndex))
+            return m_flow->framePointerSummary(id, *entryParameter).uses.containsOnly(usesOfBorrowedParameter);
+        // An argument without a parameter is unused.
+        std::optional<uint32_t> argument = call.variadicOperandIndex(operandIndex);
+        return argument && *argument >= callee.numberOfPositionalParameters() && !callee.hasAny({ FunctionFlags::HasArgumentCount, FunctionFlags::HasHiddenRest, FunctionFlags::HasRestParameter });
     };
     CalleeList callees = calleesOfCall(m_program, call);
     Callees seen = callees.seen().predicted();
@@ -612,6 +671,12 @@ Expected<bool> FramePlanner::mayFindBorrowingCallee(const Value& call, uint32_t 
             return entry && borrows(entry->function);
         });
     });
+}
+
+// A cell in a frame keeps the fields that it is made with. One that is made with every field of its layout has none left to create, however other objects of the layout come by theirs.
+bool mayCreateFieldsLater(const Layout& layout, size_t numberOfFieldsAtAllocation)
+{
+    return layout.flow.fieldCreation != FieldCreation::OnlyAtConstruction && numberOfFieldsAtAllocation != layout.fields.size();
 }
 
 static AllocationHeapCause checkObjectForm(const Program& program, const Value& object)
@@ -638,7 +703,7 @@ static AllocationHeapCause checkObjectForm(const Program& program, const Value& 
         if (defersClosureWithCapture(flowOf(program, FieldReference { id, field }).location.deferral))
             return AllocationHeapCause::LayoutDefersClosures;
     }
-    if (layout.flow.fieldCreation != FieldCreation::OnlyAtConstruction)
+    if (mayCreateFieldsLater(layout, object.fields().size()))
         return AllocationHeapCause::FieldsCreatedLater;
     return AllocationHeapCause::None;
 }
@@ -647,7 +712,7 @@ static AllocationHeapCause checkCellForm(const Program& program, const Value& al
 {
     if (allocation.opcode != Opcode::NewClosure)
         return checkObjectForm(program, allocation);
-    // The list of recorded callees holds the closure that the function is entered through, and the collector visits the list. Where it is the run time that records, once a closure of the function was renamed, no closure that lies in a frame is written into the list.
+    // A frame of such a function is named by the closure that the function was entered through, when the stack is read. Where no statement is seen to rename a closure of the function, one that lies in a frame has the name that is written.
     const Function& callee = program.at(allocation.function());
     if (callee.has(FunctionCapabilities::RecordsCallee) && !callee.has(FunctionCapabilities::RecordsCalleeOnceRenamed))
         return AllocationHeapCause::ClosureIsNotOnlyCalled;
@@ -990,6 +1055,9 @@ void FramePlanner::checkReturnCalls()
                     continue;
                 if (isCandidate(object) && m_decisions[object.index()].madeAgainAt.contains(use))
                     continue;
+                // A borrower of a closure returns no part of it, and a non-borrower is passed the heap closure. So the result of the call it was lent to is never the cell in the frame.
+                if (isCandidate(object) && isLent(object) && sameObjectThroughCasts(m_function, operand) != allocationOf(object))
+                    continue;
                 if (isCandidate(object) && calleesEndTheirTailCalls())
                     keepsFrame |= mayBeInFrame(object);
                 else
@@ -1182,7 +1250,7 @@ void FramePlanner::checkMaterialization()
     for (ObjectID environment : candidates()) {
         if (m_decisions[environment.index()].storage != AllocationStorage::FrameUntilMaterialized)
             continue;
-        std::span<const ObjectUse> uses = m_escape.usesOf(environment);
+        ObjectUses uses = m_escape.usesOf(environment);
         auto isCaptureOfFrameClosure = [&](const ObjectUse& entry) {
             return entry.use.kind == Use::Kind::Operand && frameClosures.get(entry.use.user.index());
         };
@@ -1227,7 +1295,7 @@ void FramePlanner::finishPlan()
             m_plan.add(m_program, value, value.storage(), value.opcode == Opcode::NewClosure && value.isLent());
         }
     }
-    AOT::sort(m_plan.decisions, { }, &FrameDecision::allocation);
+    AOT::sortInLine(m_plan.decisions, { }, &FrameDecision::allocation);
 }
 
 } } } // namespace JSC::AOT::Typed

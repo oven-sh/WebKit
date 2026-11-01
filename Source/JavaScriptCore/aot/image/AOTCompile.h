@@ -10,6 +10,7 @@
 #include "AOTArrivalSiteNumbers.h"
 #include "AOTDiagnostics.h"
 #include "AOTFlowReport.h"
+#include "AOTHostFunctionTexts.h"
 #include "AOTID.h"
 #include "AOTLosses.h"
 #include "AOTObfuscatedSites.h"
@@ -81,6 +82,15 @@ struct FlowFindings {
     size_t builtinsUsedCount { 0 };
     const Wire::LackedFunctionRecord* libraryFunctionsLacked { nullptr };
     size_t libraryFunctionsLackedCount { 0 };
+    const Wire::ReplacedExportRecord* exportsThatSpiesReplace { nullptr };
+    size_t exportsThatSpiesReplaceCount { 0 };
+    const Wire::ReplacedBuiltinRecord* builtinsThatTestsReplace { nullptr };
+    size_t builtinsThatTestsReplaceCount { 0 };
+    // The ranges of the names lie in `textOfNames`.
+    const Wire::AddedNameRecord* namesThatTestsAdd { nullptr };
+    size_t namesThatTestsAddCount { 0 };
+    const uint8_t* textOfNames { nullptr };
+    size_t textOfNamesSize { 0 };
 };
 
 // The compiler calls release(owner) at most once, on any thread, when it has read the program bytes.
@@ -91,11 +101,15 @@ struct ProgramOwner {
     void* owner { nullptr };
     const ExternalFunctionBodies* externalBodies { nullptr };
     bool (*goesOnBehindFlowAnalysis)(void* owner, const FlowFindings*) { nullptr };
+    // Of a module whose text the program does not hold.
+    HostFunctionTexts functionTexts { };
 };
 
 JS_EXPORT_PRIVATE std::unique_ptr<CompileOutput> compileProgram(std::span<const uint8_t> program, const Wire::CompileOptions&, const HostThreadPool* = nullptr, ProgramOwner = { });
 JS_EXPORT_PRIVATE std::unique_ptr<CompileOutput> compileParsedProgram(std::unique_ptr<Typed::Program>, BuildContext&);
 JS_EXPORT_PRIVATE size_t imageAlignment();
+// The most memory that the process has had resident. The log of phases resets the system's own mark at every line, and getrusage() reads that mark.
+JS_EXPORT_PRIVATE size_t peakResidentMegabytesOfProcess();
 
 // For a program that holds expected results and nothing else: the plan of each, in their order, each behind its length in four bytes, the low one first. Empty where the bytes are no program.
 JS_EXPORT_PRIVATE Vector<uint8_t> writeValidationPlans(std::span<const uint8_t> program, const Wire::CompileOptions&);

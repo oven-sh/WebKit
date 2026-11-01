@@ -5,6 +5,7 @@
 
 #include "config.h"
 #include "AOTCodeGenerationDriver.h"
+#include "AOTImagesBelow.h"
 
 #if ENABLE(AOT)
 
@@ -44,11 +45,6 @@ struct Batch {
     uint32_t size;
 };
 
-struct HiddenBody {
-    Typed::Function::Blocks::Storage blocks;
-    Typed::Function::Values::Storage values;
-};
-
 } // anonymous namespace
 
 CodeGenerationPlan prepareCodeGeneration(const Typed::PipelineOutput& pipeline, BuildContext& context, ProgramTablesUse tables)
@@ -78,8 +74,24 @@ CodeGenerationPlan prepareCodeGeneration(const Typed::PipelineOutput& pipeline, 
 
             IdentifierNumbering numbering = numberIdentifiers(program, plan.uses.keys, pipeline.slots->keysWithColumn(), context);
             StubPolicy policy = chooseStubPolicy(plan.uses.keys, numbering, context);
+            addExpectedFieldTableEntries(policy, program, *pipeline.slots, numbering);
+            chooseOrderOfFieldTableForms(policy, program, *pipeline.slots, plan.uses.keys);
             addRegExpLiterals(policy, *pipeline.regExpRequests, pipeline.flow->mayReadLegacyRegExpStatics(), context);
-            plan.stubCatalog = makeUniqueWithoutFastMallocCheck<const StubCatalog>(StubOptions::from(context.recordedOptions(), program, *pipeline.flow), WTF::move(policy));
+            StubOptions stubOptions = StubOptions::from(context.recordedOptions(), program, *pipeline.flow);
+            stubOptions.maxNameInFieldTable = numbering.countWithFieldTableColumn() - 1;
+            if (context.options().sharesRealms()) {
+                stubOptions.sharesRealms = true;
+                stubOptions.imagesBelow = context.imagesBelow() ? context.imagesBelow()->count() : 0;
+                stubOptions.shapesBelow = pipeline.placement->shapes().shapesBelow();
+                stubOptions.lastShape = pipeline.placement->shapes().numberOfShapes();
+                stubOptions.firstStringHeader = numbering.first();
+                Typed::ClosureFunctionRange closures = pipeline.placement->closureFunctions();
+                stubOptions.closureNumbersBelow = closures.numbersBelow;
+                stubOptions.endOfClosureNumbers = closures.numbersBelow + closures.end.index() - closures.first.index();
+                stubOptions.layoutIndicesBelow = context.imagesBelow() ? context.imagesBelow()->layoutIndices() : 0;
+                stubOptions.numberOfLayoutIndices = static_cast<uint32_t>(program.layouts.size());
+            }
+            plan.stubCatalog = makeUniqueWithoutFastMallocCheck<const StubCatalog>(stubOptions, WTF::move(policy));
             context.setIdentifierNumbering(WTF::move(numbering));
 
             plan.stringConstants = numberStringConstants(program, plan.uses.strings, context);
@@ -124,6 +136,12 @@ void LinkedFunctions::grow(size_t newSize, BuildContext& context)
     *this = LinkedFunctions(context.parallelLoops(), safeCast<unsigned>(newSize), [](unsigned) {
         return CompiledCode { };
     });
+}
+
+void LinkedFunctions::makeRoomFor(size_t newSize)
+{
+    RELEASE_ASSERT(isEmpty());
+    static_cast<ParallelArray&>(*this) = ParallelArray::withRoomFor(safeCast<unsigned>(newSize));
 }
 
 void LinkedFunctions::clearOnAllThreads(BuildContext& context)
@@ -268,7 +286,7 @@ struct CodeGenerationJob::State {
     BuildContext& context;
     Vector<Batch> batches;
     Vector<FunctionID> ids;
-    Vector<HiddenBody> hiddenBodies;
+    Vector<Typed::ParkedBody> hiddenBodies;
     GeneratedCode result;
     std::optional<Typed::TypeInterningPhase> phase;
     std::optional<Typed::ProgramCaches> caches;
@@ -309,7 +327,7 @@ CodeGenerationJob::CodeGenerationJob(const Typed::CodeGenerationInputs& inputs, 
         willRelease(ids[position]);
         Typed::Function& function = program.at(ids[position]);
         if (function.bodyIsReleased)
-            m_state->hiddenBodies[position] = { function.takeBlocks(), function.takeValues() };
+            m_state->hiddenBodies[position] = Typed::ParkedBody(function.editAllBlocks(), function.editAllValues());
     });
     forEachIndexInParallel(loops, functionsWithoutCode.size(), [&](unsigned index) {
         m_state->release(FunctionID(functionsWithoutCode[index]));
@@ -328,7 +346,8 @@ GeneratedCode CodeGenerationJob::run()
 {
     auto& [inputs, program, context, batches, ids, hiddenBodies, result, phase, caches] = *m_state;
     const ParallelLoops& loops = context.parallelLoops();
-    result.functions.grow(ids.size(), context);
+    // The records of all functions are hundreds of megabytes, and memory is at its highest here: a batch makes its own.
+    result.functions.makeRoomFor(ids.size());
     std::span<CompiledCode> functions = result.functions.mutableSpan();
     Vector<CodeGenerationTotals> totals(context.threadCount());
     forEachIndexInParallel(loops, batches.size(), [&](unsigned index, unsigned worker) {
@@ -336,12 +355,11 @@ GeneratedCode CodeGenerationJob::run()
         std::span<const FunctionID> idsInBatch = ids.subspan(batch.first, batch.size);
         std::span<CompiledCode> functionsInBatch = functions.subspan(batch.first, batch.size);
         for (uint32_t member = 0; member < batch.size; ++member) {
+            result.functions.makeAt(batch.first + member);
             Typed::Function& function = program.at(idsInBatch[member]);
             if (!function.bodyIsReleased)
                 continue;
-            HiddenBody body = WTF::move(hiddenBodies[batch.first + member]);
-            function.editAllBlocks() = WTF::move(body.blocks);
-            function.editAllValues() = WTF::move(body.values);
+            hiddenBodies[batch.first + member].takeInto(function.editAllBlocks(), function.editAllValues());
         }
         Typed::TypeArena arena(*phase, index);
         Typed::compileFunctions({ context, arena, context.backEndScratch(worker) }, inputs, idsInBatch, functionsInBatch, totals[worker]);

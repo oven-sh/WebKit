@@ -13,6 +13,7 @@
 #include "AOTStubFrontEnds.h"
 #include "AOTStubRegisters.h"
 #include "AOTStubsExceptions.h"
+#include "AOTStubsOperations.h"
 #include "AOTStubsPolls.h"
 #include "AOTVector.h"
 #include "AssemblerPolicy.h"
@@ -44,10 +45,11 @@ static CPUFeatureSet featuresOfStubs(CPUFeatureSet features)
 #endif
 }
 
-StubAssembler::StubAssembler(const StubOptions& options, const StubCatalog& catalog)
+StubAssembler::StubAssembler(const StubOptions& options, const StubCatalog& catalog, PCRelativeReach addressReach)
     : m_options(options)
     , m_catalog(catalog)
     , m_relocations(*this, AssemblerPolicy::forImage(featuresOfStubs(options.targetFeatures)))
+    , m_addressReach(addressReach)
 {
     readTagsFromInstance(*this);
 }
@@ -68,6 +70,7 @@ StubRecording StubAssembler::generateBody(StubKey body, const ScopedLambda<void(
     RELEASE_ASSERT(!m_key.hasFamily());
 
     m_key = body;
+    m_callPosition = CallPosition::Ordinary;
     m_signature = signatureOf(body);
     m_recording = { };
     m_recording.body = body;
@@ -119,7 +122,28 @@ void StubAssembler::jumpToOperationCallOf(Entry entry)
 {
     recordCall(entry);
     move(TrustedImm32(offsetInRuntimeTable(entry)), *m_signature.immediate);
+    // argumentGPROfPreservingCall() has the other half.
+    if (key().family() == StubFamily::CallOperationPreservingRegisters && preservingCallShapes[key().form()].firstArgument == OperationCall::FirstArgument::Instance && hasPrelude(entryAtOffset(*key().immediate()))) {
+        unsigned index = 1;
+        for (GPRReg reg : registersThatPreservingCallsTakeArgumentsIn()) {
+            recordClobber(reg);
+            move(operationArgumentGPR(index++), reg);
+        }
+    }
     jumpToStub(key().withoutImmediate());
+}
+
+void StubAssembler::jumpToCallOfOperation(Entry entry)
+{
+    RELEASE_ASSERT(effectsOf(entry).mayThrow);
+    constexpr StubKey callsOperation = AOT::callOperation(OperationCall::Returns::Value, OperationCall::FirstArgument::Instance);
+    if (hasPrelude(entry)) {
+        jumpToStub(callsOperation.withImmediate(offsetInRuntimeTable(entry)));
+        return;
+    }
+    recordCall(entry);
+    move(TrustedImm32(static_cast<int32_t>(offsetInRuntimeTable(entry))), reuseScratch(stubImmediateRegister));
+    jumpToStub(callsOperation);
 }
 
 void StubAssembler::recordSignatureRegisters(StubKey entry)
@@ -448,6 +472,7 @@ void StubAssembler::addReference(StubKey target, StubReference::Kind kind)
         checkHasNoBorrowedFPRs();
         break;
     case StubReference::Kind::Call:
+    case StubReference::Kind::PollAfterOperation:
     case StubReference::Kind::Address:
         if (!m_savedRegisterStack.isEmpty())
             savedAround = m_savedRegisterStack.last();
@@ -458,9 +483,9 @@ void StubAssembler::addReference(StubKey target, StubReference::Kind kind)
     m_recording.references.appendIfNotContains(StubReference { target, kind, savedAround });
 }
 
-void StubAssembler::emitStubCall(StubKey target)
+void StubAssembler::emitStubCall(StubKey target, StubReference::Kind kind)
 {
-    addReference(target, StubReference::Kind::Call);
+    addReference(target, kind);
     m_pendingCalls.append({ CCallHelpers::nearCall(), target });
 }
 
@@ -486,19 +511,19 @@ void StubAssembler::linkToStub(JumpList& jumps, StubKey target)
 void StubAssembler::loadStubAddress(StubKey target, GPRReg result)
 {
     addReference(target, StubReference::Kind::Address);
-    m_pendingStubAddresses.append({ movePCRelativeAddress(result, PCRelativeReach::Near), target });
+    m_pendingStubAddresses.append({ movePCRelativeAddress(result, m_addressReach), target });
 }
 
 void StubAssembler::returnStubAddress(StubKey target)
 {
     addReference(target, StubReference::Kind::ReturnedAddress);
-    m_pendingStubAddresses.append({ movePCRelativeAddress(result(), PCRelativeReach::Near), target });
+    m_pendingStubAddresses.append({ movePCRelativeAddress(result(), m_addressReach), target });
     returnToCaller();
 }
 
 void StubAssembler::loadLabelAddress(Label target, GPRReg result)
 {
-    m_pendingLabelAddresses.append({ movePCRelativeAddress(result, PCRelativeReach::Near), target });
+    m_pendingLabelAddresses.append({ movePCRelativeAddress(result, m_addressReach), target });
 }
 
 void StubAssembler::jumpThroughHandlerTable(BaseIndex tableEntry, std::span<const StubKey> handlers)
@@ -619,7 +644,7 @@ void StubAssembler::jumpToExceptionHandler()
     jumpToStub(handleException(false));
 }
 
-CCallHelpers::Address StubAssembler::limitOfCallsByValue()
+CCallHelpers::Address StubAssembler::limitOfTailCallsByValue()
 {
     return Address(instanceGPR, AOT_INSTANCE_OFFSET(callsByValue.limit) + StackManager::Mirror::offsetOfTrapAwareSoftStackLimit());
 }
@@ -639,6 +664,50 @@ void StubAssembler::checkStackBeforeEntering()
     pollIfBelow(trapAwareSoftStackLimitWord(), pollBeforeEntering(PollBeforeEnteringForm::Plain));
 }
 
+// Native code whose allocation fails continues with the reserve. sp is as it was at the stub's entry, so what the poll throws is thrown at the call site.
+// No function is entered here, so an exhausted stack alone is not a reason to throw.
+void StubAssembler::pollBeforeReturningFromNativeCode()
+{
+    if (key().callerFrame() == CallerFrame::StubFrame)
+        return;
+    Jump mayHavePendingTrap = branchPtr(Below, stackPointerRegister, trapAwareSoftStackLimitWord());
+    Label afterPoll = label();
+    addOutOfLinePart([mayHavePendingTrap, afterPoll](StubAssembler& jit) {
+        mayHavePendingTrap.link(&jit);
+        jit.branchPtr(Below, stackPointerRegister, softStackLimitWord()).linkTo(afterPoll, &jit);
+        jit.pollAtStubEntry(pollBeforeEntering(PollBeforeEnteringForm::Plain));
+        jit.jump().linkTo(afterPoll, &jit);
+    });
+}
+
+CCallHelpers::Address StubAssembler::pollIsDueWord()
+{
+    return Address(instanceGPR, AOT_INSTANCE_OFFSET(pollIsDue));
+}
+
+// One test for the exception that an operation reports in a register and for the poll. Changes the register.
+CCallHelpers::Jump StubAssembler::branchIfNonZeroOrPollIsDue(GPRReg value, GPRReg scratch)
+{
+#if CPU(X86_64)
+    UNUSED_PARAM(scratch);
+    or64(pollIsDueWord(), value);
+    return Jump(m_assembler.jCC(x86Condition(NonZero)));
+#else
+    loadPtr(pollIsDueWord(), scratch);
+    or64(scratch, value);
+    return branchTestPtr(NonZero, value);
+#endif
+}
+
+// The out-of-line part of a stub that has found a poll due after its operation, with sp as it was at the stub's entry. pollBeforeReturningFromNativeCode() says why.
+// A caller plans for the error of a failed allocation wherever a call may collect, so the poll adds nothing to the effects of the stub.
+void StubAssembler::pollBeforeReturningFromOperation(Label afterPoll)
+{
+    branchPtr(Below, stackPointerRegister, softStackLimitWord()).linkTo(afterPoll, this);
+    pollAtStubEntry(pollBeforeEntering(PollBeforeEnteringForm::Plain), StubReference::Kind::PollAfterOperation);
+    jump().linkTo(afterPoll, this);
+}
+
 void StubAssembler::checkStackBeforeEntering(GPRReg endOfFrame)
 {
     Jump mayNotFit = branchPtr(Below, endOfFrame, trapAwareSoftStackLimitWord());
@@ -653,7 +722,11 @@ void StubAssembler::checkStackBeforeEntering(GPRReg endOfFrame)
 
 void StubAssembler::checkStackBeforeEnteringCallee()
 {
-    pollIfBelow(limitOfCallsByValue(), pollBeforeEntering(PollBeforeEnteringForm::FunctionObject));
+    if (m_callPosition == CallPosition::Ordinary) {
+        checkStackBeforeEntering();
+        return;
+    }
+    pollIfBelow(limitOfTailCallsByValue(), pollBeforeEntering(PollBeforeEnteringForm::FunctionObject));
 }
 
 void StubAssembler::pollIfBelow(Address limit, StubKey poll)
@@ -668,12 +741,12 @@ void StubAssembler::pollIfBelow(Address limit, StubKey poll)
 }
 
 // sp is as at the entry of this stub: on x86-64 not aligned for a call, which PollBeforeEntering expects.
-void StubAssembler::pollAtStubEntry(StubKey poll)
+void StubAssembler::pollAtStubEntry(StubKey poll, StubReference::Kind kind)
 {
 #if CPU(ARM64)
     move(linkRegister, ARM64Registers::x16);
 #endif
-    emitStubCall(poll);
+    emitStubCall(poll, kind);
 #if CPU(X86_64)
     bindReturnLabel(StubFrameKind::AtStubEntry);
 #endif
@@ -710,11 +783,12 @@ bool StubAssembler::linkCallsAndAddresses(LinkBuffer& linkBuffer)
 {
     for (const PendingCall& pending : m_pendingCalls)
         linkBuffer.link<JITThunkPtrTag>(pending.call, linkBuffer.locationOf<JITThunkPtrTag>(labelOf(pending.target)));
+    RelocationKind addressKind = addressKindFor(m_addressReach);
     bool isInReach = true;
     for (const PendingStubAddress& pending : m_pendingStubAddresses)
-        isInReach &= linkBuffer.link(pending.site, RelocationKind::AddressNear, labelOf(pending.target));
+        isInReach &= linkBuffer.link(pending.site, addressKind, labelOf(pending.target));
     for (const PendingLabelAddress& pending : m_pendingLabelAddresses)
-        isInReach &= linkBuffer.link(pending.site, RelocationKind::AddressNear, pending.target);
+        isInReach &= linkBuffer.link(pending.site, addressKind, pending.target);
     return isInReach;
 }
 

@@ -11,11 +11,14 @@
 
 namespace JSC {
 
+class InlineWatchpointSet;
+class JSFunction;
+class ObjectPropertyCondition;
 class PropertyName;
 
 namespace AOT {
 
-enum class RefusedChange : uint8_t { Store, Definition, Deletion, Prototype };
+enum class RejectedWrite : uint8_t { Store, Definition, Deletion, Prototype };
 
 void didChangeChainObject(VM&, JSObject* changed, UniquedStringImpl* uidOrNull);
 
@@ -26,9 +29,10 @@ namespace AOT::RuntimeHooks {
 
 using AOT::didCreateClass;
 using AOT::didCreateStaticProperty;
-using AOT::didRefuseChange;
+using AOT::didRejectWrite;
 // Null for an object that start-up has not locked.
-using AOT::messageOfRefusalByLockedObject;
+using AOT::lockedObjectErrorMessage;
+using AOT::reflectThrowsOnLockedProperty;
 using AOT::takeStaticPropertyMadeAhead;
 
 void willInitializeRealm(JSGlobalObject*);
@@ -40,8 +44,19 @@ inline bool keepsPrototypeOfNativeConstructors(JSGlobalObject* realm) { return l
 String messageOfNameRefusedOnBuiltinFunction(PropertyName);
 String messageOfPrototypeRefusedOnBuiltinFunction();
 void didCreateRealm(JSGlobalObject*);
+// The built-ins of a realm that runs a program get other Structures when they are locked. What watches them is installed behind that, once.
+enum class DeferredWatchpointKind : bool { Structure, PropertyChange };
+void willWatchBuiltins(JSGlobalObject*);
+void didWatchBuiltins(JSGlobalObject*);
+bool defersWatchpoints(JSGlobalObject*);
+bool deferWatchpoint(JSGlobalObject*, const ObjectPropertyCondition&, InlineWatchpointSet&, DeferredWatchpointKind);
+void installDeferredWatchpoints(JSGlobalObject*);
+// The stubs of an image ask words of the instance that are written at the start alone: they would go on making arrays with plain storage.
+[[noreturn]] void stopBecauseRealmHasABadTime();
 inline void didChangePrototypeChain(VM& vm, JSObject* changed, UniquedStringImpl* nameOrNull) { didChangeChainObject(vm, changed, nameOrNull); }
 void didFlattenStructure(VM&, Structure*);
+// A native constructor entered by compiled code's `super(..)` creates an object for this new.target and would give it this Structure.
+Structure* addBrandForSuperCall(VM&, JSFunction* newTarget, Structure*);
 // No object with this Structure has got this name before. An object that is filled once keeps its names in a table of its own, without a Structure for each. The second object that gets the same name behind the same names gets Structures, which the third shares.
 bool becomesDictionaryByAddition(VM&, JSObject*, Structure*, UniquedStringImpl*);
 void didMakeStructureForAddition(VM&, Structure* made);

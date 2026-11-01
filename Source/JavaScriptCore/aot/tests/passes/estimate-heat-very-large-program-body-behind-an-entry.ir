@@ -1,5 +1,5 @@
 # In a very large program the callers of a function are counted at the entry that the engine has put in front of it. The body behind that entry has one caller and runs as often as the entry;
-# what the body calls in its turn is judged by its own callers, and the body behind an entry that few call stays cold. So does the body of an async function, which waits between its steps.
+# what the body calls in its turn is judged by its own callers, and the body behind an entry that few call stays cold. An async function behind an entry is such a body.
 # FORM: Prepared
 # OPTIONS: limit=MaxWarmCodeValues:1
 # RUN: pass EstimateHeat
@@ -9,7 +9,7 @@
 # CHECK-NEXT: f4 Cold 10 1
 # CHECK-NEXT: f5 Cold 10 1
 # CHECK: f10 Hot 90 100
-# CHECK-NEXT: f11 Cold 10 1
+# CHECK-NEXT: f11 Hot 90 100
 # CHECK: thresholds: cold=4 hot=50
 
 module m0 path="main.js" displayPath="main.js" body=f0

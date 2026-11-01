@@ -10,7 +10,8 @@ be sorted into one of three piles:
 2. **The test cannot pass in a mode or build we run.** Skip it in that mode only, with the reason. Section B.
 3. **A known gap or bug in the fork.** Skipped with `TODO(bun)`. Section C. Remove the skip when the gap is closed.
 
-Anything that fits none of these is a regression from the sync: fix the engine, not the test.
+Anything that fits none of these is a regression from the sync: fix the engine, not the test. The exception is an
+unchanged test whose result depends on the load of the machine: those have a section of their own after C.
 
 Rules for an edit to an upstream test:
 
@@ -157,6 +158,16 @@ Rules for an edit to an upstream test:
 
 ---
 
+## Not changed: the result depends on the load of the machine
+
+Upstream's tests as upstream has them. A failure with the message given here is not a regression.
+
+| file | message | what it depends on |
+|---|---|---|
+| `stress/new-largeish-contiguous-array-with-size.js` | `Error: heap too big before forced GC: <bytes>` | with `--forceRAMSize=10000000` it allocates 1,000 arrays of 50,000 elements in a loop and then bounds `gcHeapSize()` at 10,000,000 without asking for a collection. The bound holds if the concurrent collector gets processor time before the loop ends. Run alone it passes; the more processes share the processors, the more often it fails |
+
+---
+
 ## TestWTF (`Tools/TestWebKitAPI/Tests/WTF`)
 
 Upstream's too, and run by the `test` job.
@@ -166,6 +177,7 @@ Upstream's too, and run by the `test` job.
 | `Threading.cpp` | `WTF_Thread.SchedulingAttributesFollowQOS` and `.HighPriorityThreadsRestoresClampWhenReenabled` are compiled only without `USE(BUN_JSC_ADDITIONS)` | on purpose, as in A: `Thread::updateSchedulingAttributes()` (`wtf/posix/ThreadingPOSIX.cpp`) does nothing on Linux, so a thread keeps the scheduling policy, nice level and utilization clamp of the process that embeds it. The tests expect upstream's mapping from QOS |
 | `StackTraceTest.cpp` | `StackTraceTest.StackTraceWorks` and `.CaptureStackTraceLimitAndSkip` are `DISABLED_` on Linux | the build, as in B: `DEFAULT_CFLAGS` in `Dockerfile` has `-fno-unwind-tables -fno-asynchronous-unwind-tables`, and glibc's `backtrace()` then returns its own frame alone |
 | `StringBuilder.cpp` | the `JSONEscape*` tests are the fork's own | they hold `appendEscapedJSONStringContent()` (`wtf/text/StringBuilderJSON.h`), which the fork vectorizes, to a scalar escaper, to its buffer, and to its check that the output has six characters of room for each one of the input |
+| `PtrTag.cpp` | the file is the fork's own | `WTF::removeReturnAddressSignature()` (`wtf/PtrTag.h`) gives the return address of a function that signs the one it saves. The function is compiled with `pac-ret` on ARM64 Linux in every build. On a processor without pointer authentication nothing is signed and the test passes whatever the code does |
 
 ---
 
@@ -192,15 +204,36 @@ Not upstream's: a sync neither brings nor changes them. Most are named `stress/b
 | `stress/array-sort-inline-int32-double-comparator.js` | an earlier, smaller test for the sort fix |
 | `stress/bun-object-assign-calls-indexed-setters-on-the-chain.js` | `Object.assign()` stores with `[[Set]]` on its fast path too: an indexed setter on the target's prototype chain is called, and a read-only element there refuses the store |
 | `stress/bun-arrays-become-prototypes-below-immutable-prototypes.js` | with `Object.prototype` and `Array.prototype` immutable and a setter under an index on a class prototype, an array or an object with elements that becomes a prototype keeps the storage it has; reads, stores and changes of length on it and through its heirs answer as the language says |
+| `stress/function-prototype-call-not-called-as-a-method.js` | `f.call(...)` is compiled to a call of `f`, so only other ways reach `Function.prototype.call` itself: `call.bind(f)`, `Reflect.apply`, `call.call` and `call.apply`. Through each of them `this`, the arguments and `new.target` arrive as they should, and a callee that is not callable is a `TypeError`, in every tier |
+| `stress/regexp-greedy-group-in-tail-position.js` | a greedy `*` or `+` group that nothing can fail after runs without the state of its earlier iterations: `exec()`, `match()` and `replace()` give the listed results |
+| `stress/regexp-greedy-group-with-minimum-can-match-empty.js` | `YarrPattern` drops the minimum of a greedy group that has no maximum and whose body can match the empty string: the results are the same as with the minimum |
+| `stress/regexp-long-source.js` | the limit of 1 MiB on the source of a pattern does not include the text of character classes made only of characters and ranges, up to 4 MiB in all. Everything else is "too large" where it was before |
+| `stress/regexp-lookaround-releases-paren-contexts.js` | YarrJIT frees the state of the groups in a lookaround once the lookaround has matched: a search over a long input finds its match, where it used to run out of stack and report none |
+| `stress/regexp-many-single-character-alternatives.js` | a long run of neighbouring one-character alternatives becomes several character classes: matches are right at the sizes around each split, and at 50,000 alternatives, where finishing one class was quadratic |
+| `stress/regexp-repeated-group-saves-the-alternative-that-matched.js` | before each iteration of a repeated group YarrJIT saves only the frame slots of the alternative that matched the iteration before: patterns that backtrack into earlier iterations give the listed results |
+| `stress/regexp-repeated-group-with-many-alternatives.js` | a repeated group of up to 16,000 capturing alternatives matches, and only the last iteration's capture is set. Compiling such a group was quadratic |
+| `stress/regexp-tail-loop-with-many-alternatives.js` | the pass that lets a tail loop match a run of characters stops after a fixed amount of work: matches are the same whether or not it reaches the end of the loop, up to 12,000 alternatives and with classes of a million code points |
 | `stress/regexp-bytecode-of-deeply-nested-fixed-count-groups.js` | the bytecode compiler of regular expressions takes a time in proportion to the depth of a nest of groups with a fixed count: no more than three times what it takes for lazy groups, at two depths |
 | `stress/regexp-flat-program-counts-turns-of-alternatives-tried-once.js` | a pattern with a `^` in one alternative and none in another: the flat program that counts turns (`yarr/YarrFlatProgram*`) walks the alternatives that are tried once and their copies in the bytecode's order, and counts the same turns |
+| `stress/regexp-flat-program-many-groups-and-surrogates.js` | in unicode mode the flat program skips positions where the first characters cannot match, counting a surrogate pair as one character, and after a failed attempt resets only the captures the attempt can have written: results match the bytecode interpreter |
+| `stress/regexp-flat-program-runs-before-back-references.js` | a run in front of a back reference: the flat program knows what the reference begins with, keeps no undo frame for a capture that is set again before anything reads it, and hands a long search to a second program that goes from one possible end of the run to the next: results match the bytecode interpreter |
+| `stress/regexp-image-mode-skips-starts-behind-a-failed-run.js` | the code a build makes for a pattern, and a flat program: once a run without an upper bound has failed at all its ends, the next attempt begins behind the starts that would only enter the same run, and with several alternatives the run remembers how far it failed: results match the sticky form asked at one place after the other |
+| `stress/regexp-lazy-run-that-stops-at-its-first-end.js` | where a pattern is analyzed, a lazy run in front of one unit becomes a run that never goes back (`.*?\]` as `[^\]]*\]`) if nothing stands behind the unit, or a run that takes all the first takes: results match the same pattern with an upper bound on the run, which is left as written |
+| `stress/regexp-reference-to-a-group-that-reads-nothing.js` | flat programs: a reference to a group that holds only a lookahead reads nothing, so what stands in front of the reference is not limited to what the lookahead accepts; a group still open at the end of the input has no first unit to read |
+| `stress/regexp-one-set-or-run.js` | flat programs: a pattern that is one set, or a run of one set, answers as the same pattern on the machine does |
 | `stress/regexp-flat-program-memoizes-unbounded-runs.js` | the flat program memoizes where the rest of an unbounded run has failed, keys entries only by the capture bounds a backreference can still read, and records a failed search under the bounds it started with: results and turn counts match the bytecode interpreter |
 | `stress/regexp-flat-program-remembers-failed-searches-beside-references.js` | beside references the flat program's table of failed searches has an entry for each set of the referenced groups' bounds: results and turns are the bytecode's |
+| `stress/regexp-flat-program-texts-behind-runs.js` | a flat program whose start scan is selective (`\/[^\/]*\.log`) looks once for the text that every match holds behind a run without a bound, when its attempts have come 128 units without a match and as many are left: results are those of a search written out by hand, and the bytecode's |
+| `stress/regexp-flat-program-alternative-at-input-end.js` | a flat program of a pattern with an alternative that begins with `$` (`\/name\|$`) still searches for where a match can begin and for the text that the other alternatives hold, and tries the end of the subject last: `(?:R)\|$` finds what R finds, or the end |
+| `stress/regexp-flat-program-start-pair.js` | a flat program of a pattern that begins with a text looks through a subject of 64 units or more for two units of the text, a vector at a time, before it asks its start table: it matches where `indexOf` finds the text |
 | `stress/regexp-image-code-hands-long-searches-over.js` | with `--useRegExpImageMode=1`, in a `jsc` that has the ahead-of-time compiler: the code of a pattern stops after nine turns a unit and 65,537, and the match is made again by the flat programs, which give it up where the JIT does. In a `jsc` without the compiler the option changes nothing, and both runs hold the JIT to the same answers |
 | `stress/switch-string-substring-of-base-widened-by-atomization.js` | a `switch` over strings that reads the characters of a substring in place, in its base, goes by the width that the base has now: atomizing the base may have put an equal 16-bit string in its place since the substring was made (DFG and FTL) |
 | `stress/bun-weak-map-and-set-shrunk-before-eden-collection.js` | the buffer of a `WeakMap` or `WeakSet` counts in the heap's size as it is behind a collection (`WeakMapImpl::reconcileWeakReferencesAtGCEnd`; upstream counts it as the last visit found it), but an eden collection never leaves that size below what the collection before it left: a buffer that shrank stops counting at the next full collection |
 | `stress/intl-timezone-posix-style.js` | `EST5EDT`, `CST6CDT`, `MST7MDT` and `PST8PDT` stay aliases of their `America/*` zones (tc39/ecma402#1103) on every ICU, including those where CLDR treats them as canonical zones (45 and earlier, 49 and later): accepted, kept as written, not in `supportedValuesOf`, same offsets and names as the primary zone, and resolved to it when they are the host's zone |
 | `stress/temporal-calendar-gregory-near-min-date.js` | the `gregory` calendar agrees with the ISO calendar in the first years of Temporal's range: reading fields, building from fields and formatting (`prolepticGregorianChangeDate`, `runtime/JSDateMath.h`) |
+| `stress/inline-cache-stub-freed-during-call-to-custom-setter.js` | an inline cache stub that has called native code stays until the call returns, also when the callee signed the return address that it saved (`JITStubRoutineSet::mark`). The setter of `$vm`'s `customAccessor` is compiled with `pac-ret` on ARM64 Linux in every build. On a processor without pointer authentication nothing is signed and the test passes whatever the code does |
+| `stress/bun-return-address-of-function-is-signed.js` | with `ENABLE(RETURN_ADDRESS_SIGNING)` a function signs the return address that it saves in LLInt, Baseline, the DFG and the FTL alike: `$vm.returnAddressOfCallerIsSigned()` signs the address again and compares. Elsewhere, and on a processor without pointer authentication (`$vm.functionsSignReturnAddress()`), the test ends at once |
+| `stress/bun-return-address-with-wrong-signature-is-not-returned-to.js` | with `ENABLE(RETURN_ADDRESS_SIGNING)` a function does not return once a bit of the signature of its saved return address was flipped, in each of the four tiers: the run must crash. Where nothing is signed the test crashes by itself |
 | the fr-CA block of `stress/intl-date-pattern-includes-literal-text.js` (the file is upstream's) | keeps the file's coverage on CLDR 49, where fr's pattern no longer has literal text: an `h` inside literal text is not mistaken for the hour field |
 | the last block of `stress/regexp-test-sticky-first-char-filter.js` (the file is upstream's; nothing of upstream's text changes) | the first-character filter of a sticky `test()` comes from the first sets of the alternatives (`yarr/YarrFirstFollowSets.*`): behind a leading lookbehind, forward reference or lookahead, and in groups nested more than eight deep, a byte that passes the filter still reaches the matcher |
 
@@ -217,5 +250,7 @@ the programs that test ahead-of-time compilation are in Bun's `test/aot`.
    depends on allocation never failing, needs more than 300 s)? Narrow it as in B.
 3. Is it a new upstream test for a feature the sync did not bring over (compare `git log upstream/main -- Source/` for
    the commit that added the test)? Bring the feature over, or skip with `TODO(bun)` naming the upstream commit, as in C.
-4. Otherwise the sync broke something. Upstream's own results for the same test and mode:
+4. Is it listed under "Not changed: the result depends on the load of the machine", with the message given there? Run it
+   alone with the flags of the failing mode. If it passes, change nothing.
+5. Otherwise the sync broke something. Upstream's own results for the same test and mode:
    `https://results.webkit.org/api/results/javascriptcore-tests/<url-encoded test.mode>?limit=5000`.

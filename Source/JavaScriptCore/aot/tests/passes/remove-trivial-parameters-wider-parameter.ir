@@ -15,7 +15,7 @@ function f0 name="edgeWithWiderValueWentAway" parameters=[{type=i32}, {type=numb
     v4 = Negate v1
     Jump -> next b5(v0)
   b4():
-    v5 = Negate v1
+    v5 = Increment v1
     Jump -> next b5(v0)
   b5(v6):
     Return v6

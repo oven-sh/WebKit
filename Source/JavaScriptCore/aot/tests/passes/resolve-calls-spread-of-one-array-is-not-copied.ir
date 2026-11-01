@@ -1,0 +1,59 @@
+# f(...list): a call reads its arguments out of an array by index, which is what the iterator of an unchanged array yields.
+# Where the list of arguments is one spread and nothing else, the call reads them out of the spread array itself and no copy is made. Any other value takes the old path.
+# FORM: Prepared optimizing
+# RUN: pass ResolveCalls
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="unknownValueIsSpread" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = NewArray contents=anything
+    AppendSpread v2, v1
+    v4 = CallList v0, -, v2
+    Return v4
+# CHECK: = TypeTest v1 testedType=Array
+# CHECK: frequency=Rare:
+# CHECK-NEXT: [[copy]]: Array = NewArray contents=anything
+# CHECK-NEXT: AppendSpread [[copy]], v1
+# CHECK-NEXT: = CallList v0, -, [[copy]]
+# CHECK: ([[array]]: Array):
+# CHECK-NEXT: = IsPristine [[array]] builtinClass=Array aspects=[Storage, Names]
+# CHECK: = CallList v0, -, [[array]]
+}
+
+function f1 name="anArgumentInFrontOfTheSpread" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = NewArray v0 contents=anything
+    AppendSpread v2, v1
+    v4 = CallList v0, -, v2
+    Return v4
+# CHECK-NOT: TypeTest
+# CHECK: = CallList v0, -, v2
+}
+
+function f2 name="twoSpreads" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = NewArray contents=anything
+    AppendSpread v2, v1
+    AppendSpread v2, v1
+    v5 = CallList v0, -, v2
+    Return v5
+# CHECK-NOT: TypeTest
+# CHECK: = CallList v0, -, v2
+}
+
+function f3 name="listIsReadAfterTheCall" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = NewArray contents=anything
+    AppendSpread v2, v1
+    v4 = CallList v0, -, v2
+    Return v2
+# CHECK-NOT: TypeTest
+# CHECK: = CallList v0, -, v2
+}
+
+function f4 name="aSetIsExpected" parameters=[{type=anything}, {type=Set flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything ~ Set):
+    v2 = NewArray contents=anything
+    AppendSpread v2, v1
+    v4 = CallList v0, -, v2
+    Return v4
+# CHECK-NOT: testedType=Array
+# CHECK: = CallList v0, -, v2
+}

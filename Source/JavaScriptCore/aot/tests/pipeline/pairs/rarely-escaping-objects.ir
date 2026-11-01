@@ -1,0 +1,11 @@
+# The program of ../../answers is one in which calls are inlined, fresh results are split, stores are folded into allocations, and allocations are sunk, with tails copied for it, behind placed tests.
+# FORM: AsRead
+# RUN: compile
+# STATISTIC: InlineDecisionInline >= 1
+# STATISTIC: FreshResultsSplit >= 1
+# STATISTIC: StoresFoldedIntoAllocations >= 1
+# STATISTIC: AllocationsSunk >= 1
+# STATISTIC: TailsDuplicatedForSinking >= 1
+# STATISTIC: TypeTestsPlaced >= 1
+# CHECK: image not empty
+# PROGRAM-OF: ../../answers/rarely-escaping-objects.ir

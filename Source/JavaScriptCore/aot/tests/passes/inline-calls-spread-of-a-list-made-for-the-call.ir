@@ -5,7 +5,7 @@
 # RUN: pass InlineCalls
 # STATISTIC: InlineDecisionInline = 1
 # STATISTIC: InlineDecisionCostExceedsBenefit = 1
-# STATISTIC: InlineBenefitFoldedCode = 1
+# STATISTIC: InlineBenefitWrapper = 1
 
 module m0 path="main.js" displayPath="main.js"
 

@@ -1,0 +1,54 @@
+# A stub makes `this` for a plain function before the function has a frame, and reading `prototype` of new.target may run any code. A plain function that may be entered by value has a row that says where a stack trace lists it meanwhile, in front of the rows of its calls in tail position, and a call at the same place keeps its own row. One call beside it is still the only call, so it names no callee. An arrow function, a function that is only called directly and a function that stack traces hide have none
+# RUN: tables functions
+
+module m0 path="main.js" displayPath="main.js" body=f0 positions={lineStarts=[0, 100, 200, 300, 400, 500, 600] whereThisIsMade=[100, 120, 200, 240, 300, 320, 400, 420, 500, 520]}
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewClosure function=f5
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="publish" [isFreeName]
+    v6 = Call v5, -, v0, v1, v2, v3
+    v7 = CallDirect function=f4
+    Return
+}
+function f1 name="stays" position=100 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0 @130
+    Return v1
+}
+function f2 name="leavesWhereThisIsMade" position=200 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f6 [isNeverInlined] @240
+    ReturnCall v1 @240
+}
+function f3 name="arrow" position=300 kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0 @330
+    Return v1
+}
+function f4 name="calledDirectly" position=400 results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = Call v1 @430
+    Return v2
+}
+function f5 name="hidden" position=500 flags=[IsHiddenInStackTraces] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0 @530
+    Return v1
+}
+function f6 name="callee" position=600 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0 @630
+    v2 = Call v0 @640
+    Return v2
+}
+
+# CHECK: placeOfTailCall function=f1 callee=- line=2 column=21 isWhereThisIsMade=true
+# CHECK-NEXT: placeOfTailCall function=f2 callee=- line=3 column=41 isWhereThisIsMade=true
+# CHECK-NEXT: placeOfTailCall function=f2 callee=- line=3 column=41 isWhereThisIsMade=false
+# CHECK-NOT: placeOfTailCall

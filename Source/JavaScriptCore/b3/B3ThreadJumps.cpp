@@ -33,9 +33,12 @@
 #include "B3BlockRarity.h"
 #include "B3BreakCriticalEdges.h"
 #include "B3DominatingConditions.h"
+#include "B3InsertionSetInlines.h"
 #include "B3IntRange.h"
 #include "B3Limits.h"
 #include "B3LoopUtilities.h"
+#include "B3MemoryNumbering.h"
+#include "B3MemoryValue.h"
 #include "B3NaturalLoops.h"
 #include "B3PhaseScope.h"
 #include "B3ProcedureInlines.h"
@@ -45,6 +48,8 @@
 #include "B3VariableValue.h"
 #include <array>
 #include <span>
+#include <wtf/BitVector.h>
+#include <wtf/HashMap.h>
 #include <wtf/IndexMap.h>
 #include <wtf/IndexSet.h>
 
@@ -83,6 +88,7 @@ public:
         }
 
         m_cloner.demoteEscapingValues(RegionCloner::PhiTreatment::KeepIfJumpFed, RegionCloner::ValueOwners::AreCurrent);
+        keepEarlierLoadsInVariables();
         copyPaths();
         copyWholeTails();
         return m_cloner.finish();
@@ -94,11 +100,19 @@ private:
     struct Step {
         BasicBlock* block;
         Outcome outcome;
+        bool isDecidedByWordReadAgain { false };
+    };
+
+    struct WordReadAgain {
+        Value* load;
+        Value* earlierLoad;
     };
 
     struct Path {
         Vector<Step, 4> steps;
         std::array<Vector<Step, 2>, 2> stepsAfterUndecidedTest;
+        // On this path each of these loads gives what a load in front of the path has given.
+        Vector<WordReadAgain, 2> wordsReadAgain;
     };
 
     struct CopyCost {
@@ -230,23 +244,137 @@ private:
     {
         m_pathAfter.resize(m_proc.size());
         m_pathCopyCost.resize(m_proc.size());
+        m_boundsOfWrites.resize(m_proc.size());
+        m_isOnWalk.ensureSize(m_proc.size());
         for (BasicBlock* block : m_proc) {
             if (block->numPredecessors() < 2 || m_isLoopHeader[block] || !pathCopyCost(block))
                 continue;
             for (BasicBlock* predecessor : block->predecessors()) {
                 if (predecessor->last()->opcode() != Jump || predecessor == block)
                     continue;
-                Path* path = followDecidedTests(predecessor, block);
+                followDecidedTests(predecessor, block);
+            }
+        }
+
+        // An unlikely way gets no copy of a block that costs something. But where every other way into the block has got one, the block is left to that way alone, and its copy takes the place of the block.
+        // It is made where the test of a word read again would otherwise be left standing for that way.
+        for (BasicBlock* block : m_proc) {
+            if (!m_hasPassedWordReadAgain)
+                break;
+            if (block->numPredecessors() < 2 || m_isLoopHeader[block] || block->last()->opcode() != Jump || !pathCopyCost(block).value_or(0))
+                continue;
+            BasicBlock* left = nullptr;
+            bool isLeftToOne = true;
+            for (BasicBlock* predecessor : block->predecessors()) {
+                Path* path = pathAfter(predecessor);
+                if (path && path->steps[0].block == block)
+                    continue;
+                isLeftToOne &= !left && predecessor->last()->opcode() == Jump && predecessor != block && !path;
+                left = predecessor;
+            }
+            if (!left || !isLeftToOne)
+                continue;
+            m_blockLeftToPredecessor = block;
+            Path* path = followDecidedTests(left, block);
+            m_blockLeftToPredecessor = nullptr;
+            if (path && !path->steps.containsIf([](const Step& step) { return step.isDecidedByWordReadAgain; }))
+                m_pathAfter[left] = std::nullopt;
+        }
+
+        endPathsAtTestsThatStay();
+        for (BasicBlock* block : m_proc) {
+            Path* path = pathAfter(block);
+            if (!path)
+                continue;
+            for (std::span<const Step> steps : { path->steps.span(), path->stepsAfterUndecidedTest[0].span(), path->stepsAfterUndecidedTest[1].span() }) {
+                for (Step step : steps) {
+                    if (m_cloner.contains(step.block))
+                        continue;
+                    m_cloner.addBlock(step.block);
+                    m_tailsOnlyForDecidedTests.add(step.block);
+                }
+            }
+        }
+    }
+
+    static BasicBlock* blockBehind(Step step)
+    {
+        return step.block->successorBlock(step.outcome == Outcome::NotTaken ? 1 : 0);
+    }
+
+    template<typename Functor>
+    void forEachSuccessorBehindPaths(BasicBlock* block, const Functor& functor)
+    {
+        Path* path = pathAfter(block);
+        if (!path) {
+            for (BasicBlock* successor : block->successorBlocks())
+                functor(successor);
+            return;
+        }
+        Step last = path->steps.last();
+        if (last.outcome != Outcome::Undecided) {
+            functor(blockBehind(last));
+            return;
+        }
+        for (unsigned arm = 0; arm < 2; ++arm) {
+            const auto& steps = path->stepsAfterUndecidedTest[arm];
+            functor(steps.isEmpty() ? last.block->successorBlock(arm) : blockBehind(steps.last()));
+        }
+    }
+
+    template<size_t inlineCapacity>
+    static bool endAtTestThatStays(Vector<Step, inlineCapacity>& steps, const BitVector& stays)
+    {
+        size_t end = steps.findIf([&](const Step& step) {
+            return step.isDecidedByWordReadAgain && stays.quickGet(step.block->index());
+        });
+        if (end == notFound)
+            return false;
+        while (end && steps[end - 1].outcome == Outcome::Jumps)
+            --end;
+        steps.shrink(end);
+        return true;
+    }
+
+    // The test of a word that is read again is passed by only where every way to it passes it by: then the test is gone. Where one way still needs it, the others
+    // would save a load and a branch, and what stands behind the test would soon be there twice.
+    void endPathsAtTestsThatStay()
+    {
+        if (!m_hasPassedWordReadAgain)
+            return;
+
+        BitVector stays(m_proc.size());
+        Vector<BasicBlock*, 32> worklist;
+        for (bool didEndPath = true; didEndPath;) {
+            didEndPath = false;
+            stays.clearAll();
+            stays.quickSet(m_proc.at(0)->index());
+            worklist.append(m_proc.at(0));
+            while (!worklist.isEmpty()) {
+                forEachSuccessorBehindPaths(worklist.takeLast(), [&](BasicBlock* successor) {
+                    if (!stays.quickSet(successor->index()))
+                        worklist.append(successor);
+                });
+            }
+            for (BasicBlock* block : m_proc) {
+                Path* path = pathAfter(block);
                 if (!path)
                     continue;
-                for (std::span<const Step> steps : { path->steps.span(), path->stepsAfterUndecidedTest[0].span(), path->stepsAfterUndecidedTest[1].span() }) {
-                    for (Step step : steps) {
-                        if (m_cloner.contains(step.block))
-                            continue;
-                        m_cloner.addBlock(step.block);
-                        m_tailsOnlyForDecidedTests.add(step.block);
+                if (endAtTestThatStays(path->steps, stays)) {
+                    didEndPath = true;
+                    path->stepsAfterUndecidedTest[0].shrink(0);
+                    path->stepsAfterUndecidedTest[1].shrink(0);
+                } else if (path->steps.last().outcome == Outcome::Undecided) {
+                    didEndPath |= endAtTestThatStays(path->stepsAfterUndecidedTest[0], stays);
+                    didEndPath |= endAtTestThatStays(path->stepsAfterUndecidedTest[1], stays);
+                    if (path->stepsAfterUndecidedTest[0].isEmpty() && path->stepsAfterUndecidedTest[1].isEmpty()) {
+                        path->steps.removeLast();
+                        while (!path->steps.isEmpty() && path->steps.last().outcome == Outcome::Jumps)
+                            path->steps.removeLast();
                     }
                 }
+                if (path->steps.isEmpty())
+                    m_pathAfter[block] = std::nullopt;
             }
         }
     }
@@ -319,6 +447,47 @@ private:
         }
     }
 
+    // A block that is copied hands its values on through variables. The copy of a load that reads a word again takes the value of the earlier load from there.
+    void keepEarlierLoadsInVariables()
+    {
+        for (const Path& path : m_paths) {
+            for (const WordReadAgain& word : path.wordsReadAgain) {
+                if (m_cloner.contains(word.earlierLoad->owner))
+                    m_variableOfEarlierLoad.add(word.earlierLoad, nullptr);
+            }
+        }
+        if (m_variableOfEarlierLoad.isEmpty())
+            return;
+        InsertionSet insertionSet(m_proc);
+        for (BasicBlock* block : m_proc) {
+            for (unsigned index = 0; index < block->size(); ++index) {
+                Value* value = block->at(index);
+                auto entry = m_variableOfEarlierLoad.find(value);
+                if (entry == m_variableOfEarlierLoad.end())
+                    continue;
+                entry->value = m_proc.addVariable(value->type());
+                if (m_proc.policy().optimization.keepsOriginsOfDemotedValues)
+                    entry->value->setOrigin(value->origin());
+                insertionSet.insert<VariableValue>(index + 1, Set, value->origin(), entry->value, value)->owner = block;
+            }
+            insertionSet.execute(block);
+        }
+    }
+
+    Value* appendEarlierLoad(BasicBlock* block, const Path* path, Value* load)
+    {
+        if (!path)
+            return nullptr;
+        for (const WordReadAgain& word : path->wordsReadAgain) {
+            if (word.load != load)
+                continue;
+            if (Variable* variable = m_variableOfEarlierLoad.get(word.earlierLoad))
+                return block->appendNew<VariableValue>(m_proc, Get, load->origin(), variable);
+            return word.earlierLoad;
+        }
+        return nullptr;
+    }
+
     void copyPaths()
     {
         for (unsigned index = 0, numberOfBlocks = m_proc.size(); index < numberOfBlocks; ++index) {
@@ -330,7 +499,7 @@ private:
             for (Step step : path->steps) {
                 if (!m_cloner.contains(step.block) || step.block == block)
                     break;
-                appendTailCopy(block, step.block, step.outcome);
+                appendTailCopy(block, step.block, step.outcome, path);
                 endsWithUndecidedTest = step.outcome == Outcome::Undecided;
             }
             if (!endsWithUndecidedTest)
@@ -346,7 +515,7 @@ private:
                 for (Step step : path->stepsAfterUndecidedTest[arm]) {
                     if (!m_cloner.contains(step.block))
                         break;
-                    appendTailCopy(edgeBlock, step.block, step.outcome);
+                    appendTailCopy(edgeBlock, step.block, step.outcome, path);
                 }
             }
         }
@@ -382,7 +551,7 @@ private:
         }
     }
 
-    void appendTailCopy(BasicBlock* block, BasicBlock* tail, Outcome outcome)
+    void appendTailCopy(BasicBlock* block, BasicBlock* tail, Outcome outcome, const Path* path = nullptr)
     {
         m_cloner.removeBlock(block);
         block->removeLast(m_proc);
@@ -400,6 +569,10 @@ private:
                 continue;
             if (value->opcode() == Phi)
                 continue;
+            if (Value* earlierLoad = appendEarlierLoad(block, path, value)) {
+                m_cloner.substitute(map, value, earlierLoad);
+                continue;
+            }
             m_cloner.appendClone(value, block, map);
         }
 
@@ -518,6 +691,8 @@ private:
     {
         shrinkPath({ 0, 0, 0, 0 });
         addUpsilonsAndSetsFrom(predecessor);
+        m_predecessor = predecessor;
+        m_wordsReadAgain.shrink(0);
         Path path;
         unsigned pathCost = 0;
         DominatingConditions::Chain chain = m_conditions->chainAt(predecessor);
@@ -533,6 +708,7 @@ private:
         if (!stepsToLastTest)
             return nullptr;
         path.steps.shrink(stepsToLastTest);
+        path.wordsReadAgain = m_wordsReadAgain;
         unsigned index = m_paths.size();
         m_paths.append(WTF::move(path));
         m_pathAfter[predecessor] = index;
@@ -560,24 +736,36 @@ private:
     template<size_t inlineCapacity>
     BasicBlock* followDecidedTests(BasicBlock* predecessor, BasicBlock* next, DominatingConditions::Chain chain, unsigned& pathCost, Vector<Step, inlineCapacity>& steps, unsigned& stepsToLastTest)
     {
+        // A block that jumps to where ways meet has a path of its own. A path that has passed tests of words read again and that a limit ends
+        // ends in front of such a block instead, so that the next such test is not left standing for it.
+        unsigned stepsToLastWayIn = 0;
+        auto endAtLimit = [&](Limit limit) -> BasicBlock* {
+            m_proc.didReachLimit(limit, next->last()->origin());
+            bool hasPassedSuchTest = steps.containsIf([](const Step& step) {
+                return step.isDecidedByWordReadAgain;
+            });
+            if (stepsToLastWayIn && hasPassedSuchTest)
+                stepsToLastTest = stepsToLastWayIn;
+            return nullptr;
+        };
         while (true) {
             if (next == predecessor || m_path.contains(next) || m_isLoopHeader[next])
                 return nullptr;
+            if (next->last()->opcode() == Jump && stepsToLastTest == steps.size() && next->successorBlock(0)->numPredecessors() >= 2)
+                stepsToLastWayIn = steps.size();
             bool isEmpty = onlyJumps(next);
+            unsigned costOfBlock = 0;
             if (!isEmpty) {
                 std::optional<unsigned> cost = pathCopyCost(next);
-                if (!cost || (*cost && !isLikelyPredecessor(predecessor, next)))
+                if (!cost || (*cost && next != m_blockLeftToPredecessor && !isLikelyPredecessor(predecessor, next)))
                     return nullptr;
+                costOfBlock = *cost;
                 pathCost += *cost;
-                if (pathCost > m_proc.limit(Limit::MaxThreadedPathCost)) {
-                    m_proc.didReachLimit(Limit::MaxThreadedPathCost, next->last()->origin());
-                    return nullptr;
-                }
+                if (pathCost > m_proc.limit(Limit::MaxThreadedPathCost))
+                    return endAtLimit(Limit::MaxThreadedPathCost);
             }
-            if (m_path.size() >= m_proc.limit(Limit::MaxBlocksOnThreadedPath)) {
-                m_proc.didReachLimit(Limit::MaxBlocksOnThreadedPath, next->last()->origin());
-                return nullptr;
-            }
+            if (m_path.size() >= m_proc.limit(Limit::MaxBlocksOnThreadedPath))
+                return endAtLimit(Limit::MaxBlocksOnThreadedPath);
             if (isEmpty) {
                 m_path.append(next);
                 next = next->successorBlock(0);
@@ -589,10 +777,16 @@ private:
                 next = next->successorBlock(0);
                 continue;
             }
+            m_didCompareLoads = false;
             TriState isTaken = evaluateTest(next, chain, next->numPredecessors() <= m_proc.limit(Limit::MaxPredecessorsForConditionQueries));
-            if (isTaken == TriState::Indeterminate)
+            // A word that is read again decides a block that does nothing but test it. What else the block does would have to be copied, for a test that costs a load and a branch.
+            if (isTaken == TriState::Indeterminate || (m_didCompareLoads && costOfBlock))
                 return next;
-            steps.append(Step { next, isTaken == TriState::True ? Outcome::Taken : Outcome::NotTaken });
+            // Nor does it change the ways into a loop or out of it: the phases that work on loops take a loop for another one then.
+            if (m_didCompareLoads && (!isInSameLoop(blockThatBranchesTo(predecessor), next) || !isInSameLoop(next, next->successorBlock(isTaken == TriState::True ? 0 : 1))))
+                return next;
+            steps.append(Step { next, isTaken == TriState::True ? Outcome::Taken : Outcome::NotTaken, m_didCompareLoads });
+            m_hasPassedWordReadAgain |= m_didCompareLoads;
             stepsToLastTest = steps.size();
             next = next->successorBlock(isTaken == TriState::True ? 0 : 1);
         }
@@ -658,10 +852,133 @@ private:
         case SExt32:
         case ZExt32:
         case Trunc:
+        case BitwiseCast:
             return true;
         default:
             return isIntegerComparison(opcode);
         }
+    }
+
+    // `if (isCell(v) && v->word & 1) ..; if (isCell(v) && v->word & 1) ..`: the second read stands below a test of its own, so the first does not dominate it and both are there.
+    // A read at the head of the block where the ways meet is there because one of the ways has written the word: that way still needs the test.
+    static bool mayReadWordAgain(Value* value)
+    {
+        return isLoad(value->opcode()) && !value->as<MemoryValue>()->hasFence() && value->owner->numPredecessors() == 1;
+    }
+
+    // Two of these give the same value if their operands do and, for a load, nothing has written the word in between.
+    static bool isComparedByOperands(Value* value)
+    {
+        return isPureIntegerOperation(value->opcode()) || value->opcode() == Select || mayReadWordAgain(value);
+    }
+
+    static bool writesBetween(BasicBlock* block, unsigned begin, unsigned end, const HeapRange& range)
+    {
+        for (unsigned index = begin; index < end; ++index) {
+            if (MemoryNumbering::writesOf(block->at(index)).overlaps(range))
+                return true;
+        }
+        return false;
+    }
+
+    bool writes(BasicBlock* block, const HeapRange& range)
+    {
+        std::optional<HeapRange>& bounds = m_boundsOfWrites[block];
+        if (!bounds) {
+            bounds = HeapRange();
+            for (Value* value : *block)
+                *bounds |= MemoryNumbering::writesOf(value).bounds();
+        }
+        return bounds->overlaps(range) && writesBetween(block, 0, block->size(), range);
+    }
+
+    // Whether no way from the load to the end of the block, on which the load does not run again, writes what it read. The block of the load dominates `last`, so every way back from there comes to it.
+    bool isUnchangedAtEndOf(BasicBlock* last, MemoryValue* load)
+    {
+        BasicBlock* first = load->owner;
+        if (!m_proc.dominators().dominates(first, last))
+            return false;
+        auto keyOf = [&](BasicBlock* block) {
+            return static_cast<uint64_t>(load->index()) << 32 | block->index();
+        };
+        if (auto known = m_isUnchangedAtEnd.find(keyOf(last)); known != m_isUnchangedAtEnd.end())
+            return known->value;
+
+        const HeapRange& range = load->range();
+        bool isUnchanged = true;
+        m_walk.shrink(0);
+        auto visit = [&](BasicBlock* block) {
+            if (!m_isOnWalk.quickSet(block->index()))
+                m_walk.append(block);
+        };
+        visit(last);
+        for (unsigned index = 0; index < m_walk.size() && isUnchanged; ++index) {
+            BasicBlock* block = m_walk[index];
+            if (block == first) {
+                size_t position = block->values().find(load);
+                RELEASE_ASSERT(position != notFound);
+                isUnchanged = !writesBetween(block, static_cast<unsigned>(position) + 1, block->size(), range);
+                continue;
+            }
+            if (auto known = m_isUnchangedAtEnd.find(keyOf(block)); known != m_isUnchangedAtEnd.end()) {
+                isUnchanged = known->value;
+                continue;
+            }
+            isUnchanged = !writes(block, range);
+            for (BasicBlock* predecessor : block->predecessors())
+                visit(predecessor);
+        }
+        for (BasicBlock* block : m_walk) {
+            m_isOnWalk.quickClear(block->index());
+            if (isUnchanged)
+                m_isUnchangedAtEnd.add(keyOf(block), true);
+        }
+        if (!isUnchanged)
+            m_isUnchangedAtEnd.add(keyOf(last), false);
+        return isUnchanged;
+    }
+
+    // An edge out of a loop has a block of its own, which is outside the loop.
+    static BasicBlock* blockThatBranchesTo(BasicBlock* block)
+    {
+        return onlyJumps(block) && block->numPredecessors() == 1 ? block->predecessor(0) : block;
+    }
+
+    bool isInSameLoop(BasicBlock* a, BasicBlock* b)
+    {
+        if (!m_hasLoop)
+            return true;
+        NaturalLoops& loops = m_proc.naturalLoops();
+        return loops.innerMostLoopOf(a) == loops.innerMostLoopOf(b);
+    }
+
+    // `known` has run on the way to the path or on it, `load` runs on it.
+    bool readsSameWordOnPath(MemoryValue* load, MemoryValue* known)
+    {
+        if (load->readsMutability() == Mutability::Immutable && known->readsMutability() == Mutability::Immutable)
+            return true;
+        size_t position = m_path.find(load->owner);
+        if (position == notFound)
+            return false;
+        for (size_t index = 0; index <= position; ++index) {
+            if (writes(m_path[index], load->range()))
+                return false;
+        }
+        size_t positionOfKnown = m_path.find(known->owner);
+        if (positionOfKnown != notFound)
+            return positionOfKnown <= position;
+        return isUnchangedAtEndOf(m_predecessor, known);
+    }
+
+    void noteWordReadAgain(MemoryValue* load, MemoryValue* known)
+    {
+        if (!m_path.contains(load->owner) || m_path.contains(known->owner) || !m_proc.dominators().dominates(known->owner, m_predecessor))
+            return;
+        bool isNoted = m_wordsReadAgain.containsIf([&](const WordReadAgain& word) {
+            return word.load == load;
+        });
+        if (!isNoted)
+            m_wordsReadAgain.append(WordReadAgain { load, known });
     }
 
     std::optional<DominatingCondition> stripNegationsOnPath(Value* condition)
@@ -697,9 +1014,19 @@ private:
             return false;
         if (value->hasInt() || other->hasInt())
             return value->hasInt() && other->hasInt() && value->asInt() == other->asInt();
-        if (value->kind() != other->kind() || !isPureIntegerOperation(value->opcode()))
+        if (value->kind() != other->kind() || !isComparedByOperands(value))
             return false;
-        return childrenAreSameOnPath(value, other, depth);
+        if (!childrenAreSameOnPath(value, other, depth))
+            return false;
+        if (!isLoad(value->opcode()))
+            return true;
+        MemoryValue* load = value->as<MemoryValue>();
+        MemoryValue* known = other->as<MemoryValue>();
+        if (known->hasFence() || load->offset() != known->offset() || load->range() != known->range() || !readsSameWordOnPath(load, known))
+            return false;
+        m_didCompareLoads = true;
+        noteWordReadAgain(load, known);
+        return true;
     }
 
     Value* trackTemporary(Value* constant)
@@ -832,7 +1159,7 @@ private:
         }
         if (value->isConstant())
             return true;
-        if (!isPureIntegerOperation(value->opcode()))
+        if (!isComparedByOperands(value))
             return functor(value, isReplacedOnPath);
         if (!depth) {
             m_proc.didReachLimit(Limit::MaxThreadedTestDepth, value->origin());
@@ -867,7 +1194,24 @@ private:
             if (result != TriState::Indeterminate)
                 return taken(result == TriState::True);
         }
+        TriState result = evaluateBitsOfNonNaNDouble(test.value, known);
+        if (result != TriState::Indeterminate)
+            return taken(result == TriState::True);
         return TriState::Indeterminate;
+    }
+
+    // A double that equals itself is not NaN, and the bits of a non-NaN double, read as a signed integer, never exceed those of +Infinity.
+    TriState evaluateBitsOfNonNaNDouble(Value* test, const DominatingCondition& known)
+    {
+        bool saysEqual = known.value->opcode() == Equal ? known.isNonZero : known.value->opcode() == NotEqual && !known.isNonZero;
+        Value* number = saysEqual ? known.value->child(0) : nullptr;
+        if (!number || number != known.value->child(1) || number->type() != Double || !isComparisonWithConstant(test))
+            return TriState::Indeterminate;
+        Value* bits = valueOnPath(test->child(0));
+        if (!bits || bits->opcode() != BitwiseCast || !isSameOnPath(bits->child(0), number, m_maxTestDepth))
+            return TriState::Indeterminate;
+        IntRange nonNaNBits(std::numeric_limits<int64_t>::min(), std::bit_cast<int64_t>(std::numeric_limits<double>::infinity()));
+        return evaluateComparison(test->opcode(), nonNaNBits, test->child(1)->asInt());
     }
 
     TriState evaluateTest(BasicBlock* tail, DominatingConditions::Chain chain, bool mayQueryConditions)
@@ -886,6 +1230,7 @@ private:
         if (!stripped || !mayBeDecidedByCondition(stripped->value, stripped->value != stripNegations(test).value))
             return TriState::Indeterminate;
         m_conditions->forEach(chain, [&](const DominatingCondition& known) {
+            m_didCompareLoads = false;
             result = evaluateAgainst(*stripped, known);
             return result == TriState::Indeterminate ? IterationStatus::Continue : IterationStatus::Done;
         });
@@ -904,6 +1249,16 @@ private:
     Vector<Path> m_paths;
     IndexMap<BasicBlock*, std::optional<unsigned>> m_pathAfter;
     Vector<BasicBlock*, 8> m_path;
+    BasicBlock* m_predecessor { nullptr };
+    BasicBlock* m_blockLeftToPredecessor { nullptr };
+    Vector<WordReadAgain, 2> m_wordsReadAgain;
+    UncheckedKeyHashMap<Value*, Variable*> m_variableOfEarlierLoad;
+    bool m_didCompareLoads { false };
+    bool m_hasPassedWordReadAgain { false };
+    IndexMap<BasicBlock*, std::optional<HeapRange>> m_boundsOfWrites;
+    UncheckedKeyHashMap<uint64_t, bool, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_isUnchangedAtEnd;
+    Vector<BasicBlock*, 16> m_walk;
+    BitVector m_isOnWalk;
     Vector<UpsilonValue*, 16> m_upsilonsOnPath;
     Vector<VariableValue*, 8> m_setsOnPath;
     Vector<std::pair<Value*, Value*>, 8> m_phiValuesOnPath;

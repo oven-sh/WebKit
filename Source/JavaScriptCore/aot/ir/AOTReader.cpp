@@ -8,7 +8,10 @@
 
 #if ENABLE(AOT)
 
+#include "AOTFlowSiteData.h"
+#include "AOTImagesBelow.h"
 #include "AOTNarrowFieldTypes.h"
+#include "AOTThreads.h"
 #include "AOTThreshold.h"
 #include "AOTTypeClosure.h"
 #include "AOTVector.h"
@@ -32,9 +35,34 @@ bool Reader::run()
 {
     return readHeader()
         && readNamesAndFamilies()
+        && readReplaceableBuiltins()
         && readTypes()
         && readListsLayoutsAndFunctions()
         && finishProgram();
+}
+
+// Before anything asks the table about a lock, and while one thread reads.
+bool Reader::readReplaceableBuiltins()
+{
+    auto& members = m_program.replaceableBuiltins;
+    if (!readList(m_sections.replaceableBuiltins, members) || !readList(m_sections.openedNames, m_program.openedNames))
+        return false;
+    for (size_t index = 1; index < members.size(); ++index) {
+        RecordChecker checker(*this, inRecord(static_cast<uint32_t>(index)));
+        checker.requireAscending(members[index - 1].member, members[index].member);
+        if (auto failure = checker.takeFailure())
+            return report(*failure);
+    }
+    if (const ImagesBelow* below = m_build.imagesBelow()) {
+        below->forEachUnlockedBuiltinMember([&](BuiltinID member) {
+            members.append(ReplaceableBuiltin { member });
+        });
+        AOT::sort(members, { }, &ReplaceableBuiltin::member);
+        members.shrink(members.size() - std::ranges::unique(members, { }, &ReplaceableBuiltin::member).size());
+    }
+    m_program.takesAnyNameFromTests = m_build.options().holdsLibraryAlone();
+    m_program.unlockReplaceableBuiltins();
+    return true;
 }
 
 bool Reader::readNamesAndFamilies()
@@ -60,6 +88,27 @@ bool Reader::readNamesAndFamilies()
     return hasStrings && hasPropertyKeys && hasFamilies;
 }
 
+// The value flow analysis identifies a string by its key. Every string held by an operation or constant data has one, whether or not a property has that name.
+static void internKeysOfStringConstants(Program& program, const ParallelLoops& loops)
+{
+    Vector<StringID> ofOperations = collectInParallel<StringID>(loops, program.functions.size(), [&](unsigned index, Vector<StringID>& found) {
+        for (const Value& value : program.functions[index].values.span()) {
+            if (value.opcode == Opcode::String)
+                found.append(value.string());
+        }
+    });
+    Vector<StringID> ofData = collectInParallel<StringID>(loops, program.data.size(), [&](unsigned index, Vector<StringID>& found) {
+        forEachDataNodeInPreorder(program.data[index].root, [&](uint32_t, const DataNode& node) {
+            if (const auto* text = node.tryAs<DataNode::String>())
+                found.append(text->value);
+        });
+    });
+    for (const Vector<StringID>& texts : { ofOperations, ofData }) {
+        for (StringID text : texts)
+            program.types.intern(PropertyKey { .kind = PropertyKeyKind::Text, .text = text });
+    }
+}
+
 bool Reader::readListsLayoutsAndFunctions()
 {
     if (!readListInParallel(m_sections.typeSites, m_program.typeSites))
@@ -78,8 +127,12 @@ bool Reader::readListsLayoutsAndFunctions()
     }
 
     const auto& options = m_build.options();
-    if (options.verifiesProgram || options.isVerifyOnly())
-        return readProgramLists() && readLayouts() && reportFirst(readFunctions().span());
+    if (options.verifiesProgram || options.isVerifyOnly()) {
+        if (!readProgramLists() || !readLayouts() || !reportFirst(readFunctions().span()))
+            return false;
+        internKeysOfStringConstants(m_program, m_build.parallelLoops());
+        return true;
+    }
 
     bool hasListsAndLayouts = false;
     Vector<Failure> failuresInFunctions;
@@ -91,7 +144,10 @@ bool Reader::readListsLayoutsAndFunctions()
             failuresInFunctions = readFunctions();
         },
     });
-    return hasListsAndLayouts && reportFirst(failuresInFunctions.span());
+    if (!hasListsAndLayouts || !reportFirst(failuresInFunctions.span()))
+        return false;
+    internKeysOfStringConstants(m_program, m_build.parallelLoops());
+    return true;
 }
 
 bool Reader::report(const InternalError& error)
@@ -212,6 +268,8 @@ bool Reader::readProgramLists()
         && readListInParallel(m_sections.variables, m_program.variables)
         && readListInParallel(m_sections.modules, m_program.modules)
         && readList(m_sections.moduleFailures, m_program.moduleFailures)
+        && readList(m_sections.ambiguousExports, m_program.ambiguousExports)
+        && readList(m_sections.sourceStamps, m_program.sourceStamps)
         && readList(m_sections.evalScopes, m_program.evalScopes)
         && readListInParallel(m_sections.data, m_program.data)
         && readList(m_sections.entries, m_program.entries)
@@ -323,7 +381,7 @@ static std::unique_ptr<Program> readProgram(std::span<const uint8_t> bytes, cons
         reader.setPreparesFunctionsForTyping();
     if (!reader.run())
         return nullptr;
-    program->copyBorrowedLineStarts(build.parallelLoops());
+    program->copyBorrowedWordsOfPositions(build.parallelLoops());
     program->collectConstructionStarts();
     program->borrowBuffer({ });
     return program;

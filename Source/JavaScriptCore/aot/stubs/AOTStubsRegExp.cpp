@@ -250,9 +250,9 @@ static void matchOnFlatProgram(StubAssembler& jit, const MatchRegisters& registe
     static_assert(leafArgumentGPR(0) == gprOf(StubRegister::A0) && leafArgumentGPR(1) == gprOf(StubRegister::A1) && leafArgumentGPR(2) == gprOf(StubRegister::A2) && leafArgumentGPR(3) == gprOf(StubRegister::A3));
     static_assert(sizeof(std::unique_ptr<Yarr::BytecodePattern>) == sizeof(void*) && sizeof(std::unique_ptr<Yarr::FlatProgram>) == sizeof(void*));
     ASSERT(characters == programArgument);
+    RELEASE_ASSERT(noOverlap(impl, programArgument, charactersArgument, lengthArgument, output));
 
     slowCases.append(jit.branch8(CCallHelpers::NotEqual, Address(regExp, RegExp::offsetOfState()), TrustedImm32(RegExp::stateWithBytecode())));
-    slowCases.append(jit.branchTest32(CCallHelpers::Zero, Address(impl, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
     if (answers.offsetVectorOwner == OffsetVectorOwner::VM)
         slowCases.append(jit.branch32(CCallHelpers::Above, Address(regExp, RegExp::offsetOfNumSubpatterns()), TrustedImm32(VMState::maxGroupsInRegExpMatchOutput)));
     const GPRReg bytecode = length;
@@ -267,7 +267,12 @@ static void matchOnFlatProgram(StubAssembler& jit, const MatchRegisters& registe
     jit.move(characters, charactersArgument);
     loadOffsetVector(jit, answers.offsetVectorOwner, regExp, output);
     jit.move(program, programArgument);
+    Jump is16Bit = jit.branchTest32(CCallHelpers::Zero, Address(impl, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit()));
     jit.callLeaf(Entry::operationAOTRegExpMatchFlatProgram8, bytesPushedInMatchFrame);
+    Jump isSearched = jit.jump();
+    is16Bit.link(&jit);
+    jit.callLeaf(Entry::operationAOTRegExpMatchFlatProgram16, bytesPushedInMatchFrame);
+    isSearched.link(&jit);
     popMatchFrame(jit, scratch, operands.all());
     Jump didNotMiss = jit.branch64(CCallHelpers::NotEqual, scratch, TrustedImm64(noMatch));
     isTooShort.link(&jit);

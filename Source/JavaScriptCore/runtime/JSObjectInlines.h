@@ -535,11 +535,9 @@ ALWAYS_INLINE void JSObject::growOutOfLineStorageForTransition(VM& vm, Structure
 
 ALWAYS_INLINE void JSObject::setStructureForAddedProperty(VM& vm, Structure* previous, Structure* next, PropertyOffset offset, PutPropertySlot& slot)
 {
-    if (vm.mayHaveUncacheableTransitions()) [[unlikely]] {
-        setStructureForAddedPropertySlow(vm, previous, next, offset, slot);
-        return;
-    }
     setStructure(vm, next);
+    if (vm.mayHaveUncacheableTransitions() && !next->isCacheableTransitionFrom(previous))
+        return;
     slot.setNewProperty(this, offset);
 }
 
@@ -1225,6 +1223,12 @@ template<JSObject::SortMode mode, typename Functor>
 void JSObject::forEachOwnIndexedProperty(NOESCAPE const Functor& functor)
 {
     ASSERT(structure()->canPerformFastPropertyEnumerationCommon());
+    forEachOwnElement<mode>(functor);
+}
+
+template<JSObject::SortMode mode, typename Functor>
+void JSObject::forEachOwnElement(NOESCAPE const Functor& functor)
+{
     ASSERT(canHaveExistingOwnIndexedProperties() && !canHaveExistingOwnIndexedGetterSetterProperties());
 
     switch (indexingType()) {

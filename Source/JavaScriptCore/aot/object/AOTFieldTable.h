@@ -35,9 +35,11 @@ struct FieldTableEntry {
     static constexpr unsigned nameShift = operandBits + formBits;
     static constexpr uint32_t maxOperand = (1u << operandBits) - 1;
     // Operands of the form Field. Zero: by the record. Up to maxSlotNumber: kept free.
-    static constexpr uint32_t maxSlotNumber = 6015;
+    static constexpr uint32_t maxSlotNumber = 4991;
+    // A field in the cell that holds a 64-bit integer. Beyond int32 it may be a marker, which the field's record explains. Less this: the index of the 64-bit word in the cell.
+    static constexpr uint32_t firstInt64 = maxSlotNumber + 1;
     // A field in the Extension that holds a 32-bit reference, in the first or in the second half of its granule. Less this: the number of the granule and one more.
-    static constexpr uint32_t firstNarrowCellInExtension = maxSlotNumber + 1;
+    static constexpr uint32_t firstNarrowCellInExtension = firstInt64 + 1024;
     static constexpr uint32_t firstNarrowCellInSecondHalfOfGranule = firstNarrowCellInExtension + 64;
     // A field in the cell whose byte is the low byte of the JSValue: false, true, undefined or null, zero for an empty slot. Less this: the index of the byte in the cell.
     static constexpr uint32_t firstEncodedByte = firstNarrowCellInSecondHalfOfGranule + 64;
@@ -48,7 +50,8 @@ struct FieldTableEntry {
     static constexpr uint32_t endOfDoubles = firstDouble + 1024;
     static constexpr uint32_t maxFormAndOperand = (1u << nameShift) - 1;
     static constexpr uint32_t noName = 0;
-    static constexpr uint32_t maxName = (1u << 15) - 1;
+    // More names than the front table has columns: a large program reads and stores fields under names that are too cold for a column there.
+    static constexpr uint32_t maxName = UINT16_MAX;
     static constexpr uint32_t minNarrowValue = nullCell32;
 
     static constexpr bool hasColumn(uint32_t identifierNumber) { return identifierNumber != noName && identifierNumber <= maxName; }
@@ -107,9 +110,12 @@ struct FieldTableEntry {
             if (field.isOutOfLine() || offset >= firstBoolean - firstEncodedByte)
                 return otherField;
             return create(field.name, Form::Field, (field.slot.representation() == SlotRepresentation::Boolean ? firstBoolean : firstEncodedByte) + offset);
-        case SlotRepresentation::Uint32:
         case SlotRepresentation::Int64:
         case SlotRepresentation::OptionalInt64:
+            if (field.isOutOfLine() || offset % sizeof(int64_t) || offset / sizeof(int64_t) >= firstNarrowCellInExtension - firstInt64)
+                return otherField;
+            return create(field.name, Form::Field, firstInt64 + offset / sizeof(int64_t));
+        case SlotRepresentation::Uint32:
         case SlotRepresentation::Float:
         case SlotRepresentation::Uint8:
         case SlotRepresentation::Int8:
@@ -193,7 +199,7 @@ private:
 // The index of the field in the record of the shape's layout. The shape is an object's and the name has a column.
 inline std::optional<uint16_t> findFieldInTable(const ProgramTables& tables, uint32_t shape, uint32_t name)
 {
-    ASSERT(shape && shape <= tables.numberOfFieldTableRows && FieldTableEntry::hasColumn(name));
+    ASSERT(shape && shape <= tables.numberOfFieldTableRows && tables.hasFieldTableColumn(name));
     uint32_t index = tables.fieldTableRowOf(shape) + name;
     if (index >= tables.fieldRecordIndices().size() || FieldTableEntry { tables.fieldTableEntries()[index] }.name() != name)
         return std::nullopt;
@@ -210,6 +216,7 @@ static_assert(traitsOf(SlotRepresentation::Cell).absentBits == JSValue::ValueEmp
 static_assert(absentCell32 < FieldTableEntry::minNarrowValue && uncreatedDeferredClosure < FieldTableEntry::minNarrowValue && absentDeferredClosure < FieldTableEntry::minNarrowValue);
 static_assert(FieldTableEntry::minNarrowValue <= nullCell32 && FieldTableEntry::minNarrowValue <= undefinedCell32);
 static_assert(absentInt32 < minInlineInt32 && undefinedInt32 < minInlineInt32 && nullInt32 < minInlineInt32);
+static_assert(absentInteger > INT32_MAX && undefinedInteger > INT32_MAX && nullInteger > INT32_MAX);
 static_assert(shapeWordOf(1) & compiledObjectShapeBit && !(pointerUpperHalfBits & compiledObjectShapeBit) && !(bigIntHashMask & compiledObjectShapeBit));
 
 } } // namespace JSC::AOT

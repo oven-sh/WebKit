@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTConvention.h"
+#include "AOTRelocation.h"
 #include "AOTStubRegisters.h"
 #include "AOTStubTestSupport.h"
 #include "AOTVector.h"
@@ -708,6 +709,28 @@ static void testStubAssemblerAssertions()
 
 #endif // OS(UNIX)
 
+static bool canLinkAddressAcross(size_t distance, PCRelativeReach reach)
+{
+    const StubCatalog& catalog = defaultCatalog();
+    StubKey plain = findPlainBody();
+    StubAssembler jit(catalog.options(), catalog, reach);
+    jit.generateForTesting(plain, [&](StubAssembler& jit) {
+        CCallHelpers::Label target = jit.label();
+        while (jit.m_assembler.codeSize() < distance)
+            jit.nop();
+        jit.loadLabelAddress(target, jit.allocateScratch(freeRegisterOf(plain)));
+    });
+    ImageLinkBuffer buffer(jit, LinkBuffer::Profile::Thunk);
+    AOT_TEST_CHECK(!buffer.didFailToAllocate());
+    return jit.linkCallsAndAddresses(buffer.linkBuffer());
+}
+
+static void testAddressReach()
+{
+    AOT_TEST_CHECK(canLinkAddressAcross(2 * MB, PCRelativeReach::Near) == !isARM64());
+    AOT_TEST_CHECK(canLinkAddressAcross(2 * MB, PCRelativeReach::Far));
+}
+
 std::span<const NativeTest> stubAssemblerTests()
 {
     static constexpr NativeTest tests[] = {
@@ -719,6 +742,7 @@ std::span<const NativeTest> stubAssemblerTests()
         { "stubs/leaf-calls"_s, testLeafCalls },
         { "stubs/recorded-exits"_s, testRecordedExits },
         { "stubs/recorded-code-symbols"_s, testRecordedCodeSymbols },
+        { "stubs/address-reach"_s, testAddressReach },
 #if OS(UNIX)
         { "stubs/assembler-assertions"_s, testStubAssemblerAssertions },
 #endif

@@ -109,6 +109,8 @@ void MathBuiltinEmitter::extremumOfArray(const InlineCall& call, Extremum kind)
     ElementAccessEmitter& elements = emitter<ElementAccessEmitter>();
     ArrayElements storage = elements.elementsOf(cellOperand(call.argument(0)));
     Integer length = elements.publicLength(storage);
+    // The call refuses a list that does not fit on the stack.
+    branchUnless(below(length, integer(static_cast<int64_t>(build().limit(LimitID::MaxReservedStackArguments)) + 1)), missBlockOf(call));
     finish(call, extremumOfElements(kind, storage.array, storage.butterfly, length, missBlockOf(call)));
 }
 
@@ -271,6 +273,18 @@ void MathBuiltinEmitter::extremum(const InlineCall& call, Extremum kind)
     bool isMax = kind == Extremum::Max;
     if (arguments.empty()) {
         finish(call, number(extremumOfNoValues(isMax)));
+        return;
+    }
+    // Int32 operands are compared and selected directly, without extending and truncating.
+    if (areIntegers(m_function, call) && std::ranges::all_of(arguments, [&](ValueID argument) { return typeOf(argument).isInt32(); })) {
+        Word32 chosen = int32Operand(arguments[0]);
+        Range range = typeOf(arguments[0]).integers;
+        for (ValueID argument : arguments.subspan(1)) {
+            Word32 next = int32Operand(argument);
+            chosen = select(isMax ? greaterThan(chosen, next) : lessThan(chosen, next), chosen, next);
+            range = range.unionWith(typeOf(argument).integers);
+        }
+        finish(call, chosen, Type::integer(range));
         return;
     }
     if (areIntegers(m_function, call)) {

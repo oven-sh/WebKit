@@ -1,0 +1,67 @@
+# Two int32 that leave no remainder have an integer for their quotient: behind the test the division is one of integers. A divisor that may be below zero makes a negative zero of a dividend that is zero, the other arm of the test says nothing, and neither does the remainder of two other numbers.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass ReduceIntegerDivisions
+# STATISTIC: IntegerDivisionsReduced = 2
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="behindTheTest" parameters=[{type=i32}, {type=int[1, 100]}] results=[{type=number}] {
+    v2 = Mod v0, v1
+    v3 = Integer
+    v4 = StrictEq v2, v3
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = Div v0, v1
+    Return v5
+  b2():
+    v6 = Div v0, v1
+    Return v6
+# CHECK: b1():
+# CHECK-NEXT: = DivideIntegers v0, v1 rounding=ToInt32
+# CHECK: b2():
+# CHECK-NEXT: = Div v0, v1
+}
+
+function f1 name="twoConstantsOfOneValue" parameters=[{type=i32}] results=[{type=number}] {
+    v1 = Integer integer=2
+    v2 = Mod v0, v1
+    v3 = Integer
+    v4 = StrictEq v3, v2
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = Integer integer=2
+    v6 = Div v0, v5
+    Return v6
+  b2():
+    Return v0
+# CHECK: b1():
+# CHECK: = DivideIntegers v0, v5 rounding=ToInt32
+}
+
+function f2 name="divisorOfEitherSign" parameters=[{type=i32}, {type=i32}] results=[{type=number}] {
+    v2 = Mod v0, v1
+    v3 = Integer
+    v4 = StrictEq v2, v3
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = Div v0, v1
+    Return v5
+  b2():
+    Return v0
+# CHECK: b1():
+# CHECK-NEXT: = Div v0, v1
+}
+
+function f3 name="remainderOfOthers" parameters=[{type=i32}, {type=int[1, 100]}, {type=int[1, 100]}] results=[{type=number}] {
+    v3 = Mod v0, v2
+    v4 = Integer
+    v5 = StrictEq v3, v4
+    Branch v5 -> taken b1(), notTaken b2()
+  b1():
+    v6 = Div v0, v1
+    Return v6
+  b2():
+    Return v0
+# CHECK: b1():
+# CHECK-NEXT: = Div v0, v1
+}

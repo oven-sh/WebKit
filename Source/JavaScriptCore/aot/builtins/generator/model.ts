@@ -24,6 +24,7 @@ import type {
   IntrinsicPosition,
   IterationKind,
   KeyedProtocol,
+  LinkedFunctionExpansion,
   Mutability,
   NativeCallKind,
   OperandRole,
@@ -412,6 +413,8 @@ export interface ModelCondition {
   buildAdmitsRuntimeCode: boolean;
   callRunsOtherCode: boolean;
   objectNobodyKnowsIsWritten: boolean;
+  testsReplaceBuiltins: boolean;
+  programStores: ModelBuiltin | null;
 }
 
 export interface ModelFeatureUse {
@@ -480,6 +483,8 @@ export interface ModelHostObject {
   fields: readonly ModelHostObjectField[];
   internalFields: readonly ModelHostObjectInternalField[];
   keepsStringsOfStoredValues: boolean;
+  nativeAccessors: readonly ModelName[];
+  platforms: readonly TargetPlatform[];
   source: Source;
 }
 
@@ -633,6 +638,7 @@ export interface ModelModule {
   listsAllExports: boolean;
   isPublic: boolean;
   namespace: ModelBuiltin;
+  exportsHoldingModuleObject: readonly ModelName[];
   exportsHeldByNamespace: readonly ModelName[];
 }
 
@@ -640,6 +646,7 @@ export type ModelFunctionRole = RuntimeFunctionRole | "Model";
 
 export interface ModelFunction {
   id: number;
+  token: string;
   role: ModelFunctionRole;
   file: string;
   name: string;
@@ -670,7 +677,7 @@ export type ModelIntrinsicMeaning =
   | { intrinsic: "PrependArgument"; callee: ModelName; argument: number }
   | { intrinsic: "HasPromiseStatus"; status: PromiseStatus }
   | { intrinsic: "NativeCall"; kind: NativeCallKind }
-  | { intrinsic: "LinkedFunction"; function: ModelFunction }
+  | { intrinsic: "LinkedFunction"; function: ModelFunction; expansion?: LinkedFunctionExpansion }
   | {
       intrinsic:
         | "IsNullish"

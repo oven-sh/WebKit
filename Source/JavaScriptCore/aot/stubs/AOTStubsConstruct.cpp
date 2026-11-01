@@ -90,8 +90,18 @@ static void loadNativeConstructor(StubAssembler& jit, ConstructSyntax syntax, GP
     return overflowsStack;
 }
 
+static constexpr ptrdiff_t offsetOfParentOfSuperCall = VM::offsetOfAOTState() + VMState::offsetOfParentOfSuperCall();
+static constexpr ptrdiff_t offsetOfNewTargetOfSuperCall = VM::offsetOfAOTState() + VMState::offsetOfNewTargetOfSuperCall();
+
 static void callConstructorAndReturn(StubAssembler& jit, ConstructSyntax syntax, const HostCallFrame& frame, GPRReg function, GPRReg globalObject)
 {
+    if (syntax == ConstructSyntax::SuperCall) {
+        const GPRReg vm = jit.reuseScratch(StubRegister::T11);
+        RELEASE_ASSERT(noOverlap(vm, frame.callee, frame.thisValue, function, globalObject));
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), vm);
+        jit.storePtr(frame.callee, Address(vm, offsetOfParentOfSuperCall));
+        jit.storePtr(frame.thisValue, Address(vm, offsetOfNewTargetOfSuperCall));
+    }
     emitHostCallFrame(jit, frame);
     const GPRReg globalObjectArgument = jit.reuseScratch(StubRegister::A0);
     const GPRReg callFrameArgument = jit.reuseScratch(StubRegister::A1);
@@ -104,6 +114,8 @@ static void callConstructorAndReturn(StubAssembler& jit, ConstructSyntax syntax,
     jit.storePtr(callFrameArgument, Address(scratch, VM::offsetOfTopCallFrame()));
     callNativeFunction(jit, CodeSpecializationKind::CodeForConstruct, function);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), exception);
+    if (syntax == ConstructSyntax::SuperCall)
+        jit.storePtr(CCallHelpers::TrustedImmPtr(nullptr), Address(exception, offsetOfNewTargetOfSuperCall));
     jit.loadPtr(Address(exception, VM::exceptionOffset()), exception);
     // Compiled code takes what super() answers for an object. A native function may answer `new` with a primitive.
     JumpList madeNoObject;
@@ -115,6 +127,7 @@ static void callConstructorAndReturn(StubAssembler& jit, ConstructSyntax syntax,
         madeNoObject.append(jit.branchIfNotObject(GPRInfo::returnValueGPR));
     }
     jit.emitFunctionEpilogue();
+    jit.pollBeforeReturningFromNativeCode();
     jit.returnToCaller();
     if (syntax == ConstructSyntax::NewExpression)
         return;
@@ -260,27 +273,35 @@ PreludeExit emitCreatePromisePrelude(StubAssembler& jit)
 // Where `super.name` begins to look: above the home object, which is the operand or the prototype property of the class object that is the operand.
 PreludeExit emitGetSuperBasePrelude(StubAssembler& jit)
 {
-    // A call that preserves registers has none to look with. An operation that is called in tail position answers the caller of the stub in the register of its result.
+    // An operation that is called in tail position answers the caller of the stub in the register of its result.
     StubFamily family = jit.key().family();
     bool isTailCall = family == StubFamily::TailCallOperation;
-    if (!isTailCall && (family != StubFamily::CallOperation || jit.signature().result != StubResult::GPR))
+    bool preservesRegisters = family == StubFamily::CallOperationPreservingRegisters;
+    if (!isTailCall && ((family != StubFamily::CallOperation && !preservesRegisters) || jit.signature().result != StubResult::GPR))
         return PreludeExit::CallsOperation;
 
     constexpr GPRReg home = operationArgumentGPR(1);
     constexpr GPRReg homeKind = operationArgumentGPR(2);
-    const GPRReg structureID = jit.allocateScratch(StubRegister::A3);
-    const GPRReg place = jit.allocateScratch(StubRegister::A4);
-    const GPRReg offset = jit.allocateScratch(StubRegister::A5);
     const GPRReg homeObject = isTailCall ? jit.allocateScratch(StubRegister::R0) : jit.result();
-    RELEASE_ASSERT(homeObject == GPRInfo::returnValueGPR && noOverlap(home, homeKind, structureID, place, offset, homeObject));
+    RELEASE_ASSERT(noOverlap(home, homeKind, homeObject));
     static_assert(!static_cast<uint32_t>(Typed::HomeObjectKind::Object) && static_cast<uint32_t>(Typed::HomeObjectKind::ClassPrototype) == 1);
 
     JumpList callsOperation;
     callsOperation.append(jit.branchIfNotCell(home));
-    jit.move(home, homeObject);
-    Jump operandIsHomeObject = jit.branchTest32(CCallHelpers::Zero, homeKind);
-    loadRememberedPrototypeProperty(jit, home, structureID, place, offset, homeObject, callsOperation);
-    operandIsHomeObject.link(&jit);
+    if (preservesRegisters) {
+        // Only the register of the result is free. That is enough where the operand is the home object.
+        callsOperation.append(jit.branchTest32(CCallHelpers::NonZero, homeKind));
+        jit.move(home, homeObject);
+    } else {
+        const GPRReg structureID = jit.allocateScratch(StubRegister::A3);
+        const GPRReg place = jit.allocateScratch(StubRegister::A4);
+        const GPRReg offset = jit.allocateScratch(StubRegister::A5);
+        RELEASE_ASSERT(noOverlap(home, homeKind, structureID, place, offset, homeObject));
+        jit.move(home, homeObject);
+        Jump operandIsHomeObject = jit.branchTest32(CCallHelpers::Zero, homeKind);
+        loadRememberedPrototypeProperty(jit, home, structureID, place, offset, homeObject, callsOperation);
+        operandIsHomeObject.link(&jit);
+    }
     callsOperation.append(jit.branchTest8(CCallHelpers::NonZero, Address(homeObject, JSCell::typeInfoFlagsOffset()), TrustedImm32(OverridesGetPrototype)));
     loadStructure(jit, homeObject, homeObject);
     jit.load64(Address(homeObject, Structure::prototypeOffset()), homeObject);

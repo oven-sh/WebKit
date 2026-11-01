@@ -100,14 +100,25 @@ static ReachedStubs findReachedStubs(const StubCatalog& catalog, std::span<const
     return reached;
 }
 
+// Bodies that a policy gives an immediate come last. Their number grows with the program, and stubs take addresses only of and from the others, which so stay close together.
 static void orderBodies(Vector<ReachedBody>& bodies, uint32_t layoutSeed)
 {
-    AOT::sort(bodies, { }, &ReachedBody::key);
+    auto isBoundByPolicy = [](const ReachedBody& body) {
+        return body.key.immediate() && descriptorOf(body.key.family()).binding == ImmediateBinding::ByPolicy;
+    };
+    AOT::sortInLine(bodies, { }, [&](const ReachedBody& body) {
+        return std::pair { isBoundByPolicy(body), body.key };
+    });
     if (!layoutSeed)
         return;
     WeakRandom random(layoutSeed);
-    for (size_t remaining = bodies.size(); remaining > 1; --remaining)
-        std::swap(bodies[remaining - 1], bodies[random.getUint32(static_cast<unsigned>(remaining))]);
+    auto shuffle = [&](std::span<ReachedBody> group) {
+        for (size_t remaining = group.size(); remaining > 1; --remaining)
+            std::swap(group[remaining - 1], group[random.getUint32(static_cast<unsigned>(remaining))]);
+    };
+    size_t numberOfOthers = std::ranges::partition_point(bodies, std::not_fn(isBoundByPolicy)) - bodies.begin();
+    shuffle(bodies.mutableSpan().first(numberOfOthers));
+    shuffle(bodies.mutableSpan().subspan(numberOfOthers));
 }
 
 static void checkRecording(const StubCatalog& catalog, const StubRecording& recording, const StubRecording& dryRun)
@@ -145,7 +156,7 @@ static void checkReturnLabels(const Vector<StubAssembler::BoundReturnLabel>& ret
 static Vector<StubEntryRange> findEntriesInFrontOfSingleReturnSites(const StubBlob& blob)
 {
     Vector<StubPlacement> byOffset = blob.placements;
-    AOT::sort(byOffset, { }, &StubPlacement::offset);
+    AOT::sortInLine(byOffset, { }, &StubPlacement::offset);
     auto isSingleReturnSite = [&](uint32_t offset) {
         auto site = std::ranges::lower_bound(blob.returnSites, offset, { }, &StubReturnSite::offset);
         return site != blob.returnSites.end() && site->offset == offset && hasSingleReturnSite(site->kind);
@@ -183,12 +194,9 @@ std::optional<uint32_t> StubBlob::offsetOf(StubKey key) const
     return placement->offset;
 }
 
-std::expected<StubBlob, LinkFailure> buildStubBlob(BuildContext& context, const StubCatalog& catalog, std::span<const StubKey> calledKeys, const EntrySet& entriesUsedByFunctions)
+static std::expected<StubBlob, LinkFailure> buildStubBlob(BuildContext& context, const StubCatalog& catalog, const ReachedStubs& reached, PCRelativeReach addressReach)
 {
-    ReachedStubs reached = findReachedStubs(catalog, calledKeys, entriesUsedByFunctions);
-    orderBodies(reached.bodies, catalog.options().layoutSeed);
-
-    StubAssembler jit(catalog.options(), catalog);
+    StubAssembler jit(catalog.options(), catalog, addressReach);
     RELEASE_ASSERT(!jit.m_assembler.codeSize());
     for (auto& body : reached.bodies)
         checkRecording(catalog, jit.generate(body.key), *body.dryRun);
@@ -214,10 +222,10 @@ std::expected<StubBlob, LinkFailure> buildStubBlob(BuildContext& context, const 
     }));
     for (auto& entry : jit.boundEntries())
         blob.placements.append(StubPlacement { entry.key, linkBuffer.offsetOf(entry.label) });
-    AOT::sort(blob.placements, { }, &StubPlacement::key);
+    AOT::sortInLine(blob.placements, { }, &StubPlacement::key);
     for (auto& returnLabel : jit.boundReturnLabels())
         blob.returnSites.append(StubReturnSite { linkBuffer.offsetOf(returnLabel.label), returnLabel.kind });
-    AOT::sort(blob.returnSites, { }, &StubReturnSite::offset);
+    AOT::sortInLine(blob.returnSites, { }, &StubReturnSite::offset);
     RELEASE_ASSERT(std::ranges::adjacent_find(blob.returnSites, { }, &StubReturnSite::offset) == blob.returnSites.end());
     blob.entriesInFrontOfSingleReturnSites = findEntriesInFrontOfSingleReturnSites(blob);
     blob.entriesUsed = reached.entriesUsed;
@@ -225,6 +233,18 @@ std::expected<StubBlob, LinkFailure> buildStubBlob(BuildContext& context, const 
     Statistics& statistics = context.statistics();
     statistics.count(StatisticID::StubsGenerated, reached.bodies.size());
     statistics.count(StatisticID::StubBytes, blob.code.bytes.size());
+    return blob;
+}
+
+std::expected<StubBlob, LinkFailure> buildStubBlob(BuildContext& context, const StubCatalog& catalog, std::span<const StubKey> calledKeys, const EntrySet& entriesUsedByFunctions)
+{
+    ReachedStubs reached = findReachedStubs(catalog, calledKeys, entriesUsedByFunctions);
+    orderBodies(reached.bodies, catalog.options().layoutSeed);
+
+    // A near address reaches 1 MB on ARM64.
+    auto blob = buildStubBlob(context, catalog, reached, PCRelativeReach::Near);
+    if (!blob && blob.error() == LinkFailure::OutOfPCRelativeReach)
+        blob = buildStubBlob(context, catalog, reached, PCRelativeReach::Far);
     return blob;
 }
 

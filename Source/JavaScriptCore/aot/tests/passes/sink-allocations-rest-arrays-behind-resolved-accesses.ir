@@ -1,0 +1,167 @@
+# A rest array is not allocated either where its reads were resolved before its function was copied into the entrypoint: the tests of its storage and of a position are answered from the frame
+# FORM: Prepared
+# RUN: pass SinkAllocations
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="target" flags=[HasRestParameter] parameters=[{type=Array}] results=[{type=anything}] {
+    Return
+}
+
+function f1 name="storageOfNumbersIsExpected" role=GenericEntrypoint flags=[HasThis] captures=[{type=f0}] results=[{type=anything}] derivation={source=f0} creator=Entrypoint{target=f0} {
+    v2 = GetArgument argumentIndex=0
+    v3 = Check v2 expectedType=i32
+    v4 = CreateRest firstArgument=1
+    v5 = HasArrayStorage v4 arrayStorage=Double
+    Branch v5 -> taken b1(| 0), notTaken b2()
+  b1(v6):
+    v7 = AllGuards v4, v6
+    v8 = GetArrayElement v4, v3, v7 arrayStorage=Double level=Expected [keyIsIntegral]
+    Return v8
+  b2():
+    v9 = ElemGet v4, v3
+    Return v9
+# CHECK-NOT: CreateRest
+# CHECK-NOT: HasArrayStorage
+# CHECK-NOT: GetArrayElement
+# CHECK: = GetMyArgumentByVal v3 firstArgument=1
+}
+
+function f2 name="storageOfAnyValueIsExpected" role=GenericEntrypoint flags=[HasThis] captures=[{type=f0}] results=[{type=anything}] derivation={source=f0} creator=Entrypoint{target=f0} {
+    v2 = GetArgument argumentIndex=0
+    v3 = Check v2 expectedType=i32
+    v4 = CreateRest firstArgument=1
+    v5 = HasArrayStorage v4 arrayStorage=Contiguous
+    Branch v5 -> taken b1(| 0), notTaken b2()
+  b1(v6):
+    v7 = AllGuards v4, v6
+    v8 = GetArrayElement v4, v3, v7 arrayStorage=Contiguous level=Expected [keyIsIntegral]
+    Return v8
+  b2():
+    v9 = Call v2, -, v4
+    Return v9
+# CHECK-NOT: CreateRest
+# CHECK-NOT: HasArrayStorage
+# CHECK-NOT: = Call
+# CHECK: = GetMyArgumentByVal v3 firstArgument=1
+}
+
+function f3 name="positionIsComparedWithTheNumberOfArguments" role=GenericEntrypoint flags=[HasThis] captures=[{type=f0}] results=[{type=anything}] derivation={source=f0} creator=Entrypoint{target=f0} {
+    v2 = GetArgument argumentIndex=0
+    v3 = Check v2 expectedType=int[0, 100]
+    v4 = CreateRest firstArgument=1
+    v5 = HasArrayStorage v4 arrayStorage=Contiguous
+    Branch v5 -> taken b1(| 0), notTaken b3()
+  b1(v6):
+    v7 = IsInBounds v4, v3
+    Branch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8):
+    v9 = AllGuards v4, v6, v8
+    v10 = GetArrayElement v4, v3, v9 arrayStorage=Contiguous level=Expected [keyIsIntegral, isInBounds]
+    Return v10
+  b3():
+    Return v2
+# CHECK-NOT: CreateRest
+# CHECK-NOT: IsInBounds
+# CHECK: [[count3]]:{{*}}= GetRestLength firstArgument=1
+# CHECK-NEXT: [[below3]]: boolean = Less v3, [[count3]]
+# CHECK: v7: boolean = {{*}}[[below3]]
+# CHECK: Branch v7 ->
+# CHECK: = GetMyArgumentByVal v3 firstArgument=1
+}
+
+function f4 name="positionMayBeNegative" role=GenericEntrypoint flags=[HasThis] captures=[{type=f0}] results=[{type=anything}] derivation={source=f0} creator=Entrypoint{target=f0} {
+    v2 = GetArgument argumentIndex=0
+    v3 = Check v2 expectedType=i32
+    v4 = CreateRest firstArgument=1
+    v5 = HasArrayStorage v4 arrayStorage=Contiguous
+    Branch v5 -> taken b1(| 0), notTaken b3()
+  b1(v6):
+    v7 = IsInBounds v4, v3
+    Branch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8):
+    v9 = AllGuards v4, v6, v8
+    v10 = GetArrayElement v4, v3, v9 arrayStorage=Contiguous level=Expected [keyIsIntegral, isInBounds]
+    Return v10
+  b3():
+    Return v2
+# CHECK-NOT: CreateRest
+# CHECK-NOT: IsInBounds
+# CHECK: [[count4]]:{{*}}= GetRestLength firstArgument=1
+# CHECK-NEXT: [[below4]]: boolean = Less v3, [[count4]]
+# CHECK: [[index4]]: boolean = GreaterEq v3,
+# CHECK: Branch [[index4]] ->
+# CHECK: = GetMyArgumentByVal v3 firstArgument=1
+}
+
+function f5 name="builtWhileTheAnswerIsReliedOn" role=GenericEntrypoint flags=[HasThis] captures=[{type=f0}] results=[{type=anything}] derivation={source=f0} creator=Entrypoint{target=f0} {
+    v2 = GetArgument argumentIndex=0
+    v3 = Check v2 expectedType=i32
+    v4 = CreateRest firstArgument=1
+    v5 = HasArrayStorage v4 arrayStorage=Contiguous
+    Branch v5 -> taken b1(| 0), notTaken b4()
+  b1(v6):
+    v7 = AllGuards v4, v6
+    v8 = ToBoolean v2
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    PutModuleVariable v4 variable=g0
+    v10 = GetArrayElement v4, v3, v7 arrayStorage=Contiguous level=Expected [keyIsIntegral]
+    Return v10
+  b3():
+    v11 = GetArrayElement v4, v3, v7 arrayStorage=Contiguous level=Expected [keyIsIntegral]
+    Return v11
+  b4():
+    Return v2
+# CHECK-NOT: HasArrayStorage
+# CHECK: b2():
+# CHECK-NEXT: [[cell5]]: Array = CreateRest firstArgument=1
+# CHECK: PutModuleVariable [[cell5]] variable=g0
+# CHECK: = GetArrayElement [[cell5]], v3, {{*}} arrayStorage=Contiguous
+# CHECK: b3():
+# CHECK-NOT: CreateRest
+# CHECK: = GetMyArgumentByVal v3 firstArgument=1
+}
+
+function f6 name="readIsProvenToGiveNumbers" role=GenericEntrypoint flags=[HasThis] captures=[{type=f0}] results=[{type=anything}] derivation={source=f0} creator=Entrypoint{target=f0} {
+    v2 = GetArgument argumentIndex=0
+    v3 = Check v2 expectedType=i32
+    v4 = CreateRest firstArgument=1
+    v5 = AssumeType v4 provenType=Array<undefined|int, proven>
+    v6 = ElemGet v5, v3
+    Return v6
+# CHECK-NOT: CreateRest
+# CHECK-NOT: ElemGet
+# CHECK: [[argument6]]: anything = GetMyArgumentByVal v3 firstArgument=1
+# CHECK-NEXT: {{*}}: undefined|int = AssumeType [[argument6]] provenType=undefined|int
+}
+
+function f7 name="numberThatIsNoIndex" role=GenericEntrypoint flags=[HasThis] captures=[{type=f0}] results=[{type=anything}] derivation={source=f0} creator=Entrypoint{target=f0} {
+    v2 = CreateRest firstArgument=1
+    v3 = Integer integer=-1
+    v4 = ElemGet v2, v3
+    Return v4
+# CHECK-NOT: CreateRest
+# CHECK-NOT: ElemGet
+# CHECK: = GetMyArgumentByVal v3 firstArgument=1
+}
+
+function f8 name="keyIsAnObjectMadeHere" role=GenericEntrypoint flags=[HasThis] captures=[{type=f0}] results=[{type=anything}] derivation={source=f0} creator=Entrypoint{target=f0} {
+    v2 = CreateRest firstArgument=0
+    v3 = NewArray contents=anything
+    v4 = ElemGet v2, v3
+    Return v4
+# CHECK-NOT: CreateRest
+# CHECK: [[key8]]:{{*}}= NewArray
+# CHECK-NOT: ElemGet
+# CHECK: = GetMyArgumentByVal [[key8]]
+}
+
+function f9 name="keyIsTheListItself" role=GenericEntrypoint flags=[HasThis] captures=[{type=f0}] results=[{type=anything}] derivation={source=f0} creator=Entrypoint{target=f0} {
+    v2 = CreateRest firstArgument=0
+    v3 = ElemGet v2, v2
+    Return v3
+# CHECK: v2: Array = CreateRest
+# CHECK-NEXT: = ElemGet v2, v2
+}

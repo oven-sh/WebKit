@@ -122,8 +122,12 @@ static MemberAnswer findFromClassObject(const PropertyAccessContext& context, co
             return walked;
         }
 
-        if (layout.has(LayoutFlags::IsConstructorFunction) && classFlow.staticLink != MemberMutability::Fixed && context.flow && context.flow->closuresAreRelinkedByProgram(layout.constructor))
+        if (layout.has(LayoutFlags::IsConstructorFunction) && classFlow.staticLink != MemberMutability::Fixed && context.flow && context.flow->closuresAreRelinkedByProgram(layout.constructor)) {
+            // Flow lists every function that the program links above this one. None has the name, before or after the links are set.
+            if (query.access == Access::Read && context.flow->closuresInheritFromFunctionPrototype(layout.constructor, query.key))
+                return finishAtChainEnd(WTF::move(walked), findBuiltinInstanceMember(context, BuiltinClasses::Function, query.key, query.access));
             return MemberAnswer::unknown(UnprovenCause::PrototypeChanged);
+        }
 
         NextHolder next = nextHolderOf(program, current, ClassSide::Static, walked.conditions);
         switch (next.step) {
@@ -165,10 +169,11 @@ MemberAnswer findNamespaceExport(const PropertyAccessContext& context, const Mem
     case PropertyKeyKind::WellKnownSymbol:
         if (!key.symbol || *key.symbol == WellKnownSymbol::ToStringTag)
             return MemberAnswer::unknown(UnprovenCause::Unknown);
-        return createProvenAnswer(MemberKind::Absent);
+        [[fallthrough]];
     case PropertyKeyKind::CreatedSymbol:
     case PropertyKeyKind::RegisteredSymbol:
-        return createProvenAnswer(MemberKind::Absent);
+        // A namespace object created by require() is extensible: Object.defineProperty() can add a symbol key.
+        return MemberAnswer::unknown(UnprovenCause::PropertyAdded);
     case PropertyKeyKind::EnginePrivateName:
     case PropertyKeyKind::ModulePrivateName:
     case PropertyKeyKind::PrivateName:
@@ -178,9 +183,11 @@ MemberAnswer findNamespaceExport(const PropertyAccessContext& context, const Mem
     }
 
     bool listsEveryName = exportListingOf(program, layout.namespaceOf) == FlowOwnListing::Complete;
+    // The names of a mock that comes ahead of the load are the names of the module: those that its factory gives, and no other.
+    bool mayBeMocked = program.at(layout.namespaceOf).flags.contains(ModuleFlags::MayBeMocked);
     std::optional<uint32_t> field = layout.findField(query.key);
     if (!field) {
-        if (!listsEveryName)
+        if (!listsEveryName || mayBeMocked)
             return MemberAnswer::unknown(UnprovenCause::UnknownObject);
         if (program.builtinNameOf(query.key) == BuiltinNames::__esModule)
             return MemberAnswer::unknown(UnprovenCause::PropertyAdded);
@@ -189,7 +196,9 @@ MemberAnswer findNamespaceExport(const PropertyAccessContext& context, const Mem
 
     const ModuleExport& entry = program.at(layout.namespaceOf).exports[*field];
     bool mayBeAmbiguous = entry.isFromStarExport && !listsEveryName;
-    if (mayBeAmbiguous)
+    // A name that the factory leaves out reads as undefined, as its variable does.
+    bool mayBeLeftOut = mayBeMocked && query.access == Access::Has;
+    if (mayBeAmbiguous || mayBeLeftOut || entry.isDroppedWhileEmpty)
         return MemberAnswer::unknown(UnprovenCause::UnknownObject);
     switch (entry.kind) {
     case ModuleExportKind::Variable:

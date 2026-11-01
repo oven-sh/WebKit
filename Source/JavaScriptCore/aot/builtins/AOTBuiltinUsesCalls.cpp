@@ -11,6 +11,7 @@
 #include "AOTBuildContext.h"
 #include "AOTBuiltinTableBindings.h"
 #include "AOTFlowResults.h"
+#include "AOTForwardedCalls.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTTypeRelations.h"
 #include <algorithm>
@@ -228,7 +229,9 @@ bool mayFindProvenCallee(const BuiltinUseInputs& inputs, const Value& call)
 {
     if (singleBuiltinOf(inputs.program.typeOf(inputs.function, call.calleeOperand())))
         return true;
-    return Value::opcodesWithCallees.contains(call.opcode) && call.callees() && !inputs.program.at(call.callees()).seen().predicted().builtins.empty();
+    if (Value::opcodesWithCallees.contains(call.opcode) && call.callees() && !inputs.program.at(call.callees()).seen().predicted().builtins.empty())
+        return true;
+    return mayFindProvenCallOfFunctionBoundToReceiver(inputs, call);
 }
 
 static bool mayObserveThisValue(const BuiltinTable& table, BuiltinID callee)
@@ -264,8 +267,14 @@ BuiltinUsePlan planCallOfBuiltin(const BuiltinUseInputs& inputs, ValueID use, Pr
     if (arguments.size() > defaultLimitValue(LimitID::MaxBuiltinCallArguments, hostArchitecture()))
         return { };
 
+    if (BuiltinUsePlan plan = planCallOfFunctionBoundToReceiver(inputs, use, point))
+        return plan;
+
     BuiltinCalleeAnswer answer = findCallee(inputs, call);
     if (!answer.callee || !canBecomeBuiltinCall(inputs.program.builtins(), answer.callee))
+        return { };
+    // The function works on what it is bound to, which only the read tells.
+    if (inputs.program.builtins().at(answer.callee).kind == BuiltinKind::Accessor)
         return { };
 
     KnownBuiltinCall known;
@@ -279,8 +288,8 @@ BuiltinUsePlan planCallOfBuiltin(const BuiltinUseInputs& inputs, ValueID use, Pr
     } else {
         known.operands.receiver = call.thisValueOperand();
         known.stamps.expectedResult = call.expectedResult();
-        // `f.call(..)` names `f.call` where `f` refuses. What such a call has become names nothing more.
-        if (call.calleeKey() && (answer.callee == Builtins::FunctionPrototypeCall || answer.callee == Builtins::FunctionPrototypeApply))
+        // JSC compiles `f.call(..)` and `f.apply(..)` in place, so a refusal names `f.call`. Reached any other way, the built-in runs in a frame of its own and names nothing.
+        if (call.calleeKey() && forwardsCallOfAnyReceiver(answer.callee) && findOwnMember(inputs.program, Builtins::FunctionPrototype, call.calleeKey()) == answer.callee)
             known.stamps.calleeName = call.calleeName();
         thisValueHandling = thisValueHandlingOf(inputs, answer.callee, known.operands.receiver);
     }
@@ -421,6 +430,9 @@ BuiltinUsePlan planRematch(const BuiltinUseInputs& inputs, ValueID use, ProgramP
             return { };
         bool isSameCall = form == BuiltinCallForm::Whole && plan.kind == BuiltinUseKind::Call && plan.call.overload == call.overload() && !insertsOperations(plan.call);
         if (isSameCall)
+            return { };
+        // The expected type of an operand may fit only an overload that says less than the one the tests in front of the call have proven.
+        if (form == BuiltinCallForm::Whole && plan.kind == BuiltinUseKind::Call && !effectsWhenApplied(inputs, plan).isSubsetOf(effectsOf(inputs.effects, inputs.function, call).normal))
             return { };
         return WTF::move(plan);
     };

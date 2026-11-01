@@ -29,9 +29,11 @@ class CacheRegistry;
 class CustomAccessorTable;
 
 class StructureRows {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(StructureRows);
     WTF_MAKE_NONCOPYABLE(StructureRows);
 public:
-    static StructureRows& singleton();
+    // The images that share a realm keep their caches apart: a slot says things in the numbers of one image.
+    static StructureRows& ofImageAt(unsigned position);
 
     uint32_t rowOf(StructureID id) const { return *wordFor(id); }
     void setRowOf(StructureID id, uint32_t row) { *wordFor(id) = row; }
@@ -64,6 +66,7 @@ public:
     static constexpr unsigned regionShift = 12;
     static constexpr uint32_t numberOfHotNames = 1u << 11;
     static constexpr uint32_t hotNameMultiplier = 1779;
+    static size_t sizeOfPagesAtStart(uint64_t valueOfLimitOfBases);
 
     static constexpr bool hasColumn(uint32_t identifierNumber) { return identifierNumber != rowMarkerColumn && identifierNumber <= maxColumn; }
     static constexpr uint32_t numberForRank(uint32_t rankByUse, uint32_t numberOfNames)

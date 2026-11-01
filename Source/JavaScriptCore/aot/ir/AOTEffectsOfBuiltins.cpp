@@ -103,7 +103,7 @@ static OperandCode describeCodeOf(const Program& program, const BuiltinOverload&
         description.addOwn(heapCapabilityEffects);
         description.addThrow();
     }
-    if (overload.isUndeclared()) {
+    if (overload.isUndeclared() || program.callsUnlockedMemberThatNoRowNames(overload.builtin)) {
         description.addUnknownCode();
         return OperandCode::IsDescribed;
     }
@@ -341,6 +341,27 @@ void describeBuiltinCall(const Program& program, const Function& function, const
     if (value.needsPristineReceiver())
         description.addOwn(dependencyReadsOf(program, Proof::Pristine));
     describeTypedResult(program, call.overload, value.expectedResult(), description);
+}
+
+// The operands matched no overload when the call was resolved, so the call counts as one that may be passed anything. Here it is judged by its operands' current types.
+EffectDescription describeUnmatchedCallByOperandTypes(const Program& program, const Function& function, const Value& value)
+{
+    BuiltinCall call = builtinCallOf(program, value);
+    RELEASE_ASSERT(call.form == BuiltinCallForm::AnyReceiver);
+    BuiltinOperandTypes types = provenOperandTypesOf(function, call);
+    const BuiltinTable& table = program.builtins();
+    const BuiltinOverload& named = table.at(call.overload);
+    EffectDescription description;
+    for (const BuiltinOverload& overload : table.overloadsOf(table.canonicalID(named.builtin))) {
+        if (overload.mode == named.mode)
+            describeCodeOf(program, overload, description);
+    }
+    description.addThrow();
+    describeOperandsOfCall(program, named.builtin, named.mode, BuiltinCallForm::Whole, types.receiver ? types.receiver : TypeTable::undefined, types.arguments.span(), description);
+    if (value.needsPristineReceiver())
+        description.addOwn(dependencyReadsOf(program, Proof::Pristine));
+    describeTypedResult(program, call.overload, value.expectedResult(), description);
+    return description;
 }
 
 static bool isArraySearchForNonString(const Program& program, InlineBuiltin builtin, std::span<const TypeID> arguments)

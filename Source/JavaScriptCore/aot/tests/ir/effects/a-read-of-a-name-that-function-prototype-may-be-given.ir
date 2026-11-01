@@ -2,8 +2,8 @@
 # `demethodize` may be added to Function.prototype and `toString` may be replaced there, by an accessor too
 # FORM: Prepared
 # RUN: effects summaries f0 f1 f2 f3
-# CHECK: f0 return: reads(ObjectFields/1, PrototypeLinks, NamedProperties/1) collects throw: none p0: [Inspects, RetainsContents]
-# CHECK-NEXT: f1 return: reads(ObjectFields/1, PrototypeLinks, NamedProperties/1) collects throw: none p0: [Inspects, RetainsContents]
+# CHECK: f0 return: reads(ObjectFields/1, PrototypeLinks, NamedProperties/1) throwsForLackOfStack collects throw: reads(ObjectFields/1, PrototypeLinks, NamedProperties/1) throwsForLackOfStack collects p0: [Inspects, RetainsContents]
+# CHECK-NEXT: f1 return: reads(ObjectFields/1, PrototypeLinks, NamedProperties/1) throwsForLackOfStack collects throw: reads(ObjectFields/1, PrototypeLinks, NamedProperties/1) throwsForLackOfStack collects p0: [Inspects, RetainsContents]
 # CHECK-NEXT: f2 return: reads(all) writes(
 # CHECK-NEXT: f3 return: reads(all) writes(
 

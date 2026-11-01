@@ -1,6 +1,5 @@
 # An int32 stays in its register around a call and takes one instruction to become a value of any type; a number that may be a double is spilled around the call and costs a handful to become one.
-# So a counter that goes into a call which stays a call is wanted as an int32, and the number that bounds it is tested in front of the loop.
-# Where the call is copied in, what the copy does with the counter decides: added to a number, it is wanted as a number.
+# The number that bounds the counter is tested in front of the loop, whether the call stays a call or is copied in.
 # RUN: pipeline Select
 # OPTIONS: check=VerifyEachPass
 
@@ -52,9 +51,9 @@ function f2 name="handsTheCounterToASmallFunction" parameters=[{type=number}] re
     Return v3
 }
 # CHECK-LABEL: function f2 name="handsTheCounterToASmallFunction"
-# CHECK-NOT: TypeTest
-# CHECK: = Less {{*}}form=Numbers
-# CHECK-NOT: TypeTest
+# CHECK: = TypeTest v0 testedType=i32
+# CHECK: LoopHint
+# CHECK-NEXT: = Less {{*}}form=Integers
 
 function f3 name="large" parameters=[{type=anything}] results=[{type=number}] {
     v1 = ToNumber v0

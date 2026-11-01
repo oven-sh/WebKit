@@ -30,10 +30,14 @@ public:
     void generateArrayShift(const InlineCall& call) { removeElementAtEnd(call, true); }
     void generateArrayPop(const InlineCall& call) { removeElementAtEnd(call, false); }
     bool resultGetsNamedProperties(const InlineCall&);
+    bool resultIsTestedForDoubles(const InlineCall&);
     void generateArraySlice(const InlineCall&);
     void generateArraySplice(const InlineCall&);
     void generateArraySplicePrefix(const InlineCall&);
     void generateArrayUnshift(const InlineCall&);
+    void generateArrayWith(const InlineCall&);
+    void generateArrayToReversed(const InlineCall&);
+    void generateArrayToSpliced(const InlineCall&);
     void generateArrayIterator(const InlineCall&);
 
 private:
@@ -63,17 +67,30 @@ private:
     // The functor ends the block it is called in.
     using SpliceArm = ScopedLambda<void(const InlineSplice&, const ArrayStorageForm&)>;
 
+    template<typename Functor> bool anyUserOfResult(const InlineCall&, const Functor&);
     ElementAccessEmitter& elements() { return emitter<ElementAccessEmitter>(); }
     bool checkChosenForm(const InlineCall&, bool isHandled);
     CellPointer receiverOf(const InlineCall& call) { return in<CellPointer>(call.receiver()); }
     Operand resultFromRawElement(const InlineCall&, const ArrayStorageForm&, Operand rawElement);
     Operand undefinedResult(const InlineCall&);
+    // The storage kind that the receiver's type proves, if any.
+    const ArrayStorageForm* provenFormOf(const InlineCall&);
+    // The same, for code that continues without testing the kind: a build that validates or checks proofs tests it here and reports a mismatch.
+    const ArrayStorageForm* provenFormOf(const InlineCall&, CellPointer array);
     ArrayStorageFormList candidateFormsOf(const InlineCall&);
     // The mask is arrayStorageTestMask for a read and IndexingShapeAndWritabilityMask for a store.
     void forEachFormOrMiss(const InlineCall&, CellPointer array, IndexingType mask, const ScopedLambda<void(const ArrayStorageForm&)>&);
 
     void removeElementAtEnd(const InlineCall&, bool removesFirst);
     void copyElements(const ArrayStorageForm&, const ElementRange& source, const ElementRange& target, Integer count, CopyDirection);
+    void copyElements(const ArrayStorageForm&, const ArrayStorageForm& formOfTarget, const ElementRange& source, const ElementRange& target, Integer count, CopyDirection, LBasicBlock ifHole = nullptr, bool reverses = false);
+    const ArrayStorageForm& formOfCopy(const InlineCall&, const ArrayStorageForm& formOfReceiver);
+    using LengthOfCopy = ScopedLambda<Integer(Integer lengthOfReceiver)>;
+    using FillOfCopy = ScopedLambda<void(const ArrayStorageForm& made, ArrayElements source, ArrayElements target)>;
+    CellPointer copyIntoNewArray(const InlineCall&, const ArrayStorageForm& formOfReceiver, const LengthOfCopy&, const FillOfCopy&);
+    void copyIntoNewArray(const InlineCall&, const LengthOfCopy&, const ScopedLambda<void(const ArrayStorageForm&, const ArrayStorageForm& made, ArrayElements source, ArrayElements target)>&);
+    Integer clampToLength(Integer relative, Integer length);
+    void storeItem(const InlineCall&, const ArrayStorageForm&, ArrayElements target, Integer position, ValueID item);
     Operand removeFirstElement(const InlineCall&, const ArrayStorageForm&, const ArrayElements&, LBasicBlock isAbsent);
     bool hasIntegerSpliceRange(const InlineCall&);
     std::optional<int64_t> deleteCountOfInlineSplice(const InlineCall&);
@@ -92,6 +109,7 @@ private:
     enum class HoleIs : bool { Nothing, Undefined };
     Integer indexOfValueComparedByIdentity(const InlineCall&, CellPointer array, HoleIs);
     Integer indexOfString(const InlineCall&, CellPointer array, CellPointer searched);
+    bool handlesSearch(const InlineCall&);
     Integer indexOfSearched(const InlineCall&, HoleIs);
     // The answer for a short vector goes to `found`. The code behind it is reached by a longer one, with nothing compared. Compact code scans nothing.
     void scanShortVector(const InlineCall&, const ArrayStorageForm&, CellPointer array, Operand searchedRawElement, Join<Integer>& found);

@@ -7,7 +7,7 @@ function f0 name="straightLine" parameters=[{type=number}] results=[{type=number
     v1 = Add v0, v0
     Return v1
 }
-# CHECK: f0 return: none throw: none
+# CHECK: f0 return: throwsForLackOfStack throw: throwsForLackOfStack
 function f1 name="loops" parameters=[{type=boolean}] results=[{type=undefined}] {
     Jump -> next b1()
   b1():

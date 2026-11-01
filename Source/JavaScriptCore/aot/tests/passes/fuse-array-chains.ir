@@ -7,77 +7,77 @@
 
 module m0 path="main.js" displayPath="main.js"
 variable g0 name="stored" module=m0 declared={type=anything} initialization=Undefined
-runtimefunction id=30 function=f1
-runtimefunction id=32 function=f2
-runtimefunction id=34 function=f3
-runtimefunction id=36 function=f4
-runtimefunction id=41 function=f5
-runtimefunction id=43 function=f6
-runtimefunction id=64 function=f7
-runtimefunction id=81 function=f8
-runtimefunction id=88 function=f9
-runtimefunction id=131091 function=f0
-function f0 name="traverseArray" role=Library enclosingRuntimeFunction=131091 parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+runtimefunction id=ArrayPrototypeEvery function=f1
+runtimefunction id=ArrayPrototypeFilter function=f2
+runtimefunction id=ArrayPrototypeFind function=f3
+runtimefunction id=ArrayPrototypeFindIndex function=f4
+runtimefunction id=ArrayPrototypeFlatMap function=f5
+runtimefunction id=ArrayPrototypeForEach function=f6
+runtimefunction id=ArrayPrototypeMap function=f7
+runtimefunction id=ArrayPrototypeReduce function=f8
+runtimefunction id=ArrayPrototypeSome function=f9
+runtimefunction id=ArrayTraversalTraverseArray function=f0
+function f0 name="traverseArray" role=Library enclosingRuntimeFunction=ArrayTraversalTraverseArray parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
     v6 = Undefined
     Return v6
 }
-function f1 name="every" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=30 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+function f1 name="every" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=ArrayPrototypeEvery thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: Array<anything>):
     v3 = Integer integer=0
     v4 = ElemGet v0, v3
     v5 = Call v1, -, v4, v3, v0
     Return v5
 }
-function f2 name="filter" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=32 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+function f2 name="filter" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=ArrayPrototypeFilter thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: Array<anything>):
     v3 = Integer integer=0
     v4 = ElemGet v0, v3
     v5 = Call v1, -, v4, v3, v0
     Return v5
 }
-function f3 name="find" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=34 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+function f3 name="find" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=ArrayPrototypeFind thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: Array<anything>):
     v3 = Integer integer=0
     v4 = ElemGet v0, v3
     v5 = Call v1, -, v4, v3, v0
     Return v5
 }
-function f4 name="findIndex" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=36 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+function f4 name="findIndex" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=ArrayPrototypeFindIndex thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: Array<anything>):
     v3 = Integer integer=0
     v4 = ElemGet v0, v3
     v5 = Call v1, -, v4, v3, v0
     Return v5
 }
-function f5 name="flatMap" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=41 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+function f5 name="flatMap" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=ArrayPrototypeFlatMap thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: Array<anything>):
     v3 = Integer integer=0
     v4 = ElemGet v0, v3
     v5 = Call v1, -, v4, v3, v0
     Return v5
 }
-function f6 name="forEach" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=43 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+function f6 name="forEach" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=ArrayPrototypeForEach thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: Array<anything>):
     v3 = Integer integer=0
     v4 = ElemGet v0, v3
     v5 = Call v1, -, v4, v3, v0
     Return v5
 }
-function f7 name="map" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=64 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+function f7 name="map" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=ArrayPrototypeMap thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: Array<anything>):
     v3 = Integer integer=0
     v4 = ElemGet v0, v3
     v5 = Call v1, -, v4, v3, v0
     Return v5
 }
-function f8 name="reduce" role=Library flags=[HasThis, HasArgumentCount, HasHiddenRest] enclosingRuntimeFunction=81 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+function f8 name="reduce" role=Library flags=[HasThis, HasArgumentCount, HasHiddenRest] enclosingRuntimeFunction=ArrayPrototypeReduce thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: int[0, 4294967295], v2: anything, v3: Array<anything>):
     v4 = Integer integer=0
     v5 = ElemGet v0, v4
     v6 = Call v2, -, v5, v5, v4, v0
     Return v6
 }
-function f9 name="some" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=88 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+function f9 name="some" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=ArrayPrototypeSome thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: Array<anything>):
     v3 = Integer integer=0
     v4 = ElemGet v0, v3
@@ -587,20 +587,22 @@ function f39 name="intermediateUsedTwice" parameters=[{type=Array<number, proven
 # CHECK: v7: anything = CallDirect v4, v5, {{*}} function=f7
 }
 
-function f40 name="otherBlock" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
-    v1 = NewClosure function=f10
-    v2 = NewArray contents=anything
-    v3 = CallDirect v0, v1, v2 function=f2
-    v4 = AssumeType v3 provenType=Array<number>
-    Jump -> next b1()
+function f40 name="otherBlock" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=boolean}] results=[{type=anything}] {
+    v2 = NewClosure function=f10
+    v3 = NewArray contents=anything
+    v4 = CallDirect v0, v2, v3 function=f2
+    v5 = AssumeType v4 provenType=Array<number>
+    Branch v1 -> taken b1(), notTaken b2()
   b1():
-    v5 = NewClosure function=f11
-    v6 = NewArray contents=anything
-    v7 = CallDirect v4, v5, v6 function=f7
-    v8 = AssumeType v7 provenType=Array<number>
-    Return v8
-# CHECK: v3: anything = CallDirect v0, v1, {{*}} function=f2
-# CHECK: v7: anything = CallDirect v4, v5, {{*}} function=f7
+    v6 = NewClosure function=f11
+    v7 = NewArray contents=anything
+    v8 = CallDirect v5, v6, v7 function=f7
+    v9 = AssumeType v8 provenType=Array<number>
+    Return v9
+  b2():
+    Return v5
+# CHECK: v4: anything = CallDirect v0, v2, {{*}} function=f2
+# CHECK: v8: anything = CallDirect v5, v6, {{*}} function=f7
 }
 
 function f41 name="rareBlock" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=boolean}] results=[{type=anything}] {
@@ -642,9 +644,10 @@ function f42 name="joinWithUnknownSeparator" parameters=[{type=Array<number, pro
 # CHECK: function [[mapToFindIndex]] name="traverseArray"{{*}}role=ChainStep{{*}}derivation={source=f0 parameter=23}
 # CHECK: function [[mapToJoin]] name="traverseArray"{{*}}role=ChainStep{{*}}derivation={source=f0 parameter=24}
 # CHECK: function [[filterToLength]] name="traverseArray"{{*}}role=ChainStep{{*}}derivation={source=f0 parameter=33}
-# CHECK: function [[filterToFlatMap]] name="traverseArray"{{*}}role=ChainStep{{*}}derivation={source=f0 parameter=41}
 # CHECK: function [[filterMapToArray]] name="traverseArray"{{*}}role=ChainStep{{*}}derivation={source=f0 parameter=96}
 # CHECK: function [[mapFilterToArray]] name="traverseArray"{{*}}role=ChainStep{{*}}derivation={source=f0 parameter=144}
 # CHECK: function [[filterMapFilterToArray]] name="traverseArray"{{*}}role=ChainStep{{*}}derivation={source=f0 parameter=608}
 # CHECK: function [[mapToReduceFromValue]] name="traverseArray"{{*}}role=ChainStep{{*}}derivation={source=f0 parameter=1043}
+# `pair` returns a list literal of two elements and nothing else, which the shape says: 41 + 2048.
+# CHECK: function [[filterToFlatMap]] name="traverseArray"{{*}}role=ChainStep{{*}}derivation={source=f0 parameter=2089}
 # CHECK-NOT: role=ChainStep

@@ -14,7 +14,7 @@ function f0 name="sumOfAnIntegerAndAByte" parameters=[{type=i32}, {type=int[0, 2
 function f1 name="differenceOfWordsIsShifted" parameters=[{type=int[0, 4294967295]}, {type=int[0, 4294967295]}] results=[{type=i32}] {
     v2: int[-4294967295, 4294967295] ~ i32 = Sub v0, v1
     v3 = Integer integer=2
-    v4: i32 = RShift v2, v3
+    v4: int[-536870912, 536870911] = RShift v2, v3
     Return v4
 # CHECK-NOT: TypeTest
 }

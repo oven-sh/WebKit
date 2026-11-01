@@ -1,0 +1,71 @@
+# for (..) sum += list[i]; for (..) sum += list[j], where the first loop leaves straight into the head of the second: the one edge that enters the second starts in a block of the first.
+# All the loops of a function are planned and then split together. Split beside the second, the first would leave from its copy into the head of the second, past the test that stands on that one edge.
+# So the two are not split in one round: one of them waits until the other is done. In `apart` a block stands between the loops, and both are split in one round.
+# In each function each loop gets its copy, behind a test of its own.
+# FORM: Prepared
+# RUN: pass SplitUnions
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="straight" parameters=[{type=Array<number>|Uint8Array}] results=[{type=anything}] {
+    v1 = Integer integer=0
+    v2 = Integer integer=0
+    Jump -> next b1(v1, v2)
+  b1(v3, v4):
+    LoopHint
+    v6 = PropGet v0 key="length"
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(), notTaken b3(v3, v2)
+  b2():
+    v8 = ElemGet v0, v4
+    v9 = Add v3, v8
+    v10 = Increment v4
+    Jump -> next b1(v9, v10)
+  b3(v11, v12):
+    LoopHint
+    v14 = PropGet v0 key="length"
+    v15 = Less v12, v14
+    Branch v15 -> taken b4(), notTaken b5()
+  b4():
+    v16 = ElemGet v0, v12
+    v17 = Add v11, v16
+    v18 = Increment v12
+    Jump -> next b3(v17, v18)
+  b5():
+    Return v11
+# CHECK: = TypeTest v0 testedType=Uint8Array
+# CHECK: = TypeTest {{*}} testedType=Uint8Array
+}
+
+function f1 name="apart" parameters=[{type=Array<number>|Uint8Array}] results=[{type=anything}] {
+    v1 = Integer integer=0
+    v2 = Integer integer=0
+    Jump -> next b1(v1, v2)
+  b1(v3, v4):
+    LoopHint
+    v6 = PropGet v0 key="length"
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = ElemGet v0, v4
+    v9 = Add v3, v8
+    v10 = Increment v4
+    Jump -> next b1(v9, v10)
+  b3():
+    Jump -> next b4(v3, v2)
+  b4(v11, v12):
+    LoopHint
+    v14 = PropGet v0 key="length"
+    v15 = Less v12, v14
+    Branch v15 -> taken b5(), notTaken b6()
+  b5():
+    v16 = ElemGet v0, v12
+    v17 = Add v11, v16
+    v18 = Increment v12
+    Jump -> next b4(v17, v18)
+  b6():
+    Return v11
+# CHECK: = TypeTest v0 testedType=Uint8Array
+# CHECK: = TypeTest {{*}} testedType=Uint8Array
+}

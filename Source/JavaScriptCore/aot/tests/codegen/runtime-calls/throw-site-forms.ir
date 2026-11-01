@@ -1,7 +1,7 @@
 # A check of a type never throws, so it has no throw site; a read from a value that is an object or null traps on null and has a faulting access in place of a throw site; a conversion to a wider type has neither; a call under a name is a call like any other: the stub that calls finds what is no function, so nothing is tested in line and there is no throw site in the code: the name stands in the fault table under the address of the call, where only the throw looks for it
 # FORM: AsRead
 # RUN: generate-code
-# OPTIONS: heat=everything-is-hot disable=pass:InlineCalls check=validate-back-end
+# OPTIONS: heat=everything-is-hot disable=pass:InlineCalls,pass:InlineHeads check=validate-back-end
 # STATISTIC: ThrowSites = 0
 # CHECK: f1: size={{*}} frame=none entries=1 sites=0 handlers=0 faults=0
 # CHECK: f2: size={{*}} frame=none entries=1 sites=1 handlers=0 faults=1

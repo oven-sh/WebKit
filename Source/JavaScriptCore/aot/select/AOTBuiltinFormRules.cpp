@@ -8,6 +8,8 @@
 
 #if ENABLE(AOT)
 
+#include "AOTFlowResults.h"
+#include "AOTForwardedCalls.h"
 #include "AOTLayout.h"
 #include "AOTPropertyAccessElements.h"
 #include "AOTPropertyAccessReceivers.h"
@@ -127,6 +129,8 @@ InlineForm chooseFormOfObjectBuiltin(const InlineBuiltinSite& site)
         return callIf(site, !receiverTypeOf(site).hasObjects(), InlineForm::TwoWay);
     case InlineBuiltin::ObjectFreeze:
         return callIf(site, !canFreezeInPlace(site), InlineForm::TwoWay);
+    case InlineBuiltin::ObjectAssign:
+        return callIf(site, site.arguments().size() != 2 || !hasObjectPart(argumentTypeOf(site, 0)), InlineForm::TwoWay);
     case InlineBuiltin::ObjectIs: {
         std::span<const ValueID> arguments = site.arguments();
         RELEASE_ASSERT(arguments.size() == 2);
@@ -150,7 +154,8 @@ InlineForm chooseFormOfFunctionBuiltin(const InlineBuiltinSite& site)
         // Bytecode constructs in place only where the call is written so. Every other call has a frame of the host function.
         return callIf(site, !site.value().isDoneInPlace() || site.arguments().size() < 2 || site.arguments().size() > 3, InlineForm::TwoWay);
     case InlineBuiltin::FunctionApply:
-        return InlineForm::Whole;
+        // Bytecode applies in place only where the call is written `f.apply(..)`. Every other call has a frame of Function.prototype.apply.
+        return callIf(site, !forwardsInPlace(site.value()), InlineForm::Whole);
     default:
         RELEASE_ASSERT_NOT_REACHED();
     }
@@ -171,10 +176,14 @@ InlineForm chooseFormOfErrorBuiltin(const InlineBuiltinSite& site)
 InlineForm chooseFormOfIntlBuiltin(const InlineBuiltinSite& site)
 {
     switch (site.builtin) {
-    case InlineBuiltin::FormatNumber:
-    case InlineBuiltin::FormatDateTime: {
+    case InlineBuiltin::FormatNumber: {
         const Type* formatted = argumentTypeOf(site, 0);
         return callIf(site, !formatted || !formatted->isNumber(), InlineForm::TwoWay);
+    }
+    case InlineBuiltin::FormatDateTime: {
+        const Type* formatted = argumentTypeOf(site, 0);
+        bool hasTimeValue = formatted && (formatted->isNumber() || formatted->isSubsetOf(Type::builtinClass(BuiltinClasses::Date), site.context.program()));
+        return callIf(site, !hasTimeValue, InlineForm::TwoWay);
     }
     default:
         RELEASE_ASSERT_NOT_REACHED();
@@ -195,6 +204,14 @@ InlineForm chooseFormOfDateBuiltin(const InlineBuiltinSite& site)
     default:
         RELEASE_ASSERT_NOT_REACHED();
     }
+}
+
+// The host's toJSON reads valueOf by name and, for a valid date alone, toISOString. Each first read adds its member to Date.prototype.
+MembersReadByHost membersReadByHostIn(const BuiltinTable& builtins, const BuiltinOverload& overload)
+{
+    if (builtins.canonicalID(overload.builtin) == Builtins::DatePrototypeToJSON)
+        return { { Builtins::DatePrototypeValueOf }, { Builtins::DatePrototypeToISOString } };
+    return { };
 }
 
 } } } // namespace JSC::AOT::Typed

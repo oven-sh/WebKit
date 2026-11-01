@@ -65,6 +65,6 @@ function f1 name="inverted" module=m0 flags=[IsChecked, HasExplicitName] length=
 # NONE-NOT: Branch(
 # NONE-NOT: IToD
 # NONE-LABEL: end of function
-# ARM64 inverts within the mask instruction.
+# arm64 inverts within the mask instruction.
 # X64: instructions: 3, patchpoints: 0
 # ARM64: instructions: 2, patchpoints: 0

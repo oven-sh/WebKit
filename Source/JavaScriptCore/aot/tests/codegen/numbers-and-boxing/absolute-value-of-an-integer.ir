@@ -55,13 +55,13 @@ function f1 name="size" module=m0 flags=[IsChecked, HasExplicitName] length=1 th
 # CHECK: Int64 b@[[sign]] = SShr(b@[[wide]], $63(b@{{*}}), {{*}}:CallInline)
 # CHECK-NEXT: Int64 b@[[flipped]] = BitXor(b@[[wide]], b@[[sign]], {{*}}:CallInline)
 # CHECK-NEXT: Int64 b@[[size]] = Sub(b@[[flipped]], b@[[sign]], {{*}}:CallInline)
-# CHECK-NEXT: Double b@[[number]] = IToD(b@[[size]])
-# CHECK-NEXT: Return(b@[[number]], Terminal)
+# CHECK-NEXT: Return(b@[[size]], Terminal)
 # CHECK-LABEL: end of function
 # NONE-LABEL: name="size" role=Source
+# NONE-NOT: IToD
 # NONE-NOT: Patchpoint(
 # NONE-NOT: Branch(
 # NONE-NOT: Check
 # NONE-LABEL: end of function
-# X64: instructions: 7, patchpoints: 0
-# ARM64: instructions: 6, patchpoints: 0
+# X64: instructions: 6, patchpoints: 0
+# ARM64: instructions: 5, patchpoints: 0

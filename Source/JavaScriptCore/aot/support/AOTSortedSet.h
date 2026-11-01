@@ -192,8 +192,11 @@ void SortedSet<T, inlineCapacity>::filter(const SortedSet& other, CommonValues c
 {
     size_t writeIndex = 0;
     size_t otherIndex = 0;
+    bool usesBinarySearch = size() * timesShorterToSearchByHalving < other.size();
     for (size_t readIndex = 0; readIndex < size(); ++readIndex) {
         T value = m_values[readIndex];
+        if (usesBinarySearch)
+            otherIndex = std::lower_bound(other.begin() + otherIndex, other.end(), value) - other.begin();
         while (otherIndex < other.size() && other.m_values[otherIndex] < value)
             ++otherIndex;
         bool isCommon = otherIndex < other.size() && other.m_values[otherIndex] == value;

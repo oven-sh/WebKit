@@ -33,6 +33,8 @@ struct StringUses {
 struct KeyUse {
     uint32_t uses { 0 };
     uint32_t tableLookupUses { 0 };
+    // Also counts code that runs once, which asks the table of fields and files nothing.
+    uint32_t lookupsByName { 0 };
     FunctionID firstTableLookupFunction;
     std::array<uint32_t, numberOfEnumerators<Typed::Access>> usesByAccess { };
 };
@@ -41,6 +43,8 @@ struct KeyUses {
     Vector<KeyUse> byKey;
     BitVector keysNamedByTables;
     BitVector stringsNamedAsKeysByTables;
+    // `kind === "circle"` in code that runs more than once. As a name of the image the text has one atom, at a place that the image fixes.
+    BitVector textsComparedRepeatedly;
 };
 
 struct ProgramUses {

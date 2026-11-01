@@ -85,10 +85,9 @@ function f3 name="cost" module=m0 position=115 kind=Method flags=[HasThis, IsChe
 }
 function f4 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 
-# The method is a member of the literal itself. Nobody replaces it, so the call jumps to its code: the member is not loaded and not tested.
+# The method is a member of the literal itself. Nobody replaces it, so the call jumps to its code: the member is not loaded and not tested. Nobody hands in anything but 2, so the 2 is not passed.
 # CHECK-LABEL: name="run" role=Source
 # CHECK-NEXT: BB#0:
 # CHECK-NEXT: Int64 b@[[job]] = ArgumentReg(
-# CHECK-NEXT: Int32 b@[[hours]] = Const32(2,
-# CHECK-NEXT: Patchpoint(b@[[job]]:Register({{*}}), $2(b@[[hours]]):Register({{*}}), runsWithoutFrame, resultConstraints = WarmAny, Terminal|{{*}}:CallDirect)
+# CHECK-NEXT: Patchpoint(b@[[job]]:Register({{*}}), runsWithoutFrame, resultConstraints = WarmAny, Terminal|{{*}}:CallDirect)
 # CHECK-LABEL: end of function

@@ -184,6 +184,8 @@ struct SlotUses {
     FastBitVector keysNamed;
     FastBitVector keysDefinedByDescriptor;
     FastBitVector stringsNamed;
+    // One bit: whether some code reads by a key that it finds only at run time.
+    FastBitVector readsByKeyFoundAtRunTime;
     BitVector functionsWhoseNewClosuresAreStoredInto;
 };
 
@@ -229,6 +231,8 @@ struct SlotClaim {
     bool isSetAtCreation { false };
     bool needsAbsentState { false };
     bool needsWideReference { false };
+    // The reference is wide because few such objects are created. Next to a layout that keeps it narrow, it is narrow too.
+    bool isWideByChoice { false };
     bool deferredClosureCapturesObject { false };
     bool deferredClosureCapturesEnvironment { false };
     SlotRepresentation representation { SlotRepresentation::JSValue };
@@ -304,7 +308,7 @@ Vector<SlotClaim> chooseSlotRepresentations(const SlotPlanContext&, const SlotUs
 PackedLayouts packObjects(const SlotPlanContext&, const SlotUses&, const JoinedRows&, std::span<const SlotClaim>);
 void packEnvironments(const SlotPlanContext&, const SlotUses&, std::span<const SlotClaim>, PackedLayouts&);
 OccupiedBytes occupiedBytesOf(const SlotPlanContext&, const PackedLayouts&, LayoutID);
-void widenSlotsIntoPadding(const SlotPlanContext&, const SlotUses&, std::span<const SlotClaim>, WidenedRepresentations, PackedLayouts&);
+void widenSlotsIntoPadding(const SlotPlanContext&, const SlotUses&, const JoinedRows&, std::span<const SlotClaim>, WidenedRepresentations, PackedLayouts&);
 void reserveEmptySlots(const SlotPlanContext&, const SlotUses&, PackedLayouts&, const EmptySlotRoom&);
 void reserveEmptySlotsInPadding(const SlotPlanContext&, const SlotUses&, PackedLayouts&);
 

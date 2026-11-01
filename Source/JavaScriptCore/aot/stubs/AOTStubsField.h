@@ -78,22 +78,64 @@ inline constexpr auto representationsReadOneByOne = [] {
     return rest;
 }();
 
+constexpr SlotRepresentation representationWithCodeForRead(SlotRepresentation representation)
+{
+    if (representation <= representationsReadAsEncodedValues.back())
+        return SlotRepresentation::JSValue;
+    if (representation <= representationsReadAsNarrowReferences.back())
+        return SlotRepresentation::OptionalCell32;
+    if (representation <= representationsReadAsInt32.back())
+        return SlotRepresentation::OptionalInt32;
+    return representation;
+}
+
+// AreReadElsewhere: the caller has told apart the encoded values, the narrow references and the 32-bit integers, and none comes here.
+enum class CommonRepresentations : bool { AreRead, AreReadElsewhere };
+
 // emitBody is given the member of a pair whose code reads both.
 template<typename EmitBody>
-void emitDispatchOnRepresentationForRead(StubAssembler& jit, GPRReg representation, const EmitBody& emitBody)
+void emitDispatchOnRepresentationForRead(StubAssembler& jit, GPRReg representation, CommonRepresentations commonRepresentations, const EmitBody& emitBody)
 {
     static_assert(std::ranges::is_sorted(representationsReadOneByOne));
     auto immediate = [](SlotRepresentation value) { return CCallHelpers::TrustedImm32(static_cast<int32_t>(value)); };
-    CCallHelpers::Jump isNoEncodedValue = jit.branch32(CCallHelpers::Above, representation, immediate(representationsReadAsEncodedValues.back()));
-    emitBody(SlotRepresentation::JSValue);
-    isNoEncodedValue.link(&jit);
-    CCallHelpers::Jump isNoNarrowReference = jit.branch32(CCallHelpers::Above, representation, immediate(representationsReadAsNarrowReferences.back()));
-    emitBody(SlotRepresentation::OptionalCell32);
-    isNoNarrowReference.link(&jit);
-    CCallHelpers::Jump isNoInt32 = jit.branch32(CCallHelpers::Above, representation, immediate(representationsReadAsInt32.back()));
-    emitBody(SlotRepresentation::OptionalInt32);
-    isNoInt32.link(&jit);
-    emitSearchForRepresentation(jit, representation, std::span(representationsReadOneByOne), emitBody);
+    if (commonRepresentations == CommonRepresentations::AreRead) {
+        CCallHelpers::Jump isNoEncodedValue = jit.branch32(CCallHelpers::Above, representation, immediate(representationsReadAsEncodedValues.back()));
+        emitBody(SlotRepresentation::JSValue);
+        isNoEncodedValue.link(&jit);
+        CCallHelpers::Jump isNoNarrowReference = jit.branch32(CCallHelpers::Above, representation, immediate(representationsReadAsNarrowReferences.back()));
+        emitBody(SlotRepresentation::OptionalCell32);
+        isNoNarrowReference.link(&jit);
+        CCallHelpers::Jump isNoInt32 = jit.branch32(CCallHelpers::Above, representation, immediate(representationsReadAsInt32.back()));
+        emitBody(SlotRepresentation::OptionalInt32);
+        isNoInt32.link(&jit);
+    }
+    // Most of what is left is numbers and booleans: `rank: n * 3`.
+    static_assert(SlotRepresentation::Double < SlotRepresentation::OptionalDouble && SlotRepresentation::OptionalDouble < SlotRepresentation::Float && SlotRepresentation::Float < SlotRepresentation::Boolean && SlotRepresentation::Boolean < SlotRepresentation::OptionalBoolean);
+    auto positionOf = [](SlotRepresentation value) {
+        return static_cast<size_t>(std::ranges::find(representationsReadOneByOne, value) - representationsReadOneByOne.begin());
+    };
+    const std::span<const SlotRepresentation> rest(representationsReadOneByOne);
+    CCallHelpers::Jump isOptionalBooleanOrAbove = jit.branch32(CCallHelpers::AboveOrEqual, representation, immediate(SlotRepresentation::OptionalBoolean));
+    CCallHelpers::Jump isNoOptionalDouble = jit.branch32(CCallHelpers::NotEqual, representation, immediate(SlotRepresentation::OptionalDouble));
+    emitBody(SlotRepresentation::OptionalDouble);
+    isNoOptionalDouble.link(&jit);
+    // Behind the comparison that failed its flags say on which side the rest lies.
+#if CPU(X86_64)
+    CCallHelpers::Jump isFloatOrBoolean(jit.m_assembler.jCC(X86Assembler::ConditionA));
+#else
+    CCallHelpers::Jump isFloatOrBoolean = jit.branch32(CCallHelpers::Above, representation, immediate(SlotRepresentation::OptionalDouble));
+#endif
+    CCallHelpers::Jump isDouble = jit.branch32(CCallHelpers::Equal, representation, immediate(SlotRepresentation::Double));
+    emitSearchForRepresentation(jit, representation, rest.first(positionOf(SlotRepresentation::Double)), emitBody);
+    isDouble.link(&jit);
+    emitBody(SlotRepresentation::Double);
+    isFloatOrBoolean.link(&jit);
+    CCallHelpers::Jump isFloat = jit.branch32(CCallHelpers::NotEqual, representation, immediate(SlotRepresentation::Boolean));
+    emitBody(SlotRepresentation::Boolean);
+    isFloat.link(&jit);
+    emitBody(SlotRepresentation::Float);
+    isOptionalBooleanOrAbove.link(&jit);
+    emitSearchForRepresentation(jit, representation, rest.subspan(positionOf(SlotRepresentation::OptionalBoolean)), emitBody);
 }
 
 // extensionWordOffset may be address. slotData is dead after computeFieldAddress: a caller may pass it again as a scratch register.
@@ -112,6 +154,11 @@ struct FieldReadRegisters {
     GPRReg result;
     FPRReg number;
     FPRReg numberScratch;
+    // Holds the instance through whose table a word of literal text is read: that of the image of a variable. None: the instance of the stub.
+    FPRReg instanceOfLiteralStrings { InvalidFPRReg };
+    // Where the slot lies, in place of field.address, which is then a scratch register. Only for a known representation that is read as an encoded value, a narrow reference or a 32-bit integer.
+    std::optional<CCallHelpers::BaseIndex> slot { };
+    CommonRepresentations commonRepresentations { CommonRepresentations::AreRead };
 };
 
 struct FieldReadExits {
@@ -135,7 +182,8 @@ struct FieldStoreExits {
 };
 
 enum class FieldStoreEnd : uint8_t { ReturnAfterBarrier, JoinList };
-enum class FieldTypeTest : bool { IsEmitted, HasPassed };
+// IsEmittedForSlot: the type is the word of a Slot, which may be bits (Slot::typeIsGivenByBits).
+enum class FieldTypeTest : uint8_t { IsEmitted, IsEmittedForSlot, HasPassed };
 
 struct TypeTestRegisters {
     GPRReg value;
@@ -161,7 +209,8 @@ struct FieldOfLayout {
 void loadExtensionWordOffset(StubAssembler&, GPRReg object, GPRReg result);
 // Keeps object and slotData, at hasNoStorage too. Out of line it also takes the scratch register of the assembler and fpTempRegister.
 void computeFieldAddress(StubAssembler&, const FieldAddressRegisters&, bool isOutOfLine, JumpList& hasNoStorage);
-void readFieldAndReturn(StubAssembler&, const FieldReadRegisters&, FieldReadExits&);
+// With a known representation, field.representation is a scratch register.
+void readFieldAndReturn(StubAssembler&, const FieldReadRegisters&, FieldReadExits&, std::optional<SlotRepresentation> known = std::nullopt);
 // The slot of an accessor field holds its GetterSetter, as a boxed value, a cell or a narrow reference. address and representation are what computeFieldAddress gave. result may be either.
 void loadGetterSetterInField(StubAssembler&, GPRReg address, GPRReg representation, GPRReg result, JumpList& isAbsent);
 // Nothing falls through. Keeps address and representation.
@@ -179,6 +228,7 @@ void listCreatedFieldAndReturn(StubAssembler&, const KeyOrderRegisters&, GPRReg 
 // Gives the field of slotData its granule, in the stub or by the run time, and goes on at findStorage. Writes address, representation and secondScratch.
 void createGranuleOfField(StubAssembler&, const FieldStoreRegisters&, const ScopedLambda<void()>& loadOffsetOfExtensionWord, Label findStorage);
 PreludeExit emitPrivateDefinePrelude(StubAssembler&);
+PreludeExit emitPrivateSetPrelude(StubAssembler&);
 
 inline constexpr uint32_t offsetBitsWithoutSlotKey = SlotData::maxOffset & ~(outOfLineSlotKey - 1);
 

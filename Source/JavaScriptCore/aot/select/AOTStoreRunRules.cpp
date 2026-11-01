@@ -18,6 +18,8 @@
 #include <algorithm>
 #include <optional>
 #include <span>
+#include <wtf/BitVector.h>
+#include <wtf/HashSet.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -33,6 +35,8 @@ struct RunKey {
 
 struct StoreRun {
     SelectionGroup group;
+    // The members, by position, that find their slots filled.
+    BitVector findsSlotFilled;
 };
 
 struct RunRule {
@@ -42,6 +46,7 @@ struct RunRule {
     size_t minAddingMembers;
     bool (*canJoin)(SelectionContext&, ValueID, const Value&, BlockID);
     void (*rewrite)(GroupRewriter&, const StoreRun&);
+    const BitVector* storesIntoFilledSlots { nullptr };
 };
 
 } // anonymous namespace
@@ -76,9 +81,12 @@ static void claimLongestRuns(SelectionContext& context, const RunRule& rule, std
             std::span<const ValueID> candidate = stores.subspan(begin, end - begin);
             if (static_cast<size_t>(std::ranges::count_if(candidate, mayAdd)) < rule.minAddingMembers)
                 break;
-            StoreRun run { { .root = candidate.back(), .members = { }, .hasSlowPath = rule.operation == Opcode::TryPutByIds } };
-            for (ValueID store : candidate)
+            StoreRun run { { .root = candidate.back(), .members = { }, .hasSlowPath = rule.operation == Opcode::TryPutByIds }, { } };
+            for (ValueID store : candidate) {
+                if (rule.storesIntoFilledSlots && rule.storesIntoFilledSlots->get(store.index()))
+                    run.findsSlotFilled.set(run.group.members.size());
                 run.group.members.append(GroupMember { store });
+            }
             if (context.tryClaim(rule.id, run.group) != ClaimResult::Claimed)
                 continue;
             runs.append(WTF::move(run));
@@ -126,8 +134,9 @@ static void rewriteSlotStoreRun(GroupRewriter& rewriter, const StoreRun& run)
     Vector<ValueID, 4> guards;
     for (const GroupMember& member : run.group.members) {
         const Value& store = rewriter.original(member.value);
+        bool mayAdd = store.opcode == Opcode::PutSlotOrAdd && !run.findsSlotFilled.get(placedKeys.size());
         storedValues.append(store.valueOperand());
-        placedKeys.append(PlacedKey { .key = store.key(), .level = store.level(), .accessSite = store.accessSite(), .mayAdd = store.opcode == Opcode::PutSlotOrAdd });
+        placedKeys.append(PlacedKey { .key = store.key(), .level = store.level(), .accessSite = store.accessSite(), .mayAdd = mayAdd });
         if (store.guardOperand())
             guards.appendIfNotContains(store.guardOperand());
     }
@@ -161,10 +170,42 @@ static bool canJoinSlotStoreRun(SelectionContext& context, ValueID, const Value&
     return !slot.deferredFunction && slot.representation != SlotRepresentation::DeferredClosure;
 }
 
+// `exports.a = void 0; .. exports.a = a;`: the second store finds what the first has created, where nothing between the two may have taken it away.
+static BitVector findStoresIntoFilledSlots(SelectionContext& context)
+{
+    constexpr AbstractHeapSet heapsOfFields { AbstractHeap::ObjectFields, AbstractHeap::OrderWords, AbstractHeap::ShapeWords, AbstractHeap::NamedProperties };
+    const Function& function = context.function();
+    FunctionAnalyses& analyses = context.analyses();
+    BitVector found;
+    UncheckedKeyHashSet<uint64_t> filled;
+    for (BlockID block : analyses.cfg().reversePostOrder()) {
+        filled.clear();
+        for (ValueID id : function.at(block).values) {
+            const Value& value = function.at(id);
+            if (slotStores.contains(value.opcode)) {
+                uint64_t slot = static_cast<uint64_t>(analyses.identityOf(value.objectOperand()).index()) << 32 | (value.key().index() + 1);
+                if (context.typeOf(value.valueOperand()).primitives & Primitive::Absent)
+                    filled.remove(slot);
+                else if (!filled.add(slot).isNewEntry)
+                    found.set(id.index());
+                continue;
+            }
+            if (filled.isEmpty())
+                continue;
+            const Effects& effects = analyses.effectsOf(id).normal;
+            if (effects.mayRunOtherCode() || effects.writes.containsAny(heapsOfFields))
+                filled.clear();
+        }
+    }
+    return found;
+}
+
 void selectSlotStoreRun(SelectionContext& context)
 {
-    if (context.candidates(Opcode::PutSlotOrAdd).size() >= minAddingSlotStores)
-        selectRuns(context, { SelectionRuleID::SlotStoreRun, Opcode::PutSlots, minSlotsPerRun, minAddingSlotStores, canJoinSlotStoreRun, rewriteSlotStoreRun });
+    if (context.candidates(Opcode::PutSlotOrAdd).size() < minAddingSlotStores)
+        return;
+    BitVector storesIntoFilledSlots = findStoresIntoFilledSlots(context);
+    selectRuns(context, { SelectionRuleID::SlotStoreRun, Opcode::PutSlots, minSlotsPerRun, minAddingSlotStores, canJoinSlotStoreRun, rewriteSlotStoreRun, &storesIntoFilledSlots });
 }
 
 static bool isOrdinaryObjectReceiver(const Type& receiver)

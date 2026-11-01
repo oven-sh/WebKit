@@ -39,11 +39,18 @@ function f0 name="handler-in-loop" parameters=[{type=string}, {type=number}, {ty
     Return v7
 }
 
-# The loop is covered by a handler and the block in front of it is not: an exception of FlattenString would miss the handler
+# The loop is covered by a handler and the block in front of it is not: the string is flattened in a block of its own under that handler. Nothing in the loop allocates any more, so its poll leaves the handler
 # CHECK-LABEL: function f1 name="covered-loop-entered-from-outside"
 # CHECK-NOT: FlattenString
-# CHECK: v9: number = StringRangeCodeUnitOrNaN v0, -, -, v5
-# CHECK-NOT: FlattenString
+# CHECK: Jump -> next [[entry1]]()
+# CHECK-NEXT: b1(v5: int|whole, v6: undefined|number):
+# CHECK-NEXT: LoopHint [leavesOwedError]
+# CHECK: b2():
+# CHECK-NEXT: v9: number = StringRangeCodeUnitOrNaN [[flat1]], -, -, v5
+# CHECK: [[entry1]]() handler=b4():
+# CHECK-NEXT: [[flat1]]: flatstring = FlattenString v0
+# CHECK-NEXT: LoopHint [throwsOwedError]
+# CHECK-NEXT: Jump -> next b1(v3, v2)
 function f1 name="covered-loop-entered-from-outside" parameters=[{type=string}, {type=number}] results=[{type=anything}] {
     v2 = Undefined
     v3 = Integer integer=0

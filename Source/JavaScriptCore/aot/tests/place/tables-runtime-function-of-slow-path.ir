@@ -5,8 +5,8 @@
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
-runtimefunction id=4 function=f2
-runtimefunction id=8 function=f1
+runtimefunction id=FunctionPrototypeApply function=f2
+runtimefunction id=ArrayPrototypeAt function=f1
 
 function f0 name="main" kind=Module results=[{type=anything}] {
     Jump -> next b1()
@@ -23,12 +23,12 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v6 = CatchValue
     Return
 }
-function f1 name="at" role=Library flags=[HasThis] enclosingRuntimeFunction=8 parameters=[{type=anything}] results=[{type=anything}] {
+function f1 name="at" role=Library flags=[HasThis] enclosingRuntimeFunction=ArrayPrototypeAt parameters=[{type=anything}] results=[{type=anything}] {
     v2 = Integer integer=0
     v3 = ElemGet v0, v2
     Return v3
 }
-function f2 name="apply" role=Library flags=[HasThis] enclosingRuntimeFunction=4 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+function f2 name="apply" role=Library flags=[HasThis] enclosingRuntimeFunction=FunctionPrototypeApply parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
     v3 = Call v0, v1
     Return v3
 }
@@ -42,6 +42,6 @@ function f2 name="apply" role=Library flags=[HasThis] enclosingRuntimeFunction=4
 # CHECK: function f2 name="apply"
 # CHECK-NEXT: function f3 name="main"
 
-# ROWS: runtimeFunction id=8 function=[[entrypoint]] visibility=Public
+# ROWS: runtimeFunction id=ArrayPrototypeAt function=[[entrypoint]] visibility=Public
 # ROWS-NOT: runtimeFunction
 # ROWS: function [[entrypoint]] name="at"

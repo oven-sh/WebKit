@@ -1,0 +1,51 @@
+# function sum(x) { const list = [1.5, x]; let s = 0; for (let i = 0; i < list.length; i++) s += list[i]; return s }  report(sum())
+# PlaceTypeTests puts the test of the position in front of the read. PlanArrayCapacities copies the loop for storage that holds any value, and there an element that is no number leaves along the failing arm of that test.
+# So the arm is entered though the index stays below the length: the second element is there, and it is undefined.
+# The list is kept for it: SinkAllocations would take it apart, and no loop would be left to copy.
+# FORM: AsRead
+# OPTIONS: disable=pass:SinkAllocations
+# RUN: run-in-shell globalThis.report = value => { print(String(value)); };
+# CHECK: NaN
+# CHECK-NEXT: exited with 0
+# RUN(ARM): pipeline PlanArrayCapacities
+# ARM-LABEL: function f1 name="sum"
+# ARM: [[inside]]: boolean = IsInBounds
+# ARM-NEXT: Branch [[inside]] -> taken {{*}}, notTaken [[outside]](
+# ARM: [[outside]]({{*}}:
+# ARM-NEXT: = ElemGet
+# ARM: = GetArrayElement {{*}} arrayStorage=Contiguous
+# ARM-NEXT: [[isNumber]]: boolean = TypeTest {{*}} testedType=number
+# ARM-NEXT: Branch [[isNumber]] -> taken {{*}}, notTaken [[noNumber]](
+# ARM: [[noNumber]]({{*}}:
+# ARM-NEXT: Jump -> next [[outside]](
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="report" [isFreeName]
+    v3 = Call v0
+    v4 = Call v2, -, v3
+    Return
+}
+function f1 name="sum" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Double number=1.5
+    v2 = NewArray v1, v0 contents=anything
+    v3 = Integer
+    v4 = Integer
+    Jump -> next b1(v3, v4)
+  b1(v5, v6):
+    LoopHint
+    v8 = PropGet v2 key="length"
+    v9 = Less v6, v8
+    Branch v9 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v10):
+    v11 = ElemGet v2, v10
+    v12 = Add v5, v11
+    v13 = Increment v10
+    Jump -> next b1(v12, v13)
+  b3(v14):
+    Return v5
+}

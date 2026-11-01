@@ -8,6 +8,8 @@
 
 #if ENABLE(AOT)
 
+#include "AOTArrayAllocationProfile.h"
+#include "AOTConvention.h"
 #include "AOTHeapCacheRegistry.h"
 #include "AOTInstance.h"
 #include "AOTJSONHooks.h"
@@ -76,8 +78,12 @@ static void freeSourceStorage(uint8_t* start, size_t capacity)
     fastFree(start);
 }
 
-JSONRuntime::JSONRuntime(Instance& instance, CacheRegistry& registry)
+JSONRuntime::JSONRuntime(Instance& instance, CacheRegistry& registry, ZeroedTableArena& arena)
     : m_instance(instance)
+    , m_recordPlanCache(arena)
+    , m_learnedNames(arena)
+    , m_learnedExtraMembers(arena)
+    , m_learnedObjects(arena)
 {
     instance.json.runtime = this;
     m_hasParsedRecords = instance.state && !instance.state->tables.parsedRecordFields().empty();
@@ -87,7 +93,7 @@ JSONRuntime::JSONRuntime(Instance& instance, CacheRegistry& registry)
 JSONValueParser::LearnedNames& JSONRuntime::learnedNames()
 {
     if (!m_learnedNames) [[unlikely]]
-        m_learnedNames = makeUnique<JSONValueParser::LearnedNames>();
+        m_learnedNames.make();
     return *m_learnedNames;
 }
 
@@ -156,7 +162,7 @@ const ObjectBuilderPlan* JSONRuntime::findOrCreateRecordPlan(VM& vm, Structure* 
 NEVER_INLINE JSONRuntime::RecordPlan JSONRuntime::findRecordPlan(VM& vm, Structure* ordinaryStructure)
 {
     if (!m_recordPlanCache)
-        m_recordPlanCache = makeUniqueWithoutFastMallocCheck<RecordPlanCache>();
+        m_recordPlanCache.make();
     RecordPlan recordPlan;
     if (const ObjectBuilderPlan* plan = findOrCreateRecordPlan(vm, ordinaryStructure))
         recordPlan = { plan, m_instance.state->objects->structures.objectStructure(vm, plan->layout().shape) };
@@ -211,6 +217,7 @@ void JSONRuntime::suspend()
         .end = words.sourceEnd,
         .capacity = m_sourceCapacity,
         .ownerStackPointer = words.sourceOwnerStackPointer,
+        .furthestAttemptedPosition = m_furthestAttemptedPosition,
         .wideText = WTF::move(m_wideText),
         .numberOfKeyOrderLists = m_keyOrderLists.size(),
         .encoding = words.sourceEncoding,
@@ -230,6 +237,8 @@ void JSONRuntime::resume()
     words.sourceEnd = source.end;
     m_sourceCapacity = source.capacity;
     words.sourceOwnerStackPointer = source.ownerStackPointer;
+    m_furthestAttemptedPosition = source.furthestAttemptedPosition;
+    m_furthestFailedPosition = source.furthestAttemptedPosition;
     m_wideText = WTF::move(source.wideText);
     m_keyOrderLists.shrink(source.numberOfKeyOrderLists);
     words.sourceEncoding = source.encoding;
@@ -260,6 +269,8 @@ ALWAYS_INLINE uint8_t* JSONRuntime::beginIn(uint8_t* start, void* stackPointer, 
     words.sourceOwnerStackPointer = stackPointer;
     words.canEndSourceInline = !isNested;
     words.valueParserFailed = false;
+    m_furthestAttemptedPosition = nullptr;
+    m_furthestFailedPosition = nullptr;
     return start;
 }
 
@@ -344,7 +355,7 @@ bool JSONRuntime::open(std::span<const uint8_t> bytes, void* stackPointer)
     return true;
 }
 
-bool JSONRuntime::open(JSValue textOrBytes, void* stackPointer)
+ALWAYS_INLINE bool JSONRuntime::openInline(JSValue textOrBytes, void* stackPointer)
 {
     if (!textOrBytes.isCell()) [[unlikely]]
         return false;
@@ -367,6 +378,11 @@ bool JSONRuntime::open(JSValue textOrBytes, void* stackPointer)
     if (cell->type() == Uint8ArrayType)
         return open(withoutByteOrderMark(uncheckedDowncast<JSArrayBufferView>(cell)->span()), stackPointer);
     return false;
+}
+
+bool JSONRuntime::open(JSValue textOrBytes, void* stackPointer)
+{
+    return openInline(textOrBytes, stackPointer);
 }
 
 bool JSONRuntime::open(StringView text, void* stackPointer)
@@ -416,6 +432,7 @@ void JSONRuntime::clear()
             learned.forgetCells();
     }
     m_numberOfObjectsLearned = 0;
+    m_uncachedFinishesRemaining = 0;
     m_timesNotFoundInARow.fill(0);
     m_timesRefusedInARow.fill(0);
     if (m_recordPlanCache)
@@ -939,7 +956,8 @@ auto JSONValueParser::parseNameAndColon(const uint8_t* quote) -> ParsedName
         StringImpl* impl = decoded.string->tryGetValueImpl();
         if (!impl)
             return { };
-        parsed.name = Identifier::fromString(m_vm, String { impl });
+        // The table of atoms narrows characters that it is given. A string that it is given becomes the atom as it is.
+        parsed.name = impl->is8Bit() ? Identifier::fromString(m_vm, String { impl }) : Identifier::fromString(m_vm, impl->span16());
         end = decoded.end;
     }
     Cursor colon = skipWhitespace(end);
@@ -1098,7 +1116,7 @@ static ALWAYS_INLINE UGPRPair toRegisterPair(ParsedJSONString parsed)
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTJSONSourceOpen, size_t, (Instance* instance, EncodedJSValue text, void* stackPointer))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTJSONSourceOpen);
-    OPERATION_RETURN(scope, instance->json.runtime->open(JSValue::decode(text), stackPointer));
+    OPERATION_RETURN(scope, instance->json.runtime->openInline(JSValue::decode(text), stackPointer));
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTJSONSourceClose, size_t, (Instance* instance, const uint8_t* cursor))
@@ -1146,10 +1164,37 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTJSONParseKey, UGPRPair, (Instance*
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTJSONParseValue, UGPRPair, (Instance* instance, const uint8_t* cursor))
 {
+    auto pairOf = [](JSValue value, const uint8_t* end) ALWAYS_INLINE_LAMBDA {
+        return makeUGPRPair(static_cast<UCPURegister>(JSValue::encode(value)), std::bit_cast<UCPURegister>(end));
+    };
+    // A number, a word and a string that the cache holds are answered without allocating: they need no scope.
+    JSValue integer;
+    if (const uint8_t* end = tryParseSmallJSONInteger(cursor, integer))
+        return pairOf(integer, end);
+    bool isString = *cursor == '"';
+    if (isString) {
+        if (auto cached = findCachedJSONString(instance->json, *instance->vm, cursor)) [[likely]]
+            return pairOf(cached->string, cached->end);
+    } else if ((*cursor | 0x20) != '{') {
+        uint32_t word = WTF::unalignedLoad<uint32_t>(cursor);
+        if (word == ('t' | 'r' << 8 | 'u' << 16 | 'e' << 24))
+            return pairOf(jsBoolean(true), cursor + 4);
+        if (word == ('n' | 'u' << 8 | 'l' << 16 | 'l' << 24))
+            return pairOf(jsNull(), cursor + 4);
+        if (WTF::unalignedLoad<uint32_t>(cursor + 1) == ('a' | 'l' << 8 | 's' << 16 | 'e' << 24) && *cursor == 'f')
+            return pairOf(jsBoolean(false), cursor + 5);
+        if (ParsedJSONNumber parsed = parseJSONNumber(cursor, instance->json.sourceEnd); parsed.end)
+            return pairOf(jsNumber(parsed.number), parsed.end);
+    }
+
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTJSONParseValue);
     DeferTerminationForAWhile deferTermination(vm);
-    ParsedJSONValue parsed = parseJSONValueAt(*instance, vm, globalObject, cursor);
-    OPERATION_RETURN(scope, makeUGPRPair(static_cast<UCPURegister>(JSValue::encode(parsed.value)), std::bit_cast<UCPURegister>(parsed.end)));
+    if (isString) {
+        if (ParsedJSONString string = makeUncachedJSONString(*instance, vm, cursor + 1); string.end)
+            OPERATION_RETURN(scope, pairOf(string.string, string.end));
+    }
+    ParsedJSONValue parsed = JSONValueParser(*instance, vm, globalObject).parse(cursor);
+    OPERATION_RETURN(scope, pairOf(parsed.value, parsed.end));
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTJSONParseNumber, UGPRPair, (Instance* instance, const uint8_t* cursor))
@@ -1277,6 +1322,43 @@ static ALWAYS_INLINE bool tryFinishObjectAsBefore(VM& vm, Instance& instance, Ob
     return true;
 }
 
+void JSONRuntime::ObservedMember::recordListStorage(unsigned level, ListStorage storage)
+{
+    ListStorage before = listStorageAt(listStorageKinds, level);
+    if (before != Unknown && before <= storage)
+        return;
+    listStorageKinds &= ~(((1 << bitsPerListStorage) - 1) << (level * bitsPerListStorage));
+    listStorageKinds |= storage << (level * bitsPerListStorage);
+}
+
+static void recordObservedMemberValue(JSONRuntime& runtime, uint32_t shape, uint16_t field, JSCell* cell)
+{
+    using Observed = JSONRuntime::ObservedMember;
+    AOT_THRESHOLD(unsigned, maxElementsInspected, 16);
+    Observed observed = runtime.observedMember(shape, field);
+    for (unsigned level = 0; cell->type() == ArrayType; ++level) {
+        auto* list = uncheckedDowncast<JSArray>(cell);
+        IndexingType storage = list->indexingType() & IndexingShapeMask;
+        if (level == Observed::maxListDepth || (storage != Int32Shape && storage != DoubleShape && storage != ContiguousShape))
+            return;
+        observed.recordListStorage(level, storage == Int32Shape ? Observed::Int32 : storage == DoubleShape ? Observed::Double : Observed::Contiguous);
+        cell = nullptr;
+        for (unsigned index = 0; storage == ContiguousShape && !cell && index < std::min(list->length(), maxElementsInspected); ++index) {
+            JSValue element = list->butterfly()->contiguous().at(list, index).get();
+            cell = element && element.isObject() ? element.asCell() : nullptr;
+        }
+        if (!cell) {
+            runtime.didSeeMember(shape, field, observed);
+            return;
+        }
+    }
+    if (isCompiledObject(cell))
+        observed.shape = uncheckedDowncast<Object>(cell)->shape();
+    else if (cell->isObject() && !observed.shape)
+        observed.shape = JSONRuntime::LearnedObject::plainObjectShape;
+    runtime.didSeeMember(shape, field, observed);
+}
+
 static bool tryFinishObject(VM& vm, Instance& instance, Object& object, JSObject* extraProperties, JSONKeyOrder order)
 {
     if (order.kind() == JSONKeyOrder::Kind::Unknown)
@@ -1295,12 +1377,13 @@ static bool tryFinishObject(VM& vm, Instance& instance, Object& object, JSObject
         const LayoutData& layout = object.layout();
         for (const FieldData& field : layout.fields()) {
             JSValue value = field.isPrivate() || field.isAccessor() ? JSValue() : object.readInline(field);
-            if (value && value.isCell() && isCompiledObject(value.asCell()))
-                instance.json.runtime->didSeeMember(layout.shape, layout.indexOf(field), uncheckedDowncast<Object>(value.asCell())->shape());
+            if (value && value.isObject())
+                recordObservedMemberValue(*instance.json.runtime, layout.shape, layout.indexOf(field), value.asCell());
         }
     }
     // A list of keys lasts as long as its text; a number lasts.
-    if (extraProperties && order.kind() == JSONKeyOrder::Kind::Numbered) {
+    bool isCacheable = extraProperties && !instance.json.runtime->consumeUncachedFinish();
+    if (isCacheable && order.kind() == JSONKeyOrder::Kind::Numbered) {
         born.orderAndCount = initial->orderAndCount;
         born.structure = initial->structure;
         instance.json.runtime->finishedObjectFor(born.structureAtBirth, born.extraStructure) = born;
@@ -1394,7 +1477,7 @@ bool JSONRuntime::mayLearnAnotherObject()
 JSONRuntime::LearnedObject* JSONRuntime::learnedObjectToReplace(uint32_t shape, uint64_t firstWord)
 {
     if (!m_learnedObjects)
-        m_learnedObjects = makeUniqueWithoutFastMallocCheck<LearnedObjects>();
+        m_learnedObjects.make();
     unsigned index = indexOfLearnedObject(shape, firstWord);
     LearnedObject& first = (*m_learnedObjects)[index];
     LearnedObject& second = (*m_learnedObjects)[index ^ 1];
@@ -1444,7 +1527,7 @@ JSONRuntime::LearnedExtraMembers* JSONRuntime::learnedExtraMembersWithoutNames(u
 JSONRuntime::LearnedExtraMembers& JSONRuntime::learnedExtraMembersToReplace(uint64_t key, const uint8_t* firstName)
 {
     if (!m_learnedExtraMembers)
-        m_learnedExtraMembers = makeUniqueWithoutFastMallocCheck<LearnedExtraMembersTable>();
+        m_learnedExtraMembers.make();
     unsigned index = indexOfLearnedExtraMembers(key, firstName);
     LearnedExtraMembers& first = (*m_learnedExtraMembers)[index];
     LearnedExtraMembers& second = (*m_learnedExtraMembers)[index ^ 1];
@@ -1636,9 +1719,9 @@ static NEVER_INLINE const uint8_t* parseAndLearnExtraMembers(Instance* instance,
     return next;
 }
 
-static ParsedJSONValue parseLearnedObjectInside(Instance&, VM&, uint32_t shape, const uint8_t* brace);
+static ParsedJSONValue parseNestedLearnedValue(Instance&, VM&, const JSONRuntime::LearnedObject&, JSONRuntime::LearnedObject::Member&, const uint8_t* start);
 
-static ALWAYS_INLINE ParsedJSONValue parseExtraValue(Instance& instance, VM& vm, const uint8_t* start, uint32_t shapeOfObject = 0)
+static ALWAYS_INLINE ParsedJSONValue parseExtraValue(Instance& instance, VM& vm, const uint8_t* start, const JSONRuntime::LearnedObject* learned = nullptr, JSONRuntime::LearnedObject::Member* member = nullptr)
 {
     JSValue integer;
     if (const uint8_t* end = tryParseSmallJSONInteger(start, integer))
@@ -1651,8 +1734,8 @@ static ALWAYS_INLINE ParsedJSONValue parseExtraValue(Instance& instance, VM& vm,
     else if (WTF::unalignedLoad<uint32_t>(start + 1) == ('a' | 'l' << 8 | 's' << 16 | 'e' << 24) && *start == 'f')
         return { jsBoolean(false), start + 5 };
     // What the general parser makes of an object or a list is none of the field's type.
-    if (shapeOfObject && (*start == '{' || *start == '['))
-        return parseLearnedObjectInside(instance, vm, shapeOfObject, start);
+    if (member && member->shapeOfValue && (*start == '{' || *start == '['))
+        return parseNestedLearnedValue(instance, vm, *learned, *member, start);
     return parseJSONValueAt(instance, vm, instance.globalObject, start);
 }
 
@@ -1725,7 +1808,14 @@ done:
     return reached;
 }
 
-static bool learnObject(Instance&, VM&, JSONRuntime::LearnedObject&, uint32_t shape, const uint8_t* firstName, unsigned depth);
+static IndexingType indexingTypeForListStorage(JSONRuntime::ObservedMember::ListStorage storage)
+{
+    using Observed = JSONRuntime::ObservedMember;
+    return storage == Observed::Int32 ? ArrayWithInt32 : storage == Observed::Double ? ArrayWithDouble : ArrayWithContiguous;
+}
+
+enum class LearnedContext : uint8_t { Member, ListElement };
+static bool learnObject(Instance&, VM&, JSONRuntime::LearnedObject&, uint32_t shape, const uint8_t* firstName, unsigned depth, LearnedContext = LearnedContext::Member);
 
 static std::optional<JSONRuntime::LearnedObject::Store> storeOf(ObjectBuilderPlan::FastField field, uint8_t kind)
 {
@@ -1761,23 +1851,64 @@ static std::optional<JSONRuntime::LearnedObject::Store> storeOf(ObjectBuilderPla
         if (representation == SlotRepresentation::OptionalBoolean)
             return Store::LowByte;
         return std::nullopt;
+    case Learned::List:
+        if (representation == SlotRepresentation::JSValue || representation == SlotRepresentation::Cell)
+            return Store::Word;
+        if (representation == SlotRepresentation::Cell32 || representation == SlotRepresentation::OptionalCell32)
+            return Store::Cell32;
+        return std::nullopt;
     case Learned::OtherKind:
         break;
     }
     return std::nullopt;
 }
 
-static bool learnObjectInside(Instance& instance, VM& vm, uint32_t shape, const uint8_t* brace, unsigned depth)
+static bool learnObjectInside(Instance& instance, VM& vm, uint32_t shape, const uint8_t* brace, unsigned depth, LearnedContext context)
 {
     AOT_THRESHOLD(unsigned, maxDepthOfLearnedObjects, 8);
     const uint8_t* firstName = skipWhitespace(brace + 1);
     if (!shape || depth == maxDepthOfLearnedObjects || *firstName != '"')
         return false;
-    JSONRuntime::LearnedObject* inner = instance.json.runtime->learnedObjectToReplace(shape, JSONRuntime::startOfName(firstName));
-    return inner && learnObject(instance, vm, *inner, shape, firstName, depth + 1);
+    JSONRuntime& runtime = *instance.json.runtime;
+    uint64_t firstWord = JSONRuntime::startOfName(firstName);
+    if (context == LearnedContext::ListElement) {
+        unsigned index = JSONRuntime::indexOfLearnedObject(shape, firstWord);
+        for (unsigned way = 0; way < 2; ++way) {
+            const JSONRuntime::LearnedObject& known = (*runtime.learnedObjects())[index ^ way];
+            if (known.isFor(shape, firstWord) && (known.isBeingLearned || (!known.members.isEmpty() && known.numberOfExtraMembers)))
+                return true;
+        }
+    }
+    JSONRuntime::LearnedObject* inner = runtime.learnedObjectToReplace(shape, firstWord);
+    return inner && learnObject(instance, vm, *inner, shape, firstName, depth + 1, context);
 }
 
-static NEVER_INLINE bool learnObject(Instance& instance, VM& vm, JSONRuntime::LearnedObject& learned, uint32_t shape, const uint8_t* firstName, unsigned depth)
+static bool learnNestedValue(Instance& instance, VM& vm, JSONRuntime::LearnedObject::Member& member, uint32_t shape, const uint8_t* value, unsigned depth)
+{
+    using Observed = JSONRuntime::ObservedMember;
+    JSONRuntime& runtime = *instance.json.runtime;
+    Observed observed = runtime.observedMember(shape, member.field);
+    unsigned level = 0;
+    bool isObserved = true;
+    for (; *value == '['; ++level) {
+        if (level == Observed::maxListDepth)
+            return false;
+        isObserved &= Observed::listStorageAt(observed.listStorageKinds, level) != Observed::Unknown;
+        value = skipWhitespace(value + 1);
+    }
+    if (!isObserved || (*value == '{' && !observed.shape)) {
+        runtime.disableFinishCache();
+        runtime.setWaitsForShapeOfMember(true);
+        return false;
+    }
+    if (observed.shape)
+        member.shapeOfValue = observed.shape;
+    if (level)
+        member.listStorageKinds = observed.listStorageKinds;
+    return *value != '{' || !member.hasRecordShape() || learnObjectInside(instance, vm, observed.shape, value, depth, level ? LearnedContext::ListElement : LearnedContext::Member);
+}
+
+static NEVER_INLINE bool learnObject(Instance& instance, VM& vm, JSONRuntime::LearnedObject& learned, uint32_t shape, const uint8_t* firstName, unsigned depth, LearnedContext context)
 {
     using Learned = JSONRuntime::LearnedObject;
     learned.shape = shape;
@@ -1785,6 +1916,7 @@ static NEVER_INLINE bool learnObject(Instance& instance, VM& vm, JSONRuntime::Le
     learned.structure = nullptr;
     learned.wasFound = false;
     learned.isOnlySeen = false;
+    learned.consecutiveFailures = 0;
     learned.members.shrink(0);
     learned.keys.shrink(0);
     learned.stores.shrink(0);
@@ -1813,6 +1945,7 @@ static NEVER_INLINE bool learnObject(Instance& instance, VM& vm, JSONRuntime::Le
     Vector<Identifier, 16> names;
     Vector<UniquedStringImpl*, 16> fieldNames;
     Vector<Learned::Kind, 16> kindsOfFields;
+    Vector<uint32_t, 16> listStructureIDs;
     Vector<UniquedStringImpl*, 16> extraNames;
     Vector<Learned::Member, 16> members;
     size_t numberOfPositionedExtraNames = 0;
@@ -1833,24 +1966,29 @@ static NEVER_INLINE bool learnObject(Instance& instance, VM& vm, JSONRuntime::Le
         UniquedStringImpl* name = key.name.impl();
         const uint8_t* value = skipWhitespace(key.afterColon);
         member.shapeOfValue = 0;
+        member.listStorageKinds = 0;
+        member.field = 0;
         if (const FieldData* field = layouts.field(vm, layout, name)) {
             JSValue integer;
             kindsOfFields.append(*value == '"' ? Learned::String : *value == 't' || *value == 'f' ? Learned::Boolean : tryParseSmallJSONInteger(value, integer) ? Learned::SmallInteger : Learned::OtherKind);
+            listStructureIDs.append(0);
             if (fieldNames.contains(name) || fieldNames.size() == Learned::maxNumberOfFields)
                 return false;
             if (!layouts.typeOf(*field).acceptsEveryObject()) {
-                // Only the form that was learned over a record looks for one: two forms that both did would each parse what lies inside, at every level.
-                member.shapeOfValue = *value == '{' ? instance.json.runtime->shapeOfMember(shape, layout.indexOf(*field)) : Learned::shapeOfNoObject;
-                if (*value == '[')
+                member.shapeOfValue = Learned::shapeOfNoObject;
+                member.field = layout.indexOf(*field);
+                if (*value == '[' && !depth && extraNames.isEmpty())
                     return false;
-                if (*value == '{' && !member.shapeOfValue) {
-                    // The objects finished so far held no record here. The next one is looked at again.
-                    instance.json.runtime->forgetFinishedObjects();
-                    instance.json.runtime->setWaitsForShapeOfMember(true);
+                if ((*value == '{' || *value == '[') && !learnNestedValue(instance, vm, member, shape, value, depth))
                     return false;
+                if (member.listStorageKinds && !instance.globalObject->isHavingABadTime()) {
+                    Structure* listStructure = instance.globalObject->originalArrayStructureForIndexingType(indexingTypeForListStorage(JSONRuntime::ObservedMember::listStorageAt(member.listStorageKinds, 0)));
+                    JSArray* list = tryCreateArrayWithStorage(vm, listStructure, 0, arrayLiteralVectorLength(0));
+                    if (list && layouts.slotAdmits(*field, list)) {
+                        kindsOfFields.last() = Learned::List;
+                        listStructureIDs.last() = listStructure->id().bits();
+                    }
                 }
-                if (*value == '{' && !learnObjectInside(instance, vm, member.shapeOfValue, value, depth))
-                    return false;
             }
             positionExtraNames();
             learned.keys.append(layout.indexOf(*field));
@@ -1879,6 +2017,9 @@ static NEVER_INLINE bool learnObject(Instance& instance, VM& vm, JSONRuntime::Le
     positionExtraNames();
     if (!depth && (!numberOfRuns || numberOfFieldsInFront > Learned::maxMembersParsedTwiceForEachReturnSaved * (numberOfRuns + 1)))
         return false;
+    bool hasListMember = members.containsIf([](const Learned::Member& member) { return member.listStorageKinds; });
+    if ((context == LearnedContext::ListElement && !numberOfRuns) || (hasListMember && numberOfRuns < Learned::minExtraRunsWithList))
+        return false;
 
     learned.plan = ObjectBuilder::tryCreatePlan(*instance.state, layout, fieldNames.span());
     if (!learned.plan || !learned.plan->hasFastPath())
@@ -1903,7 +2044,7 @@ static NEVER_INLINE bool learnObject(Instance& instance, VM& vm, JSONRuntime::Le
             learned.stores.shrink(0);
             break;
         }
-        learned.stores.append({ learned.plan->fastFields()[member.indexOfValue].offset, *store, member.indexOfValue, kind });
+        learned.stores.append({ learned.plan->fastFields()[member.indexOfValue].offset, *store, member.indexOfValue, kind, kind == Learned::String ? vm.stringStructure->id().bits() : listStructureIDs[member.indexOfValue] });
     }
     learned.members.appendVector(members);
     isLearned = true;
@@ -1981,10 +2122,10 @@ static ALWAYS_INLINE bool valuesAreOfLearnedKinds(const JSONRuntime::LearnedObje
     bool areOfLearnedKinds = true;
     for (const Learned::FieldStore& field : learned.stores) {
         JSValue value = JSValue::decode(values[field.indexOfValue]);
-        if (field.kind == Learned::SmallInteger)
+        if (field.structureID)
+            areOfLearnedKinds &= value.isCell() && value.asCell()->structureID().bits() == field.structureID;
+        else if (field.kind == Learned::SmallInteger)
             areOfLearnedKinds &= value.isInt32();
-        else if (field.kind == Learned::String)
-            areOfLearnedKinds &= value.isString();
         else
             areOfLearnedKinds &= value.isBoolean();
     }
@@ -2034,56 +2175,116 @@ static ALWAYS_INLINE JSObject* createLearnedObject(VM& vm, const JSONRuntime::Le
     return object;
 }
 
-static ALWAYS_INLINE const uint8_t* tryParseObjectInlineAs(Instance& instance, VM& vm, JSONRuntime::LearnedObject& learned, const uint8_t* quote, uint64_t& result)
+static bool membersParseIdentically(const JSONRuntime::LearnedObject::Member& first, const JSONRuntime::LearnedObject::Member& second, JSValue parsed)
+{
+    if (first.textLength != second.textLength || first.indexOfValue != second.indexOfValue || memcmp(first.text, second.text, sizeof(first.text)))
+        return false;
+    return !parsed.isObject() || (first.shapeOfValue == second.shapeOfValue && first.listStorageKinds == second.listStorageKinds);
+}
+
+enum class ExpectedToken : uint8_t { Name, ClosingBrace };
+
+static NEVER_INLINE JSONRuntime::LearnedObject* findAlternateForm(JSONRuntime& runtime, JSONRuntime::LearnedObject& learned, size_t numberOfMembersParsed, const EncodedJSValue* values, ExpectedToken expected, const uint8_t* cursor)
+{
+    JSONRuntime::LearnedObjects& table = *runtime.learnedObjects();
+    JSONRuntime::LearnedObject& other = table[(&learned - table.data()) ^ 1];
+    if (!learned.shape || !other.isFor(learned.shape, learned.firstWord) || other.members.size() < numberOfMembersParsed || other.members.isEmpty())
+        return nullptr;
+    for (size_t index = 0; index < numberOfMembersParsed; ++index) {
+        if (!membersParseIdentically(learned.members[index], other.members[index], JSValue::decode(values[learned.members[index].indexOfValue])))
+            return nullptr;
+    }
+    bool continues = expected == ExpectedToken::ClosingBrace ? other.members.size() == numberOfMembersParsed : other.members.size() > numberOfMembersParsed && other.members[numberOfMembersParsed].standsAt(cursor);
+    return continues ? &other : nullptr;
+}
+
+static NEVER_INLINE const uint8_t* failAttempt(JSONRuntime& runtime, JSONRuntime::LearnedObject& learned, size_t numberOfMembersParsed, const EncodedJSValue* values, const uint8_t* firstName, const uint8_t* reached)
+{
+    if (!runtime.isAttemptAbandoned())
+        runtime.setUnmatchedObject(learned.shape, firstName);
+    bool shouldAbandon = false;
+    for (size_t index = 0; index < numberOfMembersParsed; ++index)
+        shouldAbandon |= learned.members[index].mayRecurse() && JSValue::decode(values[learned.members[index].indexOfValue]).isObject();
+    runtime.noteAttemptFailure(reached, shouldAbandon);
+    runtime.setOutermostFailedForm(&learned);
+    return nullptr;
+}
+
+static ALWAYS_INLINE const uint8_t* tryParseObjectInlineAs(Instance& instance, VM& vm, JSONRuntime::LearnedObject*& matchedForm, const uint8_t* firstName, uint64_t& result)
 {
     using Learned = JSONRuntime::LearnedObject;
     EncodedJSValue values[Learned::maxNumberOfFields + Learned::maxNumberOfExtraMembers];
-    Structure* structureAtBirth = learned.structureAtBirth;
-    Structure* extraStructure = learned.extraStructure;
-    CompiledStructure* structure = learned.structure;
-    const Learned::Member* member = learned.members.begin();
-    const Learned::Member* end = learned.members.end();
+    Learned* learned = matchedForm;
+    const uint8_t* quote = firstName;
+    Structure* structureAtBirth = learned->structureAtBirth;
+    Structure* extraStructure = learned->extraStructure;
+    CompiledStructure* structure = learned->structure;
+    Learned::Member* member = learned->members.begin();
+    Learned::Member* end = learned->members.end();
+    auto switchToAlternateForm = [&](ExpectedToken expected, const uint8_t* cursor) ALWAYS_INLINE_LAMBDA {
+        size_t numberOfMembersParsed = member - learned->members.begin();
+        Learned* other = findAlternateForm(*instance.json.runtime, *learned, numberOfMembersParsed, values, expected, cursor);
+        if (!other)
+            return false;
+        member = other->members.begin() + numberOfMembersParsed;
+        end = other->members.end();
+        matchedForm = learned = other;
+        structureAtBirth = other->structureAtBirth;
+        extraStructure = other->extraStructure;
+        structure = other->structure;
+        return true;
+    };
+    auto fail = [&](const uint8_t* reached) ALWAYS_INLINE_LAMBDA {
+        return failAttempt(*instance.json.runtime, *learned, member - learned->members.begin(), values, firstName, reached);
+    };
     for (;;) {
-        if (!member->standsAt(quote)) [[unlikely]]
-            return nullptr;
+        if (!member->standsAt(quote)) [[unlikely]] {
+            if (!switchToAlternateForm(ExpectedToken::Name, quote))
+                return fail(quote);
+        }
+        ASSERT(member < end);
         const uint8_t* start = skipWhitespace(quote + member->textLength);
-        ParsedJSONValue parsed = parseExtraValue(instance, vm, start, member->shapeOfValue);
+        ParsedJSONValue parsed = parseExtraValue(instance, vm, start, learned, member);
         if (!parsed.end) [[unlikely]]
-            return nullptr;
+            return fail(nullptr);
         values[member->indexOfValue] = JSValue::encode(parsed.value);
         ++member;
         quote = skipWhitespace(parsed.end);
         if (*quote != ',')
             break;
-        if (member == end) [[unlikely]]
-            return nullptr;
+        if (member == end) [[unlikely]] {
+            if (!switchToAlternateForm(ExpectedToken::Name, skipWhitespace(quote + 1)))
+                return fail(quote);
+        }
         quote = skipWhitespace(quote + 1);
     }
-    if (*quote != '}' || member != end) [[unlikely]]
-        return nullptr;
+    if (*quote != '}' || member != end) [[unlikely]] {
+        if (*quote != '}' || !switchToAlternateForm(ExpectedToken::ClosingBrace, quote))
+            return fail(quote);
+    }
 
-    JSObject* extraProperties = extraStructure ? createLearnedExtraProperties(vm, learned, extraStructure, values + Learned::maxNumberOfFields) : nullptr;
+    JSObject* extraProperties = extraStructure ? createLearnedExtraProperties(vm, *learned, extraStructure, values + Learned::maxNumberOfFields) : nullptr;
     bool isFinishedAsBefore = structure || !extraProperties;
-    if (isFinishedAsBefore && !learned.wordsBehindHeader.isEmpty() && valuesAreOfLearnedKinds(learned, values)) [[likely]] {
-        result = JSValue::encode(createLearnedObject(vm, learned, structure ? structure : structureAtBirth, values, extraProperties));
+    if (isFinishedAsBefore && !learned->wordsBehindHeader.isEmpty() && valuesAreOfLearnedKinds(*learned, values)) [[likely]] {
+        result = JSValue::encode(createLearnedObject(vm, *learned, structure ? structure : structureAtBirth, values, extraProperties));
         return quote;
     }
-    const ObjectBuilderPlan* plan = learned.plan.get();
+    const ObjectBuilderPlan* plan = learned->plan.get();
     JSObject* object = plan ? ObjectBuilder::tryBuild(vm, *plan, structure ? structure : structureAtBirth, values) : nullptr;
     if (!object) [[unlikely]]
-        return nullptr;
-    if (isFinishedAsBefore && (extraProperties || !learned.stores.isEmpty() == !learned.wordsBehindHeader.isEmpty())) {
+        return fail(quote);
+    if (isFinishedAsBefore && (extraProperties || !learned->stores.isEmpty() == !learned->wordsBehindHeader.isEmpty())) {
         if (extraProperties) {
-            uncheckedDowncast<Object>(object)->at<uint32_t>(offsetOfOrderWord) = learned.orderWord;
-            storeExtraProperties(learned, reinterpret_cast<uint8_t*>(object), extraProperties);
+            uncheckedDowncast<Object>(object)->at<uint32_t>(offsetOfOrderWord) = learned->orderWord;
+            storeExtraProperties(*learned, reinterpret_cast<uint8_t*>(object), extraProperties);
         }
-    } else if (!finishFirstLearnedObject(vm, learned, *uncheckedDowncast<Object>(object), extraProperties))
-        return nullptr;
+    } else if (!finishFirstLearnedObject(vm, *learned, *uncheckedDowncast<Object>(object), extraProperties))
+        return fail(quote);
     result = JSValue::encode(object);
     return quote;
 }
 
-static NEVER_INLINE const uint8_t* tryParseObjectAs(Instance& instance, VM& vm, JSONRuntime::LearnedObject& learned, const uint8_t* quote, uint64_t& result)
+static NEVER_INLINE const uint8_t* tryParseObjectAs(Instance& instance, VM& vm, JSONRuntime::LearnedObject*& learned, const uint8_t* quote, uint64_t& result)
 {
     return tryParseObjectInlineAs(instance, vm, learned, quote, result);
 }
@@ -2105,54 +2306,276 @@ static NEVER_INLINE const uint8_t* learnAndParseObject(Instance& instance, VM& v
         seen->members.shrink(0);
         return nullptr;
     }
-    if (!runtime.mayLearnAnotherObject() || !learnObject(instance, vm, *seenOnce, shape, firstName, 0) || !seenOnce->shape)
+    if (runtime.isFinishCacheDisabled() || !runtime.mayLearnAnotherObject() || !learnObject(instance, vm, *seenOnce, shape, firstName, 0) || !seenOnce->shape)
         return nullptr;
-    return tryParseObjectAs(instance, vm, *seenOnce, firstName, result);
+    runtime.resetAttemptState();
+    return tryParseObjectAs(instance, vm, seenOnce, firstName, result);
 }
 
 static NEVER_INLINE ParsedJSONValue parseLearnedObjectInside(Instance& instance, VM& vm, uint32_t shape, const uint8_t* brace)
 {
-    JSONRuntime::LearnedObjects* table = instance.json.runtime->learnedObjects();
-    if (*brace != '{' || !table || !vm.isSafeToRecurse()) [[unlikely]]
-        return { };
-    const uint8_t* firstName = skipWhitespace(brace + 1);
-    uint64_t firstWord = JSONRuntime::startOfName(firstName);
-    unsigned index = JSONRuntime::indexOfLearnedObject(shape, firstWord);
-    for (unsigned way = 0; way < 2; ++way) {
-        JSONRuntime::LearnedObject& learned = (*table)[index ^ way];
-        if (!learned.isFor(shape, firstWord) || learned.members.isEmpty())
-            continue;
-        uint64_t result;
-        if (const uint8_t* end = tryParseObjectAs(instance, vm, learned, firstName, result)) [[likely]] {
-            learned.wasFound = true;
-            instance.json.runtime->setLearnedObjectFoundLast(&learned);
-            return { JSValue::decode(result), end + 1 };
+    JSONRuntime& runtime = *instance.json.runtime;
+    if (vm.isSafeToRecurse()) [[likely]] {
+        const uint8_t* firstName = skipWhitespace(brace + 1);
+        uint64_t firstWord = JSONRuntime::startOfName(firstName);
+        unsigned index = JSONRuntime::indexOfLearnedObject(shape, firstWord);
+        for (unsigned way = 0; way < 2 && !runtime.isAttemptAbandoned(); ++way) {
+            JSONRuntime::LearnedObject* learned = &(*runtime.learnedObjects())[index ^ way];
+            if (!learned->isFor(shape, firstWord) || learned->members.isEmpty())
+                continue;
+            uint64_t result;
+            if (const uint8_t* end = tryParseObjectAs(instance, vm, learned, firstName, result)) [[likely]] {
+                learned->wasFound = true;
+                runtime.setLearnedObjectFoundLast(learned);
+                return { JSValue::decode(result), end + 1 };
+            }
         }
     }
+    if (!runtime.isAttemptAbandoned()) {
+        runtime.setOutermostFailedForm(nullptr);
+        runtime.setUnmatchedObject(shape, skipWhitespace(brace + 1));
+    }
+    runtime.noteAttemptFailure(brace, true);
     return { };
 }
 
-static NEVER_INLINE const uint8_t* appendLearnedObjects(Instance& instance, VM& vm, uint32_t shape, JSArray* array, const uint8_t* element)
+static ALWAYS_INLINE JSArray* createList(Instance& instance, VM& vm, JSONRuntime::ObservedMember::ListStorage storage, const EncodedJSValue* values, unsigned length)
+{
+    using Observed = JSONRuntime::ObservedMember;
+    static_assert(sizeof(JSArray) == 2 * sizeof(uint64_t) && sizeof(IndexingHeader) == sizeof(uint64_t) && JSObject::butterflyOffset() == sizeof(uint64_t));
+    for (unsigned index = 0; index < length && storage != Observed::Contiguous; ++index) {
+        JSValue value = JSValue::decode(values[index]);
+        if (!value.isInt32())
+            storage = value.isDouble() ? Observed::Double : Observed::Contiguous;
+    }
+    const InstancePrefix& prefix = instance.prefix();
+    uint64_t header = storage == Observed::Contiguous ? prefix.newArrayWithContiguousHeader : storage == Observed::Double ? prefix.newArrayWithDoubleHeader : prefix.newArrayWithInt32Header;
+    // The header is zero while the realm is having a bad time.
+    if (!static_cast<uint32_t>(header)) [[unlikely]]
+        return nullptr;
+    unsigned vectorLength = arrayLiteralVectorLength(length);
+    auto* words = static_cast<uint64_t*>(vm.cellSpace().allocate(vm, sizeOfArrayWithStorage(vectorLength), nullptr, AllocationFailureMode::Assert));
+    uint64_t* elements = words + 3;
+    words[2] = length | static_cast<uint64_t>(vectorLength) << 32;
+    for (unsigned index = 0; index < length; ++index)
+        elements[index] = storage == Observed::Double ? std::bit_cast<uint64_t>(JSValue::decode(values[index]).asNumber()) : static_cast<uint64_t>(values[index]);
+    uint64_t hole = storage == Observed::Double ? std::bit_cast<uint64_t>(PNaN) : static_cast<uint64_t>(JSValue::encode(JSValue()));
+    for (unsigned index = length; index < vectorLength; ++index)
+        elements[index] = hole;
+    words[1] = std::bit_cast<uint64_t>(elements);
+    words[0] = header;
+    vm.mutatorFence();
+    return std::bit_cast<JSArray*>(words);
+}
+
+static NEVER_INLINE JSArray* flushListElements(Instance& instance, VM& vm, JSArray* array, JSONRuntime::ObservedMember::ListStorage storage, const EncodedJSValue* values, unsigned count)
+{
+    if (vm.traps().needsOutOfMemoryError()) [[unlikely]]
+        return nullptr;
+    if (!array)
+        return createList(instance, vm, storage, values, count);
+    IndexingType shape = array->indexingType() & IndexingShapeMask;
+    bool fits = shape == ContiguousShape;
+    if (shape == Int32Shape || shape == DoubleShape) {
+        fits = true;
+        for (unsigned index = 0; index < count; ++index)
+            fits &= shape == Int32Shape ? JSValue::decode(values[index]).isInt32() : JSValue::decode(values[index]).isNumber();
+    }
+    unsigned length = array->length();
+    if (fits && length <= MAX_STORAGE_VECTOR_LENGTH - count && array->ensureLength(vm, length + count)) [[likely]] {
+        auto* elements = array->butterfly()->indexingPayload<uint64_t>() + length;
+        for (unsigned index = 0; index < count; ++index)
+            elements[index] = shape == DoubleShape ? std::bit_cast<uint64_t>(JSValue::decode(values[index]).asNumber()) : static_cast<uint64_t>(values[index]);
+        if (shape == ContiguousShape)
+            vm.writeBarrier(array);
+        return array;
+    }
+    auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    for (unsigned index = 0; index < count; ++index) {
+        array->push(instance.globalObject, JSValue::decode(values[index]));
+        if (catchScope.exception()) [[unlikely]] {
+            catchScope.clearException();
+            return nullptr;
+        }
+    }
+    return array;
+}
+
+static NEVER_INLINE bool refreshObservedMember(JSONRuntime& runtime, const JSONRuntime::LearnedObject& learned, JSONRuntime::LearnedObject::Member& member)
+{
+    JSONRuntime::ObservedMember observed = runtime.observedMember(learned.shape, member.field);
+    uint32_t shapeOfValue = observed.shape ? observed.shape : JSONRuntime::LearnedObject::shapeOfNoObject;
+    if (!learned.shape || (shapeOfValue == member.shapeOfValue && observed.listStorageKinds == member.listStorageKinds)) {
+        runtime.disableFinishCache();
+        return false;
+    }
+    member.shapeOfValue = shapeOfValue;
+    member.listStorageKinds = observed.listStorageKinds;
+    return true;
+}
+
+static NEVER_INLINE JSArray* flushNumbers(Instance& instance, VM& vm, JSArray* array, const double* numbers, unsigned count)
+{
+    unsigned length = 0;
+    if (vm.traps().needsOutOfMemoryError()) [[unlikely]]
+        return nullptr;
+    if (!array) {
+        if (!static_cast<uint32_t>(instance.prefix().newArrayWithDoubleHeader)) [[unlikely]]
+            return nullptr;
+        array = tryCreateArrayWithStorage(vm, instance.globalObject->originalArrayStructureForIndexingType(ArrayWithDouble), count, arrayLiteralVectorLength(count));
+    } else {
+        length = array->length();
+        if (length > MAX_STORAGE_VECTOR_LENGTH - count || !array->ensureLength(vm, length + count)) [[unlikely]]
+            return nullptr;
+    }
+    if (array) [[likely]]
+        memcpy(array->butterfly()->contiguousDouble().data() + length, numbers, count * sizeof(double));
+    return array;
+}
+
+static NEVER_INLINE ParsedJSONValue tryParseNumberList(Instance& instance, VM& vm, const uint8_t* cursor)
+{
+    static constexpr unsigned capacity = 32;
+    double numbers[capacity];
+    unsigned count = 0;
+    JSArray* array = nullptr;
+    for (;;) {
+        ParsedJSONNumber number;
+        JSValue integer;
+        if (const uint8_t* end = tryParseSmallJSONInteger(cursor, integer))
+            number = { static_cast<double>(integer.asInt32()), end };
+        else
+            number = parseJSONNumber(cursor, instance.json.sourceEnd);
+        if (!number.end) [[unlikely]]
+            return { };
+        if (count == capacity) {
+            array = flushNumbers(instance, vm, array, numbers, std::exchange(count, 0));
+            if (!array) [[unlikely]]
+                return { };
+        }
+        numbers[count++] = number.number;
+        cursor = skipWhitespace(number.end);
+        if (*cursor != ',')
+            break;
+        cursor = skipWhitespace(cursor + 1);
+    }
+    if (*cursor != ']') [[unlikely]]
+        return { };
+    array = flushNumbers(instance, vm, array, numbers, count);
+    return array ? ParsedJSONValue { array, cursor + 1 } : ParsedJSONValue { };
+}
+
+static const uint8_t* appendLearnedObjects(Instance&, VM&, uint32_t shape, JSArray*, const uint8_t* element, JSONRuntime::LearnedObject* likelyForm);
+
+static NEVER_INLINE ParsedJSONValue parseLearnedList(Instance& instance, VM& vm, const JSONRuntime::LearnedObject& learned, JSONRuntime::LearnedObject::Member& member, unsigned level, const uint8_t* bracket)
+{
+    using Learned = JSONRuntime::LearnedObject;
+    using Observed = JSONRuntime::ObservedMember;
+    static constexpr unsigned capacity = 16;
+    JSONRuntime& runtime = *instance.json.runtime;
+    EncodedJSValue elements[capacity];
+    unsigned count = 0;
+    JSArray* array = nullptr;
+    const uint8_t* cursor = skipWhitespace(bracket + 1);
+    auto storage = [&]() ALWAYS_INLINE_LAMBDA {
+        return Observed::listStorageAt(member.listStorageKinds, level);
+    };
+    bool isComplete = false;
+    if (vm.isSafeToRecurse() && (storage() != Observed::Unknown || refreshObservedMember(runtime, learned, member)) && storage() != Observed::Unknown) {
+        if (storage() == Observed::Double && *cursor != ']') {
+            if (ParsedJSONValue numbers = tryParseNumberList(instance, vm, cursor); numbers.end) [[likely]]
+                return numbers;
+        }
+        isComplete = *cursor == ']';
+        while (!isComplete) {
+            ParsedJSONValue parsed;
+            if (*cursor == '{' && (member.hasRecordShape() || (member.shapeOfValue == Learned::shapeOfNoObject && refreshObservedMember(runtime, learned, member) && member.hasRecordShape()))) {
+                array = flushListElements(instance, vm, array, storage(), elements, std::exchange(count, 0));
+                if (!array) [[unlikely]]
+                    break;
+                cursor = appendLearnedObjects(instance, vm, member.shapeOfValue, array, cursor, member.shapeOfValue == learned.shape ? const_cast<Learned*>(&learned) : runtime.learnedObjectFoundLast());
+                if (*cursor == '{' || runtime.isAttemptAbandoned()) [[unlikely]]
+                    break;
+                isComplete = *cursor == ']';
+                continue;
+            }
+            if (*cursor == '[' && (member.shapeOfValue != Learned::plainObjectShape || Observed::listStorageAt(member.listStorageKinds, level + 1) != Observed::Unknown))
+                parsed = parseLearnedList(instance, vm, learned, member, level + 1, cursor);
+            else if (*cursor != '{' || member.shapeOfValue == Learned::plainObjectShape)
+                parsed = parseExtraValue(instance, vm, cursor);
+            if (!parsed.end) [[unlikely]]
+                break;
+            if (count == capacity) {
+                array = flushListElements(instance, vm, array, storage(), elements, std::exchange(count, 0));
+                if (!array) [[unlikely]]
+                    break;
+            }
+            elements[count++] = JSValue::encode(parsed.value);
+            cursor = skipWhitespace(parsed.end);
+            if (*cursor == ',') {
+                cursor = skipWhitespace(cursor + 1);
+                continue;
+            }
+            isComplete = *cursor == ']';
+            if (!isComplete) [[unlikely]]
+                break;
+        }
+    }
+    if (isComplete) [[likely]] {
+        if (count || !array)
+            array = flushListElements(instance, vm, array, storage(), elements, count);
+        if (array) [[likely]]
+            return { array, cursor + 1 };
+    }
+    if (!runtime.isAttemptAbandoned())
+        runtime.setUnmatchedObject(0, nullptr);
+    runtime.noteAttemptFailure(cursor, true);
+    return { };
+}
+
+static NEVER_INLINE ParsedJSONValue parseNestedLearnedValue(Instance& instance, VM& vm, const JSONRuntime::LearnedObject& learned, JSONRuntime::LearnedObject::Member& member, const uint8_t* start)
+{
+    if (*start == '[' && member.listStorageKinds) {
+        if (const uint8_t* first = skipWhitespace(start + 1); *first == ']') {
+            if (JSArray* list = createList(instance, vm, JSONRuntime::ObservedMember::listStorageAt(member.listStorageKinds, 0), nullptr, 0)) [[likely]]
+                return { list, first + 1 };
+        }
+        return parseLearnedList(instance, vm, learned, member, 0, start);
+    }
+    if (*start == '{' && member.hasRecordShape())
+        return parseLearnedObjectInside(instance, vm, member.shapeOfValue, start);
+    if (*start == '{' && member.shapeOfValue == JSONRuntime::LearnedObject::plainObjectShape)
+        return parseJSONValueAt(instance, vm, instance.globalObject, start);
+    instance.json.runtime->noteAttemptReached(start);
+    return { };
+}
+
+static NEVER_INLINE const uint8_t* appendLearnedObjects(Instance& instance, VM& vm, uint32_t shape, JSArray* array, const uint8_t* element, JSONRuntime::LearnedObject* likelyForm)
 {
     auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    JSONRuntime::LearnedObject* last = nullptr;
+    JSONRuntime& runtime = *instance.json.runtime;
+    JSONRuntime::LearnedObject* last = likelyForm;
+    if (!runtime.learnedObjects())
+        return element;
     while (*element == '{') {
         const uint8_t* firstName = skipWhitespace(element + 1);
         ParsedJSONValue parsed;
         uint64_t result;
-        const uint8_t* end = last && last->holdsMembersOf(shape) ? tryParseObjectInlineAs(instance, vm, *last, firstName, result) : nullptr;
+        const uint8_t* end = last && last->holdsMembersOf(shape) ? tryParseObjectInlineAs(instance, vm, last, firstName, result) : nullptr;
         if (end) [[likely]]
             parsed = { JSValue::decode(result), end + 1 };
         else {
+            if (runtime.isAttemptAbandoned())
+                break;
             parsed = parseLearnedObjectInside(instance, vm, shape, element);
             if (!parsed.end)
                 break;
-            last = instance.json.runtime->learnedObjectFoundLast();
+            last = runtime.learnedObjectFoundLast();
         }
         const uint8_t* next = skipWhitespace(parsed.end);
         if (*next == ',') {
             next = skipWhitespace(next + 1);
-            if (*next != '{')
+            if (*next == ']')
                 break;
         } else if (*next != ']')
             break;
@@ -2163,42 +2586,106 @@ static NEVER_INLINE const uint8_t* appendLearnedObjects(Instance& instance, VM& 
         }
         element = next;
     }
+    if (last && !runtime.isAttemptAbandoned())
+        last->consecutiveFailures = 0;
     return element;
+}
+
+static NEVER_INLINE void handleAbandonedAttempt(Instance& instance, VM& vm, JSONRuntime& runtime, bool isListRequest)
+{
+    AOT_THRESHOLD(uint8_t, maxConsecutiveFailures, 4);
+    JSONRuntime::LearnedObject* learned = runtime.outermostFailedForm();
+    auto [shape, firstName] = runtime.unmatchedObject();
+    runtime.resetAttemptState();
+    if (!learned)
+        return;
+    if (!isListRequest) {
+        if (learned->shape)
+            runtime.didRefuseTextOf(learned->shape);
+    } else if (++learned->consecutiveFailures == maxConsecutiveFailures) {
+        learned->members.shrink(0);
+        learned->isOnlySeen = false;
+        return;
+    }
+    if (!shape || !runtime.remembersTextsOf(shape) || runtime.isFinishCacheDisabled() || !runtime.mayLearnAnotherObject())
+        return;
+    if (JSONRuntime::LearnedObject* missing = runtime.learnedObjectToReplace(shape, JSONRuntime::startOfName(firstName)); missing && missing != learned)
+        learnObject(instance, vm, *missing, shape, firstName, 1, LearnedContext::ListElement);
 }
 
 static ALWAYS_INLINE const uint8_t* tryParseObjectAsLearned(Instance& instance, VM& vm, uint32_t shape, const uint8_t* firstName, uint64_t& result)
 {
-    if (JSONRuntime::LearnedObject* last = instance.json.runtime->learnedObjectFoundLast(); last && last->holdsMembersOf(shape)) {
-        if (const uint8_t* end = tryParseObjectAs(instance, vm, *last, firstName, result)) [[likely]] {
-            instance.json.runtime->didFindWholeTextOf(shape);
+    JSONRuntime& runtime = *instance.json.runtime;
+    JSONRuntime::LearnedObject* last = runtime.learnedObjectFoundLast();
+    if (last && last->holdsMembersOf(shape)) {
+        JSONRuntime::LearnedObject* matched = last;
+        if (const uint8_t* end = tryParseObjectAs(instance, vm, matched, firstName, result)) [[likely]] {
+            runtime.didFindWholeTextOf(shape);
+            if (matched != last) [[unlikely]] {
+                matched->wasFound = true;
+                runtime.setLearnedObjectFoundLast(matched);
+            }
             return end;
         }
-    }
+    } else
+        last = nullptr;
     uint64_t firstWord = JSONRuntime::startOfName(firstName);
     JSONRuntime::LearnedObject* seenOnce = nullptr;
-    if (JSONRuntime::LearnedObjects* table = instance.json.runtime->learnedObjects()) [[likely]] {
+    if (JSONRuntime::LearnedObjects* table = runtime.learnedObjects()) [[likely]] {
         unsigned index = JSONRuntime::indexOfLearnedObject(shape, firstWord);
         for (unsigned way = 0; way < 2; ++way) {
-            JSONRuntime::LearnedObject& learned = (*table)[index ^ way];
-            if (!learned.isFor(shape, firstWord))
+            JSONRuntime::LearnedObject* learned = &(*table)[index ^ way];
+            if (!learned->isFor(shape, firstWord))
                 continue;
-            if (learned.isOnlySeen) {
-                seenOnce = &learned;
+            if (learned->isOnlySeen) {
+                seenOnce = learned;
                 continue;
             }
-            if (learned.isRefused()) {
-                instance.json.runtime->didRefuseTextOf(shape);
+            if (learned->isRefused()) {
+                runtime.didRefuseTextOf(shape);
                 return nullptr;
             }
+            if (learned == last || runtime.isAttemptAbandoned())
+                continue;
             if (const uint8_t* end = tryParseObjectAs(instance, vm, learned, firstName, result)) [[likely]] {
-                learned.wasFound = true;
-                instance.json.runtime->didFindWholeTextOf(shape);
-                instance.json.runtime->setLearnedObjectFoundLast(&learned);
+                learned->wasFound = true;
+                runtime.didFindWholeTextOf(shape);
+                runtime.setLearnedObjectFoundLast(learned);
                 return end;
             }
         }
     }
     return learnAndParseObject(instance, vm, seenOnce, shape, firstName, result);
+}
+
+static ALWAYS_INLINE const uint8_t* appendLearnedObjectsForRequest(Instance& instance, VM& vm, JSONRuntime& runtime, uint32_t shape, JSArray* array, const uint8_t* cursor)
+{
+    const uint8_t* end = appendLearnedObjects(instance, vm, shape, array, cursor, nullptr);
+    if (runtime.isAttemptAbandoned()) [[unlikely]] {
+        handleAbandonedAttempt(instance, vm, runtime, true);
+        runtime.noteAttemptReached(end);
+    } else
+        runtime.noteParsedThrough(end);
+    return end;
+}
+
+static ALWAYS_INLINE const uint8_t* parseWithLearnedForms(Instance& instance, VM& vm, uint32_t shape, const uint8_t* cursor, uint64_t& listOrResult, bool isListRequest)
+{
+    JSONRuntime& runtime = *instance.json.runtime;
+    if (!runtime.canStartAttemptAt(cursor)) [[unlikely]] {
+        if (!isListRequest && !runtime.isBeforeFailedPosition(cursor))
+            runtime.didRefuseTextOf(shape);
+        return cursor;
+    }
+    if (isListRequest)
+        return appendLearnedObjectsForRequest(instance, vm, runtime, shape, uncheckedDowncast<JSArray>(JSValue::decode(listOrResult).asCell()), cursor);
+    if (const uint8_t* end = tryParseObjectAsLearned(instance, vm, shape, skipWhitespace(cursor + 1), listOrResult)) [[likely]] {
+        runtime.noteParsedThrough(end);
+        return end;
+    }
+    if (runtime.isAttemptAbandoned())
+        handleAbandonedAttempt(instance, vm, runtime, false);
+    return cursor;
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTJSONObjectKey, uint64_t, (Instance* instance, uint64_t order, uint32_t shape, uint32_t field))
@@ -2235,12 +2722,10 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTJSONObjectFinish, size_t, (Instanc
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTJSONParseExtraMembers, const uint8_t*, (Instance* instance, uint32_t shape, const uint8_t* cursor, uint64_t* extraAndOrder))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTJSONParseExtraMembers);
-    if (JSValue::decode(extraAndOrder[0]).isNull()) {
-        const uint8_t* end = tryParseObjectAsLearned(*instance, vm, shape, skipWhitespace(cursor + 1), extraAndOrder[0]);
-        return end ? end : cursor;
-    }
-    if (JSValue extra = JSValue::decode(extraAndOrder[0]); extra.isCell() && extra.asCell()->type() == ArrayType)
-        return appendLearnedObjects(*instance, vm, shape, uncheckedDowncast<JSArray>(extra.asCell()), cursor);
+    JSValue extra = JSValue::decode(extraAndOrder[0]);
+    bool isListRequest = extra.isCell() && extra.asCell()->type() == ArrayType;
+    if (extra.isNull() || isListRequest)
+        return parseWithLearnedForms(*instance, vm, shape, cursor, extraAndOrder[0], isListRequest);
     if (*cursor != '"') [[unlikely]]
         return cursor;
     if (instance->json.runtime->remembersTextsOf(shape)) [[likely]] {

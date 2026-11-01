@@ -19,6 +19,7 @@
 #include <tuple>
 #include <utility>
 #include <wtf/EnumSet.h>
+#include <wtf/HashSet.h>
 #include <wtf/MathExtras.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -436,7 +437,7 @@ void AllocationPrefilter::materialize(uint32_t object, const Use& use)
 
 bool AllocationPrefilter::neverFolds(uint32_t object, const Value& store, BlockID block) const
 {
-    constexpr EnumSet<VirtualObjectKind> writableKinds { VirtualObjectKind::Object, VirtualObjectKind::Environment, VirtualObjectKind::Array, VirtualObjectKind::Arguments };
+    constexpr EnumSet<VirtualObjectKind> writableKinds { VirtualObjectKind::Object, VirtualObjectKind::Environment, VirtualObjectKind::Array, VirtualObjectKind::ArrayIterator, VirtualObjectKind::CollectionIterator, VirtualObjectKind::Arguments };
 
     if (!isAllocation(object) || store.opcode == Opcode::AppendElement || store.opcode == Opcode::AppendHole)
         return false;
@@ -456,7 +457,7 @@ bool AllocationPrefilter::neverFolds(uint32_t object, const Value& store, BlockI
         return false;
     if (admissionOf(m_sinking, description, access.field, { m_function.at(store.valueOperand()).type }) != Admission::Refused)
         return false;
-    return store.opcode != Opcode::PropSet || m_sinking.storesByNameWaitIn(block) || !canHoldUnprovenValue(m_program, description, access.field);
+    return (store.opcode != Opcode::PropSet && store.opcode != Opcode::PropDefine) || m_sinking.storesByNameWaitIn(block) || !canHoldUnprovenValue(m_program, description, access.field);
 }
 
 bool AllocationPrefilter::mayBeScalarReplacedBy(uint32_t object, const Use& use, BuiltinCallForm formOfCall)
@@ -1486,7 +1487,7 @@ void AllocationPrefilter::partition()
         if (find(object) == object && !m_objects[object].isDecided)
             roots.append({ firstPositionOfComponent[findComponent(object)], findComponent(object), object });
     }
-    AOT::sort(roots);
+    AOT::sortInLine(roots);
 
     for (size_t first = 0; first < roots.size();) {
         size_t end = first;
@@ -1516,14 +1517,14 @@ void AllocationPrefilter::partition()
         link.chunk = m_objects[link.source].chunk;
     for (ObjectUse& use : m_uses)
         use.chunk = m_objects[use.object].chunk;
-    AOT::sort(m_events, { }, [](const Event& event) {
+    AOT::sortInLine(m_events, { }, [](const Event& event) {
         return std::tuple { event.chunk, event.position, event.index, event.kind };
     });
-    AOT::sort(m_parameterLinks, { }, [](const ParameterLink& link) {
+    AOT::sortInLine(m_parameterLinks, { }, [](const ParameterLink& link) {
         return std::tuple { link.chunk, link.position, link.edge.targetIndex, link.parameter, link.source };
     });
     if (m_chunks.size() > 1)
-        AOT::sort(m_uses, { }, &ObjectUse::chunk);
+        AOT::sortInLine(m_uses, { }, &ObjectUse::chunk);
     auto spanOfChunk = [](auto& list, uint32_t chunk) {
         auto range = std::ranges::equal_range(list, chunk, { }, [](const auto& entry) {
             return entry.chunk;
@@ -1584,10 +1585,12 @@ struct AccessesLookedUp {
     VirtualObjectKind kind;
     LayoutID layout;
     TypeID type;
-    BitVector users;
 };
 
-static void ensureFieldsInUse(const VirtualObjectContext& context, const EscapeAnalysis& escape, const VirtualObjectDescription& description, VirtualFamily& family, uint64_t maxFields, BitVector& usersLookedUp)
+// The accesses that were looked up, each with the index of its AccessesLookedUp. A bit for each value of the function in each of those takes allocations times values.
+using UsersLookedUp = UncheckedKeyHashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
+
+static void ensureFieldsInUse(const VirtualObjectContext& context, const EscapeAnalysis& escape, const VirtualObjectDescription& description, VirtualFamily& family, uint64_t maxFields, UsersLookedUp& usersLookedUp, uint32_t lookedUp)
 {
     auto hasTooManyFields = [&] {
         return family.numberOfFields() > maxFields;
@@ -1612,7 +1615,7 @@ static void ensureFieldsInUse(const VirtualObjectContext& context, const EscapeA
                 family.ensureField(VirtualField::element(position));
             continue;
         }
-        if (!namesField(context.program, user) || usersLookedUp.set(objectUse.use.user.index()))
+        if (!namesField(context.program, user) || !usersLookedUp.add(uint64_t { lookedUp } << 32 | objectUse.use.user.index()).isNewEntry)
             continue;
         VirtualFieldAccess access = lookUpField(context, description, user);
         if (access.lookup == FieldLookup::Field)
@@ -1621,14 +1624,17 @@ static void ensureFieldsInUse(const VirtualObjectContext& context, const EscapeA
 }
 
 // One value carries a field for every variant of a join. What is read from a literal array is cast to what its variants hold.
-static bool givesOneFieldSeveralTypes(const VirtualObjectContext& context, const VirtualFamily& family, bool followsUndefinedAndNullInFields)
+// A property of plain objects is also carried with the union of its types, as in `{ ok: true, value }` and `{ ok: false, error }`, unless the parts are returned.
+static bool givesOneFieldSeveralTypes(const VirtualObjectContext& context, const VirtualFamily& family, bool followsUndefinedAndNullInFields, bool returnsParts)
 {
     std::span<const VirtualObjectDescription> descriptions = family.descriptions();
     if (descriptions.size() < 2 || std::ranges::all_of(descriptions, [](const VirtualObjectDescription& description) { return description.kind == VirtualObjectKind::Array; }))
         return false;
 
+    bool carriesUnionsOfProperties = !returnsParts && std::ranges::all_of(descriptions, [](const VirtualObjectDescription& description) { return description.kind == VirtualObjectKind::Object; });
     for (uint32_t field = 0; field < family.numberOfFields(); ++field) {
         const VirtualField& virtualField = family.fieldAt(field);
+        bool carriesUnion = carriesUnionsOfProperties && virtualField.isProperty();
         TypeID commonType;
         bool commonlyHoldsUndefinedAndNullToo = false;
         for (const VirtualObjectDescription& description : descriptions) {
@@ -1636,7 +1642,7 @@ static bool givesOneFieldSeveralTypes(const VirtualObjectContext& context, const
             if (type == TypeTable::never)
                 continue;
             bool holdsUndefinedAndNull = followsUndefinedAndNullInFields && holdsUndefinedAndNullToo(context, description, virtualField);
-            if (commonType && (commonType != type || commonlyHoldsUndefinedAndNullToo != holdsUndefinedAndNull))
+            if (commonType && ((commonType != type && !carriesUnion) || commonlyHoldsUndefinedAndNullToo != holdsUndefinedAndNull))
                 return true;
             commonType = type;
             commonlyHoldsUndefinedAndNullToo = holdsUndefinedAndNull;
@@ -1778,7 +1784,9 @@ const BitVector& AllocationSinking::loadableFieldsOf(VirtualObjectID object)
 
 void AllocationSinking::findWhetherObjectsAreBuiltBeforeBranches()
 {
-    m_buildsSomeObjectBeforeBranches = std::ranges::any_of(m_candidates, &Candidate::isBuiltBeforeBranches);
+    m_buildsSomeObjectBeforeBranches = std::ranges::any_of(m_candidates, [](const Candidate& candidate) {
+        return candidate.isBuiltBeforeBranches || candidate.isBuiltBeforeBranchesOnceCyclic || candidate.isBuiltUnderHandler;
+    });
 }
 
 Vector<DescribedObject> AllocationSinking::collectAllocations()
@@ -1789,7 +1797,7 @@ Vector<DescribedObject> AllocationSinking::collectAllocations()
             if (interpretedOf(m_function.at(id).opcode) != Interpretation::Allocation)
                 continue;
 
-            DescribedObject described = describeVirtualObject(m_analyses, id, m_policy.followsUndefinedAndNullInFields ? ListedValues::MayAlsoBeUndefinedOrNull : ListedValues::HaveTypesOfFields);
+            DescribedObject described = describeVirtualObject(m_analyses, id, m_policy.followsUndefinedAndNullInFields ? ListedValues::MayAlsoBeUndefinedOrNull : ListedValues::HaveTypesOfFields, m_policy.types);
             switch (described.support) {
             case VirtualObjectSupport::ExceedsLimit:
                 if (m_policy.recordsLosses)
@@ -1893,9 +1901,10 @@ void AllocationSinking::addTracesOfFruitlessAllocations(Vector<uint64_t>& traces
         if (!m_candidates[index].isAbandoned || cause == LimitID::MaxSinkingWork || cause == LimitID::MaxSinkingRounds)
             tracesWithSurvivors.append(m_tracesOfAllocations[index]);
     }
+    AOT::sort(tracesWithSurvivors);
     size_t sizeBefore = traces.size();
     for (uint64_t trace : m_tracesOfAllocations) {
-        if (!tracesWithSurvivors.contains(trace) && !std::ranges::binary_search(traces.span().first(sizeBefore), trace))
+        if (!std::ranges::binary_search(tracesWithSurvivors, trace) && !std::ranges::binary_search(traces.span().first(sizeBefore), trace))
             traces.append(trace);
     }
     AOT::sort(traces);
@@ -2011,6 +2020,7 @@ void AllocationSinking::createFamilies(std::span<const DescribedObject> describe
     const EscapeAnalysis& escape = m_analyses.escape();
     uint64_t maxFields = limit(LimitID::MaxVirtualObjectFields);
     Vector<AccessesLookedUp, 8> accessesLookedUp;
+    UsersLookedUp usersLookedUp;
     Vector<Vector<uint32_t, 1>> lookedUpOfFamily(m_families.size());
     for (uint32_t index = 0; index < described.size(); ++index) {
         Candidate& candidate = m_candidates[index];
@@ -2028,10 +2038,9 @@ void AllocationSinking::createFamilies(std::span<const DescribedObject> describe
         if (position == notFound) {
             position = ofFamily.size();
             ofFamily.append(accessesLookedUp.size());
-            accessesLookedUp.append(AccessesLookedUp { candidate.family, description.kind, description.layout, description.type, { } });
+            accessesLookedUp.append(AccessesLookedUp { candidate.family, description.kind, description.layout, description.type });
         }
-        size_t lookedUp = ofFamily[position];
-        ensureFieldsInUse(m_objectContext, escape, description, family, maxFields, accessesLookedUp[lookedUp].users);
+        ensureFieldsInUse(m_objectContext, escape, description, family, maxFields, usersLookedUp, ofFamily[position]);
     }
 
     BitVector familiesWithTooManyFields(m_families.size());
@@ -2042,7 +2051,7 @@ void AllocationSinking::createFamilies(std::span<const DescribedObject> describe
         VirtualFamilyID family = m_candidates[index].family;
         if (m_families[family.index()].numberOfFields() > maxFields)
             familiesWithTooManyFields.set(family.index());
-        else if (givesOneFieldSeveralTypes(m_objectContext, m_families[family.index()], m_policy.followsUndefinedAndNullInFields))
+        else if (givesOneFieldSeveralTypes(m_objectContext, m_families[family.index()], m_policy.followsUndefinedAndNullInFields, m_policy.returnedObjects == ReturnedObjects::StayVirtual))
             familiesWithoutJoins.set(family.index());
     }
     for (uint32_t index = 0; index < numberOfCandidates; ++index) {
@@ -2075,6 +2084,10 @@ void AllocationSinking::computeInputs()
     m_inputs.blocksInCycles.ensureSize(numberOfBlocks);
     m_inputs.mergeBlocks.ensureSize(numberOfBlocks);
     m_inputs.blocksWithCandidates.ensureSize(numberOfBlocks);
+    m_inputs.handlers = Vector<BlockID>(numberOfBlocks, [&](size_t index) {
+        const std::optional<Target>& handler = m_function.at(BlockID(index)).handler;
+        return handler ? handler->block : BlockID();
+    });
 
     m_preparedBlocks.ensureSize(numberOfBlocks);
     m_blocksWithLiveDefinition.grow(m_candidates.size());
@@ -2110,12 +2123,17 @@ void AllocationSinking::computeInputsOf(BlockID block)
         uint64_t endedMemberGuards { 0 };
         uint64_t readMemberGuards { 0 };
     };
+    const Block& contents = m_function.at(block);
+    // An operation whose allocation fails throws when it returns.
+    auto mayThrowToHandler = [&](const EffectsOnEdges& effects) {
+        return effects.mayThrow() || (contents.handler && effects.onAnyEdge().mayCollect);
+    };
     auto traitsOf = [&](ValueID id) -> Traits {
         if (m_analyses.hasNoEffects(id))
             return { };
         const EffectsOnEdges& effects = m_analyses.effectsOf(id);
         return {
-            effects.mayThrow(),
+            mayThrowToHandler(effects),
             effects.normal.writes.containsAny(perObjectHeaps) || effects.handler.writes.containsAny(perObjectHeaps) || effects.normal.mayRunOtherCode(),
             effects.normal.mayCallUnknownCode && reliesOf(m_function.at(id).opcode).isEmpty(),
             effects.normal.mayRunOtherCode() ? LocationMasks::entireHeap : effects.normal.writes.maskOf(AbstractHeap::MemberGuards) | effects.handler.writes.maskOf(AbstractHeap::MemberGuards),
@@ -2123,8 +2141,7 @@ void AllocationSinking::computeInputsOf(BlockID block)
         };
     };
 
-    const Block& contents = m_function.at(block);
-    if (m_analyses.effectsOfTerminator(block).mayThrow())
+    if (mayThrowToHandler(m_analyses.effectsOfTerminator(block)))
         m_inputs.throwingTerminators.quickSet(block.index());
 
     uint32_t first = m_relevantValues.size();
@@ -2180,6 +2197,9 @@ bool AllocationSinking::storesByNameWaitIn(BlockID block) const
 {
     if (m_inputs.isLargeForItsWork)
         return true;
+    // A returned part has no slot to fit. The test belongs where the caller builds the object, if it ever does.
+    if (m_policy.returnedObjects == ReturnedObjects::StayVirtual)
+        return false;
     if (m_policy.blocksThatMayGetTests && !mayGetTests(block))
         return false;
     return !m_inputs.hasOperationsOnSlots || m_function.at(block).frequency.predicted() == BlockFrequency::Normal;

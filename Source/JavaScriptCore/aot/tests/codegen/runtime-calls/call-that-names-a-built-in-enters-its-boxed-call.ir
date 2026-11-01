@@ -53,3 +53,52 @@ function f5 name="builtinWithoutBoxedCall" parameters=[{type=object}, {type=null
 # CHECK-LABEL: f5: size=
 # CHECK-NOT: stub CallBoxedBuiltin
 # CHECK: stub CallHostFunctionWithoutBoxedCall.n2 x1
+# Code that gets no test of its receiver takes a piece of a text, or replaces a text in it, without the host function.
+function f6 name="substringOfAnything" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = CallBuiltin v0, v1, v2 overload=StringPrototypeSubstring/0 builtinCallForm=AnyReceiver
+    Return v3
+}
+# CHECK-LABEL: f6: size=
+# CHECK-NOT: stub CallHostFunction
+# CHECK: stub CallBoxedBuiltin.StringSubstring.n2 x1
+function f7 name="replaceAllOfAnything" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = CallBuiltin v0, v1, v2 overload=StringPrototypeReplaceAll/3
+    Return v3
+}
+# CHECK-LABEL: f7: size=
+# CHECK-NOT: stub CallHostFunction
+# CHECK: stub CallBoxedBuiltin.StringReplaceAll.n2 x1
+function f8 name="replaceOfAnything" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = CallBuiltin v0, v1, v2 overload=StringPrototypeReplace/3
+    Return v3
+}
+# CHECK-LABEL: f8: size=
+# CHECK-NOT: stub CallHostFunction
+# CHECK: stub CallBoxedBuiltin.StringReplace.n2 x1
+function f9 name="splitOfAnything" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = CallBuiltin v0, v1 overload=StringPrototypeSplit/5
+    Return v2
+}
+# CHECK-LABEL: f9: size=
+# CHECK-NOT: stub CallHostFunction
+# CHECK: stub CallBoxedBuiltin.StringSplit.n1 x1
+function f10 name="testOfAnyObject" parameters=[{type=object}, {type=string}] results=[{type=boolean}] {
+  b0(v0: object, v1: string):
+    v2 = CallBuiltin v0, v1 overload=RegExpPrototypeTest/1
+    Return v2
+}
+# CHECK-LABEL: f10: size=
+# CHECK-NOT: stub CallHostFunction
+# CHECK: stub CallBoxedBuiltin.RegExpTest.n1 x1
+function f11 name="splitWithLimit" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = CallBuiltin v0, v1, v2 overload=StringPrototypeSplit/5
+    Return v3
+}
+# CHECK-LABEL: f11: size=
+# CHECK-NOT: stub CallBoxedBuiltin
+# CHECK: stub CallHostFunctionWithoutBoxedCall.n2 x1

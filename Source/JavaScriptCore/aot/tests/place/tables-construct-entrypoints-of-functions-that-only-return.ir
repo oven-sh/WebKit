@@ -1,0 +1,33 @@
+# A plain function that only returns undefined is listed without an entrypoint: the new object is all that its construction makes. One that returns an argument, one with an effect and an arrow function have no row
+# RUN(ROWS): tables functions
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewClosure function=f4
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="publish" [isFreeName]
+    v6 = Call v5, -, v0, v1, v2, v3
+    Return
+}
+function f1 name="empty" flags=[HasThis] results=[{type=anything}] {
+    Return
+}
+function f2 name="returnsArgument" flags=[HasThis] parameters=[{type=anything}] results=[{type=anything}] {
+    Return v1
+}
+function f3 name="hasEffect" flags=[HasThis] results=[{type=anything}] {
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="publish" [isFreeName]
+    v3 = Call v2, -
+    Return
+}
+function f4 name="arrow" kind=Arrow results=[{type=anything}] {
+    Return
+}
+
+# ROWS: constructEntrypoint function=[[empty]] onlyReturns
+# ROWS-NOT: constructEntrypoint

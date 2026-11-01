@@ -75,8 +75,8 @@ function f1 name="row" module=m0 flags=[IsChecked, HasExplicitName] length=1 thi
 
 # Nine constant characters are two stores of immediates: eight bytes (0x64742f3c3e64743c, "<td></td" from the lowest byte up) and one. The cursor goes up by nine.
 # CHECK-LABEL: name="row" role=Source
-# CHECK: Int64 b@[[limit]] = Phi(
 # CHECK: Int64 b@[[cursor]] = Phi(
+# CHECK: Int64 b@[[limit]] = Phi(
 # CHECK: Store($7238462436882543676(b@{{*}}), b@[[cursor]], ControlDependent|Writes:stringBuilderBytes, {{*}}:StringBuilderAppendConstant)
 # CHECK: Store8($62(b@{{*}}), b@[[cursor]], offset = 8, ControlDependent|Writes:stringBuilderBytes, {{*}}:StringBuilderAppendConstant)
 # CHECK-NOT: Load(
@@ -85,7 +85,7 @@ function f1 name="row" module=m0 flags=[IsChecked, HasExplicitName] length=1 thi
 # CHECK-NEXT: Branch(b@[[fits]], Terminal,
 # CHECK-NEXT: Successors: Then:#{{*}}, Else:Rare:#
 # CHECK-LABEL: end of loop
-# There is one loop. Nothing is called in it but the poll and, in the rare block for a full buffer, the stub that makes room, behind which the limit is read again. No cell is made or loaded for the literal, and its characters are not read from memory.
+# The first loop runs under a bound that is an int32. Nothing is called in it but the poll and, in the rare block for a full buffer, the stub that makes room, behind which the limit is read again. No cell is made or loaded for the literal, and its characters are not read from memory.
 # HOT-LABEL: name="row" role=Source
 # HOT-NOT: Reads:characters
 # HOT-NOT: Reads:AOTInstance
@@ -101,6 +101,9 @@ function f1 name="row" module=m0 flags=[IsChecked, HasExplicitName] length=1 thi
 # HOT-NEXT: Upsilon(
 # HOT-NEXT: Upsilon(
 # HOT-NEXT: Jump(
+# HOT: end of loop
+# The other loop is the copy for a bound that is no int32.
+# HOT: loop #
 # HOT: end of loop
 # HOT-NOT: loop #
 # HOT-LABEL: end of function

@@ -11,12 +11,14 @@
 #include "AOTImage.h"
 #include "AOTImageText.h"
 #include "AOTInstance.h"
+#include "AOTJSONTextWriter.h"
 #include "AOTLimits.h"
 #include "AOTOperationArguments.h"
 #include "AOTOperationData.h"
 #include "AOTOperationScope.h"
 #include "AOTProgramStrings.h"
 #include "AOTPropertyCachesStringKeys.h"
+#include "AOTRuntimeCounters.h"
 #include "AOTSlotRepresentation.h"
 #include "AOTState.h"
 #include "AOTStringEmitter.h"
@@ -34,6 +36,7 @@
 #include "StringConstructor.h"
 #include "StringPrototype.h"
 #include "StringPrototypeInlines.h"
+#include "StringSplitCacheInlines.h"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -378,14 +381,12 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTToLiteralString, EncodedJSValue, (
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLiteralStringToString, JSCell*, (Instance* instance, uint64_t word))
 {
     AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTLiteralStringToString);
-    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     OPERATION_RETURN(scope, instance->state->strings->stringForLiteralStringWord(word));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTConcat, JSCell*, (Instance* instance, JSCell* left, JSCell* right))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTConcat);
-    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     JSString* leftString = cellArgument<JSString>(left, Entry::operationAOTConcat);
     JSString* rightString = cellArgument<JSString>(right, Entry::operationAOTConcat);
     OPERATION_RETURN(scope, jsString(globalObject, leftString, rightString));
@@ -394,7 +395,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTConcat, JSCell*, (Instance* instance, JSCel
 JSC_DEFINE_JIT_OPERATION(operationAOTConcatThree, JSCell*, (Instance* instance, JSCell* first, JSCell* second, JSCell* third))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTConcatThree);
-    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     JSString* firstString = cellArgument<JSString>(first, Entry::operationAOTConcatThree);
     JSString* secondString = cellArgument<JSString>(second, Entry::operationAOTConcatThree);
     JSString* thirdString = cellArgument<JSString>(third, Entry::operationAOTConcatThree);
@@ -404,7 +404,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTConcatThree, JSCell*, (Instance* instance, 
 JSC_DEFINE_JIT_OPERATION(operationAOTSubstring, JSCell*, (Instance* instance, JSCell* string, int32_t from, int32_t to))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTSubstring);
-    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     leaveCellsForRopes(instance);
     OPERATION_RETURN(scope, jsSubstring(globalObject, cellArgument<JSString>(string, Entry::operationAOTSubstring), from, to - from));
 }
@@ -412,7 +411,10 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSubstring, JSCell*, (Instance* instance, JS
 JSC_DEFINE_JIT_OPERATION(operationAOTFlatten, void*, (Instance* instance, JSCell* string))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTFlatten);
-    auto value = cellArgument<JSString>(string, Entry::operationAOTFlatten)->value(globalObject);
+    JSString* cell = cellArgument<JSString>(string, Entry::operationAOTFlatten);
+    if (cell->isRope() && uncheckedDowncast<JSRopeString>(cell)->tryResolveFlatLatin1Parts(vm))
+        OPERATION_RETURN(scope, cell->tryGetValueImpl());
+    auto value = cell->value(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
     OPERATION_RETURN(scope, value->impl());
 }
@@ -438,6 +440,15 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStringsAreEqual, size_t, (Instance
     OPERATION_RETURN(scope, firstString->equalResolvingRopes(secondString));
 }
 
+// Only compared, never dereferenced.
+static thread_local std::array<const JSString*, 4> ropesComparedInPieces;
+
+// A rope made for one question is garbage after it. One that is asked about again is kept by somebody, and is flattened.
+static bool isAskedAboutForTheFirstTime(const JSString* rope)
+{
+    return rope->isNonSubstringRope() && std::exchange(ropesComparedInPieces[(std::bit_cast<uintptr_t>(rope) / sizeof(JSRopeString)) % ropesComparedInPieces.size()], rope) != rope;
+}
+
 static NEVER_INLINE OperationReturnType<size_t> JIT_OPERATION_ATTRIBUTES stringHasAtGeneric(Instance* instance, JSCell* string, JSCell* other, int32_t position)
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTStringHasAt);
@@ -449,6 +460,18 @@ static NEVER_INLINE OperationReturnType<size_t> JIT_OPERATION_ATTRIBUTES stringH
         OPERATION_RETURN(scope, false);
     auto characters = base->view(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, false);
+    if (isAskedAboutForTheFirstTime(argument)) {
+        unsigned start = position;
+        for (JSRopeString::LeafIterator pieces(argument); !pieces.isAtEnd();) {
+            StringView piece = pieces.next();
+            if (characters->substring(start, piece.length()) != piece)
+                OPERATION_RETURN(scope, false);
+            start += piece.length();
+        }
+        OPERATION_RETURN(scope, true);
+    }
+    if (argument->isNonSubstringRope())
+        countRopeFlattenedForPrefixTest(vm);
     auto otherCharacters = argument->view(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, false);
     OPERATION_RETURN(scope, characters->substring(position, otherLength) == otherCharacters.data);
@@ -511,6 +534,34 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStringIndexOfFrom, size_t, (Instance* insta
     OPERATION_RETURN_IF_EXCEPTION(scope, 0);
     size_t found = characters->find(vm.adaptiveStringSearcherTables(), otherCharacters, position);
     OPERATION_RETURN(scope, found == notFound ? none : found);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTStringIncludes, EncodedJSValue, (Instance* instance, JSCell* string, JSCell* other))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTStringIncludes);
+    JSString* base = cellArgument<JSString>(string, Entry::operationAOTStringIncludes);
+    JSString* argument = cellArgument<JSString>(other, Entry::operationAOTStringIncludes);
+    if (base->length() < argument->length())
+        OPERATION_RETURN(scope, JSValue::encode(jsBoolean(false)));
+    auto otherCharacters = argument->view(globalObject);
+    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    auto characters = base->view(globalObject);
+    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    OPERATION_RETURN(scope, JSValue::encode(jsBoolean(characters->find(vm.adaptiveStringSearcherTables(), otherCharacters, 0) != notFound)));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTStringEndsWith, EncodedJSValue, (Instance* instance, JSCell* string, JSCell* other))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTStringEndsWith);
+    JSString* base = cellArgument<JSString>(string, Entry::operationAOTStringEndsWith);
+    JSString* argument = cellArgument<JSString>(other, Entry::operationAOTStringEndsWith);
+    if (base->length() < argument->length())
+        OPERATION_RETURN(scope, JSValue::encode(jsBoolean(false)));
+    auto otherCharacters = argument->view(globalObject);
+    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    auto characters = base->view(globalObject);
+    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    OPERATION_RETURN(scope, JSValue::encode(jsBoolean(characters->endsWith(otherCharacters))));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTStringIndexOfLiteral, size_t, (Instance* instance, JSCell* string, uint32_t text, int32_t fromIndex))
@@ -614,13 +665,23 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStringEqualsLiteralInRegister, siz
     auto* string = cellArgument<JSString>(cell, Entry::operationAOTStringEqualsLiteralInRegister);
     unsigned length = string->length();
     RELEASE_ASSERT(length && length <= maxRegisterStringLength);
-    std::array<char16_t, maxRegisterStringLength> units;
-    string->resolveToBuffer(std::span { units }.first(length));
-    for (unsigned i = 0; i < length; ++i) {
-        if (!WTF::isLatin1(units[i]))
-            return false;
+    static_assert(maxRegisterStringLength == sizeof(uint64_t));
+    std::array<Latin1Character, maxRegisterStringLength> characters { };
+    if (string->is8Bit())
+        string->resolveToBuffer(std::span { characters }.first(length));
+    else {
+        std::array<char16_t, maxRegisterStringLength> units;
+        string->resolveToBuffer(std::span { units }.first(length));
+        for (unsigned i = 0; i < length; ++i) {
+            if (!WTF::isLatin1(units[i]))
+                return false;
+            characters[i] = static_cast<Latin1Character>(units[i]);
+        }
     }
-    return Typed::packStringIntoRegister(std::span<const char16_t> { units }.first(length)) == text;
+    // As packStringIntoRegister packs.
+    if (length == 7)
+        return (WTF::unalignedLoad<uint32_t>(characters.data()) | static_cast<uint64_t>(WTF::unalignedLoad<uint32_t>(characters.data() + 3)) << 32) == text;
+    return WTF::unalignedLoad<uint64_t>(characters.data()) == text;
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTShortStringOfString, EncodedJSValue, (Instance*, EncodedJSValue encoded))
@@ -658,23 +719,16 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStringEqualsLiteral, size_t, (Inst
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTIntToString, JSCell*, (Instance* instance, uint64_t bits))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTIntToString);
-    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     int64_t value = static_cast<int64_t>(bits);
     if (value >= static_cast<int64_t>(NumericStrings::cacheSize) && value <= INT32_MAX) {
         StringKeyCache& keys = *instance->state->stringKeys;
         JSString* string = keys.tryFindIntegerKey(static_cast<uint32_t>(value));
         if (!string) {
-            std::array<Latin1Character, 10> digits;
-            size_t first = digits.size();
-            for (uint32_t rest = static_cast<uint32_t>(value); rest; rest /= 10)
-                digits[--first] = static_cast<Latin1Character>('0' + rest % 10);
-            std::span characters = std::span<const Latin1Character> { digits }.subspan(first);
-            if (!keys.wasAskedForIntegerKey(static_cast<uint32_t>(value))) {
-                keys.cacheIntegerKey(vm, static_cast<uint32_t>(value), nullptr);
-                OPERATION_RETURN(scope, jsNontrivialString(vm, String(StringImpl::create(characters))));
-            }
-            string = keys.makeIntegerKey(vm, static_cast<uint32_t>(value), characters);
-            vm.numericStrings.setJSString(static_cast<int32_t>(value), string->tryGetValue(), string);
+            std::array<Latin1Character, maxJSONIntegerLength> digits;
+            size_t length = appendJSONInteger(digits.data(), value) - digits.data();
+            string = jsNontrivialString(vm, String(StringImpl::create(std::span<const Latin1Character> { digits }.first(length))));
+            if (!keys.cacheIntegerKey(static_cast<uint32_t>(value), string)) [[unlikely]]
+                vm.numericStrings.setJSString(static_cast<int32_t>(value), string->tryGetValue(), string);
         }
         OPERATION_RETURN(scope, string);
     }
@@ -696,7 +750,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTDoubleToString, JSCell*, (Instance
         return operationAOTIntToString(instance, static_cast<uint64_t>(integer));
     }
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTDoubleToString);
-    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     if (integer == value)
         OPERATION_RETURN(scope, int32ToString(vm, integer, 10));
     OPERATION_RETURN(scope, vm.numericStrings.addJSString(vm, value));
@@ -705,7 +758,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTDoubleToString, JSCell*, (Instance
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCharToString, JSCell*, (Instance* instance, uint32_t character))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTCharToString);
-    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     OPERATION_RETURN(scope, jsSingleCharacterString(vm, static_cast<char16_t>(character)));
 }
 
@@ -1130,7 +1182,35 @@ static JSString* tryReplaceAllWithPlainText(JSGlobalObject* globalObject, VM& vm
     RELEASE_AND_RETURN(scope, replaceRanges(globalObject, vm, subject, matchStarts.span(), matchLength, replacementText, static_cast<unsigned>(resultLength)));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTStringReplaceAllString, JSCell*, (Instance* instance, JSCell* stringCell, JSCell* searchCell, JSCell* replacementCell))
+static ALWAYS_INLINE std::optional<std::span<const Latin1Character>> tryGetLatin1Characters(JSString* string)
+{
+    if (const StringImpl* impl = string->tryGetValueImpl())
+        return impl->is8Bit() ? std::optional(impl->span8()) : std::nullopt;
+    if (!string->isSubstring())
+        return std::nullopt;
+    auto* piece = uncheckedDowncast<JSRopeString>(string);
+    const StringImpl* whole = piece->substringBase()->tryGetValueImpl();
+    if (!whole || !whole->is8Bit())
+        return std::nullopt;
+    return whole->span8().subspan(piece->substringOffset(), piece->length());
+}
+
+static ALWAYS_INLINE bool containsShortText(std::span<const Latin1Character> characters, std::span<const Latin1Character> sought)
+{
+    ASSERT(!sought.empty());
+    if (sought.size() > characters.size())
+        return false;
+    const Latin1Character* cursor = characters.data();
+    const Latin1Character* endOfStarts = cursor + (characters.size() - sought.size() + 1);
+    while ((cursor = static_cast<const Latin1Character*>(memchr(cursor, sought[0], endOfStarts - cursor)))) {
+        if (WTF::equal(cursor + 1, sought.subspan(1)))
+            return true;
+        ++cursor;
+    }
+    return false;
+}
+
+static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES replaceAllOfText(Instance* instance, JSCell* stringCell, JSCell* searchCell, JSCell* replacementCell)
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTStringReplaceAllString);
     JSString* string = cellArgument<JSString>(stringCell, Entry::operationAOTStringReplaceAllString);
@@ -1146,6 +1226,17 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStringReplaceAllString, JSCell*, (Instance*
     OPERATION_RETURN(scope, replaceUsingStringSearch<StringReplaceMode::Global>(vm, globalObject, string, stringView, searchView, replacement));
 }
 
+JSC_DEFINE_JIT_OPERATION(operationAOTStringReplaceAllString, JSCell*, (Instance* instance, JSCell* stringCell, JSCell* searchCell, JSCell* replacementCell))
+{
+    AOT_THRESHOLD(unsigned, maxLengthOfTextSoughtByItsFirstCharacter, 8);
+    const StringImpl* sought = uncheckedDowncast<JSString>(searchCell)->tryGetValueImpl();
+    if (sought && sought->is8Bit() && sought->length() - 1 < maxLengthOfTextSoughtByItsFirstCharacter) [[likely]] {
+        if (auto characters = tryGetLatin1Characters(uncheckedDowncast<JSString>(stringCell)); characters && !containsShortText(*characters, sought->span8()))
+            return { stringCell, nullptr };
+    }
+    [[clang::musttail]] return replaceAllOfText(instance, stringCell, searchCell, replacementCell);
+}
+
 // An 8-bit text cut at a flat text that is not empty.
 static JSArray* trySplitAtPlainText(JSGlobalObject* globalObject, VM& vm, JSString* string, JSString* separator, uint32_t limit)
 {
@@ -1153,8 +1244,16 @@ static JSArray* trySplitAtPlainText(JSGlobalObject* globalObject, VM& vm, JSStri
     StringImpl* separatorImpl = separator->tryGetValueImpl();
     if (!separatorImpl || !separatorImpl->length() || !limit || !string->is8Bit() || globalObject->isHavingABadTime())
         return nullptr;
-    if (StringImpl* impl = string->tryGetValueImpl(); impl && impl->isAtom())
-        return nullptr;
+    if (StringImpl* impl = string->tryGetValueImpl(); StringSplitCache::canBeKey(impl)) {
+        bool canBeCached = limit == std::numeric_limits<uint32_t>::max() && StringSplitCache::canBeKey(separatorImpl);
+        if (auto* cache = canBeCached ? vm.stringSplitCache() : nullptr) {
+            if (auto* butterfly = cache->getForKeys(impl, separatorImpl))
+                return JSArray::createWithButterfly(vm, nullptr, globalObject->originalArrayStructureForIndexingType(CopyOnWriteArrayWithContiguous), butterfly->toButterfly());
+        }
+        // stringSplitFast() keeps the answer.
+        if (impl->isAtom() || (canBeCached && StringSplitCache::isWorthCaching(*impl)))
+            return nullptr;
+    }
 
     Vector<unsigned, 16> ends;
     unsigned separatorLength = separatorImpl->length();

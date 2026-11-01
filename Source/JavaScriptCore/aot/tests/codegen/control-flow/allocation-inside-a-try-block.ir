@@ -1,0 +1,58 @@
+# No rule of the language lets a list literal throw, but it may find no room. Under a handler its call has the handler at its site, as a call that may throw has.
+# Behind the try its call has a site as well, which says that no handler is in force there.
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls disable=pass:SplitFreshResults
+# RUN: lower-to-b3 optimized
+# REQUIRES: unsanitized-code
+# RUN(SITES): generate-code
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = CallDirect v1 function=f1
+    PropSet v0, v2 key="first"
+    v4 = CallDirect v1 function=f2
+    PropSet v0, v4 key="second"
+    v6 = CallDirect v1 function=f3
+    Return v6
+}
+function f1 name="covered" parameters=[{type=anything}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1() handler=b2():
+    v1 = NewArray v0, v0 contents=anything
+    Return v1
+  b2() role=CatchHandler:
+    v2 = CatchValue
+    Return v2
+}
+function f2 name="notCovered" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewArray v0, v0 contents=anything
+    Return v1
+}
+function f3 name="behindTheTry" parameters=[{type=anything}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1() handler=b3():
+    v1 = NewArray v0, v0 contents=anything
+    Jump -> next b2(v1)
+  b2(v2):
+    v3 = NewArray v2, v0 contents=anything
+    Return v3
+  b3() role=CatchHandler:
+    v4 = CatchValue
+    Jump -> next b2(v4)
+}
+
+# CHECK-LABEL: name="covered" role=Source
+# CHECK: Int64 b@[[list]] = Patchpoint({{*}}Terminal{{*}}:NewArray)
+# CHECK-NEXT: Successors: #[[next]], Rare:#[[handler]]
+# CHECK-NEXT: BB#[[next]]:
+# CHECK: Return(b@[[list]], Terminal)
+# CHECK-NEXT: BB#[[handler]]:
+# CHECK-LABEL: name="notCovered" role=Source
+# CHECK: Int64 b@[[other]] = Patchpoint({{*}}:NewArray)
+# CHECK-NEXT: Return(b@[[other]], Terminal)
+# SITES: f1: size={{*}} sites=1 handlers=1
+# SITES: f2: size={{*}} sites=0 handlers=0
+# SITES: f3: size={{*}} sites=2 handlers=1

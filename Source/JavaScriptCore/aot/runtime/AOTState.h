@@ -12,6 +12,7 @@
 #include "StructureID.h"
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <memory>
 #include <span>
 #include <type_traits>
@@ -21,6 +22,7 @@
 #include <wtf/Noncopyable.h>
 #include <wtf/OSAllocator.h>
 #include <wtf/PageBlock.h>
+#include <wtf/TZoneMalloc.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -45,15 +47,46 @@ class StringKeyCache;
 struct BuiltinFamilyState;
 struct ObjectModel;
 
-// Zeroed pages for what lives as long as a VM or the process. With ENABLE(AOT_GUARDED_PAGES) they lie between two pages that cannot be touched, on Linux at an address drawn for them alone.
+// Zeroed pages for data that lives as long as the process. With ENABLE(AOT_GUARDED_PAGES) they sit between two inaccessible pages, on Linux at their own random address.
 void* reserveGuardedPages(size_t bytes, OSAllocator::Usage = OSAllocator::FastMallocPages);
 void* tryReserveGuardedPages(size_t bytes, OSAllocator::Usage = OSAllocator::FastMallocPages);
 void releaseGuardedPages(void* pages, size_t bytes);
 
+// Zeroed pages for data that lives no longer than a VM. What the VM takes at startup are pieces of one mapping, which is unmapped in one call when the VM ends,
+// so threads that start or end together make one system call each. What does not fit gets its own pages. With ENABLE(AOT_GUARDED_PAGES) everything does.
+class PagesOfVM {
+    WTF_MAKE_TZONE_ALLOCATED(PagesOfVM);
+    WTF_MAKE_NONCOPYABLE(PagesOfVM);
+public:
+    explicit PagesOfVM(size_t sizeOfMapping);
+    ~PagesOfVM();
+
+    void* allocate(size_t bytes);
+    void* tryAllocate(size_t bytes);
+    void release(void* pages, size_t bytes);
+    // The system moved the pages elsewhere: nothing is mapped here any more.
+    void didMoveAway(void* pages, size_t bytes);
+    // From here on, a released piece stays mapped until the whole mapping is released, if the mapping is still whole.
+    void willReleaseEverything() { m_releasesEverything = true; }
+
+private:
+    bool contains(const void* pages) const { return std::bit_cast<uintptr_t>(pages) - std::bit_cast<uintptr_t>(m_start) < m_size; }
+
+    uint8_t* m_start { nullptr };
+    size_t m_size { 0 };
+    size_t m_used { 0 };
+    bool m_releasesEverything { false };
+    // The pieces that were released early, unordered. A neighboring piece may have grown into one since.
+    Vector<std::pair<uint8_t*, size_t>> m_gaps;
+};
+
 class ZeroedPages {
     WTF_MAKE_NONCOPYABLE(ZeroedPages);
 public:
-    ZeroedPages() = default;
+    explicit ZeroedPages(PagesOfVM& pagesOfVM)
+        : m_pagesOfVM(pagesOfVM)
+    {
+    }
     ~ZeroedPages();
 
     // AllAtOnce is for a table whose every page is written right away: one call into the kernel takes the place of a fault per page.
@@ -63,6 +96,7 @@ public:
     std::span<const std::pair<void*, size_t>> ranges() const { return m_ranges.span(); }
 
 private:
+    PagesOfVM& m_pagesOfVM;
     Vector<std::pair<void*, size_t>> m_ranges;
 };
 
@@ -70,6 +104,7 @@ class ZeroedTableArena {
     WTF_MAKE_NONCOPYABLE(ZeroedTableArena);
 public:
     ZeroedTableArena(ZeroedPages&, const ProgramTables&);
+    ZeroedTableArena(ZeroedPages&, size_t capacity);
 
     template<typename T> T* allocate(size_t count);
 
@@ -78,6 +113,46 @@ private:
     char* m_start { nullptr };
     size_t m_capacity { 0 };
     size_t m_used { 0 };
+};
+
+// A table that is made at its first use. Its pages are set aside with the tables of the program, and a program that never makes it never touches them.
+// The first use may come where no more memory can be mapped, and what reads a property or copies an object has no way to report that.
+template<typename T>
+class MadeInArena {
+    WTF_MAKE_NONCOPYABLE(MadeInArena);
+public:
+    struct alignas(64) Storage {
+        static_assert(alignof(T) <= 64);
+        uint8_t bytes[sizeof(T)];
+    };
+
+    explicit MadeInArena(ZeroedTableArena& arena)
+        : m_storage(arena.allocate<Storage>(1))
+    {
+    }
+
+    ~MadeInArena()
+    {
+        if (m_value)
+            std::destroy_at(m_value);
+    }
+
+    explicit operator bool() const { return m_value; }
+    T& operator*() const { return *m_value; }
+    T* operator->() const { return m_value; }
+    T* get() const { return m_value; }
+
+    template<typename... Arguments>
+    T& make(Arguments&&... arguments)
+    {
+        ASSERT(!m_value);
+        m_value = new (NotNull, m_storage) T(std::forward<Arguments>(arguments)...);
+        return *m_value;
+    }
+
+private:
+    Storage* m_storage;
+    T* m_value { nullptr };
 };
 
 // Created at its first use. A program without one never pays for it.
@@ -101,7 +176,7 @@ private:
     T& create();
 
     State& m_state;
-    std::unique_ptr<T> m_value;
+    MadeInArena<T> m_value;
 };
 
 extern template class CreatedAtFirstUse<PropertyCaches>;
@@ -115,6 +190,13 @@ struct HandlerKnownByItsSlots {
     const FieldData* fieldOfGetOwnPropertyDescriptor { nullptr };
 };
 
+// The field of an object's layout that has the name of a field that a class declares. Layouts and their fields are data of the image, so what is remembered never goes stale.
+struct FieldUnderDeclaredName {
+    const LayoutData* layoutOfObject;
+    const FieldData* declared;
+    const FieldData* field;
+};
+
 struct State {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(State);
     WTF_MAKE_NONCOPYABLE(State);
@@ -126,6 +208,8 @@ struct State {
 
     Instance& instance;
     const ProgramTables& tables;
+    // The realm runs other images beside the one that these tables are of: a compiled object or a closure of the realm need not be theirs.
+    const bool sharesRealm;
     ZeroedPages pages;
     ZeroedTableArena tableArena;
     std::unique_ptr<CacheRegistry> caches;
@@ -155,6 +239,9 @@ struct State {
     uint64_t keptByCleanup { 0 };
     static constexpr unsigned numberOfHandlersKnownByTheirSlots = 8;
     std::array<HandlerKnownByItsSlots, numberOfHandlersKnownByTheirSlots> handlersKnownByTheirSlots { };
+    static constexpr size_t numberOfFieldsUnderDeclaredNames = 64;
+    // Allocated when a private name is first looked for in an object of another layout than the one that declares it.
+    FieldUnderDeclaredName* fieldsUnderDeclaredNames { nullptr };
 
 private:
     explicit State(Instance&);

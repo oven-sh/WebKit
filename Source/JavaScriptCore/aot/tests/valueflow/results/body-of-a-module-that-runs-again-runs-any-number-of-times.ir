@@ -1,0 +1,29 @@
+# import { state } from "./counter.js"  export let exported = 1  function bump() {}  bump()      a test file under `bun test --rerun-each`
+# The host loads such a module several times in one realm, so neither its body nor what the body calls in one place runs at most once. The module that it imports does.
+# RUN: valueflow-results
+# CHECK-NOT: function f0 {{*}}executions=AtMostOnce
+# CHECK-NOT: function f1 {{*}}executions=AtMostOnce
+# CHECK: function f2 {{*}}executions=AtMostOnce
+
+variable g0 name="exported" module=m0 declared={type=anything} initialization=Uninitialized
+variable g1 name="state" module=m1 declared={type=anything} initialization=Uninitialized
+module m0 path="a.test.js" displayPath="a.test.js" flags=[RunsAgain] body=f0 requests=[{target=m1 completes=true}] exports=[{name="exported" variable=g0}]
+module m1 path="counter.js" displayPath="counter.js" body=f2 exports=[{name="state" variable=g1}]
+entry module=m0
+function f0 name="test" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Call v0
+    v2 = Integer integer=1
+    PutModuleVariable v2 variable=g0
+    v4 = GetModuleVariable variable=g0
+    v5 = GetModuleVariable variable=g1
+    Return
+}
+function f1 name="bump" results=[{type=anything}] {
+    Return
+}
+function f2 name="counter" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Integer integer=0
+    PutModuleVariable v0 variable=g1
+    Return
+}

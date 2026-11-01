@@ -13,6 +13,7 @@
 #include <bit>
 #include <optional>
 #include <wtf/FixedVector.h>
+#include <wtf/HashMap.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/TZoneMalloc.h>
 
@@ -34,6 +35,8 @@ public:
         // Of such an entry only address and stubFrameKind say anything.
         bool isStubReturnSite() const { return !code; }
         ALWAYS_INLINE std::optional<unsigned> shownFrameCountFor(bool hasShownFrame, bool calleeWasEntered) const;
+        // The frame of an entrypoint that called the body in tail position and stays on the stack to return a known result. The body may have left by a tail call since.
+        bool isOfEntrypointAtTailCall() const { return outermostVisibleFunction == OutermostVisibleFunction::None && site.isTailCall(); }
         const HandlerRecord* exceptionHandler() const { return handler && handler->catchesExceptions() ? &*handler : nullptr; }
 
         const void* address { nullptr };
@@ -43,10 +46,14 @@ public:
         bool rejectsOnThrow : 1 { false };
         bool isInModuleBody : 1 { false };
         bool innermostIsAsync : 1 { false };
-        // What the site calls is a function object that its own function made and handed to nobody.
-        bool callsOwnFunctionObject : 1 { false };
+        // Image::calleeOfSiteAt() returns a value.
+        bool hasRecordedCallee : 1 { false };
         // Image::constructedCalleeAt() has an answer.
         bool namesConstructedCallee : 1 { false };
+        // Of the frames at the site that a stack trace may list: FunctionDescription::recordsCallee() or recordsCalleeOnceRenamed() holds of the function of one, as it is written or in the form that runs.
+        bool hasFrameRecordingCallee : 1 { false };
+        // leavesByTailCall(site.calledBuiltin): the frame of the built-in is listed only while its callee has not been entered.
+        bool namesTailCallingBuiltin : 1 { false };
         // Once the callee of the site has been entered.
         OutermostVisibleFunction outermostVisibleFunction : 2 { OutermostVisibleFunction::Listed };
         TraceVisibility innermostVisibility { TraceVisibility::Visible };
@@ -61,21 +68,50 @@ public:
         ImageFrame frame { };
     };
 
+    // Where the stack holds the function objects that run in the frames at a call site, and the one that the site has called. The image says it, in tables that are read from their start.
+    struct CalleesOfFrames {
+        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(CalleesOfFrames);
+        struct KeptInFrame {
+            unsigned inlineFrame;
+            FunctionID sourceFunction;
+            CalleeOfSite callee;
+            // FunctionDescription::recordsCallee() or recordsCalleeOnceRenamed().
+            bool recordsCallee;
+        };
+        // calleeOfCopiedFrame() of the frames that a stack trace may list, but for CalleeOfSite::ownFunctionObject().
+        WTF::Vector<KeptInFrame, 2> keptInFrame;
+        // The frame that the machine frame was entered for: hasOnlyEntrypointsBelow() holds of it and calleeOfCopiedFrame() knows nothing. No function: no such frame may be listed.
+        FunctionID sourceFunctionEntered;
+        unsigned inlineFrameEntered { 0 };
+        bool enteredRecordsCallee { false };
+        // Image::calleeOfSiteAt().
+        std::optional<CalleeOfSite> calledAtSite;
+        // Of the innermost frame, for the frame above that was entered through it: its function as it is written, calleeOfCopiedFrame() and hasOnlyEntrypointsBelow().
+        FunctionID sourceFunctionOfInnermost;
+        std::optional<CalleeOfSite> calleeOfInnermost;
+        bool innermostHasOnlyEntrypointsBelow { false };
+    };
+
     // The next resolve() may move or replace the entry that either of the two returns.
     ALWAYS_INLINE const Entry* find(const void* returnAddress) const;
     // Nothing for an address that runs no compiled code.
     const Entry* resolve(const Image&, const void* returnAddress);
     // For an entry of this cache, or none: a call whose stub reads the method. Where the read has no site, the throw site of the call says where it is, and the entry gets that as its firstReadSite.
     const Entry* withMethodReadSite(const Image&, const Entry*);
+    // For a call site whose callee was entered. It stays where it is.
+    const CalleesOfFrames& calleesOfFramesAt(const Image&, const Entry&);
     std::optional<SourcePosition> positionOf(const Image&, CompiledFunctionID, CallSiteIndex);
-    // It remembers the inlined frames of the function that was asked for last.
+    // It remembers the inlined frames of the functions that were asked for lately.
     InlineFrameReader& inlineFrames() { return m_inlineFrames; }
+    uint64_t numberOfInlineFramesDecoded() const { return m_decodedInlineFrames.numberOfFramesDecoded(); }
 
     static constexpr size_t initialNumberOfEntries = 128;
     static constexpr size_t maxNumberOfEntries = 2048;
     static constexpr unsigned numberOfPositions = 16;
 
 private:
+    friend struct CallSiteCacheSlots;
+
     size_t primaryIndex(const void* address) const { return (std::bit_cast<uintptr_t>(address) >> 2) & m_indexMask; }
     size_t secondaryIndex(const void* address) const { return std::bit_cast<uintptr_t>(address) * 0x9e3779b97f4a7c15ull >> m_secondaryIndexShift; }
 
@@ -94,8 +130,11 @@ private:
     unsigned m_secondaryIndexShift { 63 };
     bool m_evictsSecondary { false };
     size_t m_numberOfFilledEntries { 0 };
+    size_t m_numberOfEvictions { 0 };
     FixedVector<Entry> m_entries;
-    InlineFrameReader m_inlineFrames;
+    DecodedInlineFrames m_decodedInlineFrames;
+    InlineFrameReader m_inlineFrames { m_decodedInlineFrames };
+    UncheckedKeyHashMap<const void*, std::unique_ptr<CalleesOfFrames>> m_calleesOfFrames;
     std::array<Position, numberOfPositions> m_positions;
 };
 static_assert(sizeof(CallSiteCache::Entry) <= 64);
@@ -105,6 +144,8 @@ static_assert(CallSiteCache::initialNumberOfEntries <= CallSiteCache::maxNumberO
 ALWAYS_INLINE std::optional<unsigned> CallSiteCache::Entry::shownFrameCountFor(bool hasShownFrame, bool calleeWasEntered) const
 {
     ASSERT(!isStubReturnSite());
+    if (namesTailCallingBuiltin) [[unlikely]]
+        return std::nullopt;
     bool isTailDeleted = site.isTailDeleted(calleeWasEntered);
     if (hasShownFrame) {
         if (site.isTailCall() && !isTailDeleted) [[unlikely]]

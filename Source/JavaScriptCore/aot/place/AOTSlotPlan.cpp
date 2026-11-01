@@ -12,8 +12,11 @@
 #include "AOTCellFormat.h"
 #include "AOTFlowResults.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTIdentifierNumbering.h"
+#include "AOTImagesBelow.h"
 #include "AOTLayoutData.h"
 #include "AOTPhaseTimes.h"
+#include "AOTPropertyCachesFront.h"
 #include "AOTRepresentation.h"
 #include "AOTSharedMemo.h"
 #include "AOTSlotPlanSteps.h"
@@ -139,6 +142,15 @@ BitVector chooseKeysWithColumn(const SlotPlanContext& context, const SlotUses& u
     auto keysByWeight = order.span();
     auto numberOfColumns = static_cast<size_t>(std::min<uint64_t>(keysByWeight.size(), context.build.limit(LimitID::LookupTableNames)));
     BitVector keysWithColumn(keysByWeight.size());
+    if (const ImagesBelow* below = context.build.imagesBelow()) {
+        // The columns are given out: a name has the one of its number there, or none.
+        for (uint32_t key : keysByWeight) {
+            std::optional<uint32_t> number = weights[key].predicted() > 0 ? numberInImagesBelow(context.program, PropertyKeyID(key), context.program.at(PropertyKeyID(key)).text, *below) : std::nullopt;
+            if (number && RowDisplacementTable::hasColumn(*number))
+                keysWithColumn.quickSet(key);
+        }
+        return keysWithColumn;
+    }
     for (uint32_t key : keysByWeight.first(numberOfColumns))
         keysWithColumn.quickSet(key);
 
@@ -161,6 +173,7 @@ static Vector<PlannedLayout> createPlannedLayouts(const SlotPlanContext& context
             return;
 
         bool isCompiledObject = planned.storage == LayoutStorage::CompiledObject;
+        planned.isRecordAlone = isCompiledObject && builtinBaseClassOf(context.program, id) && !context.build.isSabotaged(Sabotage::ClassesBelowBuiltinsHaveSlots);
         planned.holdsWideReferences = holdsWideReferences(context, id);
         planned.keysAreNeverEnumerated = isCompiledObject && keysAreNeverEnumerated(context.program, context.inputs.flow, id);
         planned.size = packed.sizes[index];
@@ -210,10 +223,10 @@ static Vector<PlannedLayout> planLayouts(const SlotPlanContext& context, const S
     packEnvironments(context, uses, claims.span(), packed);
     if (!finishStep("packEnvironments"_s))
         return { };
-    widenSlotsIntoPadding(context, uses, claims.span(), WidenedRepresentations::Numbers, packed);
+    widenSlotsIntoPadding(context, uses, joinedRows, claims.span(), WidenedRepresentations::Numbers, packed);
     if (!finishStep("widenSlotsIntoPadding(Numbers)"_s))
         return { };
-    widenSlotsIntoPadding(context, uses, claims.span(), WidenedRepresentations::References, packed);
+    widenSlotsIntoPadding(context, uses, joinedRows, claims.span(), WidenedRepresentations::References, packed);
     if (!finishStep("widenSlotsIntoPadding(References)"_s))
         return { };
     reserveEmptySlotsInPadding(context, uses, packed);
@@ -365,7 +378,7 @@ SlotAgreement SlotPlan::agreementOf(const Program& program, PropertyKeyID key, s
         if (program.at(member).flow.allocation == AllocationState::NeverAllocated)
             continue;
         std::optional<uint32_t> field;
-        if (storageOf(member) == LayoutStorage::CompiledObject)
+        if (holdsCompiledObjects(member))
             field = program.at(member).findField(key);
         if (!field || !slot(member, *field).hasStorage()) {
             agreement.membersWithoutSlot.append(member);
@@ -393,7 +406,7 @@ SlotAgreement SlotPlan::agreementOf(const Program& program, PropertyKeyID key, s
     agreement.membersWithoutSlotKeepBytesZero = shared.storage == SlotStorage::Inline
         && representsAbsentAsZero(shared.representation)
         && std::ranges::all_of(agreement.membersWithoutSlot, [&](LayoutID member) {
-            return storageOf(member) == LayoutStorage::CompiledObject && layout(member).keepsZero(shared.offset, shared.width());
+            return holdsCompiledObjects(member) && layout(member).keepsZero(shared.offset, shared.width());
         });
     return agreement;
 }
@@ -460,7 +473,7 @@ InheritedRows::InheritedRows(const Program& program, const SlotRows& rows, std::
     for (unsigned index = 0; index < numberOfLayouts; ++index) {
         LayoutID id(index);
         LayoutID root = id;
-        for (LayoutID base = provenBaseOf(program.at(id)); base; base = provenBaseOf(program.at(base))) {
+        for (LayoutID base = nearestLayoutAlwaysAbove(program.at(id).flow); base; base = nearestLayoutAlwaysAbove(program.at(base).flow)) {
             RELEASE_ASSERT(m_depths[index] < numberOfLayouts);
             ++m_depths[index];
             root = base;
@@ -503,7 +516,7 @@ InheritedRows::InheritedRows(const Program& program, const SlotRows& rows, std::
         add(rows.extensionWordOf(id), root, rows.extensionWordOf(root));
         add(rows.extraPropertiesWordOf(id), root, rows.extraPropertiesWordOf(root));
     }
-    AOT::sort(members);
+    AOT::sortInLine(members);
 
     m_rows.reserveInitialCapacity(members.size());
     for (auto [depth, declaringRow, row] : members) {
@@ -513,14 +526,21 @@ InheritedRows::InheritedRows(const Program& program, const SlotRows& rows, std::
         m_rows.append(row);
     }
 
-    AOT::sort(rowsInUnallocatedBases);
-    m_rowsInUnallocatedBases = WTF::map(rowsInUnallocatedBases, [](const std::pair<SlotRow, SlotRow>& entry) {
-        return entry.second;
-    });
+    Vector<uint32_t> firstOfDeclaringRow(FillWith { }, rows.count() + 1, 0u);
+    for (auto [declaringRow, row] : rowsInUnallocatedBases)
+        ++firstOfDeclaringRow[declaringRow + 1];
+    for (size_t row = 0; row < rows.count(); ++row)
+        firstOfDeclaringRow[row + 1] += firstOfDeclaringRow[row];
+    m_rowsInUnallocatedBases.grow(rowsInUnallocatedBases.size());
+    Vector<uint32_t> nextOfDeclaringRow = firstOfDeclaringRow;
+    for (auto [declaringRow, row] : rowsInUnallocatedBases)
+        m_rowsInUnallocatedBases[nextOfDeclaringRow[declaringRow]++] = row;
     for (Family& family : m_families) {
-        auto found = std::ranges::equal_range(rowsInUnallocatedBases, family.declaringRow, { }, &std::pair<SlotRow, SlotRow>::first);
-        family.firstRowInUnallocatedBases = static_cast<uint32_t>(found.begin() - rowsInUnallocatedBases.begin());
-        family.numberOfRowsInUnallocatedBases = static_cast<uint32_t>(found.size());
+        family.firstRowInUnallocatedBases = firstOfDeclaringRow[family.declaringRow];
+        family.numberOfRowsInUnallocatedBases = firstOfDeclaringRow[family.declaringRow + 1] - firstOfDeclaringRow[family.declaringRow];
+        std::span<SlotRow> rowsOfFamily = m_rowsInUnallocatedBases.mutableSpan().subspan(family.firstRowInUnallocatedBases, family.numberOfRowsInUnallocatedBases);
+        if (!std::ranges::is_sorted(rowsOfFamily))
+            AOT::sort(rowsOfFamily);
     }
 }
 
@@ -639,7 +659,7 @@ JoinedRows::JoinedRows(const SlotPlanContext& context, const SlotUses& uses)
     m_accesses.removeAllMatching([&](const Access& access) {
         return !access.numberOfRows || setOf(rowsOf(access)[0]) == noSet;
     });
-    AOT::stableSort(m_accesses, { }, [&](const Access& access) {
+    AOT::stableSortInLine(m_accesses, { }, [&](const Access& access) {
         return setOf(rowsOf(access)[0]);
     });
     for (uint32_t index = 0; index < m_accesses.size(); ++index) {
@@ -666,7 +686,7 @@ JoinedRows::JoinedRows(const SlotPlanContext& context, const SlotUses& uses)
         m_rows[joined.firstRow + joined.numberOfRows++] = row;
     }
 
-    AOT::sort(m_sets, [](const Set& a, const Set& b) {
+    AOT::sortInLine(m_sets, [](const Set& a, const Set& b) {
         return std::tuple(b.weight.predicted(), a.firstRow) < std::tuple(a.weight.predicted(), b.firstRow);
     });
 }
@@ -677,6 +697,9 @@ bool isDescribedToRunTime(const Program& program, const FlowResults& flow, Modul
 {
     switch (moduleExport.kind) {
     case ModuleExportKind::Variable:
+        // Only the variable says whether the name is an export.
+        if (moduleExport.isDroppedWhileEmpty)
+            return true;
         switch (flow.module(exporter).namespaceUse) {
         case NamespaceUse::Unknown:
             return true;
@@ -814,7 +837,7 @@ void findUncheckedVariableReads(FunctionAnalyses& analyses, const BitVector& can
 
 static PlannedVariable planFunctionVariable(const Variable& variable)
 {
-    if (variable.flow.stores != StoreCount::Never)
+    if (variable.flow.stores != StoreCount::Never || variable.flags.contains(VariableFlags::IsReplaceable))
         return { .storage = VariableStorage::Statics, .encoding = VariableEncoding::FunctionAsZero, .representation = SlotRepresentation::JSValue };
     return { .storage = VariableStorage::ClosureTable, .encoding = VariableEncoding::FunctionAsZero, .representation = SlotRepresentation::DeferredClosure };
 }
@@ -841,10 +864,11 @@ static PlannedVariable planVariable(const SlotPlanContext& context, const Variab
         break;
     }
     bool readsZeroAsUndefined = isZeroEncodingCandidate && !use.hasUncheckedRead;
+    bool holdsAnyValue = readsZeroAsUndefined || variable.flags.contains(VariableFlags::IsReplaceable);
     return {
         .storage = VariableStorage::Statics,
         .encoding = readsZeroAsUndefined ? VariableEncoding::UndefinedAsZero : VariableEncoding::Plain,
-        .representation = readsZeroAsUndefined ? SlotRepresentation::JSValue : variableRepresentationOf(context, variable),
+        .representation = holdsAnyValue ? SlotRepresentation::JSValue : variableRepresentationOf(context, variable),
         .isUsedBeforeProgramEntry = use.isUsedBeforeProgramEntry || context.program.at(variable.module).kind == ModuleKind::RuntimeSource,
     };
 }
@@ -930,7 +954,7 @@ static bool capturesNothingButClassEnvironment(const Program& program, const Fun
 
 static bool canBeCreatedByClassRecord(const Program& program, const Function& constructor, const ClassMember& member)
 {
-    if (!member.key || program.isIndexLike(member.key) || isCreatedWithItsHolder(program, member.side, member.key))
+    if (!member.key || member.isAssignedByProgram || program.isIndexLike(member.key) || isCreatedWithItsHolder(program, member.side, member.key))
         return false;
     const Function& function = program.at(member.function);
     return function.name && capturesNothingButClassEnvironment(program, constructor, function);
@@ -975,7 +999,7 @@ static bool isClassWithConstantNames(const Layout& layout)
     if (layout.kind != LayoutKind::Instance || !layout.constructor || layout.isDerived() || layout.has(LayoutFlags::IsConstructorFunction))
         return false;
     return std::ranges::all_of(layout.classFlow.members, [](const ClassMember& member) {
-        return !!member.key;
+        return member.key && !member.isAssignedByProgram;
     });
 }
 

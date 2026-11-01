@@ -52,7 +52,6 @@ struct HeapsOfCollection {
 struct NarrowReferenceOrigins {
     // A 32-bit load, a 32-bit Phi or a shift of a pointer with one of these origins is a narrow reference, whether or not the function decodes it.
     BitVector references;
-    BitVector suspensions;
     // More such origins, found while the procedure is made.
     const BitVector* laterReferences { nullptr };
     // For the test of what notices a missing guard: of the references with these origins, the one with this ordinal among those that would get a pointer gets none.

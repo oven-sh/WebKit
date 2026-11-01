@@ -160,10 +160,12 @@ export const operandRoles = [
   "WorkerEntryPath",
   "DescribedWhenRefused",
   "ContentsOfContentsAreOnlyStored",
+  "FunctionsAreOnlyNamed",
+  "ProxiesArePrintedAsTheirTargets",
 ] as const;
 export type OperandRole = (typeof operandRoles)[number];
 
-export const pristineAspects = ["Storage", "Names", "AsCreated", "Dense", "NamesKeptBelow"] as const;
+export const pristineAspects = ["Storage", "Names", "AsCreated", "Dense", "NamesKeptBelow", "Prototype"] as const;
 export type PristineAspect = (typeof pristineAspects)[number];
 
 export const contentsSlots = ["Element", "Key", "Value"] as const;
@@ -446,6 +448,8 @@ export interface DirectEntrySpec {
   offsetOfNativeObject?: string;
   /** The function answers the fields of the layout that the row returns, in registers, and makes no object. Compiled code calls it where the program only reads the fields. */
   returnsFields?: boolean;
+  /** The function answers a `double`, in a register for numbers, and nothing is boxed. It cannot fail. A NaN that it answers is the one that arithmetic makes. */
+  returnsNumber?: boolean;
 }
 
 export interface NativeCodeRef {
@@ -463,7 +467,9 @@ export type ConditionSpec =
   | { operand: OperandName; hasProperty: string }
   | { buildAdmitsRuntimeCode: true }
   | { callRunsOtherCode: true }
-  | { objectNobodyKnowsIsWritten: true };
+  | { objectNobodyKnowsIsWritten: true }
+  | { testsReplaceBuiltins: true }
+  | { programStores: BuiltinPath };
 
 export type FeatureUseSpec = FeatureName | { feature: FeatureName; when: ConditionSpec };
 
@@ -588,6 +594,21 @@ export const builtinMarks = [
   "IsCalledWithoutStartupLoads",
   // Its instances have such a method, whether or not the table has their prototype object.
   "InstancesHaveMethodCalledWithStartupLoads",
+  // The native code it loads only receives and returns numbers and pointers. It never gets a JSValue or the global object, so it cannot create objects, register symbols or touch properties.
+  "LoadsCodeWithoutJSAccess",
+  // A lookup goes on to the object that the table names above it. Whoever asks what stands above it is told null: Object.getPrototypeOf, __proto__.
+  // The host keeps what the table lists on it on an object in between, which nobody gets to see. Object.setPrototypeOf takes all of that away.
+  "AnswersNullAsItsPrototype",
+  // What it answers loads files with code under names that the build does not see, and the table has no entry for the function that does. So the read itself counts as such a load.
+  "ReadLoadsCodeByName",
+  // The file at the path that it holds is the main module: `require.main` and `process.mainModule` answer the module object of that file.
+  "HoldsPathOfMainModule",
+  // The host calls what the program has stored under it for each name that require() or require.resolve() resolves at run time: on its holder, with the module object of the file that asks. What it answers is the path.
+  "IsResolverThatLoaderCalls",
+  // The host calls what the program has stored under it for each require() that is answered at run time: on the module object of the file that asks. What it answers is the module.
+  "IsRequireThatLoaderCalls",
+  // A prototype object. The host prints the instances below it with code of their own, which asks none of the getters on it.
+  "InstancesArePrintedWithoutTheirGetters",
 ] as const;
 export type BuiltinMark = (typeof builtinMarks)[number];
 
@@ -696,8 +717,12 @@ export interface ClassColumns {
   lockedObjects?: readonly ("constructor" | "prototype")[];
   lockedMembers?: readonly ("constructor" | "prototype")[];
   closedToOtherNames?: readonly ("constructor" | "prototype")[];
+  /** The prototype object has the members that the table lists under it and no other. aotBuiltinMismatches() compares its own keys. */
+  prototypeListsAllMembers?: boolean;
   openNamesOfPrototype?: readonly string[];
   openNamesOfConstructor?: readonly string[];
+  /** Native code that was not handed the prototype looks up these names on it and no other, and it stores to none. */
+  namesReadByNativeCodeOnPrototype?: readonly string[];
   hasConstructor?: boolean;
   hasPrototype?: boolean;
   /** False: the constructor has no property `prototype`. The prototype object lies above the instances, and no path from the constructor leads to it. */
@@ -728,6 +753,8 @@ export type ErrorKind = (typeof errorKinds)[number];
 export const nativeCallKinds = ["Cpp", "Rust", "NewCppFunction", "NewRustFunction", "Bindgen"] as const;
 export type NativeCallKind = (typeof nativeCallKinds)[number];
 
+export type LinkedFunctionExpansion = "IteratorGenericClose" | "IteratorGenericNext";
+
 export type IntrinsicSpec =
   | { intrinsic: "Operation"; opcode: string }
   | { intrinsic: "Conversion"; conversion: Exclude<Conversion, "None" | "Dictionary"> }
@@ -746,6 +773,7 @@ export type IntrinsicSpec =
   | { intrinsic: "PrependArgument"; callee: string; argument: number }
   | { intrinsic: "HasPromiseStatus"; status: PromiseStatus }
   | { intrinsic: "NativeCall"; kind: NativeCallKind }
+  | { intrinsic: "LinkedFunction"; expansion?: LinkedFunctionExpansion }
   | {
       intrinsic:
         | "IsNullish"
@@ -760,7 +788,6 @@ export type IntrinsicSpec =
         | "ReplaceablePrivateGlobal"
         | "PrivateName"
         | "ModulePrivateName"
-        | "LinkedFunction"
         | "Erased"
         | "BundleError";
     };

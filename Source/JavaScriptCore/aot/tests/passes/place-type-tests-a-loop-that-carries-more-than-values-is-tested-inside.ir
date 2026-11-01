@@ -1,0 +1,55 @@
+# const free = name => taken.has(name + mark) ? free(name + mark) : name + mark;
+# A function that calls itself in tail position is a loop, and its environment goes around with the name. Behind a test that fails in front of a loop each
+# parameter of the head is defined again, by an Upcast, which takes a JavaScript value: no environment, no iterator state. Such a loop keeps its tests inside.
+# FORM: Prepared
+# OPTIONS: heat=NothingIsHottest
+# RUN: pass PlaceTypeTests
+# STATISTIC: LoopParametersTestedInFrontOfLoops = 1
+
+module m0 path="main.js" displayPath="main.js"
+
+layout L0 kind=Environment name="free" fields=[{key="free" declared={type=anything}}]
+
+function f0 name="carriesItsEnvironment" kind=Arrow captures=[{type=env L0}] parameters=[{type=i32 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: env L0, v1: anything ~ i32):
+    Jump -> next b1(v0, v1)
+  b1(v2: env L0, v3: anything ~ i32):
+    LoopHint
+    v5 = Integer
+    v6 = Eq v3, v5
+    Branch v6 -> taken b3(), notTaken b2()
+  b2():
+    v7 = Integer integer=1
+    v8 = Sub v3, v7
+    v9 = BitAnd v3, v8
+    Jump -> next b1(v2, v9)
+  b3():
+    Return v3
+}
+# CHECK-LABEL: function f0 name="carriesItsEnvironment"
+# CHECK-NOT: Upcast
+# CHECK: b2([[environment]]: env L0, [[x]]: anything ~ i32):
+# CHECK-NEXT: LoopHint
+# CHECK: = TypeTest [[x]] testedType=i32
+
+# The same loop with values alone is tested where it is entered.
+function f1 name="carriesValuesAlone" parameters=[{type=anything}, {type=i32 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything ~ i32):
+    Jump -> next b1(v0, v1)
+  b1(v2: anything, v3: anything ~ i32):
+    LoopHint
+    v5 = Integer
+    v6 = Eq v3, v5
+    Branch v6 -> taken b3(), notTaken b2()
+  b2():
+    v7 = Integer integer=1
+    v8 = Sub v3, v7
+    v9 = BitAnd v3, v8
+    Jump -> next b1(v2, v9)
+  b3():
+    Return v3
+}
+# CHECK-LABEL: function f1 name="carriesValuesAlone"
+# CHECK: ([[held]]: anything, [[z]]: i32):
+# CHECK-NEXT: LoopHint
+# CHECK: = Upcast v2 castType=anything

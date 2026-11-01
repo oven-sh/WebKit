@@ -283,6 +283,20 @@ NextHolder nextHolderOf(const Program& program, LayoutID classLayout, ClassSide 
     return next;
 }
 
+static LayoutID commonAncestorIfNoClassBetweenHasMember(const Program& program, const Layout& layout, PropertyKeyID key)
+{
+    if (!layout.flow.commonAncestor || layout.classFlow.prototypeLink != MemberMutability::Fixed)
+        return { };
+    bool isPassedByEveryClassBetween = std::ranges::all_of(layout.flow.intermediateClasses, [&](LayoutID between) {
+        const ClassFlow& classFlow = program.at(between).classFlow;
+        if (classFlow.prototypeLink != MemberMutability::Fixed || !classFlow.prototypeNamesAreComplete)
+            return false;
+        DeclaredMember member = findDeclaredMember(classFlow, ClassSide::Prototype, key);
+        return !member.isDeclared() && !member.isListedWithoutDefinition() && !member.isWritableData;
+    });
+    return isPassedByEveryClassBetween ? layout.flow.commonAncestor : LayoutID();
+}
+
 BuiltinLocationAnswer builtinLocationAnswerOf(const PropertyAccessContext& context, BuiltinID member)
 {
     if (!member)
@@ -407,6 +421,48 @@ MemberAnswer finishAtChainEnd(MemberAnswer&& walked, MemberAnswer&& chainEnd)
     return WTF::move(chainEnd);
 }
 
+// `class extends Above { constructor() { .. } }`: the prototype object holds `constructor` alone and never anything else, and its link is fixed. A walk under another name passes it and notes nothing.
+static bool hasEmptyPrototypeBelowOneClass(const Program& program, LayoutID id)
+{
+    if (TypeTable::isProvisional(id))
+        return false;
+    const Layout& layout = program.at(id);
+    const ClassFlow& classFlow = layout.classFlow;
+    if (layout.kind != LayoutKind::Instance || !layout.constructor || layout.flow.baseState != BaseState::Layout || layout.flow.commonAncestor)
+        return false;
+    if (classFlow.prototypeLink != MemberMutability::Fixed || !classFlow.prototypeNamesAreComplete)
+        return false;
+    auto isOnPrototype = [](const ClassMember& member) {
+        return member.side == ClassSide::Prototype;
+    };
+    return std::ranges::none_of(classFlow.members, isOnPrototype) && std::ranges::none_of(classFlow.namedMembers, isOnPrototype);
+}
+
+// Where a long row of such classes ends is kept for each class of the row, so the row is walked once, not once for each name.
+static LayoutID passEmptyPrototypes(const Program& program, PropertyAccessCache& cache, LayoutID id)
+{
+    auto isAnswerFor = [](LayoutID wanted) {
+        return [wanted](const PropertyAccessCache::ClassAbove& entry) {
+            return entry.key == wanted;
+        };
+    };
+    Vector<LayoutID, 8> passed;
+    LayoutID current = id;
+    for (size_t steps = 0; steps < program.layouts.size() && hasEmptyPrototypeBelowOneClass(program, current); ++steps) {
+        if (steps >= PropertyAccessCache::fewestClassesAbove) {
+            if (const PropertyAccessCache::ClassAbove* kept = cache.classesAboveEmptyPrototypes.find(computeHash(current), isAnswerFor(current))) {
+                current = kept->value;
+                break;
+            }
+            passed.append(current);
+        }
+        current = program.at(current).flow.base;
+    }
+    for (LayoutID layout : passed)
+        cache.classesAboveEmptyPrototypes.add(computeHash(layout), PropertyAccessCache::ClassAbove { layout, current }, isAnswerFor(layout));
+    return current;
+}
+
 // A walk that has noted nothing when it comes to a class goes on as the walk that begins there, step for step. The two name their first class in what they note, and nowhere else.
 // So an answer without conditions is the answer of both, and a long row of classes is walked once for a name, not once from each of its classes.
 struct ClassesPassed {
@@ -422,6 +478,7 @@ static MemberAnswer walkPrototypes(const PropertyAccessContext& context, const M
         return MemberAnswer::unknown(UnprovenCause::Unknown);
 
     bool isConstructorKey = program.nameClassOf(key) == NameClass::Constructor;
+    PropertyAccessCache* rowsPassed = isConstructorKey ? nullptr : passed.cache;
     MemberCondition memberUnchanged { MemberCondition::Kind::MemberUnchanged, query.layout, ClassSide::Prototype, key };
     MemberAnswer walked;
     const bool asksRunTime = query.access == Access::Store && program.at(query.layout).classFlow.evaluations == ExecutionCount::AtMostOnce;
@@ -495,6 +552,10 @@ static MemberAnswer walkPrototypes(const PropertyAccessContext& context, const M
         if (!layout.classFlow.prototypeNamesAreComplete)
             addConditionWithCause(walked, memberUnchanged, UnprovenCause::UnknownKeyStore);
 
+        if (LayoutID ancestor = commonAncestorIfNoClassBetweenHasMember(program, layout, key)) {
+            current = ancestor;
+            continue;
+        }
         NextHolder next = nextHolderOf(program, current, ClassSide::Prototype, walked.conditions);
         switch (next.step) {
         case ChainStep::Unknown:
@@ -502,7 +563,7 @@ static MemberAnswer walkPrototypes(const PropertyAccessContext& context, const M
         case ChainStep::CompiledClass:
             if (context.usesOnlyAnswersWithoutTests && !walked.conditions.isEmpty())
                 return MemberAnswer::unknown(walked.cause);
-            current = next.layout;
+            current = rowsPassed ? passEmptyPrototypes(program, *rowsPassed, next.layout) : next.layout;
             continue;
         case ChainStep::BuiltinClass:
             return finish(findMemberFromPrototypeOf(context, next.builtinClass, key, query.access));
@@ -591,6 +652,40 @@ static MemberAnswer findTupleMember(const PropertyAccessContext& context, const 
     return findInheritedMember(context, query);
 }
 
+bool mayBeEmptyInSlot(const Program& program, LayoutID layout, FieldReference reference)
+{
+    const FieldFlow& flow = flowOf(program, reference);
+    return program.at(layout).kind == LayoutKind::Instance
+        && flow.occupancy == Occupancy::Unknown
+        && flow.location.deferral == ClosureDeferral::Unknown
+        && fieldAt(program, reference).form.isEmpty()
+        && staysInSlot(program, reference);
+}
+
+bool mayBeEmptyBelowAccessor(const Program& program, LayoutID layout, FieldReference reference)
+{
+    return flowOf(program, reference).prototypeName == PrototypeNameState::AccessorOnPrototypes && mayBeEmptyInSlot(program, layout, reference);
+}
+
+static std::optional<MemberAnswer> findAccessorAboveField(const PropertyAccessContext& context, const MemberQuery& query, FieldReference field)
+{
+    const Program& program = context.program;
+    if (query.isOwnLookup || query.access == Access::Define || isPrivateName(program, query.key) || !mayBeEmptyBelowAccessor(program, query.layout, field))
+        return std::nullopt;
+    MemberAnswer inherited = findMemberOnPrototypes(context, query);
+    if (inherited.kind != MemberKind::Accessor)
+        return std::nullopt;
+    MemberAnswer walked;
+    requireLookupPastObject(program, walked, inherited, query, Proof::NoExtraProperties, UnprovenCause::OwnPropertyHidesMember);
+    return finishAtChainEnd(WTF::move(walked), WTF::move(inherited));
+}
+
+bool isEmptyBelowAccessor(const PropertyAccessContext& context, LayoutID layout, PropertyKeyID key)
+{
+    std::optional<FieldReference> field = findField(context.program, layout, key, BaseChain::Proven);
+    return field && findAccessorAboveField(context, { MemberStart::Instance, layout, key, Access::Store, false }, *field);
+}
+
 MemberAnswer findInstanceMember(const PropertyAccessContext& context, const MemberQuery& query)
 {
     const Program& program = context.program;
@@ -616,6 +711,8 @@ MemberAnswer findInstanceMember(const PropertyAccessContext& context, const Memb
     if (std::optional<FieldReference> found = findField(program, query.layout, key, BaseChain::Proven)) {
         if (builtinBase)
             return MemberAnswer::unknown(UnprovenCause::BuiltinBase);
+        if (std::optional<MemberAnswer> accessor = findAccessorAboveField(context, query, *found))
+            return WTF::move(*accessor);
 
         bool storesValue = query.access == Access::Store || query.access == Access::Define;
         if (storesValue && !isPrivateName(program, key) && isNeverStored(program, *found))
@@ -628,6 +725,8 @@ MemberAnswer findInstanceMember(const PropertyAccessContext& context, const Memb
         return MemberAnswer::unknown(UnprovenCause::BuiltinBase);
 
     bool mayGainOwnProperty = ownPropertyGainOf(program, query.layout, key) != OwnPropertyGain::Impossible;
+    if (builtinBase && mayGainOwnProperty && isCreatedWithProperties(program, query.layout, builtinBase) && !hasTestForOtherNames(program, query.layout))
+        return MemberAnswer::unknown(UnprovenCause::BuiltinBase);
     MemberAnswer walked;
     if (query.isOwnLookup || query.access == Access::Define || keyKind == PropertyKeyKind::PrivateName) {
         if (mayGainOwnProperty && query.isOwnLookup)

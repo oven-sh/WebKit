@@ -58,7 +58,7 @@ PhaseScope::~PhaseScope()
 {
     m_procedure.setLastPhaseName(m_name);
     if (!m_procedure.report().failure && shouldValidateIRAtEachPhase(m_procedure))
-        validate(m_procedure, m_dumpBefore);
+        validateAfterPhase(m_procedure, m_dumpBefore);
 
     if (Options::dumpIonGraph()) [[unlikely]]
         m_procedure.appendIonGraphPass(m_name);

@@ -90,8 +90,6 @@ public:
     std::atomic<size_t> bytesOfTypesOfSets { 0 };
     std::once_flag hasFoundLayoutsOfSites;
     ValueFlowLayoutsOfSites layoutsOfSites;
-    std::once_flag hasFoundBirths;
-    std::optional<ValueFlowBirthsOfUnknownObject> births;
 };
 
 class ValueFlowPositions {
@@ -112,6 +110,7 @@ public:
     FlowPositionUpdate updateFrom(const ValueFlowPositionResult&, const Type& family);
     FlowPositionUpdate updateFor(const DeclaredType&, ValueFlowNodeID, DeadZone = DeadZone::MayBeObserved, const ValueFlowNumbers* = nullptr);
     void takeWhatArrives(const DeclaredType&, ValueFlowNodeID, FlowPositionUpdate&);
+    std::optional<Type> typeByLayoutsOfClassesBelowBuiltinClasses(ValueSetID);
 
     std::optional<LayoutSet> receiversAt(ValueSetID);
     std::optional<CalleeSet> calleesAt(ValueSetID possible, ValueSetID seen, const ValueFlowOperand* calleeOfConstruction);
@@ -121,7 +120,10 @@ public:
     std::optional<Type> typeWhereOnlyInstancesOfBuiltinClassesAreTurnedAway(ValueSetID, const Type&);
     bool holdsObjectThatMayLieOutside(ValueSetID, const Type&);
     bool turnsAwayConstructedObject(ValueSetID, const Type&);
+    bool turnsAwayObjectMadeForOtherClass(ValueSetID, const Type&);
     bool turnsAwayEveryObject(ValueSetID, const Type&);
+    bool turnsAwayEverySeenObject(ValueSetID seen, const Type&);
+    void addPrototypesThatAreKept(ValueSetID held, Type&);
 
     Type typeOfObject(ValueFlowObjectID);
 
@@ -138,6 +140,8 @@ private:
     Type typeOfMembers(ValueSetID);
     Type typeOf(ValueSetID);
     Type withinLimits(Type&&);
+    TypeID withStringsWithinLimit(TypeID);
+    bool keepContentStringsWithinLimit(ClassParts&);
     ValueFlowObjectID findStranger(ValueSetID, const Type& family);
     std::optional<Type> familyBehindDictionaries(const Type& family);
     template<typename KindOfType> ValueFlowPositionResult decide(KindOfType family, ValueSetID, DeadZone, const ValueFlowNumbers*, ValueFlowNodeID = { });
