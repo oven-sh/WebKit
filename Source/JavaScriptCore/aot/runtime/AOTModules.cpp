@@ -623,7 +623,13 @@ bool Modules::hasRunToItsEndWithItsCycle(const ModuleRecord& record) const
 // An ES module of the program that has run needs no record, like one that ran with the graph of another: whoever asks for it again is handed a record that says so.
 void Modules::retireRecordsOfSettledLoads()
 {
-    if (m_instance.vm->synchronousModuleQueue() || m_innermostEvaluation || m_rootWhoseFilesRun || m_rootWhoseFilesRanAhead || m_fileWhoseJobsWaitForLoader || !m_levelsOfLoads.isEmpty())
+    // A frame on the stack holds each of these two, and ends with no load that settles: a require() returns, a body goes on behind the jobs that it had the host run. Nobody would ask again.
+    if (m_instance.vm->synchronousModuleQueue() || m_innermostEvaluation) {
+        if (!m_modulesWhoseRecordsLoaderHolds.isEmpty()) [[unlikely]]
+            retireRecordsWhenVMIsIdle();
+        return;
+    }
+    if (m_rootWhoseFilesRun || m_rootWhoseFilesRanAhead || m_fileWhoseJobsWaitForLoader || !m_levelsOfLoads.isEmpty())
         return;
     // The host loads the graph of the entry point.
     if (!m_firstModuleRequestedByHost || status(*m_firstModuleRequestedByHost) < ModuleStatus::Evaluating)
@@ -660,6 +666,28 @@ void Modules::retireRecordsOfSettledLoads()
         else if (hasRunToItsEndWithItsCycle(*record))
             retireRecord(record);
     }
+}
+
+NEVER_INLINE void Modules::retireRecordsWhenVMIsIdle()
+{
+    if (m_isLoadingForRequire || m_retiresRecordsWhenVMIsIdle)
+        return;
+    m_retiresRecordsWhenVMIsIdle = true;
+    // The collector may take the realm of this image before the VM is idle. It takes the instance out of the list then.
+    VM& vm = *m_instance.vm;
+    vm.whenIdle([&vm] {
+        VMState& state = vm.aotState();
+        Locker locker { state.instancesLock };
+        for (Instance* instance : state.instances) {
+            Modules* modules = instance->state ? instance->state->modules.get() : nullptr;
+            if (!modules || !modules->m_retiresRecordsWhenVMIsIdle)
+                continue;
+            RunningImageScope imageOfInstance(state, instance->program);
+            modules->retireRecordsOfSettledLoads();
+            // Where nothing has entered the VM, VM::whenIdle() has called at once, under what refused: that call is refused too, and finds this set.
+            modules->m_retiresRecordsWhenVMIsIdle = false;
+        }
+    });
 }
 
 void didSettleLoad(JSPromise* settled)

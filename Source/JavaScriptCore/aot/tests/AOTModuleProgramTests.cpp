@@ -11,18 +11,25 @@
 #include "AOTCompile.h"
 #include "AOTCompileOptionWords.h"
 #include "AOTIRParser.h"
+#include "AOTLoadedProgramTestSupport.h"
+#include "AOTModules.h"
 #include "AOTNativeTest.h"
 #include "AOTProgramFile.h"
 #include "AOTShellProcess.h"
 #include "AOTTemporaryFile.h"
 #include "AOTThreads.h"
 #include "AOTVector.h"
+#include "JSCInlines.h"
+#include "TopExceptionScope.h"
+#include "VMEntryScopeInlines.h"
 #include <initializer_list>
 #include <stdlib.h>
 #include <wtf/DataLog.h>
 #include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT {
+
+std::span<const NativeTest> moduleProgramTests();
 
 using OptionWords = std::initializer_list<ASCIILiteral>;
 
@@ -505,12 +512,226 @@ function f10 name="importLast" results=[{type=anything}] {
 }
 )IR"_s;
 
+// main.js hands the script a closure, which the script calls when the entry point has run: what the closure loads is under no evaluation and no load of the host.
+static constexpr ASCIILiteral mainThatRegistersClosure = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f4
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="register" [isFreeName]
+    v3 = Call v2, -, v0
+    Return
+}
+)IR"_s;
+
+// running.js calls import() on other.js. Where a require() runs running.js, the loader takes every step of that import() before the require() returns: its load settles there.
+static constexpr ASCIILiteral moduleThatImportsWhileItRuns = R"IR(module m1 path="/running.js" displayPath="running.js" body=f1 requests=[{target=m2 completes=true}]
+module m2 path="/imported.js" displayPath="imported.js" body=f2
+module m3 path="/other.js" displayPath="other.js" body=f3
+function f1 name="running" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="running.js"
+    v3 = String string="begins"
+    v4 = Call v1, -, v3, v2
+    v5 = ImportModule module=m3 referrer=m1
+    v6 = String string="ends"
+    v7 = Call v1, -, v6, v2
+    Return
+}
+function f2 name="imported" module=m2 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="imported.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f3 name="other" module=m3 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="other.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+)IR"_s;
+
+static constexpr ASCIILiteral closureThatRequires = R"IR(function f4 name="requireRunning" results=[{type=anything}] {
+    v0 = RequireModule module=m1 referrer=m0 specifier="./running.js"
+    Return v0
+}
+)IR"_s;
+
+// The closure calls import() on outer.js, whose body requires running.js. That require() returns under the evaluation of outer.js, and the import() of outer.js takes no step of the loader: no load settles behind it.
+static constexpr ASCIILiteral closureThatImportsRequirer = R"IR(module m4 path="/outer.js" displayPath="outer.js" body=f5
+function f4 name="importOuter" results=[{type=anything}] {
+    v0 = ImportModule module=m4 referrer=m0
+    Return v0
+}
+function f5 name="outer" module=m4 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="outer.js"
+    v3 = String string="begins"
+    v4 = Call v1, -, v3, v2
+    v5 = RequireModule module=m1 referrer=m4 specifier="./running.js"
+    v6 = String string="ends"
+    v7 = Call v1, -, v6, v2
+    Return
+}
+)IR"_s;
+
+// The same with no require(): the body of outer.js calls import() on other.js and has the host run the jobs that wait, so the load settles under the evaluation of outer.js with no queue of a require().
+static constexpr ASCIILiteral closureThatImportsModuleThatRunsJobs = R"IR(module m4 path="/outer.js" displayPath="outer.js" body=f5
+function f4 name="importOuter" results=[{type=anything}] {
+    v0 = ImportModule module=m4 referrer=m0
+    Return v0
+}
+function f5 name="outer" module=m4 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="outer.js"
+    v3 = String string="begins"
+    v4 = Call v1, -, v3, v2
+    v5 = ImportModule module=m3 referrer=m4
+    v6 = PropGet v0 key="drainMicrotasks" [isFreeName]
+    v7 = Call v6
+    v8 = String string="ends"
+    v9 = Call v1, -, v8, v2
+    Return
+}
+)IR"_s;
+
+// Two closures, each for a VM entry of its own. Each requires a module that calls import() on another one.
+static constexpr ASCIILiteral requiresInTwoEntries = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
+module m1 path="/first.js" displayPath="first.js" body=f1
+module m2 path="/below-first.js" displayPath="below-first.js" body=f2
+module m3 path="/second.js" displayPath="second.js" body=f3
+module m4 path="/below-second.js" displayPath="below-second.js" body=f4
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f5
+    v1 = NewClosure function=f6
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="registerImports" [isFreeName]
+    v4 = Call v3, -, v0, v1, v1
+    Return
+}
+function f1 name="first" module=m1 kind=Module results=[{type=anything}] {
+    v0 = ImportModule module=m2 referrer=m1
+    Return
+}
+function f2 name="belowFirst" module=m2 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="below-first.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f3 name="second" module=m3 kind=Module results=[{type=anything}] {
+    v0 = ImportModule module=m4 referrer=m3
+    Return
+}
+function f4 name="belowSecond" module=m4 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="below-second.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f5 name="requireFirst" results=[{type=anything}] {
+    v0 = RequireModule module=m1 referrer=m0 specifier="./first.js"
+    Return v0
+}
+function f6 name="requireSecond" results=[{type=anything}] {
+    v0 = RequireModule module=m3 referrer=m0 specifier="./second.js"
+    Return v0
+}
+)IR"_s;
+
+// running.js throws behind its import() of other.js, which imports below.js.
+static constexpr ASCIILiteral moduleThatThrowsBehindImport = R"IR(module m1 path="/running.js" displayPath="running.js" body=f1
+module m2 path="/other.js" displayPath="other.js" body=f2 requests=[{target=m3 completes=true}]
+module m3 path="/below.js" displayPath="below.js" body=f3
+function f1 name="running" module=m1 kind=Module results=[{type=anything}] {
+    v0 = ImportModule module=m2 referrer=m1
+    v1 = String string="thrown by running.js"
+    Throw v1
+}
+function f2 name="other" module=m2 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="other.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f3 name="below" module=m3 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="below.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+)IR"_s;
+
+// For native code that calls require(): the realm has no report().
+static constexpr ASCIILiteral modulesRequiredByNativeCode = R"IR(module m0 path="/first.js" displayPath="first.js" body=f0
+module m1 path="/below-first.js" displayPath="below-first.js" body=f1
+module m2 path="/second.js" displayPath="second.js" body=f2
+module m3 path="/below-second.js" displayPath="below-second.js" body=f3
+entry module=m0
+entry module=m2
+function f0 name="first" kind=Module results=[{type=anything}] {
+    v0 = ImportModule module=m1 referrer=m0
+    v1 = Builtin builtin=GlobalThis
+    PropSet v1, v0 key="importOfBelowFirst"
+    Return
+}
+function f1 name="belowFirst" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = Boolean boolean=true
+    PropSet v0, v1 key="belowFirstHasRun"
+    Return
+}
+function f2 name="second" module=m2 kind=Module results=[{type=anything}] {
+    v0 = ImportModule module=m3 referrer=m2
+    v1 = Builtin builtin=GlobalThis
+    PropSet v1, v0 key="importOfBelowSecond"
+    Return
+}
+function f3 name="belowSecond" module=m3 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = Boolean boolean=true
+    PropSet v0, v1 key="belowSecondHasRun"
+    Return
+}
+)IR"_s;
+
 static constexpr ASCIILiteral scriptStart = R"js(
 globalThis.report = (label, value) => print(label + ": " + value);
 globalThis.id = value => value;
 globalThis.input = 1;
 globalThis.register = closure => { globalThis.registered = closure; };
 globalThis.registerImports = (first, second, last) => Object.assign(globalThis, { importFirst: first, importSecond: second, importLast: last });
+// A record that is retired is in no entry of the loader. Another cell, or a word of the stack, may still name it for a while.
+globalThis.recordsThatLoaderHolds = () => {
+    const snapshot = generateHeapSnapshot();
+    const classOf = new Map();
+    for (let at = 0; at < snapshot.nodes.length; at += 4)
+        classOf.set(snapshot.nodes[at], snapshot.nodeClassNames[snapshot.nodes[at + 2]]);
+    const held = new Set();
+    for (let at = 0; at < snapshot.edges.length; at += 4) {
+        const holder = classOf.get(snapshot.edges[at]);
+        if (classOf.get(snapshot.edges[at + 1]) === "CompiledModuleRecord" && (holder === "ModuleLoader" || holder === "ModuleRegistryEntry"))
+            held.add(snapshot.edges[at + 1]);
+    }
+    return held.size;
+};
 )js"_s;
 
 static constexpr ASCIILiteral scriptEnd = R"js(.then(() => {
@@ -687,6 +908,113 @@ later import: fulfilled
 )js"_s);
 }
 
+// The timer runs when the VM has been idle behind the job that called the closure.
+static constexpr ASCIILiteral reportRecordsBehindClosure = R"js(.then(async () => {
+    await registered();
+    setTimeout(() => report("records that the loader holds", recordsThatLoaderHolds()), 0);
+}).catch(error => print("the script threw " + error));
+)js"_s;
+
+static void testNoRecordOfImportSettledInsideRequire()
+{
+    checkShellOutput(makeString(mainThatRegistersClosure, moduleThatImportsWhileItRuns, closureThatRequires), { "validate"_s }, R"(runs: imported.js
+begins: running.js
+ends: running.js
+runs: other.js
+records that the loader holds: 0
+)"_s, reportRecordsBehindClosure);
+}
+
+static void testNoRecordOfImportSettledInsideRequireUnderEvaluation()
+{
+    checkShellOutput(makeString(mainThatRegistersClosure, moduleThatImportsWhileItRuns, closureThatImportsRequirer), { "validate"_s }, R"(begins: outer.js
+runs: imported.js
+begins: running.js
+ends: running.js
+runs: other.js
+ends: outer.js
+records that the loader holds: 0
+)"_s, reportRecordsBehindClosure);
+}
+
+static void testNoRecordOfImportSettledInJobsThatRunningModuleHasHostRun()
+{
+    checkShellOutput(makeString(mainThatRegistersClosure, moduleThatImportsWhileItRuns, closureThatImportsModuleThatRunsJobs), { "validate"_s }, R"(begins: outer.js
+runs: other.js
+ends: outer.js
+records that the loader holds: 0
+)"_s, reportRecordsBehindClosure);
+}
+
+static void testNoRecordOfImportsSettledInsideRequiresOfTwoEntries()
+{
+    // The VM is left between a timer and the first job behind it, and a later entry with such a require() asks for the idle VM again.
+    checkShellOutput(requiresInTwoEntries, { "validate"_s }, R"(runs: below-first.js
+records that the loader holds in the first job behind the timer: 0
+runs: below-second.js
+records that the loader holds behind both timers: 0
+)"_s, R"js(.then(() => {
+    setTimeout(() => {
+        importFirst();
+        Promise.resolve().then(() => report("records that the loader holds in the first job behind the timer", recordsThatLoaderHolds()));
+        setTimeout(() => {
+            importSecond();
+            setTimeout(() => report("records that the loader holds behind both timers", recordsThatLoaderHolds()), 0);
+        }, 0);
+    }, 0);
+}).catch(error => print("the script threw " + error));
+)js"_s);
+}
+
+static void testRecordsOfImportSettledInsideRequireThatThrows()
+{
+    // A module that failed keeps its record, with the error. What its import() loaded has run to its end.
+    checkShellOutput(makeString(mainThatRegistersClosure, moduleThatThrowsBehindImport, closureThatRequires), { "validate"_s }, R"(runs: below.js
+runs: other.js
+require() threw: thrown by running.js
+records that the loader holds: 0
+)"_s, R"js(.then(() => {
+    try {
+        registered();
+    } catch (error) {
+        report("require() threw", error);
+    }
+    setTimeout(() => report("records that the loader holds", recordsThatLoaderHolds()), 0);
+}).catch(error => print("the script threw " + error));
+)js"_s);
+}
+
+static void checkRequiresByNativeCode(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    JSGlobalObject* realm = program.realm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    Modules& modules = *modulesOf(realm);
+    constexpr ModuleID first { 0u };
+    constexpr ModuleID belowFirst { 1u };
+    constexpr ModuleID second { 2u };
+    constexpr ModuleID belowSecond { 3u };
+
+    // Nothing has entered the VM, so VM::whenIdle() calls at once, under the queue of the require(): the listener is refused as the call before it was.
+    AOT_TEST_CHECK(!vm.entryScope);
+    evaluateModuleSynchronously(realm, first);
+    AOT_TEST_CHECK(!scope.exception());
+    AOT_TEST_CHECK(modules.status(belowFirst) == ModuleStatus::Evaluated);
+    AOT_TEST_CHECK(modules.recordIfExists(belowFirst));
+
+    {
+        VMEntryScope entryScope(vm, realm);
+        evaluateModuleSynchronously(realm, second);
+        AOT_TEST_CHECK(!scope.exception());
+        AOT_TEST_CHECK(modules.status(belowSecond) == ModuleStatus::Evaluated);
+        AOT_TEST_CHECK(modules.recordIfExists(belowSecond));
+    }
+    // The VM has been idle.
+    AOT_TEST_CHECK(!modules.recordIfExists(belowSecond));
+    AOT_TEST_CHECK(!modules.recordIfExists(belowFirst));
+    AOT_TEST_CHECK(modules.status(belowFirst) == ModuleStatus::Evaluated && modules.status(belowSecond) == ModuleStatus::Evaluated);
+}
+
 std::span<const NativeTest> moduleProgramTests()
 {
     static constexpr NativeTest tests[] = {
@@ -698,6 +1026,12 @@ std::span<const NativeTest> moduleProgramTests()
         { "module-programs/import-meta-passed-on"_s, testImportMetaPassedOn },
         { "module-programs/module-builtins-in-every-position"_s, testModuleBuiltinsInEveryPosition },
         { "module-programs/termination-during-import-handoff"_s, testTerminationDuringImportHandoff },
+        { "module-programs/no-record-of-import-settled-inside-require"_s, testNoRecordOfImportSettledInsideRequire },
+        { "module-programs/no-record-of-import-settled-inside-require-under-evaluation"_s, testNoRecordOfImportSettledInsideRequireUnderEvaluation },
+        { "module-programs/no-record-of-import-settled-in-jobs-that-running-module-has-host-run"_s, testNoRecordOfImportSettledInJobsThatRunningModuleHasHostRun },
+        { "module-programs/no-record-of-imports-settled-inside-requires-of-two-entries"_s, testNoRecordOfImportsSettledInsideRequiresOfTwoEntries },
+        { "module-programs/records-of-import-settled-inside-require-that-throws"_s, testRecordsOfImportSettledInsideRequireThatThrows },
+        { "module-programs/no-record-of-import-settled-inside-require-by-native-code"_s, runNativeTestWithLoadedProgram<moduleProgramTests, modulesRequiredByNativeCode, checkRequiresByNativeCode> },
     };
     return tests;
 }
