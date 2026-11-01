@@ -26,6 +26,7 @@
 #include "config.h"
 #include "JSModuleRecord.h"
 
+#include "AOTModuleRecord.h"
 #include "AsyncContextSwapScope.h"
 #include "BuiltinNames.h"
 #include "CodeCache.h"
@@ -265,6 +266,11 @@ JSValue JSModuleRecord::evaluate(JSGlobalObject* globalObject, JSValue sentValue
                 return IterationStatus::Continue;
             Resolution resolution = resolveImport(globalObject, localName);
             RETURN_IF_EXCEPTION(scope, IterationStatus::Done);
+#if ENABLE(AOT)
+            // A compiled module has no environment, and its exports are read by name (abstractAccess() in JSScope.cpp).
+            if (vm.hasCompiledCode() && resolution.type == Resolution::Type::Resolved && resolution.moduleRecord->inherits<AOT::ModuleRecord>())
+                return IterationStatus::Continue;
+#endif
             if (resolution.type == Resolution::Type::Resolved)
                 environment->importSlot(index).set(vm, environment, resolution.moduleRecord->moduleEnvironment());
             return IterationStatus::Continue;
