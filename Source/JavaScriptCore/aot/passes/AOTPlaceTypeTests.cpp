@@ -38,6 +38,7 @@
 #include "AOTValueSubstitution.h"
 #include <wtf/Scope.h>
 #include <algorithm>
+#include <bit>
 #include <limits>
 #include <ranges>
 #include <tuple>
@@ -2126,6 +2127,14 @@ static LayoutID declarerOf(const Program& program, LayoutID layout, PropertyKeyI
     return program.declarersOfName(name)[holder - holders.begin()];
 }
 
+// An estimate of heat is a sum of products over the whole program. Its last digits follow the order of the sums, so they change with code that has nothing to do
+// with what is estimated. Whoever ranks by it ranks by its first twenty bits: what is made equally often stays equal.
+static double withoutLastDigits(double estimate)
+{
+    constexpr uint64_t lastDigits = (1ull << 32) - 1;
+    return std::bit_cast<double>(std::bit_cast<uint64_t>(estimate) & ~lastDigits);
+}
+
 // A class and the layouts below it have an inherited field in one slot, and a test for all of them is one test.
 static LayoutsToTest keepLikeliestDeclarations(FunctionPassContext& context, const Expected<LayoutList>& guessed, std::span<const NamedUse> uses, size_t maxDeclarations, const Expected<LayoutList>& metElsewhere)
 {
@@ -2154,8 +2163,9 @@ static LayoutsToTest keepLikeliestDeclarations(FunctionPassContext& context, con
     using RankedLayout = std::pair<Likelihood, LayoutID>;
     Vector<RankedLayout, 16> likeliestFirst(layouts.size(), [&](size_t index) {
         LayoutID layout = layouts.span()[index];
-        return RankedLayout { Likelihood { nameOfSubject && heat.isStoredUnder(layout, nameOfSubject).predicted(), layoutsSeenToArrive.contains(layout), layoutsMetElsewhere.contains(layout), module && (program.at(layout).module == module || heat.isAllocatedIn(layout, module).predicted()), heat.allocationsOf(layout).predicted() }, layout };
+        return RankedLayout { Likelihood { nameOfSubject && heat.isStoredUnder(layout, nameOfSubject).predicted(), layoutsSeenToArrive.contains(layout), layoutsMetElsewhere.contains(layout), module && (program.at(layout).module == module || heat.isAllocatedIn(layout, module).predicted()), withoutLastDigits(heat.allocationsOf(layout).predicted()) }, layout };
     });
+    // Among equals the lower number goes first: `layouts` is sorted by it. The front end numbers layouts by module, and in a module as it meets them.
     AOT::stableSortInLine(likeliestFirst, std::ranges::greater { }, &RankedLayout::first);
 
     // Every declaration kept is a fast path at each access of the subject, and the last one picked out of many seldom arrives.
