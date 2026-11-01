@@ -1281,15 +1281,21 @@ static void expectAccessorsDefinedBeforeInstances(Program& program, const FlowRe
     }
 }
 
+StringView pathOfFlowFacts()
+{
+    StringView points = StringView::fromLatin1(byteCast<char>(Options::dumpAOTIR()));
+    return points.startsWith("FlowFacts="_s) ? points.substring(10) : StringView();
+}
+
 // BUN_JSC_dumpAOTIR=FlowFacts=<path>. What flow hands this pass, a line a fact, each thing named by its place in the source, so that two builds can be compared:
 // a program and the same with more code, or one program under two orders of the rules. test/aot/harness/flow-facts.ts in Bun reads it.
 // "%p" stands for the process. The second compile of a process writes <path>.1.
 static std::unique_ptr<FilePrintStream> openFileOfFlowFacts()
 {
-    StringView points = StringView::fromLatin1(byteCast<char>(Options::dumpAOTIR()));
-    if (!points.startsWith("FlowFacts="_s)) [[likely]]
+    StringView path = pathOfFlowFacts();
+    if (path.isEmpty()) [[likely]]
         return nullptr;
-    String name = makeStringByReplacingAll(points.substring(10).toString(), "%p"_s, String::number(getCurrentProcessID()));
+    String name = makeStringByReplacingAll(path.toString(), "%p"_s, String::number(getCurrentProcessID()));
     static std::atomic<unsigned> filesWritten;
     unsigned number = filesWritten++;
     return FilePrintStream::open((number ? makeString(name, '.', number) : name).utf8(), "wb"_s);
@@ -1325,21 +1331,37 @@ static void writeFlowFacts(const Program& program, const FlowResults& results, c
             return makeString(function.locationOf(value).position, '.', static_cast<unsigned>(function.at(value).opcode), '.', ordinals[value.index()]);
         };
         const FlowBodyUpdate& body = application.bodies[index];
-        for (const FlowCallStamp& stamp : body.calls) {
-            const CalleeSet& set = program.at(stamp.callees);
+        // Every check and every call of a value has a line: where flow says nothing of one, it stays as it was read, and that is an answer too.
+        auto nothingArrivesAt = [&](ValueID operation) {
+            return std::ranges::binary_search(application.operationsThatNothingArrivesAt, std::pair { id, operation });
+        };
+        for (uint32_t number = 0; number < function.values.size(); ++number) {
+            ValueID value(number);
+            Opcode opcode = function.at(value).opcode;
+            if (opcode == Opcode::Check) {
+                const FlowClaimUpdate* claim = findByValue(body.claims.span(), value, &FlowClaimUpdate::claim);
+                out.println(claim && claim->isRedundant ? "K" : nothingArrivesAt(value) ? "n" : "k", "\t", self, "\t", siteOf(value), "\t");
+                continue;
+            }
+            if (flowRuleOf(opcode) != FlowRule::Call)
+                continue;
+            const FlowCallStamp* stamp = findByValue(body.calls.span(), value, &FlowCallStamp::value);
+            if (!stamp) {
+                out.println(nothingArrivesAt(value) ? "n" : "c", "\t", self, "\t", siteOf(value), "\t");
+                continue;
+            }
+            const CalleeSet& set = program.at(stamp->callees);
             Vector<String> callees;
             for (FunctionID callee : set.written().functions)
                 callees.append(placeOf(callee));
             for (BuiltinID builtin : set.written().builtins)
                 callees.append(makeString('@', program.builtins().tokenOf(builtin)));
             std::ranges::sort(callees, codePointCompareLessThan);
-            out.print(set.listsEveryCallee() ? "C" : "c", "\t", self, "\t", siteOf(stamp.value), "\t");
+            out.print(set.listsEveryCallee() ? "C" : "c", "\t", self, "\t", siteOf(value), "\t");
             for (const String& callee : callees)
                 out.print(callee, " ");
             out.println();
         }
-        for (const FlowClaimUpdate& claim : body.claims)
-            out.println(claim.isRedundant ? "K" : "k", "\t", self, "\t", siteOf(claim.claim), "\t");
     }
     for (uint32_t index = 0; index < application.layouts.size(); ++index) {
         const Layout& layout = program.at(LayoutID(index));

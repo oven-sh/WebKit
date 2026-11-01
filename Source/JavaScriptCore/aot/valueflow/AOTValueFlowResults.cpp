@@ -338,6 +338,28 @@ private:
 
 } // anonymous namespace
 
+static Vector<std::pair<FunctionID, ValueID>> findOperationsThatNothingArrivesAt(const ValueFlowResultInputs& inputs)
+{
+    Vector<std::pair<FunctionID, ValueID>> found;
+    BorrowedValueSetMaker maker(inputs.makerPool());
+    auto add = [&](FunctionID function, ValueID operation, const ValueFlowOperand& operand) {
+        if (inputs.sets().isEmpty(inputs.possibleValuesOf(maker.get(), operand)))
+            found.append({ function, operation });
+    };
+    for (const ValueFlowObservedValue& observed : inputs.bodies().observedValues()) {
+        if (observed.test && inputs.program.at(observed.function).at(observed.test).opcode == Opcode::Check)
+            add(observed.function, observed.test, observed.operand);
+    }
+    for (uint32_t index = 0; index < inputs.program.functions.size(); ++index) {
+        for (const ValueFlowStatement& statement : inputs.bodies().statementsOf(index)) {
+            if (statement.kind == ValueFlowStatementKind::Operation && flowRuleOf(statement.opcode) == FlowRule::Call)
+                add(FunctionID(index), statement.site, inputs.bodies().operandsOf(statement)[0]);
+        }
+    }
+    AOT::sort(found);
+    return found;
+}
+
 FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& build, const ListenerForSetsOutsideTypes* setsOutsideTypes, const JudgeOfUsesOfLibraryCode* goesOn)
 {
     RELEASE_ASSERT(&types == &program.types);
@@ -601,6 +623,8 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
     inputs.ledgerOfVariables = nullptr;
     build.destroyLater(WTF::move(ledgerOfVariables));
     build.destroyLater(WTF::move(ledgerOfBuiltinObjects));
+    if (!pathOfFlowFacts().isEmpty()) [[unlikely]]
+        tables.application->operationsThatNothingArrivesAt = findOperationsThatNothingArrivesAt(inputs);
     build.destroyLater(WTF::move(solution));
     return FlowResults(WTF::move(tables));
 }
