@@ -3027,8 +3027,12 @@ bool Modules::deliverFirstTextThatWaits(TextOfImport textOfImport)
         promise->fulfill(vm, text.requestedRecord.get());
         return true;
     }
-    // The load of `bun run` keeps the async context of the call of import() while it waits for the text.
-    AsyncContextSwapScope asyncContextOfImport(vm, m_instance.globalObject, text.asyncContext.get());
+    // The import() goes on as a job of its own would: under the async context of its call, which the load of `bun run` keeps while it waits for the text, and under none where the call had none.
+    // Not in the drain of a synchronous load, where no job of the loader enters an async context.
+    std::optional<AsyncContextSwapScope> asyncContextOfCall;
+    if (!vm.synchronousModuleQueue())
+        asyncContextOfCall.emplace(vm, m_instance.globalObject, text.asyncContext.get());
+    ModuleEvaluationAsyncContextScope jobOfImport(vm, m_instance.globalObject, text.asyncContext.get());
     bool isMadeAgain = text.waitsApart || text.caller == ImportCaller::Host;
     JSPromise* loaded = startImport(text.module, text.referrerAsyncOrder, isMadeAgain ? text.caller : ImportCaller::Host, textOfImport, isMadeAgain ? promise : nullptr);
     if (scope.exception()) [[unlikely]] {
