@@ -134,6 +134,38 @@ static ALWAYS_INLINE void threadSelfRestrict()
 }
 
 #endif
+#elif ENABLE(JIT_PROTECTION_KEY)
+
+#include "JSCConfig.h"
+
+namespace JSC {
+// Out of line, so that it alone has RDPKRU and WRPKRU: Bun lists every function that has an instruction newer than its baseline CPU.
+// The kernel starts a signal handler with no rights to the region, so one that reads it as data, as backtrace() does, calls this
+// with false first. Does nothing where the region has no key.
+JS_EXPORT_PRIVATE void setJITRegionWritableForCurrentThread(bool);
+}
+
+template <MemoryRestriction restriction>
+static ALWAYS_INLINE bool threadSelfRestrictSupported()
+{
+    if constexpr ((restriction == MemoryRestriction::kRwxToRw)
+        || (restriction == MemoryRestriction::kRwxToRx))
+        return g_jscConfig.jitProtectionKeyBits;
+    return false;
+}
+
+template <MemoryRestriction restriction>
+static ALWAYS_INLINE void threadSelfRestrict()
+{
+    ASSERT(g_jscConfig.useFastJITPermissions);
+    if constexpr (restriction == MemoryRestriction::kRwxToRw)
+        JSC::setJITRegionWritableForCurrentThread(true);
+    else if constexpr (restriction == MemoryRestriction::kRwxToRx)
+        JSC::setJITRegionWritableForCurrentThread(false);
+    else
+        RELEASE_ASSERT_NOT_REACHED();
+}
+
 #else // Not OS(DARWIN) && CPU(ARM64)
 #if defined(OS_THREAD_SELF_RESTRICT) || defined(OS_THREAD_SELF_RESTRICT_SUPPORTED)
 #error OS_THREAD_SELF_RESTRICT and OS_THREAD_SELF_RESTRICT_SUPPORTED are only used on ARM64+Darwin-only systems
