@@ -33,6 +33,8 @@ inline bool forwardsCallOfAnyReceiver(const BuiltinOverload& overload) { return 
 std::optional<ForwardedCallPlan> planForwardedCall(const Program&, const Function&, const BuiltinCall&);
 // The built-in refuses a callee and a new.target that are no constructors in its own words, and before it reads the list.
 std::optional<ForwardedCallPlan> planForwardedConstruct(const Program&, const Function&, const BuiltinCall&);
+// Written any other way than `Reflect.construct(..)`, the built-in has a frame of its own between the caller and the constructor. What may be no constructor is refused by the built-in, in its own words.
+bool constructsInPlaceWithoutRefusal(const Program&, const Function&, const Value& builtinCall, const ForwardedCallPlan&);
 std::optional<BuiltinOperand> operandCalledBy(const BuiltinOverload&);
 std::optional<BuiltinOperand> operandListedBy(const BuiltinOverload&);
 

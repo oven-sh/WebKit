@@ -153,6 +153,41 @@ static FunctionList findClosuresArrivingOnWaysOfTheirOwn(FunctionPassContext& co
     return closures;
 }
 
+// `Object.getPrototypeOf(B)`: the layouts were declared with the function that stands above a constructor function. Whether it still does is for a test to say.
+// Where the read stands behind a helper that finds its built-in on several ways, the ways meet in front of whoever takes the answer.
+static void addFunctionsDeclaredAbove(FunctionPassContext& context, ValueID value, unsigned joinsLeft, FunctionList& found)
+{
+    const Program& program = context.program;
+    const Function& function = context.function;
+    ValueID source = context.analyses.identityOf(value);
+    const Value& definition = function.at(source);
+    if (definition.opcode == Opcode::CallBuiltin) {
+        const BuiltinTable& builtins = program.builtins();
+        BuiltinID called = builtins.canonicalID(builtins.at(definition.overload()).builtin);
+        BuiltinCall call = builtinCallOf(program, definition);
+        if ((called != Builtins::ObjectGetPrototypeOf && called != Builtins::ReflectGetPrototypeOf) || call.arguments.empty())
+            return;
+        const Type& below = program.typeOf(function, call.arguments[0]);
+        if (!below.isObject() || !below.hasOnlyKnownCallees() || below.layouts || !below.builtins.isEmpty() || below.functions.size() != 1)
+            return;
+        LayoutID constructed = program.at(*below.functions.begin()).constructedClass;
+        LayoutID base = constructed ? program.at(declaredLayoutOf(program, constructed)).base : LayoutID();
+        if (FunctionID above = base ? program.at(declaredLayoutOf(program, base)).constructor : FunctionID())
+            found.add(above);
+        return;
+    }
+    if (definition.opcode != Opcode::Parameter || !joinsLeft)
+        return;
+    ValueLocation location = context.analyses.useLists().locationOf(source);
+    if (location.placement != ValuePlacement::Parameter || location.block == entryBlock)
+        return;
+    for (Edge edge : context.analyses.cfg().incomingEdges(location.block)) {
+        const Target& target = targetOf(function, edge);
+        if (!edge.isHandlerEdge() && location.index < target.arguments.size())
+            addFunctionsDeclaredAbove(context, target.arguments[location.index], joinsLeft - 1, found);
+    }
+}
+
 static PropertyKeyID keyOfRead(FunctionPassContext& context, ValueID value)
 {
     const Value& read = context.function.at(context.analyses.identityOf(value));
@@ -815,6 +850,22 @@ static LayoutID findClassAllocatedBySuperCall(const Program& program, LayoutID h
         return holder;
     std::span<const LayoutID> allocatedBelow = program.layoutsBelow(holder);
     return allocatedBelow.size() == 1 ? allocatedBelow[0] : LayoutID();
+}
+
+// `Reflect.construct(A, list, B)`: flow hands the constructor an instance of new.target's class. Where the fields of that class go on from those of the function that is constructed, the object is made as one.
+static LayoutID findClassSelectedByNewTarget(const Program& program, const Type& newTarget, LayoutID constructed)
+{
+    if (!newTarget.isObject() || !newTarget.hasOnlyKnownCallees() || newTarget.layouts || !newTarget.builtins.isEmpty() || newTarget.functions.size() != 1)
+        return { };
+    const Function& selecting = program.at(*newTarget.functions.begin());
+    if (selecting.kind != FunctionKind::Plain || selecting.constructorForm() != ConstructorForm::Base || !selecting.constructedClass)
+        return { };
+    if (!program.at(declaredLayoutOf(program, selecting.constructedClass)).has(LayoutFlags::IsConstructorFunction))
+        return { };
+    LayoutID layout = selecting.constructedClass;
+    for (size_t steps = 0; layout && layout != constructed && steps <= program.layouts.size(); ++steps)
+        layout = program.at(layout).base;
+    return layout == constructed ? selecting.constructedClass : LayoutID();
 }
 
 static Type classObjectsAllocatedAtOrBelow(const Program& program, LayoutID holder)
@@ -1709,6 +1760,8 @@ struct CallResolver {
             { { Opcode::Call, Opcode::PropGet, Opcode::PropSet }, &CallResolver::planReceiverDispatch },
             { { Opcode::Call, Opcode::PropGet, Opcode::PropSet }, &CallResolver::planClassObjectMember },
             { { Opcode::Call, Opcode::SuperGet, Opcode::SuperSet }, &CallResolver::planSuperMember },
+            { { Opcode::Call }, &CallResolver::planCallOfBuiltinBoundHere },
+            { { Opcode::Call, Opcode::CallList }, &CallResolver::planCallOfBuiltinBoundElsewhere },
             { { Opcode::Call }, &CallResolver::planCalleeDispatch },
             { { Opcode::Construct, Opcode::SuperConstruct, Opcode::SuperConstructList }, &CallResolver::planConstruct },
             { { Opcode::CallList }, &CallResolver::planRestHandover },
@@ -2544,6 +2597,64 @@ struct CallResolver {
         };
     }
 
+    // `next = iterator.next.bind(iterator); next()`: whoever calls what that bind answered calls the built-in on what was bound. A bound function has no frame of its own, and nothing changes what it binds.
+    Plan planCallOfBuiltinBoundHere(const CallSite& site)
+    {
+        const Value& call = function.at(site.position.value);
+        if (!typeOf(call.calleeOperand()).overlaps(Type::builtinClass(BuiltinClasses::BoundFunction), program))
+            return declined;
+        context.planAsksAboutPlace = true;
+        const Value& bind = function.at(sameObjectThroughCasts(function, context.analyses.identityOf(call.calleeOperand())).valueInFrontOfFacts());
+        if (bind.opcode != Opcode::CallBuiltin || bind.builtinCallForm() != BuiltinCallForm::Whole || program.builtins().at(bind.overload()).builtin != Builtins::FunctionPrototypeBind)
+            return declined;
+        BuiltinCall bound = builtinCallOf(program, bind);
+        // What `call` and `apply` say of a receiver that cannot be called, they say in other words where they are called by name.
+        BuiltinID target = bound.receiver ? typeOf(bound.receiver).singleBuiltin() : BuiltinID();
+        if (!target || forwardsCallOfAnyReceiver(program.builtins().canonicalID(target)))
+            return declined;
+        Vector<ValueID, 8> arguments;
+        if (bound.arguments.size() > 1)
+            arguments.append(bound.arguments.subspan(1));
+        arguments.append(call.argumentsOperands());
+        return [this, &site, target = bound.receiver, boundThis = bound.arguments.empty() ? ValueID() : bound.arguments[0], arguments = WTF::move(arguments)] {
+            Value& edited = function.edit(site.position.value);
+            edited.setCalleeOperand(target);
+            edited.setThisValueOperand(boundThis);
+            edited.setArgumentsOperands(arguments.span());
+            edited.setCallees({ });
+            context.analyses.didChangeValues();
+        };
+    }
+
+    // `_extends = Object.assign ? Object.assign.bind() : function (..) { .. }`: flow has followed every bound function that reaches the call to a bind of nothing to one built-in.
+    Plan planCallOfBuiltinBoundElsewhere(const CallSite& site)
+    {
+        const Value& call = function.at(site.position.value);
+        BuiltinID target = flow.hasResults() ? flow.builtinBehindBoundFunctionsCalledAt(call.accessSite()) : BuiltinID();
+        TypeID boundFunctions = context.types.intern(Type::builtinClass(BuiltinClasses::BoundFunction));
+        if (!target || forwardsCallOfAnyReceiver(program.builtins().canonicalID(target)) || !typeOf(call.calleeOperand()).overlaps(program.at(boundFunctions), program))
+            return declined;
+        context.planAsksAboutPlace = true;
+        if (hasFailedEarlier(makeTypeTest(call.calleeOperand(), boundFunctions), site))
+            return declined;
+        return [this, &site, target, boundFunctions] {
+            expansion.begin(site.position);
+            const Value& original = expansion.original();
+            IRBuilder::BranchBlocks branch = builder.emitBranch(expansion.append(makeTypeTest(original.calleeOperand(), boundFunctions)), expansion.frequency(), expansion.frequency());
+            builder.moveToEndOf(branch.notTaken);
+            expansion.finishArm(expansion.appendOriginal());
+            builder.moveToEndOf(branch.taken);
+            Value builtin = IRBuilder::make(Opcode::Builtin);
+            builtin.setBuiltin(target);
+            Value onTarget = original;
+            onTarget.setCalleeOperand(expansion.append(WTF::move(builtin)));
+            onTarget.setThisValueOperand({ });
+            onTarget.setCallees({ });
+            expansion.finishArm(expansion.append(WTF::move(onTarget)));
+            expansion.end();
+        };
+    }
+
     Plan planCalleeDispatch(const CallSite& site)
     {
         RELEASE_ASSERT(site.opcode == Opcode::Call);
@@ -2836,8 +2947,13 @@ struct CallResolver {
         if (!allocatesOwnThis(program.at(member))) {
             if (!(isSuperCall ? construct.layout() : constructed))
                 return std::unexpected(CallDeclineReason::CalleeNotCallable);
-            if (!isOwnNewTarget && !isSuperCall)
-                return declined;
+            if (!isOwnNewTarget && !isSuperCall) {
+                arm.allocatedClass = findClassSelectedByNewTarget(program, typeOf(newTarget), constructed);
+                if (!arm.allocatedClass || program.at(arm.allocatedClass).flow.allocation == AllocationState::NeverAllocated)
+                    return declined;
+                arm.readsConstructPrototype = !hasOnePrototypeObject(program, arm.allocatedClass);
+                return arm;
+            }
             if (isSuperCall && !isAlwaysClassAtOrBelow(program, typeOf(newTarget), construct.layout())) {
                 Type classObjects = classObjectsAllocatedAtOrBelow(program, construct.layout());
                 if (!typeOf(newTarget).overlaps(classObjects, program) || classObjects.functions.size() > context.limit(LimitID::MaxDispatchCases) || !isAlwaysClassAtOrBelow(program, classObjects, construct.layout()))
@@ -3098,6 +3214,88 @@ struct CallResolver {
         });
     }
 
+    // The functions of the program among what a value is proven to be, where each of them can be constructed.
+    Vector<FunctionID, 4> constructorsAmong(ValueID value)
+    {
+        Vector<FunctionID, 4> constructors;
+        for (FunctionID id : typeOf(value).functions) {
+            if (program.at(id).constructorForm() != ConstructorForm::NotConstructor)
+                constructors.append(id);
+        }
+        return constructors;
+    }
+
+    // `Reflect.construct(Object.getPrototypeOf(B), list, Object.getPrototypeOf(this).constructor)`: flow lists what stands above a function and what a prototype object names as its constructor,
+    // beside Function.prototype, Object and undefined. Behind a test for the functions of the list the construction is as if they were written there. The built-in takes the rest, which it may refuse.
+    Plan planConstructBehindTests(const CallSite& site, const ForwardedCallPlan& forwarded)
+    {
+        if (isRare(site).predicted() || (forwarded.list && !isAlwaysArray(typeOf(forwarded.list))))
+            return declined;
+        Vector<FunctionID, 4> targets = constructorsAmong(forwarded.callee);
+        if (targets.isEmpty()) {
+            AOT_THRESHOLD(unsigned, mostJoinsWalked, 4);
+            FunctionList declaredAbove;
+            addFunctionsDeclaredAbove(context, forwarded.callee, mostJoinsWalked, declaredAbove);
+            for (FunctionID id : declaredAbove) {
+                if (program.at(id).constructorForm() != ConstructorForm::NotConstructor)
+                    targets.append(id);
+            }
+        }
+        Vector<FunctionID, 4> newTargets = forwarded.newTarget ? constructorsAmong(forwarded.newTarget) : Vector<FunctionID, 4>();
+        if (targets.isEmpty() || (forwarded.newTarget && newTargets.isEmpty()))
+            return declined;
+        if (std::max(targets.size(), newTargets.size()) > context.limit(LimitID::MaxDispatchCases))
+            return declined;
+
+        return [this, &site, forwarded, targets = WTF::move(targets), newTargets = WTF::move(newTargets)] {
+            expansion.begin(site.position);
+            Expected<BlockFrequency> frequency = expansion.frequency();
+            auto operandIndexOf = [&](ValueID operand) {
+                std::optional<uint32_t> found;
+                expansion.original().forEachOperand([&](ValueID id, uint32_t index) {
+                    if (id == operand && !found)
+                        found = index;
+                });
+                return found;
+            };
+            auto leaveToBuiltin = [&](ValueID operand, ValueID narrowed) {
+                expansion.finishArm(expansion.appendOriginal({ .operandIndex = operandIndexOf(operand), .operand = narrowed, .isNarrowedValue = true }));
+            };
+            auto construct = [&](ValueID target, ValueID newTarget) {
+                ForwardedCallPlan plan = forwarded;
+                plan.callee = target;
+                plan.newTarget = newTarget;
+                Value call = expansion.original();
+                becomeForwardedCall(call, plan);
+                ValueID constructed = expansion.append(WTF::move(call));
+                expansion.finishArm(constructed);
+                // Where the built-in stood in tail position, the arm has been marked as a call that leaves its function. A construction never does.
+                function.edit(constructed, ValueEdit::Definition).isTailCall = false;
+            };
+
+            Type allTargets;
+            for (FunctionID id : targets)
+                allTargets.functions.add(id);
+            ValueSplit byTarget { .value = forwarded.callee, .arms = { SplitArm { context.types.intern(allTargets), frequency } }, .hasRest = true, .restFrequency = rarerOf(frequency, BlockFrequency::Unlikely) };
+            emitSplit(expansion, byTarget, [&](uint32_t, ValueID target) {
+                if (!forwarded.newTarget)
+                    return construct(target, { });
+                // new.target selects what is allocated, so each function of the list has an arm of its own.
+                ValueSplit byNewTarget { .value = forwarded.newTarget, .arms = { }, .hasRest = true, .restFrequency = rarerOf(frequency, BlockFrequency::Unlikely) };
+                for (FunctionID id : newTargets)
+                    byNewTarget.arms.append(SplitArm { context.types.intern(Type::forFunction(id)), frequency });
+                emitSplit(expansion, byNewTarget, [&](uint32_t, ValueID newTarget) {
+                    construct(target, newTarget);
+                }, [&](ValueID rest) {
+                    leaveToBuiltin(forwarded.newTarget, rest);
+                });
+            }, [&](ValueID rest) {
+                leaveToBuiltin(forwarded.callee, rest);
+            });
+            expansion.end();
+        };
+    }
+
     Plan planFunctionMethod(const CallSite& site)
     {
         const Value& value = function.at(site.position.value);
@@ -3114,8 +3312,10 @@ struct CallResolver {
         if (!forwarded) {
             forwarded = planForwardedConstruct(program, function, builtinCallOf(program, value));
             // Written any other way, the built-in has a frame of its own between the caller and the constructor.
-            if (forwarded && !(value.isDoneInPlace() && isAlwaysConstructor(forwarded->callee) && (!forwarded->newTarget || isAlwaysConstructor(forwarded->newTarget))))
+            if (forwarded && !value.isDoneInPlace())
                 return declined;
+            if (forwarded && !(isAlwaysConstructor(forwarded->callee) && (!forwarded->newTarget || isAlwaysConstructor(forwarded->newTarget))))
+                return planConstructBehindTests(site, *forwarded);
         }
         if (!forwarded || (forwarded->list && !isAlwaysArray(typeOf(forwarded->list))))
             return declined;

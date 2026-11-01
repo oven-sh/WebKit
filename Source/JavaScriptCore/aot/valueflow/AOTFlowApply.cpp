@@ -663,10 +663,16 @@ static bool makesTailCall(const Function& function)
 static BitVector findFunctionsThatAreOnlyConstructed(const FlowApplyContext& context)
 {
     const Program& program = context.program;
+    const ParallelLoops& loops = context.build.parallelLoops();
     std::span<const FlowBodyUpdate> bodies = context.application.bodies.span();
     BitVector constructed(program.functions.size());
+    // First every construction is noted, then every other call is taken back. Within each of the two the order does not matter, so all threads write, a byte a function.
+    Vector<uint8_t> isConstructed(FillWith { }, program.functions.size(), static_cast<uint8_t>(0));
+    auto isNoted = [&](FunctionID callee) {
+        return !!WTF::atomicLoad(&isConstructed[callee.index()], std::memory_order_relaxed);
+    };
     auto forEachStampedCallee = [&](bool ofConstructions, const auto& functor) {
-        for (size_t index = 0; index < bodies.size(); ++index) {
+        forEachIndexInParallel(loops, bodies.size(), [&](unsigned index) {
             for (const FlowCallStamp& stamp : bodies[index].calls) {
                 if (!!OperandPosition::newTarget(program.functions[index].at(stamp.value).opcode) != ofConstructions)
                     continue;
@@ -674,35 +680,44 @@ static BitVector findFunctionsThatAreOnlyConstructed(const FlowApplyContext& con
                 for (FunctionID callee : followed.value())
                     functor(callee);
             }
-        }
+        });
     };
     auto noteConstruction = [&](FunctionID callee) {
+        if (isNoted(callee))
+            return;
         const Function& function = program.at(callee);
         if (function.kind == FunctionKind::Plain && context.results.function(callee).callers == CallerState::AllKnown && makesTailCall(function))
-            constructed.quickSet(callee.index());
+            WTF::atomicStore(&isConstructed[callee.index()], static_cast<uint8_t>(1), std::memory_order_relaxed);
+    };
+    auto noteOtherCall = [&](FunctionID callee) {
+        if (isNoted(callee))
+            WTF::atomicStore(&isConstructed[callee.index()], static_cast<uint8_t>(0), std::memory_order_relaxed);
     };
     forEachStampedCallee(true, noteConstruction);
     for (const FlowIndirectCall& call : context.results.indirectCalls()) {
         if (call.isAlwaysConstruction)
             noteConstruction(call.callee);
     }
-    if (constructed.isEmpty())
+    if (!std::ranges::contains(isConstructed, 1))
         return constructed;
 
-    forEachStampedCallee(false, [&](FunctionID callee) {
-        constructed.quickClear(callee.index());
-    });
+    forEachStampedCallee(false, noteOtherCall);
     for (const FlowIndirectCall& call : context.results.indirectCalls()) {
         if (!call.isAlwaysConstruction)
-            constructed.quickClear(call.callee.index());
+            noteOtherCall(call.callee);
     }
-    for (const Function& function : program.functions) {
+    forEachIndexInParallel(loops, program.functions.size(), [&](unsigned index) {
+        const Function& function = program.functions[index];
         for (const Block& block : function.blocks) {
             for (ValueID id : block.values) {
                 if (function.at(id).opcode == Opcode::CallDirect && !function.at(id).isConstruction())
-                    constructed.quickClear(function.at(id).function().index());
+                    noteOtherCall(function.at(id).function());
             }
         }
+    });
+    for (size_t index = 0; index < isConstructed.size(); ++index) {
+        if (isConstructed[index])
+            constructed.quickSet(index);
     }
     return constructed;
 }

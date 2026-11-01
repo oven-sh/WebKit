@@ -913,6 +913,8 @@ void AccessEmitter::putNamedProperty(const ValueContext& value, Boxed object, Pu
         stub = putKnownFieldThatTakesAnyValue(mode);
     else if (storedFieldAcceptsAnyNumber(m_program, m_placement, m_function, value.value()))
         stub = putKnownFieldAcceptingAnyNumber(mode);
+    else if (storedFieldKeepsNumbersAsValues(m_program, m_placement, m_function, value.value()))
+        stub = putKnownFieldKeepingNumbersAsValues(mode);
     callStub(value, stub, { object.value(), in<Boxed>(value->valueOperand()).value() }, { .immediate = *record });
 }
 

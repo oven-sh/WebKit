@@ -776,6 +776,33 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowStackOverflowError, void, (Instance* i
     OPERATION_RETURN(scope);
 }
 
+static bool tryListLandingOfMisfit(LandingsOfMisfits& landings, const LandingOfMisfit& listed)
+{
+    if ((landings.numberOfEntriesFilled + 1) * 2 > landings.numberOfPlaces())
+        return false;
+    LandingOfMisfit* entry = landings.placeOf(listed.returnAddress);
+    while (entry->returnAddress)
+        ++entry;
+    if (entry == landings.entries + 2 * landings.numberOfPlaces() - 1)
+        return false;
+    *entry = listed;
+    ++landings.numberOfEntriesFilled;
+    return true;
+}
+
+static void listLandingOfMisfit(Instance& instance, const LandingOfMisfit& listed)
+{
+    LandingsOfMisfits& landings = instance.scratch.landingsOfMisfits;
+    while (!tryListLandingOfMisfit(landings, listed)) {
+        std::span former = unsafeMakeSpan(landings.entries, landings.numberOfEntriesFilled ? 2 * landings.numberOfPlaces() : 0);
+        for (size_t numberOfPlaces = std::max(LandingsOfMisfits::leastNumberOfPlaces, 2 * landings.numberOfPlaces());; numberOfPlaces *= 2) {
+            landings = { instance.state->tableArena.allocate<LandingOfMisfit>(2 * numberOfPlaces), (numberOfPlaces - 1) << LandingsOfMisfits::shiftOfAddress, 0, { } };
+            if (std::ranges::all_of(former, [&](const LandingOfMisfit& entry) { return !entry.returnAddress || tryListLandingOfMisfit(landings, entry); }))
+                break;
+        }
+    }
+}
+
 // A caller that relies on the type has a landing for what is not of it. Any other caller takes whatever is returned, at its return address.
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFindLandingOfMisfit, void*, (Instance* instance, void* returnAddress, EncodedJSValue misfit))
 {
@@ -788,8 +815,8 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFindLandingOfMisfit, void*, (Insta
         instance->scratch.misfit = misfit;
         landing = const_cast<uint8_t*>(state.image->codeOf(site->code.index())) + site->handler->codeOffset;
     }
-    // The stub asks here first the next time.
-    instance->scratch.landingsOfMisfits[LandingOfMisfit::indexOf(returnAddress)] = { returnAddress, landing };
+    // The stub finds it there the next time.
+    listLandingOfMisfit(*instance, { returnAddress, landing });
     return landing;
 }
 

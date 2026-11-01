@@ -169,8 +169,10 @@ const CachedPropertyList* tryGetListOfOwnProperties(VM& vm, JSObject* object, JS
         return nullptr;
     ASSERT(vm.heap.isDeferred());
     CachedPropertyList* list = cachedPropertyList(vm, *typed);
-    if (list)
+    if (list && !list->holdsOnlyPlainData) {
+        writeJSONKeys(vm, *list);
         list->holdsOnlyPlainData = true;
+    }
     return list;
 }
 

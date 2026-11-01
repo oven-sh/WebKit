@@ -32,6 +32,7 @@
 #include "AOTVector.h"
 #include "BuiltinNames.h"
 #include "DeferGC.h"
+#include "Exception.h"
 #include "ExecutableBaseInlines.h"
 #include "InternalFieldTuple.h"
 #include "Interpreter.h"
@@ -827,13 +828,22 @@ static std::optional<RunStart> findRunAtTop(VM& vm)
 static std::optional<RunStart> findRunBelowHostFunction(VM& vm, FrameOnTop frameOnTop)
 {
     CallFrame* top = vm.topCallFrame;
-    if (top->callerFrameOrEntryFrame() == vm.topEntryFrame || top->isZombieFrame() || top->isNativeCalleeFrame() || top->codeBlock() || vm.aotState().classCalledWithoutNew == top)
+    if (top->isZombieFrame() || top->isNativeCalleeFrame() || top->codeBlock() || vm.aotState().classCalledWithoutNew == top)
         return std::nullopt;
     if (frameOnTop == FrameOnTop::IsListed) {
         JSCell* callee = top->callee().asCell();
         auto* function = callee ? dynamicDowncast<JSFunction>(callee) : nullptr;
         if (!function || function->executable()->implementationVisibility() != ImplementationVisibility::Public)
             return std::nullopt;
+    }
+    // An operation of compiled code has entered the VM for the function, as for a getter that `super.name` finds.
+    if (top->callerFrameOrEntryFrame() == vm.topEntryFrame) {
+        VMEntryRecord* entry = vmEntryRecord(vm.topEntryFrame);
+        CallFrame* operationRecord = entry->prevTopCallFrame();
+        // The frames of an async function that waits for this entry would come in between.
+        if (!isOperationFrameRecord(vm, operationRecord) || (Options::useAsyncStackTrace() && JSC::Interpreter::asyncFunctionIn(entry->m_context)))
+            return std::nullopt;
+        return RunStart { stackPointerOfCaller(operationRecord), operationRecord->callerFrame(), operationRecord->rawReturnPC(), entry->prevTopEntryFrame(), false, true };
     }
     const CallSiteCache::Entry* site = vm.aotState().callSiteCache->find(removeCodePtrTag(top->rawReturnPC()));
     if (!site || !site->isStubReturnSite() || site->stubFrameKind != StubFrameKind::HostCall)
@@ -843,6 +853,7 @@ static std::optional<RunStart> findRunBelowHostFunction(VM& vm, FrameOnTop frame
 
 static NEVER_INLINE std::optional<RunStart> findRunBelowOtherFrames(VM& vm, JSCell* owner, WTF::Vector<StackFrame>& framesOnTop, size_t maxStackSize)
 {
+    countStackCaptureBelowListedFrames(vm);
     std::optional<CompiledFrameIterator> frames;
     vm.interpreter.appendStackTrace(owner, framesOnTop, { .callFrame = vm.topCallFrame, .compiledFramesBelow = &frames }, maxStackSize);
     if (!frames || frames->isAtEnd() || frames->hasNoMachineFrame() || framesOnTop.size() > ReturnAddressTrace::maxFramesOnTop)
@@ -1066,6 +1077,8 @@ static ALWAYS_INLINE ReturnAddressTrace* tryCaptureRun(VM& vm, JSCell* owner, si
 
 ReturnAddressTrace* tryCaptureStackTrace(VM& vm, JSCell* owner, size_t maxStackSize, std::unique_ptr<WTF::Vector<StackFrame>>& otherFrames, JSCell* lastConstructorToSkip, FrameOnTop frameOnTop)
 {
+    if (owner->inherits<Exception>())
+        countStackTakenForThrow(vm);
     std::optional<AssertNoGC> assertNoGC { std::in_place };
     WTF::Vector<StackFrame> results;
     auto* trace = tryCaptureRun(vm, owner, maxStackSize, results, lastConstructorToSkip, frameOnTop, [&](size_t size) {
@@ -1728,7 +1741,9 @@ static ALWAYS_INLINE SuspendedAsyncFunction findSuspendedAsyncFunction(JSCell* c
 static NEVER_INLINE void appendInlinedFrames(const CallSiteCache::Entry& entry, WTF::Vector<StackFrame>& results)
 {
     ShownFrameFilter filter(true);
-    forEachShownFrame(entry.code, entry.site, filter, [&](const TraceFrame& frame) {
+    CallSiteRecord site = entry.site;
+    site.kind = CallSiteKind::Plain;
+    forEachShownFrame(entry.code, site, filter, [&](const TraceFrame& frame) {
         // A function that is not async cannot wait: it has handed on the promise of its callee and returned. Only its code was taken into the function that waits.
         if (FunctionDescription(frame.function).isAsync())
             results.constructAndAppend(frame, true);

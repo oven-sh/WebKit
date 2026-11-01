@@ -682,7 +682,7 @@ public:
             [&] {
                 m_bodies = ParallelArray<ValueFlowBody>(m_loops, m_numberOfFunctions + 1, largestFirst.span(), [&](unsigned index) {
                     if (index == m_numberOfFunctions)
-                        return makeHostBody(m_program, tables, m_result.m_notedOperations.span());
+                        return makeHostBody(m_program, tables, m_result.m_notedOperations.span(), &m_result.m_unobservedDefinitions);
                     return reduceBody(m_program, tables, FunctionID(index), &m_result.m_unobservedDefinitions);
                 });
             },

@@ -1274,7 +1274,7 @@ struct FieldResults {
                     held.facts.set(FieldFact::MayBeAccessed, uses.mayBeAccessedUnder(objects, field.key));
                     held.facts.set(FieldFact::IsStoredAfterCreation, stores.isStoredAfterCreation(id, field.key));
                     bool mayBeMissing = known[declaration.layout.index()][declaration.field].facts.contains(FieldFact::IsMissingAtCreation) || held.possibleMutations.containsAny({ ObjectMutation::DeleteField, ObjectMutation::ReachUnknownJavaScript });
-                    held.facts.set(FieldFact::MayInheritName, !mayBeMissing || !build.isEnabled(FlowResultKind::OwnNames, declaration.layout.index()) || !inheritsNothingUnder(maker, id, above, field.key));
+                    held.facts.set(FieldFact::MayInheritName, (!mayBeMissing && !classCannotAnswerForNames(program.at(id), application.layouts[id.index()].classFlow)) || !build.isEnabled(FlowResultKind::OwnNames, declaration.layout.index()) || !inheritsNothingUnder(maker, id, above, field.key));
                 }
                 if (field.key && !hasNodeOfItsOwn(field)) {
                     if (build.isEnabled(FlowResultKind::AppendedFields, declaration.layout.index())) {
@@ -2197,7 +2197,7 @@ struct FieldResults {
             if (listsEveryName) {
                 KeysOfFieldsHeld keysOfFields(*this, id, &appendedKeys);
                 auto isField = [&](PropertyKeyID key) {
-                    return !std::ranges::binary_search(tables.wholeProgram.keysOfSeveralSymbols, key) && keysOfFields.contains(key);
+                    return !std::ranges::binary_search(tables.wholeProgram.keysOfSeveralSymbols, key) && keysOfFields.contains(key) && !stores.mayBeDefinedInFormNobodyPlansFor(id, key);
                 };
                 addedKeys = stores.keysStoredIntoKnownObjects(id);
                 addedKeys.removeAllMatching(isField);
@@ -2644,7 +2644,7 @@ static void typeAppendedFields(const ValueFlowResultInputs& inputs, const ValueF
                 if (flow.location.initialization == InitializationState::SetAtCreation && flow.stability == everyFlagOf<FieldStability>() && !inputs.sets().isEmpty(stored)) {
                     flow.occupancy = Occupancy::AlwaysFilled;
                     // The store that fills the field asks the classes above for the name. Above a parent nobody proves there is nobody to ask, and only this says that they have none.
-                    if (!hasParentNobodyProves(index))
+                    if (!hasParentNobodyProves(index) && !classCannotAnswerForNames(inputs.program.layouts[index], application.layouts[index].classFlow))
                         flow.prototypeName = PrototypeNameState::Unknown;
                 }
             }

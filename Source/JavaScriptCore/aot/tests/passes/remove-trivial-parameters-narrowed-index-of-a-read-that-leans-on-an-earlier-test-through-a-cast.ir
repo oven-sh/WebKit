@@ -1,0 +1,24 @@
+# As its neighbour without a cast: the read takes a cast of the parameter that a comparison narrowed to one number, and leans on the guard of an earlier test of the index.
+# The parameter stays
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass RemoveTrivialParameters
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="readBehindComparisonAndCast" parameters=[{type=Uint8Array}, {type=int[2, 3]}] results=[{type=anything}] {
+    v2 = IsInsideView v0, v1 typedArrayType=2 [keyIsIntegral]
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    v4 = Integer integer=3
+    v5 = Less v1, v4
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6):
+    v7 = Upcast v6 castType=number
+    v8 = GetTypedArrayElement v0, v7, v3 typedArrayType=2 level=Proven [keyIsIntegral, isInsideView]
+    Return v8
+  b3():
+    v9 = Undefined
+    Return v9
+# CHECK: b2(v6: 2):
+# CHECK-NEXT: = Upcast v6
+}

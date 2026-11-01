@@ -1258,6 +1258,17 @@ static OperandSummary summarizeOperandOfOverload(const Program& program, const T
     return summary;
 }
 
+Expected<bool> outlivesCallOf(const Program& program, BuiltinID builtin, uint32_t argumentIndex)
+{
+    constexpr OperandUses usesThatKeep { OperandUse::Retains, OperandUse::Returns, OperandUse::BecomesPrototype, OperandUse::PassesToUserCode };
+    std::span<const BuiltinOverload> overloads = program.builtins().overloadsOf(builtin);
+    if (overloads.empty() || argumentIndex > BuiltinOperand::maxArgumentIndex)
+        return true;
+    return std::ranges::any_of(overloads, [&](const BuiltinOverload& overload) {
+        return mayRunUnnamedCode(overload) || declaredBehaviorOf(overload, BuiltinOperand::argument(argumentIndex)).uses.containsAny(usesThatKeep);
+    });
+}
+
 static OperandSummary summarizeAccessOperand(const Program& program, const Function& function, const Type& type, const Value& access, uint32_t operandIndex, UsesAskedFor askedFor)
 {
     OperandBehavior behavior = declaredBehaviorOf(access.opcode, operandIndex);

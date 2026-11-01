@@ -127,8 +127,9 @@ public:
     {
         if (!more)
             return;
+        // Room for half as much again: a list that got exactly what a large round asked for is full, and the next few elements would copy all of it. A page that nobody writes to costs nothing.
         if (m_size + more > capacity())
-            m_elements.realloc(std::max<size_t>({ 1024, capacity() * 2, m_size + more }) * sizeof(T));
+            m_elements.realloc(std::max<size_t>({ 1024, capacity() * 2, m_size + more + (m_size + more) / 2 }) * sizeof(T));
         m_size += more;
     }
 

@@ -370,12 +370,16 @@ constexpr std::array optimizeSteps {
     ScheduleStep::run(ReduceIntegerDivisions),
     ScheduleStep::run(ResolveCalls),
     ScheduleStep::run(ResolveAccesses),
+    // What a read that has just been resolved gives has the type of its slot: an access to that needs no test of its own.
+    ScheduleStep::run(RetypeValues),
+    ScheduleStep::run(InsertObjectCoercibleChecks),
+    ScheduleStep::run(ResolveAccesses),
     // Where the rounds above were cut short by their limit, ResolveCalls still finds calls to resolve here, and makes of a call with a spread what only ExpandIteration removes.
     ScheduleStep::run(ExpandIteration),
     // No test is placed and nothing is sunk any more, so a copy of a join costs one more round of cleaning up and no copy of what lies below it.
     ScheduleStep::runBehindRounds(ThreadJumps),
     ScheduleStep::includeWithoutCompacting(FunctionSchedule::Simplify),
-    ScheduleStep::run(RestartInGenericVersion),
+    ScheduleStep::runBehindRounds(RestartInGenericVersion),
     ScheduleStep::run(RemoveDeadCountedLoops),
     ScheduleStep::run(HoistLoopInvariantReads),
     ScheduleStep::run(EliminateRedundantReads),
@@ -1757,7 +1761,7 @@ void Pipeline::runSelectStage()
 {
     TimedStage stage(*this, Stage::Select);
     bool wasRunning = !m_runner.isStopped();
-    if (wasRunning && m_runner.mayRunAnalysesTogether() && !m_build.options().verifiesAfterEveryStage) {
+    if (wasRunning && m_runner.mayRunAnalysesTogether()) {
         // Whoever only reads a function reads it where it is in the cache: behind its selection, or behind the last step that changes it.
         bool findsOutliningSites = m_build.isEnabled(PassID::OutlineColdOperations, FunctionID());
         OutliningSiteFinder finder(m_program, inputsFor(PassID::OutlineColdOperations), m_build);
@@ -1783,6 +1787,7 @@ void Pipeline::runSelectStage()
         ReaderOfScheduledFunction readers1[] = { observe, findOutliningSitesOrReadFinishedFunction };
         const ReaderOfScheduledFunction* readersOfSelectedFunction[] = { &readers1[0], &readers1[1] };
         stage.run(FunctionSchedule::Select, { .behind = readersOfSelectedFunction });
+        stage.verifyOnRequest(IRForm::Selected);
         advanceTo(IRForm::Selected, wasRunning);
         if (!m_runner.isStopped() && observer)
             m_output->accessSiteObservations = observer->finish();

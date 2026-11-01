@@ -858,8 +858,8 @@ RecordedSite RuntimeCallEmitter::recordedSiteOf(const OperationContext& context,
         calledBuiltin = { };
     bool standsForCallee = calledBuiltin ? (origin.isTailCall || options.isTailCall) && !options.constructs : origin.isTailCall && !options.isTailCall && !options.constructs;
     // A call, and the read of the method that it calls, can throw before the callee begins.
-    bool isInsideCallee = standsForCallee && (calledBuiltin || !value || !runsBeforeCalleeOf(value->opcode));
-    std::optional<CallSiteKind> kind = findCallSiteKind({ .isConstruct = options.constructs, .isTailCall = options.isTailCall || origin.isTailCall, .isInsideCallee = isInsideCallee, .namesBuiltin = !!calledBuiltin });
+    bool isInsideCallee = options.callerHasLeft || (standsForCallee && (calledBuiltin || !value || !runsBeforeCalleeOf(value->opcode)));
+    std::optional<CallSiteKind> kind = findCallSiteKind({ .isConstruct = options.constructs, .isTailCall = options.isTailCall || origin.isTailCall || options.callerHasLeft, .isInsideCallee = isInsideCallee, .namesBuiltin = !!calledBuiltin });
     RELEASE_ASSERT(kind);
     return { .origin = origin, .kind = *kind, .calledBuiltin = calledBuiltin, .constructedCallee = options.constructedCallee, .callsOwnFunctionObject = options.callsOwnFunctionObject, .keptCalleePlusOne = options.keptCalleePlusOne };
 }

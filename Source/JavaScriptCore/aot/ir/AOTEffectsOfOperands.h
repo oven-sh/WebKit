@@ -120,6 +120,8 @@ enum class UsesAskedFor : uint8_t { All, AllButPassesToUserCode };
 
 OperandSummary summarizeOperand(const EffectContext&, const Function&, const Value& user, uint32_t operandIndex, UsesAskedFor = UsesAskedFor::All);
 OperandSummary summarizeOperand(const EffectContext&, const Function&, const Terminator& user, uint32_t operandIndex, UsesAskedFor = UsesAskedFor::All);
+// Whether the built-in keeps the argument itself, hands it back or hands it on, by what its overloads declare. A getter that a read of the argument runs may keep it all the same.
+Expected<bool> outlivesCallOf(const Program&, BuiltinID, uint32_t argumentIndex);
 OperandMemory memoryAccessedThrough(const EffectContext&, const Function&, const Value& user, uint32_t operandIndex, const EffectsOnEdges& effectsOfUser);
 
 enum class OperandConfinement : uint8_t { Unknown, WritesOnlyNamedOperands };

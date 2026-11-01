@@ -103,7 +103,6 @@ static_assert(sizeof(FunctionConstruction) <= 64);
 struct SolvedConstruction {
     bool mayLeak { true };
     bool storesOnlyInInitialOrder { false };
-    bool passesTestForInstance { false };
     ConstructionNames storedBeforeLeak;
     ConstructionNames storedAtExit;
     ConstructionNames readBeforeStore;
@@ -122,7 +121,6 @@ struct ResolvedConstructionEvent {
     bool otherCodeMayRun { true };
     bool resultHoldsObject { false };
     bool holderIsEmpty { false };
-    bool isTestForInstanceThatShowsNothing { false };
     Vector<uint32_t, 1> callees;
 };
 
@@ -972,7 +970,6 @@ struct ConstructionGraphBuilder {
         if (accessorsUnder(constructors.chain, hasInstance, true) != ValueSets::nothing || accessorsUnder(constructors.chain, program.keyOf(BuiltinNames::prototype), true) != ValueSets::nothing)
             return;
         resolved.mayLeak = resolved.otherCodeMayRun = false;
-        resolved.isTestForInstanceThatShowsNothing = true;
     }
 
     void resolveAccess(const FunctionConstruction& construction, bool isEnteredByNew, const ConstructionEvent& event, ResolvedConstructionEvent& resolved)
@@ -1232,7 +1229,6 @@ struct StoredNamesProblem {
         solved.readBeforeStore.unite(readEarly);
         solved.readNames.unite(callee.readNames);
         solved.selfReferenceNames.unite(callee.selfReferenceNames);
-        solved.passesTestForInstance |= callee.passesTestForInstance;
         if (callee.mayLeak) {
             ConstructionNames storedAtLeak = state.stored;
             storedAtLeak.unite(callee.storedBeforeLeak);
@@ -1291,7 +1287,6 @@ struct StoredNamesProblem {
         case ConstructionEventKind::Leak:
             if (resolved.mayLeak)
                 applyLeak(stateBeforeOperation.stored);
-            solved.passesTestForInstance |= resolved.isTestForInstanceThatShowsNothing;
             return;
         case ConstructionEventKind::Store:
             applyCallees(state, stateBeforeOperation, resolved, false);
@@ -2204,7 +2199,6 @@ ValueFlowConstructions computeConstructions(const ValueFlowResultInputs& inputs,
             const ConstructionNode& node = graph.nodes[maker];
             auto [order, isComplete] = ownOrderOf(program, node, LayoutID(index));
             createsFieldsOnlyInListedOrders &= !node.solved.mayLeak && node.solved.storesOnlyInInitialOrder && isComplete;
-            construction.passesTestForInstance |= node.solved.passesTestForInstance;
             if (!construction.orders.contains(order))
                 construction.orders.append(WTF::move(order));
         }
@@ -2271,7 +2265,6 @@ ValueFlowConstructions computeConstructions(const ValueFlowResultInputs& inputs,
             ValueFlowConstructions::OfLayout& construction = result.layouts[member.layout.index()];
             construction.isFollowed = maker.isFollowed;
             construction.isNewTargetOfOtherFunctions = maker.isNewTargetOfOtherFunctions;
-            construction.passesTestForInstance = maker.passesTestForInstance;
             construction.namesStoredBeforeObjectLeaks = maker.namesStoredBeforeObjectLeaks;
             construction.keysStoredAtBirth = maker.keysStoredAtBirth;
             construction.keysStoredWithValueAtBirth = maker.keysStoredWithValueAtBirth;

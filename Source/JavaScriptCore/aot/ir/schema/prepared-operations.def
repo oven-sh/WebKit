@@ -141,7 +141,7 @@ operation IsCollectionTableFull (collection: Object/inspects) -> natural(boolean
 operation ReserveCollectionCapacity (collection: Object/inspects+writesContents, remaining: Integer/inspects, finished: Integer/inspects, sizeAtEntry: Integer/inspects) -> none ; reads(CollectionStorage, CollectionEntries, AllocatorState) writes(CollectionStorage, CollectionEntries, AllocatorState, RuntimeState) collects ; runtime = ReserveCollectionCapacity
 
 family SavedFrame Prepared..Placed
-operation NewGenerator (function: Function(Dispatch), callee?: Callable/inspects, allocationSite?: AllocationSite) -> allocation(Generator) ; Allocates reads(NamedProperties) ; runtime = NewGenerator ; interpreted = Allocation
+operation NewGenerator (function: Function(Dispatch), callee?: Callable/inspects, allocationSite?: AllocationSite) [getsHeapFrame] -> allocation(Generator) ; Allocates reads(NamedProperties) ; runtime = NewGenerator ; interpreted = Allocation
 operation NewAsyncGenerator (function: Function(Dispatch), callee: Callable/inspects, allocationSite?: AllocationSite) -> allocation(AsyncGenerator) ; Allocates reads(NamedProperties) ; runtime = NewGenerator
 operation TakeGeneratorPrototype (generator: Object/inspects+changesPrototype, callee: Callable/inspects) -> none ; reads(NamedProperties, PrototypeLinks, ShapeWords) writes(PrototypeLinks, ShapeWords, RuntimeState) collects ; runtime = TakeGeneratorPrototype ; flow = Copies
 operation IsGeneratorUnstarted (generator: Object/inspects) -> natural(boolean) ; reads(InternalFields) ; branches = May ; replaces = StepGenerator
@@ -154,7 +154,7 @@ operation AwaitMayContinue () -> natural(boolean) ; reads(RuntimeState, PromiseS
 operation AwaitBySavingFrame (awaited: Any/retains+runs(Thenable), promise: Any/inspects, held...: Convertible/retains) [takesExtraTurn] -> unknown => declared(awaited) ; unknownCode suspends ; runtime = SaveFrameAndAwait ; boundTo = Frame ; replaces = Await
 operation AwaitCallBySavingFrame (function: Function(Call), promise: Any/inspects, numberOfHeld?: UInt32, arguments...: Declared/retains, accessSite?: AccessSite) -> unknown ; unknownCode suspends by Call ; accessClass = DirectCall ; runtime = SaveFrameAndAwaitCall ; boundTo = Frame ; replaces = AwaitBySavingFrame, CallDirect ; runsBeforeCallee = true
 operation YieldBySavingFrame (generator: Object/inspects, value: Any/retains, held...: Convertible/retains) -> results(YieldResult: unknown, natural(ResumeMode)) ; unknownCode suspends ; runtime = SaveFrameAndYield ; boundTo = Frame ; replaces = Yield, InitialYield
-operation NewHeapFrame (generator: Object/inspects, function: Function(Dispatch), numberOfWords: UInt32) -> unknown ; Allocates UsesRuntime writes(InternalFields) ; runtime = NewHeapFrame
+operation NewHeapFrame (generator: Object/inspects, function: Function(Dispatch), numberOfWords: UInt32, callee?: Callable/retains) -> unknown ; Allocates UsesRuntime writes(InternalFields) ; runtime = NewHeapFrame
 operation GetHeapFrameWord (frame: Any/inspects, index: UInt32, valueType: Type, allocationGroup?: UInt32) -> declared(valueType) ; reads(InternalFields)
 operation PutHeapFrameWord (frame: Any/inspects, index: UInt32, value: Any/retains) [remembersFrame] -> none ; writes(InternalFields)
 operation NewHeapWords (numberOfWords: UInt32) -> unknown ; Allocates UsesRuntime writes(InternalFields) ; runtime = NewHeapFrame

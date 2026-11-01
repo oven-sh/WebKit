@@ -2205,7 +2205,7 @@ BlockID ensureCallOfGenericVersion(FunctionPassContext& pass, IRBuilder& builder
 }
 
 // A test of the state of an object that fails leads into generic code for what follows it, which the function holds for itself.
-PassOutcome restartInGenericVersion(FunctionPassContext& pass)
+static PassOutcome restartWhereTestsFail(FunctionPassContext& pass)
 {
     Function& function = pass.function;
     FunctionID genericVersion = findGenericVersionToRestartIn(pass);
@@ -2235,6 +2235,69 @@ PassOutcome restartInGenericVersion(FunctionPassContext& pass)
     // The graph is that of the last search, which has edited nothing.
     pass.keptAnalyses = controlFlowAnalyses;
     return PassOutcome::Changed;
+}
+
+// The class of a constructor function begins with its first object, and the guard of the function's `prototype` holds from then on. Whoever asks for that guard alone is about to make an object.
+// Where the object has been taken away on both sides of the test nobody begins the class, and the test fails for ever. So its failing side begins the class.
+// This comes behind the rounds: a test whose two ways meet has gone by then, and with this on one of them they would not meet.
+static PassOutcome beginClassesThatNobodyBegins(FunctionPassContext& pass)
+{
+    if (!pass.analyses.opcodesOfValues().contains(Opcode::AreMembersUnchanged))
+        return PassOutcome::Unchanged;
+    Function& function = pass.function;
+    const Program& program = pass.program;
+    PropertyKeyID prototype = program.keyOf(BuiltinNames::prototype);
+    auto beginsClass = [&](BlockID block, LayoutID classLayout) {
+        constexpr unsigned mostBlocksFollowed = 4;
+        for (unsigned followed = 0; followed < mostBlocksFollowed; ++followed) {
+            for (ValueID id : function.at(block).values) {
+                const Value& value = function.at(id);
+                if ((value.opcode == Opcode::NewObject && declaredLayoutOf(program, value.layout()) == classLayout) || (value.opcode == Opcode::BeginMemberGuards && value.layout() == classLayout))
+                    return true;
+            }
+            if (function.at(block).terminator.kind != TerminatorKind::Jump)
+                return false;
+            block = function.at(block).terminator.next().block;
+        }
+        return false;
+    };
+
+    Vector<std::pair<Edge, LayoutID>, 4> failingEdges;
+    for (BlockID block : pass.analyses.cfg().reversePostOrder()) {
+        const Terminator& terminator = function.at(block).terminator;
+        if (terminator.kind != TerminatorKind::Branch)
+            continue;
+        const Value& test = function.at(terminator.conditionOperand());
+        if (test.opcode != Opcode::AreMembersUnchanged || test.conditions().size() != 1)
+            continue;
+        MemberConditionRecord condition = *test.conditions().begin();
+        if (condition.kind != MemberConditionKind::MemberUnchanged || condition.side != ClassSide::Static || condition.key != prototype || !program.at(condition.layout).has(LayoutFlags::IsConstructorFunction))
+            continue;
+        if (!beginsClass(terminator.notTaken().block, condition.layout))
+            failingEdges.append({ Edge { block, 1 }, condition.layout });
+    }
+    if (failingEdges.isEmpty())
+        return PassOutcome::Unchanged;
+
+    IRBuilder builder(pass.analyses.context(), function, pass.types, &pass.analyses);
+    for (auto [edge, classLayout] : failingEdges) {
+        builder.setOrigin(function.at(edge.from).terminator.origin());
+        BlockID added = builder.splitEdge(edge, function.at(edge.from).handler);
+        Value begin = IRBuilder::make(Opcode::BeginMemberGuards);
+        begin.setLayout(classLayout);
+        builder.insertBefore(pointBeforeTerminatorOf(function, added), WTF::move(begin));
+        builder.applyInsertions();
+    }
+    pass.keptAnalyses = { };
+    return PassOutcome::Changed;
+}
+
+PassOutcome restartInGenericVersion(FunctionPassContext& pass)
+{
+    PassOutcome outcome = restartWhereTestsFail(pass);
+    if (pass.isBehindRounds)
+        outcome |= beginClassesThatNobodyBegins(pass);
+    return outcome;
 }
 
 } } } // namespace JSC::AOT::Typed

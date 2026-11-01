@@ -327,6 +327,7 @@ private:
     unsigned m_initializationDepth { 0 };
     bool m_validates { false };
     bool m_checksProofs { false };
+    bool m_runsOutOfMemoryWhenCounted { false };
     bool m_checksKeptRegisters { false };
     bool m_forcesGCSlowPaths { false };
     bool m_hasFailed { false };

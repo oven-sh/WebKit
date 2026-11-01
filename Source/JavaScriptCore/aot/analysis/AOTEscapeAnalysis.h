@@ -289,6 +289,8 @@ public:
     std::optional<ObjectID> objectDefinedBy(ValueID) const;
 
     PointsToSet pointsTo(ValueID) const LIFETIME_BOUND;
+    // The allocations of the function that the value may be, where it can be nothing else. Two values with such sets that share no member are never one object.
+    std::optional<ObjectSet> allocationsIfNothingElse(ValueID) const LIFETIME_BOUND;
     std::optional<ObjectID> singleObject(ValueID) const;
     bool isExactUse(ObjectID, const Use&) const;
     bool isOnlyOperandHolding(ObjectID, const Use&) const;
@@ -470,6 +472,19 @@ inline PointsToSet EscapeAnalysis::pointsTo(ValueID value) const
         return { ObjectSet(m_emptySet), true };
     const StoredSet& set = m_sets[id.index()];
     return { ObjectSet(set.objects), set.mayBeUntracked };
+}
+
+inline std::optional<ObjectSet> EscapeAnalysis::allocationsIfNothingElse(ValueID value) const
+{
+    solveIfWaiting();
+    RELEASE_ASSERT(value.index() < m_setOfValue.size());
+    ValueSetID id = m_setOfValue[value.index()];
+    if (!id)
+        return std::nullopt;
+    const StoredSet& set = m_sets[id.index()];
+    if (set.mayBeUntracked || set.holdsEntryParameter)
+        return std::nullopt;
+    return ObjectSet(set.objects);
 }
 
 inline std::optional<ObjectID> EscapeAnalysis::singleObject(ValueID value) const

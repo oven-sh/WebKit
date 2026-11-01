@@ -2112,7 +2112,8 @@ static void narrowFieldsOfObjects(const ValueFlowResultInputs& inputs, LayoutID 
         bool staysInSlot = flow.stability.containsAll({ FieldStability::IsNeverDeleted, FieldStability::IsNeverRedefined }) && (flow.stability.contains(FieldStability::IsNeverStoredWithOtherType) || slotStaysWide);
         if (isEverFilled && flow.location.initialization == InitializationState::SetAtCreation && staysInSlot) {
             flow.occupancy = Occupancy::AlwaysFilled;
-            flow.prototypeName = PrototypeNameState::Unknown;
+            if (!classCannotAnswerForNames(program.at(id), update.classFlow))
+                flow.prototypeName = PrototypeNameState::Unknown;
         }
         if (!isEverFilled && flow.stability == everyFlagOf<FieldStability>() && inputs.build.isEnabled(FlowResultKind::StoreCounts, id.index()))
             flow.location.stores = StoreCount::Never;
@@ -2198,7 +2199,7 @@ static void narrowVariable(const ValueFlowResultInputs& inputs, VariableID id, c
     bool everyReadSeesStore = update.flow.initialization == InitializationState::StoredBeforeEveryRead && update.flow.storeNaming == StoreNaming::EveryStoreNamesLocation;
     if (everyReadSeesStore && inputs.program.at(id).initialization == VariableInitialization::Undefined && !variablesStoredUndefined.quickGet(id.index()))
         deadZone = DeadZone::UndefinedAtStartIsNeverObserved;
-    else if (!everyReadSeesStore && startsWithoutValueInSolve(inputs.program, inputs.program.at(id)))
+    else if (!everyReadSeesStore && (startsWithoutValueInSolve(inputs.program, inputs.program.at(id)) || inputs.bodies().unobservedDefinitions().isStoredAheadOfEveryRead(id)))
         deadZone = DeadZone::UndefinedAtStartMayBeObserved;
     const DeclaredType& declared = inputs.program.at(id).declared;
     ValueFlowNodeID node = inputs.bodies().nodes().variable(id);

@@ -463,7 +463,7 @@ static AnalysisSet addDependentAnalyses(AnalysisSet set)
 FunctionAnalyses::FunctionAnalyses(const AnalysisContext& context, const Function& function)
     : m_context(context)
     , m_function(function)
-    , m_effectContext { context.program, context.effects ? *context.effects : m_unknownSummaries.emplace() }
+    , m_effectContext { context.program, context.effects ? *context.effects : m_unknownSummaries.emplace(), context.savedFrames == SavedFrames::AreOutOfReach ? UntestedStorage::LeavesReadKnown : UntestedStorage::MakesReadUnknown }
     , m_effects(m_effectContext, function, context.build.options().verifiesAfterEveryPass ? &context.build.diagnostics() : nullptr)
     , m_countsBuilds(context.build.options().logging.logsPhaseTimes)
     , m_verifiesUpdates(context.build.options().verifiesAfterEveryPass)

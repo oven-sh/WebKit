@@ -150,6 +150,19 @@ public:
     CompiledStructure* withKeyOrderOfOneObject(VM&, const CompiledStructure&, std::span<const uint16_t> entries, std::span<const RefPtr<UniquedStringImpl>> keysNamedByOrder);
     CompiledStructure* withNumberedKeyOrder(VM&, const CompiledStructure&);
 
+    // Where an object went that was given a field or lost one and found no numbered order for its keys: from the Structure and the order word that said its keys to those that say them now.
+    // The first such object walks the numbered orders and searches the held ones. The next one with the same keys takes the same step.
+    struct StepOfKeyOrder {
+        StructureID before;
+        uint32_t orderAndCountBefore;
+        uint32_t fieldAndKind;
+        StructureID after;
+        uint32_t orderAndCountAfter;
+    };
+    enum class KindOfStep : bool { Creates, Removes };
+    const StepOfKeyOrder* findStepOfKeyOrder(StructureID before, uint32_t orderAndCountBefore, uint16_t field, KindOfStep) const;
+    void rememberStepOfKeyOrder(StructureID before, uint32_t orderAndCountBefore, uint16_t field, KindOfStep, StructureID after, uint32_t orderAndCountAfter);
+
     JSCell* allocate(VM&, uint32_t allocation);
     // An object has its header, its order word and its shape word, as behind the stub, and zeros behind them.
     JSCell* allocateAsCompiledCodeDoes(VM&, uint32_t allocation);
@@ -217,6 +230,11 @@ private:
     // No cell has them. Every other Structure of a compiled object starts as a copy of one: the second is for objects with another prototype than their layout's.
     std::array<CompiledStructure*, 2> m_templateStructures { };
     std::unique_ptr<VariantMaps> m_variants;
+    using StepsOfKeyOrders = std::array<StepOfKeyOrder, 4096>;
+    // Of the newer of two steps.
+    static size_t placeOfStep(StructureID before, uint32_t orderAndCountBefore, uint32_t fieldAndKind) { return ((before.bits() >> 4 ^ orderAndCountBefore * 0x9e3779b1u ^ fieldAndKind * 0x85ebca6bu) * 0x9e3779b1u) >> 20 & ~static_cast<size_t>(1); }
+    // Made by the first step that is remembered. A collection forgets them all.
+    std::unique_ptr<StepsOfKeyOrders> m_stepsOfKeyOrders;
     // In a run with --aotCountsPath.
     std::unique_ptr<MadeStructures> m_made;
     RememberedSlotSet m_writtenStructures;

@@ -836,12 +836,30 @@ bool StoresByLayout::spellsKey(ValueSetMaker& maker, const Writer& writer, Value
     return key && key.index() == name.payload;
 }
 
+void StoresIntoObjects::uniteWhatWaits(ValueSetMaker& maker)
+{
+    SetsToUnite& sets = *std::exchange(setsToUnite, nullptr);
+    for (auto& [place, waiting] : sets.waiting) {
+        AOT::sortInLine(waiting, { }, &ValueSetID::index);
+        removeRepeatedElements(waiting);
+        ValueSetID* into = nullptr;
+        auto which = static_cast<SetsToUnite::Place>(place & ((1u << SetsToUnite::bitsOfPlace) - 1));
+        if (place & SetsToUnite::underUnknownKey)
+            into = which == SetsToUnite::Value ? &underUnknownKey : which == SetsToUnite::ValueFromOperations ? &valueFromOperationsUnderUnknownKey : &gettersUnderUnknownKey;
+        else {
+            StoredUnderKey& stored = underKey.add(static_cast<uint32_t>(place >> SetsToUnite::bitsOfPlace), StoredUnderKey { }).iterator->value;
+            into = which == SetsToUnite::Value ? &stored.value : which == SetsToUnite::ValueFromOperations ? &stored.valueFromOperations : which == SetsToUnite::Getters ? &stored.getters : &stored.setters;
+        }
+        *into = maker.unite(*into, maker.uniteAll(waiting.span()));
+    }
+}
+
 void StoresByLayout::note(ValueSetMaker& maker, StoresIntoObjects& stores, ValueFlowName name, ValueSetID value, bool isAllocation, bool isNamedByOperation)
 {
     switch (name.kind) {
     case ValueFlowNameKind::Property: {
         StoredUnderKey& stored = stores.underKey.add(name.payload, StoredUnderKey { }).iterator->value;
-        stored.value = maker.unite(stored.value, value);
+        stores.unite(maker, stored.value, SetsToUnite::under(name.payload, SetsToUnite::Value), value);
         stored.isStoredAfterCreation |= !isAllocation;
         stored.isNamedByOperation |= isNamedByOperation;
         return;
@@ -854,7 +872,7 @@ void StoresByLayout::note(ValueSetMaker& maker, StoresIntoObjects& stores, Value
         return;
     }
     case ValueFlowNameKind::UnknownKey:
-        stores.underUnknownKey = maker.unite(stores.underUnknownKey, value);
+        stores.unite(maker, stores.underUnknownKey, SetsToUnite::underUnknownKey | SetsToUnite::Value, value);
         return;
     case ValueFlowNameKind::Elements:
         stores.isStoredUnderIndex = true;
@@ -1036,6 +1054,16 @@ uint32_t StoresByLayout::familyDeclaredForReceiverOf(const Writer& writer) const
     return typeOfThis.hasOnlyLayouts() ? typeOfThis.layouts.index() : UINT32_MAX;
 }
 
+static bool callsDefineProperty(const Program& program, const ValueFlowStatement& statement)
+{
+    if (statement.opcode != Opcode::Call)
+        return false;
+    const Function& function = program.at(statement.function);
+    const Value& callee = function.at(definitionThroughUpcasts(function, function.at(statement.site).calleeOperand()));
+    BuiltinID builtin = callee.opcode == Opcode::Builtin ? program.builtins().canonicalID(callee.builtin()) : BuiltinID();
+    return builtin == Builtins::ObjectDefineProperty || builtin == Builtins::ReflectDefineProperty;
+}
+
 std::optional<ValueSetID> StoresByLayout::descriptorsWrittenOutIn(ValueSetMaker& maker, const ValueFlowStatement& statement) const
 {
     constexpr size_t positionOfDescriptor = OperandIndex::Call::arguments + 2;
@@ -1049,6 +1077,19 @@ std::optional<ValueSetID> StoresByLayout::descriptorsWrittenOutIn(ValueSetMaker&
     return descriptors;
 }
 
+// `desc = Object.getOwnPropertyDescriptor(from, key); if (..) desc = { enumerable: true, get() { .. } }; Object.defineProperty(to, key, desc)`: a layout plans for the form that the program writes out.
+// What a built-in has made may say any form: a property that is defined in another form than the field's lies outside the slot. All of them, where the program writes none or every one.
+ValueSetID StoresByLayout::descriptorsOfProgramAmong(ValueSetMaker& maker, ValueSetID descriptors) const
+{
+    ValueSetID written = ValueSets::nothing;
+    m_inputs.sets().forEachMember(descriptors, [&](ValueFlowObjectID descriptor) {
+        const ValueFlowSite* site = m_inputs.universe().siteOf(descriptor);
+        if (site && (site->origin == ValueFlowSiteOrigin::Operation || site->origin == ValueFlowSiteOrigin::DataNode))
+            written = maker.unite(written, maker.of(descriptor));
+    });
+    return written == ValueSets::nothing ? descriptors : written;
+}
+
 uint8_t StoresByLayout::formsOfAccessorDefinedBy(ValueSetMaker& maker, const Writer& writer, ValueFlowName name) const
 {
     if (ValueFlowNameShape shape = shapeOf(name.kind); !shape.isAccessor() || shape.reach == ValueFlowNameReach::EveryKey)
@@ -1058,9 +1099,13 @@ uint8_t StoresByLayout::formsOfAccessorDefinedBy(ValueSetMaker& maker, const Wri
         return 0;
     if (statement.opcode == Opcode::DefineGetter || statement.opcode == Opcode::DefineSetter)
         return AccessorForms::of(true, true);
+    // `{ enumerable: true, get }`
+    if (statement.opcode == Opcode::TryDefineLiveBinding)
+        return AccessorForms::of(true, false);
     std::optional<ValueSetID> descriptors = descriptorsWrittenOutIn(maker, statement);
     if (!descriptors)
         return AccessorForms::unknown;
+    descriptors = descriptorsOfProgramAmong(maker, *descriptors);
     const ValueSets& sets = m_inputs.sets();
     auto attribute = [&](BuiltinName member) -> std::optional<bool> {
         ValueSetID written = std::as_const(m_heap).writtenUnder(maker, *descriptors, ValueFlowName::property(m_inputs.program, m_inputs.program.keyOf(member)));
@@ -1147,6 +1192,8 @@ auto StoresByLayout::describeWrite(ValueSetMaker& maker, StoreUnderName& store, 
             .spellsKey = spellsItsKey,
             .isIntoThisOfConstructor = spellsItsKey && storesIntoThisOfConstructor(m_inputs.program, writer),
             .definesValue = definesValue(maker, writer, name),
+            .takesDescriptorsOfBuiltins = false,
+            .hasValueOnlyOfDescriptorsOfBuiltins = false,
             .accessorForms = formsOfAccessorDefinedBy(maker, writer, name),
             .formsOfDefinedValues = name.kind == ValueFlowNameKind::Property ? formsOfValueDefinedByCall(maker, statement) : static_cast<uint8_t>(0),
             .familyDeclaredForReceiver = spellsItsKey ? familyDeclaredForReceiverOf(writer) : UINT32_MAX,
@@ -1154,6 +1201,15 @@ auto StoresByLayout::describeWrite(ValueSetMaker& maker, StoreUnderName& store, 
             .objectsRead = ValueSets::nothing,
             .keyRead = 0,
         };
+        // It hands on the descriptor of an accessor of a module and of a value that never changes.
+        if (isOperation && statement.opcode == Opcode::TryDefineLiveBinding)
+            store.takesDescriptorsOfBuiltins = true;
+        else if (std::optional<ValueSetID> descriptors = isOperation && callsDefineProperty(m_inputs.program, statement) ? descriptorsWrittenOutIn(maker, statement) : std::nullopt) {
+            ValueSetID written = descriptorsOfProgramAmong(maker, *descriptors);
+            store.takesDescriptorsOfBuiltins = written != *descriptors;
+            store.hasValueOnlyOfDescriptorsOfBuiltins = store.takesDescriptorsOfBuiltins
+                && m_inputs.sets().isEmpty(std::as_const(m_heap).writtenUnder(maker, written, ValueFlowName::property(m_inputs.program.keyOf(BuiltinNames::value))));
+        }
     }
     bool holdsNumber = std::ranges::any_of(std::array { PrimitiveSet::Integer, PrimitiveSet::WholeNumber, PrimitiveSet::FractionalNumber }, [&](PrimitiveSet kind) {
         return m_inputs.sets().contains(value, ValueFlowUniverse::primitive(kind));
@@ -1190,6 +1246,8 @@ auto StoresByLayout::describeWrite(ValueSetMaker& maker, StoreUnderName& store, 
         .givesValueItself = isOperation && statement.opcode != Opcode::Call,
         .isWrittenByCallOfBuiltin = isOperation && statement.opcode == Opcode::Call,
         .definesValue = store.definesValue,
+        .takesDescriptorsOfBuiltins = store.takesDescriptorsOfBuiltins,
+        .hasValueOnlyOfDescriptorsOfBuiltins = store.hasValueOnlyOfDescriptorsOfBuiltins,
         .isAssignment = isOperation && statement.opcode == Opcode::PropSet,
         .isOtherThanAssignment = !isOperation || statement.opcode != Opcode::PropSet,
         .leavesOutComputedKey = isCopyIntoLiteral && !m_inputs.program.at(statement.function).at(statement.site).excludedOperands().empty(),
@@ -1218,6 +1276,8 @@ auto StoresByLayout::collectWrites(ValueSetMakers& makers) const -> ParallelArra
         merged.givesValueItself |= write.givesValueItself;
         merged.isWrittenByCallOfBuiltin |= write.isWrittenByCallOfBuiltin;
         merged.definesValue |= write.definesValue;
+        merged.takesDescriptorsOfBuiltins |= write.takesDescriptorsOfBuiltins;
+        merged.hasValueOnlyOfDescriptorsOfBuiltins &= write.hasValueOnlyOfDescriptorsOfBuiltins;
         merged.isAssignment |= write.isAssignment;
         merged.isOtherThanAssignment |= write.isOtherThanAssignment;
         merged.leavesOutComputedKey |= write.leavesOutComputedKey;
@@ -1331,7 +1391,9 @@ void StoresByLayout::noteWritesInto(ValueSetMaker& maker, StoresIntoObjects& sto
         stored.isAssigned |= writes.isAssignment;
         stored.isWrittenOtherThanByAssignment |= writes.isOtherThanAssignment;
         stored.formsOfDefinedValues |= writes.formsOfDefinedValues;
-    }
+        stored.mayBeDefinedInFormNobodyPlansFor |= writes.takesDescriptorsOfBuiltins;
+    } else
+        stores.mayBeDefinedInFormNobodyPlansForUnderUnknownKey |= writes.takesDescriptorsOfBuiltins;
     stores.getsCopyWithoutComputedKey |= writes.leavesOutComputedKey;
     if (name.kind == ValueFlowNameKind::CopiedFrom) {
         std::span<const PropertyKeyID> leftOut;
@@ -1356,12 +1418,14 @@ void StoresByLayout::noteWritesInto(ValueSetMaker& maker, StoresIntoObjects& sto
         return;
     if (name.kind == ValueFlowNameKind::Property) {
         StoredUnderKey& stored = stores.underKey.add(name.payload, StoredUnderKey { }).iterator->value;
-        stored.valueFromOperations = maker.unite(stored.valueFromOperations, writes.value);
+        if (!writes.hasValueOnlyOfDescriptorsOfBuiltins)
+            stores.unite(maker, stored.valueFromOperations, SetsToUnite::under(name.payload, SetsToUnite::ValueFromOperations), writes.value);
         stored.isGivenValueByOperation |= writes.givesValueItself;
         stored.isGivenValueByDefinition |= writes.definesValue;
     }
     if (name.kind == ValueFlowNameKind::UnknownKey) {
-        stores.valueFromOperationsUnderUnknownKey = maker.unite(stores.valueFromOperationsUnderUnknownKey, writes.value);
+        if (!writes.hasValueOnlyOfDescriptorsOfBuiltins)
+            stores.unite(maker, stores.valueFromOperationsUnderUnknownKey, SetsToUnite::underUnknownKey | SetsToUnite::ValueFromOperations, writes.value);
         stores.isGivenValueByOperationUnderUnknownKey |= writes.givesValueItself;
     }
     if (!writes.accessorForms)
@@ -1369,15 +1433,15 @@ void StoresByLayout::noteWritesInto(ValueSetMaker& maker, StoresIntoObjects& sto
     if (name.kind == ValueFlowNameKind::GetterUnderUnknownKey || name.kind == ValueFlowNameKind::SetterUnderUnknownKey) {
         stores.formsOfAccessorsUnderUnknownKey |= writes.accessorForms;
         if (name.kind == ValueFlowNameKind::GetterUnderUnknownKey)
-            stores.gettersUnderUnknownKey = maker.unite(stores.gettersUnderUnknownKey, writes.value);
+            stores.unite(maker, stores.gettersUnderUnknownKey, SetsToUnite::underUnknownKey | SetsToUnite::Getters, writes.value);
         return;
     }
     StoredUnderKey& stored = stores.underKey.add(name.payload, StoredUnderKey { }).iterator->value;
     stored.accessorForms |= writes.accessorForms;
     if (name.kind == ValueFlowNameKind::Getter)
-        stored.getters = maker.unite(stored.getters, writes.value);
+        stores.unite(maker, stored.getters, SetsToUnite::under(name.payload, SetsToUnite::Getters), writes.value);
     else
-        stored.setters = maker.unite(stored.setters, writes.value);
+        stores.unite(maker, stored.setters, SetsToUnite::under(name.payload, SetsToUnite::Setters), writes.value);
 }
 
 void StoresByLayout::noteWrites()
@@ -1706,6 +1770,10 @@ void StoresByLayout::noteWrites()
             return;
         }
         uint32_t layout = index - numberOfSharedTables;
+        AOT_THRESHOLD(uint32_t, fewestSetsWhoseValuesWait, 1024);
+        SetsToUnite setsToUnite;
+        if (firstSetOfLayout[layout + 1] - firstSetOfLayout[layout] >= fewestSetsWhoseValuesWait)
+            m_storesOfLayout[layout].setsToUnite = &setsToUnite;
         auto noteWritesThroughSets = [&](std::span<const uint32_t> entries) {
             for (uint32_t entry : entries) {
                 for (const WritesThroughSet& write : writesThrough(entry >> 1)) {
@@ -1726,6 +1794,8 @@ void StoresByLayout::noteWrites()
             note(maker, m_storesOfLayout[layout], writes[position].name(), writes[position].value, false, false);
             noteNumbers(m_storesOfLayout[layout], writes[position].name(), writes[position].numbersWithoutFollowedReads());
         }
+        if (m_storesOfLayout[layout].setsToUnite)
+            m_storesOfLayout[layout].uniteWhatWaits(maker);
     });
 
     if (!m_storesSharedByLayouts.isEmpty()) {
@@ -2047,6 +2117,16 @@ bool StoresByLayout::isStoredByConstructor(LayoutID layout, PropertyKeyID key) c
         isStored |= found != stores.underKey.end() && found->value.isStoredByConstructor;
     });
     return isStored;
+}
+
+bool StoresByLayout::mayBeDefinedInFormNobodyPlansFor(LayoutID layout, PropertyKeyID key) const
+{
+    bool mayBe = m_storesOfLayout[layout.index()].mayBeDefinedInFormNobodyPlansForUnderUnknownKey;
+    forEachTableOfKnownObjects(layout, [&](const StoresIntoObjects& table) {
+        auto found = table.underKey.find(key.index());
+        mayBe |= table.mayBeDefinedInFormNobodyPlansForUnderUnknownKey || (found != table.underKey.end() && found->value.mayBeDefinedInFormNobodyPlansFor);
+    });
+    return mayBe;
 }
 
 bool StoresByLayout::mayGetAccessorUnder(LayoutID layout, PropertyKeyID key, ObjectsOfLayout objects) const

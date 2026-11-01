@@ -561,22 +561,32 @@ void AllocationSinking::rewriteBlock(BlockID block)
     m_cursor->builder().emitTerminator(WTF::move(terminator));
 }
 
-static bool bringsOnlyShapesOfHead(const SinkingState& edge, const SinkingState& head)
+static uint64_t keyOf(Edge edge)
+{
+    return (static_cast<uint64_t>(edge.from.index()) << 32 | static_cast<uint64_t>(edge.targetIndex) << 1 | edge.isHandlerEdge()) + 1;
+}
+
+void AllocationSinking::setObjectsDeadOnEdge(Edge edge, Vector<VirtualObjectID, 4>&& objects)
+{
+    m_objectsDeadOnEdges.set(keyOf(edge), WTF::move(objects));
+}
+
+bool AllocationSinking::isDeadOnEdge(Edge edge, VirtualObjectID object) const
+{
+    auto found = m_objectsDeadOnEdges.find(keyOf(edge));
+    return found != m_objectsDeadOnEdges.end() && found->value.contains(object);
+}
+
+static bool bringsOnlyShapesOfHead(const AllocationSinking& sinking, Edge taken, const SinkingState& edge, const SinkingState& head)
 {
     return std::ranges::all_of(edge.objects, [&](const ObjectEntry& entry) {
         const ObjectState* atHead = head.find(entry.object);
-        bool isDeadCell = !atHead || (entry.state.isCell() && !atHead->hasCell());
-        return isDeadCell || std::ranges::all_of(entry.state.variants, [&](const ObjectVariant& variant) {
+        return !atHead || sinking.isDeadOnEdge(taken, entry.object) || std::ranges::all_of(entry.state.variants, [&](const ObjectVariant& variant) {
             return atHead->variants.containsIf([&](const ObjectVariant& other) {
                 return other.shape == variant.shape;
             });
         });
     });
-}
-
-bool AllocationSinking::checksThatModesAgree() const
-{
-    return m_checksShortcuts || context().build.validates();
 }
 
 void AllocationSinking::rewriteEdge(ObjectInterpreter& interpreter, Terminator& terminator, const OutgoingEdge& outgoing)
@@ -591,7 +601,7 @@ void AllocationSinking::rewriteEdge(ObjectInterpreter& interpreter, Terminator& 
     ObjectValueMap edgeValues = interpreter.values();
     ObjectInterpreter edge(*this, SinkingMode::Rewrite, edgeState, &edgeValues);
     edge.enterEdge(outgoing, &terminator, head);
-    RELEASE_ASSERT(!checksThatModesAgree() || !edgeState.isReachable || bringsOnlyShapesOfHead(edgeState, *head));
+    RELEASE_ASSERT(!checksThatModesAgree() || !edgeState.isReachable || bringsOnlyShapesOfHead(*this, outgoing.edge, edgeState, *head));
 
     Target& target = terminator.targets[outgoing.edge.targetIndex];
     if (testIsInterpreted)

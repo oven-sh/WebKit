@@ -235,9 +235,10 @@ public:
         m_whereWalkBegins = nullptr;
         m_tookArgumentsOfAllCallersTogether = false;
         m_didNotMultiplyAlternatives = false;
+        m_callersAreTooManyForOneWalk = false;
         explore(call, result);
         // A walk that asked for no parameter says the same for each caller, and so does one in which one part alone had several values.
-        if ((!result.sawEveryText || !result.sawAllFlags) && m_tookArgumentsOfAllCallersTogether && m_didNotMultiplyAlternatives) {
+        if ((!result.sawEveryText || !result.sawAllFlags) && m_tookArgumentsOfAllCallersTogether && (m_didNotMultiplyAlternatives || m_callersAreTooManyForOneWalk)) {
             Vector<FunctionID, 4> chain { call.site.function };
             Patterns byCallers = WTF::move(result);
             byCallers.sawEveryText = true;
@@ -312,6 +313,9 @@ private:
     mutable Vector<WhyNot, 3> m_allCauses;
     // Where one part of a text alone has several values, the walk over all callers together gives each caller's text. What a caller passes has to be kept together only where two parts have.
     mutable bool m_didNotMultiplyAlternatives { false };
+    // The walk's budget keeps a walk from running away; it is no bound on how large a program may be. A walk that takes what all callers pass follows a value for each of them at the least: where
+    // there are more of them than it may still follow it cannot come to an end, and each caller gets a walk, and a budget, of its own.
+    bool m_callersAreTooManyForOneWalk { false };
     Vector<const Typed::Value*, 4> m_callsOfChain;
 
     using ValueKey = std::pair<FunctionID, ValueID>;
@@ -400,8 +404,9 @@ private:
             Patterns world;
             m_tookArgumentsOfAllCallersTogether = false;
             m_didNotMultiplyAlternatives = false;
+            m_callersAreTooManyForOneWalk = false;
             exploreUnderChain(call, chain, world);
-            if ((!world.sawEveryText || !world.sawAllFlags) && m_tookArgumentsOfAllCallersTogether && m_didNotMultiplyAlternatives) {
+            if ((!world.sawEveryText || !world.sawAllFlags) && m_tookArgumentsOfAllCallersTogether && (m_didNotMultiplyAlternatives || m_callersAreTooManyForOneWalk)) {
                 Patterns above;
                 exploreForEachCaller(call, bottom, chain, above);
                 if (above.sawEveryText && above.sawAllFlags && !above.patterns.isEmpty())
@@ -505,8 +510,10 @@ private:
 
         result.sawEveryText &= sawEveryText;
         result.sawAllFlags &= sawAllFlags;
-        if (result.whyNot.cause == Cause::None && (!sawEveryText || !sawAllFlags))
+        // One row's flags say less than another row's text: without the text there is nothing to look a record up by.
+        if ((result.whyNot.cause == Cause::None && (!sawEveryText || !sawAllFlags)) || (result.whyNot.cause == Cause::Flags && !sawEveryText))
         {
+            result.furtherCauses.shrink(0);
             result.whyNot = sawEveryText ? WhyNot { Cause::Flags, m_whyNot.function, m_whyNot.value } : whyNotOfTexts;
             for (const WhyNot& other : m_allCauses) {
                 if (other != result.whyNot && result.furtherCauses.size() < 2)
@@ -731,6 +738,18 @@ private:
         MemoKey memoKey { callsLeadingTo(activation), nullptr, activation.function.index(), id.index() };
         if (const Constants* remembered = mayRemember ? recall(memoKey) : nullptr)
             return *remembered;
+        // A walk goes the same way each time. Where the walk of this value came to the end of a budget of which so much was left, it comes to the end of one of which no more is left: many calls
+        // ask for what one large family of functions hands round, and each would spend all it has there. Not so a test, which may follow few values: what it needs may be at hand the next time.
+        unsigned leftAtFirst = m_budget - m_valuesFollowed;
+        bool goesSameWayEachTime = mayRemember && !m_testsBeingAnswered;
+        if (goesSameWayEachTime) {
+            if (auto ranOut = m_leftWhereBudgetRanOut.find(memoKey); ranOut != m_leftWhereBudgetRanOut.end() && leftAtFirst <= ranOut->value) {
+                m_valuesFollowed = m_budget;
+                bool mayFollow = mayFollowAnotherValue();
+                ASSERT_UNUSED(mayFollow, !mayFollow);
+                return { };
+            }
+        }
         if (MemoryOfChoice* memory = memoryOfChoiceFor(activation, function, id)) {
             if (auto remembered = memory->values.find(memoKey); remembered != memory->values.end()) {
                 m_sawEverything &= remembered->value->sawEverything;
@@ -757,6 +776,10 @@ private:
         bool isOneOfSeveralObjects = result.size() > 1 && std::ranges::all_of(result, &Constant::isObjectOrArray);
         if (isOneOfSeveralObjects)
             m_split = Split { { activation.function, id }, result };
+        if (goesSameWayEachTime && m_valuesFollowed > m_budget) {
+            auto ranOut = m_leftWhereBudgetRanOut.add(memoKey, leftAtFirst);
+            ranOut.iterator->value = std::max(ranOut.iterator->value, leftAtFirst);
+        }
         if (mayRemember && m_walksCutShort == walksCutShortBefore && m_valuesFollowed <= maxValuesFollowed)
             m_remembered.add(memoKey, makeUniqueWithoutFastMallocCheck<Remembered>(Remembered { result, m_sawEverything, m_split, m_tookArgumentsOfAllCallersTogether, m_whyNot, m_didNotMultiplyAlternatives }));
         else if (MemoryOfChoice* memory = memoryOfChoiceFor(activation, function, id); memory && m_walksCutShort == walksCutShortBefore && m_valuesFollowed <= m_budget)
@@ -791,6 +814,8 @@ private:
         case Typed::Opcode::GetSlotOrUndefined:
         case Typed::Opcode::PropGet:
             return fieldsOf(evaluate(activation, value.objectOperand()), value.key());
+        case Typed::Opcode::PropGetChain:
+            return fieldsOf(fieldsOf(evaluate(activation, value.objectOperand()), value.key()), value.secondKey());
         case Typed::Opcode::GetArrayElement: {
             Constants arrays = evaluate(activation, value.arrayOperand());
             return elementsAt(activation, arrays, value.positionOperand());
@@ -1165,6 +1190,20 @@ private:
         ValueID operation;
     };
 
+    // Of the operations that name a member, those that cannot hand out what the member holds without the walk seeing it: the reads that holderOf() knows; those that store, define, delete or copy,
+    // which write an operand and are found by that; those that answer yes or no; those that call what the member holds; those that make a key. Whatever else names a member, an operation that is
+    // added tomorrow too, may hand out what it holds, and nobody here sees what is done with that.
+    static constexpr Typed::OpcodeSet opcodesThatHandOutNoMemberUnseen {
+        Typed::Opcode::PropGet, Typed::Opcode::GetSlot, Typed::Opcode::GetSlotOrUndefined, Typed::Opcode::PropGetChain, Typed::Opcode::PropGetPair,
+        Typed::Opcode::PropSet, Typed::Opcode::PropDefine, Typed::Opcode::PutSlot, Typed::Opcode::PropDelete, Typed::Opcode::DefineMethod, Typed::Opcode::DefineGetter, Typed::Opcode::DefineSetter,
+        Typed::Opcode::DefineOwnProperty, Typed::Opcode::DefineAccessors, Typed::Opcode::TryPutByIds, Typed::Opcode::SuperSet, Typed::Opcode::SetGlobalBinding, Typed::Opcode::SetFunctionName,
+        Typed::Opcode::CopyDataProperties, Typed::Opcode::CopyObject,
+        Typed::Opcode::PropHas, Typed::Opcode::PropHasOwn, Typed::Opcode::PropGetAndTest, Typed::Opcode::ScopeHasBinding, Typed::Opcode::FindsDeclaredMember, Typed::Opcode::ValidateLookup,
+        Typed::Opcode::NarrowByField,
+        Typed::Opcode::Call, Typed::Opcode::CallMethod, Typed::Opcode::CallList, Typed::Opcode::CallTable, Typed::Opcode::CallForwardVarargs,
+        Typed::Opcode::KeyConstant, Typed::Opcode::ToPropertyKey,
+    };
+
     // Freezing a list leaves what it holds.
     static constexpr Typed::OperandUses usesThatChangeContents = (Typed::operandWritingUses - Typed::OperandUse::ChangesIntegrity) | Typed::OperandUse::DefinesName | Typed::OperandUse::ChangesPrototype;
 
@@ -1228,6 +1267,14 @@ private:
         case Typed::Opcode::GetSlotOrUndefined:
         case Typed::Opcode::PropGet:
             return Holder { HolderKind::Member, value.key().index() };
+        case Typed::Opcode::PropGetChain:
+            return Holder { HolderKind::Member, value.secondKey().index() };
+        case Typed::Opcode::ResultAt: {
+            const Typed::Value& results = function.at(value.resultsOperand());
+            if (results.opcode != Typed::Opcode::PropGetPair)
+                return std::nullopt;
+            return Holder { HolderKind::Member, (value.index() ? results.secondKey() : results.key()).index() };
+        }
         case Typed::Opcode::Parameter: {
             size_t index = function.blocks.first().parameters.find(container);
             if (index == notFound)
@@ -1349,6 +1396,13 @@ private:
             for (uint32_t valueIndex = 0; valueIndex < function.values.size(); ++valueIndex) {
                 const Typed::Value& value = function.values[valueIndex];
                 operation = ValueID(valueIndex);
+                if (!opcodesThatHandOutNoMemberUnseen.contains(value.opcode)) {
+                    // Which operations name a member is what the schema says.
+                    if (Typed::Value::opcodesWithKey.contains(value.opcode) && value.key())
+                        found.append(WriteNotFollowed { Holder { HolderKind::Member, value.key().index() }, id, operation, operation });
+                    if (Typed::Value::opcodesWithSecondKey.contains(value.opcode) && value.secondKey())
+                        found.append(WriteNotFollowed { Holder { HolderKind::Member, value.secondKey().index() }, id, operation, operation });
+                }
                 // A literal of many members is made empty, filled member by member and cut to its length: elementsOfLongLiteral() reads that.
                 if (placeWrittenBy(value) || value.opcode == Typed::Opcode::PutContiguousIndex || value.opcode == Typed::Opcode::TruncateNewArray)
                     continue;
@@ -2579,9 +2633,13 @@ private:
         SetForScope testsBeingAnswered(m_testsBeingAnswered, m_testsBeingAnswered + 1);
         unsigned valuesFollowedBefore = m_valuesFollowed;
         unsigned walksCutShortBefore = m_walksCutShort;
+        std::optional<Split> splitBefore = m_split;
         SetForScope budget(m_budget, std::min(m_budget, m_valuesFollowed + maxValuesFollowedForTest));
         Typed::KnownBoolean answer = answerOf(activation, function, terminator.conditionOperand());
         if (m_valuesFollowed > m_budget) {
+            // `if (row.mark === undefined)` in a function that is handed the rows of a table: the test has come through as many rows as it may follow values. They are not all the rows there are,
+            // and whoever went through them one at a time would take them for all.
+            m_split = WTF::move(splitBefore);
             m_valuesFollowed = valuesFollowedBefore + maxValuesFollowedForTest;
             m_walksCutShort = walksCutShortBefore;
             return false;
@@ -2602,7 +2660,9 @@ private:
         // Other operations may enter the function too, unless the call graph has found that nothing but direct calls names it.
         m_sawEverything &= m_callGraph.entrySet(activation.function) == Typed::EntrySet::DirectCallers;
         Constants values;
-        for (const DirectCall& call : std::ranges::equal_range(m_directCalls, activation.function, { }, &DirectCall::callee)) {
+        auto callers = std::ranges::equal_range(m_directCalls, activation.function, { }, &DirectCall::callee);
+        m_callersAreTooManyForOneWalk |= !m_testsBeingAnswered && m_valuesFollowed < m_budget && callers.size() > m_budget - m_valuesFollowed;
+        for (const DirectCall& call : callers) {
             // Nothing can be followed any more, and a function may have thousands of callers.
             if (m_valuesFollowed >= m_budget) {
                 ++m_valuesFollowed;
@@ -3201,6 +3261,14 @@ private:
             return index < value.numberOfOperands() ? evaluate(activation, value.operand(index)) : Constants();
         case Typed::Opcode::StringRange:
             return boundsOf(activation, value, index);
+        case Typed::Opcode::PropGetPair: {
+            // Two reads of members in one operation: `row.name` and `row.open`, `a.b` and `c.d`, or `a.b` and `a.b.c`.
+            if (!index || value.readsFromFirstResult()) {
+                Constants first = fieldsOf(evaluate(activation, value.objectOperand()), value.key());
+                return index ? fieldsOf(first, value.secondKey()) : first;
+            }
+            return fieldsOf(evaluate(activation, value.otherOperand() ? value.otherOperand() : value.objectOperand()), value.secondKey());
+        }
         case Typed::Opcode::DestructureIterable: {
             // `([low, high]) => ..` where the analysis of the whole program does not know that a list is handed in. The built-in objects are read-only in a compiled program, so going through a
             // list that has no members of its own but its elements gives its elements.
@@ -3618,6 +3686,7 @@ private:
     unsigned m_valuesFollowed { 0 };
     unsigned m_walksCutShort { 0 };
     HashMap<MemoKey, std::unique_ptr<Remembered>> m_remembered;
+    HashMap<MemoKey, unsigned> m_leftWhereBudgetRanOut;
     bool m_sawEverything { true };
     std::optional<Split> m_split;
     Vector<std::pair<ValueKey, Constant>, 4> m_bindings;

@@ -838,6 +838,35 @@ static bool isAnsweredByTestOfCell(const Program& program, const Value& slotOper
     });
 }
 
+// A field that holds its own object cannot be listed, and the fields behind it wait for the order of the keys. Stores that stand directly behind the allocation, with nothing between that looks at anything, are as good as listed:
+// nobody has the object before they have run. To the store that fills the slot it is not filled yet.
+static ValueID valueStoredDirectlyBehind(FunctionAnalyses& analyses, ValueID allocation, PropertyKeyID key, const Value& user)
+{
+    const Function& function = analyses.function();
+    ValueLocation location = analyses.useLists().locationOf(allocation);
+    const BlockValues& values = function.at(location.block).values;
+    for (uint32_t index = location.index + 1; index < values.size(); ++index) {
+        const Value& value = function.at(values[index]);
+        if (&value == &user)
+            return { };
+        if (value.opcode == Opcode::PutSlots && value.objectOperand() == allocation) {
+            PayloadListView<PlacedKey> keys = value.placedKeys();
+            std::span<const ValueID> stored = value.variadicOperands();
+            for (uint32_t position = 0; position < keys.size() && position < stored.size(); ++position) {
+                if (keys[position].key == key)
+                    return stored[position];
+            }
+            continue;
+        }
+        bool storesIntoObject = (value.opcode == Opcode::PutSlot || value.opcode == Opcode::PutSlotOrAdd) && value.objectOperand() == allocation;
+        if (storesIntoObject && value.key() == key)
+            return value.valueOperand();
+        if (!storesIntoObject && !analyses.hasNoEffects(values[index]))
+            return { };
+    }
+    return { };
+}
+
 static bool fillsSlotWithDeclaredType(FunctionAnalyses& analyses, ValueID allocationID, const Value& user)
 {
     PropertyKeyID key = user.key();
@@ -855,6 +884,10 @@ static bool fillsSlotWithDeclaredType(FunctionAnalyses& analyses, ValueID alloca
     for (size_t index = 0; index < fields.size() && index < values.size(); ++index) {
         if (fieldAt(program, { allocation.layout(), fields[index] }).key == key)
             listsValue = !mayBeMarker(values[index]);
+    }
+    if (!listsValue) {
+        ValueID stored = valueStoredDirectlyBehind(analyses, allocationID, key, user);
+        listsValue = stored && !mayBeMarker(stored);
     }
     if (!listsValue)
         return false;
@@ -1330,6 +1363,19 @@ static constexpr OpcodeSet opcodesBehindProofsOfFilledSlots = opcodesMatching([]
     return isTest || (resultRuleOf(opcode) == ResultRule::Allocation && Value::opcodesWithLayout.contains(opcode));
 });
 
+static bool isFilledBehindEveryAllocation(FunctionAnalyses& analyses, const GuardFact& fact, const Value& user)
+{
+    PropertyKeyID key = user.key();
+    // Placement asks of a store whether it finds the slot as a creating store left it, and one of these stores may be the one that asks.
+    if (storedOf(user.opcode) || (!fact.proves(Proof::SlotFilled) && !fact.proves(Proof::KeyOrder)))
+        return false;
+    return std::ranges::all_of(fact.origins, [&](const GuardOrigin& origin) {
+        if (origin.source != GuardSource::Allocation)
+            return false;
+        return listsFieldWithKey(analyses.program(), analyses.function().at(origin.test), key) || valueStoredDirectlyBehind(analyses, origin.test, key, user);
+    });
+}
+
 bool guardProvesSlotFilled(FunctionAnalyses& analyses, const Value& slotOperation)
 {
     ValueID guard = slotOperation.guardOperand();
@@ -1346,7 +1392,7 @@ bool guardProvesSlotFilled(FunctionAnalyses& analyses, const Value& slotOperatio
     bool isProven = std::ranges::any_of(analyses.guardFacts(guard).facts, [&](const GuardFact& fact) {
         if (fact.subject != object)
             return false;
-        return provesSlotFilled(program, analyses.function(), fact, slotOperation.key()) || (testOfCellAnswers && fact.proves(Proof::BirthFieldsFilled));
+        return provesSlotFilled(program, analyses.function(), fact, slotOperation.key()) || (testOfCellAnswers && fact.proves(Proof::BirthFieldsFilled)) || isFilledBehindEveryAllocation(analyses, fact, slotOperation);
     });
     RELEASE_ASSERT(mayBeProven || !isProven);
     return isProven;

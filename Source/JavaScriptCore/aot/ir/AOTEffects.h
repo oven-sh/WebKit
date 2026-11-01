@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTMemoryLocation.h"
+#include <type_traits>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -16,6 +17,9 @@ class Program;
 struct Function;
 struct Terminator;
 struct Value;
+
+// Sabotage::MemoryRunsOutWhenCountedByRule: whoever asks is told that an error for lack of memory is thrown by rule. What was declared stays as it was.
+inline bool lackOfMemoryThrowsByRule { false };
 
 class ThrowEffect {
 public:
@@ -43,7 +47,8 @@ public:
 
     constexpr operator bool() const { return m_mayThrow; }
     constexpr bool otherThanStackOverflow() const { return m_mayThrowOtherThanStackOverflow; }
-    constexpr bool byRule() const { return m_mayThrowByRule; }
+    constexpr bool byRule() const { return m_mayThrowByRule || (m_mayThrowOtherThanStackOverflow && !std::is_constant_evaluated() && lackOfMemoryThrowsByRule); }
+    constexpr bool isDeclaredOnlyForLackOfMemory() const { return m_mayThrowOtherThanStackOverflow && !m_mayThrowByRule; }
 
     constexpr ThrowEffect& operator|=(ThrowEffect other)
     {
@@ -285,9 +290,14 @@ struct EffectTraitBounds {
     EffectTraits atMost { EffectTraits::all() };
 };
 
+// The test of the storage chooses between two ways to read an element of a pristine array, and neither runs code. Only what judges finished code goes by that: a call that was put in line brings such reads
+// before their storage is decided, and its summary knew them for reads. Told to the passes it moves code.
+enum class UntestedStorage : bool { MakesReadUnknown, LeavesReadKnown };
+
 struct EffectContext {
     const Program& program;
     const EffectSummaries& summaries;
+    UntestedStorage untestedStorage { UntestedStorage::MakesReadUnknown };
 };
 
 EffectsOnEdges effectsOf(const EffectContext&, const Function&, const Value&);

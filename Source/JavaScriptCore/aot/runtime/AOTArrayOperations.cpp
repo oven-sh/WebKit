@@ -180,6 +180,9 @@ static void appendElements(JSGlobalObject* globalObject, VM& vm, JSArray* target
         throwOutOfMemoryError(globalObject, scope);
         return;
     }
+    // A target that shares its elements, as the answer of Object.keys() does, goes on sharing them.
+    if (!source->length())
+        return;
     bool isAppended = isFrameArray(source) ? tryAppendFrameArray(globalObject, vm, target, source) : tryAppendArray(globalObject, vm, target, source);
     RETURN_IF_EXCEPTION(scope, void());
     if (isAppended)

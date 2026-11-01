@@ -13,6 +13,13 @@
 #include <wtf/MathExtras.h>
 #include <wtf/StdLibExtras.h>
 
+// In a hardened engine the table of boxed calls has pages of its own, which are read-only. On ARM64 the instance ends below the loop poll page without it.
+#if defined(BUN_HARDENED) || CPU(ARM64)
+#define AOT_BOXED_CALLS_LIE_BELOW_INSTANCE 1
+#else
+#define AOT_BOXED_CALLS_LIE_BELOW_INSTANCE 0
+#endif
+
 namespace JSC { namespace AOT {
 
 struct InstanceSizes {
@@ -37,7 +44,9 @@ struct InstanceLayout {
 #if defined(BUN_HARDENED)
     // From here to the key order steps: what nothing writes once the instance has been created. The pages are read-only from then on.
     static constexpr size_t offsetOfWordsWrittenOnce = 16 * KB;
-    // The table of boxed calls, with room for an entry for every number that a byte holds. Read-only from then on as well.
+#endif
+#if AOT_BOXED_CALLS_LIE_BELOW_INSTANCE
+    // The table of boxed calls, with room for an entry for every number that a byte holds. In a hardened engine it is read-only once the instance has been created.
     static constexpr ptrdiff_t offsetOfBoxedCalls = -static_cast<ptrdiff_t>(32 * KB);
     static constexpr size_t bytesReservedForBoxedCalls = 16 * KB;
 #endif
@@ -55,8 +64,13 @@ struct InstanceLayout {
     static constexpr size_t offsetOfBuiltinCells = 128 * KB;
     static constexpr size_t offsetOfBuiltinValues = 256 * KB;
 
+#if CPU(ARM64) && !defined(BUN_HARDENED)
+    // A poll is one load, and the immediate offset of a load reaches from the instance to 32 KB above it: the page lies between the instance and the key order steps.
+    static constexpr ptrdiff_t offsetOfLoopPollPage() { return static_cast<ptrdiff_t>(offsetOfKeyOrderSteps - bytesReservedForLoopPollPage); }
+#else
     static constexpr ptrdiff_t offsetOfLoopPollPage() { return -static_cast<ptrdiff_t>(bytesReservedForPrefixAndPollPage); }
-    static constexpr ptrdiff_t offsetOfStatics(InstanceSizes sizes) { return offsetOfLoopPollPage() - static_cast<ptrdiff_t>(bytesReservedForStatics(sizes)); }
+#endif
+    static constexpr ptrdiff_t offsetOfStatics(InstanceSizes sizes) { return -static_cast<ptrdiff_t>(bytesReservedForPrefixAndPollPage + bytesReservedForStatics(sizes)); }
     static constexpr ptrdiff_t offsetOfCards(InstanceSizes sizes) { return offsetOfStatics(sizes) - static_cast<ptrdiff_t>(bytesReservedForStatics(sizes) >> cardShift); }
     static constexpr size_t bytesReservedBelowInstance(InstanceSizes sizes)
     {
@@ -91,10 +105,14 @@ static_assert(!(InstanceLayout::bytesReservedForPrefixAndPollPage % InstanceLayo
 static_assert(!(InstanceLayout::offsetOfStringCells % InstanceLayout::granuleAboveInstance));
 #if defined(BUN_HARDENED)
 static_assert(!(InstanceLayout::offsetOfWordsWrittenOnce % InstanceLayout::granuleAboveInstance) && !(InstanceLayout::offsetOfKeyOrderSteps % InstanceLayout::granuleAboveInstance));
-static_assert(!(InstanceLayout::offsetOfBoxedCalls % static_cast<ptrdiff_t>(InstanceLayout::granuleAboveInstance)) && !(InstanceLayout::bytesReservedForBoxedCalls % InstanceLayout::granuleAboveInstance));
-static_assert(InstanceLayout::offsetOfLoopPollPage() + static_cast<ptrdiff_t>(InstanceLayout::bytesReservedForLoopPollPage) <= InstanceLayout::offsetOfBoxedCalls);
 #endif
-static_assert(InstanceLayout::offsetOfLoopPollPage() + static_cast<ptrdiff_t>(InstanceLayout::bytesReservedForLoopPollPage) <= InstanceLayout::offsetOfKeyedValuePlaces);
+#if AOT_BOXED_CALLS_LIE_BELOW_INSTANCE
+static_assert(!(InstanceLayout::offsetOfBoxedCalls % static_cast<ptrdiff_t>(InstanceLayout::granuleAboveInstance)) && !(InstanceLayout::bytesReservedForBoxedCalls % InstanceLayout::granuleAboveInstance));
+static_assert(InstanceLayout::offsetOfCopiesWithoutFrame + static_cast<ptrdiff_t>(InstanceLayout::bytesReservedForCopiesWithoutFrame) <= InstanceLayout::offsetOfBoxedCalls);
+#endif
+static_assert(-static_cast<ptrdiff_t>(InstanceLayout::bytesReservedForPrefixAndPollPage - InstanceLayout::bytesReservedForLoopPollPage) <= InstanceLayout::offsetOfKeyedValuePlaces);
+static_assert(!(InstanceLayout::offsetOfLoopPollPage() % static_cast<ptrdiff_t>(InstanceLayout::granuleAboveInstance)) && !(InstanceLayout::bytesReservedForLoopPollPage % InstanceLayout::granuleAboveInstance));
+static_assert(InstanceLayout::offsetOfLoopPollPage() < 0 || InstanceLayout::offsetOfLoopPollPage() + InstanceLayout::bytesReservedForLoopPollPage <= InstanceLayout::offsetOfKeyOrderSteps);
 static_assert(InstanceLayout::offsetOfKeyedValuePlaces + static_cast<ptrdiff_t>(InstanceLayout::bytesReservedForKeyedValuePlaces) <= InstanceLayout::offsetOfCopiesWithoutFrame);
 static_assert(InstanceLayout::offsetOfCopiesWithoutFrame + static_cast<ptrdiff_t>(InstanceLayout::bytesReservedForCopiesWithoutFrame) <= -static_cast<ptrdiff_t>(32 * KB));
 static_assert(InstanceLayout::offsetOfStringCells - InstanceLayout::offsetOfBuiltinValues == InstanceLayout::offsetOfBuiltinValues - InstanceLayout::offsetOfBuiltinCells);

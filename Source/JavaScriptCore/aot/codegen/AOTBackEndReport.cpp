@@ -126,6 +126,8 @@ static StatisticID statisticOf(B3::Counter counter)
         return StatisticID::LoopBoundsClamped;
     case B3::Counter::LoopPollsRemoved:
         return StatisticID::LoopPollsRemoved;
+    case B3::Counter::WordsCarriedAroundLoops:
+        return StatisticID::WordsCarriedAroundLoops;
     case B3::Counter::SumsKeptAsIntegers:
         return StatisticID::SumsKeptAsIntegers;
     case B3::Counter::KnownInductionsUsed:
@@ -142,6 +144,12 @@ static StatisticID statisticOf(B3::Counter counter)
         return StatisticID::PredecessorsReadForRareBlocks;
     case B3::Counter::StepsToReleaseDeadValues:
         return StatisticID::StepsToReleaseDeadValues;
+    case B3::Counter::RangesHeldAgainstStackCells:
+        return StatisticID::RangesHeldAgainstStackCells;
+    case B3::Counter::ClobberPointsReadForCalls:
+        return StatisticID::ClobberPointsReadForCalls;
+    case B3::Counter::AccessesReadForWordsCarriedAroundLoops:
+        return StatisticID::AccessesReadForWordsCarriedAroundLoops;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

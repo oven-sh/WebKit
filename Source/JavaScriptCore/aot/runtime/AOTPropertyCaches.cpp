@@ -15,6 +15,7 @@
 #include "AOTCompiledFrame.h"
 #include "AOTCompiledStructure.h"
 #include "AOTEmptyPages.h"
+#include "AOTGenerator.h"
 #include "AOTHeapCacheRegistry.h"
 #include "AOTImage.h"
 #include "AOTInstance.h"
@@ -1446,6 +1447,7 @@ PropertyCaches::PropertyCaches(State& state)
     state.caches->add(CacheKind::StrongRoots, "Structures of additions in an Eden collection"_s, *this);
     state.caches->addObserver("PropertyCaches"_s, *this);
     state.caches->addClearedEachCollection("exits of fields"_s, asMutableByteSpan(std::span { m_fieldExits }));
+    state.caches->addClearedEachCollection("extra properties added"_s, asMutableByteSpan(std::span { m_addedExtraProperties }));
     state.instance.propertyCaches.fieldExits = m_fieldExits.data();
     if (Options::aotCountsPath())
         m_countedFilings = makeUnique<UncheckedKeyHashSet<uint64_t>>();
@@ -2099,6 +2101,12 @@ static bool findsOwnPropertyInStructureAlone(VM& vm, JSCell* base, Structure* st
         return !info.hasStaticPropertyTable();
     if (info.type() == ErrorInstanceType)
         return !ErrorInstance::isLazilyMaterialized(vm, PropertyName(uid));
+    // A function answers by itself for its length, its name and its prototype, and a class for the static fields that lie in variables. A plain value that its table lists is what a look finds.
+    if (isJSFunctionType(info.type()) || info.type() == SlimClosureWithPropertiesType) {
+        unsigned attributes = 0;
+        return uid != vm.propertyNames->length.impl() && uid != vm.propertyNames->name.impl() && uid != vm.propertyNames->prototype.impl()
+            && isValidOffset(structure->getConcurrently(uid, attributes)) && !(attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue);
+    }
     return (info.type() == ArrayType || info.type() == DerivedArrayType) && uid != vm.propertyNames->length.impl() && !parseIndex(*uid);
 }
 
@@ -2110,6 +2118,9 @@ void PropertyCaches::fileValueWithoutChangingObject(JSCell* base, uint32_t ident
     CachedName name = nameOf(identifierNumber);
     JSGlobalObject* globalObject = m_state.instance.globalObject;
     PropertySlot slot(base, PropertySlot::InternalMethodType::VMInquiry, &vm);
+    // An object that was given its first names a moment ago is still being filled. Nothing of a cacheable dictionary moves when it is made flat, and no cell is allocated.
+    if (structure->isDictionary() && !structure->isUncacheableDictionary() && base->isObject())
+        flattenOnce(vm, asObject(base));
     if (Object* object = compiledObjectOrNull(base); object ? !Object::structureGuaranteesAbsence(structure, name.uid) || hasPendingStars(*object) : !findsOwnPropertyInStructureAlone(vm, base, structure, name.uid))
         return;
     unsigned attributes = 0;
@@ -2171,7 +2182,7 @@ static StructureLookupResult lookUpByStructure(Structure* structure, UniquedStri
 {
     for (JSObject* holder = nullptr;; structure = holder->structure()) {
         TypeInfo info = structure->typeInfo();
-        if (!info.isObject() || !structure->hasMonoProto() || info.overridesGetOwnPropertySlot() || info.overridesGetPrototype()
+        if (!info.isObject() || !structure->hasMonoProto() || info.overridesGetOwnPropertySlot() || hidesObjectsAbove(structure)
             || TypeInfo::hasStaticPropertyTable(info.inlineTypeFlags()) || structure->isCompiledStructure() || structure->isUncacheableDictionary())
             return { };
         unsigned attributes = 0;

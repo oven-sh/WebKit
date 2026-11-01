@@ -38,7 +38,7 @@ public:
     void generateData(const ValueContext&);
     void generateNewClosure(const ValueContext&);
     void generateKeyConstant(const ValueContext&);
-    void generateUnspecified(const ValueContext& value) { define(value, zeroOf(value.representation())); }
+    void generateUnspecified(const ValueContext& value) { define(value, generator().validates() ? markOfUnspecifiedValue(value.representation()) : zeroOf(value.representation())); }
     void generateEmptyArgumentList(const ValueContext& value) { defineCell(value, CellPointer(loadImmutablePointer(AOT_INSTANCE_OFFSET(realm.emptyArgumentList)).value())); }
 
     CellPointer stringConstant(const OperationContext&, StringID);
@@ -61,6 +61,10 @@ public:
     void branchOnIsBuiltinCell(LValue boxedValueOrCell, BuiltinID, BranchTargets);
     Operand constantOf(JSValue, Representation);
     Operand zeroOf(Representation);
+    // What a validating build puts where nothing was specified. A NaN that is kept as Double has no payload, so no number has these bits. An integer has them only where its type reaches that far down.
+    static constexpr uint64_t bitsOfUnspecifiedDouble = 0x7ff8000000badbadull;
+    static constexpr int32_t unspecifiedInt32 = std::numeric_limits<int32_t>::min();
+    Operand markOfUnspecifiedValue(Representation);
     // The cell in a word that, once filled, stays as it is.
     CellPointer permanentCell(TypedPointer cellWord, bool isNarrow, NOESCAPE const Invocable<CellPointer()> auto& create);
 

@@ -207,6 +207,8 @@ struct TestSite {
     uint32_t numberOfTests { 0 };
     Effects effectsWhenPassed;
     TestOutcome outcome { TestOutcome::IsExpectedToPass };
+    // Of a read of an element: every use makes a number of it, so a hole may be read as NaN.
+    bool mayReadHoleAsNaN { false };
 };
 
 struct TestSites {
@@ -283,6 +285,11 @@ public:
     void beginRule(TestSiteRuleID rule) { m_rule = rule; }
     void moveTo(TestSiteRuleID, ValueID use, ProgramPoint);
     bool didReport() const { return m_didReport; }
+    void noteThatHoleMayBeReadAsNaN()
+    {
+        RELEASE_ASSERT(m_didReport);
+        m_sites.sites.last().mayReadHoleAsNaN = true;
+    }
     TestSites takeSites() { return WTF::move(m_sites); }
 
 private:
@@ -348,6 +355,7 @@ public:
     IRBuilder& builder() const { return m_inputs.builder; }
 
     ValueID use() const { return m_inputs.site.use; }
+    bool mayReadHoleAsNaN() const { return m_inputs.site.mayReadHoleAsNaN; }
     Value& useValue() const LIFETIME_BOUND { return m_inputs.context.function.edit(m_inputs.site.use); }
     ProgramPoint point() const { return m_inputs.point; }
 

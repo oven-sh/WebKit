@@ -159,6 +159,7 @@ static B3::LoopPolicy loopPolicyFor(const FunctionBackEndTraits& traits)
     loops.pollsBetweenStretches = true;
     loops.vectorizes = std::isfinite(traits.leastFrequencyOfWarmCode);
     loops.unrolls = std::isfinite(traits.leastFrequencyOfWarmCode);
+    loops.promotesMemory = true;
     loops.minFrequencyOfUnrolledLoop = traits.leastFrequencyOfWarmCode;
     loops.hoistsOnlyFromLikelyPaths = true;
     loops.hoistsImmutableLoadsPastWrites = true;
@@ -181,6 +182,7 @@ static B3::ValidationPolicy validationPolicyFor(const BuildContext& build)
     validation.omitsStridedLimitGuard = build.isSabotaged(Sabotage::StridedIndexesStayInRange);
     validation.overlooksWritesBehindWordsReadAgain = build.isSabotaged(Sabotage::WordsReadAgainOutlastWrites);
     validation.overlooksWritesToWhatLoopsReadAgain = build.isSabotaged(Sabotage::VariablesReadAgainInLoopsOutlastWrites);
+    validation.overlooksWritesToWordsCarriedAroundLoops = build.isSabotaged(Sabotage::WordsCarriedAroundLoopsOutlastWrites);
     validation.overlooksWritesBetweenLoadsAndTheirUsers = build.isSabotaged(Sabotage::LoadsFoldedIntoTheirUsersOutlastWrites);
     validation.overlooksWritesBetweenPairedLoads = build.isSabotaged(Sabotage::PairedLoadsOutlastWrites);
     validation.leavesRoomForOneTurnTooFew = build.isSabotaged(Sabotage::WrittenOutTurnsAlwaysFit);

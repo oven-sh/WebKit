@@ -165,6 +165,10 @@ static std::optional<HandlerOnEntry> findHandlerOnEntry(SelectionContext& contex
     const std::optional<Target>& headerHandler = function.at(header).handler;
     if (!headerHandler || function.at(entry.from).handler == headerHandler)
         return HandlerOnEntry { headerHandler, { } };
+    // A handler inside the loop leads on to the next turn. Entered from the loop entry, it would get there past what the entry defines.
+    const NaturalLoops& loops = context.analyses().naturalLoops();
+    if (const NaturalLoop* loop = loops.headerOf(header); loop && loops.belongsTo(headerHandler->block, *loop))
+        return std::nullopt;
     Target handler = *headerHandler;
     const Target& target = targetOf(function, entry);
     if (target.arguments.size() != function.at(header).parameters.size())

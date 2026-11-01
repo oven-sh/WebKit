@@ -62,13 +62,11 @@ public:
             return false;
         if (!m_isLiveAtEntry) {
             m_isLiveAtEntry.emplace();
-            const Liveness& liveness = (*m_liveness)();
-            for (BlockID entry : m_entries) {
-                for (ValueID value : liveness.liveAtHead(entry)) {
-                    if (!isDefinedOutside(value))
-                        m_isLiveAtEntry->set(value.index());
-                }
-            }
+            auto note = [&](ValueID value) {
+                if (!isDefinedOutside(value))
+                    m_isLiveAtEntry->set(value.index());
+            };
+            (*m_liveness)().forEachLiveAtHeadOfAny(m_entries, ScopedLambda<void(ValueID)>(note));
         }
         return m_isLiveAtEntry->get(definition.index());
     }

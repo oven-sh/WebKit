@@ -428,8 +428,11 @@ static void enterEdge(AllocationSinking& sinking, SinkingState& state, Edge edge
     }
 
     bool isPlain = sinking.isPlain(edge, target) && !sinking.checksShortcuts();
-    if (isPlain && ObjectInterpreter(sinking, SinkingMode::Analyze, state).tryEnterPlainEdge(target))
+    if (isPlain && ObjectInterpreter(sinking, SinkingMode::Analyze, state).tryEnterPlainEdge(target)) {
+        if (sinking.checksThatModesAgree()) [[unlikely]]
+            sinking.setObjectsDeadOnEdge(edge, { });
         return;
+    }
     OutgoingEdge outgoing = isPlain ? OutgoingEdge { edge, target, { } } : outgoingEdgeOf(function, edge);
     const Terminator* terminator = edge.isHandlerEdge() ? nullptr : &function.at(edge.from).terminator;
     if (sinking.checksShortcuts() && sinking.isPlain(edge, target)) [[unlikely]] {
@@ -1489,7 +1492,18 @@ void ObjectInterpreter::makeFieldsOfCellsValid(const OutgoingEdge& outgoing, con
 void ObjectInterpreter::dropDeadEntries(BlockID target, const SinkingState* headOfTarget)
 {
     if (m_mode == SinkingMode::Analyze) {
+        Vector<VirtualObjectID, 4> deadObjects;
+        if (m_sinking.checksThatModesAgree()) [[unlikely]] {
+            for (const ObjectEntry& entry : m_state.objects)
+                deadObjects.append(entry.object);
+        }
         removeDeadEntries(m_sinking, m_state, target);
+        if (m_sinking.checksThatModesAgree()) [[unlikely]] {
+            deadObjects.removeAllMatching([&](VirtualObjectID object) {
+                return !!m_state.find(object);
+            });
+            m_sinking.setObjectsDeadOnEdge(m_enteredEdge.edge->edge, WTF::move(deadObjects));
+        }
         return;
     }
 

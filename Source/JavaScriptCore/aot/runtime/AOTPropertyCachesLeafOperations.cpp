@@ -10,6 +10,7 @@
 
 #include "AOTAllocationCounts.h"
 #include "AOTCompiledCallee.h"
+#include "AOTGenerator.h"
 #include "AOTImage.h"
 #include "AOTInstance.h"
 #include "AOTModuleNamespace.h"
@@ -69,7 +70,7 @@ static ALWAYS_INLINE StructuralRead lookUpGeneric(JSObject* object, UniquedStrin
         bool hasSymbolsOnlyInStructure = uid->isSymbol() && object->type() == GlobalObjectType && object->methodTable()->getOwnPropertySlot == JSGlobalObject::getOwnPropertySlot;
         if (!hasSymbolsOnlyInStructure && (info.overridesGetOwnPropertySlot() || TypeInfo::hasStaticPropertyTable(object->inlineTypeFlags())))
             return { };
-        if (info.overridesGetPrototype() || structure->isCompiledStructure())
+        if (hidesObjectsAbove(structure) || structure->isCompiledStructure())
             return { };
         unsigned attributes;
         auto offset = structure->getWithoutMaterializing(uid, attributes);
@@ -348,11 +349,13 @@ static StructuralRead readByKey(Instance* instance, JSCell* base, JSCell* key, L
     if (!base->isObject())
         return { };
     JSObject* object = asObject(base);
-    KeyName name = nameOfKeyForLeaf(instance, key, KeyAtomization::OnlyExisting);
+    const JSCell*& lastKeyWithoutAtom = instance->state->propertyCaches->tables().lastKeyWithoutAtomLike(key);
+    KeyName name = nameOfKeyForLeaf(instance, key, lastKeyWithoutAtom == key ? KeyAtomization::Atomize : KeyAtomization::OnlyExisting);
     switch (name.kind) {
     case KeyNameKind::NotAName:
         return { };
     case KeyNameKind::HasNoAtom:
+        lastKeyWithoutAtom = key;
         return hasOnlyOrdinaryLookupsOnChain(object) ? StructuralRead { jsUndefined(), LeafPresence::Absent } : StructuralRead { };
     case KeyNameKind::Index: {
         JSValue value = object->tryGetIndexQuickly(name.index);

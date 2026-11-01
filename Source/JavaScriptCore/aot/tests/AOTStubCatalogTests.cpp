@@ -373,7 +373,7 @@ static void checkBarrierEffects(const StubCatalog& catalog)
 
 static void checkLeaves(const StubCatalog& catalog)
 {
-    for (StubKey leaf : { weakMapGet(), weakMapHas(), weakSetHas() })
+    for (StubKey leaf : { weakMapGet(), weakMapFind(), weakMapHas(), weakSetHas() })
         AOT_TEST_CHECK(catalog.isLeaf(leaf));
     for (KeyComparison comparison : { KeyComparison::AnyValue, KeyComparison::String })
         AOT_TEST_CHECK(!catalog.isLeaf(mapGet(comparison)));

@@ -104,6 +104,7 @@ CodeGenerator::CodeGenerator(const FunctionInputs& inputs, B3::Procedure& proc, 
     , m_droppedGuard(droppedGuardIn(inputs.build.recordedOptions(), inputs.id))
     , m_validates(inputs.build.validates())
     , m_checksProofs(!inputs.build.validates() && inputs.build.recordedOptions().has(TestingSwitch::CheckProofsAtRunTime))
+    , m_runsOutOfMemoryWhenCounted(inputs.build.recordedOptions().isSabotaged(Sabotage::MemoryRunsOutWhenCounted) || inputs.build.recordedOptions().isSabotaged(Sabotage::MemoryRunsOutWhenCountedByRule))
     , m_checksKeptRegisters(inputs.build.validates() && inputs.build.options().validatesBackEnd)
     , m_forcesGCSlowPaths(inputs.build.recordedOptions().has(TestingSwitch::ForceGCSlowPaths))
 {

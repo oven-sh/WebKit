@@ -732,8 +732,7 @@ bool importMayAnswerWithMock(const Module& module)
 
 bool requireMayAnswerWithMock(const Program& program, const Module& module)
 {
-    std::span<const uint8_t> name = program.string(module.path);
-    return importMayAnswerWithMock(module) && !spanHasPrefix(name, byteCast<uint8_t>("node:"_span)) && !equalSpans(name, byteCast<uint8_t>("bun"_span));
+    return importMayAnswerWithMock(module) && !equalSpans(program.string(module.path), byteCast<uint8_t>("bun"_span));
 }
 
 bool requireReadsModuleValue(const Program& program, const Module& module)

@@ -877,8 +877,6 @@ private:
         if (opcode == Opcode::GetModuleVariable && m_inputs.zeroEncodingCandidates.quickGet(value.variable().index()))
             m_readsZeroEncodingCandidate = true;
         scanNames(value);
-        if (value.opcode == Opcode::ElemGet)
-            setBit(m_shared.readsByKeyFoundAtRunTime, 0);
     }
 
     struct LastStore {
@@ -1367,7 +1365,6 @@ SlotUses collectSlotUses(const SlotPlanContext& context)
             uses.keysNamed = FastBitVector(program.types.numberOfPropertyKeys());
             uses.keysDefinedByDescriptor = FastBitVector(program.types.numberOfPropertyKeys());
             uses.stringsNamed = FastBitVector(program.strings.size());
-            uses.readsByKeyFoundAtRunTime = FastBitVector(1);
         },
         [&] { timed("findLayoutsNamedBelow"_s, [&] { inputs.layoutsNamedBelow = findLayoutsNamedBelow(context); }); },
         [&] { timed("findObjectsUnderConstruction"_s, [&] { inputs.objectsUnderConstruction = findObjectsUnderConstruction(context); }); },

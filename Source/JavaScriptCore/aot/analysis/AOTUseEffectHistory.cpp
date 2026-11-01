@@ -354,6 +354,27 @@ Occurrence UseEffectHistory::AtPoint::occurrenceOf(ObjectID object) const
     return hasOccurred ? Occurrence::MayHaveOccurred : Occurrence::HasNotOccurred;
 }
 
+void UseEffectHistory::AtPoint::addObjectsThatMayHaveOccurredTo(BitVector& result) const
+{
+    RELEASE_ASSERT(!m_isUnknown);
+    BitVector occurred;
+    occurred.ensureSize(m_history.m_numberOfObjects);
+    for (size_t word = 0; word < m_head.size(); ++word) {
+        for (uint64_t bits = m_head[word]; bits; bits &= bits - 1)
+            occurred.quickSet(word * bitsPerWord + std::countr_zero(bits));
+    }
+    for (size_t position = 0; position < m_actions.size();) {
+        ObjectID object = m_actions[position].object;
+        // The last action in front of the point decides.
+        for (; position < m_actions.size() && m_actions[position].object == object; ++position) {
+            if (m_actions[position].index < m_index)
+                occurred.quickSet(object.index(), m_actions[position].kind == ActionKind::Event);
+        }
+    }
+    result.merge(occurred);
+    result.merge(m_history.m_isUnknown);
+}
+
 auto UseEffectHistory::actionsOf(BlockID block) const -> std::span<const Action>
 {
     uint32_t blockOrder = m_cfg.reversePostOrderIndex(block);

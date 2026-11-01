@@ -78,33 +78,28 @@ static void dumpClassOf(PrintStream& out, JSValue found)
 }
 
 // Numbers and kinds only: what a program holds is not for a log.
-static bool holdsType(Instance& instance, const RuntimeType& type, JSValue held, unsigned position)
+static NEVER_INLINE void reportHeldOutsideType(const RuntimeType& type, JSValue held, unsigned position)
 {
-    if (instance.state->objects->layouts.valueHasType(type, held))
-        return true;
     dataLog("AOT: number ", position, " of what the container holds is outside a type of ", type.literalStrings().size(), " texts and ", type.cellTests().size(), " tests of cells: ");
     dumpClassOf(WTF::dataFile(), held);
     dataLogLn();
+}
+
+#if COMPILER(CLANG)
+#pragma clang attribute pop
+#endif
+
+static ALWAYS_INLINE bool holdsType(Instance& instance, const RuntimeType& type, JSValue held, unsigned position)
+{
+    if (instance.state->objects->layouts.valueHasType(type, held)) [[likely]]
+        return true;
+    reportHeldOutsideType(type, held, position);
     return false;
 }
 
-template<typename Collection>
-static bool entriesHaveType(Instance& instance, Collection* collection, Typed::ContentsSlot slot, const RuntimeType& type)
-{
-    JSCell* storage = collection->storage();
-    typename Collection::Helper::Entry entry = 0;
-    // Deleted entries stay in the table until it is rebuilt, and the walk passes them one by one.
-    for (unsigned numberOfTestedEntries = 0; storage && entry < maxNumberOfTestedElements; ++numberOfTestedEntries) {
-        auto next = Collection::Helper::transitAndNext(*instance.vm, *storage, entry);
-        if (!next.storage)
-            return true;
-        if (!holdsType(instance, type, slot == Typed::ContentsSlot::Value ? next.value : next.key, numberOfTestedEntries))
-            return false;
-        storage = next.storage;
-        entry = next.entry + 1;
-    }
-    return true;
-}
+#if COMPILER(CLANG)
+#pragma clang attribute push(__attribute__((minsize)), apply_to = function)
+#endif
 
 static bool anyProperty(VM& vm, Structure* structure, const auto& predicate)
 {
@@ -170,6 +165,10 @@ static bool hasPristineNames(VM& vm, JSValue value)
     return !shadowsLockedPrototypeChain(vm, structure);
 }
 
+#if COMPILER(CLANG)
+#pragma clang attribute pop
+#endif
+
 // The pointers are only compared.
 struct SampledArray {
     const JSCell* array;
@@ -178,8 +177,7 @@ struct SampledArray {
 };
 
 struct SampledArrays {
-    std::array<SampledArray, 4> arrays { };
-    unsigned numberOfReplacements { 0 };
+    std::array<SampledArray, 1024> arrays { };
 };
 
 static SampledArrays& sampledArraysOfThread();
@@ -187,12 +185,32 @@ static SampledArrays& sampledArraysOfThread();
 static uint64_t numberOfEarlierSamples(const JSCell* array, const RuntimeType& type)
 {
     SampledArrays& earlier = sampledArraysOfThread();
-    for (SampledArray& sampled : earlier.arrays) {
-        if (sampled.array == array && sampled.type == &type)
-            return ++sampled.numberOfSamples;
-    }
-    earlier.arrays[earlier.numberOfReplacements++ % earlier.arrays.size()] = { array, &type, 0 };
+    SampledArray& sampled = earlier.arrays[WTF::pairIntHash(WTF::PtrHash<const JSCell*>::hash(array), WTF::PtrHash<const RuntimeType*>::hash(&type)) % earlier.arrays.size()];
+    if (sampled.array == array && sampled.type == &type)
+        return ++sampled.numberOfSamples;
+    sampled = { array, &type, 0 };
     return 0;
+}
+
+template<typename Collection>
+static bool entriesHaveType(Instance& instance, Collection* collection, Typed::ContentsSlot slot, const RuntimeType& type)
+{
+    JSCell* storage = collection->storage();
+    uint64_t size = collection->size();
+    uint64_t numberOfEarlier = size > maxNumberOfElementsTestedAgain ? numberOfEarlierSamples(collection, type) : 0;
+    typename Collection::Helper::Entry entry = numberOfEarlier ? numberOfEarlier * maxNumberOfElementsTestedAgain % size : 0;
+    typename Collection::Helper::Entry end = entry + (numberOfEarlier ? maxNumberOfElementsTestedAgain : maxNumberOfTestedElements);
+    // Deleted entries stay in the table until it is rebuilt, and the walk passes them one by one.
+    for (unsigned numberOfTestedEntries = 0; storage && entry < end; ++numberOfTestedEntries) {
+        auto next = Collection::Helper::transitAndNext(*instance.vm, *storage, entry);
+        if (!next.storage)
+            return true;
+        if (!holdsType(instance, type, slot == Typed::ContentsSlot::Value ? next.value : next.key, numberOfTestedEntries))
+            return false;
+        storage = next.storage;
+        entry = next.entry + 1;
+    }
+    return true;
 }
 
 static bool contentsHaveType(Instance& instance, JSCell* container, Typed::ContentsSlot slot, const RuntimeType& type)
@@ -208,7 +226,7 @@ static bool contentsHaveType(Instance& instance, JSCell* container, Typed::Conte
 
     // A loop checks the same long array on every iteration. Samples after the first are small, and each starts one element later, so together they cover the array.
     uint64_t length = array->length();
-    uint64_t numberOfEarlier = length > maxNumberOfTestedElements ? numberOfEarlierSamples(array, type) : 0;
+    uint64_t numberOfEarlier = length > maxNumberOfElementsTestedAgain ? numberOfEarlierSamples(array, type) : 0;
     uint64_t stride = std::max<uint64_t>(1, length / (numberOfEarlier ? maxNumberOfElementsTestedAgain : maxNumberOfTestedElements));
     for (uint64_t position = numberOfEarlier % stride; position < length; position += stride) {
         unsigned index = static_cast<unsigned>(position);
@@ -218,6 +236,10 @@ static bool contentsHaveType(Instance& instance, JSCell* container, Typed::Conte
     }
     return true;
 }
+
+#if COMPILER(CLANG)
+#pragma clang attribute push(__attribute__((minsize)), apply_to = function)
+#endif
 
 static void dumpChangedRegister(PrintStream& out, JSValue found)
 {
@@ -579,9 +601,8 @@ static bool isCellOfHeap(VM& vm, const void* address)
 }
 
 // Of bits that are no marker of the representation and no word of a literal string.
-static bool isFormOfValue(VM& vm, SlotRepresentation representation, uint64_t bits, uintptr_t cageBase)
+static bool isFormOfValue(VM& vm, SlotRepresentation representation, const SlotTraits& traits, uint64_t bits, uintptr_t cageBase)
 {
-    SlotTraits traits = traitsOf(representation);
     switch (traits.valueKind) {
     case SlotValueKind::Boolean:
         return traits.hasAbsent ? bits == JSValue::ValueFalse || bits == JSValue::ValueTrue : bits <= 1;
@@ -609,38 +630,64 @@ static bool isFormOfValue(VM& vm, SlotRepresentation representation, uint64_t bi
     return JSValue::decode(bits).isCell() && isCellOfHeap(vm, JSValue::decode(bits).asCell());
 }
 
+#if COMPILER(CLANG)
+#pragma clang attribute pop
+#endif
+
+static constexpr auto traitsOfEveryRepresentation = [] {
+    std::array<SlotTraits, numberOfEnumerators<SlotRepresentation>> traits { };
+    for (size_t index = 0; index < traits.size(); ++index)
+        traits[index] = traitsOf(static_cast<SlotRepresentation>(index));
+    return traits;
+}();
+
 std::optional<SlotOutsideType> findSlotOutsideType(VM& vm, const Object& object)
 {
     State& state = object.state();
     const LayoutData& layout = object.layout();
+    std::optional<Extension*> extension;
     for (const FieldData& field : layout.fields()) {
         // A brand is a class token, and what the slot of an accessor holds is not the value of the property. No type describes either.
         if (field.isBrand() || field.isAccessor())
             continue;
-        const void* slot = object.slotOf(field);
+        const void* slot = &object.at<uint8_t>(field.slot.offset);
+        if (field.isOutOfLine()) {
+            if (!extension)
+                extension = object.extension();
+            slot = *extension ? (*extension)->slotOrNull(field.slot.offset) : nullptr;
+        }
         if (!slot)
             continue;
 
         SlotRepresentation representation = field.slot.representation();
-        SlotTraits traits = traitsOf(representation);
+        const SlotTraits& traits = traitsOfEveryRepresentation[static_cast<size_t>(representation)];
         uint64_t bits = readSlotBits(representation, slot);
         // A slot that cannot say "absent" holds zero until its first store.
         if (bits == (traits.hasAbsent ? traits.absentBits : 0))
             continue;
+        const RuntimeType& type = state.objects->layouts.typeOf(field);
         if ((traits.hasUndefined && bits == traits.undefinedBits) || (traits.hasNull && bits == traits.nullBits)) {
-            JSValue marker = bits == traits.undefinedBits ? jsUndefined() : jsNull();
-            if (!state.objects->layouts.slotAdmits(field, marker))
-                return SlotOutsideType { &field, bits, true, marker };
+            bool isUndefined = bits == traits.undefinedBits;
+            if (!field.slotHoldsUndefinedAndNull && !type.primitiveSet().contains(isUndefined ? PrimitiveSet::Undefined : PrimitiveSet::Null))
+                return SlotOutsideType { &field, bits, true, isUndefined ? jsUndefined() : jsNull() };
+            continue;
+        }
+        if (representation == SlotRepresentation::Int32 || representation == SlotRepresentation::OptionalInt32) {
+            int32_t integer = static_cast<int32_t>(bits);
+            if (representation == SlotRepresentation::OptionalInt32 && integer < minInlineInt32)
+                return SlotOutsideType { &field, bits, false, { } };
+            auto range = type.integerRange();
+            if (!type.primitiveSet().contains(PrimitiveSet::Integer) || (range && (integer < range->first || integer > range->second)))
+                return SlotOutsideType { &field, bits, true, jsNumber(integer) };
             continue;
         }
 
-        const RuntimeType& type = state.objects->layouts.typeOf(field);
         if (traits.valueKind == SlotValueKind::LiteralString && isLiteralStringWord(bits)) {
             if (!slotMayHoldLiteralString(*state.instance.program, type, bits))
                 return SlotOutsideType { &field, bits, true, { } };
             continue;
         }
-        if (!isFormOfValue(vm, representation, bits, cageBaseOf(&object)))
+        if (!isFormOfValue(vm, representation, traits, bits, cageBaseOf(&object)))
             return SlotOutsideType { &field, bits, false, { } };
 
         bool defersClosure = traits.valueKind == SlotValueKind::DeferredClosure;
@@ -655,6 +702,10 @@ std::optional<SlotOutsideType> findSlotOutsideType(VM& vm, const Object& object)
     }
     return std::nullopt;
 }
+
+#if COMPILER(CLANG)
+#pragma clang attribute push(__attribute__((minsize)), apply_to = function)
+#endif
 
 void validateSlotTypes(VM& vm, const Object& object)
 {
@@ -691,9 +742,42 @@ void CollectionValidator::didFinishCollection(VM& vm, CollectionScope scope)
     }
 
     // Every compiled object lies in the space of cells.
+    if (!vm.aotState().recheckedCells)
+        vm.aotState().recheckedCells = makeUnique<RecheckedCells>();
+    RecheckedCells& rechecked = *vm.aotState().recheckedCells;
+    uint64_t collection = ++rechecked.numberOfCollections;
+    bool isFull = scope == CollectionScope::Full;
+    vm.cellSpace().forEachDirectory([&](BlockDirectory& directory) {
+        directory.forEachNotEmptyBlock([&](MarkedBlock::Handle* handle) {
+            directory.assertIsMutatorOrMutatorIsStopped();
+            MarkedBlock& block = handle->block();
+            if ((!isFull && !directory.isEden(handle)) || block.areMarksStale())
+                return;
+            auto& ofBlock = rechecked.blocks.ensure(&block, [] {
+                return makeUnique<RecheckedCells::OfBlock>();
+            }).iterator->value;
+            ofBlock->lastCollection = collection;
+            if (!isFull) {
+                WTF::BitSet<MarkedBlock::atomsPerBlock> fresh = block.marks();
+                fresh.exclude(ofBlock->cells);
+                fresh.forEachSetBit([&](size_t atom) {
+                    if (Object* object = compiledObjectOrNull(static_cast<JSCell*>(handle->atomAt(atom))))
+                        validateSlotTypes(vm, *object);
+                });
+            }
+            ofBlock->cells = block.marks();
+        });
+    });
+    if (isFull) {
+        rechecked.blocks.removeIf([&](auto& entry) {
+            return entry.value->lastCollection != collection;
+        });
+    }
     if (scope != CollectionScope::Full) {
-        vm.cellSpace().forEachMarkedCell([&](HeapCell* heapCell, HeapCell::Kind) {
-            if (Object* object = compiledObjectOrNull(static_cast<JSCell*>(heapCell)))
+        vm.cellSpace().forEachPreciseAllocation([&](PreciseAllocation* allocation) {
+            if (!allocation->isMarked())
+                return;
+            if (Object* object = compiledObjectOrNull(static_cast<JSCell*>(allocation->cell())))
                 validateSlotTypes(vm, *object);
         });
         return;
@@ -766,6 +850,10 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReportValidationFailure, void, (In
     crashOnValidationFailure(*instance->vm, { failureKind, Typed::FunctionID(function), Typed::ValueID(valueIndex), JSValue::decode(value), static_cast<Typed::Representation>(unboxedAs) });
 }
 
+#if COMPILER(CLANG)
+#pragma clang attribute pop
+#endif
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTContentsHaveType, size_t, (Instance* instance, JSCell* container, uint32_t contentsSlot, uint32_t type))
 {
     DeferGCForAWhile deferGC(*instance->vm);
@@ -773,6 +861,10 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTContentsHaveType, size_t, (Instanc
     RELEASE_ASSERT(contents);
     return contentsHaveType(*instance, container, static_cast<Typed::ContentsSlot>(contentsSlot), *contents);
 }
+
+#if COMPILER(CLANG)
+#pragma clang attribute push(__attribute__((minsize)), apply_to = function)
+#endif
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTValueHasType, size_t, (Instance* instance, EncodedJSValue value, uint32_t type))
 {

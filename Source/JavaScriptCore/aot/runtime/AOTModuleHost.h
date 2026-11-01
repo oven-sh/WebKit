@@ -121,6 +121,8 @@ String sourceProviderURL(ModuleID);
 JS_EXPORT_PRIVATE bool entryPointIsCommonJS(JSGlobalObject*);
 JS_EXPORT_PRIVATE bool isESModule(ModuleID);
 JS_EXPORT_PRIVATE bool isDataFile(ModuleID);
+// A file of a test run that an executable holds too: ModuleFlags::FindsBuiltinsReadOnly. Nothing for a module of Bun's own code, which writes for whoever has called it.
+std::optional<bool> findsBuiltinsReadOnly(ModuleID);
 // The loader of `bun run` would have the file in its registry: an import of it has settled, or a module that imports it has been loaded.
 JS_EXPORT_PRIVATE bool isHeldForImport(JSGlobalObject*, ModuleID);
 // Of what findModule() answers: the host makes the module, and the image holds its number alone.
@@ -241,6 +243,8 @@ JS_EXPORT_PRIVATE bool hasBegunToLoad(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE std::optional<ModuleID> formThatMockFinds(JSGlobalObject*, StringView path, std::optional<ModuleID> file);
 JS_EXPORT_PRIVATE Vector<ModuleID, 2> formsThatAttributesAskFor(JSGlobalObject*, StringView path);
 JS_EXPORT_PRIVATE void deferMock(JSGlobalObject*, ModuleID);
+// The mock has ended: its test file is over, or the program has taken it back. The next load finds the module itself, and whoever has imported a module of the library reads its own names again.
+JS_EXPORT_PRIVATE void didEndMock(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void runMocksBelow(JSGlobalObject*, ModuleID);
 // Behind runMocksBelow() that threw: it was the factory of the module itself, and an import statement asks for the module.
 JS_EXPORT_PRIVATE bool mockFailedBehindImportStatement(JSGlobalObject*, ModuleID);

@@ -493,6 +493,9 @@ void AccessRewriter::rewrite(const NamedAccessSite& site, const AccessOperands& 
                 Value fact = IRBuilder::make(Opcode::Entered);
                 fact.setFunction(function.inlineFrames[value->inlineFrame].callee);
                 entered = insertBeforeAccess(WTF::move(fact));
+            } else if (plan.operation == Opcode::GetModuleVariable && variable.owner && !plan.conditions.isEmpty()) {
+                // The variable holds the static field while the conditions hold. Ahead of their test it may hold the mark of a field that has left it.
+                entered = insertBeforeAccess(IRBuilder::make(Opcode::Specified));
             }
             value->become(plan.operation);
             value->setVariable(variableID);
@@ -4482,11 +4485,8 @@ static std::optional<PlannedSplit> planSplitByKeys(FunctionPassContext& context,
     if (!keyType.hasOnlyPrimitives(Primitive::LiteralString | Primitive::UndefinedOrNull) || keyType.stringLiterals.size() + mayBeNullish < 2)
         return std::nullopt;
 
-    Vector<Type, 4> keys;
-    bool guessesThatEveryKeyIsAbsent = true;
-    for (StringID text : keyType.stringLiterals) {
-        keys.append(Type::stringLiteral(text));
-        ConstantKey constantKey = constantKeyOf(context.program, keys.last());
+    auto planUnder = [&](const Type& key) -> std::optional<PropertyAccessPlan> {
+        ConstantKey constantKey = constantKeyOf(context.program, key);
         if (!constantKey)
             return std::nullopt;
         Value named = value;
@@ -4497,7 +4497,32 @@ static std::optional<PlannedSplit> planSplitByKeys(FunctionPassContext& context,
         PropertyAccessPlan plan = planNamedAccess(context, *query);
         if (!plan.isResolved())
             return std::nullopt;
-        guessesThatEveryKeyIsAbsent &= plan.member.kind == MemberKind::Absent && plan.level != KnowledgeLevel::Proven;
+        return plan;
+    };
+
+    // `Object.defineProperty(to, key, { get() { return from[key] } })`: a getter that was found under a name is expected to hold that name. With another it reads by key.
+    const Function& function = context.function;
+    const Value& held = function.at(sameObjectThroughCasts(function, value.propertyOperand()).valueInFrontOfFacts());
+    const Value* getter = held.opcode == Opcode::GetCapture ? &function.at(sameObjectThroughCasts(function, held.operand(0)).valueInFrontOfFacts()) : nullptr;
+    if (getter && getter->opcode == Opcode::GetSlotGetter) {
+        for (StringID text : keyType.stringLiterals) {
+            Type key = Type::stringLiteral(text);
+            ConstantKey constantKey = constantKeyOf(context.program, key);
+            if (!constantKey || internKey(context.types, constantKey) != getter->key())
+                continue;
+            if (std::optional<PropertyAccessPlan> plan = planUnder(key); plan && plan->member.kind != MemberKind::Absent)
+                return planSplitOfKey(context, site, singleElementSpan(key), true);
+        }
+    }
+
+    Vector<Type, 4> keys;
+    bool guessesThatEveryKeyIsAbsent = true;
+    for (StringID text : keyType.stringLiterals) {
+        keys.append(Type::stringLiteral(text));
+        std::optional<PropertyAccessPlan> plan = planUnder(keys.last());
+        if (!plan)
+            return std::nullopt;
+        guessesThatEveryKeyIsAbsent &= plan->member.kind == MemberKind::Absent && plan->level != KnowledgeLevel::Proven;
     }
     // `const entry = { [key]: 1 }; entry[key]`: code reads under a key to find something, so that guess fails at every read.
     if (guessesThatEveryKeyIsAbsent)
@@ -4872,8 +4897,15 @@ AccessTests createAccessTests(FunctionPassContext& context, const PropertyAccess
     }
 
     // The first test that reads the receiver also finds out that it is undefined or null: it faults. So nothing that branches stands between the check for those two and that test.
-    if (!plan.conditions.isEmpty())
-        result.tests.append(makeConditionsTest(types, plan.conditions.span()));
+    if (!plan.conditions.isEmpty()) {
+        // A set of guards takes what it says of a constructor function without objects to speak of no object. The receiver here is an object of one such function, so its class has begun where the access runs:
+        // the test waits for the class, and may then stand ahead of the allocation of its own receiver.
+        MemberConditions conditions = plan.conditions;
+        if (plan.receivers.size() == 1 && program.at(plan.receivers[0]).has(LayoutFlags::IsConstructorFunction)
+            && std::ranges::any_of(conditions, [&](const MemberCondition& condition) { return condition.layout != plan.receivers[0]; }))
+            addCondition(conditions, { MemberCondition::Kind::MemberUnchanged, plan.receivers[0], ClassSide::Static, program.keyOf(BuiltinNames::prototype) });
+        result.tests.append(makeConditionsTest(types, conditions.span()));
+    }
 
     // The test of the stored value comes last: whoever plans the store behind the tests takes it off the end.
     if (plan.stores() && !plan.storedValueFits) {
@@ -4902,16 +4934,41 @@ std::optional<ReceiverCandidates> receiversEstablishedBy(const Program& program,
 DispatchPlan planDispatch(FunctionPassContext& context, const MemberPartition& partition, const ReceiverCandidates& candidates, ValueID site, NOESCAPE const CanEmitArm& canEmitArm)
 {
     DispatchPlan plan;
-    // First the arms that find the member, then those with more expected members, then those with more members.
-    Vector<std::tuple<bool, uint32_t, uint32_t, LayoutID>, 4> ranks;
+    // First the arms that find the member, and of these the ones that hold it themselves, then those with more expected members, then those with more members.
+    Vector<std::tuple<bool, bool, uint32_t, uint32_t, LayoutID>, 4> ranks;
     for (uint32_t index = 0; index < partition.arms.size(); ++index) {
         const MemberArm& arm = partition.arms[index];
         LayoutList expectedMembers = arm.layouts;
         expectedMembers.intersect(candidates.expected.predicted());
-        ranks.append({ arm.answer.kind == MemberKind::Absent, ~static_cast<uint32_t>(expectedMembers.size()), ~static_cast<uint32_t>(arm.layouts.size()), arm.layouts[0] });
+        ranks.append({ arm.answer.kind == MemberKind::Absent, arm.answer.isAccessorInSlot, ~static_cast<uint32_t>(expectedMembers.size()), ~static_cast<uint32_t>(arm.layouts.size()), arm.layouts[0] });
         if (canEmitArm(arm))
             plan.arms.append(index);
     }
+    // Where some layouts hold the value and others a getter, an arm for a getter that no warm call site takes in line is more code than the read by name.
+    auto hasGetterTooLargeForArm = [&](uint32_t index) {
+        const MemberArm& arm = partition.arms[index];
+        if (!arm.answer.isAccessorInSlot)
+            return false;
+        const Program& program = context.program;
+        const Value& access = context.function.at(site);
+        PropertyKeyID key = Value::opcodesWithKey.contains(access.opcode) ? access.key() : PropertyKeyID();
+        return !key || std::ranges::any_of(arm.layouts, [&](LayoutID layout) {
+            std::optional<FieldReference> found = findField(program, layout, key, BaseChain::Proven);
+            TypeID slotType = found ? fieldAt(program, *found).slotType : TypeID();
+            FunctionID getter = slotType ? program.at(slotType).singleFunction() : FunctionID();
+            if (!getter)
+                return true;
+            unsigned bytes = 0;
+            for (const Block& block : program.at(getter).blocks)
+                bytes = saturatingSum<unsigned>(bytes, estimatedCodeBytes(program, program.at(getter), block));
+            return bytes > context.limit(LimitID::InlineBudgetWarmBytes);
+        });
+    };
+    bool holdsValueInSomeArm = std::ranges::any_of(partition.arms, [](const MemberArm& arm) {
+        return arm.answer.kind == MemberKind::Field && !arm.answer.isAccessorInSlot;
+    });
+    if (holdsValueInSomeArm && std::ranges::any_of(plan.arms, hasGetterTooLargeForArm))
+        plan.arms.clear();
     AOT::sortInLine(plan.arms, { }, [&](uint32_t arm) {
         return ranks[arm];
     });

@@ -44,7 +44,7 @@ static_assert(!exists(mapGet(KeyComparison::Bits).withForm(static_cast<uint8_t>(
 static_assert(exists(mapDelete(KeyComparison::Bits)) && exists(setDelete(KeyComparison::Bits)) && exists(newCompactTable(CompactTableOwner::Set)));
 static_assert(!JSValue::ValueEmpty && !absentCell32);
 
-enum class WeakTableLookup : uint8_t { MapGet, MapHas, SetHas };
+enum class WeakTableLookup : uint8_t { MapGet, MapFind, MapHas, SetHas };
 enum class InsertionPoint : uint8_t { AmongTags, AtSlot };
 
 static StubSignature signatureOfLookup()
@@ -365,10 +365,10 @@ static void emitLookupInWeakTable(StubAssembler& jit, WeakTableLookup lookup)
     jit.branchTestPtr(CCallHelpers::NonZero, other).linkTo(loop, &jit);
 
     notCell.link(&jit);
-    returnConstant(jit, lookup == WeakTableLookup::MapGet ? jsUndefined() : jsBoolean(false));
+    returnConstant(jit, lookup == WeakTableLookup::MapGet ? jsUndefined() : lookup == WeakTableLookup::MapFind ? JSValue() : jsBoolean(false));
 
     found.link(&jit);
-    if (lookup != WeakTableLookup::MapGet) {
+    if (lookup != WeakTableLookup::MapGet && lookup != WeakTableLookup::MapFind) {
         returnConstant(jit, jsBoolean(true));
         return;
     }
@@ -377,19 +377,20 @@ static void emitLookupInWeakTable(StubAssembler& jit, WeakTableLookup lookup)
 }
 
 StubSignature signatureOfMapGet(StubKey) { return signatureOfLookup(); }
+StubSignature signatureOfMapFind(StubKey) { return signatureOfLookup(); }
 StubSignature signatureOfMapHas(StubKey) { return signatureOfLookup(); }
-StubSignature signatureOfSetHas(StubKey) { return signatureOfLookup(); }
 StubSignature signatureOfSetAdd(StubKey) { return signatureOfLookup(); }
 StubSignature signatureOfMapDelete(StubKey) { return signatureOfLookup(); }
 StubSignature signatureOfSetDelete(StubKey) { return signatureOfLookup(); }
 StubSignature signatureOfWeakMapGet(StubKey) { return signatureOfLookup(); }
+StubSignature signatureOfWeakMapFind(StubKey) { return signatureOfLookup(); }
 StubSignature signatureOfWeakMapHas(StubKey) { return signatureOfLookup(); }
 StubSignature signatureOfWeakSetHas(StubKey) { return signatureOfLookup(); }
 StubSignature signatureOfMapSet(StubKey) { return StubSignature::withGPRResult({ ownerOfHashTableGPR, argumentGPR(0), argumentGPR(1) }); }
 StubSignature signatureOfNewMap(StubKey) { return StubSignature::withGPRResult({ }); }
 StubSignature signatureOfNewSet(StubKey) { return StubSignature::withGPRResult({ }); }
 
-void generateMapGet(StubAssembler& jit)
+static void emitGet(StubAssembler& jit, JSValue whenAbsent, Entry operation)
 {
     const HashTableRegisters registers = HashTableRegisters::take(jit);
     HashTableExits exits;
@@ -397,15 +398,18 @@ void generateMapGet(StubAssembler& jit)
     if (hasFoundExit(exits))
         emitLoadValueOfCompactTable(jit, registers, exits);
     emitAtExit(jit, exits.absent, [&] {
-        returnConstant(jit, jsUndefined());
+        returnConstant(jit, whenAbsent);
     });
     emitAtExit(jit, exits.unknown, [&] {
-        emitCallTableOperation(jit, registers, Entry::operationAOTMapGet, std::nullopt);
+        emitCallTableOperation(jit, registers, operation, std::nullopt);
     });
 }
 
+void generateMapGet(StubAssembler& jit) { emitGet(jit, jsUndefined(), Entry::operationAOTMapGet); }
+// `map.has(key) ? map.get(key) : ..`: one search answers both. No value stands for a key that is absent.
+void generateMapFind(StubAssembler& jit) { emitGet(jit, JSValue(), Entry::operationAOTMapFind); }
+
 void generateMapHas(StubAssembler& jit) { emitHas(jit, Entry::operationAOTMapHas); }
-void generateSetHas(StubAssembler& jit) { emitHas(jit, Entry::operationAOTSetHas); }
 void generateMapSet(StubAssembler& jit) { emitInsert(jit, CompactTableOwner::Map); }
 void generateSetAdd(StubAssembler& jit) { emitInsert(jit, CompactTableOwner::Set); }
 
@@ -984,6 +988,7 @@ void generateReserveCollectionCapacityFrontEnd(StubAssembler& jit)
 }
 
 void generateWeakMapGet(StubAssembler& jit) { emitLookupInWeakTable(jit, WeakTableLookup::MapGet); }
+void generateWeakMapFind(StubAssembler& jit) { emitLookupInWeakTable(jit, WeakTableLookup::MapFind); }
 void generateWeakMapHas(StubAssembler& jit) { emitLookupInWeakTable(jit, WeakTableLookup::MapHas); }
 void generateWeakSetHas(StubAssembler& jit) { emitLookupInWeakTable(jit, WeakTableLookup::SetHas); }
 

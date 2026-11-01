@@ -201,6 +201,10 @@ public:
     void moveFieldToExtraProperties(VM&, const FieldData&, LeavingProperty, SlotExitReason);
     // False where the object is not in the state that the other object was in, or the slot takes the value.
     bool tryRepeat(VM&, const FieldExit&, JSValue);
+    // False where the object is not in the state that the other object was in.
+    bool tryRepeat(VM&, const AddedExtraProperty&, JSValue);
+    // `Object.defineProperty(object, name, descriptor)` with a descriptor that is an object: what it describes is added as to the last object in the same state, or nothing is done.
+    bool tryDefineAsOnTheLastObject(VM&, PropertyName, const PropertyDescriptor&);
     bool tryMoveFieldBackToSlot(VM&, const FieldData&);
     void deleteField(VM&, const FieldData&);
     bool hasEveryFieldOfBirth() const;
@@ -337,7 +341,8 @@ public:
     // To make a plan costs several copies by name. A caller that can copy by name asks for one only from the second copy between the same shapes on.
     bool tryAssignPropertiesOf(VM&, JSObject* source, std::span<UniquedStringImpl* const> excludedNames = { });
     // Defines data properties in this order where each is a field that takes its value. The key order is looked up once, however many fields are created.
-    bool tryDefineFields(VM&, std::span<UniquedStringImpl* const> names, std::span<const EncodedJSValue> values);
+    // With attributes: a property that is absent and whose attributes are not those of its field is listed where it stands and goes to the extra properties.
+    bool tryDefineFields(VM&, std::span<UniquedStringImpl* const> names, std::span<const EncodedJSValue> valuesOrAccessors, std::span<const unsigned> attributes = { });
 
     enum class SymbolKeys : bool { Skip, Include };
     bool forEachFieldAsProperty(const ScopedLambda<bool(UniquedStringImpl&, JSValue)>&, SymbolKeys = SymbolKeys::Skip) const;

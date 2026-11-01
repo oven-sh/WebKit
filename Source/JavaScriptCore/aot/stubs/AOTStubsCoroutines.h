@@ -20,7 +20,8 @@ enum class AwaitedOperand : uint8_t { Value, ResultOfCallWithoutPromise, ValueAf
 enum class GeneratorSuspension : uint8_t { Yield, AsyncAwait, AsyncYield, AsyncYieldAfterAwait };
 // A step of a loop or of `yield*`, or an awaited call of `next`: that goes on under the async context of the await, a step under the one that is active where the step is finished.
 enum class StepConsumer : uint8_t { AsyncFunction, AsyncGenerator, AsyncFunctionAwaitingCall, AsyncGeneratorAwaitingCall };
-enum class NewGeneratorKind : uint8_t { Sync, Async };
+// SyncWithHeapFrame: whoever asks goes on to make the heap frame of the generator, or calls a body that does.
+enum class NewGeneratorKind : uint8_t { Sync, Async, SyncWithHeapFrame };
 
 constexpr StubKey newPromise() { return StubKey(StubFamily::NewPromise); }
 // PerformPromiseThen with one handler, which is callable, and a promise of the realm as the capability.
@@ -51,7 +52,7 @@ static_assert(static_cast<unsigned>(GeneratorSuspension::AsyncYieldAfterAwait) +
 static_assert(numberOfEnumerators<GeneratorStepCheck> == descriptorOf(StubFamily::StepGenerator).numberOfForms);
 static_assert(!static_cast<unsigned>(GeneratorStepCheck::IsUnmodifiedGenerator) && static_cast<unsigned>(GeneratorStepCheck::IsGenerator) == 1 && static_cast<unsigned>(GeneratorStepCheck::IsUnmodified) == 2 && static_cast<unsigned>(GeneratorStepCheck::None) == 3);
 static_assert(static_cast<unsigned>(StepConsumer::AsyncGeneratorAwaitingCall) + 1 == descriptorOf(StubFamily::StepAsyncGenerator).numberOfForms);
-static_assert(static_cast<unsigned>(NewGeneratorKind::Async) + 1 == descriptorOf(StubFamily::NewGenerator).numberOfForms);
+static_assert(static_cast<unsigned>(NewGeneratorKind::SyncWithHeapFrame) + 1 == descriptorOf(StubFamily::NewGenerator).numberOfForms);
 static_assert(exists(newPromise()) && exists(returnAsyncResult()) && exists(awaitCallBySavingFrame()) && exists(suspendGenerator(GeneratorSuspension::AsyncYieldAfterAwait)));
 static_assert(exists(awaitBySavingFrame(AwaitedOperand::ValueAfterTurn)) && exists(awaitBySavingFrame(AwaitedOperand::ValueInModuleBody)));
 static_assert(exists(stepGenerator(GeneratorStepCheck::None)) && exists(enterSavedFrame()) && exists(restoreSavedFrameToStack()) && exists(enterGeneratorFrame()));

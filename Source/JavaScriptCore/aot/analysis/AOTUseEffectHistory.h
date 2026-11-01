@@ -51,6 +51,10 @@ public:
         AtPoint(const UseEffectHistory&, ProgramPoint);
 
         Occurrence occurrenceOf(ObjectID) const;
+        // Nothing is known of any object there.
+        bool isUnknown() const { return m_isUnknown; }
+        // The objects of which occurrenceOf() says anything but that it has not occurred. Goes by what happens in the block, not by the objects asked about.
+        void addObjectsThatMayHaveOccurredTo(BitVector&) const;
 
     private:
         const UseEffectHistory& m_history;

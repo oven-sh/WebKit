@@ -223,6 +223,8 @@ void CodeGenerator::generateBlock(BlockID id)
     }
     if (m_validates)
         emitter<RuntimeValidationEmitter>().validateParameters(id, function().at(id));
+    else if (m_checksProofs)
+        emitter<RuntimeValidationEmitter>().forgetPassedTypeTests();
     generateContentsOf(id);
 }
 
@@ -383,10 +385,14 @@ void CodeGenerator::generate(const ValueContext& context)
     convertOperandsOf(context, context.value());
     if (m_validates)
         emitter<RuntimeValidationEmitter>().validateOperands(context);
-    else if (m_checksProofs)
+    else if (m_checksProofs) {
         emitter<RuntimeValidationEmitter>().checkSlotAccessWithoutGuard(context);
+        emitter<RuntimeValidationEmitter>().forgetPassedTypeTestsBehind(context);
+    }
     if (validatesOrChecksProofs() && maySuspend(context.opcode()) && analyses().maySuspend(context.id()))
         emitter<CellAllocationEmitter>().leaveFrameOfCheckedCells();
+    if (m_runsOutOfMemoryWhenCounted) [[unlikely]]
+        emitter<RuntimeValidationEmitter>().runOutOfMemoryWhenCounted(context);
 
     auto begin = m_heaps.markDecorations();
     size_t numberOfEnclosingExemptions = m_exemptStores.size();

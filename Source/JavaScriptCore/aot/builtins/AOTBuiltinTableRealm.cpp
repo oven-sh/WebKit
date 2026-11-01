@@ -972,7 +972,7 @@ public:
     String storeErrorMessage(UniquedStringImpl* uid) const final { return assignmentToLockedBuiltinMessage(m_vm, m_holder, uid, lockedIn()); }
     String deleteErrorMessage(UniquedStringImpl* uid) const final { return deletionFromLockedBuiltinMessage(m_vm, m_holder, uid, lockedIn()); }
     bool throwsInSloppyMode() const final { return true; }
-    bool throwsFromReflect() const final { return m_reflectThrows; }
+    bool throwsFromReflect() const final { return lockedIn() == LockedIn::TestRun; }
 
     String setPrototypeErrorMessage() const final
     {
@@ -981,7 +981,7 @@ public:
 
 private:
     // Reflect is told of a refusal in a test run, and nowhere else.
-    LockedIn lockedIn() const { return m_reflectThrows ? LockedIn::TestRun : LockedIn::Executable; }
+    LockedIn lockedIn() const { return m_reflectThrows && !isWrittenByFileOfProduct(m_vm) ? LockedIn::TestRun : LockedIn::Executable; }
 
     bool isFixed(BuiltinName name) const
     {

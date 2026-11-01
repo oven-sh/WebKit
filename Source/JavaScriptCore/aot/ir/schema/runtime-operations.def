@@ -159,7 +159,7 @@ runtime ResolvePromise : void (JSCell* promise, EncodedJSValue value) ; unknownC
 runtime ResolvePromiseOrReturnResult : EncodedJSValue (JSCell* promise, EncodedJSValue value) ; unknownCode
 runtime RejectPromise : void (JSCell* promise, EncodedJSValue reason) ; reads(all) writes(PromiseState, ExternalState, AllocatorState, RuntimeState) collects
 runtime RejectWithException : JSCell* (uint64_t frame) ; unknownCode
-runtime NewGenerator : JSCell* (EncodedJSValue closure, uint32_t isAsync) ; reads(all) writes(AllocatorState, RuntimeState) collects
+runtime NewGenerator : JSCell* (EncodedJSValue closure, uint32_t kind) ; reads(all) writes(AllocatorState, RuntimeState) collects
 runtime NewHeapFrame : JSCell* (uint32_t numberOfWords, void* resumeAddress) ; reads(all) writes(AllocatorState, RuntimeState, InternalFields) collects
 runtime TakeGeneratorPrototype : void (JSCell* generator, EncodedJSValue closure) ; reads(all) writes(PrototypeLinks, ShapeWords, AllocatorState, RuntimeState) collects
 runtime SaveFrameAndAwait, SaveFrameAndAwaitCall, SaveFrameAndAwaitAfterTurn, SaveFrameAndAwaitInModuleBody : JSCell* (EncodedJSValue awaited, uint64_t* frame, const uint64_t* bottom, void* resumeAddress, const uint64_t* suspensionWords) ; unknownCode suspends
@@ -192,6 +192,7 @@ runtime CountStopsForCollector : uint64_t () ; reads(ValidationState) writes(Val
 runtime MakeCheckedFrameCell : void* (void* slot, void* wordOfFrame, uint64_t sizeAndFunction, uint64_t valueAndModule, uint64_t lineAndColumn) ; reads(all) writes(ValidationState)
 runtime LeaveFrameOfCheckedCells : void (void* wordOfFrame) ; reads(all) writes(ValidationState)
 runtime ReportEscapedFrameCell : void (void* cell) ; reads(all) writes(ExternalState)
+runtime RunOutOfMemoryWhenCounted : void (uint32_t event, uint32_t module, uint32_t line, uint32_t column) ; reads(all) writes(ValidationState, AllocatorState, RuntimeState) throws collects
 runtime ContentsHaveType : size_t (JSCell* container, uint32_t contentsSlot, uint32_t type) ; reads(all)
 runtime ValueHasType : size_t (EncodedJSValue value, uint32_t type) ; reads(all)
 runtime ValidateLookup : size_t (JSCell* receiver, uint32_t key, JSCell* expected) ; RuntimeCreatesConstant

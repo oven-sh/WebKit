@@ -1118,6 +1118,33 @@ CompiledStructure* StructureTable::withNumberedKeyOrder(VM& vm, const CompiledSt
     return findOrCreate(vm, variant);
 }
 
+const StructureTable::StepOfKeyOrder* StructureTable::findStepOfKeyOrder(StructureID before, uint32_t orderAndCountBefore, uint16_t field, KindOfStep kind) const
+{
+    if (!m_stepsOfKeyOrders)
+        return nullptr;
+    uint32_t fieldAndKind = field << 1 | static_cast<uint32_t>(kind);
+    size_t newer = placeOfStep(before, orderAndCountBefore, fieldAndKind);
+    for (size_t place : { newer, newer + 1 }) {
+        const StepOfKeyOrder& step = (*m_stepsOfKeyOrders)[place];
+        if (step.before == before && step.orderAndCountBefore == orderAndCountBefore && step.fieldAndKind == fieldAndKind)
+            return &step;
+    }
+    return nullptr;
+}
+
+void StructureTable::rememberStepOfKeyOrder(StructureID before, uint32_t orderAndCountBefore, uint16_t field, KindOfStep kind, StructureID after, uint32_t orderAndCountAfter)
+{
+    if (!m_stepsOfKeyOrders) {
+        m_stepsOfKeyOrders = makeUniqueWithoutFastMallocCheck<StepsOfKeyOrders>();
+        m_stepsOfKeyOrders->fill({ });
+        m_state.caches->addClearedEachCollection("steps of key orders"_s, asWritableBytes(std::span { *m_stepsOfKeyOrders }));
+    }
+    uint32_t fieldAndKind = field << 1 | static_cast<uint32_t>(kind);
+    size_t newer = placeOfStep(before, orderAndCountBefore, fieldAndKind);
+    (*m_stepsOfKeyOrders)[newer + 1] = (*m_stepsOfKeyOrders)[newer];
+    (*m_stepsOfKeyOrders)[newer] = { before, orderAndCountBefore, fieldAndKind, after, orderAndCountAfter };
+}
+
 static constexpr uint64_t orderAndShapeWordsFor(uint32_t shape, uint32_t orderWord)
 {
     return static_cast<uint64_t>(shapeWordOf(shape)) << 32 | orderWord;

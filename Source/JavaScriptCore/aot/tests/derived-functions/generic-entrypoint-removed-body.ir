@@ -7,5 +7,5 @@ module m0 path="main.js" displayPath="main.js"
 function f0 name="neverCalled" parameters=[{type=number}] results=[{type=anything}]
 # CHECK: role=GenericEntrypoint{{*}}parameters=[{type=anything}]{{*}}creator=Entrypoint{target=f0 arguments=Registers} {
 # CHECK-NEXT: b0([[closure]]: f0, [[this]]: anything, [[argument]]: anything):
-# CHECK-NEXT: = ThrowNewError message="'neverCalled' was not compiled into this executable because your code never calls it.
+# CHECK-NEXT: = ThrowNewError message="'neverCalled' was not compiled into this executable because nothing that the compiler can follow calls it.
 # CHECK-NEXT: Unreachable

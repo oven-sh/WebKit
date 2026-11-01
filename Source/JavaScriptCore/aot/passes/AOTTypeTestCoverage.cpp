@@ -153,17 +153,82 @@ ConditionGroups::ConditionGroups(FunctionAnalyses& analyses, const TestCondition
     writtenOfGroups.grow(firstConditions.size());
 }
 
+void ConditionGroups::listConditionsOfObjects()
+{
+    if (std::exchange(hasConditionsOfObjects, true))
+        return;
+    isAboutAllocationsAlone.ensureSize(conditions.size());
+    lastWriterWithinReach.fill(0, conditions.size());
+    allocationsOfSubjects.grow(conditions.size());
+    for (size_t index : conditions.stretchConditions()) {
+        ValueID subject = dependencies[index]->subject;
+        if (!subject || subjectsFromOutside.quickGet(index))
+            continue;
+        std::optional<Vector<ObjectID, 4>> objects = GuardWriter::allocationsOf(analyses, subject);
+        std::optional<ObjectSet> own = analyses.escape().allocationsIfNothingElse(subject);
+        if (!objects || !own || own->isEmpty())
+            continue;
+        isAboutAllocationsAlone.quickSet(index);
+        for (ObjectID object : *objects)
+            conditionsOfObjects.add(object.index(), Vector<uint32_t, 1>()).iterator->value.append(index);
+        for (ObjectID object : *own)
+            allocationsOfSubjects[index].append(object);
+    }
+}
+
+bool ConditionGroups::findConditionsWithinReachOf(GuardWriter& writer)
+{
+    std::optional<Vector<ObjectID, 4>> reached = writer.allocationsWithinReach();
+    if (!reached)
+        return false;
+    for (ObjectID object : *reached) {
+        auto iterator = conditionsOfObjects.find(object.index());
+        if (iterator == conditionsOfObjects.end())
+            continue;
+        for (uint32_t index : iterator->value)
+            lastWriterWithinReach[index] = numberOfWriters;
+    }
+    return true;
+}
+
 BitVector ConditionGroups::findConditionsEndedBy(ValueID writer, const EffectsOnEdges& effects, std::span<const uint32_t> stretchConditions)
 {
+    AOT_THRESHOLD(size_t, fewestConditionsLookedUpByObject, 32);
     BitVector ended;
     EndingsAtWriter endings { analyses, writer, effects.normal };
     ++numberOfWriters;
+    std::optional<bool> isReachKnown;
+    const bool looksUpByObject = stretchConditions.size() >= fewestConditionsLookedUpByObject;
     for (uint32_t index : stretchConditions) {
         WrittenByWriter& group = writtenOfGroups[groupOf[index]];
         if (std::exchange(group.writer, numberOfWriters) != numberOfWriters) {
             group.written = { };
+            group.hasAskedForAllocations = false;
             if (effects.normal.writes.overlaps(dependencies[index]->masks))
                 group.written = endings.writtenOf(conditions.at(TestConditionID(index)), *dependencies[index]);
+        }
+        if (group.written.endedProofs == GuardWriter::EndedProofs::AboutSomeObjects && looksUpByObject) {
+            if (!isReachKnown) {
+                listConditionsOfObjects();
+                isReachKnown = findConditionsWithinReachOf(*endings.guardWriter);
+            }
+            if (isAboutAllocationsAlone.quickGet(index)) {
+                if (*isReachKnown) {
+                    if (lastWriterWithinReach[index] != numberOfWriters)
+                        continue;
+                } else {
+                    if (!std::exchange(group.hasAskedForAllocations, true))
+                        group.allocationsWhoseProofsEnd = endings.guardWriter->allocationsWhoseProofsEnd(group.written);
+                    if (group.allocationsWhoseProofsEnd) {
+                        bool mayEnd = std::ranges::any_of(allocationsOfSubjects[index], [&](ObjectID object) {
+                            return group.allocationsWhoseProofsEnd->get(object.index());
+                        });
+                        if (mayEnd && !analyses.context().build.isSabotaged(Sabotage::ProofsOutlastWritesToTheirSubject))
+                            ended.set(index);
+                        continue;
+                    }
+                }
+            }
         }
         if (endings.mayEnd(dependencies[index]->subject, subjectsFromOutside.quickGet(index), group.written))
             ended.set(index);

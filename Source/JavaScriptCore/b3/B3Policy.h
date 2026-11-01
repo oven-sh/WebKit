@@ -66,6 +66,7 @@ struct ValidationPolicy {
     bool omitsStridedLimitGuard { false };
     bool overlooksWritesBehindWordsReadAgain { false };
     bool overlooksWritesToWhatLoopsReadAgain { false };
+    bool overlooksWritesToWordsCarriedAroundLoops { false };
     bool overlooksWritesBetweenLoadsAndTheirUsers { false };
     bool overlooksWritesBetweenPairedLoads { false };
     bool leavesRoomForOneTurnTooFew { false };
@@ -155,6 +156,7 @@ struct LoopPolicy {
     bool pollsBetweenStretches { false };
     bool vectorizes { false };
     bool unrolls { false };
+    bool promotesMemory { false };
     double minFrequencyOfUnrolledLoop { 1 };
     bool hoistsOnlyFromLikelyPaths { false };
     bool hoistsImmutableLoadsPastWrites { false };
@@ -208,6 +210,7 @@ enum class PolicySwitch : uint8_t {
     ClampLoopBounds,
     VectorizeLoops,
     UnrollLoops,
+    PromoteLoopMemory,
     BitTests,
     KnownRanges,
     KnownDereferenceableBytes,
@@ -231,7 +234,7 @@ enum class PolicySwitch : uint8_t {
     FoldTrapsIntoAccesses,
 };
 
-static constexpr unsigned numberOfSwitches = 42;
+static constexpr unsigned numberOfSwitches = 43;
 static_assert(static_cast<unsigned>(PolicySwitch::FoldTrapsIntoAccesses) + 1 == numberOfSwitches);
 static_assert(numberOfSwitches <= 64);
 

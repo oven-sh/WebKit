@@ -2,6 +2,8 @@
 # FORM: Placed
 # OPTIONS: heat=EverythingIsHot disable=b3:UnrollLoops
 # RUN: lower-to-air
+# Where the block that returns stands depends on the target.
+# RUN(RETURNS): lower-to-air
 # RUN(LOOPS): lower-to-air loops
 # RUN(SIZE): lower-to-air size
 # RUN(BOTH): lower-to-air size loops
@@ -23,8 +25,9 @@ function f0 name="countUp" parameters=[{type=int[0, 1000]}] results=[{type=int[0
     Return v2
 
 # CHECK-NEXT: BB#0:
-# CHECK: Ret64
 # CHECK: Add32 $1,
+
+# RETURNS: Ret64
 
 # LOOPS-NEXT: loop #[[header]], instructions: 2, patchpoints: 1, polls: 1, %[[counter]] steps by 1
 # LOOPS-NEXT: BB#[[header]]:

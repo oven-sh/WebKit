@@ -57,7 +57,7 @@ runtime MaterializeDeferredClosure : JSCell* (JSCell* object, uint32_t key) ; re
 runtime GetFieldOutsideSlot : EncodedJSValue (JSCell* object, uint32_t key) ; reads(all)
 
 runtime NewMap, NewSet : JSCell* () ; RuntimeAllocates
-runtime MapGet, MapHas, SetHas : EncodedJSValue (JSCell*, EncodedJSValue lookupKey) ; RuntimeCreatesString writes(CollectionStorage)
+runtime MapGet, MapFind, MapHas, SetHas : EncodedJSValue (JSCell*, EncodedJSValue lookupKey) ; RuntimeCreatesString writes(CollectionStorage)
 runtime MapSet : EncodedJSValue (JSCell* map, EncodedJSValue lookupKey, EncodedJSValue value) ; reads(all) writes(CollectionStorage, CollectionEntries, StringStorage, AllocatorState, RuntimeState) throws collects
 runtime SetAdd : EncodedJSValue (JSCell* set, EncodedJSValue lookupKey) ; reads(all) writes(CollectionStorage, CollectionEntries, StringStorage, AllocatorState, RuntimeState) throws collects
 runtime WeakMapSet : EncodedJSValue (JSCell* map, JSCell* lookupKey, EncodedJSValue value) ; reads(all) writes(CollectionStorage, CollectionEntries, AllocatorState, RuntimeState) throws collects

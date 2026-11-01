@@ -942,9 +942,17 @@ void raiseFrequenciesBehind(FunctionAnalyses& analyses, Function& function, Edge
     Expected<BlockFrequency> actual = function.at(decided.from).frequency;
     if (!isRarerThan(expected, actual).predicted() || !analyses.cfg().isReachable(decided.from))
         return;
+    // The call behind the head of a function that was copied in is marked by what is expected of the tests of the head. Those behind the one that is decided are reached no more.
+    auto isCallBehindHead = [&](BlockID block) {
+        return std::ranges::any_of(function.at(block).values, [&](ValueID value) {
+            return function.at(value).opcode == Opcode::CallDirect && function.at(value).isAfterInlinedHead();
+        });
+    };
     auto isEnteredAnotherWay = [&](Edge way) {
-        return std::ranges::any_of(analyses.cfg().incomingEdges(targetOf(function, way).block), [&](Edge edge) {
-            return edge != way && function.at(edge.from).frequency.predicted() != BlockFrequency::Rare;
+        BlockID entered = targetOf(function, way).block;
+        bool passesOverTestsBehind = isCallBehindHead(entered);
+        return std::ranges::any_of(analyses.cfg().incomingEdges(entered), [&](Edge edge) {
+            return edge != way && function.at(edge.from).frequency.predicted() != BlockFrequency::Rare && !(passesOverTestsBehind && analyses.dominators().dominates(way.from, edge.from));
         });
     };
     if (isEnteredAnotherWay(decided))

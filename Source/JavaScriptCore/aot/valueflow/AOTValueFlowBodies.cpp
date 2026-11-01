@@ -2667,7 +2667,7 @@ bool startsWithoutValueInSolve(const Program& program, const Variable& variable)
     return variable.initialization == VariableInitialization::Undefined && variable.flags.contains(VariableFlags::IsImmutable) && variable.module && program.at(variable.module).kind == ModuleKind::RuntimeSource;
 }
 
-ValueFlowBody makeHostBody(const Program& program, const ValueFlowBuiltinTables& tables, std::span<const uint64_t> operationsOfFunctions)
+ValueFlowBody makeHostBody(const Program& program, const ValueFlowBuiltinTables& tables, std::span<const uint64_t> operationsOfFunctions, const UnobservedFieldDefinitions* unobservedDefinitions)
 {
     ValueFlowBody body = makeBodyWithoutOperations({ }, 0, 0, false);
 
@@ -2683,7 +2683,7 @@ ValueFlowBody makeHostBody(const Program& program, const ValueFlowBuiltinTables&
             body.seedsOnceReached.append({ node, absentValue, 0 });
             break;
         case VariableInitialization::Undefined:
-            if (!startsWithoutValueInSolve(program, variable))
+            if (!startsWithoutValueInSolve(program, variable) && !(unobservedDefinitions && unobservedDefinitions->isStoredAheadOfEveryRead(VariableID(index))))
                 body.seedsOnceReached.append({ node, undefinedValue, 0 });
             break;
         case VariableInitialization::Function:

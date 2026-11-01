@@ -1,0 +1,43 @@
+# What lives on where a variable is let go keeps its word under whatever name it lives on. Here that is the parameter of a block, a name that no yield saves: it only hands the value on to a name
+# that shares the word. The next yield finds the word as it was and does not store it again, so a word that were cleared here would stay empty.
+# FORM: Prepared
+# RUN: pass MoveGeneratorFramesToHeap
+# STATISTIC: GeneratorsWithHeapFrames = 1
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="holds" role=CoroutineRamp flags=[IsGenerator, TakesCallee] parameters=[{type=anything}, {type=anything}] results=[{type=Generator}] creator=Coroutine{ramp=f0 body=f1 promiseParameter=3}
+function f1 name="holds" role=CoroutineBody flags=[IsGenerator, TakesCallee] parameters=[{type=anything}, {type=anything}, {type=Generator}] results=[{type=anything}] derivation={source=f0} creator=Coroutine{ramp=f0 body=f1 promiseParameter=3} {
+    v4 = Undefined
+    v5 = YieldBySavingFrame v3, v4 @10
+    v6 = ResultAt v5 index=0
+    v7 = ResultAt v5 index=1
+    Switch v7 cases=[1, 2] -> case b1(), case b2(), otherwise b3(v2)
+  b1() frequency=Rare:
+    Throw v6
+  b2() frequency=Rare:
+    Return v6
+  b3(v8):
+    v9 = Call v1
+    ReleaseHint v1 @11
+    Jump -> next b4(v8)
+  b4(v11):
+    v12 = YieldBySavingFrame v3, v9 @12
+    v13 = ResultAt v12 index=0
+    v14 = ResultAt v12 index=1
+    Switch v14 cases=[1, 2] -> case b5(), case b6(), otherwise b7()
+  b5() frequency=Rare:
+    Throw v13
+  b6() frequency=Rare:
+    Return v13
+  b7():
+    Return v11
+}
+# CHECK: function f2 name="holds"
+# CHECK: b0([[saved]]: anything,
+# CHECK: [[absent]]: absent = Absent @11
+# CHECK-NEXT: PutHeapFrameWord [[saved]], [[absent]] index=1 @11
+# CHECK-NEXT: ReleaseHint {{*}} @11
+# CHECK: SuspendInHeapFrame {{*}} resumeIndex=1 @12
+# CHECK: [[kept]]: anything = GetHeapFrameWord [[saved]] index=2
+# CHECK: Return [[kept]]

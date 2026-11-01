@@ -2959,7 +2959,8 @@ struct VariableCarrier : LoopEditor {
     {
         // A read of an environment field names no fact: the copy of it ahead of the loop says what the read says.
         bool someReadLeansOnFact = std::ranges::any_of(variable.reads, [&](ValueID id) {
-            return m_function.at(id).opcode == Opcode::GetModuleVariable && holdsDeclaredTypeOnlyBehindEntry(m_program, m_function, m_function.at(id));
+            const Value& read = m_function.at(id);
+            return read.opcode == Opcode::GetModuleVariable && (read.factOperand() || holdsDeclaredTypeOnlyBehindEntry(m_program, m_function, read));
         });
         if (!someReadLeansOnFact)
             return { };
@@ -3848,17 +3849,16 @@ struct LoopPathSeparator : LoopEditor {
         return isPassedByLeavingPath && passedOnLikelyPaths && allocations.contains(m_function.at(passedOnLikelyPaths).opcode);
     }
 
-    bool leavesAllocationAlone(const BitVector& isInLoop, const BitVector& leaves)
+    uint64_t numberOfAllocationsLeftAlone(const BitVector& isInLoop, const BitVector& leaves)
     {
+        uint64_t count = 0;
         for (size_t index : isInLoop) {
             if (leaves.get(index))
                 continue;
-            for (size_t position = 0; position < m_function.blocks[index].parameters.size(); ++position) {
-                if (isAllocationButForLeavingPaths(BlockID(index), position, leaves))
-                    return true;
-            }
+            for (size_t position = 0; position < m_function.blocks[index].parameters.size(); ++position)
+                count += isAllocationButForLeavingPaths(BlockID(index), position, leaves);
         }
-        return false;
+        return count;
     }
 
     ValueID findObjectPassedOnEveryEdge(ValueID parameter)
@@ -4271,7 +4271,7 @@ struct LoopPathSeparator : LoopEditor {
             return !!tested;
         });
         bool paysToMoveTest = movesTest && (paysForLoopInside || !runsLoopInEveryTurn || !onlyChoosesBetweenFormsOfLoopInside(loop, isInLoop, leaves, testsOfEveryTurn.span()));
-        bool paysByItself = paysToMoveTest || plan.letsVariablesBeCarried || narrowsParameter(isInLoop, leaves) || (isShort && leavesAllocationAlone(isInLoop, leaves)) || leavesReadsFromTablesAlone(leaves);
+        bool paysByItself = paysToMoveTest || plan.letsVariablesBeCarried || narrowsParameter(isInLoop, leaves) || bytesOfLikelyPaths <= bytesOfShortTurn * numberOfAllocationsLeftAlone(isInLoop, leaves) || leavesReadsFromTablesAlone(leaves);
         bool onlyLeavesObjectUnderOneName = !paysByItself && leavesObjectUnderOneName(isInLoop, leaves);
         paysByItself |= onlyLeavesObjectUnderOneName;
         if (!paysByItself && !(isShort && (paysForLoopInside || leavesTestWithOneAnswer(isInLoop, leaves))))
@@ -4431,7 +4431,7 @@ struct LoopPathSeparator : LoopEditor {
             leavesGainingLoop.filter(isInGainingLoop);
             if (leavesGainingLoop.isEmpty())
                 return false;
-            return !runsLoopInEveryTurn || leavesAllocationAlone(isInGainingLoop, leavesGainingLoop) || leavesObjectToLikelyPaths(isInGainingLoop, leavesGainingLoop) || leavesReadsUnwritten(isInGainingLoop, leavesGainingLoop);
+            return !runsLoopInEveryTurn || numberOfAllocationsLeftAlone(isInGainingLoop, leavesGainingLoop) || leavesObjectToLikelyPaths(isInGainingLoop, leavesGainingLoop) || leavesReadsUnwritten(isInGainingLoop, leavesGainingLoop);
         };
         if (gains(isInLoop, true))
             return false;
@@ -5274,7 +5274,8 @@ struct LoopVersioner : LoopEditor {
                 builder.setOrigin(m_function.at(step.value).origin());
                 ValueID asked = builder.append(WTF::move(copy));
                 askedAhead.set(step.value, asked);
-                if (typeOf(step.value).isJavaScriptValue())
+                // A test stays the condition of its branch: the edges of a branch that both leave the loop go on handing over what it proves.
+                if (typeOf(step.value).isJavaScriptValue() && provesOf(m_function.at(step.value).opcode) == Proof::None)
                     becomeUpcast(m_function, step.value, asked);
                 break;
             }

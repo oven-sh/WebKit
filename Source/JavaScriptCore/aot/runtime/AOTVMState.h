@@ -30,6 +30,7 @@ namespace AOT {
 
 class CacheRegistry;
 class CallSiteCache;
+class CheckedFrameCells;
 class Image;
 class Modules;
 class PagesOfVM;
@@ -44,6 +45,7 @@ struct QuotesOfPlaces;
 struct Instance;
 struct MockedModules;
 struct OperationsBeingValidated;
+struct RecheckedCells;
 struct RuntimeCounters;
 
 // Every live Structure whose objects store elements without asking the objects above them.
@@ -178,6 +180,7 @@ public:
     ImageBelowAdapter* endOfRoomForImagesBelowAdapters { nullptr };
     UniqueArray<ImageBelowAdapter> imagesBelowAdapters;
     bool validatesRuntime { false };
+    bool didFinishCollection { false };
     // Some object has become a dictionary for the names that it is being given.
     bool hasObjectsBeingFilled { false };
     // It is marked as a prototype when it is created, but nothing inherits from it until the class definition ends. Only compared with.
@@ -218,6 +221,9 @@ public:
     std::unique_ptr<CacheRegistry> caches;
     std::unique_ptr<RuntimeCounters> counters;
     std::unique_ptr<RuntimeReporter> reporter;
+    std::unique_ptr<RecheckedCells> recheckedCells;
+    CheckedFrameCells* checkedFrameCells { nullptr };
+    const void* lowestFrameOfCheckedCells { nullptr };
     std::unique_ptr<FormatPatternState, FormatPatternStateDeleter> formatPatternState;
     // By Image::position(). Its size never changes while the VM runs code, so the collector's threads may read it.
     Vector<PartsOfImage, 1> parts;

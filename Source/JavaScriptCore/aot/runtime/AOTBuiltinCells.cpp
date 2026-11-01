@@ -796,7 +796,7 @@ String lockedObjectErrorMessage(JSGlobalObject*, JSObject* object, UniquedString
     BuiltinID id = builtinOfLockedObject(instance, object);
     if (!id)
         return { };
-    LockedIn lockedIn = instance && admitsReplacedBuiltins(*instance) ? LockedIn::TestRun : LockedIn::Executable;
+    LockedIn lockedIn = instance && admitsReplacedBuiltins(*instance) && !isWrittenByFileOfProduct(object->vm()) ? LockedIn::TestRun : LockedIn::Executable;
     if (change == RejectedWrite::Prototype)
         return prototypeChangeOfLockedBuiltinMessage(BuiltinTable::singleton().textOf(id), lockedIn);
     VM& vm = object->vm();
@@ -822,7 +822,7 @@ bool reflectThrowsOnLockedProperty(JSObject* lockedObject)
 {
     JSGlobalObject* realm = lockedObject->realm();
     Instance* instance = realm ? Instance::of(realm) : nullptr;
-    return instance && admitsReplacedBuiltins(*instance);
+    return instance && admitsReplacedBuiltins(*instance) && !isWrittenByFileOfProduct(lockedObject->vm());
 }
 
 // Every realm of the VM, with an instance or without: text that is evaluated in any of them reaches the objects of the program.

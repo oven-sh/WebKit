@@ -5458,6 +5458,9 @@ static PassOutcome testLoopParametersInFrontOfLoops(FunctionPassContext& context
         // Other passes fold what follows from the failed question into its arm: from then on the arm is the generic turn only for values that fail that question.
         bool isArmAsPlaced = testsPlacedInThisRun.get(header.terminator.conditionOperand().index());
         for (uint32_t parameterIndex = 0; parameterIndex < header.parameters.size(); ++parameterIndex) {
+            // In the loop the test stands behind the fact that the cast names. In front of the loop it would read through whatever the word holds.
+            if (typeOf(header.parameters[parameterIndex]).mayBeUnspecified())
+                continue;
             std::optional<TestInFrontOfLoop> test = findTestOfLoopParameter(context, loop, parameterIndex);
             if (!test || !(isArmAsPlaced || test->isQuestionOfHeader))
                 continue;

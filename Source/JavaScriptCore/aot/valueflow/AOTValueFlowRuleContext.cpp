@@ -913,12 +913,15 @@ const ValueFlowRareFactsOfText* ValueFlowRuleContext::rareFactsOfText(const Valu
     return &*found;
 }
 
-ValueFlowCallGroup ValueFlowRuleContext::group(ClimbingSet callees, ValueFlowCallKind kind, ValueFlowCalleeOrigin origin)
+ValueFlowCallGroup ValueFlowRuleContext::group(ClimbingSet callees, ValueFlowCallKind kind, ValueFlowCalleeOrigin origin, ValueFlowArgumentsLeftOut leftOut)
 {
     bool mayBeWhateverHasEscaped = origin == ValueFlowCalleeOrigin::Value && kind != ValueFlowCallKind::Get && kind != ValueFlowCallKind::Set;
     if (mayBeWhateverHasEscaped && m_solver.m_input.nodes && m_solver.m_input.universe && sets().contains(callees.m_set, ValueFlowUniverse::unknownObject()))
         add(nodes().ofHost(ValueFlowHostNode::ValueNobodyKnowsIsCalled), ClimbingSet(leavesOutSomeUnknownSource() ? universe().undefinedValue() : universe().unknownObjectAlone()));
-    return callGroupAt(nodeFor(ValueFlowNodeKey::callGroup(callees.m_set, kind, m_markerEntered)));
+    ValueFlowCallGroup group = callGroupAt(nodeFor(ValueFlowNodeKey::callGroup(callees.m_set, kind, m_markerEntered)));
+    if (kind == ValueFlowCallKind::CallByNativeCode && leftOut == ValueFlowArgumentsLeftOut::AnyOfThem && m_solver.m_input.universe)
+        add(group.anyArgumentLeftOut(), ClimbingSet(universe().undefinedValue()));
+    return group;
 }
 
 ValueFlowNodeID ValueFlowRuleContext::hub(ValueFlowBehaviorID behavior)

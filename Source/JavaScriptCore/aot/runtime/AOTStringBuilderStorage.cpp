@@ -24,8 +24,13 @@
 #include "NumberPrototype.h"
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <charconv>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <optional>
+#include <wtf/DataLog.h>
 #include <wtf/HashSet.h>
 #include <wtf/dtoa.h>
 #include <wtf/text/ASCIIFastPath.h>
@@ -1463,6 +1468,51 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStringBuilderCheckLength, void, (Instance* 
 {
     AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTStringBuilderCheckLength);
     cellArgument<StringBuilderStorage>(builder, Entry::operationAOTStringBuilderCheckLength)->checkLength(globalObject);
+    OPERATION_RETURN(scope);
+}
+
+// Sabotage::MemoryRunsOutWhenCounted. BUN_AOT_OUT_OF_MEMORY_AT is a number n, "flattening:k", "module:line:column:k" or "list".
+JSC_DEFINE_JIT_OPERATION(operationAOTRunOutOfMemoryWhenCounted, void, (Instance* instance, uint32_t event, uint32_t module, uint32_t line, uint32_t column))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTRunOutOfMemoryWhenCounted);
+    struct Request {
+        uint64_t count { 0 };
+        CountedLackOfMemory event { CountedLackOfMemory::Operation };
+        unsigned module { 0 };
+        unsigned line { 0 };
+        unsigned column { 0 };
+        bool hasSite { false };
+        bool lists { false };
+    };
+    static const Request request = [] {
+        Request result;
+        const char* text = getenv("BUN_AOT_OUT_OF_MEMORY_AT");
+        if (!text)
+            return result;
+        unsigned long long count = 0;
+        if (!strcmp(text, "list"))
+            result.lists = true;
+        else if (sscanf(text, "flattening:%llu", &count) == 1)
+            result.event = CountedLackOfMemory::Flattening;
+        else if (sscanf(text, "%u:%u:%u:%llu", &result.module, &result.line, &result.column, &count) == 4)
+            result.hasSite = true;
+        else
+            count = strtoull(text, nullptr, 10);
+        result.count = count;
+        return result;
+    }();
+    static std::atomic<uint64_t> executions;
+    ASCIILiteral name = event == static_cast<uint32_t>(CountedLackOfMemory::Flattening) ? "flattening"_s : "operation"_s;
+    if (request.lists) {
+        dataLogLn("AOT: memory could run out at ", module, ":", line, ":", column, " ", name);
+        OPERATION_RETURN(scope);
+    }
+    if (event != static_cast<uint32_t>(request.event) || (request.hasSite && (module != request.module || line != request.line || column != request.column)))
+        OPERATION_RETURN(scope);
+    if (++executions == request.count) {
+        dataLogLn("AOT: memory runs out at ", module, ":", line, ":", column, " ", name);
+        throwOutOfMemoryError(globalObject, scope);
+    }
     OPERATION_RETURN(scope);
 }
 

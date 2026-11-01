@@ -548,6 +548,15 @@ struct CellFilledInLoop {
 
 } // anonymous namespace
 
+static B3::PatchpointValue* appendBirth(B3::Procedure& proc, B3::BasicBlock* block, B3::Value* address)
+{
+    B3::PatchpointValue* birth = block->appendNew<B3::PatchpointValue>(proc, B3::pointerType(), originOf(otherOrigin));
+    birth->append(address, B3::ValueRep::SomeRegister);
+    birth->effects = B3::Effects::none();
+    birth->effects.writes = B3::HeapRange(1, 2);
+    return birth;
+}
+
 static CellFilledInLoop appendCellFilledInLoop(B3::Procedure& proc, KnownBy knownBy)
 {
     B3::Origin origin = originOf(otherOrigin);
@@ -557,13 +566,8 @@ static CellFilledInLoop appendCellFilledInLoop(B3::Procedure& proc, KnownBy know
     appendJump(proc, root, loop);
 
     B3::Value* address = appendSlotBase(proc, loop, proc.addStackSlot(8), firstAddressOrigin);
-    if (knownBy == KnownBy::Birth) {
-        B3::PatchpointValue* birth = loop->appendNew<B3::PatchpointValue>(proc, B3::pointerType(), origin);
-        birth->append(address, B3::ValueRep::SomeRegister);
-        birth->effects = B3::Effects::none();
-        birth->effects.writes = B3::HeapRange(1, 2);
-        address = birth;
-    }
+    if (knownBy == KnownBy::Birth)
+        address = appendBirth(proc, loop, address);
     appendStore(proc, loop, address);
     B3::MemoryValue* load = loop->appendNew<B3::MemoryValue>(proc, B3::Load, B3::Int64, origin, address);
     load->setReadsMutability(B3::Mutability::Immutable);
@@ -610,6 +614,36 @@ static void testBirthsOfFrameCellsAreDissolved()
     AOT_TEST_CHECK(phase.run->run(proc));
     AOT_TEST_CHECK(cell.load->lastChild()->opcode() == B3::SlotBase);
     AOT_TEST_CHECK(cell.reader->child(0) == cell.load->lastChild());
+    B3::validate(proc);
+}
+
+static void testBirthTakesSlotBaseThroughPhi()
+{
+    B3::Origin origin = originOf(otherOrigin);
+    B3::Procedure proc;
+    B3::BasicBlock* root = proc.addBlock();
+    B3::BasicBlock* first = proc.addBlock();
+    B3::BasicBlock* second = proc.addBlock();
+    B3::BasicBlock* done = proc.addBlock();
+    appendBranch(proc, root, first, second);
+
+    B3::Air::StackSlot* slot = proc.addStackSlot(8);
+    B3::Value* phi = done->appendNew<B3::Value>(proc, B3::Phi, B3::pointerType(), origin);
+    for (B3::BasicBlock* block : { first, second }) {
+        B3::Value* address = appendSlotBase(proc, block, slot, firstAddressOrigin);
+        appendStore(proc, block, appendBirth(proc, block, address));
+        block->appendNew<B3::UpsilonValue>(proc, origin, address, phi);
+        appendJump(proc, block, done);
+    }
+    B3::PatchpointValue* secondBirth = appendBirth(proc, done, phi);
+    B3::Value* store = appendStore(proc, done, secondBirth);
+    appendReturn(proc, done);
+    proc.resetReachability();
+    B3::validate(proc);
+
+    bool hasBirths = true;
+    AOT_TEST_CHECK(dissolveBirthsOfFrameCells(hasBirths, true).run->run(proc));
+    AOT_TEST_CHECK(store->lastChild() == phi);
     B3::validate(proc);
 }
 
@@ -2694,6 +2728,7 @@ std::span<const NativeTest> backEndPhaseTests()
         { "materialize-in-pipeline"_s, testMaterializeInPipeline },
         { "readers-of-frame-cell-stay-behind-its-birth"_s, testReadersOfFrameCellStayBehindItsBirth },
         { "births-of-frame-cells-are-dissolved"_s, testBirthsOfFrameCellsAreDissolved },
+        { "birth-takes-slot-base-through-phi"_s, testBirthTakesSlotBaseThroughPhi },
         { "padding-of-frame-cell-counts-as-written"_s, testPaddingOfFrameCellCountsAsWritten },
         { "merge-implied-branches"_s, testMergeImpliedBranches },
         { "merge-implied-branches-of-negated-test"_s, testMergeImpliedBranchesOfNegatedTest },

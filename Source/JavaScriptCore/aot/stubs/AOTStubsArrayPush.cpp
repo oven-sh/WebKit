@@ -277,7 +277,17 @@ void generateAppendElements(StubAssembler& jit)
     isEmpty.link(&jit);
     jit.load8(Address(array, JSCell::indexingTypeAndMiscOffset()), kind);
     jit.and32(TrustedImm32(IndexingShapeAndWritabilityMask), kind);
-    slowPath.append(jit.branch32(CCallHelpers::Above, kind, TrustedImm32(ContiguousShape)));
+    Jump mayRefuse = jit.branch32(CCallHelpers::Above, kind, TrustedImm32(ContiguousShape));
+    jit.returnToCaller();
+
+    // One that shares its elements, as the answer of Object.keys() does, goes on sharing them. It refuses only where they are frozen in place.
+    mayRefuse.link(&jit);
+    slowPath.append(jit.branchTest32(CCallHelpers::Zero, kind, TrustedImm32(CopyOnWrite)));
+    loadStructure(jit, array, target);
+    jit.load32(Address(target, Structure::bitFieldOffset()), kind);
+    jit.urshift32(TrustedImm32(Structure::s_transitionKindShift), kind);
+    jit.and32(TrustedImm32(Structure::s_transitionKindMask), kind);
+    slowPath.append(jit.branch32(CCallHelpers::Equal, kind, TrustedImm32(static_cast<int32_t>(TransitionKind::FreezeElementsInPlace))));
     jit.returnToCaller();
 
     needsBarrier.link(&jit);

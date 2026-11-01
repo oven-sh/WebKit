@@ -121,9 +121,15 @@ static bool isOnlyInterpreted(FunctionAnalyses& analyses, ValueID value)
     return isOnlyInterpreted(analyses, value, [](const Use&) { return true; });
 }
 
+// `this instanceof A` of an object whose layout is known where it was made is answered by what the class says of itself.
+static bool asksForClassOf(const Function& function, const Use& use)
+{
+    return use.kind == Use::Kind::Operand && function.at(use.user).opcode == Opcode::InstanceOf && use.operandIndex == OperandIndex::InstanceOf::value;
+}
+
 static Expected<bool> isOnlyInterpretedInLikelyCode(FunctionAnalyses& analyses, ValueID value)
 {
-    return isOnlyInterpreted(analyses, value, [&](const Use& use) { return analyses.function().at(use.block).frequency.predicted() == BlockFrequency::Normal; });
+    return isOnlyInterpreted(analyses, value, [&](const Use& use) { return analyses.function().at(use.block).frequency.predicted() == BlockFrequency::Normal && !asksForClassOf(analyses.function(), use); });
 }
 
 static bool takesCells(const Program& program, const Value& user)
@@ -165,6 +171,7 @@ public:
     CalleeOfCall(FunctionPassContext& context, BlockID block, ValueID call)
         : m_context(context)
         , m_id(context.function.at(call).function())
+        , m_block(block)
     {
         m_isRepeated = isHot(heatClassOf(context, block)).predicted() || context.analyses.blockFrequencies().frequencyOf(block).predicted() >= HeatModel::minWeightOfCallInLoop;
     }
@@ -172,32 +179,63 @@ public:
     Expected<bool> onlyInterpretsRestArgumentsInLikelyCode(uint32_t entryParameter)
     {
         const Function& callee = m_context.program.at(m_id);
-        if (!m_isRepeated || !callee.hasBody() || !callee.has(FunctionFlags::HasRestParameter) || entryParameter != callee.firstParameterIndex() + callee.numberOfPositionalParameters())
+        if (!callee.has(FunctionFlags::HasRestParameter) || entryParameter != callee.firstParameterIndex() + callee.numberOfPositionalParameters())
+            return false;
+        return onlyInterpretsInLikelyCode(entryParameter);
+    }
+
+    Expected<bool> onlyInterpretsInLikelyCode(uint32_t entryParameter)
+    {
+        const Function& callee = m_context.program.at(m_id);
+        if (!m_isRepeated || !callee.hasBody() || entryParameter >= callee.at(entryBlock).parameters.size())
             return false;
         FunctionAnalyses analyses(AnalysisContext { m_context.build, m_context.program, &m_context.inputs.flow, &m_context.inputs.effects, m_id }, callee);
         return isOnlyInterpretedInLikelyCode(analyses, callee.at(entryBlock).parameters[entryParameter]);
     }
 
+    // A build on a rarer path takes the allocation out of the code that runs more often. Where the call is repeated, what needs the cell there does not hold it beside the call:
+    // the likely code of the callee decides, which then has to do without the cell.
+    bool onlyInterpretsAllInLikelyCode(std::span<const uint32_t> entryParameters)
+    {
+        return std::ranges::all_of(entryParameters, [&](uint32_t entryParameter) {
+            return onlyInterpretsInLikelyCode(entryParameter).predicted();
+        });
+    }
+
+    Expected<bool> isBuiltApartFor(const Use& use) const
+    {
+        if (!m_isRepeated)
+            return false;
+        const BlockFrequencies& frequencies = m_context.analyses.blockFrequencies();
+        return isRarerThan(frequencies.classOf(use.block), frequencies.classOf(m_block));
+    }
+
 private:
     FunctionPassContext& m_context;
     FunctionID m_id;
+    BlockID m_block;
     bool m_isRepeated { false };
 };
 
 // A callee that only reads an object lets nothing escape, and the call still takes a cell. An object that the callee lets escape is built in a copy of the callee as well.
 static bool needsCellOnlyFor(FunctionAnalyses& analyses, ObjectID object, ValueID call, CalleeOfCall& callee)
 {
-    bool isPassedToCall = false;
+    Vector<uint32_t, 2> passedAs;
+    bool isBuiltApart = false;
     for (const ObjectUse& objectUse : analyses.escape().usesOf(object)) {
         bool isOperandOfCall = objectUse.use.kind == Use::Kind::Operand && objectUse.use.user == call;
+        if (!isOperandOfCall && callee.isBuiltApartFor(objectUse.use).predicted()) {
+            isBuiltApart |= objectUse.isEscape || needsCell(analyses.program(), analyses.function(), objectUse);
+            continue;
+        }
         if (objectUse.isEscape && !(isOperandOfCall && callee.onlyInterpretsRestArgumentsInLikelyCode(objectUse.use.operandIndex).predicted()))
             return false;
         if (isOperandOfCall)
-            isPassedToCall = true;
+            passedAs.append(objectUse.use.operandIndex);
         else if (needsCell(analyses.program(), analyses.function(), objectUse))
             return false;
     }
-    return isPassedToCall;
+    return !passedAs.isEmpty() && (!isBuiltApart || callee.onlyInterpretsAllInLikelyCode(passedAs.span()));
 }
 
 enum class SeenOfAllocation : uint8_t { Nothing, NeedsCellElsewhere, Escapes, NeedsCellOnlyForCall };
@@ -281,7 +319,8 @@ static SeenOfAllocation lookAtUsesOf(FunctionAnalyses& analyses, ValueID maker, 
     const Function& function = analyses.function();
     const UseLists& useLists = analyses.useLists();
     bool needsCellElsewhere = false;
-    bool isPassedToCall = false;
+    Vector<uint32_t, 2> passedAs;
+    bool isBuiltApart = false;
     bool hasSeenAll = true;
     Vector<ValueID, maxNames> names { maker };
     auto addName = [&](ValueID name) {
@@ -314,24 +353,27 @@ static SeenOfAllocation lookAtUsesOf(FunctionAnalyses& analyses, ValueID maker, 
                 addName(use.user);
                 break;
             case UseSeenAlone::IsListedAsEscape:
-                if (!(isOperandOfCall && callee.onlyInterpretsRestArgumentsInLikelyCode(use.operandIndex).predicted()))
+                if (!(isOperandOfCall ? callee.onlyInterpretsRestArgumentsInLikelyCode(use.operandIndex) : callee.isBuiltApartFor(use)).predicted())
                     return SeenOfAllocation::Escapes;
+                isBuiltApart |= !isOperandOfCall;
                 // What the callee lets escape may come back out of it, under names that only the objects tell.
                 hasSeenAll = false;
                 break;
             case UseSeenAlone::IsListed:
                 hasSeenAll = hasSeenAll && !maySendObjectOn(analyses, use);
                 if (isOperandOfCall)
-                    isPassedToCall = true;
+                    passedAs.append(use.operandIndex);
                 else if (needsCell(analyses.program(), function, ObjectUse { .use = use }))
-                    needsCellElsewhere = true;
+                    (callee.isBuiltApartFor(use).predicted() ? isBuiltApart : needsCellElsewhere) = true;
                 break;
             }
         }
     }
     if (needsCellElsewhere)
         return SeenOfAllocation::NeedsCellElsewhere;
-    return hasSeenAll && isPassedToCall ? SeenOfAllocation::NeedsCellOnlyForCall : SeenOfAllocation::Nothing;
+    if (!hasSeenAll || passedAs.isEmpty())
+        return SeenOfAllocation::Nothing;
+    return !isBuiltApart || callee.onlyInterpretsAllInLikelyCode(passedAs.span()) ? SeenOfAllocation::NeedsCellOnlyForCall : SeenOfAllocation::NeedsCellElsewhere;
 }
 
 // Nearly every question ends with none, and the function is another one behind each call that is inlined: the solve is left to the few calls of which this does not tell.

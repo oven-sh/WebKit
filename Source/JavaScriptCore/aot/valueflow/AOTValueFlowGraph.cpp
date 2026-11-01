@@ -93,6 +93,7 @@ public:
             }
             return;
         }
+        ParallelRegionScope parallelRegion;
         m_step = &step;
         m_helpersWanted.store(std::min(m_mostHelpers, count / 2), std::memory_order_relaxed);
         m_numberDone.store(0);
@@ -101,6 +102,9 @@ public:
         askForHelper();
         askForHelper();
         takeIndices(0);
+        if (m_numberDone.load() == count)
+            return;
+        BusyThreads::WaitScope waitScope;
         for (unsigned spins = 0; spins < 2048; ++spins) {
             if (m_numberDone.load() == count)
                 return;
@@ -317,6 +321,31 @@ NEVER_INLINE void ValueFlowGraph::makePagesWritable(uint32_t page) const
     m_arePagesWritable[page / 64].fetch_or(1ull << page % 64, std::memory_order_relaxed);
 }
 
+uint32_t ValueFlowGraph::hashOf(const Mask& mask)
+{
+    uint64_t mixed = (static_cast<uint64_t>(mask.admitted.index()) << 32 | mask.familyObjects.index()) * 0x9e3779b97f4a7c15ull;
+    return static_cast<uint32_t>((mixed ^ mixed >> 32 ^ static_cast<uint64_t>(mask.kind)) * 0xbf58476d1ce4e5b9ull >> 32);
+}
+
+std::optional<uint32_t> ValueFlowGraph::findNumberOf(const Mask& mask) const
+{
+    return m_numberOfMask.find(hashOf(mask), [&](uint32_t candidate) {
+        return m_masks[candidate].isSameAs(mask);
+    });
+}
+
+bool ValueFlowGraph::setMaskThatSomeNodeHas(ValueFlowNodeID node, ValueSetID admitted, ValueFlowMaskKind kind, ValueSetID familyObjects)
+{
+    ASSERT(valueOf(node) == ValueSets::nothing);
+    std::optional<uint32_t> number = 0;
+    if (admitted != ValueSets::anything)
+        number = findNumberOf(Mask { admitted, kind == ValueFlowMaskKind::Plain ? ValueSetID() : familyObjects, kind });
+    if (!number)
+        return false;
+    m_gates[node.index()].mask = *number;
+    return true;
+}
+
 void ValueFlowGraph::setMask(ValueFlowNodeID node, ValueSetID admitted, ValueFlowMaskKind kind, ValueSetID familyObjects)
 {
     ASSERT(valueOf(node) == ValueSets::nothing);
@@ -326,16 +355,12 @@ void ValueFlowGraph::setMask(ValueFlowNodeID node, ValueSetID admitted, ValueFlo
     }
 
     Mask mask { admitted, kind == ValueFlowMaskKind::Plain ? ValueSetID() : familyObjects, kind };
-    uint64_t mixed = (static_cast<uint64_t>(mask.admitted.index()) << 32 | mask.familyObjects.index()) * 0x9e3779b97f4a7c15ull;
-    uint32_t hash = static_cast<uint32_t>((mixed ^ mixed >> 32 ^ static_cast<uint64_t>(kind)) * 0xbf58476d1ce4e5b9ull >> 32);
-    std::optional<uint32_t> number = m_numberOfMask.find(hash, [&](uint32_t candidate) {
-        return m_masks[candidate].isSameAs(mask);
-    });
+    std::optional<uint32_t> number = findNumberOf(mask);
     if (!number) {
         number = static_cast<uint32_t>(m_masks.size());
         if (*number >= 1u << 22) [[unlikely]]
             exitProgramTooLarge();
-        m_numberOfMask.add(hash, *number);
+        m_numberOfMask.add(hashOf(mask), *number);
         mask.lowMembersAdmitted = lowMembersOf(admitted, *m_makers[0]);
         m_masks.append(mask);
     }
@@ -1303,6 +1328,101 @@ void ValueFlowGraph::runWave(Team& team)
     inOneList.shrink(0);
 }
 
+bool ValueFlowGraph::evaluatesNodesAgainAndAgain() const
+{
+    AOT_THRESHOLD(uint64_t, mostEvaluationsOfNodeInWaves, 8);
+    AOT_THRESHOLD(uint64_t, fewestEvaluationsToAsk, 4096);
+    uint64_t evaluations = 0;
+    uint64_t numberMoved = 0;
+    for (const std::unique_ptr<Worker>& worker : m_workers) {
+        evaluations += worker->evaluations;
+        numberMoved += worker->movedNodes.size();
+    }
+    return evaluations >= fewestEvaluationsToAsk && evaluations > mostEvaluationsOfNodeInWaves * numberMoved;
+}
+
+// A wave takes every value one node further. Down a chain of n nodes that each have something of their own to hand on, or round a ring of them, that is n waves in which each node gets one
+// value more and a new set: n times n evaluations and as many sets. In the order in which values flow a node is evaluated once everything above it has been: once down a chain, twice or
+// three times round a ring. The order is that of a walk, depth first, over the nodes that have moved in this solve; what is reached beyond them comes behind them, in the order of arrival.
+// What the nodes hold in the end does not depend on the order.
+void ValueFlowGraph::finishInOrderOfFlow()
+{
+    unsigned parity = m_parity;
+    if (m_numberOfMessagesWithShards.exchange(0, std::memory_order_relaxed)) {
+        for (unsigned source = 0; source < numberOfShards; ++source) {
+            for (uint64_t shards = std::exchange(m_shardsWithMessagesOfShard[parity][source], 0); shards; shards &= shards - 1) {
+                Vector<Message>& messages = m_shards[source]->messages[parity][std::countr_zero(shards)];
+                takeArrivals(m_arrivals, messages.span());
+                messages.shrink(0);
+            }
+        }
+    }
+    takeArrivals(m_arrivals, m_messages[parity].span());
+    m_messages[parity].shrink(0);
+
+    UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> placeOf;
+    {
+        constexpr uint32_t isLeft = 1u << 31;
+        constexpr uint32_t isEntered = UINT32_MAX;
+        Vector<uint32_t> stack;
+        Vector<uint32_t> inOrderLeft;
+        auto walkFrom = [&](uint32_t root) {
+            stack.append(root);
+            while (!stack.isEmpty()) {
+                uint32_t top = stack.takeLast();
+                if (top & isLeft) {
+                    inOrderLeft.append(top & ~isLeft);
+                    continue;
+                }
+                if (!placeOf.add(top, isEntered).isNewEntry)
+                    continue;
+                stack.append(top | isLeft);
+                if (!m_successors[top])
+                    continue;
+                forEachSuccessor(top, [&](uint32_t successor) {
+                    if (m_hasMoved[successor] && !placeOf.contains(successor))
+                        stack.append(successor);
+                });
+            }
+        };
+        RELEASE_ASSERT(m_numberOfNodes < isLeft);
+        for (const NodeWithArrivals& waiting : m_arrivals.nodes)
+            walkFrom(waiting.node);
+        for (const std::unique_ptr<Worker>& worker : m_workers) {
+            for (uint32_t node : worker->movedNodes)
+                walkFrom(node);
+        }
+        for (size_t index = 0; index < inOrderLeft.size(); ++index)
+            placeOf.set(inOrderLeft[index], static_cast<uint32_t>(inOrderLeft.size() - 1 - index));
+    }
+
+    // The place in the order, then the index in the list of nodes with arrivals.
+    Vector<uint64_t> heap;
+    auto isBehind = std::greater<uint64_t> { };
+    auto enqueue = [&](size_t index) {
+        uint32_t place = placeOf.ensure(m_arrivals.nodes[index].node, [&] {
+            return static_cast<uint32_t>(placeOf.size());
+        }).iterator->value;
+        heap.append(static_cast<uint64_t>(place) << 32 | index);
+        std::ranges::push_heap(heap, isBehind);
+    };
+    for (size_t index = 0; index < m_arrivals.nodes.size(); ++index)
+        enqueue(index);
+    Worker& worker = *m_workers[0];
+    while (!heap.isEmpty()) {
+        std::ranges::pop_heap(heap, isBehind);
+        NodeWithArrivals next = m_arrivals.nodes[static_cast<uint32_t>(heap.takeLast())];
+        evaluate(next, m_arrivals, worker, [&](const Message& message) {
+            size_t numberWaiting = m_arrivals.nodes.size();
+            takeArrival(m_arrivals, message);
+            if (m_arrivals.nodes.size() > numberWaiting)
+                enqueue(numberWaiting);
+        });
+    }
+    m_arrivals.nodes.shrink(0);
+    m_arrivals.list.shrink(0);
+}
+
 void ValueFlowGraph::giveBackLargeBuffers()
 {
     auto giveBack = [](auto& vector, size_t mostElementsKept) {
@@ -1366,10 +1486,14 @@ void ValueFlowGraph::solve(Vector<ValueFlowNodeID>& moved, RetiredNodes retiredN
                     m_messages[m_parity].append(Message { node, setIn(row), row.low });
             });
         }
-        while (m_numberOfMessagesWithShards.load(std::memory_order_relaxed) || !m_messages[m_parity].isEmpty()) {
+        AOT_THRESHOLD(uint64_t, wavesBetweenLooksAtEvaluations, 8);
+        for (uint64_t waves = 1; m_numberOfMessagesWithShards.load(std::memory_order_relaxed) || !m_messages[m_parity].isEmpty(); ++waves) {
             ++m_counters.waves;
             noteWhatCoveredNodesHold();
-            runWave(team.get());
+            if (!(waves % wavesBetweenLooksAtEvaluations) && evaluatesNodesAgainAndAgain())
+                finishInOrderOfFlow();
+            else
+                runWave(team.get());
         }
     };
     AOT_THRESHOLD(size_t, fewestEdgesToMarkBesideWaves, 4096);

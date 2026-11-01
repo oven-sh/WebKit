@@ -32,12 +32,15 @@
 # CHECK-NOT: ModuleVariables
 # CHECK-LABEL: end of loop
 # CHECK-LABEL: end of function
-# Joining texts throws where the text gets too long, and whoever catches that may read the variable: every turn reads it and stores to it.
+# Joining texts throws where the text gets too long, and whoever catches that may read the variable: every turn stores to it. Nothing else in the loop writes the variable,
+# so what a turn would read there is what the turn before has stored: that goes around in a register.
 # CHECK-LABEL: name="writes" role=Source
 # CHECK-LABEL: loop #
-# CHECK: Int64 b@[[text]] = Load(b@{{*}}Reads:ModuleVariables{{*}}:GetModuleVariable)
+# CHECK: Int64 b@[[text]] = Phi(
+# CHECK-NOT: Reads:ModuleVariables
 # CHECK: Int64 b@[[longer]] = Patchpoint(b@[[text]]:Register({{*}}:Add)
 # CHECK: Store(b@[[longer]], b@{{*}}Writes:ModuleVariables{{*}}:PutModuleVariable)
+# CHECK: Upsilon(b@[[longer]], ^[[text]],
 # CHECK-LABEL: end of loop
 # CHECK-LABEL: end of function
 

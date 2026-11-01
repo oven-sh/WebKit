@@ -1249,6 +1249,35 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
         for (const ObjectCreatedWithKey& created : prototypeObjectsWithMethods.underKeys)
             prototypeObjectsWithMethods.objects.append(created.object);
         createdInStretches.append(WTF::move(prototypeObjectsWithMethods));
+        // One object stands for all closures of a function. What one place stores into the closure that it makes says nothing of the closures that another place makes.
+        struct ClosureMade {
+            FunctionID function;
+            Vector<PropertyKeyID, 8> keys;
+        };
+        Vector<ClosureMade> closuresMade = collectInParallel<ClosureMade>(loops, program.functions.size(), [&](unsigned index, Vector<ClosureMade>& found) {
+            std::optional<KeysOfLiterals> keysOfStores;
+            forEachListedValue(program, FunctionID(index), { Opcode::NewClosure }, [&](BlockID, uint32_t, ValueID id, const Value& closure) {
+                if (!keysOfStores)
+                    keysOfStores = keysStoredRightAfterAllocations(program, program.functions[index]);
+                auto stores = keysOfStores->find(id.index());
+                found.append({ closure.function(), stores == keysOfStores->end() ? Vector<PropertyKeyID, 8>() : stores->value });
+            });
+        });
+        Vector<uint8_t> numberOfPlacesMaking(FillWith { }, program.functions.size(), uint8_t { 0 });
+        for (const ClosureMade& made : closuresMade)
+            numberOfPlacesMaking[made.function.index()] = std::min(numberOfPlacesMaking[made.function.index()] + 1, 2);
+        for (const Variable& variable : program.variables) {
+            if (variable.initialization == VariableInitialization::Function && variable.function)
+                numberOfPlacesMaking[variable.function.index()] = 2;
+        }
+        ObjectsCreatedWithFields closuresStoredTo;
+        for (const ClosureMade& made : closuresMade) {
+            if (numberOfPlacesMaking[made.function.index()] != 1)
+                continue;
+            for (PropertyKeyID key : made.keys)
+                closuresStoredTo.storedToUnderKeys.append({ key, universe.closureOf(made.function) });
+        }
+        createdInStretches.append(WTF::move(closuresStoredTo));
         auto layOut = [&](Vector<ObjectCreatedWithKey> ObjectsCreatedWithFields::* list, Vector<uint32_t>& endOfKey, Vector<ValueFlowObjectID>& objects) {
             endOfKey.fill(0u, numberOfKeys);
             for (const ObjectsCreatedWithFields& createdInStretch : createdInStretches) {

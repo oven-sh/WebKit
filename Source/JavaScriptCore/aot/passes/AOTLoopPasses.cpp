@@ -313,14 +313,28 @@ static std::optional<CounterCandidate> findCandidateTestedAheadOfStep(FunctionPa
 }
 
 // The first turn of a loop may stand in front of it. Below an int32 bound its counter is still an int32 one step later, as in the loop.
-static bool stepsBeyondInt32Behind(FunctionPassContext& context, Edge edge, ValueID tested)
+// One bound may be tested by every loop of a function, so its uses are walked once, not once for each test.
+struct StepsBeyondInt32 {
+    HashMap<ValueID, Vector<BlockID, 1>> blocksOfSteps;
+    uint64_t usesRead { 0 };
+};
+static bool stepsBeyondInt32Behind(FunctionPassContext& context, Edge edge, ValueID tested, StepsBeyondInt32& steps)
 {
     FunctionAnalyses& analyses = context.analyses;
-    return std::ranges::any_of(analyses.useLists().usesOf(tested), [&](const Use& use) {
-        if (use.kind != Use::Kind::Operand || !isNumberBeyondInt32(context.program.typeOf(context.function, use.user)) || !dominatesAfterSplit(analyses, edge, use.block))
-            return false;
-        std::optional<SumWithCounter> sum = findSumWithConstant(context, use.user);
-        return sum && sum->counterIndex == use.operandIndex;
+    auto entry = steps.blocksOfSteps.add(tested, Vector<BlockID, 1> { });
+    if (entry.isNewEntry) {
+        for (const Use& use : analyses.useLists().usesOf(tested)) {
+            ++steps.usesRead;
+            if (use.kind != Use::Kind::Operand || !isNumberBeyondInt32(context.program.typeOf(context.function, use.user)))
+                continue;
+            std::optional<SumWithCounter> sum = findSumWithConstant(context, use.user);
+            if (sum && sum->counterIndex == use.operandIndex)
+                entry.iterator->value.append(use.block);
+        }
+    }
+    steps.usesRead += entry.iterator->value.size();
+    return std::ranges::any_of(entry.iterator->value, [&](BlockID block) {
+        return dominatesAfterSplit(analyses, edge, block);
     });
 }
 
@@ -356,6 +370,7 @@ static Vector<CounterCandidate, 4> findCounterCandidates(FunctionPassContext& co
                 isJudgedAsCounter.set(variable.parameter.index());
         }
     }
+    StepsBeyondInt32 steps;
     for (BlockID block : analyses.cfg().reversePostOrder()) {
         const Terminator& terminator = function.at(block).terminator;
         if (terminator.kind != TerminatorKind::Branch)
@@ -371,7 +386,7 @@ static Vector<CounterCandidate, 4> findCounterCandidates(FunctionPassContext& co
             const Type& tested = typeOf(comparison.operand(operandIndex));
             if (!tested.isNumberWithoutFraction() || (!testsForTruth && !typeOf(comparison.operand(1 - operandIndex)).isInteger()))
                 continue;
-            if (tested.isInt32() && (testsForTruth || terminator.taken().proofs.contains(operandIndex) || !stepsBeyondInt32Behind(context, Edge { block, 0 }, comparison.operand(operandIndex))))
+            if (tested.isInt32() && (testsForTruth || terminator.taken().proofs.contains(operandIndex) || !stepsBeyondInt32Behind(context, Edge { block, 0 }, comparison.operand(operandIndex), steps)))
                 continue;
             // `while (++i < n)`: what a turn has counted up is tested as often as what it is about to.
             ValueID number = sameNumberThroughConversions(context, comparison.operand(operandIndex));
@@ -386,6 +401,8 @@ static Vector<CounterCandidate, 4> findCounterCandidates(FunctionPassContext& co
             candidates.append(CounterCandidate { number, terminator.conditionOperand(), operandIndex, Edge { block, 0 }, { }, comparesNoVariable });
         }
     }
+
+    context.build.statistics().count(StatisticID::UsesReadForStepsBehindTests, steps.usesRead);
 
     // What has failed the test for an integer is none. Where the loop by itself keeps its counter an integer nothing is left of it on that edge, so what the copy behind the edge counts up comes back to nobody.
     for (BlockID block : analyses.cfg().reversePostOrder()) {
@@ -1684,8 +1701,6 @@ static ValueID listWhoseLengthIsRead(const Program& program, const Value& value)
     return overload.mode == BuiltinCallMode::Get && program.builtins().canonicalID(overload.builtin) == Builtins::ArrayPrototypeLength ? value.receiverOperand() : ValueID();
 }
 
-// These ask whether a position lies below the length of a list, and can be told the length.
-static constexpr OpcodeSet testsOfPositionsInLists { Opcode::IsInBounds, Opcode::GetArrayElement, Opcode::IsElementPresent, Opcode::HasArrayElement };
 // These look at how a list keeps its elements and not at how many it has.
 static constexpr OpcodeSet readersOfStorageFormAlone { Opcode::HasArrayStorage, Opcode::NewArrayWithCapacity };
 
