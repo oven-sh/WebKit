@@ -681,6 +681,8 @@ bool Modules::beginModuleInRecord(ModuleID module)
     // The first load of a CommonJS file that a mock waits for.
     if (m_modulesWithMockToRun.get(module.index())) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+        // An import has run what waits below it before it comes here. This is a require() that compiled code answers itself.
+        SetForScope requireRunsMocks(m_instance.vm->aotState().requireRunsMocks, true);
         runMockThatWaits(module);
         RETURN_IF_EXCEPTION(scope, false);
     }
@@ -3472,7 +3474,10 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
         throwException(m_instance.globalObject, scope, error);
         return { };
     }
-    runMocksBelow(target);
+    {
+        SetForScope requireRunsMocks(vm.aotState().requireRunsMocks, true);
+        runMocksBelow(target);
+    }
     RETURN_IF_EXCEPTION(scope, { });
     if (isLeftToHost(target)) [[unlikely]]
         RELEASE_AND_RETURN(scope, loadEvictedFile(fileOf(target)));

@@ -184,6 +184,8 @@ JS_EXPORT_PRIVATE bool forEachNewChild(JSGlobalObject*, ModuleID, const ScopedLa
 JS_EXPORT_PRIVATE void willLoadByName(JSGlobalObject*, JSValue specifier, LoadByName = LoadByName::Require);
 // In the host's resolve step: an import() of compiled code asks, which does not come by the host's own hook for import().
 JS_EXPORT_PRIVATE bool isResolvingImportCall(VM&);
+// In ModuleHost::runMock: a require() has come to the module, so what the mock loads is loaded at once.
+JS_EXPORT_PRIVATE bool requireRunsMocks(VM&);
 // The host calls this with the file of the image that such a name has resolved to, before it looks into a cache of its own. It throws for a file that is no entry point.
 JS_EXPORT_PRIVATE void willAnswerWithModule(JSGlobalObject*, ModuleID, LoadByName = LoadByName::Require);
 class Modules;

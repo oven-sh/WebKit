@@ -5413,6 +5413,11 @@ bool isResolvingImportCall(VM& vm)
     return vm.aotState().isResolvingImportCall;
 }
 
+bool requireRunsMocks(VM& vm)
+{
+    return vm.aotState().requireRunsMocks;
+}
+
 void willLoadByName(JSGlobalObject* realm, JSValue specifier, LoadByName form)
 {
     auto scope = DECLARE_THROW_SCOPE(realm->vm());

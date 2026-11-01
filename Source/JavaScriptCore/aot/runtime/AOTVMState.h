@@ -220,6 +220,8 @@ public:
     bool askerLoadsCompiledFilesAlone { false };
     // An import() of compiled code asks the host what its name stands for.
     bool isResolvingImportCall { false };
+    // A require() runs the mocks that wait below what it loads. It cannot wait for them.
+    bool requireRunsMocks { false };
     std::unique_ptr<PagesOfVM> pages;
     std::unique_ptr<ProgramIdentifiers> identifiers;
     std::unique_ptr<CacheRegistry> caches;
