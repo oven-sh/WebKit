@@ -47,8 +47,8 @@ operation AreLoaderFunctionsStored () -> natural(boolean) ; reads(ExternalState)
 operation CountExecution (module: Module(Referrer), description: String, counter: UInt32) -> none ; writes(ExternalState) ; runtime = CountExecution ; flow = TableProves ; flowsWithoutRule = true
 operation ResolveModule (module: Module(Referrer), referrer: Module(Referrer), specifier: String) [isURL] -> unknown ; unknownCode ; runtime = ResolveModule ; flow = Unsound
 operation ThrowModuleFailure (failure: ModuleFailure) [isForRequire] -> natural(never) ; Allocates UsesRuntime throws ; runtime = ThrowModuleFailure ; flow = TableProves
-operation ImportDynamic (specifier: Any/Converted, options?: Any/retains, referrer: Module(Referrer)) -> allocation(Promise) ; unknownCode ; raises = LoadsModule ; runtime = ImportDynamic ; flow = Allocates ; flowRule = Module
-operation RequireDynamic (specifier: Any/Converted, referrer: Module(Referrer)) -> unknown ; unknownCode ; raises = LoadsModule ; runtime = RequireDynamic ; flow = Copies ; flowRule = Module
+operation ImportDynamic (specifier: Any/Converted, options?: Any/retains, referrer: Module(Referrer)) [allNamesAreKnown] -> allocation(Promise) ; unknownCode ; raises = LoadsModule ; runtime = ImportDynamic ; flow = Allocates ; flowRule = Module
+operation RequireDynamic (specifier: Any/Converted, referrer: Module(Referrer)) [allNamesAreKnown] -> unknown ; unknownCode ; raises = LoadsModule ; runtime = RequireDynamic ; flow = Copies ; flowRule = Module
 operation ResolveDynamic (specifier: Any/Converted, referrer: Module(Referrer)) [isURL isForRequire] -> unknown ; unknownCode ; runtime = ResolveDynamic ; flow = Unsound ; flowRule = Module
 
 family Eval AsRead..Placed
