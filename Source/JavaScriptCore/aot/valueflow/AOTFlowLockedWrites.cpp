@@ -93,6 +93,18 @@ public:
 
     bool mayExitAtTerminator(FunctionID id, const Block& block) const { return throwsExplicitly(codeKindOf(id), block); }
 
+    bool mayExitAtUnknownPosition(FunctionID id)
+    {
+        if (!m_hostCalleeMayExit) {
+            m_hostCalleeMayExit = std::ranges::any_of(m_results.indirectCalls(), [&](const FlowIndirectCall& call) {
+                return !call.caller && codeKindOf(call.callee) == CodeKind::ProgramFunction && mayExit(call.callee);
+            });
+        }
+        return *m_hostCalleeMayExit || std::ranges::any_of(m_results.indirectCallsFrom(id), [&](const FlowIndirectCall& call) {
+            return !call.site && mayExit(call.callee);
+        });
+    }
+
     bool mayExit(FunctionID root)
     {
         if (m_neverExits.quickGet(root.index()))
@@ -155,10 +167,21 @@ private:
         return !member || table.has(BuiltinMark::MayBeAbsent, member) || table.has(BuiltinMark::IsAddedByOption, member);
     }
 
-    bool mayTerminateProcess(BuiltinID builtin) const
+    bool isMarkedAsTerminating(BuiltinID builtin) const
     {
         const BuiltinTable& table = m_program.builtins();
-        return table.has(BuiltinMark::MayTerminateProcess, table.canonicalID(builtin)) || table.overloadsOf(builtin).empty();
+        return table.has(BuiltinMark::MayTerminateProcess, table.canonicalID(builtin));
+    }
+
+    bool mayTerminateProcess(BuiltinID builtin) const { return isMarkedAsTerminating(builtin) || m_program.builtins().overloadsOf(builtin).empty(); }
+
+    bool passesTerminatingBuiltin(const Function& function, const Value& call) const
+    {
+        return std::ranges::any_of(call.operands(), [&](ValueID operand) {
+            return operand && std::ranges::any_of(m_program.typeOf(function, operand).builtins, [&](BuiltinID builtin) {
+                return isMarkedAsTerminating(builtin);
+            });
+        });
     }
 
     bool anyProgramFunctionMayExit()
@@ -201,7 +224,7 @@ private:
         CalleeList callees = calleesOfCall(m_program, value);
         if (callees.runsNothing())
             return false;
-        if (value.type == TypeTable::never && codeKind != CodeKind::Library)
+        if (codeKind != CodeKind::Library && (value.type == TypeTable::never || passesTerminatingBuiltin(function, value)))
             return true;
         for (FunctionID callee : callees.listed().functions)
             visitCallee(callee);
@@ -236,6 +259,7 @@ private:
     BitVector m_neverExits;
     BitVector m_isQueued;
     std::optional<bool> m_anyProgramFunctionMayExit;
+    std::optional<bool> m_hostCalleeMayExit;
 };
 
 } // anonymous namespace
@@ -300,6 +324,9 @@ static bool alwaysRuns(const Program& program, std::span<const ModuleID> evaluat
         return false;
     auto position = std::ranges::find(evaluationOrder, function.module);
     if (position == evaluationOrder.end())
+        return false;
+
+    if (earlyExits.mayExitAtUnknownPosition(id))
         return false;
 
     const Dominators& dominators = analyses.dominators();
