@@ -684,6 +684,15 @@ void runHostRoots(const ValueFlowStatement& statement, ValueFlowRuleContext& con
         for (uint32_t index = 0; index < program.modules.size(); ++index) {
             if (program.modules[index].flags.contains(ModuleFlags::IsShownByEntryOfCache))
                 connect(context, requiredValueOf(context, ModuleID(index)), ValueFlowProgramNodes::escaped());
+            if (program.modules[index].flags.contains(ModuleFlags::IsHandedOutByTestRunner)) {
+                ModuleID module(index);
+                if (isAskedOfHostByName(program.modules[index])) {
+                    context.add(context.nodes().ofHost(ValueFlowHostNode::ModulesOfSeenCode), only(context, universe.namespaceOf(module)));
+                    evaluateModule(context, module);
+                }
+                for (const ValueFlowSources& answer : { requiredValueOf(context, module), namespaceOf(context, module) })
+                    connect(context, answer, context.nodes().ofHost(ValueFlowHostNode::HeldByNativeCode));
+            }
         }
     }
     std::span<const Entry> entries = program.entries.span();
