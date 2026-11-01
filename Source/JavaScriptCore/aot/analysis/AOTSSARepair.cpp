@@ -923,7 +923,7 @@ void SSARepair::insertParameters(std::span<const Variable> variables)
     // values on each, edges times values. The definition that reaches the tail of a block stands in the nearest block at or above it that defines the variable, so two blocks with the same
     // nearest block that defines any of the variables joined there are reached by the same definitions of them. Their edges are gathered: they lead to one block that only jumps, and that jump
     // carries the arguments.
-    AOT_THRESHOLD(size_t, fewestEdgesGathered, 16);
+    AOT_THRESHOLD(size_t, fewestEdgesGathered, std::numeric_limits<size_t>::max());
     constexpr uint32_t notGathered = std::numeric_limits<uint32_t>::max();
     struct GatheredJoin {
         Vector<uint32_t> columnOfEdge;
