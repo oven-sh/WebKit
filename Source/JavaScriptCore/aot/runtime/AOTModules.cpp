@@ -1449,11 +1449,11 @@ auto Modules::mockThatAnswersFor(const ModuleExportData& passedOn) const -> std:
                 continue;
             if (takesFromAnotherModule(declaring))
                 break;
-            return AnswerOfMock { mock, identifier(entry.name) };
+            return AnswerOfMock { mock, identifier(entry.name), ModuleID(index) };
         }
         for (const SyntheticExportData& entry : m_table.syntheticExports(declaring)) {
             if (entry.hasVariable && entry.variable == passedOn.variable)
-                return AnswerOfMock { mock, identifier(entry.name) };
+                return AnswerOfMock { mock, identifier(entry.name), ModuleID(index) };
         }
     }
     return std::nullopt;
@@ -6246,6 +6246,11 @@ void ModuleRecord::executeAsync(JSGlobalObject* globalObject)
     promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::AsyncModuleExecutionDone, nullptr, this);
 }
 
+bool ModuleRecord::someMockStandsInPlace() const
+{
+    return modules().someMockStandsInPlace();
+}
+
 void ModuleRecord::appendDynamicStarTargets(StarExportTargets& targets)
 {
     RunningImageScope imageOfRecord(m_instance.vm->aotState(), m_instance.program);
@@ -6305,6 +6310,14 @@ auto ModuleRecord::resolveOwnExport(JSGlobalObject* globalObject, const Identifi
     }
     if (!entry || modules.isLeftOut(m_module, *index, Modules::TablesBehindStars::MayLackName))
         return absent;
+    // `export * from "./dep"`, `export { fn } from "./dep"`: while a mock stands in place of the module that declares the variable, the name is found where whoever asks that module finds it.
+    // spyOn() so comes to the object that the factory returned.
+    if (std::optional<Modules::AnswerOfMock> answer = modules.mockThatAnswersFor(*entry)) [[unlikely]] {
+        AbstractModuleRecord* record = modules.recordForResolution(answer->mocked);
+        RETURN_IF_EXCEPTION(scope, Resolution::error());
+        if (record != this)
+            RELEASE_AND_RETURN(scope, record->resolveExport(globalObject, answer->name));
+    }
     // A Resolution has no phase, and its readers take *namespace* as the namespace object of phase Evaluation.
     if (entry->kind() == ModuleExportKind::Variable || (entry->kind() == ModuleExportKind::Namespace && entry->isDeferred))
         return { Resolution::Type::Resolved, this, exportName, *index };

@@ -177,6 +177,7 @@ public:
         const LoadedModule* loaded = loadedIfExists(module);
         return loaded ? loaded->mockInPlace.get() : nullptr;
     }
+    bool someMockStandsInPlace() const { return m_numberOfMocksInPlace; }
     bool setMockInPlace(ModuleID, JSObject* mock, JSValue whatRequireAnswers);
     void letGoOfMockAtNextLoad(ModuleID);
     void letGoOfMockThatEnded(ModuleID);
@@ -189,6 +190,7 @@ public:
     struct AnswerOfMock {
         JSObject* mock;
         Identifier name;
+        ModuleID mocked;
     };
     std::optional<AnswerOfMock> mockThatAnswersFor(const ModuleExportData& passedOn) const;
     bool isMockedInItsImage(ModuleID);
