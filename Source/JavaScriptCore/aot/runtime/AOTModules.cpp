@@ -1725,7 +1725,7 @@ void Modules::letGoOfMockInRequireCache(ModuleID module)
 
 // `export { sides } from "./shapes"`, `export * from "./shapes"`, `import { sides } from "./shapes"; export { sides as again }`: the entry of the module that passes an export on names the variable
 // of the module that declares it. While a mock stands in place of that one nothing fills the variable, and the mock answers under the name that the declaring module exports it by.
-auto Modules::mockThatAnswersFor(ModuleID passingOn, const ModuleExportData& passedOn) const -> std::optional<AnswerOfMock>
+auto Modules::mockThatAnswersForSlow(ModuleID passingOn, const ModuleExportData& passedOn) const -> std::optional<AnswerOfMock>
 {
     if (!m_numberOfMocksInPlace || passedOn.kind() != ModuleExportKind::Variable)
         return std::nullopt;
@@ -2561,7 +2561,7 @@ void Modules::forgetMockThatWaits(ModuleID module)
 }
 
 // It does not wait while its factory runs, which may load the module. A factory that fails leaves nothing in place of the module: the next load asks the mock again, as under `bun test`.
-void Modules::runMockThatWaits(ModuleID module)
+void Modules::runMockThatWaitsSlow(ModuleID module)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     MockDoor door(this, module, "runMock"_s);
@@ -2724,6 +2724,10 @@ const MockOperations& Modules::mockOperations()
         .runMocksBelowModuleThatLoaderFetches = [](Modules& modules, ModuleID module) { modules.runMocksBelowModuleThatLoaderFetchesSlow(module); },
         .evaluateModulesOwedBelow = [](Modules& modules, ModuleID root, bool hasImporterAboveThatRan) { modules.evaluateModulesOwedBelowSlow(root, hasImporterAboveThatRan); },
         .letGoOfMockThatEnded = [](Modules& modules, ModuleID module) { modules.letGoOfMockThatEndedSlow(module); },
+        .runMockThatWaits = [](Modules& modules, ModuleID module) { modules.runMockThatWaitsSlow(module); },
+        .mockThatAnswersFor = [](const Modules& modules, ModuleID passingOn, const ModuleExportData& passedOn) { return modules.mockThatAnswersForSlow(passingOn, passedOn); },
+        .isMockedInItsImage = [](Modules& modules, ModuleID module, MocksAskedFor which) { return modules.isMockedInItsImageSlow(module, which); },
+        .answerRequireWithOriginal = [](Modules& modules, ModuleID file) { return modules.answerRequireWithOriginalSlow(file); },
     };
     return operations;
 }

@@ -3563,7 +3563,7 @@ bool Modules::getsOriginalBesideMock(ModuleID target, ModuleID referrer)
 }
 
 // The answer of the mock stands where the exports of the file are read from, and the file counts as evaluated. The body runs once, with both set aside.
-JSValue Modules::answerRequireWithOriginal(ModuleID file)
+JSValue Modules::answerRequireWithOriginalSlow(ModuleID file)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     if (JSValue original = ensureLoaded(file).exportsOfOriginalBesideMock.get())

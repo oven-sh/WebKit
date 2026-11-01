@@ -86,7 +86,7 @@ StarExportResolution::Type Modules::resolveRequiredName(ModuleID exporter, const
 }
 
 // Of a module of this image, or of the module of another image that a record of this one stands for.
-bool Modules::isMockedInItsImage(ModuleID module, MocksAskedFor which)
+bool Modules::isMockedInItsImageSlow(ModuleID module, MocksAskedFor which)
 {
     // A mock that is laid over an ES module that has run replaces what its names stand for and adds none.
     auto counts = [&](ModuleID each) {

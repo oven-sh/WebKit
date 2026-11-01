@@ -231,8 +231,10 @@ public:
         ModuleID mocked;
     };
     std::optional<AnswerOfMock> mockThatAnswersFor(ModuleID passingOn, const ModuleExportData& passedOn) const;
+    std::optional<AnswerOfMock> mockThatAnswersForSlow(ModuleID passingOn, const ModuleExportData& passedOn) const;
     enum class MocksAskedFor : uint8_t { All, ThoseThatAddNames };
     bool isMockedInItsImage(ModuleID, MocksAskedFor = MocksAskedFor::All);
+    bool isMockedInItsImageSlow(ModuleID, MocksAskedFor);
     // A mock that comes before the body of an ES module has run stands for the whole module: the loader of `bun run` takes what the factory answers for the module itself.
     // So a name that the factory leaves out is no export: no key of the namespace object. See fillExportsOfBodyThatNeverRuns() for whoever reads the variable.
     void leaveOutWhatMockLacks(ModuleID, JSObject* exportsOfMock);
@@ -325,6 +327,7 @@ public:
     void endMockLaidOverFile(ModuleID);
     JSValue exportsBeforeMock(ModuleID);
     void runMockThatWaits(ModuleID);
+    void runMockThatWaitsSlow(ModuleID);
     // `build.module("dep", ..)` of a plugin: from now on the loader answers for the name with another module. A file that is linked keeps what it has.
     void forgetWhatNamesResolvedTo();
     void willMockLibraryModule(ModuleID);
@@ -845,6 +848,7 @@ private:
     JSValue answerRequireWithMock(ModuleID, ModuleID referrer);
     bool getsOriginalBesideMock(ModuleID, ModuleID referrer);
     JSValue answerRequireWithOriginal(ModuleID file);
+    JSValue answerRequireWithOriginalSlow(ModuleID file);
     JSValue answerOfRequireToMock(ModuleID);
     bool isMockedLibraryModule(ModuleID);
     JSValue loadEvictedFile(ModuleID);
@@ -1425,6 +1429,10 @@ struct MockOperations {
     void (*runMocksBelowModuleThatLoaderFetches)(Modules&, ModuleID);
     void (*evaluateModulesOwedBelow)(Modules&, ModuleID root, bool hasImporterAboveThatRan);
     void (*letGoOfMockThatEnded)(Modules&, ModuleID);
+    void (*runMockThatWaits)(Modules&, ModuleID);
+    std::optional<Modules::AnswerOfMock> (*mockThatAnswersFor)(const Modules&, ModuleID passingOn, const ModuleExportData& passedOn);
+    bool (*isMockedInItsImage)(Modules&, ModuleID, Modules::MocksAskedFor);
+    JSValue (*answerRequireWithOriginal)(Modules&, ModuleID file);
 };
 
 ALWAYS_INLINE void Modules::runMocksBelow(ModuleID root, RootOfLoad rootOfLoad)
@@ -1449,6 +1457,30 @@ ALWAYS_INLINE void Modules::letGoOfMockThatEnded(ModuleID module)
 {
     if (hasMockThatEnded(module)) [[unlikely]]
         m_mockOperations->letGoOfMockThatEnded(*this, module);
+}
+
+// Whoever calls it has seen that a mock waits.
+ALWAYS_INLINE void Modules::runMockThatWaits(ModuleID module)
+{
+    m_mockOperations->runMockThatWaits(*this, module);
+}
+
+ALWAYS_INLINE auto Modules::mockThatAnswersFor(ModuleID passingOn, const ModuleExportData& passedOn) const -> std::optional<AnswerOfMock>
+{
+    if (!m_numberOfMocksInPlace) [[likely]]
+        return std::nullopt;
+    return m_mockOperations->mockThatAnswersFor(*this, passingOn, passedOn);
+}
+
+ALWAYS_INLINE bool Modules::isMockedInItsImage(ModuleID module, MocksAskedFor which)
+{
+    return m_mockOperations && m_mockOperations->isMockedInItsImage(*this, module, which);
+}
+
+// Whoever calls it has seen the mock: getsOriginalBesideMock().
+ALWAYS_INLINE JSValue Modules::answerRequireWithOriginal(ModuleID file)
+{
+    return m_mockOperations->answerRequireWithOriginal(*this, file);
 }
 
 } } // namespace JSC::AOT
