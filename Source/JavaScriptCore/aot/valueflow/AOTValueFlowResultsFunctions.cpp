@@ -1469,7 +1469,7 @@ ValueSetID computeClosuresNeverCompared(const ValueFlowResultInputs& inputs, Val
         std::ranges::for_each(overload.parameters, noteBehaviorOf);
     }
     for (uint32_t index = 0; index < builtinThatLooksThrough.size(); ++index) {
-        if (!builtinThatLooksThrough[index])
+        if (!builtinThatLooksThrough[index] || inputs.build.isSabotaged(Sabotage::BuiltinsLookAtTheirOperandsAlone))
             continue;
         if (ValueSetID reached = inputs.solver().possibleValuesOf(inputs.bodies().nodes().hub(ValueFlowBehaviorID(index))); reached != ValueSets::anything)
             keep(0, closuresIn(0, reached), { { }, builtinThatLooksThrough[index], { } });

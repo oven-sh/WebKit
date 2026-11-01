@@ -118,7 +118,7 @@ void HeapRule::copyProperties(const ValueFlowOperand& target, const ValueFlowOpe
             connect(m_context.readWhatWasWritten(read, everySetter), ValueFlowProgramNodes::escaped());
         }
     }
-    if (keepsAccessors && m_context.meet(targets, m_tables.objectsOfRealm())) {
+    if (keepsAccessors && m_context.meet(targets, m_tables.objectsOfRealm()) && !m_context.isSabotaged(Sabotage::AccessorsCopiedOntoTheRealmStayHidden)) {
         connect(m_context.readWhatWasWritten(allSources, everyGetter), ValueFlowProgramNodes::escaped());
         connect(m_context.readWhatWasWritten(allSources, everySetter), ValueFlowProgramNodes::escaped());
     }
