@@ -4649,7 +4649,7 @@ struct TestPlacer {
                     Type replacedType = types.at(currentTypeID);
                     Type both = provenType.intersectWith(replacedType, types);
                     bool saysMore = !both.isNever() && both != replacedType && both.isSubsetOf(replacedType, context.program);
-                    narrowing.castType = saysMore ? types.intern(both) : TypeID();
+                    narrowing.castType = saysMore ? claimOfCast(types.intern(both), current) : TypeID();
                 }
                 if (*narrowing.castType) {
                     narrowable.getsCast = true;
@@ -4726,6 +4726,7 @@ struct TestPlacer {
                 if (context.build.validates())
                     builder.insertBefore(head, makeValidateType(proven, planned.castType));
                 castsOfProvenValue.append({ planned.castType, builder.insertBefore(head, makeAssumeType(proven, Proven::byRulesWithoutChecks(planned.castType))) });
+                castsToTypesOfOperands.append(castsOfProvenValue.last().second);
             }
             replace(*planned.use, castsOfProvenValue[found].second);
         }
