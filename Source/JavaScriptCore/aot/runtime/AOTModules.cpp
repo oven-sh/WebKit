@@ -4789,7 +4789,7 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
         call.append(jsBoolean(caller == ImportCaller::Host));
         call.append(jsNumber(static_cast<uint32_t>(text)));
         call.append(stateOfWait);
-        JSArray* heldCall = constructArray(realm, static_cast<ArrayAllocationProfile*>(nullptr), call);
+        JSArray* heldCall = constructArray(realm, static_cast<JSC::ArrayAllocationProfile*>(nullptr), call);
         RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
         factories->performPromiseThenWithContext(vm, realm, goOn, jsUndefined(), promise, heldCall);
         return promise;
@@ -5744,7 +5744,7 @@ JSPromise* Modules::importUncompiled(const Identifier& key, ModuleID referrer, R
         call.append(jsString(vm, key.string()));
         call.append(jsNumber(moduleIDForHost(*m_instance.program, referrer).index()));
         call.append(stateOfWait);
-        JSArray* heldCall = constructArray(realm, static_cast<ArrayAllocationProfile*>(nullptr), call);
+        JSArray* heldCall = constructArray(realm, static_cast<JSC::ArrayAllocationProfile*>(nullptr), call);
         RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
         factories->performPromiseThenWithContext(vm, realm, goOn, jsUndefined(), promise, heldCall);
         return promise;

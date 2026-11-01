@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCFG.h"
 #include "AOTSort.h"
 
 namespace JSC { namespace AOT { namespace Typed {
