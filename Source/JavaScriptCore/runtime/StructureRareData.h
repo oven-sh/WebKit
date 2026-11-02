@@ -150,6 +150,8 @@ public:
         return --m_activeReplacementWatchpointSet;
     }
 
+    InlineWatchpointSet& anyPropertyReplacedWatchpointSet() { return m_anyPropertyReplacedWatchpoint; }
+
 private:
     friend class LLIntOffsetsExtractor;
     friend class Structure;
@@ -179,6 +181,8 @@ private:
 #endif
 
     PropertyWatchpointMap m_replacementWatchpointSets;
+    InlineWatchpointSet m_anyPropertyReplacedWatchpoint { IsWatched };
+    bool m_anyPropertyReplacedWatchpointEnsured { false };
     std::unique_ptr<SpecialPropertyCache> m_specialPropertyCache;
     Box<InlineWatchpointSet> m_polyProtoWatchpoint;
 

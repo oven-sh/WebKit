@@ -854,6 +854,7 @@ public:
     void startWatchingPropertyForReplacements(VM&, PropertyName);
     WatchpointSet* propertyReplacementWatchpointSet(PropertyOffset);
     WatchpointSet* firePropertyReplacementWatchpointSet(VM&, PropertyOffset, const char* reason);
+    JS_EXPORT_PRIVATE InlineWatchpointSet& ensureAnyPropertyReplacementWatchpointSet(VM&);
 
     void didReplaceProperty(PropertyOffset offset)
     {
