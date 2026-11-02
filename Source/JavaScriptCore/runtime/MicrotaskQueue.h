@@ -288,7 +288,16 @@ public:
     {
         m_queue.beginMarking();
         m_toKeep.beginMarking();
+#if USE(BUN_JSC_ADDITIONS)
+        m_setAsideAtTermination.beginMarking();
+#endif
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    // For VM::cancelTermination(), and for a termination that begins: see clearAfterTermination().
+    JS_EXPORT_PRIVATE void restoreJobsSetAsideAtTermination();
+    void dropJobsSetAsideAtTermination() { m_setAsideAtTermination.clear(); }
+#endif
 
     DECLARE_VISIT_AGGREGATE;
 
@@ -339,8 +348,15 @@ private:
     template<bool useCallOnEachMicrotask>
     std::pair<JSGlobalObject*, bool> drainImpl(JSGlobalObject*, VM&, TopExceptionScope&);
 
+#if USE(BUN_JSC_ADDITIONS)
+    void clearAfterTermination(VM&);
+#endif
+
     MarkedMicrotaskDeque m_queue;
     MarkedMicrotaskDeque m_toKeep;
+#if USE(BUN_JSC_ADDITIONS)
+    MarkedMicrotaskDeque m_setAsideAtTermination;
+#endif
 };
 
 JS_EXPORT_PRIVATE void runMicrotaskWithDebugger(JSGlobalObject*, VM&, QueuedTask&);

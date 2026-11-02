@@ -6,7 +6,7 @@
 // sets an environment again. So the cut link has to leave none: ASSERT(!m_moduleEnvironment) in an assertion build.
 //
 // Each walk takes a termination at each trap check of an import() in turn ($vm.callWithTerminationAtTrapCheck()) and
-// imports the module again. A cut inside the load is not the subject here: there the later import() can stay pending.
+// imports the module again. A cut inside the load is the subject of module-load-cut-short-by-termination.js.
 
 function shouldBe(actual, expected, what) {
     if (actual !== expected)

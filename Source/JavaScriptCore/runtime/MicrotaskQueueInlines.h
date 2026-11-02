@@ -95,6 +95,7 @@ inline void MicrotaskQueue::clearForGlobalObject(JSGlobalObject* targetGlobalObj
         return;
     m_queue.clearForGlobalObject(targetGlobalObject);
     m_toKeep.clearForGlobalObject(targetGlobalObject);
+    m_setAsideAtTermination.clearForGlobalObject(targetGlobalObject);
 }
 #endif
 
