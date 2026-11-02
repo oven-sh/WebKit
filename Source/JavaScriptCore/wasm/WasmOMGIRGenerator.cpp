@@ -2266,9 +2266,13 @@ auto OMGIRGenerator::emitIndirectCall(Value* calleeInstance, Value* calleeCode, 
     // it. In Signaling mode it is not pinned, clobberLate(wasmPinnedRegisters()) prevents the
     // scratch from overlapping.
     // Code for an image reads the base of the cage through the instance that runs it, before that
-    // instance gives way to the callee's (emitPrepareToCageMemoryBase()), so there the scratch is a
-    // register of its own in both modes.
-    bool needsCageScratch = m_mode == MemoryMode::Signaling || m_context.codeForImage;
+    // instance gives way to the callee's (emitPrepareToCageMemoryBase()), so there the scratch cannot
+    // be the callee instance. In BoundsChecking mode it is the register of functionInfo, which is
+    // dead once it is stored in the callee frame and cannot be a pinned register. A scratch from B3
+    // on top of the three inputs is one register more than x86-64 has when six arguments are in
+    // registers. In Signaling mode functionInfo may be in wasmBoundsCheckingSizeRegister, so there
+    // the scratch comes from B3, as it does for code that is not for an image.
+    bool needsCageScratch = m_mode == MemoryMode::Signaling;
     if (needsCageScratch)
         patchpoint->numGPScratchRegisters = 1;
     patchpoint->setGenerator([this, handle = handle, prepareForCall = prepareForCall, patchArgsIndex, signature = Ref<const RTT>(signature), wasmCalleeInfo = WTF::move(wasmCalleeInfo), needsCageScratch](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
@@ -2285,8 +2289,8 @@ auto OMGIRGenerator::emitIndirectCall(Value* calleeInstance, Value* calleeCode, 
         GPRReg calleeInstanceGPR = params[patchArgsIndex + 2].gpr();
         // Safe to reuse the callee instance in BoundsChecking mode: it is dead once
         // storeWasmContextInstance below has copied it, and the caging happens after that.
-        GPRReg cageScratch = needsCageScratch ? params.gpScratch(0) : calleeInstanceGPR;
-        ASSERT(needsCageScratch || !jit.policy().recordsProcessAddresses);
+        GPRReg cageScratch = needsCageScratch ? params.gpScratch(0) : m_context.codeForImage ? params[patchArgsIndex + 3].gpr() : calleeInstanceGPR;
+        ASSERT(cageScratch != calleeInstanceGPR || !jit.policy().recordsProcessAddresses);
 
         // Do a context switch if needed. We pessimistically assume we're calling something with
         // BoundsChecking memory.
