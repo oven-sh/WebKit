@@ -267,8 +267,8 @@ private:
     static ALWAYS_INLINE unsigned secondaryTransitionIndex(uint64_t key);
     template<typename CharacterType> static ALWAYS_INLINE Structure* transitionIfMatches(const TransitionEntry&, StructureID from, std::span<const CharacterType> name);
     static ALWAYS_INLINE unsigned prefixedNameIndex(StructureID, uint32_t prefix);
-    // Characters are folded to bytes before they are hashed, so that 16-bit text finds the names and long
-    // strings recorded from the same 8-bit text.
+    // Characters are folded to bytes before they are hashed, so that 16-bit text finds the names recorded from
+    // the same 8-bit text. Bun: a long string is only given to text of its own width (longStringMatches()).
     static ALWAYS_INLINE uint32_t sourcePrefix(std::span<const Latin1Character> source);
     static ALWAYS_INLINE uint32_t sourcePrefix(std::span<const char16_t> source);
     static ALWAYS_INLINE uint64_t stringPrefix(const Latin1Character*);

@@ -221,6 +221,10 @@ ALWAYS_INLINE bool JSONCache::longStringMatches(JSString* string, std::span<cons
     // A JSString's characters can move to another StringImpl when it is atomized, so they are read from it.
     SUPPRESS_UNCOUNTED_LOCAL StringImpl* impl = string->getValueImpl();
     ASSERT(impl->length() == characters.size());
+    // Bun: tryMakeLongJSString() makes a long string in the width of its text, so text of one width does not take the
+    // string that was made for the other. findLongString() takes no 16-bit string either.
+    if (impl->is8Bit() != (sizeof(CharacterType) == 1))
+        return false;
     return impl->is8Bit() ? equal(impl->span8().data(), characters) : equal(impl->span16().data(), characters);
 }
 
