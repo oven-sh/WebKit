@@ -64,6 +64,22 @@ namespace JSModuleLoaderInternal {
 static constexpr unsigned maximumResolutionFailures = 128;
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// A VM that runs compiled code (an image, aot/runtime) keeps records of its own for each load, and its steps read the
+// load promise of a registry entry (settleLoadPromiseInEntry in moduleLoadStep()). The exits of the loader for a
+// termination update neither. So in such a VM each of them leaves a cut load as it is, also the load of a plain file,
+// and MicrotaskQueue::clearAfterTermination() sets no job aside: a later load of the same modules still waits there.
+static ALWAYS_INLINE bool loadsBelongToCompiledProgram(VM& vm)
+{
+#if ENABLE(AOT)
+    return vm.hasCompiledCode();
+#else
+    UNUSED_PARAM(vm);
+    return false;
+#endif
+}
+#endif
+
 static Identifier jsValueToSpecifier(JSGlobalObject* globalObject, JSValue value)
 {
     if (value.isSymbol())
@@ -1161,6 +1177,11 @@ void JSModuleLoader::innerModuleLoading(JSGlobalObject* globalObject, ModuleGrap
                             compiled->didFailToFetchRequest(request.m_specifier, scope.exception());
 #endif
                         state->setDrainingInnerLoad(false);
+#if USE(BUN_JSC_ADDITIONS)
+                        // Also for what a host hook throws, with no termination.
+                        if (!loadsBelongToCompiledProgram(vm))
+                            state->endAbandonedLoad();
+#endif
                         return;
                     }
                     // 2.d.iii.2. NOTE: HostLoadImportedModule will call FinishLoadingImportedModule, which re-enters the graph loading process through ContinueModuleLoading.
@@ -1544,6 +1565,195 @@ void JSModuleLoader::removeFailedFetchEntry(ModuleRegistryEntry* entry)
     didRemoveModuleMapEntry(moduleMapKey.second);
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+void JSModuleLoader::removeEntryIfRegistered(ModuleRegistryEntry* entry)
+{
+    ModuleMapKey moduleMapKey { entry->key().impl(), entry->moduleType() };
+    auto iter = m_moduleMap.find(moduleMapKey);
+    if (iter == m_moduleMap.end() || iter->value.get() != entry)
+        return;
+    Locker locker { cellLock() };
+    m_moduleMap.remove(iter);
+    didRemoveModuleMapEntry(moduleMapKey.second);
+}
+
+// The entry gives up `loadPromise` if that is the promise it answers with. Whoever asks for the entry next takes its own
+// load steps from the module promise. Returns the record that the realm's [[LoadedModules]] must give up with it:
+// hostLoadImportedModule() answers for a module of that list with the load promise of its entry. The [[LoadedModules]]
+// of a module that imports the record keeps it. Only askAgainForAbandonedLoad() asks the host for a request of that list.
+AbstractModuleRecord* JSModuleLoader::forgetLoadPromise(ModuleRegistryEntry* entry, JSPromise* loadPromise)
+{
+    if (!entry || entry->loadPromise() != loadPromise)
+        return nullptr;
+    entry->clearLoadPromise();
+    return entry->record();
+}
+
+void JSModuleLoader::removeFromRealmLoadedModules(std::span<AbstractModuleRecord* const> records)
+{
+    if (records.empty() || m_loadedModules.isEmpty())
+        return;
+    Locker locker { cellLock() };
+    m_loadedModules.removeIf([&](auto& loaded) {
+        return std::ranges::find(records, loaded.value.m_module.get()) != records.end();
+    });
+}
+
+// Ends the loads that wait for `promise`, which nothing settles any more. The loads are the reactions on the promise.
+// With a synchronous queue open, a rejection collects them in that queue, and this function is its only reader. For
+// a load step it takes the load promise out of the entry and rejects that promise in turn, which collects the loads
+// that wait for that one. So when this returns, every entry up to the roots has its record and no load promise, and
+// whoever asks for it next takes its own steps.
+//
+// The promises are rejected with this loader, a value that script cannot have. What waits at a root:
+// - An import(). Its job goes to the queue of the VM and runs at the next checkpoint with that value. It asks again
+//   there, as a step does that begins to wait for an abandoned load later (askAgainForAbandonedLoad()).
+// - A load that evaluates its module: a synchronous load, or the load of an entry point. Its job is dropped. The
+//   caller of a synchronous load got the termination, and nothing evaluates the module for it later.
+void JSModuleLoader::abandonLoadsWaitingFor(JSGlobalObject* globalObject, JSPromise* promise)
+{
+    VM& vm = globalObject->vm();
+    VM::SynchronousModuleQueueScope queue(vm);
+    auto& tasks = vm.m_synchronousModuleQueue->tasks;
+    Vector<AbstractModuleRecord*, 8> forgotten;
+
+    auto abandon = [&](JSPromise* waitedFor) {
+        if (waitedFor->status() != JSPromise::Status::Pending)
+            return;
+        waitedFor->markAsHandled();
+        waitedFor->reject(vm, this);
+    };
+
+    abandon(promise);
+    for (size_t i = 0; i < tasks.size(); ++i) {
+        auto task = tasks[i];
+        switch (task.task) {
+        case InternalMicrotask::ModuleLoadStep: {
+            auto* loadPromise = uncheckedDowncast<JSPromise>(task.arg0);
+            if (AbstractModuleRecord* record = forgetLoadPromise(uncheckedDowncast<ModuleLoadingContext>(task.arg2)->entry(), loadPromise))
+                forgotten.append(record);
+            abandon(loadPromise);
+            break;
+        }
+        case InternalMicrotask::ModuleGraphLoadingError: {
+            auto* state = uncheckedDowncast<ModuleGraphLoadingState>(task.arg2);
+            state->endAbandonedLoad();
+            abandon(state->promise());
+            break;
+        }
+        case InternalMicrotask::ModuleLoadLinkEvaluateSettled:
+            if (uncheckedDowncast<ModuleLoadingContext>(task.arg2)->evaluate())
+                break;
+            [[fallthrough]];
+        case InternalMicrotask::DynamicImportLoadSettled:
+        case InternalMicrotask::DynamicImportDeferLoadSettled:
+        case InternalMicrotask::PromiseFulfillWithoutHandlerJob:
+            globalObject->queueMicrotask(vm, task.task, task.payload, task.arg0, task.arg1, task.arg2, task.arg3);
+            break;
+        default:
+            break;
+        }
+    }
+    removeFromRealmLoadedModules(forgotten.span());
+}
+
+void JSModuleLoader::makeModuleWasCutShort(JSGlobalObject* globalObject, ModuleRegistryEntry* entry, JSPromise* modulePromise)
+{
+    // A load that the hook itself started can have made the record meanwhile (hostLoadImportedModule()).
+    if (loadsBelongToCompiledProgram(vm()) || modulePromise->status() != JSPromise::Status::Pending)
+        return;
+    // The entry has no record and no step left that makes one. The next load of the module fetches it again.
+    removeEntryIfRegistered(entry);
+    abandonLoadsWaitingFor(globalObject, modulePromise);
+}
+
+void JSModuleLoader::loadRequestedModulesWasCutShort(JSGlobalObject* globalObject, ModuleRegistryEntry* entry, JSPromise* loadPromise)
+{
+    if (loadsBelongToCompiledProgram(vm()))
+        return;
+    // The entry keeps its record. The next load of the module takes its own steps from the module promise.
+    if (AbstractModuleRecord* record = forgetLoadPromise(entry, loadPromise))
+        removeFromRealmLoadedModules({ &record, 1 });
+    abandonLoadsWaitingFor(globalObject, loadPromise);
+}
+
+// A termination began behind FinishLoadingImportedModule. The module of the step is loaded, and the payload has counted
+// it: ContinueModuleLoading counts a module before its first exception check. So the step settles its own promise, and
+// what waits for the module goes on at the next checkpoint.
+bool JSModuleLoader::loadStepSettlesAfterTermination()
+{
+    return !loadsBelongToCompiledProgram(vm());
+}
+
+// A step began to wait for a load after that load was abandoned (abandonLoadsWaitingFor()), so the step belongs to code
+// that runs after the termination was withdrawn, or to an import() that was in flight. It asks again, and settles the
+// same promise.
+void JSModuleLoader::askAgainForAbandonedLoad(JSGlobalObject* globalObject, ModuleLoadingContext* context, JSPromise* loadPromise)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // The step waited for the requests of its module. It asks for them with a new state, as the step before it did.
+    if (context->step() == ModuleLoadingContext::Step::Requested) {
+        JSPromise* requestedPromise = loadRequestedModules(globalObject, context->module(), context->scriptFetcher());
+        if (scope.exception()) [[unlikely]] {
+            if (!loadPromise->rejectWithCaughtException(vm, scope))
+                loadRequestedModulesWasCutShort(globalObject, context->entry(), loadPromise);
+            return;
+        }
+        requestedPromise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ModuleLoadStep, loadPromise, context);
+        return;
+    }
+
+    // The step waited for the module. It asks the host for the same request and with the same promise, as
+    // Modules::resumeDeferredRequests() of aot/runtime does for a request that it held back. Two things first:
+    // - With the promise still in the entry, the answer would be that promise, and the step would wait for itself.
+    // - The host answers for a module of the referrer's [[LoadedModules]] with the load promise of its entry. The
+    //   list can name the module from the time when its load was in flight, and the entry has no load promise now.
+    if (AbstractModuleRecord* record = forgetLoadPromise(context->entry(), loadPromise))
+        removeFromRealmLoadedModules({ &record, 1 });
+    const AbstractModuleRecord::ModuleRequest& request = context->moduleRequest();
+    {
+        CyclicModuleRecord* referrer = context->referrer().getModule();
+        auto& loadedModules = referrer ? referrer->loadedModules() : m_loadedModules;
+        if (auto iter = loadedModules.find(ModuleMapKey { request.m_specifier.impl(), request.type() }); iter != loadedModules.end()) {
+            ModuleRegistryEntry* entry = getRegisteredMayBeNull(iter->value.m_module->moduleKey(), request.type());
+            if (!entry || !entry->loadedPromise(globalObject)) {
+                Locker locker { referrer ? referrer->cellLock() : cellLock() };
+                loadedModules.remove(iter);
+            }
+        }
+    }
+
+    // As the first time: a module asks with the import map (innerModuleLoading()), and a top-level load asks for a
+    // key that is resolved already (loadModule()).
+    bool useImportMap = context->referrer().isModule();
+    JSPromise* loaded = hostLoadImportedModule(globalObject, context->referrer(), request, context->payload(), context->scriptFetcher(), useImportMap, loadPromise);
+    if (scope.exception()) [[unlikely]] {
+        if (!loadPromise->rejectWithCaughtException(vm, scope))
+            abandonLoadsWaitingFor(globalObject, loadPromise);
+        return;
+    }
+    if (loaded != loadPromise)
+        loadPromise->pipeFrom(vm, loaded);
+}
+
+// As askAgainForAbandonedLoad(), for the top-level load that `context` describes.
+void JSModuleLoader::loadAgainAfterAbandonedLoad(JSGlobalObject* globalObject, ModuleLoadingContext* context, JSPromise* resultPromise)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    const AbstractModuleRecord::ModuleRequest& request = context->moduleRequest();
+    JSPromise* again = loadModule(globalObject, request.m_specifier, request.m_attributes, context->scriptFetcher(), context->flags(), context->referrerAsyncOrder());
+    if (scope.exception()) [[unlikely]] {
+        resultPromise->rejectWithCaughtException(vm, scope);
+        return;
+    }
+    resultPromise->pipeFrom(vm, again);
+}
+#endif
+
 #if ENABLE(AOT)
 void JSModuleLoader::removeEntryOfRecord(AbstractModuleRecord* record)
 {
@@ -1616,6 +1826,47 @@ JSValue JSModuleLoader::ModuleReferrer::toJSValue() const
 }
 
 #if USE(BUN_JSC_ADDITIONS)
+// The entries from `first` on are reactions that performPromiseThen…/
+// triggerPromiseReactions diverted off the global microtask queue.
+// Dropping them would leave their loadPromise/modulePromise pending
+// forever, so hand them back to where they would have gone without
+// this synchronous diversion: the queue of the synchronous load that
+// this one runs inside, which drains them before it returns, or the
+// global queue. There they run on the next normal microtask drain.
+void JSModuleLoader::handBackSynchronousModuleQueue(JSGlobalObject* globalObject, size_t first, size_t except)
+{
+    VM& vm = globalObject->vm();
+    auto& tasks = vm.m_synchronousModuleQueue->tasks;
+    auto* enclosing = vm.m_synchronousModuleQueue->prev;
+    for (size_t i = first; i < tasks.size(); ++i) {
+        if (i == except)
+            continue;
+        auto rest = tasks[i];
+        if (enclosing)
+            enclosing->tasks.append(rest);
+        else
+            globalObject->queueMicrotask(vm, rest.task, rest.payload, rest.arg0, rest.arg1, rest.arg2, rest.arg3);
+    }
+    tasks.shrink(0);
+}
+
+// For loadModuleSync(), when an exception is pending behind its call of loadModule(): none of the queue has run. The
+// jobs belong to loads that other callers wait for too, and are handed back. The first job of the load that
+// loadModule() began for this caller does not: the caller gets the exception, and nothing loads and evaluates the
+// module for it later. loadModule() queues that job last, if the fetch of the module is settled, and the promise
+// that the job settles is the one whose reaction settles `result`.
+void JSModuleLoader::handBackQueueOfSynchronousLoadThatDidNotRun(JSGlobalObject* globalObject, JSPromise* result)
+{
+    auto& tasks = globalObject->vm().m_synchronousModuleQueue->tasks;
+    size_t own = notFound;
+    if (result && !tasks.isEmpty() && tasks.last().task == InternalMicrotask::ModuleLoadTopSettled) {
+        auto* context = uncheckedDowncast<ModuleLoadingContext>(tasks.last().arg2);
+        if (context->evaluate() && !context->dynamic())
+            own = tasks.size() - 1;
+    }
+    handBackSynchronousModuleQueue(globalObject, 0, own);
+}
+
 void JSModuleLoader::drainSynchronousModuleQueue(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
@@ -1630,17 +1881,8 @@ void JSModuleLoader::drainSynchronousModuleQueue(JSGlobalObject* globalObject)
         auto t = tasks[i++];
         runInternalMicrotask(globalObject, vm, t.task, t.payload, t.arg0, t.arg1, t.arg2, t.arg3);
         if (scope.exception()) [[unlikely]] {
-            // The remaining entries are reactions that performPromiseThen…/
-            // triggerPromiseReactions diverted off the global microtask queue.
-            // Dropping them would leave their loadPromise/modulePromise pending
-            // forever, so hand them back to the global queue (where they would
-            // have gone without the synchronous diversion) before propagating
-            // the exception. They run on the next normal microtask drain.
-            while (i < tasks.size()) {
-                auto rest = tasks[i++];
-                globalObject->queueMicrotask(vm, rest.task, rest.payload, rest.arg0, rest.arg1, rest.arg2, rest.arg3);
-            }
-            tasks.shrink(0);
+            // The rest of the queue runs later, before the exception propagates.
+            handBackSynchronousModuleQueue(globalObject, i, notFound);
             return;
         }
     }
@@ -1679,7 +1921,7 @@ JSPromise* JSModuleLoader::loadModuleSync(JSGlobalObject* globalObject, const Id
         return true;
     };
     JSPromise* result = loadModule(globalObject, moduleName, parameters.copyRef(), scriptFetcher.copyRef(), { ModuleLoadFlag::Evaluate });
-    RETURN_IF_EXCEPTION(scope, result);
+    RETURN_IF_EXCEPTION(scope, (handBackQueueOfSynchronousLoadThatDidNotRun(globalObject, result), result));
     drainSynchronousModuleQueue(globalObject);
     RETURN_IF_EXCEPTION(scope, result);
     if (result->status() != JSPromise::Status::Pending || !waitsForStepOfImport())
@@ -1690,7 +1932,7 @@ JSPromise* JSModuleLoader::loadModuleSync(JSGlobalObject* globalObject, const Id
 #else
     JSPromise* result = loadModule(globalObject, moduleName, WTF::move(parameters), WTF::move(scriptFetcher), { ModuleLoadFlag::Evaluate });
 #endif
-    RETURN_IF_EXCEPTION(scope, result);
+    RETURN_IF_EXCEPTION(scope, (handBackQueueOfSynchronousLoadThatDidNotRun(globalObject, result), result));
 
     scope.release();
     drainSynchronousModuleQueue(globalObject);

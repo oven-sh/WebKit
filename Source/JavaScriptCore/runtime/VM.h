@@ -1311,6 +1311,11 @@ public:
     // what runs next is unaffected. It cannot tell requests apart: if another party's request may be pending too
     // (a worker being stopped), the caller checks that first or requests again. Does not undo executionForbidden().
     // API lock held, not inside a DeferTermination scope. Returns whether anything was pending.
+#if USE(BUN_JSC_ADDITIONS)
+    // Of the microtasks that were queued on the VM's default queue when the termination ended a checkpoint, the jobs
+    // of the module loader go back to the queue here (MicrotaskQueue::clearAfterTermination()): a module load that
+    // was in flight goes on at the next checkpoint, also one that the limited scope began. Every other job was dropped.
+#endif
     JS_EXPORT_PRIVATE bool cancelTermination();
 
     CONCURRENT_SAFE void requestStop()
