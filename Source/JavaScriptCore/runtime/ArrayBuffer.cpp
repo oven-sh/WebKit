@@ -48,6 +48,9 @@ namespace ArrayBufferInternal {
 static constexpr bool verbose = false;
 }
 
+// Six words and the flags: a new flag goes next to the others, where it adds nothing to every ArrayBuffer.
+static_assert(sizeof(ArrayBufferContents) == 7 * sizeof(void*));
+
 static void zeroFill(void* base, size_t size)
 {
     constexpr size_t largeZeroFillThreshold = 1 * MB;
@@ -152,18 +155,19 @@ static RefPtr<BufferMemoryHandle> tryAllocateResizableMemory(VM* vm, size_t size
     return adoptRef(*new BufferMemoryHandle(slowMemory, initialBytes, maximumBytes, PageCount::fromBytes(initialBytes), PageCount::fromBytes(maximumBytes), MemorySharingMode::Shared, MemoryMode::BoundsChecking));
 }
 
-ArrayBufferContents::ArrayBufferContents(void* data, size_t sizeInBytes, std::optional<size_t> maxByteLength, ArrayBufferDestructorFunction&& destructor)
+ArrayBufferContents::ArrayBufferContents(void* data, size_t sizeInBytes, std::optional<size_t> maxByteLength, ArrayBufferDestructorFunction&& destructor, ArrayBufferExternalWriters externalWriters)
     : m_data(data)
     , m_destructor(WTF::move(destructor))
     , m_sizeInBytes(sizeInBytes)
     , m_maxByteLength(maxByteLength.value_or(sizeInBytes))
     , m_hasMaxByteLength(!!maxByteLength)
+    , m_hasExternalWriters(externalWriters == ArrayBufferExternalWriters::Yes)
 {
     RELEASE_ASSERT(m_sizeInBytes <= MAX_ARRAY_BUFFER_SIZE);
 }
 
-ArrayBufferContents::ArrayBufferContents(std::span<const uint8_t> data, std::optional<size_t> maxByteLength, ArrayBufferDestructorFunction&& destructor)
-    : ArrayBufferContents(const_cast<uint8_t*>(data.data()), data.size(), maxByteLength, WTF::move(destructor))
+ArrayBufferContents::ArrayBufferContents(std::span<const uint8_t> data, std::optional<size_t> maxByteLength, ArrayBufferDestructorFunction&& destructor, ArrayBufferExternalWriters externalWriters)
+    : ArrayBufferContents(const_cast<uint8_t*>(data.data()), data.size(), maxByteLength, WTF::move(destructor), externalWriters)
 {
 }
 
@@ -224,6 +228,7 @@ void ArrayBufferContents::tryAllocate(size_t numElements, unsigned elementByteSi
     RELEASE_ASSERT(m_sizeInBytes <= MAX_ARRAY_BUFFER_SIZE);
     m_maxByteLength = m_sizeInBytes;
     m_hasMaxByteLength = false;
+    m_hasExternalWriters = false;
     m_destructor = ArrayBuffer::primitiveGigacageDestructor();
 }
 
@@ -265,6 +270,7 @@ void ArrayBufferContents::shareWith(ArrayBufferContents& other) const
     other.m_sizeInBytes = m_sizeInBytes;
     other.m_maxByteLength = m_maxByteLength;
     other.m_hasMaxByteLength = m_hasMaxByteLength;
+    other.m_hasExternalWriters = m_hasExternalWriters;
     RELEASE_ASSERT(other.m_sizeInBytes <= MAX_ARRAY_BUFFER_SIZE);
     ASSERT(other.m_maxByteLength <= MAX_ARRAY_BUFFER_SIZE);
 }
@@ -311,12 +317,12 @@ Ref<ArrayBuffer> ArrayBuffer::createAdopted(std::span<const uint8_t> data)
 //   longer caged, or we could introduce a new set of typed array types that are uncaged and get accessed
 //   differently.
 // - WebAssembly. Wasm should allocate from the cage.
-Ref<ArrayBuffer> ArrayBuffer::createFromBytes(std::span<const uint8_t> data, ArrayBufferDestructorFunction&& destructor)
+Ref<ArrayBuffer> ArrayBuffer::createFromBytes(std::span<const uint8_t> data, ArrayBufferDestructorFunction&& destructor, ArrayBufferExternalWriters externalWriters)
 {
     if (data.data() && !Gigacage::isCaged(Gigacage::Primitive, data.data()))
         Gigacage::disablePrimitiveGigacage();
     
-    ArrayBufferContents contents(data, std::nullopt, WTF::move(destructor));
+    ArrayBufferContents contents(data, std::nullopt, WTF::move(destructor), externalWriters);
     return create(WTF::move(contents));
 }
 
