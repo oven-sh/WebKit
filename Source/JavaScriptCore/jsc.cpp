@@ -517,6 +517,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionLoad);
 static JSC_DECLARE_HOST_FUNCTION(functionLoadString);
 static JSC_DECLARE_HOST_FUNCTION(functionReadFile);
 static JSC_DECLARE_HOST_FUNCTION(functionWriteFile);
+static JSC_DECLARE_HOST_FUNCTION(functionSetModuleLoaderFetchHook);
 static JSC_DECLARE_HOST_FUNCTION(functionCheckSyntax);
 static JSC_DECLARE_HOST_FUNCTION(functionOpenFile);
 static JSC_DECLARE_HOST_FUNCTION(functionReadline);
@@ -887,6 +888,7 @@ private:
         addFunction(vm, "readFile"_s, functionReadFile, 2);
         addFunction(vm, "read"_s, functionReadFile, 2);
         addFunction(vm, "writeFile"_s, functionWriteFile, 2);
+        addFunction(vm, "setModuleLoaderFetchHook"_s, functionSetModuleLoaderFetchHook, 1);
         addFunction(vm, "write"_s, functionWriteFile, 2);
         addFunction(vm, "checkSyntax"_s, functionCheckSyntax, 1);
         addFunction(vm, "sleepSeconds"_s, functionSleepSeconds, 1);
@@ -1677,6 +1679,21 @@ static inline SourceCode jscSource(const Vector& utf8, const SourceOrigin& sourc
     return jscSource(str, sourceOrigin, filename);
 }
 
+// setModuleLoaderFetchHook(fn): see functionSetModuleLoaderFetchHook().
+class ModuleLoaderFetchHook final : public SideDataRepository::SideData {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ModuleLoaderFetchHook);
+public:
+    Strong<JSObject> function;
+};
+static char moduleLoaderFetchHookKey;
+
+static ModuleLoaderFetchHook& moduleLoaderFetchHook(VM& vm)
+{
+    return vm.ensureSideData<ModuleLoaderFetchHook>(&moduleLoaderFetchHookKey, [] {
+        return makeUnique<ModuleLoaderFetchHook>();
+    });
+}
+
 template<typename Vector>
 static bool fetchModuleFromLocalFileSystem(const URL& fileURL, Vector& buffer)
 {
@@ -1744,6 +1761,23 @@ JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject, JSModul
 
     URL moduleURL({ }, moduleKey);
     ASSERT(moduleURL.protocolIsFile());
+
+    // Bun: setModuleLoaderFetchHook(). What the function throws is thrown by this hook, as a host's fetch hook may.
+    if (JSObject* hook = moduleLoaderFetchHook(vm).function.get(); hook && !attributes) {
+        MarkedArgumentBuffer arguments;
+        arguments.append(key);
+        JSValue text = call(globalObject, hook, arguments, "The fetch hook of the module loader is not a function"_s);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (text.isString()) {
+            String source = asString(text)->value(globalObject);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            auto sourceCode = JSSourceCode::create(vm, jscSource(source, SourceOrigin { moduleURL }, moduleURL.fileSystemPath(), TextPosition(), SourceProviderSourceType::Module));
+            scope.release();
+            promise->resolve(globalObject, vm, sourceCode);
+            return promise;
+        }
+    }
+
     // Strip the URI from our key so Errors print canonical system paths.
     moduleKey = moduleURL.fileSystemPath();
 
@@ -2753,6 +2787,25 @@ JSC_DEFINE_HOST_FUNCTION(functionReadFile, (JSGlobalObject* globalObject, CallFr
 }
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
+// Bun: setModuleLoaderFetchHook(fn). Before the shell reads the file of a JavaScript module, it calls fn(key). If fn
+// returns a string, that is the text of the module and no file is read. Otherwise the file is read. What fn throws is
+// thrown by the fetch hook of the loader. A test uses it to make modules without files, and to run script inside the
+// fetch step of a load. setModuleLoaderFetchHook() takes the function away.
+JSC_DEFINE_HOST_FUNCTION(functionSetModuleLoaderFetchHook, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue function = callFrame->argument(0);
+    if (function.isUndefined()) {
+        moduleLoaderFetchHook(vm).function.clear();
+        return JSValue::encode(jsUndefined());
+    }
+    if (!function.isCallable())
+        return throwVMTypeError(globalObject, scope, "expected a function"_s);
+    moduleLoaderFetchHook(vm).function.set(vm, asObject(function));
+    return JSValue::encode(jsUndefined());
+}
 
 JSC_DEFINE_HOST_FUNCTION(functionWriteFile, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
