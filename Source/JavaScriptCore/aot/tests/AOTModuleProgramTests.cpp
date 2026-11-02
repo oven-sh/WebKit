@@ -505,6 +505,153 @@ function f10 name="importLast" results=[{type=anything}] {
 }
 )IR"_s;
 
+// The closures that the script gets: require() of a module, and import() of each of two modules that import each other.
+static constexpr ASCIILiteral requireAndCycleFromScript = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 kind=Require completes=true}]
+module m1 path="/required.js" displayPath="required.js" body=f1
+module m2 path="/a.js" displayPath="a.js" body=f2 requests=[{target=m3 completes=true}]
+module m3 path="/b.js" displayPath="b.js" body=f3 requests=[{target=m2 completes=true}]
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f4
+    v1 = NewClosure function=f5
+    v2 = NewClosure function=f6
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="registerImports" [isFreeName]
+    v5 = Call v4, -, v0, v1, v2
+    Return
+}
+function f1 name="required" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="required.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f2 name="a" module=m2 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="a.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f3 name="b" module=m3 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="b.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f4 name="requireRequired" results=[{type=anything}] {
+    EvaluateModule module=m1 referrer=m0
+    Return
+}
+function f5 name="importA" results=[{type=anything}] {
+    v0 = ImportModule module=m2 referrer=m0
+    Return v0
+}
+function f6 name="importB" results=[{type=anything}] {
+    v0 = ImportModule module=m3 referrer=m0
+    Return v0
+}
+)IR"_s;
+
+// The closures that the script gets: import() and require() of a CommonJS file. The file requires a module that imports the file.
+static constexpr ASCIILiteral fileAndModuleThatImportsIt = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 kind=Require completes=true}]
+module m1 path="/file.cjs" displayPath="file.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g0 requests=[{target=m2 kind=Require completes=true}]
+module m2 path="/esm.js" displayPath="esm.js" body=f2 requests=[{target=m3 completes=true}]
+module m3 path="#3" displayPath="file.cjs" exportRule=CommonJs body=f3 requests=[{target=m1 kind=Require completes=true}] syntheticExports=[{name="default" variable=g1}]
+entry module=m0
+variable g0 name="exports" module=m1 declared={type=anything} initialization=Undefined
+variable g1 name="default" module=m3 declared={type=anything}
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f4
+    v1 = NewClosure function=f5
+    v2 = NewClosure function=f4
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="registerImports" [isFreeName]
+    v5 = Call v4, -, v0, v1, v2
+    Return
+}
+function f1 name="file" module=m1 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = NewDictionary
+    PutModuleVariable v2 variable=g0
+    v4 = String string="runs"
+    v5 = String string="file.cjs"
+    v6 = Call v1, -, v4, v5
+    EvaluateModule module=m2 referrer=m1 [isBare]
+    v8 = String string="resumes"
+    v9 = String string="file.cjs, after esm.js imported it"
+    v10 = Call v1, -, v8, v9
+    Return
+}
+function f2 name="esm" module=m2 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="esm.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f3 name="faceOfFile" module=m1 kind=Module results=[{type=anything}] {
+    EvaluateModule module=m1 referrer=m3 [isBare]
+    Return
+}
+function f4 name="importFile" results=[{type=anything}] {
+    v0 = ImportModule module=m3 referrer=m0
+    Return v0
+}
+function f5 name="requireFile" results=[{type=anything}] {
+    EvaluateModule module=m1 referrer=m0
+    Return
+}
+)IR"_s;
+
+// The closures that the script gets: require() and import() of a module that requires another module.
+static constexpr ASCIILiteral requireThatImportsJoin = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 kind=Require completes=true}]
+module m1 path="/root.js" displayPath="root.js" body=f1 requests=[{target=m2 kind=Require completes=true}]
+module m2 path="/dependency.js" displayPath="dependency.js" body=f2
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f3
+    v1 = NewClosure function=f4
+    v2 = NewClosure function=f4
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="registerImports" [isFreeName]
+    v5 = Call v4, -, v0, v1, v2
+    Return
+}
+function f1 name="root" module=m1 kind=Module results=[{type=anything}] {
+    EvaluateModule module=m2 referrer=m1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="report" [isFreeName]
+    v3 = String string="runs"
+    v4 = String string="root.js"
+    v5 = Call v2, -, v3, v4
+    Return
+}
+function f2 name="dependency" module=m2 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="dependency.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f3 name="requireRoot" results=[{type=anything}] {
+    EvaluateModule module=m1 referrer=m0
+    Return
+}
+function f4 name="importRoot" results=[{type=anything}] {
+    v0 = ImportModule module=m1 referrer=m0
+    Return v0
+}
+)IR"_s;
+
 static constexpr ASCIILiteral scriptStart = R"js(
 globalThis.report = (label, value) => print(label + ": " + value);
 globalThis.id = value => value;
@@ -540,7 +687,7 @@ static std::unique_ptr<CompileOutput> compileOnThisThread(const String& programT
     return output;
 }
 
-static String runInShell(const String& programText, ASCIILiteral referencesWord, OptionWords optionWords, ASCIILiteral scriptAfterEntryPoint = scriptEnd)
+static String runInShell(const String& programText, ASCIILiteral referencesWord, OptionWords optionWords, const String& scriptAfterEntryPoint = scriptEnd)
 {
     std::unique_ptr<CompileOutput> output;
     runOnBuildThread([&] {
@@ -561,7 +708,7 @@ static String runInShell(const String& programText, ASCIILiteral referencesWord,
     return makeStringByReplacingAll(result.output, "\r\n"_s, "\n"_s);
 }
 
-static void checkShellOutput(const String& programText, OptionWords optionWords, ASCIILiteral expectedOutput, ASCIILiteral scriptAfterEntryPoint = scriptEnd)
+static void checkShellOutput(const String& programText, OptionWords optionWords, ASCIILiteral expectedOutput, const String& scriptAfterEntryPoint = scriptEnd)
 {
     for (ASCIILiteral referencesWord : { "references=wide"_s, "references=narrow"_s }) {
         String output = runInShell(programText, referencesWord, optionWords, scriptAfterEntryPoint);
@@ -687,6 +834,135 @@ later import: fulfilled
 )js"_s);
 }
 
+// The value of a termination is never what a later import() or require() of a stopped module gives. The script stops a body at the call of report() that has the name `stoppedBody`, and the host withdraws the termination.
+static void checkModulesStoppedByTermination(const String& programText, ASCIILiteral steps, ASCIILiteral expectedOutput)
+{
+    checkShellOutput(programText, { }, expectedOutput, makeString(R"js(;
+drainMicrotasks();
+let stoppedBody;
+const printLine = report;
+const atReport = new Map;
+globalThis.report = (label, value) => {
+    printLine(label, value);
+    const hook = atReport.get(value);
+    atReport.delete(value);
+    if (hook)
+        hook();
+    if (value !== stoppedBody)
+        return;
+    stoppedBody = undefined;
+    requestTerminationAndCall(() => { });
+};
+function stopIn(body, start)
+{
+    stoppedBody = body;
+    printLine("termination was pending", callAndCancelTermination(() => {
+        start();
+        drainMicrotasks();
+    }));
+}
+function describe(error)
+{
+    return error === null ? "null" : typeof error;
+}
+// Where a compiled program and plain Bun do not end the same way, the line says only if the value of the termination came out.
+function valueOnly(outcome)
+{
+    return outcome.endsWith(" string") ? outcome : "not the value of the termination";
+}
+function importLater(name, startImport, exact = true)
+{
+    let outcome = "pending";
+    startImport().then(() => { outcome = "fulfilled"; }, error => { outcome = "rejected with " + describe(error); });
+    drainMicrotasks();
+    printLine("later import of " + name, exact ? outcome : valueOnly(outcome));
+}
+function requireLater(what, requireIt, exact = true)
+{
+    let outcome = "returned";
+    try {
+        requireIt();
+    } catch (error) {
+        outcome = "threw " + describe(error);
+    }
+    printLine(what, exact ? outcome : valueOnly(outcome));
+}
+function settled(what, promise)
+{
+    let outcome = "pending";
+    promise.then(() => { outcome = "fulfilled"; }, error => { outcome = "rejected with " + describe(error); });
+    drainMicrotasks();
+    printLine(what, outcome);
+}
+)js"_s, steps));
+}
+
+static void testTerminationInModuleBody()
+{
+    checkModulesStoppedByTermination(dynamicImportsFromScript, R"js(stopIn("first.js", importFirst);
+importLater("first.js", importFirst);
+stopIn("file.cjs", importSecond);
+importLater("second.js", importSecond, false);
+)js"_s, R"(runs: below-first.js
+runs: first.js
+termination was pending: true
+later import of first.js: rejected with null
+runs: file.cjs
+termination was pending: true
+later import of second.js: not the value of the termination
+)"_s);
+    checkModulesStoppedByTermination(requireAndCycleFromScript, R"js(const [requireRequired, importA, importB] = [importFirst, importSecond, importLast];
+stopIn("required.js", requireRequired);
+requireLater("require() again", requireRequired, false);
+stopIn("a.js", importA);
+importLater("a.js", importA);
+importLater("b.js", importB);
+)js"_s, R"(runs: required.js
+termination was pending: true
+require() again: not the value of the termination
+runs: b.js
+runs: a.js
+termination was pending: true
+later import of a.js: rejected with null
+later import of b.js: rejected with null
+)"_s);
+    // The error of file.cjs is dropped while the termination is pending: nothing is stored for that.
+    checkModulesStoppedByTermination(fileAndModuleThatImportsIt, R"js(const [importFile, requireFile] = [importFirst, importSecond];
+stopIn("file.cjs, after esm.js imported it", importFile);
+requireLater("require() of file.cjs", requireFile);
+requireLater("require() of file.cjs again", requireFile);
+importLater("file.cjs", importFile, false);
+)js"_s, R"(runs: file.cjs
+runs: esm.js
+resumes: file.cjs, after esm.js imported it
+termination was pending: true
+require() of file.cjs: returned
+require() of file.cjs again: returned
+later import of file.cjs: not the value of the termination
+)"_s);
+    // An import() that was made while root.js ran waits for the capability of root.js, and is settled with it.
+    checkModulesStoppedByTermination(requireThatImportsJoin, R"js(const [requireRoot, importRoot] = [importFirst, importSecond];
+let fromDependency, fromRoot;
+atReport.set("dependency.js", () => {
+    fromDependency = importRoot();
+    drainMicrotasks();
+});
+atReport.set("root.js", () => { fromRoot = importRoot(); });
+stopIn("root.js", requireRoot);
+settled("import() of root.js, from dependency.js", fromDependency);
+settled("import() of root.js, from its own body", fromRoot);
+importLater("root.js", importRoot);
+requireLater("require() again", requireRoot, false);
+)js"_s, R"(runs: dependency.js
+runs: root.js
+termination was pending: true
+import() of root.js, from dependency.js: rejected with null
+import() of root.js, from its own body: rejected with null
+later import of root.js: rejected with null
+require() again: not the value of the termination
+)"_s);
+}
+
 std::span<const NativeTest> moduleProgramTests()
 {
     static constexpr NativeTest tests[] = {
@@ -698,6 +974,7 @@ std::span<const NativeTest> moduleProgramTests()
         { "module-programs/import-meta-passed-on"_s, testImportMetaPassedOn },
         { "module-programs/module-builtins-in-every-position"_s, testModuleBuiltinsInEveryPosition },
         { "module-programs/termination-during-import-handoff"_s, testTerminationDuringImportHandoff },
+        { "module-programs/termination-in-module-body"_s, testTerminationInModuleBody },
     };
     return tests;
 }

@@ -2758,8 +2758,13 @@ void Modules::evaluateWithOwnStack(ModuleID root)
         if (auto* compiled = dynamicDowncast<ModuleRecord>(member))
             compiled->retain();
     }
-    if (capability && !vm.isTerminationException(exception)) [[unlikely]]
-        capability->reject(vm, exception->value());
+    if (capability) [[unlikely]] {
+        // As step 9 of CyclicModuleRecord::evaluate(): for a termination the error of the modules is null, and the capability is rejected with the same null, as handled.
+        if (vm.isTerminationException(exception))
+            capability->rejectAsHandled(vm, jsNull());
+        else
+            capability->reject(vm, exception->value());
+    }
 }
 
 // A module that is still with the loader of `bun test` has there all that it imports.
