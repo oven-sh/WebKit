@@ -934,7 +934,7 @@ namespace {
 
 class FixedNamesOfBuiltin final : public ImmutablePropertyNames::OutsideNames {
 public:
-    FixedNamesOfBuiltin(VM& vm, BuiltinID holder, std::span<const uint32_t> constantMembers, WritesToBuiltinMembers* writes, std::span<const uint32_t> unlockedMembers, bool reflectThrows)
+    FixedNamesOfBuiltin(VM& vm, BuiltinID holder, std::span<const uint32_t> constantMembers, WritesToBuiltinMembers* writes, std::span<const uint32_t> unlockedMembers, bool reflectThrows, std::span<const Identifier> openedNames)
         : m_vm(vm)
         , m_holder(holder)
         , m_closedKeys(BuiltinTable::singleton().closedKeysOf(holder))
@@ -943,6 +943,10 @@ public:
         , m_reflectThrows(reflectThrows)
         , m_writes(writes)
     {
+        for (const Identifier& opened : openedNames) {
+            if (BuiltinName name = BuiltinTable::singleton().nameOf(vm, opened.impl()))
+                m_openedNames.append(name);
+        }
     }
 
     void willWrite(UniquedStringImpl* uid) const final
@@ -986,7 +990,7 @@ private:
     bool isFixed(BuiltinName name) const
     {
         if (std::ranges::binary_search(m_closedKeys, name))
-            return true;
+            return !m_openedNames.contains(name);
         const BuiltinTable& table = BuiltinTable::singleton();
         BuiltinID member = table.findOwnMember(m_holder, name);
         if (!member)
@@ -1004,6 +1008,7 @@ private:
     VM& m_vm;
     BuiltinID m_holder;
     std::span<const BuiltinName> m_closedKeys;
+    Vector<BuiltinName, 2> m_openedNames;
     std::span<const uint32_t> m_constantMembers;
     std::span<const uint32_t> m_unlockedMembers;
     bool m_reflectThrows;
@@ -1022,10 +1027,10 @@ Ref<ImmutablePropertyNames> immutablePropertyNamesOf(VM& vm, BuiltinID holder, s
         parts.add(ImmutablePropertyNames::Part::Prototype);
 
     IdentifierSet openStrings;
-    for (const Identifier& name : openedNames)
-        openStrings.add(name.impl());
     if (table.at(holder).flags.containsAny({ BuiltinFlag::IsClosedToOtherNames, BuiltinFlag::IsLockedObject })) {
         parts.add(ImmutablePropertyNames::Part::OtherStrings);
+        for (const Identifier& name : openedNames)
+            openStrings.add(name.impl());
         for (BuiltinName name : table.openNamesOf(holder))
             openStrings.add(table.identifierOf(vm, name).impl());
         for (BuiltinID member : table.membersOf(holder)) {
@@ -1034,7 +1039,7 @@ Ref<ImmutablePropertyNames> immutablePropertyNamesOf(VM& vm, BuiltinID holder, s
                 openStrings.add(table.identifierOf(vm, table.at(member).name).impl());
         }
     }
-    return ImmutablePropertyNames::create({ }, parts, WTF::move(openStrings), adoptRef(*new FixedNamesOfBuiltin(vm, holder, constantMembers, writes, unlockedMembers, reflectThrows)));
+    return ImmutablePropertyNames::create({ }, parts, WTF::move(openStrings), adoptRef(*new FixedNamesOfBuiltin(vm, holder, constantMembers, writes, unlockedMembers, reflectThrows, openedNames)));
 }
 
 } // namespace JSC::AOT

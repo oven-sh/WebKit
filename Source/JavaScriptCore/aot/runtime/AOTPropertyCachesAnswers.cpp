@@ -20,6 +20,7 @@
 #include "AOTModules.h"
 #include "AOTObject.h"
 #include "AOTObjectModel.h"
+#include "AOTPrimitives.h"
 #include "AOTProgramIdentifiers.h"
 #include "AOTProgramStatics.h"
 #include "AOTPropertyCaches.h"
@@ -391,7 +392,7 @@ PropertyAnswer classifyNamespaceRead(const ReadQuery& query)
             return uncacheableOnce(SlotAccess::Read);
         return { .kind = PropertyAnswerKind::Constant, .isOwn = true, .constant = inner };
     }
-    if (moduleExport.kind() != ModuleExportKind::Variable || state.modules->mockThatAnswersFor(moduleExport))
+    if (moduleExport.kind() != ModuleExportKind::Variable || state.modules->mockThatAnswersFor(moduleNamespace->module(), moduleExport))
         return PropertyAnswer::uncacheable(SlotAccess::Read);
     SlotValueKind valueKind = traitsOf(moduleExport.variable.representation()).valueKind;
     if (valueKind == SlotValueKind::DeferredClosure) {

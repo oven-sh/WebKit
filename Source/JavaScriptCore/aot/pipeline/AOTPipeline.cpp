@@ -1200,6 +1200,17 @@ PassOutcome Pipeline::verify(IRForm form)
     if (inputs.flow)
         inputs.effects = &m_analyses.effects(*inputs.flow);
     bool isRunning = !m_runner.isStopped();
+    // A program that is not valid as it was read is nothing to go on with.
+    if (m_build.options().keepsGoingBehindFailedVerifications && (form != IRForm::AsRead || m_build.diagnostics().hasKeptFailures())) {
+        Vector<InternalError> errors;
+        {
+            Diagnostics::Interception interception(m_build.diagnostics());
+            read(PassID::VerifyProgram, verifyProgram, m_program, form, m_build, inputs);
+            errors = interception.take();
+        }
+        m_runner.keepFailedVerifications(PassID::VerifyProgram, m_program, WTF::move(errors));
+        return m_runner.lastProgramPassOutcome();
+    }
     bool isValid = read(PassID::VerifyProgram, verifyProgram, m_program, form, m_build, inputs);
     if (isRunning && !isValid && form != IRForm::AsRead && !m_build.options().verifiesAfterEveryStage)
         m_build.diagnostics().add(InternalError { .kind = InternalErrorKind::VerificationFailedAtTheEnd });
@@ -1455,6 +1466,11 @@ PassOutcome Pipeline::runProgramPass(PassID id)
             output.flow->setBorrowedParameters(m_analyses.borrowedParameters());
             ProgramCachesWithScratchTypes caches(m_program, m_build);
             output.flow->setFrameArrayParameters(computeFrameArrayParameters(m_program, m_build));
+            // The verifier asks the same tables whether a callee keeps what lies in a frame. A test that runs this pass alone has not handed it the results of flow.
+            if (VerifierInputs inputs = m_runner.verifierInputs(); !inputs.flow) {
+                inputs.flow = &flow();
+                m_runner.setVerifierInputs(inputs);
+            }
         }
         *output.frameAllocation = edit(id, allocateInFrames, inputsFor(id), *output.flow, m_build);
         return m_runner.lastProgramPassOutcome();
@@ -2067,7 +2083,7 @@ std::unique_ptr<PipelineOutput> runPipeline(std::unique_ptr<Program> program, Bu
         pipeline.runAllStages(readBesideLastEffectSummaries, goesOnBehindFlowAnalysis);
         output = pipeline.takeOutput();
     }
-    if (build.diagnostics().hasErrors()) {
+    if (build.diagnostics().hasErrors() || build.diagnostics().hasKeptFailures()) {
         output->waitForRegExps();
         build.diagnostics().finish(output->program.get());
         return nullptr;

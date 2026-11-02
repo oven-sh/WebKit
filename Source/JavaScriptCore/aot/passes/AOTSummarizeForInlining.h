@@ -99,11 +99,11 @@ struct InliningSummary {
 
     bool testsParentOfClass { false };
     InlineBarrier barrier { InlineBarrier::Unknown };
-    bool neverReturns { false };
+    bool neverReturns : 1 { false };
     // Nothing in it loops: it does not spin, it ends by throwing.
-    bool onlyThrows { false };
-    bool hasCycle { false };
-    bool hasBareReturn { false };
+    bool onlyThrows : 1 { false };
+    bool hasCycle : 1 { false };
+    bool hasBareReturn : 1 { false };
     bool isWrapper { false };
     // Its rest parameter is only spread into its calls, and it is short.
     bool onlyForwardsRestParameter { false };
@@ -117,6 +117,9 @@ struct InliningSummary {
     static constexpr uint8_t notAsked = std::numeric_limits<uint8_t>::max();
     // The answer of countFreshAllocationsReturned() for the function, once it is made. Threads that share the summary read and write it as an atomic: each that finds none makes it, and all make the same.
     mutable uint8_t freshAllocationsReturned { notAsked };
+    static constexpr uint16_t bytesNotAsked = std::numeric_limits<uint16_t>::max();
+    // What the array methods of the body bring that are handed a function, with those functions. Made once, in the same way.
+    mutable uint16_t bytesOfArrayMethodsHandedFunctions { bytesNotAsked };
     uint32_t codeBytes { 0 };
     // The larger of two parts: the code that is expected to run, without the tests of declared types, and the code that is not.
     uint32_t likelyCodeBytes { 0 };

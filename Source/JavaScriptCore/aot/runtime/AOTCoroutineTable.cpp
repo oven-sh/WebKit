@@ -73,9 +73,8 @@ Structure* CoroutineTable::structureOfGeneratorsWithoutPrototypeOf(VM& vm, JSObj
 {
     JSGlobalObject* globalObject = m_instance.globalObject;
     if (!m_structureOfGeneratorsWithoutPrototype) {
-        m_standInForPrototypes = constructEmptyObject(globalObject, globalObject->generatorPrototype());
-        m_standInForPrototypes->didBecomePrototype(vm);
-        RELEASE_ASSERT(m_standInForPrototypes->structureID().bits() == m_instance.coroutines.emptyGeneratorPrototypeStructureID);
+        // Of the Structure that compiled code compares with. The realm forgets its Structures where a prototype gets an indexed property, and would make another.
+        m_standInForPrototypes = constructEmptyObject(vm, std::bit_cast<StructureID>(m_instance.coroutines.emptyGeneratorPrototypeStructureID).decode());
         m_state.immortalCells->add(m_standInForPrototypes);
         m_structureOfGeneratorsWithoutPrototype = Generator::createStructureWithoutPrototype(vm, globalObject, m_standInForPrototypes);
         m_state.immortalCells->add(m_structureOfGeneratorsWithoutPrototype);

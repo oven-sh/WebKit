@@ -2211,6 +2211,8 @@ void AllocationSinking::computeInputsOf(BlockID block)
             m_inputs.memberGuardsReadByValues.add(id.index() + 1, traits.readMemberGuards);
         if (m_function.at(id).opcode == Opcode::AllGuards && std::ranges::any_of(m_analyses.useLists().usesOf(id), [](const Use& use) { return use.kind != Use::Kind::Operand; }))
             m_inputs.guardsThatMoreThanOperationsTake.set(id.index());
+        if (m_function.at(id).opcode == Opcode::NewArgumentList && std::ranges::any_of(m_analyses.useLists().usesOf(id), [&](const Use& use) { return isGuardUse(m_function, use); }))
+            m_inputs.listsOfArgumentsNamedAsGuards.set(id.index());
         if (m_names.valuesMentioningNames.quickGet(id.index()) || m_candidateOfValue[id.index()])
             m_relevantValues.append(index);
         else if (traits.writesObjects || traits.endedMemberGuards || traits.readMemberGuards || (traits.mayThrow && contents.handler))

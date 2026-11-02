@@ -592,6 +592,12 @@ ChildProcessResult ChildProcessLauncher::run(std::span<const String> arguments) 
     for (const String& argument : m_sharedArguments)
         commandLine.append(argument);
     ChildProcessResult result = runProcess(commandLine);
+    if (result.outcome == ChildProcessOutcome::Crashed || result.outcome == ChildProcessOutcome::Hung) {
+        dataLog("The process that ", result.description(), " was started as:");
+        for (StringView word : commandLine)
+            dataLog(" ", word);
+        dataLogLn();
+    }
     if (printsLineAfterEachChildProcess)
         dataLogLn(lineAfterChildProcess);
     return result;

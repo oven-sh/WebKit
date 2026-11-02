@@ -5,6 +5,7 @@
 
 #include "config.h"
 #include "AOTPass.h"
+#include "AOTPredictedValues.h"
 
 #if ENABLE(AOT)
 
@@ -443,6 +444,7 @@ static Vector<ValueID, 4> passCountersOnEdges(FunctionPassContext& context, IRBu
     const UseLists& useLists = context.analyses.useLists();
     Vector<Vector<Use, 8>, 4> dominatedUses(candidates.size());
     Vector<Vector<RepeatedSum, 1>, 4> repeatedSums(candidates.size());
+    Vector<Vector<ValueID, 1>, 4> stepsThatKnowMore(candidates.size());
     for (size_t index = 0; index < candidates.size(); ++index) {
         const CounterCandidate& candidate = candidates[index];
         auto collectUsesOf = [&](ValueID value, auto& uses) {
@@ -453,8 +455,13 @@ static Vector<ValueID, 4> passCountersOnEdges(FunctionPassContext& context, IRBu
         };
         ValueID tested = function.at(candidate.comparison).operand(candidate.testedOperandIndex);
         collectUsesOf(tested, dominatedUses[index]);
-        for (ValueID stepped : candidate.stepsEqualToTested)
-            collectUsesOf(stepped, dominatedUses[index]);
+        // `if (i + 1 > n) break; if (i >= length) break; i = i + 1;`: the step stands behind another test of the counter and has its bound from there. It is the number that is tested here, and keeps what it knows of it.
+        for (ValueID stepped : candidate.stepsEqualToTested) {
+            if (context.program.typeOf(function, tested).isSubsetOf(context.program.typeOf(function, stepped), context.program))
+                collectUsesOf(stepped, dominatedUses[index]);
+            else
+                stepsThatKnowMore[index].append(stepped);
+        }
         if (candidate.stepsEqualToTested.isEmpty() && tested != candidate.parameter && function.at(tested).type == function.at(candidate.parameter).type)
             collectUsesOf(candidate.parameter, dominatedUses[index]);
         for (SumAheadOfTest sum : findSumsAheadOfTest(context, candidate.stayingEdge, tested)) {
@@ -474,11 +481,17 @@ static Vector<ValueID, 4> passCountersOnEdges(FunctionPassContext& context, IRBu
     }
 
     Vector<ValueID, 4> narrowedCounters;
+    std::optional<PredictedValues> predicted;
     for (size_t index = 0; index < candidates.size(); ++index) {
         builder.setOrigin(function.at(candidates[index].comparison).origin());
         narrowedCounters.append(builder.addEdgeResult(candidates[index].stayingEdge, candidates[index].testedOperandIndex));
         for (const Use& use : dominatedUses[index])
             replaceUse(function, use, narrowedCounters.last());
+        for (ValueID stepped : stepsThatKnowMore[index]) {
+            if (!predicted)
+                predicted.emplace(function, context.analyses.cfg());
+            function.edit(stepped).becomeAssumeType(narrowedCounters.last(), Proven::byRulesBeforeWidening(function.at(stepped).type, predicted->isBehindCheck(stepped) ? ProofScope::BehindChecks : ProofScope::EveryVersion));
+        }
         for (const RepeatedSum& repeated : repeatedSums[index]) {
             const Value& original = function.at(repeated.original.sum);
             Value sum = original.numberOfOperands() == 1 ? IRBuilder::make(original.opcode, { narrowedCounters.last() }) : IRBuilder::make(original.opcode, { original.operand(0), original.operand(1) });
@@ -644,6 +657,8 @@ static std::optional<int64_t> mostTurnsBehindFirst(FunctionPassContext& context,
         if (!type.isInteger() || !type.integers.isSubsetOf(changedByEveryStep) || variable.step.kind != InductionStepKind::Constant || !variable.step.constant)
             continue;
         int64_t turns = (type.integers.maximum - type.integers.minimum) / std::abs(variable.step.constant);
+        if (context.build.isSabotaged(Sabotage::TalliesOutrunTheirCounters))
+            turns /= 4;
         fewest = fewest ? std::min(*fewest, turns) : turns;
     }
     return fewest;
@@ -1230,16 +1245,48 @@ static bool testFirstValuesInFrontOfLoops(FunctionPassContext& context)
         });
         if (!canHandOn)
             continue;
+        // The head may look at its parameter through casts, and a cast may name a fact of the head: that the word has been filled. In front of such a cast the word may be anything.
+        // Whoever takes the entry comes to the head with nothing in between, so what holds there holds in front of the loop: the first value is asked through copies of what the head asks through.
+        HashMap<ValueID, ValueID> inFrontOfLoop;
+        for (uint32_t index = 0; index < parameters.size(); ++index)
+            inFrontOfLoop.set(parameters[index], first[index]);
+        BitVector leadsToTest(function.values.size());
+        Vector<ValueID, 4> worklist { test.valueOperand() };
+        while (!worklist.isEmpty()) {
+            ValueID id = worklist.takeLast();
+            ValueLocation location = analyses.useLists().locationOf(id);
+            if (location.block != header || location.placement != ValuePlacement::InBlock || leadsToTest.quickSet(id.index()))
+                continue;
+            function.at(id).forEachOperand([&](ValueID operand, uint32_t) {
+                worklist.append(operand);
+            });
+        }
+        Vector<ValueID, 4> askedThrough;
+        for (ValueID id : function.at(header).values) {
+            if (leadsToTest.quickGet(id.index()))
+                askedThrough.append(id);
+        }
 
         TypeID testedType = test.testedType();
+        ValueID askedOfHead = test.valueOperand();
         Expected<BlockFrequency> frequencyWhenFailed = function.at(whenFailed).frequency;
         IRBuilder builder(analyses.context(), function, context.types, &analyses);
         builder.setOrigin(test.origin());
+        Origin originOfTest = test.origin();
         BlockID front = builder.splitEdge(*entry);
         Expected<BlockFrequency> frequency = function.at(front).frequency;
         function.edit(front, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator = Terminator { };
         builder.moveToEndOf(front);
-        IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(builder.appendTypeTest(first[parameterIndex], testedType), OperandIndex::TypeTest::value, frequency, frequencyWhenFailed);
+        for (ValueID id : askedThrough) {
+            Value copy(function.at(id));
+            copy.forEachOperand([&](ValueID& operand, uint32_t) {
+                operand = inFrontOfLoop.getOptional(operand).value_or(operand);
+            });
+            builder.setOrigin(copy.origin());
+            inFrontOfLoop.set(id, builder.append(WTF::move(copy)));
+        }
+        builder.setOrigin(originOfTest);
+        IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(builder.appendTypeTest(inFrontOfLoop.getOptional(askedOfHead).value_or(first[parameterIndex]), testedType), OperandIndex::TypeTest::value, frequency, frequencyWhenFailed);
         builder.moveToEndOf(branch.notTaken);
         for (ValueID poll : polls) {
             builder.setOrigin(function.at(poll).origin());
@@ -1535,6 +1582,7 @@ PassOutcome convertCountersToIntegers(FunctionPassContext& context)
             Vector<ValueID, 4> bounded = boundTallies(context, builder, tallies.span());
             outcome = PassOutcome::Changed;
             numberOfConvertedCounters += tallies.size();
+            context.build.statistics().count(StatisticID::TalliesBounded, tallies.size());
             if (narrowValueTypes({ context.program, context.id, context.function, context.analyses, context.types, context.build, &context.typingMemo }, bounded.span()).didChangeControlFlow())
                 parametersOverStepLimit.clearAll();
             continue;
@@ -1840,6 +1888,8 @@ static ListsLeftAlone findListsTheLoopLeavesAlone(FunctionPassContext& context, 
         writtenLists.append({ writers[first].list, isHeldByNobodyElse(writers.span().subspan(first, end - first)) });
     }
     auto isLeftAlone = [&](ValueID measured) {
+        if (context.build.isSabotaged(Sabotage::ListsWrittenInLoopsAreLeftAlone))
+            return true;
         return std::ranges::all_of(writtenLists, [&](const WrittenList& written) {
             if (!escape.mayAlias(written.list, measured))
                 return true;
@@ -1854,6 +1904,7 @@ static ListsLeftAlone findListsTheLoopLeavesAlone(FunctionPassContext& context, 
         bool isMeasuredInLoop = std::ranges::any_of(readersOfList, [&](const Reader& reader) { return isLengthRead.get(reader.id.index()); });
         if ((isMeasuredInLoop && std::ranges::binary_search(listsReadOtherwise, readers[first].list)) || !isLeftAlone(readers[first].list))
             continue;
+        context.build.statistics().count(StatisticID::ListsLeftAloneByLoops, 1);
         if (isMeasuredInLoop)
             found.listsMeasuredInLoop.append(readers[first].list);
         for (const Reader& reader : readersOfList) {
@@ -1917,6 +1968,8 @@ static unsigned tellTestsLengthInFrontOfLoop(FunctionPassContext& context, const
         function.edit(test).setLengthOperands(std::span(&lengths[index].id, 1));
         ++numberOfTestsTold;
     }
+    if (numberOfTestsTold)
+        context.build.statistics().count(StatisticID::TestsToldLengthAheadOfLoop, numberOfTestsTold);
     return numberOfTestsTold;
 }
 
@@ -2039,9 +2092,15 @@ static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop&
             return false;
         return hasInvariantOperands(value) || namesFactOfFirstTurn(value) || canGoAheadOfItsFact(value);
     };
-    auto canHoist = [&](ValueID id, BlockID block, const LoopClobbers& clobbersBeforeRead) {
+    // A branch gives its proofs by the test that it names. `c === a` in the head of a loop and `a === c` in its body are one value with two branches.
+    BitVector testsThatNarrow(function.values.size());
+    for (BlockID block : context.analyses.cfg().reversePostOrder()) {
         const Terminator& terminator = function.at(block).terminator;
-        if (terminator.isConditionalBranch() && terminator.conditionOperand() == id && std::ranges::any_of(terminator.targets, [](const Target& target) { return !target.proofs.isEmpty(); }))
+        if (terminator.isConditionalBranch() && std::ranges::any_of(terminator.targets, [](const Target& target) { return !target.proofs.isEmpty(); }))
+            testsThatNarrow.quickSet(terminator.conditionOperand().index());
+    }
+    auto canHoist = [&](ValueID id, BlockID block, const LoopClobbers& clobbersBeforeRead) {
+        if (testsThatNarrow.get(id.index()))
             return false;
         // A comparison or a look-up in a collection is declared to throw where it flattens a rope and memory runs out.
         // What may throw does not leave its handler, and it runs ahead of the loop only where the first turn is sure to run it: a loop that makes no turn throws nothing.

@@ -3684,6 +3684,10 @@ public:
 
     void breakpoint()
     {
+        if (policy().trapsWithIllegalInstruction) {
+            m_assembler.illegalInstruction();
+            return;
+        }
         m_assembler.int3();
     }
 

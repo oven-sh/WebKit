@@ -484,6 +484,8 @@ export interface ModelHostObject {
   internalFields: readonly ModelHostObjectInternalField[];
   keepsStringsOfStoredValues: boolean;
   nativeAccessors: readonly ModelName[];
+  lockedNames: readonly ModelName[];
+  holder: ModelBuiltin | null;
   platforms: readonly TargetPlatform[];
   source: Source;
 }

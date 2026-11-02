@@ -47,6 +47,16 @@ std::span<uint8_t> ImageLinkBuffer::bytes()
     return asMutableByteSpan(m_storage.mutableSpan()).first(m_linkBuffer.offsetOf(m_end));
 }
 
+void emitPadding(CCallHelpers& jit)
+{
+#if CPU(X86_64)
+    constexpr uint8_t halt = 0xf4;
+    jit.m_assembler.buffer().putByte(static_cast<int8_t>(halt));
+#else
+    jit.breakpoint();
+#endif
+}
+
 RelocationRecorder::RelocationRecorder(CCallHelpers& jit, const AssemblerPolicy& policy)
     : m_jit(jit)
 {
@@ -159,7 +169,7 @@ std::expected<CodeTemplates, LinkFailure> CodeTemplates::create(const AssemblerP
         jit.ret();
     });
     RelocatableCode breakpoint = emit([](CCallHelpers& jit, RelocationRecorder&) {
-        jit.breakpoint();
+        emitPadding(jit);
     });
     RelocatableCode veneer = emit([]([[maybe_unused]] CCallHelpers& jit, RelocationRecorder& recorder) {
 #if CPU(ARM64)

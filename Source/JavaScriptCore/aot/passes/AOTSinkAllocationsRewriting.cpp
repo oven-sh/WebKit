@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTDecidedBranches.h"
+#include "AOTGuardAvailability.h"
 #include "AOTPredictedValues.h"
 #include "AOTSort.h"
 #include "AOTSpecifiedValues.h"
@@ -322,6 +323,43 @@ void AllocationSinking::letTestsAwaitClassesOfObjectsThatAreNotMade(IRBuilder& b
         m_analyses.didChangeValuesButNotUses();
 }
 
+// Only an allocation is a guard of what it makes. Whoever named as a guard a list that is not made after all names the one that is made in its place, which proves the same.
+static void nameAllocationsMadeInsteadAsGuards(const Program& program, Function& function, std::span<const std::pair<ValueID, ValueID>> replacedReads)
+{
+    Vector<std::pair<ValueID, ValueID>, 2> madeInstead;
+    for (auto [read, replacement] : replacedReads) {
+        ProofSet proofs = proofsOfAllocation(program, function, function.at(read));
+        if (!proofs.isEmpty() && proofs == proofsOfAllocation(program, function, function.at(replacement)))
+            madeInstead.append({ read, replacement });
+    }
+    if (madeInstead.isEmpty())
+        return;
+
+    Vector<std::pair<Use, ValueID>, 4> uses;
+    auto note = [&](Use use, ValueID operand) {
+        if (!isGuardUse(function, use))
+            return;
+        for (auto [allocation, allocationMadeInstead] : madeInstead) {
+            if (allocation == operand)
+                uses.append({ use, allocationMadeInstead });
+        }
+    };
+    for (uint32_t index = 0; index < function.blocks.size(); ++index) {
+        BlockID id(index);
+        const Block& block = function.at(id);
+        for (ValueID user : block.values) {
+            function.at(user).forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+                note({ Use::Kind::Operand, id, user, operandIndex }, operand);
+            });
+        }
+        block.terminator.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+            note({ Use::Kind::TerminatorOperand, id, { }, operandIndex }, operand);
+        });
+    }
+    for (auto& [use, allocationMadeInstead] : uses)
+        replaceUse(function, use, allocationMadeInstead);
+}
+
 void AllocationSinking::rewrite(IRBuilder& builder, const FreshResultShape* shape)
 {
     letTestsAwaitClassesOfObjectsThatAreNotMade(builder);
@@ -361,6 +399,7 @@ void AllocationSinking::rewrite(IRBuilder& builder, const FreshResultShape* shap
     builder.function().edit(entryBlock, BlockEdit::Values).values.insertVector(0, tables.entryConstants);
     builder.emptyUnreachableBlocks();
     removeBoundParameters(builder);
+    nameAllocationsMadeInsteadAsGuards(m_program, builder.function(), tables.replacedReads.span());
     ValueSubstitution substitution(builder.function());
     for (auto [read, replacement] : tables.replacedReads)
         replaceReadWithValue(m_program, builder.function(), substitution, read, replacement);

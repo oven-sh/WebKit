@@ -25,6 +25,7 @@
 #include "AOTLayoutData.h"
 #include "AOTLiteralStringDigest.h"
 #include "AOTModuleGraph.h"
+#include "AOTModuleHost.h"
 #include "AOTNarrowFieldTypes.h"
 #include "AOTNumberLiteralStrings.h"
 #include "AOTObjectVisiting.h"
@@ -427,10 +428,8 @@ static void appendRuntimeType(TableEncoder& encoder, const LayoutSetRecords& rec
         AOT::stableSort(cellTests.mutableSpan(), { }, [](const RuntimeCellTest& test) -> int64_t {
             return test.kind == CellTestKind::IsClosureOf ? static_cast<int64_t>(test.operand) : -1;
         });
-        for (StringID literal : plan.stringLiterals) {
-            if (!numbered.isLeftOut(literal))
-                literalStrings.append(literal);
-        }
+        for (StringID literal : plan.stringLiterals)
+            literalStrings.append(literal);
         integers = plan.integers;
         if (describesTypes(encoder)) {
             if (TypeID contents = describedContentsOf(encoder.program, planned.id))
@@ -3487,6 +3486,27 @@ void encodeModuleTables(TableEncoder& encoder)
             modulesThatFindBuiltinsReadOnly.append(index);
     }
     encoder.setTable(ProgramTableIndex::modulesThatFindBuiltinsReadOnly, modulesThatFindBuiltinsReadOnly);
+    Vector<uint32_t> modulesReachedUnderOtherNames;
+    constexpr std::pair<ModuleFlags, OtherNameOfModule> otherNames[] = {
+        { ModuleFlags::IsReachedWithoutExtension, OtherNameOfModule::WithoutExtension },
+        { ModuleFlags::IsReachedUnderAnotherExtension, OtherNameOfModule::UnderAnotherExtension },
+        { ModuleFlags::IsReachedAsFolder, OtherNameOfModule::AsFolder },
+    };
+    for (uint32_t index = 0; index < program.modules.size(); ++index) {
+        if (!program.modules[index].flags.contains(ModuleFlags::MayBeMocked))
+            continue;
+        for (auto [flag, name] : otherNames) {
+            if (program.modules[index].flags.contains(flag))
+                modulesReachedUnderOtherNames.append(moduleReachedUnder(index, name));
+        }
+    }
+    encoder.setTable(ProgramTableIndex::modulesReachedUnderOtherNames, modulesReachedUnderOtherNames);
+    Vector<uint32_t> asyncFunctionsWithoutAwait;
+    for (uint32_t index = 0; index < program.functions.size(); ++index) {
+        if (firstSourceOf(program, FunctionID(index)).index() == index && isAsyncFunctionWithoutAwait(program, program.functions[index]))
+            asyncFunctionsWithoutAwait.append(index);
+    }
+    encoder.setTable(ProgramTableIndex::asyncFunctionsWithoutAwait, asyncFunctionsWithoutAwait);
     encoder.setTable(ProgramTableIndex::modules, lists.modules);
     encoder.setTable(ProgramTableIndex::moduleDirectories, lists.directories);
     encoder.setTable(ProgramTableIndex::moduleDisplayPaths, lists.displayPaths);
@@ -3646,16 +3666,8 @@ static void encodeBuiltinAndBigIntTables(TableEncoder& encoder)
     for (BuiltinID member : constantBuiltinMembersToLock(encoder.program, encoder.flow))
         members.append(member.index());
     BitVector unlocked = encoder.flow.builtinMembersWrittenInSharedRealm();
-    // What an image that holds the library alone takes for unlocked is whatever any run may open. The images over it take over what is listed here, so it lists what it writes itself.
-    if (!encoder.build.options().holdsLibraryAlone()) {
-        for (BuiltinID member : encoder.program.unlockedBuiltins())
-            unlocked.set(member.index());
-    } else if (const ImagesBelow* library = encoder.build.referenceLibraryImage()) {
-        unlocked.clearAll();
-        library->forEachUnlockedBuiltinMember([&](BuiltinID member) {
-            unlocked.set(member.index());
-        });
-    }
+    for (BuiltinID member : encoder.program.unlockedBuiltins())
+        unlocked.set(member.index());
     for (size_t member : unlocked)
         members.append(static_cast<uint32_t>(member) | ProgramTables::unlockedBuiltinMember);
     for (const OpenedName& opened : encoder.program.openedNames)

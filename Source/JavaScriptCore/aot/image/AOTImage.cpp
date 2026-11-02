@@ -10,6 +10,7 @@
 
 #include "AOTRegExpRecord.h"
 #include "AOTStubBlob.h"
+#include "AOTStubDescriptor.h"
 #include "AOTTraceFrame.h"
 #include "JSCellButterfly.h"
 #include "MarkedBlockCage.h"

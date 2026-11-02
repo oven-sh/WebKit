@@ -29,6 +29,7 @@
 #include "AOTVector.h"
 #include "DeferGC.h"
 #include "DeferTermination.h"
+#include "GetterSetter.h"
 #include "JSCInlines.h"
 #include "ObjectConstructor.h"
 #include "TopExceptionScope.h"

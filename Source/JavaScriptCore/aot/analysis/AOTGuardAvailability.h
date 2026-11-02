@@ -387,6 +387,7 @@ private:
     Vector<Boundary> m_boundaries;
     Vector<uint32_t> m_numberInDominatorTree;
     Vector<FailedSwitch> m_failedSwitches;
+    BitVector m_subjects;
 };
 
 } } } // namespace JSC::AOT::Typed

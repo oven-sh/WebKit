@@ -580,6 +580,15 @@ ClimbingSet ValueFlowRuleContext::markedAmong(ClimbingSet objects, OptionSet<Obj
     return marked;
 }
 
+// What is done to an object that has escaped, through a value that may be any such object, is noted of the unknown object alone. The results count it so too.
+ClimbingSet ValueFlowRuleContext::markedThemselvesOrThroughUnknownObjectAmong(ClimbingSet objects, OptionSet<ObjectMutation> mutations)
+{
+    ClimbingSet marked = markedAmong(objects, mutations);
+    if (isSabotaged(Sabotage::EscapedObjectsBearOnlyTheirOwnMarks) || !meet(markedAmong(ClimbingSet(universe().unknownObjectAlone()), mutations), ValueSets::anything))
+        return marked;
+    return unite(marked, valueWithin(objects, ValueFlowProgramNodes::escaped()));
+}
+
 bool ValueFlowRuleContext::isReached(FunctionID function)
 {
     if (m_solver.isReached(function))
@@ -655,6 +664,12 @@ ValueFlowNodeKey ValueFlowRuleContext::keyOfConstant(ValueSetID set) const
 bool ValueFlowRuleContext::leavesOut(ValueFlowUnknownSource source) const { return m_solver.m_input.unknownSourcesLeftOut.contains(source); }
 bool ValueFlowRuleContext::leavesOutSomeUnknownSource() const { return !m_solver.m_input.unknownSourcesLeftOut.isEmpty(); }
 RefusedCode ValueFlowRuleContext::refusedCode() const { return m_solver.m_input.refusedCode; }
+bool ValueFlowRuleContext::handsReceiverOn(FunctionID function) const
+{
+    std::span<const uint64_t> noted = m_solver.m_input.notedOperationsOfFunctions;
+    return function.index() >= noted.size() || (noted[function.index()] & notedOperations({ ValueFlowNotedOperation::ReceiverHandedOn }));
+}
+
 bool ValueFlowRuleContext::isSabotaged(Sabotage part) const { return m_solver.m_input.build && m_solver.m_input.build->isSabotaged(part); }
 
 bool ValueFlowRuleContext::isGuardedByRemovedFeature(BuiltinID builtin) const

@@ -185,9 +185,14 @@ static LoggingOptions readLoggingOptions()
     logging.functionToDump = UTF8CString { Options::aotFunctionToDump() };
     logging.mapFilePath = UTF8CString { Options::aotMapFilePath() };
 
-    if (Options::dumpAOTIR())
+    StringView points = StringView::fromLatin1(byteCast<char>(Options::dumpAOTIR()));
+    // valueflow/AOTFlowApply.cpp reads it.
+    bool asksForFlowFactsAlone = points.startsWith("FlowFacts="_s);
+    if (Options::dumpAOTIR() && !asksForFlowFactsAlone)
         dataLogLn("dumpAOTIR: only testaot prints IR. `bun build --compile --aot --aot-out=<file>` writes the program, and `testaot print <file> --until=<pass>` prints it");
-    for (StringView point : StringView::fromLatin1(byteCast<char>(Options::dumpAOTIR())).split(',')) {
+    for (StringView point : points.split(',')) {
+        if (asksForFlowFactsAlone)
+            break;
         if (auto pass = passNamed(point))
             logging.dumpedPass = pass;
         else
@@ -331,12 +336,6 @@ public:
             } else
                 reportInvalid(m_wire.target.imagesBelow.size);
         }
-        if (m_wire.target.referenceLibraryImage.size) {
-            if (options.holdsLibraryAlone())
-                options.referenceLibraryImage = std::span { std::bit_cast<const uint8_t*>(static_cast<uintptr_t>(m_wire.target.referenceLibraryImage.address)), static_cast<size_t>(m_wire.target.referenceLibraryImage.size) };
-            else
-                reportInvalid(m_wire.target.referenceLibraryImage.size);
-        }
         options.executableIdentity = m_wire.executableIdentity;
         options.removedFeatures = m_wire.removedFeatures;
         options.featuresKeptOnlyWhenNamed = m_wire.target.featuresKeptOnlyWhenNamed;
@@ -459,6 +458,7 @@ private:
     {
         CheckSet checks = m_wire.checks;
         options.verifiesAfterEveryPass = hasFlag(checks, CheckSet::VerifyEachPass);
+        options.keepsGoingBehindFailedVerifications = hasFlag(checks, CheckSet::KeepGoing);
         options.verifiesAfterEveryStage = options.verifiesAfterEveryPass || hasFlag(checks, CheckSet::VerifyEachStage);
         options.recorded.validates = hasFlag(checks, CheckSet::Validate);
         options.verifiesProgram = options.verifiesAfterEveryStage || options.recorded.validates || Options::verifyAOTProgram();

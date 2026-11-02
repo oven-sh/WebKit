@@ -524,10 +524,10 @@ static StubOptions createValidatingOptions()
 }
 
 template<typename Emit>
-static Vector<uint8_t> assemble(const Emit& emit)
+static Vector<uint8_t> assemble(const Emit& emit, const AssemblerPolicy& policy = AssemblerPolicy::forImage(StubOptions { }.targetFeatures))
 {
     CCallHelpers jit;
-    RelocationRecorder relocations(jit, AssemblerPolicy::forImage(StubOptions { }.targetFeatures));
+    RelocationRecorder relocations(jit, policy);
     emit(jit);
     std::expected<RelocatableCode, LinkFailure> code = relocations.finalize(LinkBuffer::Profile::Thunk, nullptr);
     AOT_TEST_CHECK(code.has_value() && code->relocations.isEmpty());
@@ -857,6 +857,73 @@ static void testValidatedCalls()
     AOT_TEST_CHECK(runInChild([&] { runInMappingOfThisProcess(lyingStub.span()); }) == ChildOutcome::Crashed);
 }
 
+// The child listens for breakpoints as a program does that has process.on("SIGTRAP"): its handler notes the signal and returns.
+// It leaves at any other signal by itself: a death by the signal would have the system write a core file of this process.
+static int signalThatEndsListener(std::span<const uint8_t> code)
+{
+    constexpr unsigned timeoutInSeconds = 10;
+
+    fflush(nullptr);
+    pid_t child = fork();
+    AOT_TEST_CHECK(child >= 0);
+    if (!child) {
+        alarm(timeoutInSeconds);
+        signal(SIGTRAP, [](int) { });
+        for (int number : { SIGILL, SIGSEGV, SIGBUS, SIGALRM })
+            signal(number, [](int number) { _exit(number); });
+        runInMappingOfThisProcess(code);
+        _exit(0);
+    }
+
+    int status = 0;
+    pid_t waited;
+    do {
+        waited = waitpid(child, &status, 0);
+    } while (waited < 0 && errno == EINTR);
+    AOT_TEST_CHECK(waited == child && WIFEXITED(status));
+    return WEXITSTATUS(status);
+}
+
+static void testTrapsEndListenerForBreakpoints()
+{
+    WTF::fastDisableScavenger();
+    auto signalBehind = [](const auto& emit) {
+        Vector<uint8_t> code = assemble([&](CCallHelpers& jit) {
+            emit(jit);
+            jit.ret();
+        });
+        return signalThatEndsListener(code.span());
+    };
+    AOT_TEST_CHECK(!signalBehind([](CCallHelpers&) { }));
+    AOT_TEST_CHECK(signalBehind([](CCallHelpers& jit) { jit.breakpoint(); }) == SIGILL);
+    AOT_TEST_CHECK(signalBehind([](CCallHelpers& jit) { jit.oops(); }) == SIGILL);
+    AOT_TEST_CHECK(signalBehind(emitPadding) == (isX86_64() ? SIGSEGV : SIGILL));
+
+    AOT_TEST_CHECK(!AssemblerPolicy::forJIT().trapsWithIllegalInstruction);
+    AssemblerPolicy policy = AssemblerPolicy::forImage(StubOptions { }.targetFeatures);
+    policy.trapsWithIllegalInstruction = false;
+    Vector<uint8_t> breakpoint = assemble([](CCallHelpers& jit) { jit.breakpoint(); }, policy);
+    AOT_TEST_CHECK(breakpoint.size() == codeOffsetUnit && MacroAssembler::isBreakpoint(breakpoint.mutableSpan().data()));
+}
+
+static void testAlignmentOfStubsIsPadding()
+{
+    StubCatalog catalog(StubOptions { }, StubPolicy { });
+    StubAssembler jit(catalog.options(), catalog);
+    jit.generateForTesting(findStubPreserving(catalog, gprOf(StubRegister::T12)), [](StubAssembler& jit) {
+        jit.returnToCaller();
+        jit.align();
+        jit.returnToCaller();
+    });
+    ImageLinkBuffer buffer(jit, LinkBuffer::Profile::Thunk);
+    AOT_TEST_CHECK(!buffer.didFailToAllocate());
+    buffer.finalize(false, "stub with an aligned part"_s);
+    std::span<uint8_t> bytes = buffer.bytes();
+    AOT_TEST_CHECK(bytes.size() > 16);
+    for (size_t offset = 0; offset < bytes.size(); offset += codeOffsetUnit)
+        AOT_TEST_CHECK(!MacroAssembler::isBreakpoint(bytes.subspan(offset).data()));
+}
+
 #endif // OS(UNIX)
 
 static void testRegistersLiveAcrossReads()
@@ -898,6 +965,8 @@ std::span<const NativeTest> stubTests()
         { "stubs/calls-without-validation"_s, testCallsWithoutValidation },
 #if OS(UNIX)
         { "stubs/validated-calls"_s, testValidatedCalls },
+        { "stubs/traps-end-listener-for-breakpoints"_s, testTrapsEndListenerForBreakpoints },
+        { "stubs/alignment-is-padding"_s, testAlignmentOfStubsIsPadding },
 #endif
         { "stubs/registers-live-across-reads"_s, testRegistersLiveAcrossReads },
     };

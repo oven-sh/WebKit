@@ -222,7 +222,12 @@ struct FlowApplication {
     Vector<std::pair<TypeID, TypeID>> typesTestedBehindDictionaries;
     BitVector typesNamingDictionaries;
     BitVector layoutSetsNamingDictionaries;
+    // Checks, and calls of a value, whose operand holds nothing. Ascending. Only for the file of flow's facts.
+    Vector<std::pair<FunctionID, ValueID>> operationsThatNothingArrivesAt;
 };
+
+// BUN_JSC_dumpAOTIR=FlowFacts=<path>
+StringView pathOfFlowFacts();
 
 TypeID typeBehindDictionaries(std::span<const std::pair<TypeID, TypeID>> ascendingTypes, TypeID);
 

@@ -10,6 +10,7 @@
 #include "AOTRecordTypes.h"
 #include "AOTVector.h"
 #include "CyclicModuleRecord.h"
+#include <wtf/BitVector.h>
 #include <wtf/HashSet.h>
 #include <wtf/OrderedHashSet.h>
 
@@ -102,12 +103,17 @@ public:
     void takeStatus();
     bool isRunningCommonJSFile();
     void setRunsWhenLoaded() { m_runsWhenLoaded = true; }
+    bool runsWhenLoaded() const { return m_runsWhenLoaded; }
+    void setRunsInItsTurn() { m_runsInItsTurn = true; }
+    bool takeRunsInItsTurn() { return std::exchange(m_runsInItsTurn, false); }
     bool isRequestedByWalkedModule() const { return m_isRequestedByWalkedModule; }
     void setIsRequestedByWalkedModule() { m_isRequestedByWalkedModule = true; }
+    void setHasRequestThatFindsNothing() { m_hasRequestThatFindsNothing = true; }
     // Around a request that the loader makes for the module. The first returns what the second takes.
     uint8_t willAskHostForRequest();
-    // Answers what it was.
-    static bool setIsAskingHost(JSGlobalObject*, bool);
+    // Around a request that the loader makes for no module of its own: every image of the realm asks. The first returns what the second takes: which of them were asking.
+    static BitVector letAllImagesAskHost(JSGlobalObject*);
+    static void restoreImagesThatAskHost(JSGlobalObject*, const BitVector& wereAsking);
     void didAskHostForRequest(uint8_t flagsBefore);
     // The host threw in place of an answer.
     void didFailToFetchRequest(const Identifier& key, Exception*);
@@ -123,11 +129,15 @@ public:
 
     // What the module itself says of the name. The search goes on in the targets: they are those of the `export *` whose names the build did not see.
     Resolution resolveOwnExport(JSGlobalObject*, const Identifier& exportName, StarExportTargets&);
+    bool someMockStandsInPlace() const;
+    bool standsForMock() const;
     void collectExportedNames(JSGlobalObject*, WTF::Vector<Identifier>&, StarExportTargets&);
     JSValue readExport(JSGlobalObject*, const Identifier& exportName, std::optional<unsigned> exportIndex);
     JSObject* moduleNamespaceObject(JSGlobalObject*, ModulePhase);
     JSObject* moduleNamespaceObjectForImageAbove(ModulePhase);
     static bool isSameBinding(const Resolution&, const Resolution&);
+    // The link of a module outside the image has found no such name. The table of a module that the host may ask for is whole: nothing is thrown, and the name is one that nobody exports.
+    static bool throwIfExportWasLeftOut(JSGlobalObject*, AbstractModuleRecord* importer, AbstractModuleRecord* exporter, const Identifier& name);
 
     void gatherAsynchronousTransitiveDependencies(OrderedHashSet<AbstractModuleRecord*>& result, VisitedModuleRecords& seen);
     bool readyForSyncExecution(VisitedModuleRecords& seen);
@@ -151,7 +161,9 @@ private:
     bool m_isRetained { false };
     bool m_isHeldByLoader { false };
     bool m_runsWhenLoaded { false };
+    bool m_runsInItsTurn { false };
     bool m_isRequestedByWalkedModule { false };
+    bool m_hasRequestThatFindsNothing { false };
 };
 
 } } // namespace JSC::AOT

@@ -1621,7 +1621,7 @@ private:
                 const uint32_t cell = m_cellOfSlot[range.slotIndex];
                 pool.setFreeUntil(cell, pool.startOfNextRangeIn(cell));
             });
-        m_code.proc().count(Counter::RangesHeldAgainstStackCells, static_cast<uint32_t>(std::min<uint64_t>(rangesHeldAgainstCells, std::numeric_limits<uint32_t>::max())));
+        m_code.proc().count(Counter::RangesComparedWithStackCells, static_cast<uint32_t>(std::min<uint64_t>(rangesHeldAgainstCells, std::numeric_limits<uint32_t>::max())));
     }
 
     StackColoring::UnitRange unitsOf(StackSlot* slot) const

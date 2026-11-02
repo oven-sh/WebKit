@@ -49,6 +49,24 @@ enum class SearchDirection : uint8_t { Forward, Backward };
 uint64_t packStringIntoRegister(StringView);
 LValue loadBytes(Output&, unsigned width, TypedPointer);
 
+class StringEmitter;
+
+// The cell of a string that is flat and stays so: wherever B3 moves a load from it, the load gives an impl. A test cannot promise that: the load may be moved above the test.
+// Only StringEmitter makes one, from what the program says of the value.
+class FlatStringCell {
+public:
+    CellPointer cell() const { return m_cell; }
+
+private:
+    friend class StringEmitter;
+    explicit FlatStringCell(CellPointer cell)
+        : m_cell(cell)
+    {
+    }
+
+    CellPointer m_cell;
+};
+
 class StringEmitter final : public OperationEmitter {
 public:
     explicit StringEmitter(CodeGenerator& generator)
@@ -87,7 +105,13 @@ public:
     Word32 lengthOf(CellPointer string);
     CharacterView viewOf(const OperationContext&, ValueID string);
     CharacterView viewOfFlatString(CellPointer flat);
-    Pointer implOfFlatString(CellPointer flat);
+    // The result of FlattenString.
+    std::optional<FlatStringCell> flatStringByType(ValueID string);
+    // A text of the image, written where it is used. The caller vouches that the cell is this value's: nothing here ties the two.
+    std::optional<FlatStringCell> flatStringWrittenHere(ValueID string, CellPointer cellOfString);
+    // For code that has no other road: what is neither stops the build.
+    FlatStringCell flatStringAssumedBy(const OperationContext&, ValueID string);
+    Pointer implOfFlatString(FlatStringCell);
     CharacterView viewOfString(const OperationContext&, CellPointer string);
     CharacterView subview(const CharacterView&, CodeUnitRange);
 
@@ -106,8 +130,8 @@ public:
     Condition areBoth8Bit(CellPointer, CellPointer);
     Word32 order(const OperationContext&, CellPointer, CellPointer);
     Word32 orderToCharacter(const CharacterView&, char16_t codeUnit);
-    Condition equalsLiteral(const OperationContext&, ComparedOperand, LValue subject, StringID, bool subjectIsFlat = false, bool everyCellIsString = false, bool subjectIsComparedAgain = false);
-    void branchOnEqualsLiteral(const OperationContext&, ComparedOperand, LValue subject, StringID, BranchTargets, bool subjectIsFlat = false, bool everyCellIsString = false, bool subjectIsComparedAgain = false);
+    Condition equalsLiteral(const OperationContext&, ComparedOperand, LValue subject, StringID, std::optional<FlatStringCell> flatSubject = std::nullopt, bool everyCellIsString = false, bool subjectIsComparedAgain = false);
+    void branchOnEqualsLiteral(const OperationContext&, ComparedOperand, LValue subject, StringID, BranchTargets, std::optional<FlatStringCell> flatSubject = std::nullopt, bool everyCellIsString = false, bool subjectIsComparedAgain = false);
     // Where the atom of a name of the image lies. In an image that may lie anywhere the atom is made on demand: `exists` says whether it has been.
     struct AtomOfName {
         Pointer address;
@@ -139,7 +163,7 @@ private:
     CellPointer substringBaseOf(CellPointer rope);
     Word32 loadCodeUnit(Pointer characters, Word32 index, bool is8Bit);
 
-    void generateEqualsLiteral(const ValueContext&, ComparedOperand, LValue subject, bool subjectIsFlat, bool everyCellIsString = false);
+    void generateEqualsLiteral(const ValueContext&, ComparedOperand, LValue subject, std::optional<FlatStringCell> flatSubject, bool everyCellIsString = false);
     void generateEndsLiteral(const ValueContext&, LiteralEnd);
     void generateFindLiteral(const ValueContext&, SearchDirection);
     bool comparesLiteralInPlace(const OperationContext&, const String& text) const;

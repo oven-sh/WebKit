@@ -251,7 +251,22 @@ Boxed HashTableBuiltinEmitter::lookUpAmongTags(const InlineCall& call, CellPoint
     LValue bitsOfUsedTags = m_out.shl(m_out.zeroExtPtr(m_out.load32(inHeader(table, CompactTable::offsetOfUsed()))), m_out.constInt32(3));
     LValue values = returnsValue ? m_out.add(table, m_out.shl(m_out.zeroExtPtr(m_out.castToInt32(kinds)), m_out.constInt32(2))) : nullptr;
     LValue valuesAreNarrow = returnsValue ? m_out.equal(m_out.bitAnd(m_out.lShr(kinds, m_out.constInt32(48)), m_out.constInt64(0xff)), m_out.constInt64(static_cast<int64_t>(CompactTable::Width::Narrow))) : nullptr;
-    Pointer impl = emitter<StringEmitter>().implOfFlatString(key);
+    // The type says which characters the key has, not which object it is: a text that was joined or cut out of another one may still be a rope. What is written here is flat.
+    std::optional<FlatStringCell> writtenHere = emitter<StringEmitter>().flatStringWrittenHere(call.argument(0), key);
+    bool isWrittenHere = !!writtenHere;
+    build().statistics().count(isWrittenHere ? StatisticID::TagLookupsWithConstantKeys : StatisticID::TagLookupsWithOtherKeys);
+    if (!isWrittenHere) {
+        Subject subject = analyses().subject();
+        subject.value = call.context().valueID();
+        subject.location = m_function.locationOf(call.context().origin());
+        build().addDecline({ .kind = Wire::DeclineKind::TagLookupKeyNotConstant, .witness = witnessOf(subject) });
+    }
+    Pointer impl = writtenHere ? emitter<StringEmitter>().implOfFlatString(*writtenHere) : loadField<Pointer>(key, m_heaps.JSString_value);
+    if (!isWrittenHere) {
+        LBasicBlock isFlat = newBlock();
+        m_out.branch(hasNoBits(impl, JSString::isRopeInPointer).value(), normalEdge(isFlat), unlikelyEdge(byStub));
+        m_out.appendTo(isFlat);
+    }
     LValue hashAndFlags = loadField<Word32>(impl, m_heaps.StringImpl_hashAndFlags).value();
     m_out.branch(m_out.aboveOrEqual(hashAndFlags, m_out.constInt32(1 << StringImpl::s_flagCount)), normalEdge(isHashed), unlikelyEdge(byStub));
 
@@ -518,7 +533,7 @@ Boxed HashTableBuiltinEmitter::lookUpInHomeSlot(const InlineCall& call, CellPoin
     // One object in 64 has the tag of another: the stub goes on from there.
     auto branchOnStringKeyAt = [&](LValue number) {
         if (!comparesTexts) {
-            m_out.branch(keyIsAt(number), normalEdge(found), unlikelyEdge(byStub));
+            m_out.branch(keyIsAt(number), normalEdge(found), unlikelyEdge(build().isSabotaged(Sabotage::ObjectsWithTheTagOfAnotherAreAbsent) ? absent : byStub));
             return;
         }
         numbersOfOtherWords.append(m_out.anchor(number));
@@ -749,7 +764,9 @@ ValueID HashTableBuiltinEmitter::findGetBehindHas(const InlineCall& has, InlineB
     auto isLookup = [&](const Value& value) {
         return value.opcode == Opcode::MoveTableToHeap || (value.opcode == Opcode::CallInline && (value.inlineBuiltin() == InlineBuiltin::MapGet || value.inlineBuiltin() == InlineBuiltin::MapHas || value.inlineBuiltin() == InlineBuiltin::SetHas));
     };
-    auto writesTables = [](const Effects& effects) {
+    auto writesTables = [&](const Effects& effects) {
+        if (build().isSabotaged(Sabotage::GetsBehindHasOutlastWrites)) [[unlikely]]
+            return false;
         return effects.writes.isTop() || effects.writes.contains(AbstractHeap::CollectionStorage) || effects.writes.contains(AbstractHeap::CollectionEntries);
     };
     ValueID receiver = behindCasts(has.receiver());
@@ -816,6 +833,7 @@ void HashTableBuiltinEmitter::lookUp(const InlineCall& call, HashTableOwner owne
     KeyComparison comparison = keyComparisonOf(typeOf(call.argument(0)));
     Boxed key = normalizedKey(call.context(), call.argument(0));
     StubKey stub = lookupStubFor(owner, answer, comparison);
+    build().statistics().count(StatisticID::InlineHashLookups);
     Boxed found = looksAmongTags(call) ? lookUpAmongTags(call, table, unboxCell(key), stub, answer, valueRead) : looksIntoHomeSlot(call, comparison) ? lookUpInHomeSlot(call, table, key, comparison, owner, answer, valueRead) : Boxed(callStub(call.context(), stub, { table.value(), key.value() }).first);
     emitter<RuntimeCallEmitter>().setCallsOnlyMoveTables(false);
     switch (answer) {

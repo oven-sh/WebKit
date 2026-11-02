@@ -134,7 +134,8 @@ void ArrayIntrinsicEmitter::generatePutOwnContiguousIndex(const ValueContext& va
     CellPointer array = in<CellPointer>(value->arrayOperand());
     ValueID stored = value->valueOperand();
     Operand rawElement = get(stored);
-    elements().storeRawElement(contiguous, elements().elementsOf(array), integerOperand(value->positionOperand()), rawElement);
+    // The storage may be of int32: see loadBoxedElement().
+    m_out.store64(rawElement.as<Boxed>().value(), elements().elementOfUnknownForm(elements().elementsOf(array), integerOperand(value->positionOperand())));
     barrierAfterStore(value, array, rawElement, typeOf(stored));
 }
 
@@ -441,8 +442,9 @@ void ArrayIntrinsicEmitter::generateTryCopyFilledElements(const ValueContext& va
     define(value, join.finish());
 }
 
-// Out of an array of boxed values that the library made and filled, into one that the program holds. False, with nothing stored, where that one is shorter or has no writable storage
-// of the three kinds. Storage for integers or doubles takes them as they are: whoever asks knows that they are such numbers then.
+// Out of an array of boxed values that the library made and filled, into one that the program holds. False where that one is shorter or has no writable storage of the three kinds.
+// Storage for integers takes them as they are: it is never younger than the values. Storage for doubles may be: convertStorageOfNumbers() makes it of storage for any value while the program's
+// code runs. So it asks each value, and answers false at the first that is no number: whoever asks then stores all of them the ordinary way.
 void ArrayIntrinsicEmitter::generateTryPutElements(const ValueContext& value)
 {
     CellPointer array = in<CellPointer>(value->arrayOperand());
@@ -476,6 +478,7 @@ void ArrayIntrinsicEmitter::generateTryPutElements(const ValueContext& value)
         branchUnless(belowOrEqual(count, elements().publicLength(to)), otherwise);
         forEachPositionBelow(count, [&](Integer position) {
             Boxed word(m_out.load64(elements().elementOfUnknownForm(from, position)));
+            branchUnless(isNumber(word), otherwise);
             Number number = select(isInt32(word), toNumber(unboxInt32(word)), unboxDouble(word));
             elements().storeRawElement(doubles, to, position, number);
         });

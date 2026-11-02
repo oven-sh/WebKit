@@ -295,7 +295,7 @@ private:
     bool hasWords(uint64_t count) const { return count <= m_code.size() - m_offset; }
     uint32_t checkedCount(uint32_t count, uint32_t minWordsPerElement = 1);
     uint16_t nextFlags(uint32_t wireMask, uint32_t declaredMask);
-    ValueID usedValue(uint32_t word) const { return word < m_checksOfParameters.size() ? m_checksOfParameters[word] : ValueID(word); }
+    ValueID usedValue(uint32_t word) const { return word < m_checksOfParameters.size() ? m_checksOfParameters[word] : ValueID::fromBits(word); }
     ValueID allocateValueID();
     Value& appendValue(ValueID, Opcode);
     ValueID valueID(uint32_t word);

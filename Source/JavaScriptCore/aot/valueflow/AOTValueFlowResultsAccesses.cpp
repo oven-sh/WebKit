@@ -248,7 +248,7 @@ ValueFlowEscapeOrigins::ValueFlowEscapeOrigins(const ValueFlowResultInputs& inpu
         solver.forEachPredecessorIncludingRemoved(taking, [&](ValueFlowNodeID predecessor) {
             const ValueFlowSolver::LoggedEdge* logged = solver.findLoggedEdge({ predecessor, taking });
             ValueFlowStatementID operation = logged ? requestingOperationOf(solver, logged->statement) : ValueFlowStatementID();
-            if (!operation || solver.statementAt(operation).kind != ValueFlowStatementKind::Behavior)
+            if (!operation || (solver.statementAt(operation).kind != ValueFlowStatementKind::Behavior && solver.statementAt(operation).kind != ValueFlowStatementKind::WalkOfBehavior))
                 return;
             ValueFlowNodeID inspectedNode = solver.statementAt(operation).result;
             if (inspectedNode && !ValueSets::isComplement(solver.seenValuesOf(inspectedNode)) && !inspectedNodes.contains(inspectedNode))
@@ -390,7 +390,7 @@ ValueFlowEscapeOrigins::ValueFlowEscapeOrigins(const ValueFlowResultInputs& inpu
                     if (ValueFlowStatementID operation = receivesEscapedObjects ? requestingOperationOf(solver, logger) : ValueFlowStatementID(); operation && operation != logger) {
                         if (isProgramStatement(operation))
                             return paths.append({ operation, ValueSets::nothing, escaping });
-                        if (solver.statementAt(operation).kind == ValueFlowStatementKind::Behavior)
+                        if (solver.statementAt(operation).kind == ValueFlowStatementKind::Behavior || solver.statementAt(operation).kind == ValueFlowStatementKind::WalkOfBehavior)
                             return;
                         // What a library operation passes on arrived at one of its operands.
                         bool hasArrived = false;

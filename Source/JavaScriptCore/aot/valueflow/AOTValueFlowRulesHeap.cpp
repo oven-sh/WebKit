@@ -392,8 +392,10 @@ void HeapRule::read(const ValueFlowOperand& object, const HeapKey& key)
             if (holdsAnything(carriedOut))
                 connect(m_context.lookup(carriedOut, name), m_statement.result);
         }
-        if (holdsNamedOrLoadedBun(object))
+        if (holdsNamedOrLoadedBun(object)) {
             add(m_statement.result, only(ValueFlowUniverse::markOfLoadedBun()));
+            raiseHostFlag(m_context, ValueFlowHostNode::NamedBunIsReadUnderKeysNobodyKnows);
+        }
     }
     if (key.keyClass == HeapKeyClass::Name && key.name == m_program.keyOf(BuiltinNames::__proto__) && mayBeUnknownObject(receivers) && isInProgramCode()) {
         connect(heldPrototypeObjectsOfLibraryClasses(m_context), m_statement.result);
@@ -634,9 +636,12 @@ void HeapRule::noteWrittenMembers(ClimbingSet receivers, const HeapKey& key, boo
     if (!mayNameExports || key.keyClass == HeapKeyClass::Index || !m_context.holdsAnything(m_context.nodes().ofHost(ValueFlowHostNode::EntriesOfModuleCacheAreRead)))
         return;
     bool mayBeSuchEntry = mayBeUnknownObject(receivers);
-    forEachMemberUnder(receivers, key, [&](BuiltinID member, ModuleID module) {
-        mayBeSuchEntry |= m_builtins.canonicalID(member) == Builtins::ModuleObjectExports && (!module || !m_program.at(module).exportsVariable);
-    });
+    if (!mayBeSuchEntry) {
+        // Only the member of that name is asked about, whatever else the key may name.
+        forEachMemberUnder(receivers, HeapKey { HeapKeyClass::Name, m_program.keyOf(m_builtins.at(Builtins::ModuleObjectExports).name) }, [&](BuiltinID member, ModuleID module) {
+            mayBeSuchEntry |= m_builtins.canonicalID(member) == Builtins::ModuleObjectExports && (!module || !m_program.at(module).exportsVariable);
+        });
+    }
     if (mayBeSuchEntry)
         add(m_context.nodes().ofHost(ValueFlowHostNode::ExportsOfEntriesStoredInModuleCache), unknownValue(ValueFlowUnknownSource::ContentsOfEscapedObject));
 }
@@ -824,11 +829,13 @@ ClimbingSet HeapRule::accessorsFoundFrom(ClimbingSet start, const HeapKey& key, 
     return holdsAnything(others) ? m_context.unite(accessors, m_context.valueOf(m_context.lookup(others, name))) : accessors;
 }
 
-ClimbingSet HeapRule::settersOfProgramLaidAbove(ClimbingSet start, const HeapKey& key)
+ClimbingSet HeapRule::accessorsOfProgramLaidAbove(ClimbingSet start, const HeapKey& key, HeapPropertyPart part)
 {
-    if (key.keyClass != HeapKeyClass::Name)
+    if (part == HeapPropertyPart::Setter && key.keyClass != HeapKeyClass::Name && m_context.isSabotaged(Sabotage::StoresUnderUnknownKeysEnterNoSetterThatEscaped))
         return { };
-    ValueFlowNodeID laid = readWhereWritten(chainFrom(start, key).objects, foundName(key, HeapPropertyPart::Setter));
+    if (part == HeapPropertyPart::Getter && m_context.isSabotaged(Sabotage::ReadsEnterNoGetterThatEscaped))
+        return { };
+    ValueFlowNodeID laid = readWhereWritten(chainFrom(start, key).objects, foundName(key, part));
     return laid ? m_context.valueWithin(ClimbingSet(m_universe.closures()), laid) : ClimbingSet();
 }
 
@@ -1243,16 +1250,17 @@ bool HeapRule::readsKeyOrValueOfPair()
     return true;
 }
 
-bool readsUnderNameOfEnumerationOfSameObject(const Function& function, const Value& read)
+bool readsUnderNameOfEnumerationOfSameObject(DefinitionsThroughTests& definitions, const Value& read)
 {
+    const Function& function = definitions.function();
     namespace At = OperandIndex;
-    const Value& name = function.at(definitionThroughTests(function, read.operand(At::ElemGet::property)));
+    const Value& name = function.at(definitions.of(read.operand(At::ElemGet::property)));
     if (name.opcode != Opcode::ResultAt || name.index() != 1)
         return false;
     const Value& step = function.at(name.operand(At::ResultAt::results));
     if (step.opcode != Opcode::ForInStep)
         return false;
-    return definitionThroughTests(function, step.operand(At::ForInStep::object)) == definitionThroughTests(function, read.operand(At::ElemGet::object));
+    return definitions.of(step.operand(At::ForInStep::object)) == definitions.of(read.operand(At::ElemGet::object));
 }
 
 StringID textThatSumBeginsWith(const Program& program, const Function& function, ValueID id)

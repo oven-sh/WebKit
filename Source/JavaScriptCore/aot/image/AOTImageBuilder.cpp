@@ -481,6 +481,14 @@ OptionSet<ImageFlag> flagsForUnseenCode(const Typed::PipelineOutput& pipeline, c
         flags.add(ImageFlag::StoresPathOfMainModule);
     if (flow.reachedFunctionsCountUnreadCode())
         flags.add(ImageFlag::RunsUnreadCode);
+    bool holdsMockOfFile = false;
+    bool originalMayRun = false;
+    for (const Typed::Variable& variable : pipeline.program->variables) {
+        holdsMockOfFile |= variable.flags.contains(Typed::VariableFlags::HoldsMock) && !pipeline.program->at(variable.module).runtimeModule;
+        originalMayRun |= variable.flags.contains(Typed::VariableFlags::OriginalMayRun);
+    }
+    if (holdsMockOfFile && !originalMayRun)
+        flags.add(ImageFlag::RefusesOriginalsBesideMocks);
     for (const auto& record : flow.unseenCode()) {
         if (Typed::admitsUnknownJavaScript(record.cause))
             flags.add(ImageFlag::AdmitsUnknownJavaScript);
@@ -742,8 +750,6 @@ static void writeHeader(ImageHeader& header, const ImageWriterInputs& parts, con
         flags.add(ImageFlag::IsObfuscated);
     if (context.options().sharesRealms())
         flags.add(ImageFlag::SharesRealms);
-    if (context.options().holdsLibraryAlone())
-        flags.add(ImageFlag::HoldsLibraryAlone);
     header.numbers = {
         .shapesBelow = context.imagesBelow() ? context.imagesBelow()->numbersOfLast().lastShape : 0,
         .lastShape = parts.inputs.pipeline.placement->shapes().numberOfShapes(),

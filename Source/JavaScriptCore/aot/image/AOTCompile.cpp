@@ -442,6 +442,27 @@ static void takeResults(BuildContext& context, CompileOutput& output, WhatTheBui
         for (auto [name, id] : sizes)
             dataLog(" | ", name, " ", counted[static_cast<unsigned>(id)]);
         dataLogLn();
+        static constexpr std::pair<ASCIILiteral, StatisticID> sections[] = {
+            { "program tables"_s, StatisticID::ProgramTableBytesEmitted }, { "text"_s, StatisticID::TextBytesEmitted }, { "string headers"_s, StatisticID::StringHeaderBytesEmitted },
+            { "string records"_s, StatisticID::StringRecordBytesEmitted }, { "identifiers"_s, StatisticID::IdentifierBytesEmitted }, { "string constants"_s, StatisticID::StringConstantBytesEmitted },
+            { "side tables"_s, StatisticID::SideTableBytesEmitted }, { "positions"_s, StatisticID::SideTableBytesPositions }, { "fault sites"_s, StatisticID::FaultSiteBytesEmitted },
+            { "function records"_s, StatisticID::FunctionRecordBytesEmitted }, { "function starts"_s, StatisticID::FunctionStartBytesEmitted }, { "code granules"_s, StatisticID::CodeGranuleBytesEmitted },
+            { "inner entries"_s, StatisticID::InnerEntryBytesEmitted }, { "frame maps"_s, StatisticID::FrameMapBytesEmitted }, { "closure words"_s, StatisticID::ClosureWordBytesEmitted },
+            { "regular expressions"_s, StatisticID::RegExpRecordBytesEmitted }, { "other"_s, StatisticID::OtherTableBytesEmitted },
+        };
+        dataLog("AOT size of the tables:");
+        for (auto [name, id] : sections)
+            dataLog(" | ", name, " ", counted[static_cast<unsigned>(id)]);
+        dataLogLn();
+        static constexpr std::pair<ASCIILiteral, StatisticID> groups[] = {
+            { "functions"_s, StatisticID::ProgramTableBytesFunctions }, { "layouts"_s, StatisticID::ProgramTableBytesLayouts }, { "field table"_s, StatisticID::ProgramTableBytesFieldTable },
+            { "types"_s, StatisticID::ProgramTableBytesTypes }, { "data"_s, StatisticID::ProgramTableBytesData }, { "modules"_s, StatisticID::ProgramTableBytesModules },
+            { "requests"_s, StatisticID::ProgramTableBytesRequests }, { "statics"_s, StatisticID::ProgramTableBytesStatics }, { "other"_s, StatisticID::ProgramTableBytesOther },
+        };
+        dataLog("AOT size of the program tables:");
+        for (auto [name, id] : groups)
+            dataLog(" | ", name, " ", counted[static_cast<unsigned>(id)]);
+        dataLogLn();
     }
     output.statistics = context.takeStatistics();
     output.limitValues = Vector<uint64_t>(context.limits().span());

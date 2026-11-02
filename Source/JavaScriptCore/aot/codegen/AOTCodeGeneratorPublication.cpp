@@ -340,7 +340,7 @@ void CodeGenerator::publishKnownProperties(ValueID id, Operand operand, bool isC
 
     Representation representation = operand.representation;
     std::optional<B3::IntRange> range = B3::mayHaveKnownRange(lowered->opcode()) ? knownRangeOf(type, representation) : std::nullopt;
-    unsigned bytes = representation == Representation::Cell ? leastCellSizeOf(program(), m_inputs.program.placement, type) : 0;
+    unsigned bytes = representation == Representation::Cell && B3::mayHaveKnownDereferenceableBytes(lowered) ? leastCellSizeOf(program(), m_inputs.program.placement, type) : 0;
     if (!range && !bytes)
         return;
     if (!typeHoldsWhereverComputed(*this, m_values.span(), id, isConverted ? PublishedValue::DerivedFromIt : PublishedValue::Itself))

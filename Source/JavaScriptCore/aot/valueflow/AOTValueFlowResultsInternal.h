@@ -679,6 +679,11 @@ public:
         }
         return stretches;
     }
+    void forEachNameWritten(NOESCAPE const Invocable<void(ValueFlowName)> auto& functor) const
+    {
+        for (uint64_t number : m_namesWritten)
+            functor(ValueFlowName { static_cast<ValueFlowNameKind>(number >> 32), static_cast<uint32_t>(number) });
+    }
     std::span<const CallOfValue> callsThatMayApplyBuiltins() const LIFETIME_BOUND { return m_callsThatMayApplyBuiltins.span(); }
     void findOperandsOfCalls(const ValueFlowResultInputs&, const ValueFlowHeapView&);
     const OperandsOfCall* operandsOfCallAt(size_t position) const LIFETIME_BOUND { return m_operandsOfCalls.isEmpty() ? nullptr : &m_operandsOfCalls[position]; }

@@ -97,7 +97,6 @@ public:
     const IdentifierNumbering& identifierNumbering() const;
     // Null for the first image of its realms, and for an image that shares none.
     const ImagesBelow* imagesBelow() const { return m_imagesBelow.get(); }
-    const ImagesBelow* referenceLibraryImage() const { return m_referenceLibraryImage.get(); }
     RegExpSummaries& regExpSummaries() { return *m_regExpSummaries; }
     Typed::ScratchRealms& scratchRealms() { return *m_scratchRealms; }
     Typed::FormatPatternPlans& formatPatternPlans() { return *m_formatPatternPlans; }
@@ -165,7 +164,6 @@ private:
     std::optional<BitVector> m_functionsToDump;
     std::unique_ptr<const IdentifierNumbering> m_identifierNumbering;
     std::unique_ptr<const ImagesBelow> m_imagesBelow;
-    std::unique_ptr<const ImagesBelow> m_referenceLibraryImage;
     std::unique_ptr<DeferredDestroyer> m_deferredDestroyer;
 };
 

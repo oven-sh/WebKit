@@ -11,7 +11,6 @@
 #include "AOTEffects.h"
 #include "AOTExpected.h"
 #include "AOTStubDescriptor.h"
-#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include "CPUFeatureSet.h"
 #include "RegisterSet.h"
@@ -85,8 +84,6 @@ struct RegExpLiteralConstants {
 };
 
 struct StubPolicy {
-    AOT_CLASS_THRESHOLD(uint32_t, minUsesForOwnStub, 512);
-
     const BitVector& namesWithOwnStub(Typed::Access access) const { return namesWithOwnStubByAccess[static_cast<size_t>(access)]; }
     std::optional<uint32_t> expectedFieldTableEntry(uint32_t name) const
     {

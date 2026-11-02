@@ -324,11 +324,18 @@ public:
         , m_universe(context.universe())
         , m_tables(m_universe.builtinTables())
         , m_undefined(operandHolding(m_universe.undefinedValue()))
+        , m_globalObject(operandHolding(context.maker().of(m_universe.objectOf(Builtins::GlobalThis))))
         , m_asksProxiesInReceiverByTheirTraps(m_builtins.canonicalID(builtin) == Builtins::FunctionPrototypeBind || m_builtins.canonicalID(builtin) == Builtins::FunctionPrototypeSymbolHasInstance)
     {
         for (BuiltinOperand operand : { BuiltinOperand::receiver(), BuiltinOperand::argument(0), BuiltinOperand::argument(3) }) {
             if (modeAndUseOf(call.kind).first == BuiltinCallMode::Call && asksOperandAboutOwnProperty(m_builtins, builtin, operand))
                 m_operandAskedAboutOwnProperty = operand;
+        }
+        for (const BuiltinOverload& overload : m_builtins.overloadsOf(builtin)) {
+            for (const BuiltinParameter& parameter : overload.parameters) {
+                if (isGlobalObjectAlone(parameter.accepted))
+                    m_operandOfGlobalObject = parameter.operand;
+            }
         }
     }
 
@@ -649,6 +656,21 @@ private:
         });
     }
 
+    bool isGlobalObjectAlone(BuiltinTypeID id) const
+    {
+        const BuiltinType& type = m_builtins.at(id);
+        return type.flags.isEmpty() && type.primitives.isEmpty() && type.stringLiterals.empty() && type.parts.size() == 1
+            && type.parts.front().kind == BuiltinTypePartKind::Builtin && m_builtins.canonicalID(type.parts.front().builtin) == m_builtins.canonicalID(Builtins::GlobalThis);
+    }
+
+    bool standsForGlobalObject(BuiltinOperand position) const
+    {
+        if (position != m_operandOfGlobalObject || !m_overload) [[likely]]
+            return false;
+        auto parameter = std::ranges::find(m_overload->parameters, position, &BuiltinParameter::operand);
+        return parameter != m_overload->parameters.end() && isGlobalObjectAlone(parameter->accepted);
+    }
+
     void forEachOperandWithProxiesAt(BuiltinOperand position, NOESCAPE const Invocable<void(const ValueFlowOperand&)> auto& functor) const
     {
         auto hand = [&](const ValueFlowOperand& operand) {
@@ -667,6 +689,8 @@ private:
             return;
         }
         case BuiltinOperand::Kind::Argument:
+            if (standsForGlobalObject(position))
+                return functor(m_globalObject);
             if (position.argumentIndex() < m_call.arguments.size()) {
                 hand(m_call.arguments[position.argumentIndex()]);
                 if (!m_call.argumentsMayBeAbsent)
@@ -781,6 +805,8 @@ private:
         case BuiltinOperand::Kind::Receiver:
             return mayHold(isPassed(m_call.thisValue) ? m_call.thisValue : m_undefined);
         case BuiltinOperand::Kind::Argument: {
+            if (position == m_operandOfGlobalObject && mayHold(m_globalObject)) [[unlikely]]
+                return true;
             unsigned index = position.argumentIndex();
             if (index < m_call.arguments.size() && (mayHold(m_call.arguments[index]) || !m_call.argumentsMayBeAbsent))
                 return mayHold(m_call.arguments[index]);
@@ -906,7 +932,7 @@ private:
             });
             if (testsNames)
                 mutations.add(ObjectMutation::AddProperty);
-            ClimbingSet changed = m_context.markedAmong(m_context.restrict(valueAt(node.operand), whilePristine), mutations);
+            ClimbingSet changed = m_context.markedThemselvesOrThroughUnknownObjectAmong(m_context.restrict(valueAt(node.operand), whilePristine), mutations);
             if (!m_context.meet(changed, ValueSets::anything))
                 stillTested = m_context.maker().intersect(stillTested, ValueSets::complement(whilePristine));
         }
@@ -2141,8 +2167,10 @@ private:
             ValueSetID objectsOfProgram = m_context.maker().intersect(m_context.maker().intersect(m_universe.objects(), everythingButUnknownObject(m_context)), ValueSets::complement(m_universe.builtinObjects()));
             ClimbingSet holders = valueAt(*place.operand);
             forEachOperandAt(*place.operand, [&](const ValueFlowOperand& operand) {
-                if (holdsNamedOrLoadedBun(operand))
+                if (holdsNamedOrLoadedBun(operand)) {
                     constant = m_context.maker().unite(constant, m_context.maker().of(ValueFlowUniverse::markOfLoadedBun()));
+                    raiseHostFlag(m_context, ValueFlowHostNode::NamedBunIsReadUnderKeysNobodyKnows);
+                }
             });
             if (mayBeUnknownObject(holders)) {
                 forEachOperandAt(*place.operand, [&](const ValueFlowOperand& operand) {
@@ -3325,7 +3353,8 @@ private:
         if (definition.opcode != Opcode::Call || descriptorIndex >= definition.numberOfOperands() || keyIndex >= definition.numberOfOperands())
             return std::nullopt;
 
-        ValueID read = definitionThroughTests(function, definition.operand(descriptorIndex));
+        DefinitionsThroughTests definitions(function);
+        ValueID read = definitions.of(definition.operand(descriptorIndex));
         if (function.at(read).opcode != Opcode::Call || function.at(read).numberOfOperands() != numberOfOperandsBeforeArguments + 2)
             return std::nullopt;
         const Value& callee = function.at(sameObjectThroughCasts(function, function.at(read).operand(0)));
@@ -3334,7 +3363,7 @@ private:
         BuiltinID reader = m_builtins.canonicalID(callee.builtin());
         if (reader != Builtins::ObjectGetOwnPropertyDescriptor && reader != Builtins::ReflectGetOwnPropertyDescriptor)
             return std::nullopt;
-        if (definitionThroughTests(function, function.at(read).operand(numberOfOperandsBeforeArguments + 1)) != definitionThroughTests(function, definition.operand(keyIndex)))
+        if (definitions.of(function.at(read).operand(numberOfOperandsBeforeArguments + 1)) != definitions.of(definition.operand(keyIndex)))
             return std::nullopt;
         // Each of the two calls converts a key that is an object anew, and may get another name for it.
         ValueSetID convertedByCode = m_context.maker().intersect(m_universe.objects(), ValueSets::complement(m_universe.symbols()));
@@ -3512,8 +3541,10 @@ private:
     const ValueFlowUniverse& m_universe;
     const ValueFlowBuiltinTables& m_tables;
     ValueFlowOperand m_undefined;
+    ValueFlowOperand m_globalObject;
     bool m_asksProxiesInReceiverByTheirTraps;
     std::optional<BuiltinOperand> m_operandAskedAboutOwnProperty;
+    std::optional<BuiltinOperand> m_operandOfGlobalObject;
     ClimbingSet m_proxiesAskedAboutOwnProperty;
     const BuiltinOverload* m_overload { nullptr };
     bool m_handsOnResult { false };
@@ -4657,20 +4688,35 @@ static void readNamedMembersAboveEscapedObjects(ValueFlowRuleContext& context, V
         context.add(context.hub(universe.builtinTables().conversionToPrimitive()), unknownValue(context, ValueFlowUnknownSource::ContentsOfEscapedObject));
 }
 
-static void readMembersOfReceivers(ValueFlowRuleContext& context, ValueFlowNodeID hub, const ValueFlowBehavior& behavior, ClimbingSet receivers)
+static ClimbingSet objectsWalkedAmong(ValueFlowRuleContext& context, const ValueFlowBehavior& behavior, ClimbingSet receivers)
 {
-    const ValueFlowUniverse& universe = context.universe();
-    ValueSetID walked = walkedWhereFunctionsAreOnlyNamed(context, behavior.namesFunctionsOnly);
-    ClimbingSet objects = context.restrict(withWhatUntrackedObjectCovers(context, context.restrict(receivers, universe.objects())), walked);
+    ClimbingSet objects = context.restrict(withWhatUntrackedObjectCovers(context, context.restrict(receivers, context.universe().objects())), walkedWhereFunctionsAreOnlyNamed(context, behavior.namesFunctionsOnly));
     // Of a proxy the test against a constructor reads names alone.
     if (behavior.protocols == Protocols { Protocol::HasInstance })
         objects = context.restrict(objects, ValueSets::complement(context.withMembersOf(ValueSets::nothing, context.followedProxiesAmong(objects))));
-    if (behavior.isTransitive) {
-        context.connect(context.readWhatWasWritten(objects, everyPropertyName), hub);
-        context.connect(enumerablePropertiesNobodyWrote(context, objects, MetBy::NativeCode), hub);
-        context.connect(context.readWhatWasWritten(objects, copiedFromName), hub);
-        context.connect(context.lookup(context.restrict(objects, context.maker().intersect(universe.knownObjects(), ValueSets::complement(universe.builtinObjects()))), elementsName), hub);
-    }
+    return objects;
+}
+
+static void walkInto(ValueFlowRuleContext& context, ValueFlowNodeID hub, ClimbingSet objects, ClimbingSet allObjects)
+{
+    const ValueFlowUniverse& universe = context.universe();
+    context.connect(enumerablePropertiesNobodyWrote(context, allObjects, MetBy::NativeCode), hub);
+    if (!context.meet(objects, ValueSets::anything))
+        return;
+    context.connect(context.readWhatWasWritten(objects, everyPropertyName), hub);
+    context.connect(context.readWhatWasWritten(objects, copiedFromName), hub);
+    context.connect(context.lookup(context.restrict(objects, context.maker().intersect(universe.knownObjects(), ValueSets::complement(universe.builtinObjects()))), elementsName), hub);
+}
+
+enum class WalkIsDone : bool { Here, ByItsOwnStatement };
+
+static void readMembersOfReceivers(ValueFlowRuleContext& context, ValueFlowNodeID hub, const ValueFlowBehavior& behavior, ClimbingSet receivers, WalkIsDone walkIsDone = WalkIsDone::Here)
+{
+    const ValueFlowUniverse& universe = context.universe();
+    ValueSetID walked = walkedWhereFunctionsAreOnlyNamed(context, behavior.namesFunctionsOnly);
+    ClimbingSet objects = objectsWalkedAmong(context, behavior, receivers);
+    if (behavior.isTransitive && walkIsDone == WalkIsDone::Here)
+        walkInto(context, hub, objects, objects);
     if (behavior.isTransitive && behavior.protocols.contains(Protocol::HasInstance))
         context.connect(context.read(objects, ValueFlowCellName { ValueFlowNameKind::HiddenSlot, BuiltinSlots::BoundFunctionTarget.index() }), hub);
     if (behavior.isTransitive && behavior.protocols.containsAll({ Protocol::OwnValues, Protocol::PrototypeChain }))
@@ -4686,8 +4732,19 @@ static void readMembersOfReceivers(ValueFlowRuleContext& context, ValueFlowNodeI
     if (!behavior.protocols.contains(Protocol::Named))
         return;
 
-    if (behavior.namedMembers.empty() && behavior.isTransitive)
-        context.connect(context.readWhatWasWritten(chainOfProgramFrom(context, objects), everyPropertyName), hub);
+    if (behavior.namedMembers.empty() && behavior.isTransitive) {
+        // On a function where a lookup finds no function and no accessor of the program's, a walk finds what Function.prototype has and no more.
+        ClimbingSet found = context.valueOf(context.readWhatWasWritten(chainOfProgramFrom(context, objects), everyPropertyName));
+        ClimbingSet functions = context.restrict(found, universe.callables());
+        context.add(hub, context.restrict(found, ValueSets::complement(universe.callables())));
+        context.add(hub, context.restrict(functions, ValueSets::complement(universe.knownObjects())));
+        context.add(hub, context.markedAmong(functions, { ObjectMutation::AddProperty, ObjectMutation::RedefineProperty }));
+        context.forEachMemberInLine(context.restrict(functions, universe.knownObjects()), [&](ValueFlowObjectID function) {
+            ClimbingSet holders = context.unite(only(context, function), chainOfProgramFrom(context, only(context, function)));
+            if (context.meet(context.valueOf(context.readWhatWasWritten(holders, everyPropertyName)), universe.callables()) || context.meet(context.valueOf(context.readWhatWasWritten(holders, everyGetterName)), ValueSets::anything))
+                context.add(hub, only(context, function));
+        });
+    }
     bool findsUnknownObject = false;
     for (BuiltinName name : behavior.namedMembers) {
         ValueFlowNodeID member = context.lookup(receivers, property(context, name));
@@ -5129,6 +5186,25 @@ static void describeRefusedOperands(ValueFlowRuleContext& context, ValueFlowNode
     });
 }
 
+// The hub of a behavior that walks grows by what the walk finds, a level of the objects a round. The behavior's own statement looks at all that the hub holds, and waits
+// while anything else can run: so what feeds the hub is no part of it.
+void runWalkOfBehavior(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
+{
+    ValueFlowNodeID hub = statement.result;
+    const ValueFlowBehavior& behavior = context.universe().builtinTables().at(context.nodes().behaviorOf(hub));
+    ValueFlowRuleContext::NativeWalk walk(context);
+    auto walkedAmong = [&](ClimbingSet values) {
+        ClimbingSet receivers = context.restrict(values, everythingButUnknownObject(context));
+        if (onlyLists(behavior) || serializes(behavior) || behavior.printsTargetsOfProxies)
+            receivers = context.restrict(receivers, ValueSets::complement(context.withMembersOf(ValueSets::nothing, context.followedProxiesAmong(receivers))));
+        return objectsWalkedAmong(context, behavior, receivers);
+    };
+    ClimbingSet held = context.valueOf(hub);
+    ClimbingSet allObjects = walkedAmong(held);
+    bool mayLeaveOutLaterWhatIsWalkedNow = context.contains(held, ValueFlowUniverse::untrackedObject()) || context.meet(held, context.universe().proxiesFromNamedConstructor());
+    walkInto(context, hub, mayLeaveOutLaterWhatIsWalkedNow ? allObjects : walkedAmong(context.newSince(hub)), allObjects);
+}
+
 void runBehavior(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
 {
     ValueFlowNodeID hub = statement.result;
@@ -5161,7 +5237,7 @@ void runBehavior(const ValueFlowStatement& statement, ValueFlowRuleContext& cont
         mask = context.maker().intersect(mask, ValueSets::complement(context.withMembersOf(ValueSets::nothing, proxies)));
         receivers = context.restrict(receivers, mask);
     }
-    readMembersOfReceivers(context, hub, behavior, receivers);
+    readMembersOfReceivers(context, hub, behavior, receivers, WalkIsDone::ByItsOwnStatement);
     // A walk reads the unknown object off a receiver that unknown code may have written to, and that covers the receiver here.
     if (behavior.isTransitive && mayUnknownCodeWrite(context)) {
         const ValueFlowUniverse& universe = context.universe();

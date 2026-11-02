@@ -867,7 +867,7 @@ private:
                     return false;
                 }
                 RELEASE_ASSERT(!distance.counter);
-                if (isTakenToLieApart || validation.takesAccessesOfVectorTurnsToLieApart) {
+                if (isTakenToLieApart || validation.assumesVectorIterationAccessesAreDisjoint) {
                     if (!validation.logsMovedLoads)
                         continue;
                     if (plan.numberOfDistancesCheckedAtEntry == Limits::maxDistancesCheckedInFrontOfVectorizedLoop)
@@ -954,7 +954,7 @@ private:
         if (operation.comparesWithoutSign) {
             auto left = intervalInTurn(plan, operation.left, Limits::maxDepthOfAddressInVectorizedLoop);
             auto right = intervalInTurn(plan, operation.right, Limits::maxDepthOfAddressInVectorizedLoop);
-            if ((left && right && left->min >= 0 && right->min >= 0) || m_proc.policy().validation.comparesAllLanesWithSign)
+            if ((left && right && left->min >= 0 && right->min >= 0) || m_proc.policy().validation.comparesAllLanesAsSigned)
                 operation.comparesWithoutSign = false;
         }
         // Without a sign: pminub, pmaxub | pminuw, pmaxuw | pminud, pmaxud. All but the first pair came with those of 32 bits with a sign.
@@ -1073,7 +1073,7 @@ private:
         if (stored != access.memory->child(0))
             return true;
         auto interval = intervalInTurn(plan, stored, Limits::maxDepthOfAddressInVectorizedLoop);
-        if (m_proc.policy().validation.takesLanesToHoldWholeValues)
+        if (m_proc.policy().validation.assumesLanesHoldWholeValues)
             return true;
         if (!interval)
             return false;
@@ -1084,7 +1084,7 @@ private:
     // A lane has the lowest bits of a value. They are all of it where the value is no wider, or is known to fit.
     bool holdsWholeValue(const Plan& plan, Value* value)
     {
-        if (sizeofType(value->type()) == plan.bytesPerLane || m_proc.policy().validation.takesLanesToHoldWholeValues)
+        if (sizeofType(value->type()) == plan.bytesPerLane || m_proc.policy().validation.assumesLanesHoldWholeValues)
             return true;
         auto interval = intervalInTurn(plan, value, Limits::maxDepthOfAddressInVectorizedLoop);
         return interval && intervalOfLane(plan.bytesPerLane, Signedness::Signed).contains(*interval);
@@ -1240,7 +1240,7 @@ private:
                     return false;
                 if (!needVector(plan, sum.addend))
                     return false;
-                sum.lanesCompareWithoutSign = (sum.lanesHoldNoSign && !m_proc.policy().validation.comparesAllLanesWithSign) || operation.comparesWithoutSign;
+                sum.lanesCompareWithoutSign = (sum.lanesHoldNoSign && !m_proc.policy().validation.comparesAllLanesAsSigned) || operation.comparesWithoutSign;
                 continue;
             }
             // A sum of 32 bits wraps around in a lane as it does in a register.
@@ -1837,7 +1837,7 @@ private:
         bool runsInStretches = (plan.poll || plan.numberOfSums) && hasFarBound;
         // A stretch that adds numbers up begins with a test of its own. The block in front of the turns leads nowhere else.
         BasicBlock* head = entered;
-        bool testsSumsOfNumbers = !m_proc.policy().validation.takesSumsOfNumbersToBeWhole;
+        bool testsSumsOfNumbers = !m_proc.policy().validation.assumesDoubleSumsAreIntegers;
         for (const Sum& sum : plan.sums()) {
             if (sum.phi->type() == Double && head == entered && testsSumsOfNumbers)
                 head = m_proc.addBlock(frequency);

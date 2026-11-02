@@ -138,6 +138,7 @@ private:
     bool mergesAllocationThatSinksWithItsCopyAt(BlockID) const;
     bool mergesGeneratorWithItsCopyAt(BlockID) const;
     bool canLeaveCopyAt(BlockID) const;
+    bool isTestOfBranchInOtherBlockThatPassesProofs(ValueID) const;
     bool handsOverTooMuchAtExits() const;
     bool tryPlan(Extent, uint64_t maxBlocks, const RegionCloner::LivenessSource&);
     void recordTestedRejoins();

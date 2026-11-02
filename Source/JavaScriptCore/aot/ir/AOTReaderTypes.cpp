@@ -1011,7 +1011,7 @@ Failure Reader::computeFunctionFamilies()
 void Reader::makeRoomForFunctions()
 {
     size_t numberOfFunctions = m_sections.functions.size();
-    m_program.functions.reserveInitialCapacity(numberOfFunctions + numberOfFunctions * 3 / 2);
+    m_program.functions.reserveInitialCapacity(ASAN_ENABLED ? numberOfFunctions : numberOfFunctions + numberOfFunctions * 3 / 2);
     growFromEmpty(m_build.parallelLoops(), m_program.functions, numberOfFunctions);
 }
 
@@ -1424,7 +1424,7 @@ static TypeID typeInSlotBelow(TypeArena& types, const RuntimeType& recorded, con
         type.anyObject = true;
         type.anyFunction = true;
     }
-    if (objects)
+    if (objects && !objects->isEmpty())
         type.layouts = types.completeLayoutSet(objects->span());
     return types.intern(WTF::move(type));
 }

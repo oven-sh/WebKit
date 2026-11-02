@@ -34,14 +34,51 @@
 
 namespace JSC { namespace AOT {
 
-void emitReportOfBrokenClaim(CCallHelpers& jit, BrokenClaim claim, Typed::FunctionID function, Typed::ValueID value, int32_t offset, GPRReg found, GPRReg given)
+static void forEachRegisterKeptRoundReport(NOESCAPE const Invocable<void(GPRReg, int32_t)> auto& forGPR, NOESCAPE const Invocable<void(FPRReg, int32_t)> auto& forFPR)
+{
+    int32_t offset = 0;
+    for (auto reg = CCallHelpers::firstRegister(); reg <= CCallHelpers::lastRegister(); reg = static_cast<GPRReg>(reg + 1)) {
+        if (reg != CCallHelpers::stackPointerRegister)
+            forGPR(reg, offset);
+        offset += sizeof(uint64_t);
+    }
+    offset = WTF::roundUpToMultipleOf<16>(offset);
+    for (auto reg = CCallHelpers::firstFPRegister(); reg <= CCallHelpers::lastFPRegister(); reg = static_cast<FPRReg>(reg + 1)) {
+        forFPR(reg, offset);
+        offset += 16;
+    }
+}
+
+static constexpr int32_t bytesOfRegistersKeptRoundReport = WTF::roundUpToMultipleOf<16>((CCallHelpers::lastRegister() - CCallHelpers::firstRegister() + 1) * static_cast<int32_t>(sizeof(uint64_t))) + (CCallHelpers::lastFPRegister() - CCallHelpers::firstFPRegister() + 1) * 16;
+// A function without a frame may have words below the stack pointer.
+static constexpr int32_t bytesLeftAloneBelowStackPointer = 128;
+
+void emitReportOfBrokenClaim(CCallHelpers& jit, BrokenClaim claim, Typed::FunctionID function, Typed::ValueID value, int32_t offset, GPRReg found, GPRReg given, ReportOfBrokenClaim report)
 {
     AllowMacroScratchRegisterUsage allowScratch(jit);
     constexpr int32_t bytesForCallee = 32;
+    bool comesBack = report == ReportOfBrokenClaim::ComesBack;
+    constexpr int32_t offsetOfStackPointer = bytesForCallee + 2 * static_cast<int32_t>(sizeof(uint64_t));
+    GPRReg stackPointerOfRegisters = InvalidGPRReg;
+    if (comesBack) {
+        jit.subPtr(CCallHelpers::TrustedImm32(bytesLeftAloneBelowStackPointer + bytesOfRegistersKeptRoundReport), CCallHelpers::stackPointerRegister);
+        forEachRegisterKeptRoundReport([&](GPRReg reg, int32_t at) {
+            jit.store64(reg, CCallHelpers::Address(CCallHelpers::stackPointerRegister, at));
+        }, [&](FPRReg reg, int32_t at) {
+            jit.storeVector(reg, CCallHelpers::Address(CCallHelpers::stackPointerRegister, at));
+        });
+        for (GPRReg candidate : { GPRInfo::regT0, GPRInfo::regT1, GPRInfo::regT2, GPRInfo::regT3 }) {
+            if (candidate != found && candidate != given && candidate != instanceGPR)
+                stackPointerOfRegisters = candidate;
+        }
+        jit.move(CCallHelpers::stackPointerRegister, stackPointerOfRegisters);
+    }
     // ARM64 keeps the stack pointer aligned, and its AND cannot read it.
     if constexpr (!isARM64())
         jit.andPtr(CCallHelpers::TrustedImm32(-16), CCallHelpers::stackPointerRegister);
-    jit.subPtr(CCallHelpers::TrustedImm32(bytesForCallee + 2 * static_cast<int32_t>(sizeof(uint64_t))), CCallHelpers::stackPointerRegister);
+    jit.subPtr(CCallHelpers::TrustedImm32(bytesForCallee + 4 * static_cast<int32_t>(sizeof(uint64_t))), CCallHelpers::stackPointerRegister);
+    if (comesBack)
+        jit.store64(stackPointerOfRegisters, CCallHelpers::Address(CCallHelpers::stackPointerRegister, offsetOfStackPointer));
     for (unsigned i = 0; i < 2; ++i) {
         CCallHelpers::Address word(CCallHelpers::stackPointerRegister, bytesForCallee + static_cast<int32_t>(i * sizeof(uint64_t)));
         if (GPRReg reg = i ? given : found; reg != InvalidGPRReg)
@@ -50,12 +87,23 @@ void emitReportOfBrokenClaim(CCallHelpers& jit, BrokenClaim claim, Typed::Functi
             jit.store64(CCallHelpers::TrustedImm64(0), word);
     }
     jit.loadPtr(CCallHelpers::Address(instanceGPR, AOT_INSTANCE_OFFSET(runtimeTable)), GPRInfo::nonArgGPR0);
-    jit.move(CCallHelpers::TrustedImm32(static_cast<int32_t>(static_cast<uint32_t>(claim) | static_cast<uint32_t>(offset) << 8)), GPRInfo::argumentGPR0);
+    jit.move(CCallHelpers::TrustedImm32(static_cast<int32_t>(static_cast<uint32_t>(claim) | (comesBack ? reportOfBrokenClaimComesBack : 0) | static_cast<uint32_t>(offset) << 8)), GPRInfo::argumentGPR0);
     jit.move(CCallHelpers::TrustedImm32(static_cast<int32_t>(function.index())), GPRInfo::argumentGPR1);
     jit.move(CCallHelpers::TrustedImm32(static_cast<int32_t>(value.index())), GPRInfo::argumentGPR2);
     jit.addPtr(CCallHelpers::TrustedImm32(bytesForCallee), CCallHelpers::stackPointerRegister, GPRInfo::argumentGPR3);
     jit.call(CCallHelpers::Address(GPRInfo::nonArgGPR0, offsetInRuntimeTable(Entry::operationAOTReportBrokenClaim)), OperationPtrTag);
-    jit.breakpoint();
+    if (!comesBack) {
+        jit.breakpoint();
+        return;
+    }
+    jit.loadPtr(CCallHelpers::Address(CCallHelpers::stackPointerRegister, offsetOfStackPointer), GPRInfo::regT0);
+    jit.move(GPRInfo::regT0, CCallHelpers::stackPointerRegister);
+    forEachRegisterKeptRoundReport([&](GPRReg reg, int32_t at) {
+        jit.load64(CCallHelpers::Address(CCallHelpers::stackPointerRegister, at), reg);
+    }, [&](FPRReg reg, int32_t at) {
+        jit.loadVector(CCallHelpers::Address(CCallHelpers::stackPointerRegister, at), reg);
+    });
+    jit.addPtr(CCallHelpers::TrustedImm32(bytesLeftAloneBelowStackPointer + bytesOfRegistersKeptRoundReport), CCallHelpers::stackPointerRegister);
 }
 
 static bool checkKnownRanges(B3::Procedure& proc, Typed::FunctionID function)
@@ -85,10 +133,10 @@ static bool checkKnownRanges(B3::Procedure& proc, Typed::FunctionID function)
     return changed;
 }
 
-static RefPtr<B3::DifferenceReport> reportOf(BrokenClaim claim, Typed::FunctionID function)
+static RefPtr<B3::DifferenceReport> reportOf(BrokenClaim claim, Typed::FunctionID function, ReportOfBrokenClaim report = ReportOfBrokenClaim::EndsRun)
 {
-    return createSharedTask<void(CCallHelpers&, const B3::MovedLoad&, GPRReg, GPRReg)>([claim, function](CCallHelpers& jit, const B3::MovedLoad& load, GPRReg found, GPRReg given) {
-        emitReportOfBrokenClaim(jit, claim, function, Typed::valueOfOrigin(load.origin), load.offset, found, given);
+    return createSharedTask<void(CCallHelpers&, const B3::MovedLoad&, GPRReg, GPRReg)>([claim, function, report](CCallHelpers& jit, const B3::MovedLoad& load, GPRReg found, GPRReg given) {
+        emitReportOfBrokenClaim(jit, claim, function, Typed::valueOfOrigin(load.origin), load.offset, found, given, report);
     });
 }
 
@@ -283,6 +331,9 @@ void checkMovedLoadsAtRunTime(B3::Policy& policy, Typed::FunctionID function, co
 {
     policy.validation.logsMovedLoads = logged.loads;
     policy.validation.logsDecidedComparisons = logged.decidedComparisons;
+    policy.validation.continuesAfterMovedLoadReports = logged.reportsComeBack;
+    ReportOfBrokenClaim report = logged.reportsComeBack ? ReportOfBrokenClaim::ComesBack : ReportOfBrokenClaim::EndsRun;
+    // The vectorizer's report ends a block: that one does not come back.
     policy.reportsMovedLoad = reportOf(BrokenClaim::LoadMayMove, function);
     policy.saysWhatCountsOfMovedLoad = createSharedTask<bool(const B3::MemoryValue&, B3::MovedLoad&)>([&procedure, &guardTests](const B3::MemoryValue& load, B3::MovedLoad& moved) {
         AOTHeaps& heaps = AOTHeaps::of(*procedure);
@@ -318,8 +369,8 @@ void checkMovedLoadsAtRunTime(B3::Policy& policy, Typed::FunctionID function, co
     policy.clientPhases.append(B3::ClientPhase {
         B3::ClientPhase::Point::AfterSinking,
         "checkMovedLoadsAtRunTime"_s,
-        createSharedTask<bool(B3::Procedure&)>([function](B3::Procedure& proc) {
-            return proc.movedLoadLog().insertChecks(proc, reportOf(BrokenClaim::LoadMayMove, function), reportOf(BrokenClaim::ComparisonIsDecided, function));
+        createSharedTask<bool(B3::Procedure&)>([function, report](B3::Procedure& proc) {
+            return proc.movedLoadLog().insertChecks(proc, reportOf(BrokenClaim::LoadMayMove, function, report), reportOf(BrokenClaim::ComparisonIsDecided, function, report));
         })
     });
 }

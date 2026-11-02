@@ -95,7 +95,7 @@ public:
         }
         ParallelRegionScope parallelRegion;
         m_step = &step;
-        m_helpersWanted.store(std::min(m_mostHelpers, count / 2), std::memory_order_relaxed);
+        m_helpersWanted.store(std::min(m_mostHelpers, count / leastIndicesForEachHelper), std::memory_order_relaxed);
         m_numberDone.store(0);
         m_numberOfStep = (m_numberOfStep + 1) & ((1u << 24) - 1);
         m_ticket.store(static_cast<uint64_t>(m_numberOfStep) << 40 | static_cast<uint64_t>(count) << 20, std::memory_order_seq_cst);
@@ -130,6 +130,7 @@ public:
 private:
     static constexpr uint64_t isOver = UINT64_MAX;
     static constexpr unsigned mostIndices = (1u << 20) - 1;
+    static constexpr unsigned leastIndicesForEachHelper = 8;
     AOT_CLASS_THRESHOLD(unsigned, mostWorkers, 64);
     static constexpr Seconds timeToLookAgain = Seconds::fromMicroseconds(40);
 

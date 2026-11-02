@@ -609,6 +609,8 @@ export const builtinMarks = [
   "IsRequireThatLoaderCalls",
   // A prototype object. The host prints the instances below it with code of their own, which asks none of the getters on it.
   "InstancesArePrintedWithoutTheirGetters",
+  // Calling it may terminate the process, so code after the call may never run.
+  "MayTerminateProcess",
 ] as const;
 export type BuiltinMark = (typeof builtinMarks)[number];
 

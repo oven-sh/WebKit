@@ -15,6 +15,7 @@
 #include "AOTCodeSizeEstimate.h"
 #include "AOTConstantEmitter.h"
 #include "AOTDerivedFunctions.h"
+#include "AOTFunctionAnalyses.h"
 #include "AOTFunctionKinds.h"
 #include "AOTIdentifierNumbering.h"
 #include "AOTObjectCreationEmitter.h"

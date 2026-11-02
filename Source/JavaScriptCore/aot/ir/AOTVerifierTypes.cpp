@@ -23,6 +23,8 @@
 #include "AOTTypePropagation.h"
 #include "AOTVector.h"
 #include <algorithm>
+#include <wtf/text/MakeString.h>
+#include <wtf/text/StringBuilder.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -159,6 +161,31 @@ void FunctionVerifier::verifyTypes()
     }
 }
 
+// Which way a type is wrong says how much it matters: one that is narrower than the rule's claims what nobody has shown.
+String (*printerOfTypesForVerifier)(const Program&, const Type&) = nullptr;
+void (*printerOfFunctionsForVerifier)(const Program&, FunctionID, const Function&, ASCIILiteral heading) = nullptr;
+
+static String describeDifference(const Program& program, const Type& stored, const Type& computed)
+{
+    if (stored == computed)
+        return "the expected type lies outside the type"_s;
+    ASCIILiteral direction = stored.isSubsetOf(computed, program) ? "narrower than"_s : computed.isSubsetOf(stored, program) ? "wider than"_s : "apart from"_s;
+    StringBuilder parts;
+    auto note = [&](bool differs, ASCIILiteral name) {
+        if (differs)
+            parts.append(parts.isEmpty() ? ""_s : ", "_s, name);
+    };
+    note(stored.primitives != computed.primitives, "primitives"_s);
+    note(stored.integers != computed.integers, "integers"_s);
+    note(stored.stringLiterals != computed.stringLiterals, "strings"_s);
+    note(stored.layouts != computed.layouts || stored.environment != computed.environment, "layouts"_s);
+    note(stored.classes != computed.classes, "classes"_s);
+    note(stored.functions != computed.functions || stored.builtins != computed.builtins, "functions"_s);
+    note(stored.anyObject != computed.anyObject || stored.anyFunction != computed.anyFunction, "any object"_s);
+    String both = printerOfTypesForVerifier ? makeString(": there stands "_s, printerOfTypesForVerifier(program, stored), ", the rule gives "_s, printerOfTypesForVerifier(program, computed)) : String();
+    return makeString("the type that stands there is "_s, direction, " what the rule gives; they differ in "_s, parts.isEmpty() ? "something else"_s : parts.toString(), both);
+}
+
 void FunctionVerifier::verifyOwnType(BlockID block, ValueID id, const Value& value)
 {
     const Type& stored = typeOf(id);
@@ -167,6 +194,12 @@ void FunctionVerifier::verifyOwnType(BlockID block, ValueID id, const Value& val
     bool isAsStored = computed == stored || computed == typing().types.adopt(stored);
     if ((!isAsStored && (!isOptimizing() || !computed.isSubsetOf(stored, m_program))) || !hasExpectedTypeInsideType(m_program, value)) {
         fail(InternalErrorKind::TypeOutOfDate, block, id);
+        m_errors.last().detail = describeDifference(m_program, typing().types.adopt(stored), computed);
+        if (printerOfTypesForVerifier && value.numberOfOperands() && value.operand(0)) {
+            const Value& definition = m_function.at(value.operand(0));
+            m_errors.last().detail = makeString(m_errors.last().detail, "; its first operand is v"_s, value.operand(0).index(), " ("_s, nameOf(definition.opcode), "): "_s, printerOfTypesForVerifier(m_program, typeOf(value.operand(0))),
+                definition.numberOfOperands() && definition.operand(0) ? makeString(", made of v"_s, definition.operand(0).index(), ": "_s, printerOfTypesForVerifier(m_program, typeOf(definition.operand(0)))) : String());
+        }
         return;
     }
 
@@ -364,7 +397,7 @@ void FunctionVerifier::verifyRequiredTypes(BlockID block, ValueID id, const Valu
         if (hasFailed() || value.operandKind(operandIndex) != OperandKind::Declared)
             return;
         const Value& definition = m_function.at(operand);
-        if (definition.opcode == Opcode::Check && context.types.at(definition.expectedType().predicted()).isNever())
+        if (definition.opcode == Opcode::Check && typeOf(definition.valueOperand()).castTo(context.types.at(definition.expectedType().predicted()), context.types).isNever())
             return;
         TypeID required = requiredTypeOfOperand(context, value, operandIndex);
         if (!required)

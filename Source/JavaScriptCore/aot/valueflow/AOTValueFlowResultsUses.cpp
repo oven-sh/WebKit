@@ -27,9 +27,12 @@ struct ValuesWithOneUse {
 
 } // anonymous namespace
 
-static LookOfPropertyAction lookOfAction(BuiltinPropertyActionKind kind)
+static LookOfPropertyAction lookOfAction(const BuiltinPropertyAction& action)
 {
-    switch (kind) {
+    switch (action.kind) {
+    // A delete answers, or throws, by whether the key is there and may go. An index is the key of no field.
+    case BuiltinPropertyActionKind::DeletesByKey:
+        return action.key.kind == BuiltinKeyKind::Indexes ? LookOfPropertyAction::None : LookOfPropertyAction::TestsKey;
     case BuiltinPropertyActionKind::TestsByKey:
     case BuiltinPropertyActionKind::ReadsGetter:
     case BuiltinPropertyActionKind::ReadsSetter:
@@ -40,7 +43,6 @@ static LookOfPropertyAction lookOfAction(BuiltinPropertyActionKind kind)
         return LookOfPropertyAction::ListsKeysOfValue;
     case BuiltinPropertyActionKind::ReadsByKey:
     case BuiltinPropertyActionKind::StoresByKey:
-    case BuiltinPropertyActionKind::DeletesByKey:
     case BuiltinPropertyActionKind::DefinesName:
     case BuiltinPropertyActionKind::TakesDescriptor:
     case BuiltinPropertyActionKind::ChangesIntegrity:
@@ -63,7 +65,7 @@ static bool looksAtObjects(const BuiltinOverload& overload)
     if ((overload.receiver && listsKeys(*overload.receiver)) || std::ranges::any_of(overload.parameters, listsKeys))
         return true;
     return std::ranges::any_of(overload.flow.propertyActions, [](const BuiltinPropertyAction& action) {
-        return lookOfAction(action.kind) != LookOfPropertyAction::None;
+        return lookOfAction(action) != LookOfPropertyAction::None;
     });
 }
 
@@ -122,7 +124,7 @@ static void forEachLookAtOperands(const ValueFlowResultInputs& inputs, BuiltinID
         for (const BuiltinParameter& parameter : overload.parameters)
             lookAtParameter(parameter);
         for (const BuiltinPropertyAction& action : overload.flow.propertyActions) {
-            switch (lookOfAction(action.kind)) {
+            switch (lookOfAction(action)) {
             case LookOfPropertyAction::TestsKey:
                 lookAtTest(action);
                 break;

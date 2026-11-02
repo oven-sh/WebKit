@@ -452,8 +452,9 @@ BitVector FramePointerVerifier::computeHolders(std::span<const ValueID> allocati
 
 void verifyFramePointers(FunctionAnalyses& analyses, Vector<InternalError>& found)
 {
-    // What that sabotage plants has to be found by running the program.
-    if (analyses.context().build.isSabotaged(Sabotage::CellsThatAreKeptLieInFrames))
+    // What these plant has to be found by running the program.
+    const BuildContext& build = analyses.context().build;
+    if (build.isSabotaged(Sabotage::CellsThatAreKeptLieInFrames) || build.isSabotaged(Sabotage::ListsThatAreKeptLieInFrames))
         return;
     FramePointers pointers(analyses.program(), analyses.function());
     if (!pointers.isEmpty())

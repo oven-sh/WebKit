@@ -442,7 +442,7 @@ static AsyncGeneratorStep finishAsyncGeneratorStep(Instance& instance, const uin
         JSPromise* promise = tryPutPromiseInPlaceOfDriver(instance, slotsOfStub, generator);
         if (!isSeenTo)
             finishAsyncGeneratorBodyCall(instance.globalObject, generator, returned, JSValue(), &vm.syncResumeCallCache());
-        if (!promise || scope.exception())
+        if (scope.exception() || !promise)
             return { vm.fastAsyncGeneratorSentinel(), AsyncGeneratorStepStatus::Result };
         return awaitPromiseOfStep(instance, promise, asObject(std::bit_cast<JSCell*>(slotsOfStub[driverSlotInStubFrame])));
     }

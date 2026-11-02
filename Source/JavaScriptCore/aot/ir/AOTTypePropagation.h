@@ -179,6 +179,7 @@ private:
     void listRestartedValuesInOrder();
 
     void enqueue(ValueID);
+    bool letParameterOfWideJoinWait(ValueID parameter, BlockID);
     void enqueueUsersOf(ValueID);
     void enqueueIndirectUsersOf(ValueID);
     void enqueueEdgeResultParameters(BlockID from);

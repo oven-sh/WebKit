@@ -838,10 +838,10 @@ static void testMergeTestOfBitsIntoOrderOfWord()
 static void testMergedTestsOfBitsTellTheLogOfTheWordReadAgain()
 {
     for (bool storesBehindRead : { false, true }) {
-        for (bool overlooksWrites : { false, true }) {
+        for (bool ignoresWrites : { false, true }) {
             B3::Policy policy;
             policy.validation.logsMovedLoads = true;
-            policy.validation.overlooksWritesBehindWordsReadAgain = overlooksWrites;
+            policy.validation.ignoresWritesAfterReloadedLocations = ignoresWrites;
             B3::Procedure proc(policy);
             TwoTests blocks { proc.addBlock(), proc.addBlock(), proc.addBlock(), proc.addBlock(), proc.addBlock(), nullptr };
             B3::Origin origin = originOf(otherOrigin);
@@ -862,7 +862,7 @@ static void testMergedTestsOfBitsTellTheLogOfTheWordReadAgain()
 
             AOT_TEST_CHECK(mergeImpliedBranches(proc));
             B3::validate(proc);
-            bool readsAgain = !storesBehindRead || overlooksWrites;
+            bool readsAgain = !storesBehindRead || ignoresWrites;
             B3::BasicBlock* dispatch = blocks.first->taken().block();
             AOT_TEST_CHECK(dispatch != blocks.firstTarget && dispatch != blocks.secondTarget);
             AOT_TEST_CHECK((dispatch->at(0)->opcode() == B3::Load) == readsAgain);
@@ -879,10 +879,10 @@ static void testMergedTestsOfBitsTellTheLogOfTheWordReadAgain()
 // header: count = *pointer; index < count ? body : exit. body: sum += count * count + count; *other = count - 1; ++index. Once the loop is rotated the count is read ahead of the loop and at the end of each turn.
 static void testVariableReadAgainInLoopIsHeldAgainstWhatStandsForIt()
 {
-    for (bool overlooksWrites : { false, true }) {
+    for (bool ignoresWrites : { false, true }) {
         B3::Policy policy;
         policy.validation.logsDecidedComparisons = true;
-        policy.validation.overlooksWritesToWhatLoopsReadAgain = overlooksWrites;
+        policy.validation.ignoresWritesToLocationsReloadedInLoops = ignoresWrites;
         B3::Procedure proc(policy);
         B3::Origin origin = originOf(otherOrigin);
         B3::BasicBlock* root = proc.addBlock();
@@ -922,10 +922,10 @@ static void testVariableReadAgainInLoopIsHeldAgainstWhatStandsForIt()
 
         Vector<B3::BasicBlock*> topTestedVersionHeaders;
         bool isVersioned = B3::versionLoops(proc, topTestedVersionHeaders);
-        AOT_TEST_CHECK(isVersioned == overlooksWrites);
+        AOT_TEST_CHECK(isVersioned == ignoresWrites);
         B3::fixSSA(proc);
         B3::validate(proc);
-        AOT_TEST_CHECK(proc.movedLoadLog().insertChecks(proc, nullptr, nullptr) == overlooksWrites);
+        AOT_TEST_CHECK(proc.movedLoadLog().insertChecks(proc, nullptr, nullptr) == ignoresWrites);
         unsigned numberOfChecks = 0;
         for (B3::Value* value : proc.values()) {
             if (value->opcode() != B3::Patchpoint)
@@ -933,7 +933,7 @@ static void testVariableReadAgainInLoopIsHeldAgainstWhatStandsForIt()
             ++numberOfChecks;
             AOT_TEST_CHECK(value->numChildren() == 2 && value->child(0)->opcode() == B3::Load && value->child(1)->opcode() == B3::Load && value->child(0) != value->child(1));
         }
-        AOT_TEST_CHECK(numberOfChecks == overlooksWrites);
+        AOT_TEST_CHECK(numberOfChecks == ignoresWrites);
     }
 }
 
@@ -950,7 +950,7 @@ static void testBoundReadTwiceIsHeldAgainstWhatStandsForIt()
         B3::Policy policy;
         policy.loops.clampsLoopBounds = true;
         policy.validation.logsMovedLoads = true;
-        policy.validation.overlooksWritesBetweenReadsOfBound = overlooksStore;
+        policy.validation.ignoresWritesBetweenLoadsOfBound = overlooksStore;
         B3::Procedure proc(policy);
         B3::Origin origin = originOf(otherOrigin);
         B3::BasicBlock* root = proc.addBlock();
@@ -1960,12 +1960,12 @@ static void testLoadIsNotFoldedAcrossWriteItStaysInFrontOf()
 
 #if CPU(ARM64)
 // first = base[0]; [other[1] = first;] second = base[1]; return first + second.
-static bool pairsLoads(bool storesBetween, bool overlooksWrites)
+static bool pairsLoads(bool storesBetween, bool ignoresWrites)
 {
     using namespace B3::Air;
     B3::Policy policy;
     policy.air.peepholes.pairsMemoryAccesses = true;
-    policy.validation.overlooksWritesBetweenPairedLoads = overlooksWrites;
+    policy.validation.ignoresWritesBetweenPairedLoads = ignoresWrites;
     B3::Procedure proc(policy);
     proc.setOptLevel(2);
     Code& code = proc.code();
@@ -2078,15 +2078,15 @@ struct LiveRangeSplitTwice {
         B3::Policy policy;
         policy.air.splitting.splitsIntoClustersOverBlocks = true;
         policy.validation.checksSpillSlots = checksSpillSlots;
-        policy.validation.overlooksColdUsesOfClustersOverBlocks = overlooksColdUses;
+        policy.validation.ignoresColdUsesOfCrossBlockClusters = overlooksColdUses;
         return policy;
     }
 
-    static B3::Policy policy(B3::MoveLeftOutByRegisterAllocator moveLeftOut, bool checksSpillSlots, bool checksAllocatedRegisters)
+    static B3::Policy policy(B3::MoveOmittedByRegisterAllocator moveLeftOut, bool checksSpillSlots, bool checksAllocatedRegisters)
     {
         B3::Policy policy = LiveRangeSplitTwice::policy(checksSpillSlots, false);
         policy.validation.checksAllocatedRegisters = checksAllocatedRegisters;
-        policy.validation.moveLeftOutByRegisterAllocator = moveLeftOut;
+        policy.validation.moveOmittedByRegisterAllocator = moveLeftOut;
         return policy;
     }
 
@@ -2576,21 +2576,21 @@ static void testValueThatOnlyCountsAsLiveMayBeSavedOutOfAnyRegister()
 
 static void testMoveThatRegisterAllocatorLeavesOutIsSeen()
 {
-    using MoveLeftOut = B3::MoveLeftOutByRegisterAllocator;
+    using MoveLeftOut = B3::MoveOmittedByRegisterAllocator;
     for (ValueIsBorn valueIsBorn : { ValueIsBorn::InTheBlockOfTheCalls, ValueIsBorn::InTheBlockBefore }) {
         LiveRangeSplitTwice sound(LiveRangeSplitTwice::policy(MoveLeftOut::None, true, true), valueIsBorn);
         AOT_TEST_CHECK(!sound.proc.report().failure);
 
         // A store is missed by whoever reads the slot, a load by whoever reads the register. Each check sees its own and not the other's.
-        LiveRangeSplitTwice withoutStore(LiveRangeSplitTwice::policy(MoveLeftOut::StoreBehindCluster, true, false), valueIsBorn);
+        LiveRangeSplitTwice withoutStore(LiveRangeSplitTwice::policy(MoveLeftOut::StoreAfterCluster, true, false), valueIsBorn);
         AOT_TEST_CHECK(withoutStore.proc.report().failure && withoutStore.proc.report().failure->kind == B3::FailureKind::SpillSlotLacksItsValue);
-        LiveRangeSplitTwice withoutStoreByRegisters(LiveRangeSplitTwice::policy(MoveLeftOut::StoreBehindCluster, false, true), valueIsBorn);
+        LiveRangeSplitTwice withoutStoreByRegisters(LiveRangeSplitTwice::policy(MoveLeftOut::StoreAfterCluster, false, true), valueIsBorn);
         AOT_TEST_CHECK(!withoutStoreByRegisters.proc.report().failure);
 
-        LiveRangeSplitTwice withoutLoad(LiveRangeSplitTwice::policy(MoveLeftOut::LoadAheadOfCluster, false, true), valueIsBorn);
+        LiveRangeSplitTwice withoutLoad(LiveRangeSplitTwice::policy(MoveLeftOut::LoadBeforeCluster, false, true), valueIsBorn);
         AOT_TEST_CHECK(withoutLoad.proc.report().failure && withoutLoad.proc.report().failure->kind == B3::FailureKind::RegisterLacksItsValue);
         AOT_TEST_CHECK(withoutLoad.detail().contains("behind register allocation"_s));
-        LiveRangeSplitTwice withoutLoadBySlots(LiveRangeSplitTwice::policy(MoveLeftOut::LoadAheadOfCluster, true, false), valueIsBorn);
+        LiveRangeSplitTwice withoutLoadBySlots(LiveRangeSplitTwice::policy(MoveLeftOut::LoadBeforeCluster, true, false), valueIsBorn);
         AOT_TEST_CHECK(!withoutLoadBySlots.proc.report().failure);
     }
 }

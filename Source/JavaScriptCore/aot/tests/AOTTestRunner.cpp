@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <wtf/FileSystem.h>
 #include <wtf/NumberOfCores.h>
+#include <wtf/ProcessID.h>
 #include <wtf/Scope.h>
 #include <wtf/StringPrintStream.h>
 #include <wtf/text/MakeString.h>
@@ -233,7 +234,29 @@ static CommandResult runCommand(const TestCommand& command, const TestFile& file
     TestCommandContext context { WTF::move(program), form, run.arguments.span(), out, build };
     context.isOptimizing = file.isOptimizing;
     context.options = &options;
+    context.readProgramAgain = [&](BuildContext& other) -> std::unique_ptr<Program> {
+        if (!command.defaultForm)
+            return nullptr;
+        bool needsLibrary = form == IRForm::AsRead && command.programAsRead != ProgramAsRead::AsParsed;
+        std::unique_ptr<Program> again = parseProgram(needsLibrary ? withStandInLibrary(file.text) : file.text, form, other, VerifierInputs { .isOptimizing = file.isOptimizing });
+        if (again && form == IRForm::AsRead && command.programAsRead == ProgramAsRead::TypedAndVerified && !runReadStage(*again, other))
+            return nullptr;
+        return again;
+    };
     command.run(context);
+    if (const char* path = getenv("TESTAOT_LISTS_BROKEN_LAWS_OF_TYPES"); path && context.program) {
+        StringPrintStream broken;
+        listBrokenLawsOfTypes(broken, *context.program, 160);
+        char pathOfProcess[1024];
+        snprintf(pathOfProcess, sizeof(pathOfProcess), "%s.%d", path, static_cast<int>(getCurrentProcessID()));
+        if (FILE* list = fopen(pathOfProcess, "a")) {
+            auto text = broken.toStringWithLatin1Fallback().utf8();
+            size_t endOfLine = file.text.find('\n');
+            fprintf(list, "== %s | %s\n", run.command.utf8().data(), file.text.left(std::min<size_t>(endOfLine == notFound ? file.text.length() : endOfLine, 150)).utf8().data());
+            fwrite(text.data(), 1, text.length(), list);
+            fclose(list);
+        }
+    }
     build.diagnostics().finish(context.program.get());
     Vector<Wire::LossRecord> losses = WTF::move(context.losses);
     losses.appendVector(build.takeLosses(context.program.get()));

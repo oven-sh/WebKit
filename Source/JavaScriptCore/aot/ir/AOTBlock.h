@@ -97,6 +97,7 @@ struct Terminator : Instruction {
             for (ValueID& argument : target.arguments)
                 functor(argument);
         }
+        touchForAddressSanitizer(this);
     }
 
     template<typename Functor>
@@ -107,6 +108,7 @@ struct Terminator : Instruction {
             for (const ValueID argument : target.arguments)
                 functor(argument);
         }
+        touchForAddressSanitizer(this);
     }
 
 #include "AOTSchemaTerminatorAccessors.inc"
@@ -159,6 +161,7 @@ struct Block {
             functor(target);
         if (handler)
             functor(*handler);
+        touchForAddressSanitizer(this);
     }
 
     template<typename Functor>
@@ -168,6 +171,7 @@ struct Block {
             functor(target);
         if (handler)
             functor(*handler);
+        touchForAddressSanitizer(this);
     }
 
     template<typename Functor>
@@ -180,6 +184,7 @@ struct Block {
         }
         if (subject)
             functor(subject);
+        touchForAddressSanitizer(this);
     }
 
     template<typename Functor>
@@ -192,6 +197,7 @@ struct Block {
         }
         if (subject)
             functor(subject);
+        touchForAddressSanitizer(this);
     }
 };
 

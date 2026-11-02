@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTImage.h"
 #include "AOTInstance.h"
 #include "AOTVMState.h"
 #include "VM.h"

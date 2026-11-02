@@ -116,9 +116,17 @@ ValueLocation TypePropagation::locationForRule(ValueID id) const
     return { ValuePlacement::Parameter, BlockID(place.block), place.index };
 }
 
+static void reportTypeOutOfDate(BuildContext& build, const InternalError& error)
+{
+    if (build.options().keepsGoingBehindFailedVerifications)
+        build.diagnostics().keepFirstFailureOfFunction(error, error.kind);
+    else
+        build.diagnostics().add(error);
+}
+
 void TypePropagation::addTypeOutOfDate(ValueID id, ASCIILiteral detail)
 {
-    m_inputs.build.diagnostics().add(InternalError { .kind = InternalErrorKind::TypeOutOfDate, .function = m_inputs.analyses.subject().function, .value = id, .detail = detail });
+    reportTypeOutOfDate(m_inputs.build, InternalError { .kind = InternalErrorKind::TypeOutOfDate, .function = m_inputs.analyses.subject().function, .value = id, .detail = detail });
 }
 
 void TypePropagation::reportRetypedValues(bool countsThem)
@@ -471,6 +479,32 @@ void TypePropagation::enqueueUsersOf(ValueID id)
     }
 }
 
+// To put a parameter back costs a walk over what is queued, more than to join a few edges again: with 4 the build of the TypeScript compiler rises by 0.03%, with 2 by 0.26%.
+AOT_THRESHOLD(size_t, fewestEdgesOfWideJoin, 16);
+
+// A block may have as many incoming edges as the function has statements. Taken behind each source that moves, its parameter would be joined over all of them that many times:
+// it goes back below the queued values that lie in front of the last of its sources. It waits for a value that is typed when it is taken, never for another that waits as it does:
+// so it is not taken again before that value is.
+NEVER_INLINE bool TypePropagation::letParameterOfWideJoinWait(ValueID parameter, BlockID block)
+{
+    uint32_t lastSource = 0;
+    for (Edge edge : m_cfg.incomingEdges(block))
+        lastSource = std::max(lastSource, m_cfg.reversePostOrderIndex(edge.from));
+    bool waitsForValueThatIsTyped = false;
+    size_t index = m_worklist.size();
+    for (; index; --index) {
+        ValueLocation location = locationForRule(m_worklist[index - 1]);
+        if (location.placement != ValuePlacement::Detached && m_cfg.isReachable(location.block) && m_cfg.reversePostOrderIndex(location.block) > lastSource)
+            break;
+        waitsForValueThatIsTyped |= location.placement != ValuePlacement::Parameter || m_cfg.incomingEdges(location.block).size() < fewestEdgesOfWideJoin;
+    }
+    if (!waitsForValueThatIsTyped)
+        return false;
+    m_worklist.insert(index, parameter);
+    m_marks[parameter.index()].isQueued = true;
+    return true;
+}
+
 void TypePropagation::propagate(TypeLevel level, Direction direction)
 {
     TypingContext context = typingContext(level);
@@ -491,6 +525,8 @@ void TypePropagation::propagate(TypeLevel level, Direction direction)
             forEachSourceOfParameter(location.block, location.index, markIfNotTaken);
         else if (!isTakenAgain)
             forEachSourceOf(id, markIfNotTaken);
+        else if (location.placement == ValuePlacement::Parameter && m_cfg.incomingEdges(location.block).size() >= fewestEdgesOfWideJoin && letParameterOfWideJoinWait(id, location.block))
+            continue;
         marks.lastWalkThatTookIt = m_numberOfWalks;
         TypeID computed = compute(context, id, location);
         if (level == TypeLevel::Expected)
@@ -905,7 +941,9 @@ void TypePropagation::replaceUpcastsOfWidenedValues()
             return false;
         const Type& typeBefore = types.at(before);
         const Type& type = types.at(now);
-        return (type.anyObject && !typeBefore.anyObject) || (type.anyFunction && !typeBefore.anyFunction) || (type.primitives & ~typeBefore.primitives) || !type.integers.isSubsetOf(typeBefore.integers);
+        // What a test leaves of a type need not lie inside the type: beside a class that no test tells, a class part loses its proofs.
+        return (type.anyObject && !typeBefore.anyObject) || (type.anyFunction && !typeBefore.anyFunction) || (type.primitives & ~typeBefore.primitives) || !type.integers.isSubsetOf(typeBefore.integers)
+            || type.classes != typeBefore.classes || type.layouts != typeBefore.layouts;
     };
     // A cast hands on what stands in front of its operand whichever cast it is, so the marks hold while casts are replaced.
     std::optional<PredictedValues> predicted;
@@ -1055,6 +1093,9 @@ void TypePropagation::cutAfterNeverValues()
         // The call stays in tail position, as in IRBuilder::demoteReturnCall(): its function is gone from the stack once the callee runs.
         if (keepsValue && block.terminator.kind == TerminatorKind::ReturnCall && block.terminator.callOperand() == block.values[index])
             m_inputs.function.edit(block.values[index], ValueEdit::Definition).isTailCall = true;
+        // A read that only asks the tables runs nothing, so it does not throw, and the read that does stands behind its failing side, which goes. It becomes that read.
+        if (keepsValue && function.at(block.values[index]).opcode == Opcode::PropGet && function.at(block.values[index]).asksOnlyTables())
+            m_inputs.function.edit(block.values[index], ValueEdit::Definition).setAsksOnlyTables(false);
         Block& cut = m_inputs.function.edit(id);
         cut.values.shrink(index + keepsValue);
         // A handler sees the parameters of the block that it covers. Nothing is left here that throws.
@@ -1735,7 +1776,7 @@ TypePropagationOutcome typeChangedValues(const TypePropagationInputs& inputs)
         statistics.count(outcome.didChange() ? StatisticID::FunctionsTypedFromChanges : StatisticID::FunctionsTypedAsBefore);
         // Where the log ran full while this typing wrote into it, every value is pending again.
         if (ValueID value = typedFromNever && !outcome.dependsOnTypesBefore() && !pending->isEverythingPending(log) ? findValueTypedWider(inputs, *typedFromNever, *typesFromNever) : ValueID())
-            inputs.build.diagnostics().add(InternalError { .kind = InternalErrorKind::TypeOutOfDate, .function = inputs.analyses.subject().function, .value = value, .detail = "typed from what changed it is wider than typed from nothing"_s });
+            reportTypeOutOfDate(inputs.build, InternalError { .kind = InternalErrorKind::TypeOutOfDate, .function = inputs.analyses.subject().function, .value = value, .detail = "typed from what changed it is wider than typed from nothing"_s });
     }
     if (pending->isEmpty(log)) {
         inputs.function.changeLog()->didPropagateTypes();

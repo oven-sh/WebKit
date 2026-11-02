@@ -1,0 +1,125 @@
+# FORM: AsRead
+# RUN: pipeline PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Integer integer=1
+    v2 = Integer
+    v3 = Call v0, -, v1, v2
+    v4 = Integer integer=-2
+    v5 = Call v0, -, v4, v4
+    v6 = String string=""
+    v7 = Call v0, -, v1, v6
+    v8 = Null
+    v9 = Undefined
+    v10 = Call v0, -, v8, v9
+    Return v10
+}
+
+function f1 name="f" length=2 parameters=[{type=null|number flags=[IsExpected]}, {type=undefined|null|number|string|Array flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: null|number, v1: undefined|null|number|string|Array):
+    Jump -> next b1()
+  b1():
+    v2 = Convert v1 declared={type=undefined|null|number|object flags=[IsExpected]}
+    v3 = ToBoolean v1
+    Branch v3 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v4):
+    Jump -> next b9(v4, v2)
+  b3(v5):
+    Jump -> next b4()
+  b4():
+    v6 = StrictEq v2, v5
+    Branch v6 -> taken b5(| 0, 1), notTaken b6(| 0, 1)
+  b5(v7, v8):
+    Jump -> next b8(v8, v7)
+  b6(v9, v10):
+    Jump -> next b7()
+  b7():
+    v11 = Builtin builtin=GlobalThis
+    v12 = PropGet v11 key="sink" [isFreeName]
+    v13 = Undefined
+    v14 = Undefined
+    v15 = Integer integer=1
+    v16 = Call v12, -, v15
+    Jump -> next b8(v10, v9)
+  b8(v17, v18):
+    Jump -> next b9(v17, v18)
+  b9(v19, v20):
+    v21 = Eq v19, v20
+    v22 = TypeTest v19 testedType=undefined|null
+    Branch v22 -> taken b10(| 0), notTaken b12(| 0)
+  b10(v23):
+    Jump -> next b11()
+  b11():
+    v24 = Undefined
+    Jump -> next b13(v24, v23)
+  b12(v25):
+    v26 = Integer
+    v27 = ElemGet v25, v26
+    Jump -> next b13(v27, v25)
+  b13(v28, v29):
+    v30 = Eq v0, v29
+    Branch v30 -> taken b14(| 0, 1), notTaken b28(| 0, 1)
+  b14(v31, v32):
+    Jump -> next b15()
+  b15():
+    v33 = Integer integer=1
+    v34 = Sub v32, v33
+    v35 = Convert v34 declared={type=undefined|null|number|string|Array flags=[IsExpected]}
+    v36 = Decrement v20
+    v37 = Convert v36 declared={type=undefined|null|number|object flags=[IsExpected]}
+    v38 = TypeTest v37 testedType=function
+    Branch v38 -> taken b16(| 0), notTaken b17(| 0)
+  b16(v39):
+    Jump -> next b27(v39)
+  b17(v40):
+    v41 = TypeTest v40 testedType=null|object
+    Branch v41 -> taken b18(| 0), notTaken b26(| 0)
+  b18(v42):
+    Jump -> next b19()
+  b19():
+    v43 = TypeTest v42 testedType=null
+    Branch v43 -> taken b20(| 0), notTaken b21(| 0)
+  b20(v44):
+    Jump -> next b27(v44)
+  b21(v45):
+    Jump -> next b22()
+  b22():
+    v46 = PropHas v45 key="id"
+    v47 = ToBoolean v46
+    Branch v47 -> taken b23(| 0), notTaken b25(| 0)
+  b23(v48):
+    Jump -> next b24()
+  b24():
+    v49 = Builtin builtin=GlobalThis
+    v50 = PropGet v49 key="sink" [isFreeName]
+    v51 = Undefined
+    v52 = Undefined
+    v53 = Integer integer=2
+    v54 = Call v50, -, v53
+    Jump -> next b27(v45)
+  b25(v55):
+    Jump -> next b27(v45)
+  b26(v56):
+    Jump -> next b27(v56)
+  b27(v57):
+    Jump -> next b29(v35, v57)
+  b28(v58, v59):
+    Jump -> next b29(v59, v20)
+  b29(v60, v61):
+    v62 = Builtin builtin=GlobalThis
+    v63 = PropGet v62 key="sink" [isFreeName]
+    v64 = Undefined
+    v65 = Undefined
+    v66 = Call v63, -, v60, v61
+    v67 = Undefined
+    Return v67
+}
+
+# CHECK-LABEL: name="f"
+# CHECK-NOT: : 0 = AssumeType
+# CHECK-NOT: : -1 = Decrement
+# CHECK: = Decrement

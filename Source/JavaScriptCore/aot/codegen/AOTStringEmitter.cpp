@@ -11,6 +11,7 @@
 #include "AOTConversionEmitter.h"
 #include "AOTNumberLiteralStrings.h"
 #include "AOTRepresentationRules.h"
+#include "AOTResultRules.h"
 #include "AOTStringBuilderStorage.h"
 #include "AOTStubsStrings.h"
 #include "AOTThreshold.h"
@@ -21,6 +22,7 @@
 #include <algorithm>
 #include <cmath>
 #include <unicode/utf16.h>
+#include <wtf/text/MakeString.h>
 #include <wtf/text/StringImpl.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -87,11 +89,51 @@ CharacterSource StringEmitter::sourceInImpl(Pointer impl, bool isImmutable)
 }
 
 // The cell stays flat, so wherever B3 moves the load it gives an impl, and the loads from that impl may leave a loop that runs no iteration.
-Pointer StringEmitter::implOfFlatString(CellPointer flat)
+static String describeAsString(const Type& type)
 {
+    if (type.primitives & Primitive::String)
+        return "string"_s;
+    if (type.hasLiteralStrings())
+        return makeString("a union of "_s, type.stringLiterals.size(), " literal strings"_s);
+    return "no string"_s;
+}
+
+std::optional<FlatStringCell> StringEmitter::flatStringByType(ValueID string)
+{
+    if (!typeOf(string).isOpaque(OpaqueKind::FlatString) && !build().recordedOptions().isSabotaged(Sabotage::RopesPassForFlatStrings))
+        return std::nullopt;
+    return FlatStringCell(in<CellPointer>(string));
+}
+
+std::optional<FlatStringCell> StringEmitter::flatStringWrittenHere(ValueID string, CellPointer cellOfString)
+{
+    while (resultRuleOf(m_function.at(string).opcode) == ResultRule::Cast)
+        string = m_function.at(string).valueOperand();
+    if (m_function.at(string).opcode != Opcode::String)
+        return std::nullopt;
+    return FlatStringCell(cellOfString);
+}
+
+FlatStringCell StringEmitter::flatStringAssumedBy(const OperationContext& context, ValueID string)
+{
+    if (std::optional<FlatStringCell> flat = flatStringByType(string))
+        return *flat;
+    CellPointer cell = in<CellPointer>(string);
+    if (std::optional<FlatStringCell> flat = flatStringWrittenHere(string, cell))
+        return *flat;
+    generator().fail(context, InternalErrorKind::EmitterAssumesFlatString, makeString("the value's type is "_s, describeAsString(typeOf(string)), ": it says what the characters are, not which object holds them"_s));
+    return FlatStringCell(cell);
+}
+
+Pointer StringEmitter::implOfFlatString(FlatStringCell flatString)
+{
+    CellPointer flat = flatString.cell();
     if (auto opened = m_openedStrings.find(flat.value()); opened != m_openedStrings.end())
         return opened->value.impl;
     Pointer impl(markImmutable(m_out.loadPtr(asPointer(flat).value(), m_heaps.JSString_value)));
+    checkClaim(flat, [&] {
+        return hasNoBits(impl, JSString::isRopeInPointer);
+    });
     m_proc.setKnownDereferenceableBytes(impl.value(), smallestStringImplSize);
     return impl;
 }
@@ -162,12 +204,15 @@ CharacterView StringEmitter::viewOfString(const OperationContext& context, CellP
 
 CharacterView StringEmitter::viewOf(const OperationContext& context, ValueID string)
 {
-    CellPointer cell = in<CellPointer>(string);
-    if (!typeOf(string).isOpaque(OpaqueKind::FlatString))
-        return viewOfString(context, cell);
+    std::optional<FlatStringCell> flat = flatStringByType(string);
+    if (!flat && build().recordedOptions().isSabotaged(Sabotage::EmittersTakeStringsForFlat)) [[unlikely]]
+        flat = flatStringAssumedBy(context, string);
+    if (!flat)
+        return viewOfString(context, in<CellPointer>(string));
+    CellPointer cell = flat->cell();
     if (auto opened = m_openedStrings.find(cell.value()); opened != m_openedStrings.end())
         return viewOfSource(opened->value.source, cell);
-    return viewOfSource(sourceInImpl(implOfFlatString(cell), true), cell);
+    return viewOfSource(sourceInImpl(implOfFlatString(*flat), true), cell);
 }
 
 CharacterView StringEmitter::subview(const CharacterView& view, CodeUnitRange range)
@@ -264,12 +309,13 @@ Word32 StringEmitter::lengthOf(ValueID string)
 {
     if (representationOf(string) == Representation::LiteralString)
         return lengthOf(in<LiteralStringWord>(string), typeOf(string));
-    CellPointer cell = in<CellPointer>(string);
-    if (!typeOf(string).isOpaque(OpaqueKind::FlatString))
-        return lengthOf(cell);
+    std::optional<FlatStringCell> flat = flatStringByType(string);
+    if (!flat)
+        return lengthOf(in<CellPointer>(string));
+    CellPointer cell = flat->cell();
     if (auto opened = m_openedStrings.find(cell.value()); opened != m_openedStrings.end())
         return opened->value.source.length;
-    Word32 length = loadField<Word32>(implOfFlatString(cell), m_heaps.StringImpl_length);
+    Word32 length = loadField<Word32>(implOfFlatString(*flat), m_heaps.StringImpl_length);
     ensureStillAliveHere(cell);
     return length;
 }

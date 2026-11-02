@@ -13,6 +13,7 @@
 #include "AOTCallGraph.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTKnownClosures.h"
+#include "AOTRowsOfLayouts.h"
 #include "AOTValueIdentity.h"
 #include <algorithm>
 #include <wtf/HashMap.h>
@@ -82,32 +83,29 @@ bool hasOnlyClassesAndBuiltins(const Program& program, const Type& type)
     });
 }
 
-static bool hasOnlyClassesAbove(const Program& program, LayoutID id)
+BitVector findClassesWithOnlyClassesAbove(const Program& program)
 {
-    LayoutID current = id;
-    for (size_t steps = 0; steps < program.layouts.size(); ++steps) {
-        const Layout& layout = program.at(current);
+    return answerAlongRows(program.layouts.size(), false, [&](LayoutID id) -> StepAlongRow {
+        const Layout& layout = program.at(id);
         if (!isClassEvaluatedOnce(program, layout) || !program.at(layout.constructor).captures.isEmpty())
-            return false;
+            return { false, { } };
         switch (layout.flow.baseState) {
         case BaseState::Layout:
-            current = layout.flow.base;
-            continue;
+            return { std::nullopt, layout.flow.base };
         case BaseState::None:
-            return !layout.has(LayoutFlags::HasHeritage);
+            return { !layout.has(LayoutFlags::HasHeritage), { } };
         case BaseState::BuiltinClass:
-            return !!builtinParentNamedByClassRecord(program, layout);
+            return { !!builtinParentNamedByClassRecord(program, layout), { } };
         case BaseState::Unknown:
-            return false;
+            return { false, { } };
         }
         RELEASE_ASSERT_NOT_REACHED();
-    }
-    return false;
+    });
 }
 
-static bool isDefinedByClassRecord(const Program& program, LayoutID id)
+static bool isDefinedByClassRecord(const Program& program, const BitVector& classesWithOnlyClassesAbove, LayoutID id)
 {
-    if (!hasOnlyClassesAbove(program, id))
+    if (!classesWithOnlyClassesAbove.quickGet(id.index()))
         return false;
     const Layout& layout = program.at(id);
     const Function& constructor = program.at(layout.constructor);
@@ -129,11 +127,11 @@ static bool isOnlyClosureOperand(const Function& function, const UseLists& useLi
     return closure.opcode == Opcode::NewClosure && closure.function() == closureFunction && closure.capturesOperands().empty() && !closure.isMadeOnDemand() && useLists.useCount(id) == 1;
 }
 
-std::optional<ClassDefinitionSite> findClassDefinitionSite(const Program& program, const Function& function, const UseLists& useLists, ValueID newClass)
+std::optional<ClassDefinitionSite> findClassDefinitionSite(const Program& program, const BitVector& classesWithOnlyClassesAbove, const Function& function, const UseLists& useLists, ValueID newClass)
 {
     const Value& head = function.at(newClass);
     RELEASE_ASSERT(head.opcode == Opcode::NewClass);
-    if (!isDefinedByClassRecord(program, head.layout()))
+    if (!isDefinedByClassRecord(program, classesWithOnlyClassesAbove, head.layout()))
         return std::nullopt;
 
     const Layout& layout = program.at(head.layout());

@@ -884,6 +884,47 @@ static BodySummary summarizeDescription(const Program& program, FunctionID id, c
     return summary;
 }
 
+Vector<FunctionID> functionsNamedIn(const Program& program, const Function& function)
+{
+    Vector<FunctionID> named;
+    auto take = [&](const EffectDescription& description) {
+        named.appendVector(description.functions);
+        named.appendVector(description.slowPathFunctions);
+    };
+    for (const Block& block : function.blocks) {
+        for (ValueID id : block.values) {
+            const Value& value = function.at(id);
+            if (value.opcode == Opcode::NewClosure)
+                named.append(value.function());
+            if (hasEmptyDescription(value.opcode))
+                continue;
+            take(describeEffects(program, function, value));
+            if (effectRuleOf(value.opcode) != EffectRule::Call)
+                continue;
+            CalleeList callees = calleesThatBoundEffectsOf(program, value);
+            if (std::optional<ProvenValue<std::span<const FunctionID>>> functions = callees.functionsAlone())
+                named.append(functions->value());
+        }
+        if (!hasEmptyDescription(block.terminator.kind))
+            take(describeEffects(program, function, block.terminator));
+    }
+    if (FunctionID genericVersion = genericVersionThatBodyRestartsIn(program, function))
+        named.append(genericVersion);
+    AOT::sort(named);
+    removeRepeatedElements(named);
+    return named;
+}
+
+BodySummary summarizeAsUnknownCode(FunctionID id, const Function& function)
+{
+    BodySummary summary;
+    summary.onReturn = Effects::unknownCode();
+    summary.onThrow = Effects::unknownCode();
+    summary.parameters = Vector<ParameterSummary>(function.numberOfEntryParameters());
+    summary.unknownCodeWitness = { id, ValueID() };
+    return summary;
+}
+
 BodySummary summarizeBodyLocally(const EffectContext& context, FunctionID id, FunctionAnalyses& analyses, BodyReferenceCollector* references, CalleesAreRead calleesAreRead)
 {
     const Function& function = analyses.function();
@@ -894,13 +935,7 @@ BodySummary summarizeBodyLocally(const EffectContext& context, FunctionID id, Fu
     }
     if (function.hasBody())
         return BodySummarizer(context, id, analyses, references, calleesAreRead == CalleesAreRead::AsTheyAre ? BodySummarizer::ReadAs::Itself : BodySummarizer::ReadAs::ItselfAndCalleesByOperandTypes).run();
-
-    BodySummary summary;
-    summary.onReturn = Effects::unknownCode();
-    summary.onThrow = Effects::unknownCode();
-    summary.parameters = Vector<ParameterSummary>(function.numberOfEntryParameters());
-    summary.unknownCodeWitness = { id, ValueID() };
-    return summary;
+    return summarizeAsUnknownCode(id, function);
 }
 
 } } } // namespace JSC::AOT::Typed

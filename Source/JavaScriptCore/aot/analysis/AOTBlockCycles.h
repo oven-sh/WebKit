@@ -33,6 +33,7 @@ public:
     }
 
     bool areInSameCycle(BlockID a, BlockID b) const { return isInCycle(a) && outermostCycleOf(a) == outermostCycleOf(b); }
+    bool isInCycleAvoiding(BlockID, BlockID avoidedBlock, uint64_t& numberOfBlocksVisited) const;
 
     std::optional<unsigned> outermostCycleOf(BlockID block) const
     {

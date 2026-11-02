@@ -342,7 +342,7 @@ NEVER_INLINE void reserveVectorCapacity(VectorWords& vector, size_t newCapacity,
 // A reference that is held across an append then reads freed memory every time.
 constexpr bool movesAtEveryAppend(size_t elements, size_t elementSize)
 {
-    return ASAN_ENABLED && elementSize >= 32 && elements * elementSize <= (1u << 16);
+    return ASAN_ENABLED && elementSize >= 32 && elements * elementSize <= (elementSize >= 128 ? (1u << 24) : (1u << 16));
 }
 
 // A short list doubles.

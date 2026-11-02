@@ -292,6 +292,30 @@ BlockCycles::BlockCycles(CFG& cfg, const Function* function)
         ForestBuilder(cfg, function).findOutermostCycles(m_outermost, m_membersOfOutermostCycles, m_firstMemberOfOutermostCycle);
 }
 
+bool BlockCycles::isInCycleAvoiding(BlockID block, BlockID avoidedBlock, uint64_t& numberOfBlocksVisited) const
+{
+    ++numberOfBlocksVisited;
+    std::optional<unsigned> cycle = outermostCycleOf(block);
+    if (!cycle || block == avoidedBlock)
+        return false;
+    if (outermostCycleOf(avoidedBlock) != cycle)
+        return true;
+    BitVector isVisited(m_cfg.numNodes());
+    isVisited.set(avoidedBlock.index());
+    Vector<unsigned, 16> worklist { block.index() };
+    while (!worklist.isEmpty()) {
+        for (BlockID successor : m_cfg.successors(BlockID(worklist.takeLast()))) {
+            if (successor == block)
+                return true;
+            if (m_outermost[successor.index()] != *cycle || isVisited.set(successor.index()))
+                continue;
+            ++numberOfBlocksVisited;
+            worklist.append(successor.index());
+        }
+    }
+    return false;
+}
+
 void BlockCycles::computeForest() const
 {
     m_forest.emplace(m_cfg, ForestBuilder(m_cfg, m_functionWithFrequencies).run(m_outermost.span(), m_membersOfOutermostCycles.span(), m_firstMemberOfOutermostCycle.span()));

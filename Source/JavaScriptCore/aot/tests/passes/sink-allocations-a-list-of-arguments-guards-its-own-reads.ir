@@ -1,0 +1,32 @@
+# The list that apply makes of an arguments object is the guard of the reads of its elements: only an allocation is a guard of what it makes.
+# Where another list is made in its place, that one is the guard. Where the rest list would stand in its place, which was not born here, the list is made.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass SinkAllocations
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="valuesAreNamed" parameters=[{type=function}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v4 = Integer integer=3
+    v5 = NewArray v2, v3 contents=anything
+    v6 = CreateUnmappedArguments v4, v5, v1
+    v7 = NewArgumentList v0, v6
+    v8 = Integer
+    v9 = GetArrayElement v7, v8, v7 level=Expected [keyIsIntegral]
+    Return v9
+# CHECK-NOT: CreateUnmappedArguments
+# CHECK-NOT: NewArgumentList
+# CHECK: [[list0]]:{{*}}= NewArray v1, v2, v3
+# CHECK: v9:{{*}}= GetArrayElement v7, v8, [[list0]]
+}
+
+function f1 name="restListIsEveryArgument" flags=[HasThis, HasArgumentCount, HasHiddenRest] captures=[{type=function}] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: function, v1: anything, v2: int[0, 4294967295], v3: Array):
+    v4 = CreateUnmappedArguments v2, v3
+    v5 = NewArgumentList v0, v4
+    v6 = Integer
+    v7 = GetArrayElement v5, v6, v5 level=Expected [keyIsIntegral]
+    Return v7
+# CHECK: v5:{{*}}= NewArgumentList v0, v4
+# CHECK: v7:{{*}}= GetArrayElement v5, v6, v5
+}

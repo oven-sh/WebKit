@@ -116,11 +116,6 @@ BuildContext::BuildContext(const Wire::CompileOptions& wire, const HostThreadPoo
         if (!m_imagesBelow)
             m_diagnostics.add(InternalError { .kind = InternalErrorKind::InvalidCompileOptions, .count = static_cast<uint32_t>(offsetof(Wire::CompileOptions, target)) });
     }
-    if (!m_options.referenceLibraryImage.empty()) {
-        m_referenceLibraryImage = ImagesBelow::tryCreate(std::span { &m_options.referenceLibraryImage, 1 });
-        if (!m_referenceLibraryImage)
-            m_diagnostics.add(InternalError { .kind = InternalErrorKind::InvalidCompileOptions, .count = static_cast<uint32_t>(offsetof(Wire::CompileOptions, target)) });
-    }
 }
 
 BuildContext::~BuildContext()

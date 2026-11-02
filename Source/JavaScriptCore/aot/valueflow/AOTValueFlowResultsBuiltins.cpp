@@ -371,6 +371,13 @@ static bool isLoadUnderConstantName(const Program& program, const Witness& witne
     return function.at(definitionThroughSameValues(function, load.specifierOperand())).opcode == Opcode::String;
 }
 
+// `import(new URL("./a.js", import.meta.url))`: the front end has read every name and answers each in front of the load, which stays for a path that is spelled otherwise.
+static bool isLoadBehindEveryName(const Program& program, const Witness& witness)
+{
+    const Value& load = program.at(FunctionID(witness.function)).at(ValueID(witness.value));
+    return (load.opcode == Opcode::ImportDynamic || load.opcode == Opcode::RequireDynamic) && load.allNamesAreKnown();
+}
+
 // `for (const name of ["os", "./plugin.ts"]) await import(name)`: the build knows every name, and each finds a module of the image.
 static bool findsModuleUnderEveryName(const ValueFlowResultInputs& inputs, const Witness& witness, bool isCallOfLoader)
 {
@@ -409,11 +416,24 @@ static void warnAboutLoadsUnderComputedNames(const ValueFlowResultInputs& inputs
     const Program& program = inputs.program;
     BuildContext& build = inputs.build;
     Vector<SourceLocation> reportedLocations;
+    bool isLoaderHeldByUnseenCode = false;
+    // `names.map(require)`: native code calls the loader too, and runs nothing that nobody has read.
+    bool runsUnseenJavaScript = std::ranges::any_of(records, [](const UnseenCodeRecord& record) {
+        return admitsUnknownJavaScript(record.cause);
+    });
     for (const UnseenCodeRecord& record : records) {
-        if (record.cause != UnseenCodeCause::LoadsModuleByName || record.witness.value == Wire::none)
+        if (record.cause != UnseenCodeCause::LoadsModuleByName)
             continue;
         bool isCallOfLoader = record.builtin != Wire::none;
+        // `vm.runInNewContext("require('./a.js')", { require })`: the text names the file, and nobody has read the text.
+        if (record.witness.value == Wire::none) {
+            if (isCallOfLoader && runsUnseenJavaScript && !std::exchange(isLoaderHeldByUnseenCode, true))
+                build.diagnostics().add(UserDiagnostic { .kind = UserDiagnosticKind::LoaderIsHeldByUnseenCode });
+            continue;
+        }
         if (isCallOfLoader ? !isCallOfProgramUnderComputedName(program, record.witness) : isLoadUnderConstantName(program, record.witness))
+            continue;
+        if (!isCallOfLoader && isLoadBehindEveryName(program, record.witness))
             continue;
         if (findsModuleUnderEveryName(inputs, record.witness, isCallOfLoader))
             continue;
@@ -597,12 +617,28 @@ static ValueSetID objectsCopiedBy(const ValueFlowBuiltinApplication& application
     return sources;
 }
 
+static bool hasAccessorUnder(const ValueFlowHeapView& heap, ValueSetMaker& maker, ValueSetID objects, PropertyKeyID key)
+{
+    return heap.writtenUnder(maker, objects, ValueFlowName::getter(key)) != ValueSets::nothing || heap.writtenUnder(maker, objects, ValueFlowName::setter(key)) != ValueSets::nothing;
+}
+
+// The first of the property, the getter and the setter of a key that one of the objects has: a key counts once.
+static bool standsForKeyIn(const ValueFlowHeapView& heap, ValueSetMaker& maker, ValueSetID objects, ValueFlowName name)
+{
+    PropertyKeyID key(name.payload);
+    for (ValueFlowName candidate : { ValueFlowName::property(key), ValueFlowName::getter(key), ValueFlowName::setter(key) }) {
+        if (heap.writtenUnder(maker, objects, candidate) != ValueSets::nothing)
+            return candidate == name;
+    }
+    return false;
+}
+
 static void forEachMemberNamedIn(const Program& program, const ValueFlowHeapView& heap, ValueSetMaker& maker, ValueSetID objects, BuiltinID holder, NOESCAPE const Invocable<void(BuiltinID, PropertyKeyID)> auto& functor)
 {
     const BuiltinTable& builtins = program.builtins();
     for (BuiltinID member : builtins.membersOf(holder)) {
         PropertyKeyID key = builtins.at(member).name ? program.keyOf(builtins.at(member).name) : PropertyKeyID();
-        if (key && ValueFlowName::property(program, key).kind == ValueFlowNameKind::Property && heap.writtenUnder(maker, objects, ValueFlowName::property(program, key)) != ValueSets::nothing)
+        if (key && ValueFlowName::property(program, key).kind == ValueFlowNameKind::Property && (heap.writtenUnder(maker, objects, ValueFlowName::property(program, key)) != ValueSets::nothing || hasAccessorUnder(heap, maker, objects, key)))
             functor(member, key);
     }
 }
@@ -615,6 +651,29 @@ static bool mayWriteLockedLocationUnderKeyNobodyKnows(const BuiltinTable& builti
             || std::ranges::any_of(builtins.membersOf(holder), [&](BuiltinID member) { return isLockedLocation(builtins, member); });
     });
     return mayWrite;
+}
+
+static bool writesLockedNameOfHostObject(const ValueFlowResultInputs& inputs, ValueFlowHeapView& heap)
+{
+    const Program& program = inputs.program;
+    std::span<const BuiltinHostObject> hostObjects = program.builtins().hostObjects();
+    bool writes = false;
+    for (uint32_t index = 0; index < hostObjects.size(); ++index) {
+        if (hostObjects[index].lockedNames.empty())
+            continue;
+        ValueSetID object = heap.maker().of(inputs.universe().hostObject(index));
+        for (BuiltinName name : hostObjects[index].lockedNames) {
+            PropertyKeyID key = program.keyOf(name);
+            if (!key)
+                continue;
+            for (ValueFlowName written : { ValueFlowName::property(program, key), ValueFlowName::getter(program, key), ValueFlowName::setter(program, key), ValueFlowName { ValueFlowNameKind::DeletedMember, key.index() }, ValueFlowName { ValueFlowNameKind::RedefinedMember, key.index() } }) {
+                heap.forEachNodeWrittenUnder(written, [&](ValueSetID objects, ValueSetID) {
+                    writes |= heap.reaches(objects, object);
+                });
+            }
+        }
+    }
+    return writes;
 }
 
 static Vector<ValueFlowWriteUnderNewName> collectWritesOfLockedLocations(const ValueFlowResultInputs& inputs, const LedgerOfBuiltinObjects& holders, ValueFlowHeapView& heap, bool writesLockedLocation, Vector<BuiltinLocationFlow>& locations, Vector<BuiltinLocationFlow>& underUnreadNames)
@@ -657,6 +716,17 @@ static Vector<ValueFlowWriteUnderNewName> collectWritesOfLockedLocations(const V
     };
     auto spelledOutTextsOf = [&](FunctionID function, ValueID keyValue) -> std::span<const StringID> {
         return keyValue ? program.typeOf(program.at(function), keyValue).stringLiterals.span() : std::span<const StringID>();
+    };
+    // One object stands for all that native code makes in a cell, so it counts among those that may be anything. What lies under a locked name of it is known all the same.
+    std::span<const BuiltinHostObject> hostObjects = builtins.hostObjects();
+    auto noteOnHostObject = [&](const Notes& notes, ValueSetID receivers, PropertyKeyID key, const Witness& witness) {
+        if (ValueSets::isComplement(receivers) || sets.size(receivers) != 1)
+            return;
+        for (uint32_t index = 0; index < hostObjects.size(); ++index) {
+            const BuiltinHostObject& hostObject = hostObjects[index];
+            if (std::ranges::any_of(hostObject.lockedNames, [&](BuiltinName name) { return program.keyOf(name) == key; }) && sets.contains(receivers, universe.hostObject(index)))
+                notes.writes.append({ hostObject.holder, key, { }, witness });
+        }
     };
     auto note = [&](const Notes& notes, ValueSetID receivers, PropertyKeyID key, const Witness& witness) {
         if (notes.changesPrototypeUnderItsName && key == keyOfPrototypeLink) {
@@ -743,14 +813,21 @@ static Vector<ValueFlowWriteUnderNewName> collectWritesOfLockedLocations(const V
             Notes notes { maker, found, statement.opcode == Opcode::PropSet || statement.opcode == Opcode::ElemSet };
             std::optional<unsigned> object = statement.kind == ValueFlowStatementKind::Operation && statement.site && !modeOfCallOperation(statement.opcode) ? OperandPosition::object(statement.opcode) : std::nullopt;
             std::span<const ValueFlowOperand> operands = bodies.operandsOf(statement);
-            if (!object || !listsItsObjects(heap.possibleValuesOf(maker, operands[*object])))
+            if (!object)
                 continue;
+            bool listsReceivers = listsItsObjects(heap.possibleValuesOf(maker, operands[*object]));
             Witness witness = witnessOfStatement(program, statement);
             ValueFlowStatementID id(static_cast<uint32_t>(&statement - bodies.statements().data()));
             inputs.forEachMadeNodeAskedForBy(id, kindsOfMadeNodes({ ValueFlowMadeNodeKind::Written }), false, [&](const ValueFlowNodeKey& key, ValueFlowStatementID) {
-                if (shapeOf(key.name().kind).reach == ValueFlowNameReach::OneKey)
+                if (shapeOf(key.name().kind).reach != ValueFlowNameReach::OneKey)
+                    return;
+                if (listsReceivers)
                     note(notes, key.set, PropertyKeyID(key.payload), witness);
+                else
+                    noteOnHostObject(notes, key.set, PropertyKeyID(key.payload), witness);
             });
+            if (!listsReceivers)
+                continue;
             const Value& operation = program.at(statement.function).at(statement.site);
             if (operation.opcode == Opcode::PropSet && operation.key() == keyOfPrototypeLink)
                 note(notes, heap.possibleValuesOf(maker, operands[*object]), keyOfPrototypeLink, witness);
@@ -805,7 +882,17 @@ static Vector<ValueFlowWriteUnderNewName> collectWritesOfLockedLocations(const V
                             ValueSetID copied = heap.writtenUnder(notes.maker, sources, ValueFlowName::property(program, key));
                             ValueFlowObjectID objectOfMember = universe.objectOf(builtins.canonicalID(member));
                             bool mayChangeMember = action.kind == BuiltinPropertyActionKind::TakesDescriptorMap ? mayDescribeOtherValue(notes.maker, copied) : !objectOfMember || !sets.isSubset(copied, notes.maker.of(objectOfMember));
-                            if (mayChangeMember)
+                            if (mayChangeMember || hasAccessorUnder(heap, notes.maker, sources, key))
+                                notes.writes.append({ holder, key, { }, witness });
+                        });
+                        // `Object.assign(Response.prototype, makeMixin())`: a holder that takes no other names refuses what the objects have and it lacks.
+                        if (!builtins.at(holder).flags.containsAny({ BuiltinFlag::IsLockedObject, BuiltinFlag::IsClosedToOtherNames }))
+                            continue;
+                        heap.index().forEachNameWritten([&](ValueFlowName name) {
+                            if (!standsForKeyIn(heap, notes.maker, sources, name))
+                                return;
+                            PropertyKeyID key(name.payload);
+                            if (!findOwnMember(program, holder, key) && isLockedLocation(program, holder, key))
                                 notes.writes.append({ holder, key, { }, witness });
                         });
                     }
@@ -880,8 +967,7 @@ static Vector<ValueFlowWriteUnderNewName> computeBuiltinLocations(const ValueFlo
         bool isUnlocked = program.isUnlocked(member);
         if (isEnabled && !isStoredThroughUnknownReceiver && !isUnlocked && isWorthLockingAtStartUp(builtins, member, uses, withoutLocks).predicted())
             tables.membersLockedAtStartUp.quickSet(index);
-        // An image that holds the library alone takes every member for unlocked, and still has to say which of them it writes itself.
-        if (inputs.build.options().sharesRealms() && (!isUnlocked || inputs.build.options().holdsLibraryAlone()) && canLockAtStartUp(builtins, member) && (isStoredThroughUnknownReceiver || !isNoWriteFollowedTo(builtins, member, uses, withoutLocks).predicted()))
+        if (inputs.build.options().sharesRealms() && !isUnlocked && canLockAtStartUp(builtins, member) && (isStoredThroughUnknownReceiver || !isNoWriteFollowedTo(builtins, member, uses, withoutLocks).predicted()))
             tables.membersWrittenInSharedRealm.quickSet(index);
         BuiltinLocationClaim claim = isEnabled || Locks::byTable(builtins, member) ? stateOfLocation(holders.behindLocks(member, withoutLocks)) : unknownLocation(UnprovenCause::ResultDisabled);
         if (isStoredThroughUnknownReceiver || isUnlocked)
@@ -900,6 +986,7 @@ static Vector<ValueFlowWriteUnderNewName> computeBuiltinLocations(const ValueFlo
         } else if (!findOwnMember(program, holder, key))
             tables.locations.append(BuiltinLocationFlow { holder, key, BuiltinLocationState::Unknown, noWitness });
     });
+    writesLockedLocation = writesLockedLocation || writesLockedNameOfHostObject(inputs, heap);
     Vector<ValueFlowWriteUnderNewName> underNewNames = collectWritesOfLockedLocations(inputs, holders, heap, writesLockedLocation, tables.locations, tables.writesUnderUnreadNames);
     tables.writesOfLocations = mergeWrites(WTF::move(tables.writesOfLocations), tables.locations.span());
     sortAndMergeLocations(tables.locations);
@@ -1275,7 +1362,7 @@ static void collectWhatTestsReplace(const ValueFlowResultInputs& inputs, ValueFl
     for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
         if (builtins.canBeReplacedInTestRuns(BuiltinID(index)))
             addHolder(builtins.at(BuiltinID(index)).holder);
-        if (builtins.canTakeNameInTestRuns(BuiltinID(index), { }))
+        if (builtins.canTakeNameInTestRuns(BuiltinID(index), { }) || !builtins.closedKeysOf(BuiltinID(index)).empty())
             addHolder(BuiltinID(index));
     }
     ValueSetID holders = heap.maker().of(objectsOfHolders.span());
@@ -1365,6 +1452,13 @@ static void collectWhatTestsReplace(const ValueFlowResultInputs& inputs, ValueFl
                         if (builtins.canBeReplacedInTestRuns(member))
                             writes.append({ member, { }, { } });
                     });
+                });
+                // `Object.assign(Response.prototype, makeMixin())`: what the objects have and the holder lacks is added.
+                if (ValueSets::isComplement(sources) || sets.meet(sources, universe.objectsThatMayBeAnything()))
+                    continue;
+                heap.index().forEachNameWritten([&](ValueFlowName name) {
+                    if (standsForKeyIn(heap, heap.maker(), sources, name))
+                        note(heap.maker(), receivers, PropertyKeyID(name.payload), writes);
                 });
             }
         }

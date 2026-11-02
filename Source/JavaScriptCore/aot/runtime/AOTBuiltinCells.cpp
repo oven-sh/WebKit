@@ -13,11 +13,14 @@
 #include "AOTBuiltinTable.h"
 #include "AOTBuiltinTableBindings.h"
 #include "AOTBuiltinTableRealm.h"
+#include "AOTClosure.h"
 #include "AOTErrorMessages.h"
 #include "AOTHeapCacheRegistry.h"
 #include "AOTImage.h"
+#include "AOTImageOfCellScope.h"
 #include "AOTInstance.h"
 #include "AOTModuleHost.h"
+#include "AOTModuleNamespace.h"
 #include "AOTModules.h"
 #include "AOTOperationScope.h"
 #include "AOTProgramIdentifiers.h"
@@ -381,6 +384,37 @@ JSCell* BuiltinCells::cell(uint32_t number)
     return *found;
 }
 
+static JSC_DECLARE_HOST_FUNCTION(refuseCallOfBuiltinChangedBeforeFirstUse);
+
+JSC_DEFINE_HOST_FUNCTION(refuseCallOfBuiltinChangedBeforeFirstUse, (JSGlobalObject* realm, CallFrame* callFrame))
+{
+    VM& vm = realm->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // Whichever image of the realm made it: as a value it reaches the code of others.
+    for (Instance* instance = realm->aotInstance(); instance; instance = instance->above) {
+        std::optional<BuiltinCellKey> key = instance->state ? instance->state->builtinCells->keyOfCellHolding(callFrame->jsCallee()) : std::nullopt;
+        if (key)
+            return throwVMTypeError(realm, scope, callOfBuiltinChangedBeforeFirstUseMessage(BuiltinTable::singleton().textOf(key->builtin())));
+    }
+    return throwVMTypeError(realm, scope, callOfBuiltinChangedBeforeFirstUseMessage(uncheckedDowncast<JSFunction>(callFrame->jsCallee())->name(vm)));
+}
+
+JSCell* BuiltinCells::cellReadWithoutTest(uint32_t number)
+{
+    if (JSCell* found = cell(number))
+        return found;
+    const BuiltinTable& table = BuiltinTable::singleton();
+    std::optional<BuiltinCellKey> key = BuiltinCellKey::decode(m_tables.builtinCells()[number], table);
+    RELEASE_ASSERT(key);
+    const Builtin& entry = table.at(key->builtin());
+    VM& vm = *m_instance.vm;
+    if (key->kind() != BuiltinCellKey::Kind::Object || !BuiltinBindings::provides(entry.origin) || table.overloadSummariesOf(key->builtin()).empty())
+        return nullptr;
+    JSFunction* refusing = JSFunction::create(vm, m_instance.globalObject, 0, table.identifierOf(vm, entry.name).string(), refuseCallOfBuiltinChangedBeforeFirstUse, ImplementationVisibility::Public);
+    fillAndKeepAlive(number, refusing);
+    return refusing;
+}
+
 JSCell* BuiltinCells::findObject(BuiltinID id)
 {
     if (std::optional<uint32_t> number = numberOf(BuiltinCellKey::object(id)))
@@ -741,6 +775,12 @@ void setRefusedChangeListener(RefusedChangeListener listener)
     refusedChangeListener = listener;
 }
 
+void tellRefusedChangeListener(JSGlobalObject* realm, const String& refusal)
+{
+    if (refusedChangeListener) [[unlikely]]
+        refusedChangeListener(realm, refusal);
+}
+
 static void noteNameOfLockedObject(JSObject* object, BuiltinID id)
 {
     Locker locker { namesOfLockedObjectsLock };
@@ -803,14 +843,133 @@ String lockedObjectErrorMessage(JSGlobalObject*, JSObject* object, UniquedString
     return change == RejectedWrite::Deletion ? deletionFromLockedBuiltinMessage(vm, id, key, lockedIn) : assignmentToLockedBuiltinMessage(vm, id, key, lockedIn);
 }
 
+bool isNameRefusedByLibraryFunction(JSObject* object, UniquedStringImpl* key)
+{
+    auto* closure = dynamicDowncast<Closure>(object);
+    return closure && closure->refusesOwnProperty(object->vm(), PropertyName(key));
+}
+
 String refusedSpyMessage(JSGlobalObject* globalObject, JSObject* object, UniquedStringImpl* key)
 {
     ImmutablePropertyNames* names = object->structure()->listedImmutablePropertyNames();
     String message = names ? names->storeErrorMessage(key) : lockedObjectErrorMessage(globalObject, object, key, RejectedWrite::Store);
+    if (isNameRefusedByLibraryFunction(object, key))
+        message = assignmentToNameThatBuiltinFunctionInheritsMessage(key);
     constexpr ASCIILiteral start = "Cannot assign to "_s;
     if (!message.startsWith(start))
         return { };
     return makeString("Cannot spy on "_s, StringView(message).substring(start.length()));
+}
+
+static LockedIn kindOfRun(JSGlobalObject* realm)
+{
+    Instance* instance = Instance::of(realm);
+    return instance && admitsReplacedBuiltins(*instance) ? LockedIn::TestRun : LockedIn::Executable;
+}
+
+String refusedSpyOnExportMessage(JSCell* moduleNamespace, UniquedStringImpl* name)
+{
+    auto* object = uncheckedDowncast<ModuleNamespace>(moduleNamespace);
+    ImageOfCellScope imageOfCell(object);
+    JSGlobalObject* realm = object->realm();
+    return spyOnExportRefusedMessage(name, modulesOf(realm)->table().pathText(object->module()), kindOfRun(realm));
+}
+
+String refusedMockMessage(JSGlobalObject* realm, const String& path)
+{
+    return mockOfModuleRefusedMessage(path, kindOfRun(realm));
+}
+
+static bool hasUnlocked(const Instance& instance, BuiltinID member)
+{
+    BuiltinCells* cells = instance.state ? instance.state->builtinCells.get() : nullptr;
+    bool hasListOfRealm = cells && !cells->membersUnlockedInRealm().empty();
+    return ProgramTables::isUnlocked(hasListOfRealm ? cells->membersUnlockedInRealm() : instance.tables().unlockedBuiltinMembers(), member.index());
+}
+
+// A function of the engine or the host that no image has asked for yet is looked for among the entries of its own name. Which of them it is its identity says.
+static BuiltinID builtinOfFunctionByIdentity(BuiltinCells& cells, JSObject* object)
+{
+    VM& vm = object->vm();
+    if (!object->isCallable())
+        return { };
+    JSValue stored = object->getDirect(vm, vm.propertyNames->name);
+    JSFunction* function = stored ? nullptr : dynamicDowncast<JSFunction>(object);
+    String written = function ? function->name(vm) : stored && stored.isString() ? asString(stored)->tryGetValue() : String();
+    if (written.isNull())
+        return { };
+    const BuiltinTable& table = BuiltinTable::singleton();
+    BuiltinName name = table.nameOf(vm, Identifier::fromString(vm, written).impl());
+    if (!name)
+        return { };
+    for (unsigned index = 0; index < table.builtinCount(); ++index) {
+        BuiltinID id { index };
+        const Builtin& entry = table.at(id);
+        bool isFunction = entry.kind == BuiltinKind::Constructor || entry.kind == BuiltinKind::Function;
+        if (isFunction && entry.name == name && table.canonicalID(id) == id && cells.findObject(id) == object)
+            return id;
+    }
+    return { };
+}
+
+static BuiltinID builtinOfObject(BuiltinCells& cells, JSObject* object)
+{
+    if (BuiltinID locked = cells.builtinOfLockedObject(object))
+        return locked;
+    if (std::optional<BuiltinCellKey> filled = cells.keyOfCellHolding(object); filled && filled->kind() == BuiltinCellKey::Kind::Object)
+        return filled->builtin();
+    return builtinOfFunctionByIdentity(cells, object);
+}
+
+// Over layers a realm runs several images, and each knows the objects that it has locked itself.
+bool isMemberUnlockedForTests(JSObject* object, UniquedStringImpl* key)
+{
+    Instance* running = instanceOfRealmOf(object);
+    if (!running)
+        return false;
+    const BuiltinTable& table = BuiltinTable::singleton();
+    BuiltinName name = table.nameOf(object->vm(), key);
+    if (!name)
+        return false;
+    // No image takes a member that changes on its own for what it was, so none lists it.
+    auto isOpenIn = [&](const Instance& instance, BuiltinID member) {
+        return member && (table.at(member).mutability == BuiltinMutability::ChangesOnItsOwn || hasUnlocked(instance, member));
+    };
+    bool isKnown = false;
+    bool isUnlockedByAll = true;
+    forEachInstanceOf(object->realm(), [&](Instance& instance) {
+        BuiltinID holder = instance.state ? builtinOfObject(*instance.state->builtinCells, object) : BuiltinID();
+        if (!holder)
+            return;
+        isKnown = true;
+        isUnlockedByAll &= isOpenIn(instance, table.findOwnMember(holder, name));
+    });
+    if (isKnown)
+        return isUnlockedByAll;
+    BuiltinID holder = builtinOfLockedObject(running, object);
+    return isOpenIn(*running, holder ? table.findOwnMember(holder, name) : BuiltinID());
+}
+
+// Compiled code reads a property without a declared type wherever the program does. A declared type would be trusted.
+bool isMemberTakenForConstant(JSObject* object, UniquedStringImpl* key)
+{
+    JSGlobalObject* realm = object->realm();
+    const BuiltinTable& table = BuiltinTable::singleton();
+    BuiltinName name = realm ? table.nameOf(object->vm(), key) : BuiltinName();
+    if (!name)
+        return false;
+    BuiltinID holder;
+    for (Instance* instance = realm->aotInstance(); instance; instance = instance->above) {
+        BuiltinCells* cells = instance->state ? instance->state->builtinCells.get() : nullptr;
+        if (!cells)
+            continue;
+        if (!holder)
+            holder = builtinOfObject(*cells, object);
+        BuiltinID member = holder ? table.findOwnMember(holder, name) : BuiltinID();
+        if (member && isImmutableLocation(table, instance->tables(), member) && !table.at(member).isReadWithoutType)
+            return true;
+    }
+    return false;
 }
 
 static bool admitsReplacedBuiltins(const Instance& instance)
@@ -961,13 +1120,6 @@ static bool isLockedByTable(const BuiltinTable& table, BuiltinID holder)
     return hasMemberLockedByTable(table, holder) || table.at(holder).flags.contains(BuiltinFlag::IsLockedObject);
 }
 
-// The lowest program of the realm whose build knew the run. An image that holds the library alone was built for every run: it rests on no lock that a run can open, and says nothing about what this one opens.
-static Instance* firstInstanceOfRun(JSGlobalObject* realm)
-{
-    Instance* first = realm->aotInstance();
-    return first && first->program->holdsLibraryAlone() && first->above ? first->above : first;
-}
-
 namespace {
 
 // Locks a built-in object that the realm has created, and what hangs on it and is there already.
@@ -1067,7 +1219,7 @@ private:
             }
         };
         appendNamesOf(m_instance);
-        if (const Instance* first = firstInstanceOfRun(m_realm); first && first != &m_instance)
+        if (const Instance* first = m_realm->aotInstance(); first && first != &m_instance)
             appendNamesOf(*first);
         return names;
     }
@@ -1180,12 +1332,8 @@ static void lockBuiltins(Instance& instance)
     }
     BuiltinCells& cells = *instance.state->builtinCells;
     // What the first program of the realm leaves open stays open: its build knows of every file that the programs share and of Bun's own code, which a later build does not see.
-    Instance* first = firstInstanceOfRun(realm);
-    if (instance.program->holdsLibraryAlone()) {
-        // It locks what that program locks, which comes behind it.
-        if (first != &instance)
-            cells.setMembersUnlockedInRealm(Vector<uint32_t>(first->tables().unlockedBuiltinMembers()));
-    } else if (first && first != &instance && first->state) {
+    Instance* first = realm->aotInstance();
+    if (first && first != &instance && first->state) {
         toLock.builtins.filter(first->state->builtinCells->builtinsToLock());
         Vector<uint32_t> unlocked(instance.tables().unlockedBuiltinMembers());
         unlocked.append(first->tables().unlockedBuiltinMembers());

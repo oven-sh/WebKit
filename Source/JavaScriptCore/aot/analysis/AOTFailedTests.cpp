@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuildContext.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTSort.h"
 #include <algorithm>
@@ -48,6 +49,16 @@ FailedTests::FailedTests(FunctionAnalyses& analyses)
         if (cfg.singleIncomingEdge(target) == Edge { from, otherwiseTargetIndex })
             m_failedSwitches.append(FailedSwitch { analyses.identityOf(terminator.subjectOperand()), from, target });
     }
+
+    if (!m_failedEdges.isEmpty() || !m_failedSwitches.isEmpty())
+        m_subjects.ensureSize(m_function.values.size());
+    for (const FailedEdge& edge : m_failedEdges) {
+        if (edge.subject)
+            m_subjects.set(edge.subject.index());
+    }
+    for (const FailedSwitch& entry : m_failedSwitches)
+        m_subjects.set(entry.subject.index());
+    analyses.context().build.statistics().count(StatisticID::FailedTestsReadForSubjects, m_failedEdges.size() + m_failedSwitches.size());
 
     nestFailedEdges();
     AOT::sort(m_failedSwitches, { }, [](const FailedSwitch& entry) {
@@ -137,12 +148,7 @@ bool FailedTests::hasTestOf(ValueID value) const
 {
     if (m_failedEdges.isEmpty() && m_failedSwitches.isEmpty())
         return false;
-    ValueID subject = m_analyses.identityOf(value);
-    return m_failedEdges.containsIf([&](const FailedEdge& edge) {
-        return edge.subject == subject;
-    }) || m_failedSwitches.containsIf([&](const FailedSwitch& entry) {
-        return entry.subject == subject;
-    });
+    return m_subjects.get(m_analyses.identityOf(value).index());
 }
 
 bool FailedTests::isCoveredBySwitch(const Value& shapeTest, const FailedSwitch& entry) const

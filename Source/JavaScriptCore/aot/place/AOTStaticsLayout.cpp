@@ -514,7 +514,30 @@ std::pair<StaticsPlan, LiteralSites> placeStatics(const PlacementContext& contex
             firstWordOfNext = placed.firstWord;
         }
     };
+    auto findWhatImportsWhatMayBeMocked = [&] {
+        Vector<uint32_t, 16> found;
+        for (uint32_t index = 0; index < program.modules.size(); ++index) {
+            if (program.modules[index].flags.contains(ModuleFlags::MayBeMocked))
+                found.append(index);
+        }
+        if (found.isEmpty())
+            return;
+        Vector<Vector<uint32_t, 2>> importers(program.modules.size());
+        for (uint32_t index = 0; index < program.modules.size(); ++index) {
+            for (const ModuleRequest& request : program.modules[index].requests) {
+                if (request.kind == ModuleRequestKind::Import && request.target)
+                    importers[request.target.index()].append(index);
+            }
+        }
+        while (!found.isEmpty()) {
+            for (uint32_t importer : importers[found.takeLast()]) {
+                if (!plan.modulesThatImportWhatMayBeMocked.set(importer))
+                    found.append(importer);
+            }
+        }
+    };
     auto placeModuleValues = [&] {
+        findWhatImportsWhatMayBeMocked();
         for (const RequireEdgeUse& use : sites.requireEdges) {
             if (requireReadsModuleValue(program, program.at(use.edge.target)) && requireAddsToRequireCache(program, use.edge.referrer, use.edge.target))
                 plan.modulesWithRequireCacheValue.set(use.edge.target.index());

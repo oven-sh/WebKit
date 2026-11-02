@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuildContext.h"
 #include "AOTBuiltinTypes.h"
 #include "AOTInlineBuiltinForms.h"
 #include "AOTLoopEntry.h"

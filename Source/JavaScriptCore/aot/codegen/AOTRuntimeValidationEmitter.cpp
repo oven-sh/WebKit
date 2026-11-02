@@ -551,14 +551,16 @@ void RuntimeValidationEmitter::branchOnType(Operand operand, const TypeTestPlan&
 }
 
 // The operation looks closer than generated code can, and returns where the statement holds.
-void RuntimeValidationEmitter::askOperationUnless(Condition condition, ValidationFailureKind kind, Operand found, ValueID id)
+void RuntimeValidationEmitter::askOperationUnless(Condition condition, std::span<const ValidationFailureKind> kinds, Operand found, ValueID id)
 {
     LBasicBlock isUndecided = newBlock();
     LBasicBlock continuation = newBlock();
     m_out.branch(condition.value(), normalEdge(continuation), rareEdge(isUndecided));
     m_out.appendTo(isUndecided);
-    Operand arguments[] { reportedValueOf(found), reportedFailure(kind, found), word32(m_id.index()), word32(id.index()) };
-    callWithoutSite(RuntimeOperation::ReportValidationFailure, arguments, Representation::Void, { .isOnRarePath = true, .reportMayReturn = true });
+    for (ValidationFailureKind kind : kinds) {
+        Operand arguments[] { reportedValueOf(found), reportedFailure(kind, found), word32(m_id.index()), word32(id.index()) };
+        callWithoutSite(RuntimeOperation::ReportValidationFailure, arguments, Representation::Void, { .isOnRarePath = true, .reportMayReturn = true });
+    }
     m_out.jump(continuation);
     m_out.appendTo(continuation);
 }

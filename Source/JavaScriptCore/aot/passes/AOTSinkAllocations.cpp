@@ -11,6 +11,7 @@
 #include "AOTArrayStorageForms.h"
 #include "AOTBorrowedParameters.h"
 #include "AOTBuildContext.h"
+#include "AOTBuiltinMembers.h"
 #include "AOTFlowApply.h"
 #include "AOTFlowResults.h"
 #include "AOTFrameAllocationPlanner.h"

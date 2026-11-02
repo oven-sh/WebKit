@@ -1589,6 +1589,7 @@ CallingConventions chooseCallingConventions(ProgramEditor& editor, const Optimiz
     }
     times.didFinish("chooseImpureDoubles"_s);
     tables.parametersLetGo = findParametersLetGo(program, inputs.callGraph, loops);
+    build.statistics().count(StatisticID::ParametersLetGo, tables.parametersLetGo.size());
     times.didFinish("findParametersLetGo"_s);
     return CallingConventions(WTF::move(tables));
 }

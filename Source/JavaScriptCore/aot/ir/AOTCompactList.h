@@ -352,7 +352,7 @@ private:
         m_words[0] = inlineTag;
         *inlineElement() = element;
     }
-    NEVER_INLINE void expandCapacity() { reserveCapacity(std::max<size_t>(2, capacity() + capacity() / 2 + 1)); }
+    NEVER_INLINE void expandCapacity() { reserveCapacity(ASAN_ENABLED ? capacity() + 1 : std::max<size_t>(2, capacity() + capacity() / 2 + 1)); }
     void setSize(size_t newSize)
     {
         if (!isInline())
@@ -696,12 +696,12 @@ private:
         m_isOutOfLine = true;
     }
 
-    NEVER_INLINE void expandCapacity() { reserveCapacity(capacity() + capacity() / 2 + 1); }
+    NEVER_INLINE void expandCapacity() { reserveCapacity(ASAN_ENABLED ? capacity() + 1 : capacity() + capacity() / 2 + 1); }
     void expandCapacityFor(size_t count)
     {
         size_t needed = size() + count;
         if (needed > capacity())
-            reserveCapacity(std::max(needed, capacity() + capacity() / 2 + 1));
+            reserveCapacity(ASAN_ENABLED ? needed : std::max(needed, capacity() + capacity() / 2 + 1));
     }
     T* openGap(size_t position, size_t length)
     {

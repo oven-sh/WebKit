@@ -41,6 +41,7 @@
 # handsOverToOneThatHandsOn();
 # FORM: AsRead
 # OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# STATISTIC: ParametersLetGo = 2
 # RUN: lower-to-b3 f7
 # RUN(X64): lower-to-air f7 f8 f9 f10
 # REQUIRES(X64): x86_64 unsanitized-code

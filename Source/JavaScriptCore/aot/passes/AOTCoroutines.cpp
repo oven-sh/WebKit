@@ -1349,6 +1349,9 @@ void splitCoroutines(ProgramEditor& editor, const OptimizationInputs& inputs, co
         AnalysisContext context { build, program, &inputs.flow, &inputs.effects, id };
         Function ramp = buildRamp(context, arenas.types, function, plan);
         context.id = plan.record.body;
+        // The listener would go away with the body, and hear nothing of what takes its place.
+        if (ReasonsForOperationsThatWent* listener = function.listenerForOperationsThatGo()) [[unlikely]]
+            didReplaceBody(*listener);
         *plan.bodySlot = plan.neverSuspends ? buildAsyncWorker(arenas.types, WTF::move(function), plan) : buildCoroutineBody(context, arenas.types, WTF::move(function), plan);
         function = WTF::move(ramp);
     });

@@ -161,6 +161,7 @@ struct CompileOptions {
     unsigned threadCount { 1 };
     CompileAction action { CompileAction::Compile };
     bool verifiesAfterEveryPass { false };
+    bool keepsGoingBehindFailedVerifications { false };
     bool verifiesAfterEveryStage { false };
     bool verifiesProgram { false };
     bool validatesBackEnd { false };
@@ -185,7 +186,6 @@ struct CompileOptions {
     OutputOptions output { };
     // The images that were built before this one for the same realms, the first of them first, as their builds wrote them. They outlive the build.
     Vector<std::span<const uint8_t>, 2> imagesBelow;
-    std::span<const uint8_t> referenceLibraryImage;
     LoggingOptions logging;
 
     bool isVerifyOnly() const { return action == CompileAction::VerifyOnly; }
@@ -210,8 +210,6 @@ struct CompileOptions {
     bool obfuscates() const { return hasFlag(output, OutputOptions::Obfuscate); }
     // A realm that runs the image runs other images too. Each is built alone, and takes the cells of the others for cells of code that no build has seen.
     bool sharesRealms() const { return hasFlag(output, OutputOptions::SharesRealms); }
-    // The image holds the library and nothing else, and is built before any of the runs that it serves is known. So it rests on no lock that a test run can open.
-    bool holdsLibraryAlone() const { return hasFlag(output, OutputOptions::HoldsLibraryAlone); }
     // The host runs the image in one realm of the VM after another, each with an instance of its own, and what it carries from one realm to the next may hold a function of the earlier one.
     bool runsInSeveralRealms() const { return hasFlag(output, OutputOptions::RunsInSeveralRealms); }
     bool writesCodeSizeMap() const { return !logging.mapFilePath.isNull(); }

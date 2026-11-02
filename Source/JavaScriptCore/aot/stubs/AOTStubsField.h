@@ -234,6 +234,28 @@ PreludeExit emitPrivateSetPrelude(StubAssembler&);
 
 inline constexpr uint32_t offsetBitsWithoutSlotKey = SlotData::maxOffset & ~(outOfLineSlotKey - 1);
 
+template<typename AddressOfSlot>
+void loadSlotBits(StubAssembler& jit, unsigned width, AddressOfSlot slot, GPRReg bits)
+{
+    switch (width) {
+    case 1:
+        jit.load8(slot, bits);
+        return;
+    case 2:
+        jit.load16(slot, bits);
+        return;
+    case 4:
+        jit.load32(slot, bits);
+        return;
+    case 8:
+        jit.load64(slot, bits);
+        return;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+Jump branchIfBitsEqual(StubAssembler&, unsigned width, GPRReg bits, uint64_t expected);
+
 } } // namespace JSC::AOT
 
 #endif // ENABLE(AOT)

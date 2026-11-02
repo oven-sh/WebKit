@@ -136,7 +136,7 @@ private:
     bool hasEscaped(ClimbingSet objects) { return m_context.holdsAnyOf(objects, ValueFlowProgramNodes::escaped()); }
     bool isAnswerThatNoReadLists(ClimbingSet objects) { return m_context.holdsAnyOf(objects, m_context.nodes().ofHost(ValueFlowHostNode::AnswersThatNoReadLists)); }
     void noteAnswersThatNoReadLists(const Members&);
-    void noteAnswersOfReadUnderUnknownKey(ValueFlowObjectID holder);
+    void noteAnswersOfReadUnderUnknownKey(ValueFlowObjectID holder, bool isReceiver);
     bool answersUnknownObjectUnderUnknownKeys(ValueFlowObjectID holder) { return isNativeModuleThatNobodyNames(holder) || m_builtins.canonicalID(m_universe.builtinOf(holder)) == Builtins::Bun; }
     bool mayBeAnsweredWithoutBeingListed(BuiltinID member) const { return isObjectKind(m_builtins.at(member).kind) && m_builtins.at(member).kind != BuiltinKind::Prototype; }
     bool mayBeReachedThroughUnknownObject(ClimbingSet objects)
@@ -272,7 +272,7 @@ private:
     bool namesObjectOfAccess() const;
     bool findsOnGlobalObjectWhatStatementsStore(const HeapKey&) const;
     ClimbingSet accessorsFoundFrom(ClimbingSet start, const HeapKey&, HeapPropertyPart);
-    ClimbingSet settersOfProgramLaidAbove(ClimbingSet start, const HeapKey&);
+    ClimbingSet accessorsOfProgramLaidAbove(ClimbingSet start, const HeapKey&, HeapPropertyPart);
     ClimbingSet gettersOfEnumerableProperties(ClimbingSet holders);
     // The images below have run first: what a preload of theirs has stored on the global object no statement of this program shows.
     bool holdsGlobalObjectOnlyWhatStatementsHaveStored() { return !m_context.refusedCode().hasImagesBelow && !doesUnseenCodeRun() && !m_context.holdsAnyOf(ClimbingSet(only(m_universe.objectOf(Builtins::ProcessDlopen))), m_context.nodes().ofHost(ValueFlowHostNode::UsedBuiltins)); }

@@ -13,6 +13,7 @@
 #include "AOTEffectsOfOperands.h"
 #include "AOTFlowApply.h"
 #include "AOTFrameAllocationPlanner.h"
+#include "AOTObservableOperations.h"
 #include "AOTSort.h"
 #include "AOTVector.h"
 #include "MathCommon.h"
@@ -338,6 +339,9 @@ void ObjectInterpreter::executeCast(ValueID id)
         keep(id);
         return;
     }
+    // What is asked is an object that the pass holds itself, whatever the type of the operand says: what a call that nobody had resolved answers is `anything` until it is typed anew.
+    if (function().at(id).opcode == Opcode::RequireObject)
+        explainOperationThatGoes(function(), id, InPlaceOfOperation::NothingByProofOfThePass);
 
     if (function().at(id).opcode == Opcode::AssumeType) {
         stateOf(object)->assume(function().at(id).provenType());
@@ -577,14 +581,18 @@ void ObjectInterpreter::passRangesOfViews(ValueID call, const BytesOperands& byt
             const ObjectState& state = *stateOf(object);
             const VirtualFamily& family = m_sinking.familyOf(object);
             uint32_t tagBitsOfRanges = 0;
-            unsigned elementSize = 1;
+            std::optional<unsigned> sizeOfElements;
             for (const ObjectVariant& variant : state.variants) {
                 const VirtualShape& shape = family.at(variant.shape);
                 if (shape.kind != VirtualShapeKind::Fields)
                     continue;
                 tagBitsOfRanges |= variant.tagMask();
-                elementSize = JSC::elementSize(typedArrayTypeOf(program().builtins(), program().at(family.descriptionOf(shape).type)));
+                unsigned size = JSC::elementSize(typedArrayTypeOf(program().builtins(), program().at(family.descriptionOf(shape).type)));
+                // One factor turns the bounds of every variant into bytes.
+                RELEASE_ASSERT(sizeOfElements.value_or(size) == size);
+                sizeOfElements = size;
             }
+            unsigned elementSize = sizeOfElements.value_or(1);
             auto partAt = [&](uint32_t operandIndex) {
                 return valueOfField(object, *family.findField(VirtualField::operand(operandIndex)));
             };

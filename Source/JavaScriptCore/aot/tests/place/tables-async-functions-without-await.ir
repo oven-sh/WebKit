@@ -1,0 +1,40 @@
+# The image lists the async functions whose own body holds no `await`, as the front end says it of each: the host asks it of the factory of a mock. An async generator is not listed.
+# OPTIONS: disable=pass:InlineCalls
+# RUN: tables functions
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    v4 = NewClosure function=f2
+    v5 = Call v1, -, v4
+    v6 = NewClosure function=f3
+    v7 = Call v1, -, v6
+    v8 = NewClosure function=f4
+    v9 = Call v1, -, v8
+    Return
+}
+function f1 name="awaits" flags=[IsAsync] length=1 syntax=[HasWrittenAwait] parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Await v0
+    Return v1
+}
+function f2 name="awaitsNothing" flags=[IsAsync] length=1 parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f3 name="plain" length=1 parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f4 name="yields" flags=[IsAsync, IsGenerator, TakesCallee] results=[{type=anything}] {
+    InitialYield
+    v2 = Integer integer=1
+    v3 = Yield v2
+    Return
+}
+
+# CHECK-NOT: asyncWithoutAwait function=f1
+# CHECK: asyncWithoutAwait function=f2
+# CHECK-NOT: asyncWithoutAwait function=f3
+# CHECK-NOT: asyncWithoutAwait function=f4

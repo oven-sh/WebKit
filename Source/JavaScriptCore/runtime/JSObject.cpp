@@ -449,7 +449,7 @@ bool ordinarySetSlow(JSGlobalObject* globalObject, JSObject* object, PropertyNam
     auto scope = DECLARE_THROW_SCOPE(vm);
 #if ENABLE(AOT)
     // The receiver is a proxy of the object that hands definitions on to it. Where an element can be set quickly nothing above the object takes the store, so the store ends in the object as it does without the proxy.
-    if (std::optional<uint32_t> index = parseIndex(propertyName); index && !object->structure()->hasImmutableIndexedProperties()) {
+    if (std::optional<uint32_t> index = vm.hasCompiledCode() ? parseIndex(propertyName) : std::nullopt; index && !object->structure()->hasImmutableIndexedProperties()) {
         JSObject* definedOn = AOT::RuntimeHooks::targetThatProxyDefinesOn(vm, receiver);
         RETURN_IF_EXCEPTION(scope, false);
         if (definedOn == object && object->trySetIndexQuickly(vm, *index, value))
@@ -864,7 +864,7 @@ bool JSObject::definePropertyOnReceiver(JSGlobalObject* globalObject, PropertyNa
     if (receiver->type() == GlobalProxyType)
         receiver = uncheckedDowncast<JSGlobalProxy>(receiver)->target();
 #if ENABLE(AOT)
-    if (JSObject* definedOn = AOT::RuntimeHooks::targetThatProxyDefinesOn(vm, receiver); definedOn && definedOn->type() != ProxyObjectType && definedOn->type() != CompiledObjectType)
+    if (JSObject* definedOn = vm.hasCompiledCode() ? AOT::RuntimeHooks::targetThatProxyDefinesOn(vm, receiver) : nullptr; definedOn && definedOn->type() != ProxyObjectType && definedOn->type() != CompiledObjectType)
         receiver = definedOn;
     RETURN_IF_EXCEPTION(scope, false);
 #endif

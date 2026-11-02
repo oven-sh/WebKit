@@ -133,8 +133,6 @@ public:
     Vector<WebAssemblyModule> webAssemblyModules;
     Vector<ReplaceableBuiltin> replaceableBuiltins;
     Vector<OpenedName> openedNames;
-    // CompileOptions::holdsLibraryAlone(): a run that nobody knows yet adds whatever names a test run can add.
-    bool takesAnyNameFromTests { false };
 
     Function& at(FunctionID id) { return functions[id.index()]; }
     const Function& at(FunctionID id) const { return ProvisionalFunctions::contains(id) ? m_provisionalFunctions->at(id) : functions[id.index()]; }

@@ -282,7 +282,7 @@ static void dumpValidation(PrintStream& out, CommaPrinter& comma, const Validati
     PRINT_IF_SET(validation, checksKnownPropertiesAtRunTime);
     PRINT_IF_SET(validation, logsMovedLoads);
     PRINT_IF_SET(validation, logsDecidedComparisons);
-    PRINT_IF_SET(validation, keepsOriginsOfAccessesThatTakeTraps);
+    PRINT_IF_SET(validation, keepsOriginsOfTrappingAccesses);
 }
 
 #undef PRINT_IF_DIFFERENT

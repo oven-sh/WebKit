@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTEdgeResults.h"
+#include "AOTIRProgram.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <bit>

@@ -495,6 +495,8 @@ FunctionAnalyses::~FunctionAnalyses()
         statistics.count(StatisticID::EffectsComputed, numberOfComputedAnswers);
     if (uint64_t numberOfKeptAnswers = m_effects.numberOfKeptAnswers())
         statistics.count(StatisticID::EffectsKept, numberOfKeptAnswers);
+    if (m_numberOfBlocksReadToBuildControlFlowGraphs)
+        statistics.count(StatisticID::BlocksReadToBuildControlFlowGraphs, m_numberOfBlocksReadToBuildControlFlowGraphs);
 }
 
 void FunctionAnalyses::reportQuestionBeforeRepair() const
@@ -719,6 +721,7 @@ CFG& FunctionAnalyses::cfg()
     dropResultsOfFormerGraph();
     if (!m_controlFlow.cfg) {
         m_controlFlow.cfg.emplace(m_function);
+        m_numberOfBlocksReadToBuildControlFlowGraphs += m_function.blocks.size();
         m_controlFlow.isReadByUseLists = false;
         m_controlFlow.numberOfBlocks = m_function.blocks.size();
         didBuild(FunctionAnalysis::ControlFlow);

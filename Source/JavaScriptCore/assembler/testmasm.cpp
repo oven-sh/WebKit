@@ -9349,6 +9349,26 @@ void checkOopsForm()
     CHECK_EQ(emitWithPolicy(AssemblerPolicy::forJIT(), emitOops).size() > breakpoint.size(), true);
 }
 
+void checkTrapForm()
+{
+    auto emitBreakpoint = [](CCallHelpers& jit) {
+        jit.breakpoint();
+    };
+    Vector<uint8_t> breakpoint = emitWithPolicy(AssemblerPolicy::forJIT(), emitBreakpoint);
+    Vector<uint8_t> illegalInstruction = emitWithPolicy(AssemblerPolicy::forJIT(), [](CCallHelpers& jit) {
+        jit.illegalInstruction();
+    });
+#if CPU(X86_64)
+    CHECK_EQ(breakpoint == Vector<uint8_t>({ 0xcc }), true);
+#elif CPU(ARM64)
+    uint32_t word = 0xd4200000 | WTF_FATAL_CRASH_CODE << 5;
+    CHECK_EQ(breakpoint.size(), sizeof(word));
+    CHECK_EQ(!memcmp(breakpoint.span().data(), &word, sizeof(word)), true);
+#endif
+    CHECK_EQ(MacroAssembler::isBreakpoint(breakpoint.mutableSpan().data()), true);
+    CHECK_EQ(emitWithPolicy(AssemblerPolicy::forImage(CPUFeatureSet::host()), emitBreakpoint) == illegalInstruction, true);
+}
+
 #if CPU(X86_64)
 void checkEncodingsFollowPolicy()
 {
@@ -9425,6 +9445,7 @@ void testAssemblerPolicy()
     constexpr AssemblerPolicy imagePolicy = AssemblerPolicy::forImage(CPUFeatureSet());
     static_assert(!imagePolicy.blindsConstants && imagePolicy.recordsProcessAddresses && imagePolicy.recordsLinkedSites && imagePolicy.shortensJumps && imagePolicy.shortensEncodings);
     static_assert(imagePolicy.oops == OopsForm::Breakpoint);
+    static_assert(imagePolicy.trapsWithIllegalInstruction && !AssemblerPolicy().trapsWithIllegalInstruction);
     static_assert(imagePolicy.needsLinkRecords() && !AssemblerPolicy().needsLinkRecords());
 
     CCallHelpers jit;
@@ -9433,6 +9454,7 @@ void testAssemblerPolicy()
     checkPerAssemblerFeatures();
     checkEmittersFollowFeatures();
     checkOopsForm();
+    checkTrapForm();
 #if CPU(X86_64)
     checkEncodingsFollowPolicy();
 #endif

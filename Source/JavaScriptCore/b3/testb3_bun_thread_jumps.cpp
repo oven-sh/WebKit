@@ -1070,6 +1070,247 @@ static void testFixSSAWithLongChainOfBlocksThatBranchToBlocksOfTheirOwn()
     CHECK(upsilonCount == 2 * (chainLength - 1));
 }
 
+// Pruned Phi placement depends only on the CFG: a variable needs a Phi at a join where it is live and that is in the dominance frontier of a Set that is read, or of
+// another such join. This computes that naively, block by block, and compares it with what fixSSA placed. Phis are matched by type: there are many variables of each type.
+static void testFixSSAMatchesNaivePhiPlacement()
+{
+    constexpr unsigned numberOfGraphs = 600;
+    constexpr B3::Type types[] = { Int32, Int64, Float, Double };
+    constexpr unsigned numberOfVariables = 100;
+    enum class What : uint8_t { Nothing, Get, Set, GetThenSet, SetThenGet };
+    uint64_t numberOfPhis = 0;
+    for (unsigned seed = 0; seed < numberOfGraphs; ++seed) {
+        WeakRandom random(seed + 1);
+        auto chance = [&](unsigned percent) { return random.getUint32(100) < percent; };
+        Procedure proc;
+        unsigned size = 2 + random.getUint32(chance(30) ? 40 : 700);
+        Vector<BasicBlock*> blocks;
+        for (unsigned index = 0; index < size; ++index)
+            blocks.append(proc.addBlock());
+        Value* argument = blocks[0]->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0);
+
+        // Every block but the last falls through to the next, so all blocks are reachable. In the third family the second half is a side chain that the first half exits to.
+        unsigned family = seed % 3;
+        unsigned half = size / 2;
+        unsigned gathering = size - 1;
+        Vector<Vector<unsigned, 2>> successors(size);
+        for (unsigned index = 0; index + 1 < size; ++index) {
+            successors[index].append(index + 1);
+            std::optional<unsigned> other;
+            if (!family) {
+                if (chance(35))
+                    other = chance(30) && index ? 1 + random.getUint32(index) : index + 1 + random.getUint32(size - index - 1);
+            } else if (family == 1) {
+                if (chance(25))
+                    other = std::min(size - 1, index + 2 + random.getUint32(3));
+                else if (chance(25))
+                    other = gathering;
+                else if (chance(4) && index)
+                    other = 1 + random.getUint32(index);
+            } else if (index + 1 < half) {
+                if (chance(50))
+                    other = half + index;
+                else if (chance(10))
+                    other = std::min(half - 1, index + 2);
+            } else if (index + 1 == half)
+                other = 1;
+            else if (chance(6))
+                other = 1 + random.getUint32(half);
+            if (other && *other != index + 1 && *other)
+                successors[index].append(*other);
+        }
+
+        Vector<Variable*> variables;
+        Vector<Vector<What>> plans;
+        for (unsigned variable = 0; variable < numberOfVariables; ++variable) {
+            variables.append(proc.addVariable(types[variable % 4]));
+            Vector<What> plan(FillWith { }, size, What::Nothing);
+            unsigned numberOfPlaces = 1 + random.getUint32(chance(70) ? 4 : 30);
+            for (unsigned count = numberOfPlaces; count--;)
+                plan[random.getUint32(size)] = static_cast<What>(1 + random.getUint32(4));
+            plans.append(WTF::move(plan));
+        }
+        for (unsigned index = 0; index < size; ++index) {
+            BasicBlock* block = blocks[index];
+            for (unsigned variable = 0; variable < variables.size(); ++variable) {
+                What what = plans[variable][index];
+                auto appendGet = [&] { block->appendNew<VariableValue>(proc, B3::Get, Origin(), variables[variable]); };
+                auto appendSet = [&] {
+                    Value* bottom = proc.addBottom(Origin(), types[variable % 4]);
+                    block->append(bottom);
+                    block->appendNew<VariableValue>(proc, B3::Set, Origin(), variables[variable], bottom);
+                };
+                if (what == What::Get || what == What::GetThenSet)
+                    appendGet();
+                if (what != What::Nothing && what != What::Get)
+                    appendSet();
+                if (what == What::SetThenGet)
+                    appendGet();
+            }
+            if (successors[index].isEmpty())
+                block->appendNew<Value>(proc, Return, Origin(), argument);
+            else if (successors[index].size() == 1) {
+                block->appendNew<Value>(proc, Jump, Origin());
+                block->setSuccessors(FrequentedBlock(blocks[successors[index][0]]));
+            } else {
+                block->appendNew<Value>(proc, Branch, Origin(), argument);
+                block->setSuccessors(FrequentedBlock(blocks[successors[index][0]]), FrequentedBlock(blocks[successors[index][1]]));
+            }
+        }
+        proc.resetReachability();
+
+        B3::Dominators& dominators = proc.dominators();
+        Vector<Vector<unsigned, 2>> frontiers(size);
+        for (unsigned index = 0; index < size; ++index) {
+            if (blocks[index]->numPredecessors() < 2)
+                continue;
+            for (BasicBlock* predecessor : blocks[index]->predecessors()) {
+                for (BasicBlock* runner = predecessor; runner != dominators.idom(blocks[index]); runner = dominators.idom(runner)) {
+                    if (!frontiers[runner->index()].contains(index))
+                        frontiers[runner->index()].append(index);
+                }
+            }
+        }
+        Vector<Vector<bool>> needsPhi;
+        for (const Vector<What>& plan : plans) {
+            auto hasSet = [&](unsigned index) { return plan[index] != What::Nothing && plan[index] != What::Get; };
+            Vector<bool> isLive(FillWith { }, size, false);
+            Vector<bool> isRead(FillWith { }, size, false);
+            Vector<unsigned> worklist;
+            for (unsigned index = 0; index < size; ++index) {
+                if (plan[index] == What::Get || plan[index] == What::GetThenSet) {
+                    isLive[index] = true;
+                    worklist.append(index);
+                }
+            }
+            while (!worklist.isEmpty()) {
+                for (BasicBlock* predecessor : blocks[worklist.takeLast()]->predecessors()) {
+                    unsigned index = predecessor->index();
+                    if (hasSet(index))
+                        isRead[index] = true;
+                    else if (!std::exchange(isLive[index], true))
+                        worklist.append(index);
+                }
+            }
+            Vector<bool> needs(FillWith { }, size, false);
+            for (unsigned index = 0; index < size; ++index) {
+                if (isRead[index])
+                    worklist.append(index);
+            }
+            while (!worklist.isEmpty()) {
+                for (unsigned join : frontiers[worklist.takeLast()]) {
+                    if (isLive[join] && !std::exchange(needs[join], true))
+                        worklist.append(join);
+                }
+            }
+            needsPhi.append(WTF::move(needs));
+        }
+
+        fixSSA(proc);
+        validate(proc);
+        for (unsigned index = 0; index < size; ++index) {
+            for (unsigned type = 0; type < 4; ++type) {
+                unsigned found = 0;
+                for (Value* value : *blocks[index])
+                    found += value->opcode() == Phi && value->type() == types[type];
+                unsigned needed = 0;
+                for (unsigned variable = type; variable < numberOfVariables; variable += 4)
+                    needed += needsPhi[variable][index];
+                numberOfPhis += found;
+                if (found != needed) {
+                    dataLogLn("Seed ", seed, ", ", size, " blocks: block ", index, " has ", found, " Phis of type ", type, " but needs ", needed);
+                    CRASH();
+                }
+            }
+        }
+    }
+    // Graphs that need no Phis would test nothing.
+    CHECK(numberOfPhis > 20 * numberOfGraphs);
+}
+
+// One loop with many statements. Each statement updates its own loop-carried variable, which is read after the loop, has a slow path that rejoins, and has a rare exit
+// into a side chain of joins. So every variable is live throughout the loop, and the whole side chain is in the dominance frontier of its Set. Each slow path can also
+// exit to one shared block, which therefore has as many predecessors as there are statements. That block reads two more groups of variables: one set before the loop,
+// and one set both before the loop and in the latch. The cost per variable must not grow with the loop.
+static void testFixSSAScalesLinearlyWithLoopCarriedVariables()
+{
+    auto stepsFor = [](unsigned numberOfStatements) {
+        Procedure proc;
+        Vector<Variable*> variables;
+        for (unsigned index = 0; index < numberOfStatements; ++index)
+            variables.append(proc.addVariable(Int64));
+        BasicBlock* root = proc.addBlock();
+        BasicBlock* header = proc.addBlock();
+        BasicBlock* beside = proc.addBlock();
+        BasicBlock* gathering = proc.addBlock();
+        BasicBlock* behind = proc.addBlock();
+        Vector<Variable*> variablesSetBeforeLoop;
+        for (unsigned index = 0; index < numberOfStatements; ++index)
+            variablesSetBeforeLoop.append(proc.addVariable(Int64));
+        Vector<Variable*> variablesSetInLatch;
+        for (unsigned index = 0; index < numberOfStatements; ++index)
+            variablesSetInLatch.append(proc.addVariable(Int64));
+        Value* argument = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0);
+        for (Variable* variable : variables)
+            root->appendNew<VariableValue>(proc, B3::Set, Origin(), variable, argument);
+        for (Variable* variable : variablesSetBeforeLoop)
+            root->appendNew<VariableValue>(proc, B3::Set, Origin(), variable, argument);
+        for (Variable* variable : variablesSetInLatch)
+            root->appendNew<VariableValue>(proc, B3::Set, Origin(), variable, argument);
+        root->appendNew<Value>(proc, Jump, Origin());
+        root->setSuccessors(FrequentedBlock(header));
+        BasicBlock* block = proc.addBlock();
+        header->appendNew<Value>(proc, Branch, Origin(), argument);
+        header->setSuccessors(FrequentedBlock(block), FrequentedBlock(behind));
+        for (Variable* variable : variables) {
+            BasicBlock* slow = proc.addBlock();
+            BasicBlock* join = proc.addBlock();
+            BasicBlock* next = proc.addBlock();
+            Value* sum = block->appendNew<Value>(proc, Add, Origin(), block->appendNew<VariableValue>(proc, B3::Get, Origin(), variable), argument);
+            block->appendNew<VariableValue>(proc, B3::Set, Origin(), variable, sum);
+            block->appendNew<Value>(proc, Branch, Origin(), sum);
+            block->setSuccessors(FrequentedBlock(join), FrequentedBlock(slow, FrequencyClass::Rare));
+            slow->appendNew<Value>(proc, Branch, Origin(), argument);
+            slow->setSuccessors(FrequentedBlock(join), FrequentedBlock(gathering, FrequencyClass::Rare));
+            join->appendNew<Value>(proc, Branch, Origin(), sum);
+            join->setSuccessors(FrequentedBlock(next), FrequentedBlock(beside, FrequencyClass::Rare));
+            BasicBlock* nextBeside = proc.addBlock();
+            beside->appendNew<Value>(proc, Jump, Origin());
+            beside->setSuccessors(FrequentedBlock(nextBeside));
+            beside = nextBeside;
+            block = next;
+        }
+        for (Variable* variable : variablesSetInLatch)
+            block->appendNew<VariableValue>(proc, B3::Set, Origin(), variable, block->appendNew<Const64Value>(proc, Origin(), 1));
+        block->appendNew<Value>(proc, Jump, Origin());
+        block->setSuccessors(FrequentedBlock(header));
+        beside->appendNew<Value>(proc, Return, Origin(), argument);
+        Value* gathered = argument;
+        for (Variable* variable : variablesSetBeforeLoop)
+            gathered = gathering->appendNew<Value>(proc, Add, Origin(), gathered, gathering->appendNew<VariableValue>(proc, B3::Get, Origin(), variable));
+        for (Variable* variable : variablesSetInLatch)
+            gathered = gathering->appendNew<Value>(proc, Add, Origin(), gathered, gathering->appendNew<VariableValue>(proc, B3::Get, Origin(), variable));
+        gathering->appendNew<Value>(proc, Return, Origin(), gathered);
+        Value* total = argument;
+        for (Variable* variable : variables)
+            total = behind->appendNew<Value>(proc, Add, Origin(), total, behind->appendNew<VariableValue>(proc, B3::Get, Origin(), variable));
+        behind->appendNew<Value>(proc, Return, Origin(), total);
+        proc.resetReachability();
+
+        CHECK(fixSSA(proc));
+        validate(proc);
+        unsigned phiCount = 0;
+        for (Value* value : proc.values())
+            phiCount += value->opcode() == Phi;
+        CHECK_EQ(phiCount, 2 * numberOfStatements);
+        return static_cast<uint64_t>(proc.report().countOf(Counter::PhiPlacementSteps));
+    };
+    uint64_t steps = stepsFor(2000);
+    uint64_t stepsAtDoubleSize = stepsFor(4000);
+    CHECK(steps);
+    CHECK(stepsAtDoubleSize <= 2 * steps + steps / 4);
+}
+
 static void testFoldPathConstantsFindsTheSameInIndexAndList()
 {
     auto policyWithLimit = [](uint64_t limit) {
@@ -1349,6 +1590,8 @@ void addBunJumpThreadingTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testEliminateDeadCodeFollowsLongChainOfPhis());
     RUN(testFixSSAWithLongChainOfBlocksThatBranchToOneBlock());
     RUN(testFixSSAWithLongChainOfBlocksThatBranchToBlocksOfTheirOwn());
+    RUN(testFixSSAMatchesNaivePhiPlacement());
+    RUN(testFixSSAScalesLinearlyWithLoopCarriedVariables());
     RUN(testFoldPathConstantsFindsTheSameInIndexAndList());
     RUN(testFoldPathConstantsBypassesSelectDecidedByBranch());
     RUN(testFoldPathConstantsFoldsSelect());

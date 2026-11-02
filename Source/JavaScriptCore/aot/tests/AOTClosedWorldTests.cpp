@@ -613,7 +613,7 @@ static void testScriptShadowsNoConstantOfCompiledCode()
     checkShellOutput(readsGlobalsAfterScripts, expectedOutput, declareInScripts, { "validate"_s });
 }
 
-#define AOT_LOAD_BY_NAME_REFUSED "Cannot load '/other.js': this executable can't load a module from a dynamic path. Pass the file to bun compile as another entry point. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)\n"
+#define AOT_LOAD_BY_NAME_REFUSED "Cannot load '/other.js': this executable can't load a module from a dynamic path. Pass the file to bun compile as another entry point, or build with --aot-allow-code-from-disk. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)\n"
 
 #define AOT_LOADER_CHANGE_REFUSED ": imports in this executable were resolved at build time, so the module loader can't be patched. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)\n"
 

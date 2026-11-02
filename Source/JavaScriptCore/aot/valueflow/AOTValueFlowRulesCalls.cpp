@@ -420,39 +420,48 @@ static ValueFlowNodeID thisParameterOf(ValueFlowRuleContext& context, FunctionID
     return index ? context.nodes().entryParameter(function, *index) : ValueFlowNodeID();
 }
 
-ValueID definitionThroughTests(const Function& function, ValueID id)
+void DefinitionsThroughTests::makeTables()
+{
+    m_hasTables = true;
+    m_numberOfBlocksRead += m_function.blocks.size();
+    m_ownerOfParameter.fill(BlockID(), m_function.values.size());
+    m_waysIn.fill(WaysIn { }, m_function.blocks.size());
+    for (uint32_t index = m_function.blocks.size(); index--;) {
+        const Block& block = m_function.blocks[index];
+        for (ValueID parameter : block.parameters)
+            m_ownerOfParameter[parameter.index()] = BlockID(index);
+        const auto& targets = block.terminator.targets;
+        for (uint32_t targetIndex = 0; targetIndex < targets.size(); ++targetIndex) {
+            WaysIn& ways = m_waysIn[targets[targetIndex].block.index()];
+            ++ways.count;
+            ways.from = index;
+            ways.targetIndex = targetIndex;
+        }
+    }
+}
+
+ValueID DefinitionsThroughTests::of(ValueID id)
 {
     AOT_THRESHOLD(unsigned, mostTests, 4);
     for (unsigned steps = 0; steps < mostTests; ++steps) {
-        id = definitionThroughSameValues(function, id);
-        if (function.at(id).opcode != Opcode::Parameter)
+        id = definitionThroughSameValues(m_function, id);
+        if (m_function.at(id).opcode != Opcode::Parameter)
             return id;
-        if (function.at(entryBlock).parameters.contains(id))
+        if (m_function.at(entryBlock).parameters.contains(id))
             return id;
-        BlockID owner;
-        size_t parameterIndex = notFound;
-        for (uint32_t block = 0; block < function.blocks.size() && !owner; ++block) {
-            parameterIndex = function.blocks[block].parameters.find(id);
-            if (parameterIndex != notFound)
-                owner = BlockID(block);
-        }
+        if (!m_hasTables)
+            makeTables();
+        BlockID owner = m_ownerOfParameter[id.index()];
         if (!owner)
             return id;
-        unsigned numberOfEdges = 0;
-        ValueID passed;
-        for (uint32_t from = 0; from < function.blocks.size(); ++from) {
-            const auto& targets = function.blocks[from].terminator.targets;
-            for (uint32_t targetIndex = 0; targetIndex < targets.size(); ++targetIndex) {
-                const Target& target = targets[targetIndex];
-                if (target.block != owner)
-                    continue;
-                if (++numberOfEdges > 1)
-                    return id;
-                passed = parameterIndex < target.arguments.size() ? target.arguments[parameterIndex]
-                    : operandNarrowedOnEdge(function, { BlockID(from), targetIndex, static_cast<uint32_t>(parameterIndex - target.arguments.size()) });
-            }
-        }
-        if (numberOfEdges != 1 || !passed)
+        const WaysIn& ways = m_waysIn[owner.index()];
+        if (ways.count != 1)
+            return id;
+        size_t parameterIndex = m_function.at(owner).parameters.find(id);
+        const Target& target = m_function.blocks[ways.from].terminator.targets[ways.targetIndex];
+        ValueID passed = parameterIndex < target.arguments.size() ? target.arguments[parameterIndex]
+            : operandNarrowedOnEdge(m_function, { BlockID(ways.from), ways.targetIndex, static_cast<uint32_t>(parameterIndex - target.arguments.size()) });
+        if (!passed)
             return id;
         id = passed;
     }
@@ -467,17 +476,18 @@ static PropertyKeyID keyOfMemberCalledOnItsHolder(ValueFlowRuleContext& context,
     return facts ? facts->keyOfMemberCalledOnItsHolder : PropertyKeyID();
 }
 
-PropertyKeyID keyOfMemberCalledOnItsHolderByText(const Program& program, const Function& function, const Value& call)
+PropertyKeyID keyOfMemberCalledOnItsHolderByText(const Program& program, DefinitionsThroughTests& definitions, const Value& call)
 {
+    const Function& function = definitions.function();
     if (constructs(call.opcode))
         return { };
     ValueID receiver = call.thisValueOperand();
     if (!receiver)
         return { };
-    const Value& read = function.at(definitionThroughTests(function, call.calleeOperand()));
+    const Value& read = function.at(definitions.of(call.calleeOperand()));
     // A member of the namespace object of a module of the library is read out of the variable of the export.
     if (read.opcode == Opcode::GetModuleVariable) {
-        const Value& holder = function.at(definitionThroughTests(function, receiver));
+        const Value& holder = function.at(definitions.of(receiver));
         if (holder.opcode != Opcode::ModuleNamespace)
             return { };
         for (const SyntheticExport& entry : program.at(holder.module()).syntheticExports) {
@@ -488,7 +498,7 @@ PropertyKeyID keyOfMemberCalledOnItsHolderByText(const Program& program, const F
     }
     if (read.opcode != Opcode::PropGet || read.isFreeName() || program.isIndexLike(read.key()))
         return { };
-    return definitionThroughTests(function, read.objectOperand()) == definitionThroughTests(function, receiver) ? read.key() : PropertyKeyID();
+    return definitions.of(read.objectOperand()) == definitions.of(receiver) ? read.key() : PropertyKeyID();
 }
 
 // What a module of the library has stored in the object that it exports reaches that object by itself: as a receiver the object is handed to nobody new.
@@ -723,23 +733,25 @@ static ClimbingSet passOperandsToInstances(ValueFlowRuleContext& context, const 
     return context.restrict(closures, ValueSets::complement(context.maker().of(entered.span())));
 }
 
-static ValueID builtinResolvedAndAwaited(const Program& program, const Function& function, ValueID id)
+static ValueID builtinResolvedAndAwaited(const Program& program, DefinitionsThroughTests& definitions, ValueID id)
 {
+    const Function& function = definitions.function();
     const Value& awaited = function.at(id);
     if (awaited.opcode != Opcode::Await)
         return { };
     const Value& resolved = function.at(definitionThroughSameValues(function, awaited.operand(0)));
     if (resolved.opcode != Opcode::Call || resolved.numberOfOperands() != 3 || !resolved.operand(2))
         return { };
-    BuiltinID callee = entryNamedByOperations(program, function, resolved.calleeOperand());
+    BuiltinID callee = entryNamedByOperations(program, definitions, resolved.calleeOperand());
     if (!callee || program.builtins().canonicalID(callee) != program.builtins().canonicalID(Builtins::PromiseResolve))
         return { };
     ValueID holder = definitionThroughSameValues(function, resolved.operand(2));
     return function.at(holder).opcode == Opcode::Builtin ? holder : ValueID();
 }
 
-BuiltinID entryNamedByOperations(const Program& program, const Function& function, ValueID value)
+BuiltinID entryNamedByOperations(const Program& program, DefinitionsThroughTests& definitions, ValueID value)
 {
+    const Function& function = definitions.function();
     constexpr unsigned mostReads = 4;
     Vector<PropertyKeyID, mostReads> keys;
     auto followReads = [&](NOESCAPE const Invocable<ValueID(ValueID)> auto& definitionOf) {
@@ -763,8 +775,8 @@ BuiltinID entryNamedByOperations(const Program& program, const Function& functio
             return { };
         if (keys.isEmpty() && function.at(entryBlock).parameters.contains(id))
             return { };
-        id = builtinResolvedAndAwaited(program, function, followReads([&](ValueID read) {
-            return definitionThroughTests(function, read);
+        id = builtinResolvedAndAwaited(program, definitions, followReads([&](ValueID read) {
+            return definitions.of(read);
         }));
         if (!id)
             return { };

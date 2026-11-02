@@ -22,6 +22,7 @@
 #include "AOTObject.h"
 #include "AOTObjectModel.h"
 #include "AOTPrimitives.h"
+#include "AOTRuntimeCounters.h"
 #include "AOTStackTrace.h"
 #include "AOTProgramIdentifiers.h"
 #include "AOTProgramStrings.h"
@@ -2945,6 +2946,26 @@ static WrittenReads findWrittenCallOfReplacedNameAt(std::span<const Latin1Charac
     return findWrittenCallAt(text, from, to, name, within, found, WrittenCallee::ReplacedName);
 }
 
+// `make(a)(b)`: what a call returned is called. The column is that of the bracket that closes the callee.
+static WrittenReads findWrittenCallOfResultAt(std::span<const Latin1Character> text, size_t from, size_t to, StringView, std::optional<size_t> within, std::span<const Latin1Character>& found)
+{
+    if (!within || *within >= to || text[*within] != ')')
+        return WrittenReads::None;
+    // `(make(a))(b)`: brackets that the printer drops.
+    size_t end = *within + 1;
+    while (end < text.size() && text[end] == ')')
+        ++end;
+    size_t open = end;
+    if (open + 1 < text.size() && text[open] == '?' && text[open + 1] == '.')
+        open += 2;
+    std::optional<size_t> start = open < text.size() && text[open] == '(' ? startOfPathInFrontOf(text, end) : std::nullopt;
+    std::optional<size_t> close = start ? findClosingBracket(text, open) : std::nullopt;
+    if (!close || *start < from)
+        return WrittenReads::None;
+    found = text.subspan(*start, *close + 1 - *start);
+    return WrittenReads::Same;
+}
+
 // The engine's own C++ refuses what is not an object in a function that the program calls, or where it asks a value for its iterator.
 static WrittenReads findWrittenCallOrIterationAt(std::span<const Latin1Character> text, size_t from, size_t to, StringView name, std::optional<size_t> within, std::span<const Latin1Character>& found)
 {
@@ -2988,7 +3009,8 @@ static String findAt(VM& vm, const PlaceInFunctionText* place, StringView name, 
         return callee.length() > name.length() && callee.startsWith(name) && callee[name.length()] == '(' ? quote : String();
     }
     // `const b = null; b(1)`: the compiler's name for the callee is `null`, or it has none. What is written there is printed with `null` in place of `b`.
-    return findSpelled(vm, place, name, findWrittenCallOfReplacedNameAt, SearchedText::OnlyKnownPlace);
+    quote = findSpelled(vm, place, name, findWrittenCallOfReplacedNameAt, SearchedText::OnlyKnownPlace);
+    return quote.isNull() && find == findWrittenCallsOfElements ? findSpelled(vm, place, name, findWrittenCallOfResultAt, SearchedText::OnlyKnownPlace) : quote;
 }
 
 // A place asks for one name in one way, so its text is looked through once, however often it throws.
@@ -3125,19 +3147,30 @@ JSObject* createSuperBaseNotAnObjectError(JSGlobalObject* globalObject, JSValue 
 }
 
 // `new a.K(b)` and `new K`, but not `new K(b).c()`, which calls.
-static bool isConstruction(const String& source)
+static bool isConstruction(std::span<const Latin1Character> text)
 {
-    if (!source.startsWith("new "_s))
+    if (!spanHasPrefix(text, byteCast<Latin1Character>("new "_span)) || text.size() == 4)
         return false;
-    CString bytes = source.utf8();
-    std::span<const Latin1Character> text = byteCast<Latin1Character>(bytes.span());
     std::optional<size_t> open = text.back() == ')' ? findOpeningBracket(text, text.size() - 1) : std::nullopt;
     if (!open)
         return true;
     // `new (void 0)(b)` and `new (void 0)`: the first brackets hold what is constructed.
-    if (text[4] == '(' && *open <= findClosingBracket(text, 4).value_or(0) + 1)
+    if (text[4] == '(') {
+        size_t close = findClosingBracket(text, 4).value_or(0);
+        // `new (make()).member(b)`: and what is read from them.
+        if (*open <= close + 1 || WTF::find(text.subspan(close, *open - close), static_cast<Latin1Character>('(')) == notFound)
+            return true;
+    }
+    if (WTF::find(text.first(*open), static_cast<Latin1Character>('(')) == notFound)
         return true;
-    return WTF::find(text.first(*open), static_cast<Latin1Character>('(')) == notFound;
+    // `new new K(a)(b)`: what is constructed is what the inner `new` made.
+    return *open > 4 && isConstruction(text.subspan(4, *open - 4));
+}
+
+static bool isConstruction(const String& source)
+{
+    CString bytes = source.utf8();
+    return isConstruction(byteCast<Latin1Character>(bytes.span()));
 }
 
 JSObject* createNotAFunctionError(JSGlobalObject* globalObject, JSValue callee, StringView name)
@@ -3165,8 +3198,13 @@ static String quoteConstruction(VM& vm, StringView name)
         source = findOnTop(vm, "[]"_s, findWrittenCallsOfElements);
     if (source.isNull() || !isConstruction(source))
         return name.isNull() ? String() : tryMakeString("new "_s, name);
-    // Bun's transpiler prints `new K()` as `new K`.
-    return source.endsWith("()"_s) ? source.left(source.length() - 2) : source;
+    // Bun's transpiler prints `new K()` as `new K`. What is constructed keeps its own brackets: `new new K()`.
+    if (!source.startsWith("new new "_s))
+        return source.endsWith("()"_s) ? source.left(source.length() - 2) : source;
+    size_t firstBracket = source.find('(');
+    if (firstBracket == notFound)
+        return tryMakeString(source, "()"_s);
+    return source.endsWith("()"_s) && firstBracket + 2 < source.length() ? source.left(source.length() - 2) : source;
 }
 
 // A constructor that nobody wrote passes on what it is given.
@@ -3276,7 +3314,9 @@ JSObject* createLoadByNameRefusedError(JSGlobalObject* globalObject, StringView 
     const Image* image = Image::current();
     if (!isModuleOfBun && image && hasFlag(image->header().options.admitted(), AdmittedCode::FilesRunByHost))
         return createErrorWithCode(globalObject, withAOTErrorNote(makeString("Cannot load '"_s, name, '\'', asker.isEmpty() ? ""_s : " from '"_s, asker, asker.isEmpty() ? ""_s : "'"_s, ": it's compiled into this test run, but no test file imports it by a constant path, so only compiled code reaches it. Import it by a constant path in a test file."_s)), code);
-    ASCIILiteral advice = isModuleOfBun ? "The compiler couldn't tell at build time that this call reaches a module loader. Call require(), import() or process.getBuiltinModule() directly."_s : "Pass the file to bun compile as another entry point."_s;
+    if (!isModuleOfBun && image && hasFlag(image->header().options.admitted(), AdmittedCode::ReplacedBuiltins))
+        return createErrorWithCode(globalObject, withAOTErrorNote(makeString("Cannot load '"_s, name, "': the build saw no import() or require() of a computed path, so compiled files answer only to the paths it saw. It can't see code from a string, as in eval() or new Function(). An executable refuses this too. Import the file by a constant path."_s)), code);
+    ASCIILiteral advice = isModuleOfBun ? "The compiler couldn't tell at build time that this call reaches a module loader. Call require(), import() or process.getBuiltinModule() directly."_s : "Pass the file to bun compile as another entry point, or build with --aot-allow-code-from-disk."_s;
     return createErrorWithCode(globalObject, withAOTErrorNote(makeString("Cannot load '"_s, name, "': this executable can't load a module from a dynamic path. "_s, advice)), code);
 }
 
@@ -3380,8 +3420,16 @@ String assignmentToLockedBuiltinMessage(const String& property)
     return printForFuzzilli(withAOTErrorNote(makeString("Cannot assign to "_s, property, " because built-in objects are read-only in a compiled executable"_s)));
 }
 
+String callOfBuiltinChangedBeforeFirstUseMessage(const String& property)
+{
+    return printForFuzzilli(withAOTErrorNote(makeString("Cannot call "_s, property, " because it was replaced, redefined or deleted before its first use, and compiled code calls the built-in function without looking it up"_s)));
+}
+
 String assignmentThatBuildDidNotSeeMessage(const String& property)
 {
+    // Who wrote a file that is loaded from disk can't show the build anything.
+    if (const Image* image = Image::current(); image && image->loadsCodeOutsideImage())
+        return printForFuzzilli(withAOTErrorNote(makeString("Cannot assign to "_s, property, " because built-in objects are read-only in a compiled executable, and the build saw no assignment to this one. Code that is loaded from disk can replace it only where the executable's own code assigns to it too, spelled out as in "_s, property, " = value"_s)));
     return printForFuzzilli(withAOTErrorNote(makeString("Cannot assign to "_s, property, " because built-in objects are read-only in a compiled executable, and the build didn't see your code assign to this one. Spell out the object and the name where it does, as in "_s, property, " = value"_s)));
 }
 
@@ -3434,7 +3482,8 @@ String assignmentToLockedBuiltinMessage(VM& vm, BuiltinID holder, UniquedStringI
     const BuiltinTable& table = BuiltinTable::singleton();
     BuiltinName name = table.nameOf(vm, key);
     BuiltinID found = name ? table.findOwnMember(holder, name) : BuiltinID();
-    bool isNewName = !key->isSymbol() && !parseIndex(*key) && !found;
+    // What hides a member of an object above is refused however it is spelled.
+    bool isNewName = !key->isSymbol() && !parseIndex(*key) && !found && (!name || table.findMember(holder, name).outcome != BuiltinMemberLookup::Outcome::Found);
     bool isOpenWhereBuildSeesWrite = found ? table.at(found).mutability == BuiltinMutability::ConstantUnlessWritten : isNewName && table.canonicalID(holder) != Builtins::ObjectPrototype && table.canTakeNameInTestRuns(holder, name);
     if (isOpenWhereBuildSeesWrite)
         return assignmentThatBuildDidNotSeeMessage(memberOfLockedBuiltin(holder, key));
@@ -3472,6 +3521,20 @@ String prototypeChangeOfLockedBuiltinMessage(const String& holder, LockedIn lock
     if (lockedIn == LockedIn::TestRun)
         return makeString("Cannot change the prototype of "_s, holder, " because built-in objects are read-only in compiled code, and a test can't change this"_s, pageOnCompiledTests);
     return printForFuzzilli(withAOTErrorNote(makeString("Cannot change the prototype of "_s, holder, " because built-in objects are read-only in a compiled executable"_s)));
+}
+
+String spyOnExportRefusedMessage(UniquedStringImpl* name, const String& path, LockedIn lockedIn)
+{
+    if (lockedIn == LockedIn::TestRun)
+        return makeString("Cannot spy on '"_s, StringView(name), "' of \""_s, path, "\" because the build didn't see a test spy on it. Spell out the module and the name where the spy is made: import * as module from \"<path>\"; spyOn(module, \""_s, StringView(name), "\")"_s, pageOnCompiledTests);
+    return makeString("Cannot spy on '"_s, StringView(name), "' of \""_s, path, "\" because module exports can't be replaced in a compiled executable. Spy on it in a test, under bun test"_s);
+}
+
+String mockOfModuleRefusedMessage(const String& path, LockedIn lockedIn)
+{
+    if (lockedIn == LockedIn::TestRun)
+        return makeString("mock(module, fn) cannot replace \""_s, path, "\" because the build didn't see a test mock it. Spell out the module's path where the mock is made: mock.module(\"<path>\", factory)"_s, pageOnCompiledTests);
+    return makeString("mock(module, fn) cannot replace \""_s, path, "\" because it was compiled ahead of time. Mock it in a test, under bun test"_s);
 }
 
 } } // namespace JSC::AOT

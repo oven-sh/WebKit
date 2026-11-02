@@ -21,6 +21,7 @@
 #include "AOTKnownClosures.h"
 #include "AOTLayout.h"
 #include "AOTNameCreatedSymbols.h"
+#include "AOTRowsOfLayouts.h"
 #include "AOTSchemaOperandIndexes.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
@@ -818,15 +819,20 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
         m_objectsThatLetInUnseenCodeWhenCalled = maker.of(objectsThatLetInUnseenCodeWhenCalled.span());
         Vector<ValueFlowObjectID, 32> objectsOfNativeModules;
         Vector<ValueFlowObjectID, 32> objectsOfPublicModules;
+        Vector<ValueFlowObjectID, 32> objectsOfPublicModulesWithoutLocks;
         for (uint32_t index = 0; index < builtins.moduleCount(); ++index) {
             const RuntimeModuleData& module = builtins.at(RuntimeModuleID(index));
             if (module.namespaceObject && module.flags.contains(RuntimeModuleFlag::IsPublic))
                 objectsOfPublicModules.append(universe.objectOf(module.namespaceObject));
+            // `Bun`, `process` and `console` are modules too, and start-up locks what hangs below the global object.
+            if (module.namespaceObject && module.flags.contains(RuntimeModuleFlag::IsPublic) && !builtins.isUnder(builtins.canonicalID(module.namespaceObject), Builtins::GlobalThis))
+                objectsOfPublicModulesWithoutLocks.append(universe.objectOf(module.namespaceObject));
             if (module.namespaceObject && module.flags.contains(RuntimeModuleFlag::IsPublic) && !module.flags.contains(RuntimeModuleFlag::HasSource) && !builtins.at(builtins.canonicalID(module.namespaceObject)).holder)
                 objectsOfNativeModules.append(universe.objectOf(module.namespaceObject));
         }
         m_objectsOfNativeModules = maker.of(objectsOfNativeModules.span());
         m_objectsOfPublicModules = maker.of(objectsOfPublicModules.span());
+        m_objectsOfPublicModulesWithoutLocks = maker.of(objectsOfPublicModulesWithoutLocks.span());
 
         Vector<EntryBelow> entriesBelowEntries = listEntriesBelowEntries(builtins);
         Objects prototypeObjects;
@@ -1135,12 +1141,16 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
                 isAllocatedAtSomeSite.quickSet(ownClass.index());
         });
         Vector<Vector<ValueFlowObjectID>> instancesOfClassesBelow(program.layouts.size());
+        Vector<LayoutID> nearestAllocatedClassAbove = findNearestWantedAbove(program.layouts.size(), [&](LayoutID id) {
+            return predictedHeritageOf(program.at(id));
+        }, [&](LayoutID id) {
+            return isAllocatedAtSomeSite.quickGet(id.index());
+        });
         sets.forEachMember(universe.instancesOfClasses(), [&](ValueFlowObjectID instance) {
             LayoutID classOfInstance = universe.layoutOf(instance);
-            LayoutID current = classOfInstance;
-            for (size_t steps = 0; steps < program.layouts.size() && current && program.at(current).has(LayoutFlags::HasHeritage); ++steps) {
-                current = predictedHeritageOf(program.at(current));
-                if (!current || current == classOfInstance || !isAllocatedAtSomeSite.quickGet(current.index()))
+            LayoutID current = nearestAllocatedClassAbove[classOfInstance.index()];
+            for (size_t steps = 0; steps < program.layouts.size() && current; ++steps, current = nearestAllocatedClassAbove[current.index()]) {
+                if (current == classOfInstance || !isAllocatedAtSomeSite.quickGet(current.index()))
                     continue;
                 Vector<ValueFlowObjectID>& instancesBelow = instancesOfClassesBelow[current.index()];
                 if (instancesBelow.isEmpty() || instancesBelow.last() != instance)

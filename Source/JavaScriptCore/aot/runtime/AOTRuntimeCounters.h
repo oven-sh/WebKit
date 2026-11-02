@@ -75,6 +75,8 @@ void countModulesSoughtForWhatHasRun(VM&, size_t);
 void countTextPrintedInPlaceDecoded(VM&, size_t);
 void countModulesSoughtForLevelsBelowImports(VM&, size_t);
 void countLinkWalkMade(VM&);
+// The state of the mock of a module in front of a door between the host and the engine, the door, and the state behind it.
+void countMockTransition(VM&, const String&);
 
 JS_EXPORT_PRIVATE uint64_t valueOf(VM&, RuntimeCounterID);
 JS_EXPORT_PRIVATE uint64_t limitHitsOf(VM&, LimitID);

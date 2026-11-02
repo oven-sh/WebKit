@@ -10,6 +10,7 @@
 
 #include "AOTCFG.h"
 #include "AOTDiagnostics.h"
+#include "AOTForwardWalk.h"
 #include "AOTObservableOperations.h"
 #include "AOTParkedBodies.h"
 #include "AOTProvisionalFunctions.h"
@@ -46,6 +47,41 @@ void Function::willEditEdgesOf(const Block& block)
             m_changes.log->didEdit(target.block, BlockEdit::Incoming);
     });
 }
+
+#if AOT_STAMPS_VALUE_IDS
+void Function::didMeetNumberFromBefore(ValueID id) const
+{
+    static Lock oneReportAtATime;
+    Locker locker { oneReportAtATime };
+    dataLogLn("A number of a value from before a renumbering: v", id.index(), " was handed out at renumbering ", id.stamp(), ", the function stands at ", stampOfValues, " and has ", values.size(), " values");
+    WTFReportBacktrace();
+    static const bool onlyReports = [] {
+        const char* wanted = getenv("AOT_STALE_NUMBERS");
+        return wanted && !strcmp(wanted, "report");
+    }();
+    if (!onlyReports)
+        CRASH();
+}
+
+void Function::stampNumbersInPlace()
+{
+    auto stamp = [&](ValueID& id) {
+        if (id)
+            id = idOfValueAt(id.index());
+    };
+    for (Block& block : blocks.m_storage) {
+        for (ValueID& parameter : block.parameters)
+            stamp(parameter);
+        for (ValueID& value : block.values)
+            stamp(value);
+        block.forEachChildOutsideValues(stamp);
+    }
+    for (Value& value : values.m_storage)
+        value.forEachChild(stamp);
+    for (WrittenPosition& written : writtenPositions)
+        stamp(written.value);
+}
+#endif
 
 void Function::releaseBody()
 {
@@ -516,11 +552,13 @@ OptionSet<FunctionCapabilities> capabilitiesInPlaceOf(const Function& replacemen
     return (initialCapabilitiesOf(replacement) - kept) | (ofReplaced & kept);
 }
 
-static bool hasEarlierPredecessors(const Function& function)
+static bool hasEarlierPredecessors(const Function& function, const CFG* blocksToLookAt = nullptr)
 {
     unsigned count = function.blocks.size();
     BitVector hasEarlierPredecessor(count);
     for (unsigned index = 0; index < count; ++index) {
+        if (blocksToLookAt && !blocksToLookAt->isReachable(BlockID(index)))
+            continue;
         if (BlockID(index) != entryBlock && !hasEarlierPredecessor.quickGet(index))
             return false;
         function.blocks[index].forEachTarget([&](const Target& target) {
@@ -532,132 +570,27 @@ static bool hasEarlierPredecessors(const Function& function)
     return true;
 }
 
-static BitVector findReachableBlocks(const Function& function)
-{
-    unsigned count = function.blocks.size();
-    BitVector isReachable(count);
-    Vector<BlockID, 16> worklist;
-    isReachable.quickSet(entryBlock.index());
-    worklist.append(entryBlock);
-    while (!worklist.isEmpty()) {
-        BlockID block = worklist.takeLast();
-        function.at(block).forEachTarget([&](const Target& target) {
-            RELEASE_ASSERT(target.block.index() < count);
-            if (!isReachable.quickSet(target.block.index()))
-                worklist.append(target.block);
-        });
-    }
-    return isReachable;
-}
-
-static Vector<BlockID> removeUnreachableBlocks(Function& function, const BitVector& isReachable)
-{
-    unsigned count = function.blocks.size();
-    if (isReachable.bitCount() == count)
-        return { };
-
-    Vector<BlockID> movedTo(count);
-    Function::Blocks::Storage& blocks = function.editAllBlocks();
-    unsigned next = 0;
-    for (unsigned b = 0; b < count; ++b) {
-        if (!isReachable.quickGet(b))
-            continue;
-        if (next != b)
-            blocks[next] = WTF::move(blocks[b]);
-        movedTo[b] = BlockID(next++);
-    }
-    blocks.shrink(next);
-    for (auto& block : blocks) {
-        block.forEachTarget([&](Target& target) {
-            target.block = movedTo[target.block.index()];
-        });
-    }
-    return movedTo;
-}
-
-static Vector<BlockID> sortIntoReversePostOrder(Function& function)
-{
-    CFG cfg(function);
-    std::span<const BlockID> order = cfg.reversePostOrder();
-    RELEASE_ASSERT(order.size() == function.blocks.size() && order[0] == entryBlock);
-
-    Function::Blocks::Storage blocks;
-    blocks.reserveInitialCapacity(order.size());
-    for (BlockID block : order)
-        blocks.append(WTF::move(function.editAllBlocks()[block.index()]));
-    function.editAllBlocks() = WTF::move(blocks);
-
-    for (auto& block : function.editAllBlocks()) {
-        block.forEachTarget([&](Target& target) {
-            target.block = BlockID(cfg.reversePostOrderIndex(target.block));
-        });
-    }
-    return Vector<BlockID>(order.size(), [&](size_t index) {
-        return BlockID(cfg.reversePostOrderIndex(BlockID(index)));
-    });
-}
-
-static Vector<BlockID> movedFirstAndThen(Vector<BlockID>&& first, Vector<BlockID>&& then)
-{
-    if (first.isEmpty())
-        return WTF::move(then);
-    if (then.isEmpty())
-        return WTF::move(first);
-    for (BlockID& block : first) {
-        if (block)
-            block = then[block.index()];
-    }
-    return WTF::move(first);
-}
-
-static Vector<ValueID> renumberValues(Function& function, size_t numberOfListedValues)
-{
-    Vector<ValueID> newID(function.values.size());
-    Function::Values::Storage values;
-    Function::Values::Storage& formerValues = function.editAllValues();
-    Function::Blocks::Storage& blocks = function.editAllBlocks();
-    values.reserveInitialCapacity(numberOfListedValues);
-    auto moveListedValue = [&](ValueID& id) {
-        unsigned oldIndex = id.index();
-        RELEASE_ASSERT(!newID[oldIndex]);
-        id = ValueID(values.size());
-        newID[oldIndex] = id;
-        values.append(WTF::move(formerValues[oldIndex]));
-    };
-    for (auto& block : blocks) {
-        for (ValueID& parameter : block.parameters)
-            moveListedValue(parameter);
-        for (ValueID& value : block.values)
-            moveListedValue(value);
-    }
-
-    auto remapChild = [&](ValueID& child) {
-        child = newID[child.index()];
-        RELEASE_ASSERT(child);
-    };
-    for (auto& value : values)
-        value.forEachChild(remapChild);
-    for (auto& block : blocks)
-        block.forEachChildOutsideValues(remapChild);
-
-    formerValues = WTF::move(values);
-
-    if (!function.writtenPositions.isEmpty()) {
-        function.writtenPositions.removeAllMatching([&](WrittenPosition& written) {
-            written.value = written.value.index() < newID.size() ? newID[written.value.index()] : ValueID();
-            return !written.value;
-        });
-        AOT::sortInLine(function.writtenPositions, { }, [](const WrittenPosition& written) { return written.value.index(); });
-    }
-    return newID;
-}
-
 static size_t countListedValues(const Function& function)
 {
     size_t count = 0;
     for (const Block& block : function.blocks)
         count += block.parameters.size() + block.values.size();
     return count;
+}
+
+static Vector<BlockID> orderToKeep(const Function& function, bool isOrdered)
+{
+    if (isOrdered)
+        return Vector<BlockID>(function.blocks.size(), [](size_t index) { return BlockID(static_cast<unsigned>(index)); });
+    CFG cfg(function);
+    if (!hasEarlierPredecessors(function, &cfg))
+        return Vector<BlockID>(cfg.reversePostOrder());
+    Vector<BlockID> reachableBlocks;
+    for (unsigned index = 0; index < function.blocks.size(); ++index) {
+        if (cfg.isReachable(BlockID(index)))
+            reachableBlocks.append(BlockID(index));
+    }
+    return reachableBlocks;
 }
 
 bool needsCompaction(const Function& function)
@@ -672,18 +605,14 @@ bool compactFunction(Function& function, Renumbering* renumbering)
 
     bool valuesAreTypedAsDefined = function.valuesAreTypedAsDefined();
     bool wasOrdered = hasEarlierPredecessors(function);
-    Vector<BlockID> movedBlocks;
-    if (!wasOrdered) {
-        movedBlocks = removeUnreachableBlocks(function, findReachableBlocks(function));
-        if (!hasEarlierPredecessors(function))
-            movedBlocks = movedFirstAndThen(WTF::move(movedBlocks), sortIntoReversePostOrder(function));
+    if (wasOrdered && countListedValues(function) == function.values.size()) {
+#if AOT_STAMPS_VALUE_IDS
+        function.stampNumbersInPlace();
+#endif
+        return false;
     }
 
-    size_t numberOfListedValues = countListedValues(function);
-    if (wasOrdered && numberOfListedValues == function.values.size())
-        return false;
-
-    Vector<ValueID> movedValues = renumberValues(function, numberOfListedValues);
+    auto [movedBlocks, movedValues] = ForwardWalk(function).run(orderToKeep(function, wasOrdered).span());
     if (ReasonsForOperationsThatWent* listener = function.listenerForOperationsThatGo()) [[unlikely]]
         listener->didRenumber(movedBlocks.span(), movedValues.span());
     if (renumbering)

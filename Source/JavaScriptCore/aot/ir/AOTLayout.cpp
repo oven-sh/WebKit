@@ -17,6 +17,7 @@
 #include "AOTLayoutUses.h"
 #include "AOTNarrowFieldTypes.h"
 #include "AOTPropertyAccessCache.h"
+#include "AOTRowsOfLayouts.h"
 #include "AOTSchemaWalkers.h"
 #include "AOTThreads.h"
 #include "AOTTypeArena.h"
@@ -141,16 +142,22 @@ const FieldFlow& flowOf(const Program& program, FieldReference reference)
     return fieldAt(program, declarationOf(program, reference)).flow;
 }
 
-bool hasOnlyCompiledBases(const Program& program, LayoutID id)
+BitVector findLayoutsWithOnlyCompiledBases(const Program& program)
 {
-    LayoutID current = declaredLayoutOf(program, id);
-    for (size_t steps = 0; current && steps < program.layouts.size(); ++steps) {
-        const Layout& layout = program.at(current);
+    BitVector declaredLayouts = answerAlongRows(program.layouts.size(), false, [&](LayoutID id) -> StepAlongRow {
+        const Layout& layout = program.at(id);
         if (!layout.has(LayoutFlags::HasHeritage))
-            return true;
-        current = layout.base;
+            return { true, { } };
+        if (!layout.base)
+            return { false, { } };
+        return { std::nullopt, layout.base };
+    });
+    BitVector result(program.layouts.size());
+    for (uint32_t index = 0; index < program.layouts.size(); ++index) {
+        if (LayoutID declared = declaredLayoutOf(program, LayoutID(index)); declared && declaredLayouts.quickGet(declared.index()))
+            result.quickSet(index);
     }
-    return false;
+    return result;
 }
 
 bool isNeverRedefined(const Program& program, FieldReference reference)

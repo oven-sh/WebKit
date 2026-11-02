@@ -146,7 +146,19 @@ struct ContainerWalker {
     FunctionID analyzedFunction;
     std::unique_ptr<FunctionAnalyses> analyses;
     std::optional<IntegerRelations> relations;
-    Vector<std::pair<ValueID, ValueID>> lengthReads;
+    struct LengthRead {
+        ValueID array;
+        ValueID read;
+        // The one listed before it that stands in the same block, counted from one. 0: there is none.
+        uint32_t earlierInSameBlock { 0 };
+    };
+    Vector<LengthRead> lengthReads;
+    // One entry a block: the last read of a length in it, counted from one.
+    Vector<uint32_t> lastLengthReadIn;
+    // One entry a block: the nearest block that reads a length, itself or above it in the tree of dominators. Filled in as it is asked for, so the way up is gone once.
+    static constexpr uint32_t notAsked = UINT32_MAX;
+    static constexpr uint32_t noBlock = UINT32_MAX - 1;
+    Vector<uint32_t> nearestBlockThatReadsLength;
     FunctionID functionOfValuesBehindChecks;
     BitVector valuesBehindChecks;
 };
@@ -539,15 +551,19 @@ private:
             walker.analyses = makeUnique<FunctionAnalyses>(AnalysisContext { m_inputs.build, program(), nullptr, nullptr, id, CallResults::NotFollowed }, function);
             walker.relations.emplace(*walker.analyses);
             walker.lengthReads.shrink(0);
+            walker.lastLengthReadIn.fill(0, function.blocks.size());
+            walker.nearestBlockThatReadsLength.fill(Walker::notAsked, function.blocks.size());
             PropertyKeyID lengthKey = program().keyOf(BuiltinNames::length);
             unsigned receiver = *receiverOf(Opcode::PropGet);
             ValueSetID arraysOrUndefined = walker.maker.unite(universe().arrays(), universe().undefinedValue());
             for (const ValueFlowStatement& statement : m_inputs.bodies().statementsOf(id.index())) {
                 if (statement.kind != ValueFlowStatementKind::Operation || statement.opcode != Opcode::PropGet || function.at(statement.site).key() != lengthKey)
                     continue;
-                walker.lengthReads.append({ walker.analyses->identityOf(function.at(statement.site).operand(receiver)), statement.site });
+                BlockID block = walker.analyses->useLists().blockOf(statement.site);
+                uint32_t earlier = std::exchange(walker.lastLengthReadIn[block.index()], static_cast<uint32_t>(walker.lengthReads.size() + 1));
+                walker.lengthReads.append({ walker.analyses->identityOf(function.at(statement.site).operand(receiver)), statement.site, earlier });
                 if (sets().isSubset(m_heap.possibleValuesOf(walker.maker, m_inputs.bodies().operandsOf(statement)[receiver]), arraysOrUndefined))
-                    walker.relations->assumeRange(statement.site, Range::uint32(), walker.analyses->useLists().blockOf(statement.site));
+                    walker.relations->assumeRange(statement.site, Range::uint32(), block);
             }
         }
     }
@@ -598,9 +614,38 @@ private:
         if (walker.relations->isWholeNumber(position, block) != Answer::Proven || walker.relations->isAtLeast(position, 0, block) != Answer::Proven)
             return false;
         ValueID array = walker.analyses->identityOf(list);
-        return std::ranges::any_of(walker.lengthReads, [&](const std::pair<ValueID, ValueID>& read) {
-            return read.first == array && walker.relations->isAtMost(position, read.second, -1, block) == Answer::Proven;
-        });
+        // A length bounds the position only where its read dominates the access: a comparison that holds there names what was made above it, what is assumed of a read holds below it,
+        // and a proof around a loop wants its bound from ahead of the loop. So the reads above the access are asked, the nearest first: that of the loop around it is a step or two away,
+        // and a function of a thousand loops over one list does not ask a thousand reads for each store.
+        const Dominators& dominators = walker.analyses->dominators();
+        uint64_t numberOfLengthsAsked = 0;
+        bool isProven = false;
+        auto nearestThatReadsLength = [&](BlockID from) {
+            Vector<BlockID, 16> waiting;
+            uint32_t answer = Walker::noBlock;
+            for (BlockID current = from; current; current = dominators.idom(current)) {
+                uint32_t known = walker.lastLengthReadIn[current.index()] ? current.index() : walker.nearestBlockThatReadsLength[current.index()];
+                if (known != Walker::notAsked) {
+                    answer = known;
+                    break;
+                }
+                waiting.append(current);
+            }
+            for (BlockID current : waiting)
+                walker.nearestBlockThatReadsLength[current.index()] = answer;
+            return answer == Walker::noBlock ? BlockID() : BlockID(answer);
+        };
+        for (BlockID above = nearestThatReadsLength(block); above && !isProven; above = dominators.idom(above) ? nearestThatReadsLength(dominators.idom(above)) : BlockID()) {
+            for (uint32_t number = walker.lastLengthReadIn[above.index()]; number && !isProven; number = walker.lengthReads[number - 1].earlierInSameBlock) {
+                const Walker::LengthRead& read = walker.lengthReads[number - 1];
+                if (read.array != array)
+                    continue;
+                ++numberOfLengthsAsked;
+                isProven = walker.relations->isAtMost(position, read.read, -1, block) == Answer::Proven;
+            }
+        }
+        m_inputs.build.statistics().count(StatisticID::LengthsAskedToBoundAccesses, numberOfLengthsAsked);
+        return isProven;
     }
 
     void noteWriteByOperation(Walker& walker, FunctionID function, const ValueFlowStatement& statement, uint32_t operandIndex, ValueSetID arrays)

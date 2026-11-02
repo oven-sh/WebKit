@@ -26,6 +26,7 @@
 #include "AOTPersistentSortedSet.h"
 #include "AOTPhaseTimes.h"
 #include "AOTPropertyAccessMembers.h"
+#include "AOTRowsOfLayouts.h"
 #include "AOTSchemaEnums.h"
 #include "AOTSharedPrefixList.h"
 #include "AOTSort.h"
@@ -816,6 +817,79 @@ static void testPackedPartitionUnpacksToWhatWasPacked()
     AOT_TEST_CHECK(packed.sizeInBytes() * 4 <= methods.arms.size() * sizeof(MemberArm));
 }
 
+static void testAnswersAlongRowsAreThoseOfWalkForEachLayout()
+{
+    WeakRandom random(1);
+    for (uint32_t numberOfLayouts : { 1, 2, 7, 60, 600 }) {
+        for (unsigned round = 0; round < 12; ++round) {
+            // In the first round one row of all layouts. Then any layout stands above any other, so that there are rings.
+            Vector<LayoutID> layoutAbove(numberOfLayouts, [&](size_t index) {
+                if (!round)
+                    return index ? LayoutID(static_cast<uint32_t>(index - 1)) : LayoutID();
+                return random.getUint32(8) ? LayoutID(random.getUint32(numberOfLayouts)) : LayoutID();
+            });
+            enum : uint8_t { No, Yes };
+            Vector<uint8_t> settled(numberOfLayouts, [&](size_t) {
+                return static_cast<uint8_t>(random.getUint32(round ? 12 : 4000));
+            });
+            auto step = [&](LayoutID id) -> StepAlongRow {
+                if (settled[id.index()] <= Yes)
+                    return { settled[id.index()] == Yes, { } };
+                if (!layoutAbove[id.index()])
+                    return { true, { } };
+                return { std::nullopt, layoutAbove[id.index()] };
+            };
+            for (bool answerInRing : { false, true }) {
+                size_t numberOfSteps = 0;
+                BitVector answers = answerAlongRows(numberOfLayouts, answerInRing, [&](LayoutID id) {
+                    ++numberOfSteps;
+                    return step(id);
+                });
+                AOT_TEST_CHECK(numberOfSteps == numberOfLayouts);
+                for (uint32_t index = 0; index < numberOfLayouts; ++index) {
+                    bool expected = answerInRing;
+                    LayoutID current(index);
+                    for (size_t steps = 0; steps < numberOfLayouts; ++steps) {
+                        StepAlongRow taken = step(current);
+                        if (taken.answer) {
+                            expected = *taken.answer;
+                            break;
+                        }
+                        current = taken.next;
+                    }
+                    AOT_TEST_CHECK(answers.quickGet(index) == expected);
+                }
+            }
+
+            auto isWanted = [&](LayoutID id) {
+                return settled[id.index()] == No;
+            };
+            size_t numberOfLooksAbove = 0;
+            Vector<LayoutID> nearest = findNearestWantedAbove(numberOfLayouts, [&](LayoutID id) {
+                ++numberOfLooksAbove;
+                return layoutAbove[id.index()];
+            }, isWanted);
+            AOT_TEST_CHECK(numberOfLooksAbove == 2 * numberOfLayouts);
+            auto wantedAbove = [&](uint32_t index, const Vector<LayoutID>& next) {
+                Vector<LayoutID> found;
+                BitVector isFound(numberOfLayouts);
+                LayoutID current = next[index];
+                for (size_t steps = 0; current && steps < numberOfLayouts; ++steps, current = next[current.index()]) {
+                    if (isWanted(current) && !isFound.quickSet(current.index()))
+                        found.append(current);
+                }
+                return found;
+            };
+            for (uint32_t index = 0; index < numberOfLayouts; ++index)
+                AOT_TEST_CHECK(wantedAbove(index, nearest) == wantedAbove(index, layoutAbove));
+            if (!round) {
+                for (uint32_t index = 0; index < numberOfLayouts; ++index)
+                    AOT_TEST_CHECK(!nearest[index] || isWanted(nearest[index]));
+            }
+        }
+    }
+}
+
 static void testListsShareWhatTheyHeldWhenTheyWereCopied()
 {
     WeakRandom random(1);
@@ -944,16 +1018,16 @@ static void testCurrentWorkNamesFunctionAndStep()
         {
             CurrentWorkScope scope(*program, FunctionID(1u));
             currentWork().setPass(PassID::EliminateDeadCode);
-            AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped) == "Stopped while compiling second (a.ts:1) in EliminateDeadCode.\nTo build without that step, add --aot-disable=pass:EliminateDeadCode.\n"_s);
+            AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped) == "Stopped while compiling second (a.ts:1) in EliminateDeadCode.\nTo build without that step, add --aot-disable=pass:EliminateDeadCode.\nAn earlier step may be at fault: --aot-check=verify-each-pass names it.\n"_s);
             AOT_TEST_CHECK(textOf(describeWhatThreadsAreCompiling) == "Still compiling second (a.ts:1) in EliminateDeadCode for 0 s.\n"_s);
             currentWork().startInSeconds.store(MonotonicTime::now().secondsSinceEpoch().value() - 90.5, std::memory_order_relaxed);
             AOT_TEST_CHECK(textOf(describeWhatThreadsAreCompiling) == "Still compiling second (a.ts:1) in EliminateDeadCode for 90 s.\nA build that stays this long in one function is stuck, which is a bug in Bun. Please report it with these lines: https://github.com/oven-sh/bun/issues\nTo build without that step, add --aot-disable=pass:EliminateDeadCode.\n"_s);
             // A pass that every build needs has no way around it.
             currentWork().setPass(PassID::GenerateCode);
-            AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped) == "Stopped while compiling second (a.ts:1) in GenerateCode.\n"_s);
+            AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped) == "Stopped while compiling second (a.ts:1) in GenerateCode.\nAn earlier step may be at fault: --aot-check=verify-each-pass names it.\n"_s);
             // A number that no function has.
             currentWork().setFunction(FunctionID(1000u));
-            AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped) == "Stopped while compiling in GenerateCode.\n"_s);
+            AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped) == "Stopped while compiling in GenerateCode.\nAn earlier step may be at fault: --aot-check=verify-each-pass names it.\n"_s);
         }
         times.didFinish("the first part"_s);
         AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped) == "Stopped while compiling in Optimize (after: the first part).\n"_s);
@@ -979,14 +1053,14 @@ static void testCurrentWorkNamesPhaseOfBackEnd()
     currentWork().setPass(PassID::GenerateCode);
     {
         B3::PhaseScope phase(second, "someB3Phase"_s);
-        AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped) == "Stopped while compiling second (a.ts:1) in GenerateCode (someB3Phase).\n"_s);
+        AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped) == "Stopped while compiling second (a.ts:1) in GenerateCode (someB3Phase).\nAn earlier step may be at fault: --aot-check=verify-each-pass names it.\n"_s);
     }
     {
         B3::PhaseScope phase(first, "anotherB3Phase"_s);
-        AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped) == "Stopped while compiling first (a.ts:1) in GenerateCode (anotherB3Phase).\n"_s);
+        AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped) == "Stopped while compiling first (a.ts:1) in GenerateCode (anotherB3Phase).\nAn earlier step may be at fault: --aot-check=verify-each-pass names it.\n"_s);
     }
     currentWork().leaveBackEnd();
-    AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped) == "Stopped while compiling first (a.ts:1) in GenerateCode.\n"_s);
+    AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped) == "Stopped while compiling first (a.ts:1) in GenerateCode.\nAn earlier step may be at fault: --aot-check=verify-each-pass names it.\n"_s);
 }
 
 static void testCurrentWorkOfPoolThreads()
@@ -1405,6 +1479,7 @@ std::span<const NativeTest> supportTests()
         { "sorted-lists/short-list-is-looked-for-by-halving"_s, testShortSortedListIsLookedForByHalving },
         { "shared-collections/persistent-sets-hold-what-sorted-sets-hold"_s, testPersistentSetsHoldWhatSortedSetsHold },
         { "shared-collections/lists-share-what-they-held-when-they-were-copied"_s, testListsShareWhatTheyHeldWhenTheyWereCopied },
+        { "rows-of-layouts/answers-are-those-of-a-walk-for-each-layout"_s, testAnswersAlongRowsAreThoseOfWalkForEachLayout },
         { "property-access/packed-partition-unpacks-to-what-was-packed"_s, testPackedPartitionUnpacksToWhatWasPacked },
         { "vector/holds-what-that-of-wtf-holds"_s, testVectorsHoldWhatThoseOfWTFHold },
         { "enum-names/end-at-the-last-enumerator"_s, testNamesOfEnumeratorsEndAtTheLastOne },

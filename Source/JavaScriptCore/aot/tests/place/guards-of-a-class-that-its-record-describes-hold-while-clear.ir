@@ -107,8 +107,7 @@ function f10 name="use" results=[{type=anything}] {
 # CHECK: L1 Static PrototypeLink - {{*}} holdsWhileClear
 # CHECK-NOT: holdsWhileClear
 # CHECK: L3 Static Member "prototype"
-# The three sets of Button's guards and the set of Keyed's, then the two sets of Made's.
-# CHECK-NEXT: set [{{*}}] {{*}} holdsWhileClear
+# The two sets of Button's guards and the set of Keyed's, then the set of Made's.
 # CHECK-NEXT: set [{{*}}] {{*}} holdsWhileClear
 # CHECK-NEXT: set [{{*}}] {{*}} holdsWhileClear
 # CHECK-NEXT: set [{{*}}] {{*}} holdsWhileClear

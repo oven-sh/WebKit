@@ -412,6 +412,13 @@ void StubAssembler::recordFarJump(PtrTag tag)
     recordCallee(tag);
 }
 
+void StubAssembler::align()
+{
+    constexpr int alignment = 16;
+    while (!m_assembler.buffer().isAligned(alignment))
+        emitPadding(*this);
+}
+
 void StubAssembler::emitStackAlignmentCheck()
 {
 #if CPU(X86_64)

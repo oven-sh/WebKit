@@ -183,8 +183,10 @@ StringEmitter::AtomOfName StringEmitter::atomOfName(uint32_t name)
     return { offsetBy(loadImmutablePointer(AOT_INSTANCE_OFFSET(lazyStrings.headers)), zeroExtended(offset), 0), isNotZero(offset) };
 }
 
-void StringEmitter::branchOnEqualsLiteral(const OperationContext& context, ComparedOperand operand, LValue subject, StringID literal, BranchTargets targets, bool subjectIsFlat, bool everyCellIsString, bool subjectIsComparedAgain)
+void StringEmitter::branchOnEqualsLiteral(const OperationContext& context, ComparedOperand operand, LValue subject, StringID literal, BranchTargets targets, std::optional<FlatStringCell> flatSubject, bool everyCellIsString, bool subjectIsComparedAgain)
 {
+    RELEASE_ASSERT(!flatSubject || flatSubject->cell().value() == subject);
+    bool subjectIsFlat = !!flatSubject;
     String text = textOf(literal);
     if (text.isEmpty()) {
         branch(equal(Boxed(subject), boxCell(emptyString())), targets);
@@ -266,7 +268,7 @@ void StringEmitter::branchOnEqualsLiteral(const OperationContext& context, Compa
     }
     auto openedString = subjectIsFlat ? m_openedStrings.find(string.value()) : m_openedStrings.end();
     const CharacterSource* source = openedString != m_openedStrings.end() ? &openedString->value.source : nullptr;
-    Pointer impl = source ? openedString->value.impl : subjectIsFlat ? implOfFlatString(string) : loadField<Pointer>(string, m_heaps.JSString_value);
+    Pointer impl = source ? openedString->value.impl : flatSubject ? implOfFlatString(*flatSubject) : loadField<Pointer>(string, m_heaps.JSString_value);
     if (!subjectIsFlat)
         continueIf(hasNoBits(impl, JSString::isRopeInPointer), unlikelyEdge(slow));
     continueIf(equal(source ? source->length : loadField<Word32>(impl, m_heaps.StringImpl_length), text.length()), targets.notTaken);
@@ -278,40 +280,42 @@ void StringEmitter::branchOnEqualsLiteral(const OperationContext& context, Compa
     branchOnEqualsLiteralByStub(context, ComparedOperand::String, string.value(), literal, targets);
 }
 
-Condition StringEmitter::equalsLiteral(const OperationContext& context, ComparedOperand operand, LValue subject, StringID literal, bool subjectIsFlat, bool everyCellIsString, bool subjectIsComparedAgain)
+Condition StringEmitter::equalsLiteral(const OperationContext& context, ComparedOperand operand, LValue subject, StringID literal, std::optional<FlatStringCell> flatSubject, bool everyCellIsString, bool subjectIsComparedAgain)
 {
     String text = textOf(literal);
     if (text.isEmpty())
         return equal(Boxed(subject), boxCell(emptyString()));
     if (fitsInRegister(text) || comparesLiteralInPlace(context, text)) {
         return asBoolean([&](BranchTargets targets) {
-            branchOnEqualsLiteral(context, operand, subject, literal, targets, subjectIsFlat, everyCellIsString, subjectIsComparedAgain);
+            branchOnEqualsLiteral(context, operand, subject, literal, targets, flatSubject, everyCellIsString, subjectIsComparedAgain);
         });
     }
     return Condition(m_out.castToInt32(callStub(context, AOT::equalsLiteral(operand), { subject }, { .immediate = literal.index() }).first));
 }
 
-void StringEmitter::generateEqualsLiteral(const ValueContext& value, ComparedOperand operand, LValue subject, bool subjectIsFlat, bool everyCellIsString)
+void StringEmitter::generateEqualsLiteral(const ValueContext& value, ComparedOperand operand, LValue subject, std::optional<FlatStringCell> flatSubject, bool everyCellIsString)
 {
+    bool subjectIsFlat = !!flatSubject;
     bool subjectIsComparedAgain = !subjectIsFlat && isSubjectComparedAgain(value);
     if (value.isBranchCondition()) {
-        branchOnEqualsLiteral(value, operand, subject, value->literal(), value.branchTargets(), subjectIsFlat, everyCellIsString, subjectIsComparedAgain);
+        branchOnEqualsLiteral(value, operand, subject, value->literal(), value.branchTargets(), flatSubject, everyCellIsString, subjectIsComparedAgain);
         return;
     }
-    define(value, equalsLiteral(value, operand, subject, value->literal(), subjectIsFlat, everyCellIsString, subjectIsComparedAgain));
+    define(value, equalsLiteral(value, operand, subject, value->literal(), flatSubject, everyCellIsString, subjectIsComparedAgain));
 }
 
 void StringEmitter::generateStringEqualsLiteral(const ValueContext& value)
 {
     ValueID string = value->stringOperand();
-    generateEqualsLiteral(value, ComparedOperand::String, in<CellPointer>(string).value(), typeOf(string).isOpaque(OpaqueKind::FlatString));
+    std::optional<FlatStringCell> flat = flatStringByType(string);
+    generateEqualsLiteral(value, ComparedOperand::String, (flat ? flat->cell() : in<CellPointer>(string)).value(), flat);
 }
 
 void StringEmitter::generateValueEqualsLiteral(const ValueContext& value)
 {
     const Type& type = typeOf(value->valueOperand());
     bool everyCellIsString = !type.hasObjects() && !(type.primitives & cellPrimitives & ~Primitive::AnyString);
-    generateEqualsLiteral(value, ComparedOperand::Value, in<Boxed>(value->valueOperand()).value(), false, everyCellIsString);
+    generateEqualsLiteral(value, ComparedOperand::Value, in<Boxed>(value->valueOperand()).value(), std::nullopt, everyCellIsString);
 }
 
 void StringEmitter::generateValueLooselyEqualsLiteral(const ValueContext& value)

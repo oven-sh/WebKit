@@ -401,6 +401,8 @@ const answersKeptBufferOfKind = {
   returns: memoryBuffer,
   capability: "heap",
   throws: true,
+  // As grow(): the buffer that was kept is detached.
+  writes: [typedArrayStorage],
   uses: { this: answersKeptBuffer },
   implementation: b.generic,
 } satisfies b.FunctionField;
@@ -509,10 +511,12 @@ export default b.declarations(
   }),
   b.class("%MapIterator%", {
     ...lockedIteratorColumns,
+    jsType: "JSMapIteratorType",
     proto: { next: libraryStep("MapIteratorPrototype", "next", iteratorResult) },
   }),
   b.class("%SetIterator%", {
     ...lockedIteratorColumns,
+    jsType: "JSSetIteratorType",
     proto: { next: libraryStep("SetIteratorPrototype", "next", iteratorResult) },
   }),
   b.class("%StringIterator%", {
@@ -998,7 +1002,7 @@ export default b.declarations(
   webAssemblyClass("Suspending", {
     nativeSymbols: ["callWebAssemblySuspending", "constructWebAssemblySuspending"],
     construct: {
-      args: { called: b.any },
+      args: { called: b.any.optional },
       returns: b.object.fresh,
       capability: "heap",
       throws: true,
@@ -1036,7 +1040,7 @@ export default b.declarations(
   webAssemblyClass("Tag", {
     construct: webAssemblyConstruction(
       "Tag",
-      { type: b.any },
+      { type: b.any.optional },
       { type: [b.runsTransitively("Iterate", "ToPrimitive", b.named("parameters")), b.readsContents()] },
     ),
   }),

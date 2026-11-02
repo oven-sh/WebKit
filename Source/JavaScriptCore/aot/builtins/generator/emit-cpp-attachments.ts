@@ -243,6 +243,8 @@ function formatHostObject(context: AttachmentContext, object: ModelHostObject): 
     ],
     ["keepsStringsOfStoredValues", object.keepsStringsOfStoredValues ? "true" : null],
     ["nativeAccessors", formatNames(context, object.nativeAccessors)],
+    ["lockedNames", formatNames(context, object.lockedNames)],
+    ["holder", formatId("BuiltinID", object.holder)],
     [
       "platforms",
       formatOptionSet(

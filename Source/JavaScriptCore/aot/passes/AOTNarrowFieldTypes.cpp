@@ -389,9 +389,14 @@ static bool isDeclaredObjectLayout(LayoutKind kind)
     return isObjectLayout(kind) && kind != LayoutKind::BuiltinResult;
 }
 
-static bool hasSlots(const Program& program, LayoutID id)
+static BitVector findLayoutsWithSlots(const Program& program)
 {
-    return isDeclaredObjectLayout(program.at(id).kind) && hasOnlyCompiledBases(program, id);
+    BitVector result = findLayoutsWithOnlyCompiledBases(program);
+    for (uint32_t index = 0; index < program.layouts.size(); ++index) {
+        if (!isDeclaredObjectLayout(program.layouts[index].kind))
+            result.quickClear(index);
+    }
+    return result;
 }
 
 // What the packer will most likely give a field of this type. It knows more by then: which fields need a state for "absent", which references must stay wide.
@@ -490,11 +495,12 @@ static void widenSlotTypesToTestedTypes(Program& program, const ParallelLoops& l
 void markEnforcedFields(Program& program, BuildContext& build)
 {
     const ParallelLoops& loops = build.parallelLoops();
+    BitVector layoutsWithSlots = findLayoutsWithSlots(program);
     forEachIndexInParallel(loops, program.layouts.size(), [&](unsigned layoutIndex) {
         Layout& layout = program.layouts[layoutIndex];
         if (!isDeclaredObjectLayout(layout.kind))
             return;
-        bool hasSlots = hasOnlyCompiledBases(program, LayoutID(layoutIndex));
+        bool hasSlots = layoutsWithSlots.quickGet(layoutIndex);
         for (Field& field : layout.fields) {
             if (!field.flags.contains(FieldFlags::IsInherited))
                 field.flags.set(FieldFlags::IsEnforced, hasSlots && !field.declared.isExpected());
@@ -816,8 +822,9 @@ Vector<Int32ParameterCandidate> narrowFieldTypes(Program& program, BuildContext&
     std::atomic<bool> hasCountedFields { false };
     Vector<BitVector> fieldsAddedTo(program.layouts.size());
     std::atomic<bool> hasFieldsAddedTo { false };
+    BitVector layoutsWithSlots = findLayoutsWithSlots(program);
     Vector<FieldToNarrow> fields = collectInParallel<FieldToNarrow>(loops, program.layouts.size(), [&](unsigned layoutIndex, Vector<FieldToNarrow>& found) {
-        if (!hasSlots(program, LayoutID(layoutIndex)))
+        if (!layoutsWithSlots.quickGet(layoutIndex))
             return;
         for (uint32_t fieldIndex = 0; fieldIndex < program.layouts[layoutIndex].fields.size(); ++fieldIndex) {
             FieldReference reference { LayoutID(layoutIndex), fieldIndex };
@@ -844,7 +851,7 @@ Vector<Int32ParameterCandidate> narrowFieldTypes(Program& program, BuildContext&
         constexpr uint32_t saved = widthOf(SlotRepresentation::OptionalDouble) - widthOf(SlotRepresentation::OptionalInt32);
         Vector<FieldReference> fieldsThatMakeCellsSmaller = collectInParallel<FieldReference>(loops, program.layouts.size(), [&](unsigned layoutIndex, Vector<FieldReference>& found) {
             const Layout& layout = program.layouts[layoutIndex];
-            if (!hasSlots(program, LayoutID(layoutIndex)) || layout.flow.allocation == AllocationState::NeverAllocated)
+            if (!layoutsWithSlots.quickGet(layoutIndex) || layout.flow.allocation == AllocationState::NeverAllocated)
                 return;
             Vector<FieldReference, 8> held;
             uint32_t bytes = offsetOfFirstField;
@@ -869,7 +876,7 @@ Vector<Int32ParameterCandidate> narrowFieldTypes(Program& program, BuildContext&
         constexpr uint32_t added = widthOf(SlotRepresentation::OptionalInt64) - widthOf(SlotRepresentation::OptionalInt32);
         Vector<FieldReference> fieldsWithoutRoom = collectInParallel<FieldReference>(loops, program.layouts.size(), [&](unsigned layoutIndex, Vector<FieldReference>& found) {
             const Layout& layout = program.layouts[layoutIndex];
-            if (!hasSlots(program, LayoutID(layoutIndex)) || layout.flow.allocation == AllocationState::NeverAllocated)
+            if (!layoutsWithSlots.quickGet(layoutIndex) || layout.flow.allocation == AllocationState::NeverAllocated)
                 return;
             Vector<FieldReference, 8> held;
             // A store into such a field is tested, and what fails the test goes to the extra properties, which have a word in the cell.
@@ -970,8 +977,9 @@ void expectFieldsOutsideTestedCode(ProgramEditor& editor, const Heat& heat, Buil
 {
     const Program& program = editor.program();
     const ParallelLoops& loops = build.parallelLoops();
+    BitVector layoutsWithSlots = findLayoutsWithSlots(program);
     Vector<FieldReference> fields = collectInParallel<FieldReference>(loops, program.layouts.size(), [&](unsigned layoutIndex, Vector<FieldReference>& found) {
-        if (!hasSlots(program, LayoutID(layoutIndex)))
+        if (!layoutsWithSlots.quickGet(layoutIndex))
             return;
         const Vector<Field>& fieldsOfLayout = program.layouts[layoutIndex].fields;
         for (uint32_t index = 0; index < fieldsOfLayout.size(); ++index) {

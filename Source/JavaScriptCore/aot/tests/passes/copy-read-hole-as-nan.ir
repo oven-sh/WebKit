@@ -1,0 +1,27 @@
+# `[...list]` of a list of whole numbers, read where Double storage was expected by a read that takes a hole for NaN. Only Double storage has such a hole:
+# the reader keeps the kind that it asked for, and the copy is made as it was
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass PlanArrayCapacities
+# STATISTIC: ChangesOfStorageKindTakenBack = 1
+# STATISTIC: KindsOfStorageChanged = 0
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="sum" parameters=[{type=Array<int[0, 7], proven, Int32, pristine[Storage, Names, Dense]>}, {type=int[0, 3]}] results=[{type=anything}] {
+    v2 = NewArray contents=int|whole [contentsAreProven]
+    v3 = AssumeType v2 provenType=Array<int|whole, proven, pristine[Storage, Names]>
+    AppendElements v3, v0
+    v5 = HasArrayStorage v3 arrayStorage=Double
+    Branch v5 -> taken b1(| 0), notTaken b3()
+  b1(v6):
+    v7 = IsInBounds v3, v1
+    Branch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8):
+    v9 = AllGuards v6, v8
+    v10 = GetArrayElement v3, v1, v9 arrayStorage=Double level=Expected [keyIsIntegral, isInBounds, readsHoleAsNaN]
+    Return v10
+  b3() frequency=Unlikely:
+    v11 = ElemGet v3, v1
+    Return v11
+}

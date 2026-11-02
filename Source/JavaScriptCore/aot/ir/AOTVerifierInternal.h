@@ -45,6 +45,7 @@ struct SlotInReceivers {
     LayoutID memberWithRemovedField;
     LayoutID memberWithAccessor;
     LayoutID memberWithValue;
+    LayoutID memberBelowAccessor;
     bool isAlwaysFilled { true };
     bool mayHoldDeferredClosure { false };
 };
@@ -147,6 +148,7 @@ private:
     void verifyLoopMarks();
 
     void verifyGuards();
+    String describeWhatMayEnd(BlockID blockOfUser, ValueID guard, const Value& user);
     void verifyProofs();
     void verifyOperandKindsWithoutChecks();
     void verifyStoredTypesWithoutChecks();

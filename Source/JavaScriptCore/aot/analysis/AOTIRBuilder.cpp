@@ -277,7 +277,7 @@ Terminator IRBuilder::makeTerminator(TerminatorKind kind, std::initializer_list<
 ValueID IRBuilder::addValue(Value&& value)
 {
     m_function.add(WTF::move(value));
-    return ValueID(m_function.values.size() - 1);
+    return m_function.idOfValueAt(m_function.values.size() - 1);
 }
 
 TypeID partInside(const Program& program, TypeArena& types, TypeID narrower, TypeID type)

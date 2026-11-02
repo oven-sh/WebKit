@@ -861,7 +861,10 @@ static ValueID valueStoredDirectlyBehind(FunctionAnalyses& analyses, ValueID all
         bool storesIntoObject = (value.opcode == Opcode::PutSlot || value.opcode == Opcode::PutSlotOrAdd) && value.objectOperand() == allocation;
         if (storesIntoObject && value.key() == key)
             return value.valueOperand();
-        if (!storesIntoObject && !analyses.hasNoEffects(values[index]))
+        // A closure that is made takes the object along and looks at nothing: nobody calls it before the stores have run. The end of the birth takes a mark off the object and leaves its slots alone.
+        bool endsBirth = (value.opcode == Opcode::FinishBirth || value.opcode == Opcode::TryFinishBirth) && value.objectOperand() == allocation;
+        bool leavesSlotsAlone = (value.opcode == Opcode::NewClosure || endsBirth) && !analyses.context().build.isSabotaged(Sabotage::ClosuresMadeBehindAllocationsHaveEffects);
+        if (!storesIntoObject && !leavesSlotsAlone && !analyses.hasNoEffects(values[index]))
             return { };
     }
     return { };
@@ -1387,12 +1390,17 @@ bool guardProvesSlotFilled(FunctionAnalyses& analyses, const Value& slotOperatio
         return false;
 
     const Program& program = analyses.program();
-    bool testOfCellAnswers = isAnsweredByTestOfCell(program, slotOperation);
+    std::optional<bool> testOfCellAnswers;
+    auto askTestOfCell = [&] {
+        if (!testOfCellAnswers)
+            testOfCellAnswers = isAnsweredByTestOfCell(program, slotOperation);
+        return *testOfCellAnswers;
+    };
     ValueID object = analyses.identityOf(slotOperation.objectOperand());
     bool isProven = std::ranges::any_of(analyses.guardFacts(guard).facts, [&](const GuardFact& fact) {
         if (fact.subject != object)
             return false;
-        return provesSlotFilled(program, analyses.function(), fact, slotOperation.key()) || (testOfCellAnswers && fact.proves(Proof::BirthFieldsFilled)) || isFilledBehindEveryAllocation(analyses, fact, slotOperation);
+        return provesSlotFilled(program, analyses.function(), fact, slotOperation.key()) || (fact.proves(Proof::BirthFieldsFilled) && askTestOfCell()) || isFilledBehindEveryAllocation(analyses, fact, slotOperation);
     });
     RELEASE_ASSERT(mayBeProven || !isProven);
     return isProven;

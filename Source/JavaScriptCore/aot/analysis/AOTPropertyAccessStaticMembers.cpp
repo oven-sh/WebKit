@@ -169,6 +169,53 @@ static bool mayBeMocked(const Program& program, ModuleID id)
     return isFaceOfCommonJSFile(program, module) && program.at(module.requests[0].target).flags.contains(ModuleFlags::MayBeMocked);
 }
 
+// `export { sides } from "./shapes"`: the entry names the variable of the module that declares it. A mock may stand in place of a module that hands it on, and answers for whoever has the
+// name through it. A module lists what somebody reads off its object, so one on the way may lack the name: where the way is lost, any mock may stand on it.
+static bool mayComeThroughMock(const Program& program, ModuleID from, VariableID variable)
+{
+    ModuleID declaring = program.at(variable).module;
+    if (from == declaring)
+        return false;
+    BitVector seen(program.modules.size());
+    seen.quickSet(from.index());
+    Vector<ModuleID, 8> work { from };
+    while (!work.isEmpty()) {
+        bool hasWay = false;
+        for (const ModuleRequest& request : program.at(work.takeLast()).requests) {
+            if (request.target == declaring) {
+                hasWay = true;
+                continue;
+            }
+            bool handsOn = std::ranges::any_of(program.at(request.target).exports, [&](const ModuleExport& entry) {
+                return entry.kind == ModuleExportKind::Variable && entry.variable == variable;
+            });
+            if (!handsOn)
+                continue;
+            hasWay = true;
+            if (mayBeMocked(program, request.target))
+                return true;
+            if (!seen.quickSet(request.target.index()))
+                work.append(request.target);
+        }
+        if (!hasWay) {
+            return std::ranges::any_of(program.modules, [](const Module& module) {
+                return module.flags.contains(ModuleFlags::MayBeMocked);
+            });
+        }
+    }
+    return false;
+}
+
+// `export * as inner from "./inner"`.
+static bool isHandedOnByModuleThatMayBeMocked(const Program& program, ModuleID handedOn)
+{
+    return std::ranges::any_of(program.modules, [&](const Module& module) {
+        return module.flags.contains(ModuleFlags::MayBeMocked) && std::ranges::any_of(module.exports, [&](const ModuleExport& entry) {
+            return entry.kind == ModuleExportKind::Namespace && entry.module == handedOn;
+        });
+    });
+}
+
 MemberAnswer findNamespaceExport(const PropertyAccessContext& context, const MemberQuery& query)
 {
     const Program& program = context.program;
@@ -217,13 +264,17 @@ MemberAnswer findNamespaceExport(const PropertyAccessContext& context, const Mem
     case ModuleExportKind::Variable: {
         // While a mock stands in place of the module that declares the variable, nothing fills it, and the namespace object asks the mock: also the object of a module that only passes the export on.
         const Variable& variable = program.at(entry.variable);
-        if (variable.flags.contains(VariableFlags::IsReplaceable) && mayBeMocked(program, variable.module))
+        if (variable.flags.contains(VariableFlags::IsReplaceable) && (mayBeMocked(program, variable.module) || mayComeThroughMock(program, layout.namespaceOf, entry.variable)))
             return MemberAnswer::unknown(UnprovenCause::UnknownObject);
         return { .kind = MemberKind::Variable, .level = KnowledgeLevel::Proven, .holder = query.layout, .field = *field, .variable = entry.variable };
     }
     case ModuleExportKind::Namespace:
         if (entry.phase != ImportPhase::Evaluation)
             return MemberAnswer::unknown(UnprovenCause::Unknown);
+        // Under a mock that module may have two objects. Which of them this one hands on goes by when it was linked, and the run time knows that.
+        // A mock that is laid over a module that hands the object on gives what it likes in its place, to every module that hands it on.
+        if (mayBeMocked(program, entry.module) || isOfModuleThatMayBeMocked || isHandedOnByModuleThatMayBeMocked(program, entry.module))
+            return MemberAnswer::unknown(UnprovenCause::UnknownObject);
         return { .kind = MemberKind::Namespace, .level = KnowledgeLevel::Proven, .module = entry.module };
     case ModuleExportKind::Indirect:
         return MemberAnswer::unknown(UnprovenCause::UnknownObject);

@@ -10,9 +10,11 @@
 #include "AOTBuiltinIDTypes.h"
 #include "AOTRecordTypes.h"
 #include "JSCJSValue.h"
+#include "LineColumn.h"
 #include <span>
 #include <wtf/text/WTFString.h>
 #include <wtf/ScopedLambda.h>
+#include <wtf/Vector.h>
 
 namespace JSC {
 
@@ -20,6 +22,7 @@ class Identifier;
 class JSFunction;
 class JSGlobalObject;
 class JSObject;
+class StackFrame;
 class VM;
 
 namespace AOT {
@@ -102,6 +105,9 @@ JSObject* createHasInstanceNotAFunctionError(JSGlobalObject*, JSValue constructo
 JSObject* createBuiltinModulesUnavailableError(JSGlobalObject*);
 JSObject* createNativeBindingsUnavailableError(JSGlobalObject*);
 JSObject* createBuiltinWithoutPathError(JSGlobalObject*);
+// An error whose sentence says that compiled code does not do what `bun run` does. With Options::aotCountsPath() it is counted where it is made, so also where a `catch` swallows it and the program takes another road.
+JS_EXPORT_PRIVATE bool isRefusal(const String& message);
+JS_EXPORT_PRIVATE void countRefusal(VM&, const String& message, const WTF::Vector<StackFrame>*);
 JSObject* createBuiltinNotCompiledError(JSGlobalObject*, const String& builtin);
 JSObject* createBuiltinFunctionNotCompiledError(JSGlobalObject*, const String& functionName);
 JSObject* createBuiltinsNotCompiledError(JSGlobalObject*, std::span<const String> builtins);
@@ -126,6 +132,7 @@ String assignmentToLockedBuiltinMessage(const String& property);
 String deletionFromLockedBuiltinMessage(const String& property);
 // `property` may be assigned to where the build sees the assignment.
 String assignmentThatBuildDidNotSeeMessage(const String& property);
+String callOfBuiltinChangedBeforeFirstUseMessage(const String& property);
 // A test run opens what the build sees a test replace. So there the words say what to write, or that nothing will do.
 enum class LockedIn : bool { Executable, TestRun };
 // The compiled code that is running, or that has called the built-in function which is, stands in a file of a test run that an executable holds too.
@@ -139,6 +146,8 @@ String deletionOfFoldedMemberMessage(const String& property, LockedIn);
 // call, apply, bind, Symbol.hasInstance: BuiltinTable::isFunctionOfEngine().
 String assignmentToNameThatBuiltinFunctionInheritsMessage(UniquedStringImpl*);
 String prototypeChangeOfLockedBuiltinMessage(const String& holder, LockedIn = LockedIn::Executable);
+String spyOnExportRefusedMessage(UniquedStringImpl* name, const String& path, LockedIn);
+String mockOfModuleRefusedMessage(const String& path, LockedIn);
 
 } } // namespace JSC::AOT
 

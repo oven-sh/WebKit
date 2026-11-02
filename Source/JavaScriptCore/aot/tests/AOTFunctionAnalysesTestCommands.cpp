@@ -391,7 +391,12 @@ static void forEachSection(PrintStream& out, Session& session, const AnalysisOpt
     }, SectionRequirement::ReachableFromWord);
     section("cycles-avoiding-blocks"_s, [&] {
         for (BlockID block : reachableBlocks()) {
-            auto isAvoided = [&](BlockID avoidedBlock) { return analyses.cfg().isInCycleAvoiding(block, avoidedBlock); };
+            auto isAvoided = [&](BlockID avoidedBlock) {
+                uint64_t numberOfBlocksVisited = 0;
+                bool isInCycle = analyses.cfg().isInCycleAvoiding(block, avoidedBlock);
+                RELEASE_ASSERT(analyses.blockCycles().isInCycleAvoiding(block, avoidedBlock, numberOfBlocksVisited) == isInCycle);
+                return isInCycle;
+            };
             dumpLine(out, block, " in cycle avoiding: "_s, reachableBlocksMatching(isAvoided));
         }
     });

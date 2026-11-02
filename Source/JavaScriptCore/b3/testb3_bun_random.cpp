@@ -8,6 +8,7 @@
 
 #if ENABLE(B3_JIT)
 
+#include "B3CheckVariablesAreSet.h"
 #include "B3ConvertBranchesToSelects.h"
 #include "B3CycleForest.h"
 #include "B3EliminateDeadCode.h"
@@ -523,6 +524,8 @@ private:
     void didRunPhase(Procedure& proc, ASCIILiteral name)
     {
         validate(proc);
+        if (!checkVariablesAreSet(proc))
+            fail(makeString("reads a variable that is not set on every path "_s, name));
         if (numberOfValues(proc, isUncloneable) > m_uncloneableValueCount)
             fail(makeString("has more values that must not be cloned than it started with "_s, name));
     }
@@ -729,6 +732,8 @@ static void testRandomProgramRegressions()
         RandomProgramChecker(seed, false, true).run();
         RandomProgramChecker(seed, true, true).run();
     }
+    for (unsigned seed : { 31131u, 41501u, 12388748u, 13785840u })
+        RandomProgramChecker(seed).run();
 }
 
 static void testRandomProgramVersionsCanDisagree()

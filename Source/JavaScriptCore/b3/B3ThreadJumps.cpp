@@ -570,7 +570,7 @@ private:
             if (value->opcode() == Phi)
                 continue;
             if (Value* earlierLoad = appendEarlierLoad(block, path, value)) {
-                m_cloner.substitute(map, value, earlierLoad);
+                m_cloner.substituteOnOnePath(map, value, earlierLoad);
                 continue;
             }
             m_cloner.appendClone(value, block, map);

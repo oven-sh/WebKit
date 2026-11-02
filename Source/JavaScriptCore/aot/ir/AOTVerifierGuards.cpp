@@ -17,6 +17,26 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static_assert(std::ranges::all_of(allMembersOf<TerminatorKind>, [](TerminatorKind kind) { return reliesOf(kind).isEmpty(); }), "verifyGuards has to visit terminators once one of them relies on a guard");
 
+String FunctionVerifier::describeWhatMayEnd(BlockID blockOfUser, ValueID guard, const Value& user)
+{
+    // Those that stand nearest in front of the use, in the order in which the blocks are walked.
+    constexpr unsigned mostListed = 6;
+    Vector<std::pair<BlockID, ValueID>> found;
+    for (BlockID block : analyses().cfg().reversePostOrder()) {
+        const BlockValues& values = m_function.at(block).values;
+        for (uint32_t index = 0; index < values.size(); ++index) {
+            if (analyses().guards().mayBeEndedAt(guard, user, { block, index }))
+                found.append({ block, values[index] });
+        }
+        if (block == blockOfUser)
+            break;
+    }
+    StringBuilder listed;
+    for (size_t index = found.size() > mostListed ? found.size() - mostListed : 0; index < found.size(); ++index)
+        listed.append(listed.isEmpty() ? ""_s : ", "_s, "v"_s, found[index].second.index(), " ("_s, nameOf(m_function.at(found[index].second).opcode), ") in b"_s, found[index].first.index());
+    return makeString("the guard is v"_s, guard.index(), "; of "_s, found.size(), " operations in front of the use that may end what it proves the nearest are "_s, listed.toString());
+}
+
 void FunctionVerifier::verifyGuards()
 {
     if (m_form == IRForm::AsRead && !isOptimizing())
@@ -62,6 +82,7 @@ void FunctionVerifier::verifyGuards()
                 if (readsKeptForValidation->get(id.index()))
                     continue;
                 fail(InternalErrorKind::GuardNotAvailable, block, id, guard.index());
+                m_errors.last().detail = describeWhatMayEnd(block, guard, value);
                 return;
             }
         }

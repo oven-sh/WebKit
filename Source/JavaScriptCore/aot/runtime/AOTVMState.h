@@ -182,6 +182,7 @@ public:
     ImageBelowAdapter* endOfRoomForImagesBelowAdapters { nullptr };
     UniqueArray<ImageBelowAdapter> imagesBelowAdapters;
     bool validatesRuntime { false };
+    bool nativeTestChangesObjectsUnseen { false };
     bool didFinishCollection { false };
     // Some object has become a dictionary for the names that it is being given.
     bool hasObjectsBeingFilled { false };
@@ -220,6 +221,8 @@ public:
     bool askerLoadsCompiledFilesAlone { false };
     // An import() of compiled code asks the host what its name stands for.
     bool isResolvingImportCall { false };
+    // A require() runs the mocks that wait below what it loads. It cannot wait for them.
+    bool requireRunsMocks { false };
     std::unique_ptr<PagesOfVM> pages;
     std::unique_ptr<ProgramIdentifiers> identifiers;
     std::unique_ptr<CacheRegistry> caches;
@@ -246,6 +249,9 @@ public:
     uint32_t numberOfCallsThatWaitApart { 0 };
     uint32_t numberOfTextsAskedFor { 0 };
     uint32_t turnOfTexts { 0 };
+    // One clock for the loads of graphs, the mocks that leave a module alone and the beginnings of test files, in every image: Modules::seesMockOf().
+    uint32_t momentOfLoads { 0 };
+    uint32_t momentOfTestFile { 0 };
     // AOTRuntimeValidation.cpp, which alone knows the type.
     std::unique_ptr<OperationsBeingValidated, void (*)(OperationsBeingValidated*)> operationsBeingValidated { nullptr, nullptr };
 };

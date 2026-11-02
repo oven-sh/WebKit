@@ -58,6 +58,8 @@ JS_EXPORT_PRIVATE void setCachedBoundFunctionStructure(VM&, JSObject*, Structure
 enum class DeclaredAs : uint8_t { NotCompiled, Function, AsyncFunction, GeneratorFunction, AsyncGeneratorFunction, Class };
 
 JS_EXPORT_PRIVATE DeclaredAs declaredAs(JSCell*);
+// Of a compiled async function: whether its own body holds an `await`, a `for await` or an `await using`. What a function written inside it holds does not count.
+JS_EXPORT_PRIVATE bool awaitsByItself(JSCell*);
 JS_EXPORT_PRIVATE String closureDeclaredName(JSObject*);
 JS_EXPORT_PRIVATE bool belongsToBuiltinModule(JSCell*);
 JS_EXPORT_PRIVATE bool isCompiledClassObject(JSFunction*);

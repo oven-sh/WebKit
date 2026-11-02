@@ -302,6 +302,9 @@ public:
             listUses();
         return { entriesOf(object, m_uses, m_firstUse), m_sharedUses.span().data() };
     }
+    // What goes by an entry of usesOf() alone can be kept under the entry's index, for all the objects that share it.
+    uint32_t numberOfSharedUses() const { return m_sharedUses.size(); }
+    uint32_t indexOfSharedUse(const ObjectUse& entry) const { return &entry - m_sharedUses.span().data(); }
     std::span<const ObjectID> contentsOf(ObjectID object) const LIFETIME_BOUND { return entriesOf(object, m_contents, m_firstContent); }
     std::span<const ObjectID> containersOf(ObjectID object) const LIFETIME_BOUND { return entriesOf(object, m_containers, m_firstContainer); }
     bool isInLocalHeapWords(ObjectID object) const { return m_objectsInLocalHeapWords.contains(object); }

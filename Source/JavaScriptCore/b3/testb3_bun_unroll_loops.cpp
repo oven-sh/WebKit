@@ -164,7 +164,7 @@ static void testUnrollLoopsDropsBranchThatRepeatsTestAtTop()
     for (auto [readsBoundAgain, storesBetweenReads, overlooksStore] : { Case { false, false, false }, Case { true, false, false }, Case { true, true, false }, Case { true, true, true } }) {
         Policy policy = loopPolicy();
         policy.validation.logsMovedLoads = true;
-        policy.validation.overlooksWritesBetweenReadsOfBound = overlooksStore;
+        policy.validation.ignoresWritesBetweenLoadsOfBound = overlooksStore;
         Procedure proc(policy);
         Graph graph { proc };
         BasicBlock* root = proc.addBlock();

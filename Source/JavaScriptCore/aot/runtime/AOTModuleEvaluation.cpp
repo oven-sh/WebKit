@@ -265,6 +265,20 @@ void Modules::innerModuleEvaluation(ModuleID root, EvaluationContext& context)
         context.stack.insert(frame.stackPosition, static_cast<AbstractModuleRecord*>(record));
     };
 
+    // What only a mocked module imports runs where the module itself does.
+    BitVector isBelowModuleThatRunsBesideMock;
+    auto isHidden = [&](ModuleID module) {
+        if (!mocks.hides(module)) [[likely]]
+            return false;
+        if (frames.isEmpty())
+            return true;
+        unsigned importer = frames.last().module.index();
+        if (!m_modulesThatRanBesideMock.get(importer) && !isBelowModuleThatRunsBesideMock.get(importer))
+            return true;
+        isBelowModuleThatRunsBesideMock.set(module.index());
+        return false;
+    };
+
     auto recordOfImporter = [&] {
         EvaluationFrame& importer = frames.last();
         if (!importer.record)
@@ -273,7 +287,7 @@ void Modules::innerModuleEvaluation(ModuleID root, EvaluationContext& context)
     };
 
     auto enter = [&](ModuleID module) {
-        if (mocks.hides(module)) [[unlikely]]
+        if (isHidden(module)) [[unlikely]]
             return false;
         const ModuleData& moduleData = data(module);
         if (moduleData.kind == ModuleKind::CommonJs) {
@@ -283,6 +297,11 @@ void Modules::innerModuleEvaluation(ModuleID root, EvaluationContext& context)
         // A module of the library ran when its importer was linked.
         if (!moduleData.hasExportTable())
             return false;
+
+        bool runsBesideMock = isMocked(module) && !hasRunItself(module) && (frames.isEmpty() ? m_modulesOwedBesideMock.get(module.index()) : importsOriginalBesideMock(module, frames.last().module));
+        // An importer that sees the mock came by first.
+        if (runsBesideMock && status(module) == ModuleStatus::Evaluated) [[unlikely]]
+            setStatus(module, ModuleStatus::Unlinked);
 
         // What a linked module requests was linked with it. No status says so for a module without work in a link.
         ModuleStatus moduleStatus = status(module);
@@ -298,9 +317,13 @@ void Modules::innerModuleEvaluation(ModuleID root, EvaluationContext& context)
             throwEvaluationError(module);
         if (moduleStatus != ModuleStatus::Linked)
             return false;
-        if (isMocked(module)) [[unlikely]] {
+        if (isMocked(module) && !runsBesideMock) [[unlikely]] {
             setStatus(module, ModuleStatus::Evaluated);
             return false;
+        }
+        if (runsBesideMock) [[unlikely]] {
+            m_modulesThatRanBesideMock.set(module.index());
+            m_modulesOwedBesideMock.clear(module.index());
         }
 
         ModuleRecord* record = recordIfExists(module);
@@ -439,14 +462,16 @@ void Modules::innerModuleEvaluation(ModuleID root, EvaluationContext& context)
                 target = frame.evaluationList->at(frame.next++);
             else {
                 ModuleID required(requests[frame.next++]);
+                // enter() runs the module itself.
+                bool runsBesideMock = isMocked(required) && !hasRunItself(required) && importsOriginalBesideMock(required, frame.module);
                 StoredModuleStatus stored = storedStatus(required);
-                if (stored == StoredModuleStatus::Evaluated)
+                if (stored == StoredModuleStatus::Evaluated && !runsBesideMock)
                     continue;
-                if (mocks.hides(required)) [[unlikely]]
+                if (isHidden(required)) [[unlikely]]
                     continue;
                 const ModuleData& requiredData = data(required);
                 // It was linked with its importer, whether or not a status was stored for it.
-                bool isLinked = stored == StoredModuleStatus::Linked || stored == StoredModuleStatus::Unlinked;
+                bool isLinked = !runsBesideMock && (stored == StoredModuleStatus::Linked || stored == StoredModuleStatus::Unlinked);
                 if (isLinked && isMocked(required)) [[unlikely]] {
                     setStoredStatus(required, StoredModuleStatus::Evaluated);
                     continue;
@@ -497,7 +522,7 @@ JSValue Modules::callBody(ModuleID module)
 {
     const ModuleData& moduleData = data(module);
     std::optional<FunctionID> body = moduleData.bodyFunction();
-    if (!body || isMocked(module))
+    if (!body || (isMocked(module) && !m_filesWhoseOriginalRuns.get(module.index()) && !m_modulesThatRanBesideMock.get(module.index())))
         return jsUndefined();
 
     VM& vm = *m_instance.vm;
@@ -590,6 +615,7 @@ void Modules::forgetRunThatThrew(ModuleID file)
         loaded->numberOfChildrenShown = 0;
         loaded->firstRequirer = std::nullopt;
         loaded->synchronousLoadCountAtStart = std::nullopt;
+        loaded->wasFirstImportedByCallWhileItRan = false;
     }
     m_recordedRequires.removeIf([&](const auto& recorded) {
         return static_cast<uint32_t>(recorded.key) == file.index();
@@ -599,6 +625,13 @@ void Modules::forgetRunThatThrew(ModuleID file)
 }
 
 // An import() that was called ahead of the require() has asked the loader for the file, waits for its text, or has queued its first job.
+// One that was called while the file ran comes to the file when it has thrown, and runs it again.
+bool Modules::isAwaitedByImportFromBeforeItRan(ModuleID file)
+{
+    LoadedModule* loaded = loadedIfExists(file);
+    return isAwaitedByImport(file) && !(loaded && loaded->wasFirstImportedByCallWhileItRan);
+}
+
 bool Modules::isAwaitedByImport(ModuleID file)
 {
     for (ModuleID fileOrFace : { file, m_table.faceOfFile(file).value_or(file) }) {
@@ -611,9 +644,12 @@ bool Modules::isAwaitedByImport(ModuleID file)
 // Where the module does not keep the error, whoever asks for it later gets what it had exported when it threw.
 void Modules::didThrowInBody(ModuleID module, JSValue error)
 {
+    // The body ran beside a mock that stands in place of the file. answerRequireWithOriginal() puts back what stood there.
+    if (m_filesWhoseOriginalRuns.get(module.index())) [[unlikely]]
+        return;
     // `bun run` takes a CommonJS file whose body throws out of require.cache, and the next require() runs it again. A test run loads it again from disk where its build
     // has compiled the code that asks for the file for a file that may load twice.
-    if (data(module).kind == ModuleKind::CommonJs && (mayBeEvicted(module) || (data(module).runsAgainAfterThrow() && !isAwaitedByImport(module))) && status(module) == ModuleStatus::Evaluating && !loaderHasFileThatThrew(module)) [[unlikely]] {
+    if (data(module).kind == ModuleKind::CommonJs && (mayBeEvicted(module) || (data(module).runsAgainAfterThrow() && !isAwaitedByImportFromBeforeItRan(module))) && status(module) == ModuleStatus::Evaluating && !loaderHasFileThatThrew(module)) [[unlikely]] {
         if (mayBeEvicted(module))
             evict(module);
         else
@@ -682,6 +718,8 @@ bool Modules::beginModuleInRecord(ModuleID module)
     // The first load of a CommonJS file that a mock waits for.
     if (m_modulesWithMockToRun.get(module.index())) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+        // An import has run what waits below it before it comes here. This is a require() that compiled code answers itself.
+        SetForScope requireRunsMocks(m_instance.vm->aotState().requireRunsMocks, true);
         runMockThatWaits(module);
         RETURN_IF_EXCEPTION(scope, false);
     }
@@ -1254,7 +1292,7 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
     SetForScope modulesWhoseFilesRunAheadOfLoader(vm.aotState().modulesWhoseFilesRunAheadOfLoader, filesBeingRun.isAheadOfJobsOfLoader ? this : vm.aotState().modulesWhoseFilesRunAheadOfLoader);
     // The start of the root calls the files one after the other, and leaves where one of them has queued a job or where the root would begin.
     // Not where the files run under the async context of a load: each of them has a scope of its own then, in the loop below, as each has a job of its own under `bun run`.
-    if (jobs == JobsOfImportedFiles::WaitForLoader && data(root).evaluatesItself() && data(root).isEntryPoint() && queue.isEmpty() && !m_rootWhoseFilesRun && !firstFileBehindFileOfOtherImage && !ModuleLoaderAsyncContextScope::wouldEnter(vm, asyncContextOfLoad)) {
+    if (jobs == JobsOfImportedFiles::WaitForLoader && data(root).evaluatesItself() && data(root).isEntryPoint() && !doOtherJobsWait() && !m_rootWhoseFilesRun && !firstFileBehindFileOfOtherImage && !ModuleLoaderAsyncContextScope::wouldEnter(vm, asyncContextOfLoad)) {
         ensureRecord(root)->retain();
         if (storedStatus(root) == StoredModuleStatus::InRecord) {
             bool hadQueuedTicks = hasQueuedTicks();
@@ -1294,7 +1332,7 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
                     throwException(m_instance.globalObject, scope, exception);
                     return true;
                 }
-                if (!queue.isEmpty()) {
+                if (doOtherJobsWait()) {
                     handGraphToLoader(filesBeingRun, *failedFile);
                     RETURN_IF_EXCEPTION(scope, true);
                     if (filesBeingRun.fileHandedToLoader) {
@@ -1679,6 +1717,9 @@ void Modules::didFailToLoadGraph(ModuleID root)
 {
     if (!m_waysThroughRealm.isEmpty()) [[unlikely]]
         takeUpWayThroughRealm(root);
+    for (LoadInFlight& load : m_loadsInFlight)
+        load.isLoaded |= load.root == root;
+    resumeImportsBehindLoad(root);
     if (m_rootWhoseFilesRanAhead != root)
         return;
     m_rootWhoseFilesRanAhead = std::nullopt;
@@ -1696,6 +1737,7 @@ void Modules::didLoadGraph(ModuleID root)
     }
     for (LoadInFlight& load : m_loadsInFlight)
         load.isLoaded |= load.root == root;
+    resumeImportsBehindLoad(root);
 }
 
 unsigned Modules::numberOfGraphsBeingLoaded()
@@ -1809,6 +1851,7 @@ void Modules::didStartLoad(JSPromise* load, ModuleID root)
         return earlier.promise->status() != JSPromise::Status::Pending && m_rootWhoseFilesRanAhead != earlier.root;
     });
     m_loadsInFlight.append(LoadInFlight { Strong<JSPromise>(*m_instance.vm, load), root });
+    queueJobOfRound(root);
 }
 
 // `bun run` loads the graph of a required ES module in steps, all of them before require() returns. A program can tell only where the steps of another graph come due among them.
@@ -1840,17 +1883,60 @@ bool Modules::isNotLoaded(ModuleID module)
 }
 
 // What lies below a root whose evaluation has begun was loaded with it.
+void Modules::noteFilesOfImagesBelowLoadedWith(ModuleID root)
+{
+    BitVector seen(m_table.size());
+    seen.quickSet(root.index());
+    Vector<ModuleID, 32> work { root };
+    while (!work.isEmpty()) {
+        ModuleID importer = work.takeLast();
+        if (data(importer).isUncompiledCode()) {
+            // The loader has resolved what it has fetched.
+            const LoadedModule* loaded = loadedIfExists(importer);
+            if (!loaded || loaded->resolvedKey.isNull())
+                continue;
+            for (Instance* below = m_instance.globalObject->aotInstance(); below && below != &m_instance; below = below->above) {
+                Modules* modules = below->state ? below->state->modules.get() : nullptr;
+                std::optional<ModuleID> file = modules ? modules->findByKey(loaded->resolvedKey) : std::nullopt;
+                if (!file)
+                    continue;
+                modules->noteModulesLoadedWith(*file);
+                break;
+            }
+            continue;
+        }
+        for (const ModuleRequestData& request : m_table.requests(importer)) {
+            if (!request.isRequire && !request.isHoisted && !request.isDeferred && !seen.quickSet(request.target()))
+                work.append(request.targetModule());
+        }
+    }
+}
+
 void Modules::noteModulesLoadedWith(ModuleID root)
 {
     if (!data(root).isESModuleOfProgram() || data(root).isFaceOfFile() || wasLoadedWithGraph(root))
         return;
+    // The loader has fetched the whole graph of a test file, the files of the layers below among it, before a body of it runs.
+    if (m_instance.vm->aotState().hasSeveralImages) [[unlikely]]
+        noteFilesOfImagesBelowLoadedWith(root);
     m_buildHasSeenWhoNamesModules &= data(root).mayBeginLoad();
+    std::optional<bool> isInPreload = host().isInPreload ? host().isInPreload(m_instance.globalObject) : std::nullopt;
+    uint32_t moment = isInPreload ? ++m_instance.vm->aotState().momentOfLoads : 0;
+    auto noteMoment = [&](uint32_t headOrModule) {
+        if (!isInPreload)
+            return;
+        if (m_momentsOfLoads.isEmpty())
+            m_momentsOfLoads.fill(0, m_table.size());
+        m_momentsOfLoads[headOrModule] = moment;
+        m_loadedInPreload.set(headOrModule, *isInPreload);
+    };
     Vector<uint32_t, 32> found { m_buildHasSeenWhoNamesModules ? m_table.headOfLoadGroup(root).index() : root.index() };
     while (!found.isEmpty()) {
         uint32_t module = found.takeLast();
         if (m_buildHasSeenWhoNamesModules) [[likely]] {
             if (std::exchange(m_loadedGroups[module / 64], m_loadedGroups[module / 64] | 1ull << (module % 64)) >> (module % 64) & 1)
                 continue;
+            noteMoment(module);
             for (uint32_t head : m_table.groupsLoadedWith(ModuleID(module)))
                 found.append(head);
             continue;
@@ -1858,6 +1944,7 @@ void Modules::noteModulesLoadedWith(ModuleID root)
         if (!data(ModuleID(module)).isESModuleOfProgram() || wasLoadedWithGraph(ModuleID(module)))
             continue;
         m_modulesLoadedBesideGroups.set(module);
+        noteMoment(module);
         for (const ModuleRequestData& request : m_table.requests(ModuleID(module))) {
             if (!request.isRequire && !request.isHoisted)
                 found.append(request.target());
@@ -1952,103 +2039,6 @@ uint32_t Modules::countLevelsBelowRoot(ModuleID root, bool& comesToEarlierCall)
         level.swap(next);
         next.shrink(0);
     }
-}
-
-// Level by level, the root at level 0. The visitor says whether the requests of the module are followed.
-template<typename Visitor>
-void Modules::forEachModuleToLoadBelow(ModuleID root, const Visitor& visit)
-{
-    const uint32_t isSeen = takeMarkOfSearch();
-    std::span<uint32_t> placesSeen = m_placesSeenByPlans.mutableSpan();
-    placesSeen[root.index()] = isSeen;
-    const BitVector* mocked = m_mocks ? &m_mocks->modules : nullptr;
-    auto hasRequestsToFollow = [&](ModuleID importer, const ModuleData& importerData) ALWAYS_INLINE_LAMBDA {
-        return importerData.kind == ModuleKind::SourceText && !importerData.isFaceOfFile() && !(mocked && mocked->get(importer.index()));
-    };
-    Vector<ModuleID, 64> level;
-    Vector<ModuleID, 64> next;
-    if (visit(root, 0) && hasRequestsToFollow(root, data(root)))
-        level.append(root);
-    for (uint32_t levels = 1; !level.isEmpty(); ++levels) {
-        for (ModuleID importer : level) {
-            for (const ModuleRequestData& request : m_table.requests(importer)) {
-                if (request.isHoisted || request.isRequire)
-                    continue;
-                ModuleID target = request.targetModule();
-                if (std::exchange(placesSeen[target.index()], isSeen) == isSeen)
-                    continue;
-                const ModuleData& targetData = data(target);
-                if (!isStillToBeLoaded(target, targetData))
-                    continue;
-                if (visit(target, levels) && hasRequestsToFollow(target, targetData))
-                    next.append(target);
-            }
-        }
-        countModulesSoughtForLevelsBelowImports(*m_instance.vm, level.size());
-        level.swap(next);
-        next.shrink(0);
-    }
-}
-
-// For a call whose graph holds modules of calls that wait. A text comes a turn behind the text of the first module that asks for it, whichever call that module belongs to.
-Modules::LastTextBelowCall Modules::findLastTextBelowCall(ModuleID root)
-{
-    const uint32_t turnOfCall = m_instance.vm->aotState().turnOfTexts;
-    constexpr uint32_t never = std::numeric_limits<uint32_t>::max();
-    struct TurnsOfText {
-        // Of the earlier calls, the one that asks first.
-        uint32_t turn { never };
-        uint32_t levelsBelowRoot { 0 };
-        uint32_t call { 0 };
-        uint32_t turnIfThisCallAsks { never };
-    };
-    UncheckedKeyHashMap<uint32_t, TurnsOfText, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> turnsOfTexts;
-    auto waiting = textsThatWait();
-    for (uint32_t call = 0; call < waiting.size(); ++call) {
-        const TextThatWaits& text = waiting[call];
-        if (!text.waitsApart)
-            continue;
-        uint32_t turnOfEarlierCall = static_cast<uint32_t>(text.place >> 33) - text.levelsAddedToPlace;
-        // Below a module that another call asks for as soon, that call asks as soon for everything.
-        forEachModuleToLoadBelow(text.module, [&](ModuleID module, uint32_t levels) {
-            TurnsOfText& known = turnsOfTexts.add(module.index(), TurnsOfText { }).iterator->value;
-            if (turnOfEarlierCall + levels >= known.turn)
-                return false;
-            known = { turnOfEarlierCall + levels, levels, call };
-            return true;
-        });
-    }
-    LastTextBelowCall last { turnOfCall };
-    ModuleID lastModule = root;
-    // Which of two texts of one turn comes last is not known here.
-    bool comesAloneInItsTurn = true;
-    forEachModuleToLoadBelow(root, [&](ModuleID module, uint32_t levels) {
-        TurnsOfText& turns = turnsOfTexts.add(module.index(), TurnsOfText { }).iterator->value;
-        turns.turnIfThisCallAsks = turnOfCall + levels;
-        uint32_t turn = std::min(turns.turn, turns.turnIfThisCallAsks);
-        if (turn > last.turn || (turn == last.turn && levels > last.levelsBelowRoot)) {
-            comesAloneInItsTurn = turn > last.turn || lastModule == root;
-            last = { turn, levels };
-            lastModule = module;
-        } else if (turn == last.turn && module != root)
-            comesAloneInItsTurn = false;
-        return true;
-    });
-    TurnsOfText turnsOfLast = turnsOfTexts.get(lastModule.index());
-    if (lastModule == root || !comesAloneInItsTurn || turnsOfLast.turn == never || waiting[turnsOfLast.call].place >> 33 < last.turn)
-        return last;
-    // Where this call asks first, the earlier one has the text sooner than it would have had.
-    bool isLastOfEarlierCall = true;
-    forEachModuleToLoadBelow(waiting[turnsOfLast.call].module, [&](ModuleID module, uint32_t) {
-        TurnsOfText turns = turnsOfTexts.get(module.index());
-        isLastOfEarlierCall &= module == lastModule || std::min(turns.turn, turns.turnIfThisCallAsks) < last.turn;
-        return isLastOfEarlierCall;
-    });
-    if (isLastOfEarlierCall) {
-        last.earlierCall = turnsOfLast.call;
-        last.levelsBelowRootOfEarlierCall = turnsOfLast.levelsBelowRoot;
-    }
-    return last;
 }
 
 // The loader of `bun run` takes four jobs from a request for a module to the job in which it asks that module for its requests. That job opens a count of its own: of the requests of the module and of
@@ -2571,8 +2561,40 @@ ModuleRecord* Modules::recordOfCommonJSFile(ModuleID module, LoadOfFile load)
     }
     ModuleRecord* record = ensureRecord(module);
     record->retain();
-    record->setRunsWhenLoaded();
+    // `await Promise.all([import("./a.mjs"), import("./b.cjs")])`: a.mjs runs first. The loader runs an ES module steps behind where it makes the record: ModuleRecord::innerModuleEvaluation().
+    // While a require() loads a graph, every step is taken before it returns: isTextReadOnOtherThread().
+    ModuleID file = m_table.fileBehindFace(module).value_or(module);
+    bool hasBegun = status(module) >= ModuleStatus::Evaluating || status(file) >= ModuleStatus::Evaluating;
+    bool hasTurn = !m_instance.vm->synchronousModuleQueue() && !hostLoadsSynchronously(file) && isAskedForBehindLoadInFlight(module);
+    if (load == LoadOfFile::IsRootOfImport && hasTurn && !hasBegun && !record->runsWhenLoaded())
+        record->setRunsInItsTurn();
+    else
+        record->setRunsWhenLoaded();
     return record;
+}
+
+// A call that finds no graph on its way overtakes nobody. The calls and the files that they name may lie in different images of the realm.
+bool Modules::isAskedForBehindLoadInFlight(ModuleID module)
+{
+    ModuleID file = m_table.fileBehindFace(module).value_or(module);
+    bool isBehind = false;
+    Instance::forEachOf(m_instance.globalObject, [&](Instance& instance) {
+        Modules& modules = modulesOf(instance);
+        for (const LoadInFlight& load : modules.m_loadsInFlight) {
+            bool isOwn = &modules == this && (load.root == module || load.root == file);
+            isBehind |= !isOwn && !load.isLoaded && load.promise->status() == JSPromise::Status::Pending;
+        }
+    });
+    return isBehind;
+}
+
+// The loader has the record since the call, and makes none for the statement that comes to the file.
+void Modules::runFileThatWaitsForItsTurn(ModuleID module)
+{
+    for (ModuleID held : { module, m_table.fileBehindFace(module).value_or(module) }) {
+        if (ModuleRecord* record = recordIfExists(held); record && record->takeRunsInItsTurn()) [[unlikely]]
+            return evaluateFilesOfLevel(held, true);
+    }
 }
 
 // `bun run` runs an imported CommonJS file when the loader makes the record of the file.
@@ -2590,7 +2612,8 @@ void Modules::evaluateLoadedCommonJSFile(ModuleID module)
         RELEASE_AND_RETURN(scope, noteLoadOfFile(module));
     // A require() started the file, and its face has not begun.
     noteLoadOfFile(module);
-    RETURN_IF_EXCEPTION(scope, void());
+    // An entry point has run by now, and its record is evaluated and on no stack: nobody could file a request to terminate on it. The request waits for the next check.
+    RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, void());
     // Another load comes to the file before the loader has heard that the file threw. The file does not run again, and the record is made of what it has left.
     if (statusAtStart == ModuleStatus::Failed && loader()->isMakingRecordInline(moduleKey(module)))
         return;
@@ -2707,7 +2730,7 @@ void Modules::evaluateCommonJSForLoader(ModuleID file)
             m_filesLoadedWithoutLoader.set(face->index());
             bool wasImportedBack = !hadCapturedExports && didCaptureExports(*face);
             evaluateLoadedCommonJSFile(*face);
-            RETURN_IF_EXCEPTION(scope, void());
+            RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, void());
             if (wasImportedBack) [[unlikely]]
                 RELEASE_AND_RETURN(scope, copyExportsOfFinishedFile(*face));
         }
@@ -2730,13 +2753,16 @@ void Modules::evaluateWithOwnStack(ModuleID root)
     Exception* exception = scope.exception();
     ASSERT(exception || stack.isEmpty());
     // An import() of the root that was called while the root ran has given it a capability, which CyclicModuleRecord::evaluate() would settle here.
-    ModuleRecord* record = recordIfExists(root);
+    // Where compiled code began the root, the table has its status and not the record.
+    ModuleRecord* record = m_records.get(root);
     JSPromise* capability = record ? record->topLevelCapability() : nullptr;
     if (capability && capability->status() != JSPromise::Status::Pending)
         capability = nullptr;
     if (!exception) {
-        if (capability) [[unlikely]]
+        if (capability) [[unlikely]] {
+            record->takeStatus();
             capability->fulfill(vm, jsUndefined());
+        }
         return;
     }
     for (AbstractModuleRecord* member : stack) {
@@ -2750,16 +2776,50 @@ void Modules::evaluateWithOwnStack(ModuleID root)
         capability->reject(vm, exception->value());
 }
 
+// A module that is still with the loader of `bun test` has there all that it imports.
+void Modules::bringBackWhatLoaderLetGoBelow(ModuleID root)
+{
+    if (m_modulesThatLoaderLetGo.isEmpty()) [[likely]]
+        return;
+    BitVector isSeen(m_table.size());
+    Vector<ModuleID, 16> toVisit { root };
+    while (!toVisit.isEmpty()) {
+        ModuleID module = toVisit.takeLast();
+        if (isSeen.quickSet(module.index()))
+            continue;
+        bool wasLetGo = m_modulesThatLoaderLetGo.clear(module.index());
+        // An import of a CommonJS file comes to its face, and loads the file with it.
+        if (std::optional<ModuleID> file = m_table.fileBehindFace(module))
+            wasLetGo |= m_modulesThatLoaderLetGo.clear(file->index());
+        if (!wasLetGo && status(module) > ModuleStatus::Linked)
+            continue;
+        if (wasLetGo && m_importersOfMockThatEnded.clear(module.index())) {
+            VMState& state = m_instance.vm->aotState();
+            m_momentsLoadedAnew.set(module, FirstMockInTestFile { ++state.momentOfLoads, state.momentOfTestFile });
+            if (state.hasSeveralImages)
+                m_importersToLinkAnewToFilesBelow.set(module.index());
+        }
+        // What only a mocked module imports is not loaded.
+        if (isMocked(module) || mockInPlace(module))
+            continue;
+        for (const ModuleRequestData& request : m_table.imports(module)) {
+            if (!request.isHoisted && !request.isDeferred)
+                toVisit.append(request.targetModule());
+        }
+    }
+}
+
 // No walk of an evaluation goes below a module that has run. This one does, and runs what a mock kept from running, when a graph comes by that holds an importer of it.
-void Modules::evaluateModulesOwedBelow(ModuleID root)
+void Modules::evaluateModulesOwedBelowSlow(ModuleID root, bool hasImporterAboveThatRan)
 {
     VM& vm = *m_instance.vm;
+    bringBackWhatLoaderLetGoBelow(root);
     // A file imports from its own image and from those below.
     bool isOwedInImageBelow = false;
     if (vm.aotState().hasSeveralImages) [[unlikely]] {
         for (Instance* instance = m_instance.globalObject->aotInstance(); instance && instance != &m_instance; instance = instance->above) {
             Modules* modules = instance->state ? instance->state->modules.get() : nullptr;
-            isOwedInImageBelow |= modules && !(modules->m_modulesOwedToImportersThatRan.isEmpty() && modules->m_modulesWithMockToLetGo.isEmpty());
+            isOwedInImageBelow |= modules && !(modules->m_modulesOwedToImportersThatRan.isEmpty() && modules->m_modulesWithMockToLetGo.isEmpty() && modules->m_modulesThatLoaderLetGo.isEmpty());
         }
     }
     if (m_modulesOwedToImportersThatRan.isEmpty() && m_modulesWithMockToLetGo.isEmpty() && !isOwedInImageBelow) [[likely]]
@@ -2767,40 +2827,69 @@ void Modules::evaluateModulesOwedBelow(ModuleID root)
     auto scope = DECLARE_THROW_SCOPE(vm);
     letGoOfMockThatEnded(root);
     RETURN_IF_EXCEPTION(scope, void());
+    // What lay behind the mock may be owed.
+    if (hasMockEndedThatWalksPassedOver()) {
+        m_modulesWithNothingOwedBelow.clearAll();
+        m_mockedModulesPassedOverByWalks.clear();
+    }
     BitVector isSeen(m_table.size());
     Vector<ModuleID, 16> toVisit { root };
     Vector<ModuleID, 4> owed;
-    Vector<Identifier, 4> filesOfImagesBelow;
+    Vector<std::pair<Identifier, ModuleID>, 4> filesOfImagesBelow;
+    BitVector hasImporterThatRan(m_table.size());
+    // The importer lies in an image above. A CommonJS file runs before the module that takes its exports.
+    if (hasImporterAboveThatRan) {
+        for (ModuleID each : { root, moduleWithExportsOf(root) }) {
+            if (m_modulesOwedToImportersThatRan.get(each.index()))
+                owed.append(each);
+        }
+    }
+    bool isRootOwed = !owed.isEmpty();
     while (!toVisit.isEmpty()) {
         ModuleID module = toVisit.takeLast();
         if (isSeen.quickSet(module.index()))
             continue;
         // What only a mocked module imports is not loaded.
-        if (isMocked(module) || mockInPlace(module))
+        if (isMocked(module) || mockInPlace(module)) {
+            if (!m_mockedModulesPassedOverByWalks.contains(module))
+                m_mockedModulesPassedOverByWalks.append(module);
             continue;
+        }
         if (isOwedInImageBelow && data(module).isUncompiledCode()) {
-            filesOfImagesBelow.append(resolvedKey(module));
+            filesOfImagesBelow.append({ resolvedKey(module), module });
             RETURN_IF_EXCEPTION(scope, void());
         }
         // An importer that has yet to run brings the module along in its own turn.
         ModuleStatus statusOfImporter = status(module);
-        bool hasRun = statusOfImporter == ModuleStatus::Evaluated || statusOfImporter == ModuleStatus::EvaluatingAsync;
+        // A module with nothing to run keeps no status. It has run with its importer.
+        bool importerHasRun = statusOfImporter == ModuleStatus::Evaluated || statusOfImporter == ModuleStatus::EvaluatingAsync || hasRun(module);
         for (const ModuleRequestData& request : m_table.imports(module)) {
             if (request.isDeferred)
                 continue;
             toVisit.append(request.targetModule());
             letGoOfMockThatEnded(request.targetModule());
             RETURN_IF_EXCEPTION(scope, void());
-            if (hasRun && m_modulesOwedToImportersThatRan.get(request.target()))
+            if (importerHasRun)
+                hasImporterThatRan.quickSet(request.target());
+            if (importerHasRun && m_modulesOwedToImportersThatRan.get(request.target()))
                 owed.append(request.targetModule());
         }
     }
     for (ModuleID module : owed) {
         if (!m_modulesOwedToImportersThatRan.get(module.index()))
             continue;
+        // The mock that waits for the module comes in place of the body, which stays owed for when that mock ends.
+        if (ModuleID file = m_table.fileBehindFace(module).value_or(module); m_modulesWithMockToRun.get(file.index())) {
+            runMocksBelow(file, RootOfLoad::IsImportedByStatement);
+            RETURN_IF_EXCEPTION(scope, void());
+            continue;
+        }
         m_modulesOwedToImportersThatRan.clear(module.index());
         if (status(module) >= ModuleStatus::Evaluating || mockInPlace(module))
             continue;
+        // The importers were linked while the mock stood, so no link has seen to it that the names are taken behind the body.
+        if (data(module).capturesExportsBehindEvaluation())
+            captureExportsBehindEvaluation(module);
         // The mock kept the loader from what the module imports from outside the image.
         if (status(module) == ModuleStatus::Unlinked && data(module).reachesUncompiledCode() && !data(module).hasTopLevelAwait()) {
             evaluateSynchronously(module, SynchronousEvaluationReason::Require);
@@ -2815,6 +2904,11 @@ void Modules::evaluateModulesOwedBelow(ModuleID root)
             return;
         }
     }
+    if (isRootOwed) {
+        handFileToImagesAbove(root);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+    m_modulesWithNothingOwedBelow.set(root.index());
     if (filesOfImagesBelow.isEmpty())
         return;
     // The graph goes on in the image that holds the file.
@@ -2822,9 +2916,9 @@ void Modules::evaluateModulesOwedBelow(ModuleID root)
         Modules* modules = instance.state ? instance.state->modules.get() : nullptr;
         if (!modules || instance.program->position() >= m_instance.program->position() || scope.exception())
             return;
-        for (const Identifier& key : filesOfImagesBelow) {
+        for (auto& [key, external] : filesOfImagesBelow) {
             if (std::optional<ModuleID> file = modules->findByKey(key))
-                modules->evaluateModulesOwedBelow(*file);
+                modules->evaluateModulesOwedBelow(*file, hasImporterThatRan.get(external.index()));
             if (scope.exception()) [[unlikely]]
                 return;
         }
@@ -3076,10 +3170,10 @@ void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason
     // The build has not seen this require(), or the root would be loaded by the loader. Under `bun run` the loader has the graph of the root in its hands while the file runs, and this load
     // gives it the file, which is what that graph waits for.
     bool givesLoaderFileThatRunsAhead = reason == SynchronousEvaluationReason::Require && m_innermostFilesBeingRun && importsFileThatRunsAhead(module);
-    bool needsLoader = needsLoaderForRequire(module);
     // As in JSModuleLoader::loadModuleSync(): the steps of the loader run before require() returns, those that a file of the graph asks for among them. One of them resumes a module whose awaited promise is settled.
     // A read of a deferred namespace evaluates the module and takes no step of the loader: an import() that the module calls is loaded in later jobs.
     bool runsStepsOfLoader = reason == SynchronousEvaluationReason::Require;
+    bool needsLoader = runsStepsOfLoader && needsLoaderForRequire(module);
     std::optional<VM::SynchronousModuleQueueScope> queue;
     if (runsStepsOfLoader)
         queue.emplace(*m_instance.vm);
@@ -3167,6 +3261,23 @@ void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason
 }
 
 // No loader has the graph of the root: its evaluation runs the files first. What is left of it runs here, and the evaluation that waits for the file finds it done.
+bool Modules::runBodyOfImportedModuleAheadOfMock(ModuleID module)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    if (!data(module).isESModuleOfProgram() || data(module).isFaceOfFile() || hasBegunToLoad(module))
+        return false;
+    VisitedModuleRecords seen;
+    bool isReady = readyForSyncExecution(module, seen);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!isReady)
+        return false;
+    forgetMockThatWaits(module);
+    RETURN_IF_EXCEPTION(scope, false);
+    evaluateSynchronously(module, SynchronousEvaluationReason::Require);
+    RETURN_IF_EXCEPTION(scope, false);
+    return true;
+}
+
 void Modules::evaluateRootThatWaitedForFile()
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
@@ -3467,6 +3578,8 @@ JSValue Modules::answerOfRequireToMock(ModuleID target)
     JSObject* exports = ensureLoaded(target).exportsOfMock;
     if (!exports)
         return { };
+    if (ensureLoaded(target).exportsOfMockAreOfCommonJSModule)
+        return exports;
     JSValue esModule = exports->getIfPropertyExists(realm, vm.propertyNames->__esModule);
     RETURN_IF_EXCEPTION(scope, { });
     if (!esModule || !esModule.toBoolean(realm))
@@ -3474,6 +3587,59 @@ JSValue Modules::answerOfRequireToMock(ModuleID target)
     JSValue defaultExport = exports->getIfPropertyExists(realm, vm.propertyNames->defaultKeyword);
     RETURN_IF_EXCEPTION(scope, { });
     return defaultExport && !defaultExport.isUndefined() ? defaultExport : JSValue(exports);
+}
+
+// Of a CommonJS file of the program whose body a mock has kept from running.
+bool Modules::getsOriginalBesideMock(ModuleID target, ModuleID referrer)
+{
+    if (!m_numberOfMocksInPlace || !host().givesOriginalBesideMock) [[likely]]
+        return false;
+    if (!referrer || data(target).kind != ModuleKind::CommonJs || !mockInPlace(target) || !m_table.hasFilePath(referrer))
+        return false;
+    return host().givesOriginalBesideMock(m_instance.globalObject, m_table.pathText(target), m_table.pathText(referrer), false);
+}
+
+// The answer of the mock stands where the exports of the file are read from, and the file counts as evaluated. The body runs once, with both set aside.
+JSValue Modules::answerRequireWithOriginalSlow(ModuleID file)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    if (JSValue original = ensureLoaded(file).exportsOfOriginalBesideMock.get())
+        return original;
+    // A ring of files comes back while the body runs.
+    if (status(file) == ModuleStatus::Evaluating)
+        return commonJSExports(file);
+    JSObject* mockBefore = mockInPlace(file);
+    // The variable and the status are the body's while it runs. What the mock answers waits here: for whoever gets no original, and for a mock that is laid meanwhile.
+    ensureLoaded(file).answerOfMockWhileOriginalRuns.set(*this, commonJSExports(file));
+    JSValue settledAnswer = ensureLoaded(file).requiredValue.get();
+    setStatus(file, ModuleStatus::Unlinked);
+    setCommonJSExports(file, jsUndefined());
+    ensureLoaded(file).requiredValue.set(*this, JSValue());
+    m_filesWhoseOriginalRuns.set(file.index());
+    evaluateCommonJS(file);
+    m_filesWhoseOriginalRuns.clear(file.index());
+    bool hasThrown = !!scope.exception();
+    JSValue original = commonJSExports(file);
+    JSValue answerOfMock = ensureLoaded(file).answerOfMockWhileOriginalRuns.get();
+    ensureLoaded(file).answerOfMockWhileOriginalRuns.set(*this, JSValue());
+    JSObject* mock = mockInPlace(file);
+    // As `bun run` does with a CommonJS file whose body throws: whoever asked hears of it, and the next one runs the body again. didThrowInBody() has left the file to this.
+    if (hasThrown)
+        forgetRunThatThrew(file);
+    // The mock ended while the body ran: the file is what the run has made of it.
+    if (!mock)
+        return hasThrown ? JSValue() : original;
+    markEvaluated(file);
+    setCommonJSExports(file, answerOfMock);
+    if (mock == mockBefore)
+        ensureLoaded(file).requiredValue.set(*this, settledAnswer);
+    if (hasThrown)
+        return { };
+    ensureLoaded(file).exportsOfOriginalBesideMock.set(*this, original);
+    // The run may have taken the names of the file for whoever imports them.
+    takeNamesOfMockInPlace(moduleWithExportsOf(file), mock);
+    RETURN_IF_EXCEPTION(scope, { });
+    return original;
 }
 
 JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy requiredBy)
@@ -3486,13 +3652,21 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
         throwException(m_instance.globalObject, scope, error);
         return { };
     }
-    runMocksBelow(target);
-    RETURN_IF_EXCEPTION(scope, { });
-    if (isLeftToHost(target)) [[unlikely]]
-        RELEASE_AND_RETURN(scope, loadEvictedFile(fileOf(target)));
     const ModuleData& targetData = data(target);
     // The library gets its own modules from the registry, where no mock stands.
     bool isRequiredByProgram = requiredBy == RequiredBy::Program || (referrer && !data(referrer).isOfLibrary());
+    if (!targetData.isOfLibrary() || isRequiredByProgram) {
+        SetForScope requireRunsMocks(vm.aotState().requireRunsMocks, true);
+        runMocksBelow(target);
+    } else
+        evaluateModulesOwedBelow(target);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (getsOriginalBesideMock(target, referrer)) [[unlikely]]
+        RELEASE_AND_RETURN(scope, answerRequireWithOriginal(target));
+    if (m_filesWhoseOriginalRuns.get(target.index()) && mockInPlace(target)) [[unlikely]]
+        return ensureLoaded(target).answerOfMockWhileOriginalRuns.get();
+    if (isLeftToHost(target)) [[unlikely]]
+        RELEASE_AND_RETURN(scope, loadEvictedFile(fileOf(target)));
     if (targetData.isOfLibrary() && isRequiredByProgram && isKeptInRequireCache(target)) [[unlikely]]
         RELEASE_AND_RETURN(scope, requireThroughCache(target, referrer));
     if (targetData.isOfLibrary() && isRequiredByProgram && isMockedLibraryModule(target)) [[unlikely]]
@@ -4167,6 +4341,12 @@ bool Modules::forEachNewChild(ModuleID module, const ScopedLambda<void(JSObject*
         RETURN_IF_EXCEPTION(scope, true);
     }
     return true;
+}
+
+void Modules::dropNewChildren(ModuleID module)
+{
+    if (LoadedModule* loaded = loadedIfExists(module))
+        loaded->numberOfChildrenShown = loaded->requiredModules.size();
 }
 
 JSValue Modules::requireSpecifier(JSValue specifier, ModuleID referrer, bool isNamedByBuild)

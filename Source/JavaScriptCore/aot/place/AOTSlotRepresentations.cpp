@@ -156,6 +156,8 @@ static bool needsAbsentState(const SlotPlanContext& context, const FieldInputs& 
     case LayoutKind::Instance:
     case LayoutKind::Container:
     case LayoutKind::BuiltinResult:
+        if (context.build.isSabotaged(Sabotage::SlotsNeedNoAbsentState))
+            return false;
         return !isAlwaysFilled
             || field.isCreatedByStore
             || !field.flow.stability.containsAll(everyStability)

@@ -60,6 +60,7 @@ struct ValueFlowSolverInput {
     std::span<const ValueFlowOperand> operands;
     std::span<const ValueFlowRareFactsOfText> rareFactsOfText;
     std::span<const ValueFlowCopyOfOperation> copiesOfOperations;
+    std::span<const uint64_t> notedOperationsOfFunctions;
     std::span<const ValueFlowEdge> edgesOnceReached;
     std::span<const ValueFlowNodeSet> seedsOnceReached;
     std::span<const FunctionID> functionsEnteredOnceReached;

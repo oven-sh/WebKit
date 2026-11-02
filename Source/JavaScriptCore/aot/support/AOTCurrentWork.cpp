@@ -287,6 +287,8 @@ size_t describeWhereThisThreadStopped(std::span<char> buffer)
     appendWork(text, work);
     text.append(".\n"_s);
     appendWayAround(text, work.pass);
+    if (work.pass != PassID::None)
+        text.append("An earlier step may be at fault: --aot-check=verify-each-pass names it.\n"_s);
     return text.size();
 }
 

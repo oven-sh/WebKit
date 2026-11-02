@@ -1,0 +1,17 @@
+# A type that is not what its rule gives is reported also where the first operand of the value, or of what made that operand, is left out.
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: TypeOutOfDate 2
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="One" module=m0 fields=[{key="x" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+layout L1 name="Other" module=m0 fields=[{key="y" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+function f0 name="noPrototype" parameters=[{type=number}] results=[{type=anything}] {
+    v1: L1 = NewObject -, v0 layout=L0 fields=[0]
+    Return v1
+}
+function f1 name="madeWithoutPrototype" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2: L1 = FinishObject v1
+    Return v2
+}

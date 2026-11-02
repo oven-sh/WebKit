@@ -73,13 +73,20 @@ CompactTable* CompactTable::tableOf(JSObject* owner)
     return uncheckedDowncast<CompactTable>(storage);
 }
 
+uint32_t& CompactTable::deletedPrefixOf(JSObject* owner)
+{
+    return static_cast<JSOrderedHashTable<MapTraits>*>(owner)->m_deletedPrefix;
+}
+
 void CompactTable::setStorage(VM& vm, JSObject* owner, JSCell* storage)
 {
     storageOf(owner).set(vm, owner, storage);
+    deletedPrefixOf(owner) = 0;
 }
 
 unsigned CompactTable::indexBitsFor(uint32_t capacity)
 {
+    static_assert((static_cast<uint64_t>(1) << 28) * 3 >= static_cast<uint64_t>(maxCapacity) * 4 && keysShiftFor(28, maxCapacity) <= 30);
     if (capacity <= maxCapacityWithTags)
         return 0;
     unsigned bits = 4;
@@ -877,6 +884,7 @@ bool CompactTable::tryClearInPlace(JSObject* owner)
     if (!table || !table->isHeapTable() || table->m_keysShiftAndFlags & wasWalked || table->m_capacity > maxCapacityEmptiedByClear)
         return false;
     table->removeAllEntries();
+    deletedPrefixOf(owner) = 0;
     return true;
 }
 

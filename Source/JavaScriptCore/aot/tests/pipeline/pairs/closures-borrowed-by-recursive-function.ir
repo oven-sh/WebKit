@@ -3,6 +3,6 @@
 # RUN: compile
 # STATISTIC: ClosuresInFrames >= 1
 # STATISTIC: ObjectsInFrames >= 1
-# STATISTIC: CallOperandsSummarizedForFrames >= 1
+# STATISTIC: OperandsSummarizedForFrames >= 1
 # CHECK: image not empty
 # PROGRAM-OF: ../../answers/closures-borrowed-by-recursive-function.ir

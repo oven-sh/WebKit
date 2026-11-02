@@ -98,6 +98,58 @@ FlowModuleOrder computeModuleOrder(const FlowOrderInputs& inputs)
             modulesThatLetTheHostRun.quickSet(module);
     }
 
+    auto isAwaitedInTurn = [&](const FlowModuleLoad& load) {
+        ModuleID file = program.at(load.function).module;
+        return load.isAwaitedAtOnceInBodyOfFile && file && program.at(file).flags.contains(ModuleFlags::HasTopLevelAwait);
+    };
+    Vector<Vector<uint32_t, 2>> modulesLoadedInBody(numberOfModules);
+    BitVector modulesBegunElsewhere(numberOfModules);
+    BitVector modulesThatMayRunTwice(numberOfModules);
+    bool someImportIsAwaitedInTurn = std::ranges::any_of(inputs.moduleLoads, isAwaitedInTurn);
+    auto forEachModuleLoadedWith = [&](Vector<uint32_t, 32>&& toVisit, const Invocable<void(uint32_t)> auto& functor) {
+        BitVector isVisited(numberOfModules);
+        for (uint32_t module : toVisit)
+            isVisited.quickSet(module);
+        auto visit = [&](uint32_t module) {
+            if (!isVisited.quickSet(module))
+                toVisit.append(module);
+        };
+        while (!toVisit.isEmpty()) {
+            uint32_t module = toVisit.takeLast();
+            functor(module);
+            for (const ModuleRequest& request : program.modules[module].requests)
+                visit(request.target.index());
+            for (uint32_t loaded : modulesLoadedInBody[module])
+                visit(loaded);
+        }
+    };
+    if (someImportIsAwaitedInTurn) {
+        BitVector begunFirst = inputs.modulesLoadedByName;
+        begunFirst.merge(inputs.modulesNamedByOperationsNobodyKnows);
+        begunFirst.merge(inputs.modulesLoadedByHost);
+        for (uint32_t module = 0; module < numberOfModules; ++module) {
+            if (program.modules[module].flags.containsAny({ ModuleFlags::MayBeEvicted, ModuleFlags::RunsAgain })) {
+                modulesThatMayRunTwice.quickSet(module);
+                begunFirst.set(module);
+            }
+        }
+        for (const FlowModuleLoad& load : inputs.moduleLoads) {
+            ModuleID loader = moduleWithBody[load.function.index()];
+            if (loader && (load.way == FlowWayIntoFile::Require || isAwaitedInTurn(load)))
+                modulesLoadedInBody[loader.index()].append(load.target.index());
+            else
+                begunFirst.set(load.target.index());
+        }
+        Vector<uint32_t, 32> toVisit;
+        for (size_t module : begunFirst)
+            toVisit.append(static_cast<uint32_t>(module));
+        forEachModuleLoadedWith(WTF::move(toVisit), [&](uint32_t module) {
+            modulesBegunElsewhere.quickSet(module);
+        });
+        for (const Entry& entry : program.entries)
+            modulesBegunElsewhere.quickSet(entry.module.index());
+    }
+
     BitVector somebodySaysWhenItBegins(numberOfModules);
     bool somebodyRunsJobs = false;
     Vector<uint32_t> firstSuccessor;
@@ -162,7 +214,8 @@ FlowModuleOrder computeModuleOrder(const FlowOrderInputs& inputs)
                 break;
             case FlowWayIntoFile::ImportCall:
                 forEachLoad(way, [&](const FlowModuleLoad& load, ModuleID file, ModuleID evaluatedModule) {
-                    begins(whereJobsRun, load.target);
+                    if (!isAwaitedInTurn(load))
+                        begins(whereJobsRun, load.target);
                     if (file && program.at(file).flags.contains(ModuleFlags::HasTopLevelAwait))
                         beginsInsideFilesOf(load, file, evaluatedModule);
                 });
@@ -239,6 +292,30 @@ FlowModuleOrder computeModuleOrder(const FlowOrderInputs& inputs)
         return entriesOfGroup(firstSuccessor, successors, node);
     });
 
+    BitVector leadsToJobs(components.numberOfComponents);
+    if (somebodyRunsJobs) {
+        leadsToJobs.set(components.componentOf[whereJobsRun]);
+        for (uint32_t component = components.componentOf[whereJobsRun] + 1; component < components.numberOfComponents; ++component) {
+            bool leads = std::ranges::any_of(components.membersOf(component), [&](uint32_t member) {
+                return std::ranges::any_of(entriesOfGroup(firstSuccessor, successors, member), [&](uint32_t successor) {
+                    return leadsToJobs.get(components.componentOf[successor]);
+                });
+            });
+            if (leads)
+                leadsToJobs.set(component);
+        }
+    }
+
+    BitVector modulesThatMayBeSeenUnfinished(numberOfModules);
+    for (const FlowModuleLoad& load : inputs.moduleLoads) {
+        if (!isAwaitedInTurn(load))
+            continue;
+        forEachModuleLoadedWith({ load.target.index() }, [&](uint32_t module) {
+            if (modulesBegunElsewhere.quickGet(module) && (modulesThatMayRunTwice.quickGet(module) || leadsToJobs.get(components.componentOf[module])))
+                modulesThatMayBeSeenUnfinished.quickSet(module);
+        });
+    }
+
     Vector<uint32_t> modulesByComponent;
     modulesByComponent.reserveInitialCapacity(numberOfModules);
     for (uint32_t module = 0; module < numberOfModules; ++module)
@@ -255,7 +332,7 @@ FlowModuleOrder computeModuleOrder(const FlowOrderInputs& inputs)
         if (!position || components.componentOf[module] != components.componentOf[modulesByComponent[position - 1]])
             ++numberOfComponents;
         order.componentOf[module] = numberOfComponents - 1;
-        if (components.isInCycle.get(module))
+        if (components.isInCycle.get(module) || modulesThatMayBeSeenUnfinished.quickGet(module))
             order.modulesInCycles.set(module);
     }
 
@@ -267,6 +344,8 @@ FlowModuleOrder computeModuleOrder(const FlowOrderInputs& inputs)
         BitVector& completed = order.componentsCompletedBefore[component];
         for (const ModuleRequest& request : program.modules[module].requests) {
             uint32_t target = order.componentOf[request.target.index()];
+            if (modulesThatMayBeSeenUnfinished.quickGet(request.target.index()))
+                continue;
             if (!completesBeforeRequester(program.modules[module], request, order.modulesInCycles) || target == component || completed.get(target))
                 continue;
             completed.set(target);
@@ -275,17 +354,6 @@ FlowModuleOrder computeModuleOrder(const FlowOrderInputs& inputs)
     }
 
     if (somebodyRunsJobs) {
-        BitVector leadsToJobs(components.numberOfComponents);
-        leadsToJobs.set(components.componentOf[whereJobsRun]);
-        for (uint32_t component = components.componentOf[whereJobsRun] + 1; component < components.numberOfComponents; ++component) {
-            bool leads = std::ranges::any_of(components.membersOf(component), [&](uint32_t member) {
-                return std::ranges::any_of(entriesOfGroup(firstSuccessor, successors, member), [&](uint32_t successor) {
-                    return leadsToJobs.get(components.componentOf[successor]);
-                });
-            });
-            if (leads)
-                leadsToJobs.set(component);
-        }
         for (uint32_t module = 0; module < numberOfModules; ++module) {
             if (leadsToJobs.get(components.componentOf[module]))
                 order.modulesThatJobsMayInterrupt.set(module);

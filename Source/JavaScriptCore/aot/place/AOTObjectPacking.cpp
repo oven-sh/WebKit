@@ -695,7 +695,7 @@ void ObjectPacker::chooseOutOfLineRows(LayoutID id, RowsOutOfLine& outOfLine)
         for (uint32_t rank = 0; rank < ranked.size(); ++rank)
             betterRanks[ranked[rank] - firstRow] = std::min(betterRanks[ranked[rank] - firstRow], rank);
     };
-    rankBy([](const SlotRowUse& use) { return use.fillHeat.predicted(); });
+    rankBy([](const SlotRowUse& use) { return withoutLastDigits(use.fillHeat.predicted()); });
     rankBy([](const SlotRowUse& use) { return use.accessWeight.predicted(); });
     auto scoreOf = [&](SlotRow row) {
         const SlotClaim& claim = m_claims[row];

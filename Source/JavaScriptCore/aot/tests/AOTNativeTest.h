@@ -184,6 +184,7 @@ inline constexpr bool framesAreThoseOfAddressSanitizer = ASAN_ENABLED;
     v(narrowReferenceValidationTests) \
     v(nativeCallValidationTests) \
     v(nativeModuleExportTests) \
+    v(originalBesideMockTests) \
     v(objectCreateProgramTests) \
     v(parsedOptionalMemberTests) \
     v(privateAccessorProgramTests) \

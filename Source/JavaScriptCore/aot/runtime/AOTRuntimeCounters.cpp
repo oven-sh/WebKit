@@ -42,6 +42,7 @@
 #include "JSCJSValueInlines.h"
 #include "LocalAllocator.h"
 #include "MarkedSpace.h"
+#include "StackFrame.h"
 #include "Subspace.h"
 #include "VM.h"
 #include <algorithm>
@@ -106,6 +107,63 @@ void countReasonForSlowStringify(VM& vm, ASCIILiteral reason)
         if (std::exchange(isCounted, true) || !instance.state)
             return;
         instance.state->propertyCaches->countNamed("JSON.stringify left to the general Stringifier"_s, name.impl());
+    });
+}
+
+void countMockTransition(VM& vm, const String& transition)
+{
+    if (!Options::aotCountsPath()) [[likely]]
+        return;
+    AtomString name(transition);
+    bool isCounted = false;
+    forEachInstance(vm, [&](Instance& instance) {
+        if (std::exchange(isCounted, true) || !instance.state)
+            return;
+        instance.state->propertyCaches->countNamed("mock"_s, name.impl());
+    });
+}
+
+bool isRefusal(const String& message)
+{
+    // Parts of the sentences that the run time makes: AOTErrorMessages.cpp, ExceptionHelpers.cpp and ProgramExecutable.cpp here; BunCompiledModules.cpp, BunPlugin.cpp, JSMockFunction.cpp, RemovedFeature.cpp,
+    // InternalModuleRegistry.cpp, CodeGenerationFromStrings.h, web_worker.rs and CompressionStreamCoder.rs in Bun. Each says what is refused: a program may well speak of "the build" or of "compiled code" itself.
+    static constexpr ASCIILiteral marks[] {
+        "bun compile differs from bun run here"_s, "bun.com/docs/compiler/"_s,
+        "in this executable"_s, "into this executable"_s, "from this executable, but the program needs it"_s, "this executable can't load"_s, "this executable only runs"_s, "this executable doesn't include"_s,
+        "rebuild this executable"_s, "in a compiled executable"_s, "read-only in compiled code"_s, "only compiled code reaches it"_s, "compiled code treats the global"_s, "compiled code calls the built-in function"_s,
+        "compiled into it"_s, "compiled into this test run"_s, "nothing in this test run"_s, "was compiled ahead of time"_s,
+        "the build found nothing"_s, "the build read no store"_s, "the build didn't see"_s, "removed by --trim"_s, "--trim removed"_s, "Build without --trim"_s,
+    };
+    return !message.isNull() && std::ranges::any_of(marks, [&](ASCIILiteral mark) { return message.contains(mark); });
+}
+
+void countRefusal(VM& vm, const String& message, const WTF::Vector<StackFrame>* frames)
+{
+    constexpr unsigned longestSentence = 200;
+    constexpr unsigned mostFrames = 3;
+    StringView sentence(message);
+    if (size_t end = sentence.find('\n'); end != notFound)
+        sentence = sentence.left(end);
+    if (size_t note = sentence.find(" (bun compile differs"_s); note != notFound)
+        sentence = sentence.left(note);
+    StringBuilder line;
+    line.append(sentence.left(longestSentence));
+    // The files of the program that stand on the stack, innermost first: a module of the library has no path.
+    unsigned listed = 0;
+    for (const StackFrame& frame : frames ? frames->span() : std::span<const StackFrame> { }) {
+        String url = frame.sourceURL(vm);
+        if (!url.contains('/'))
+            continue;
+        line.append(listed ? " < "_s : " @ "_s, url, ':', frame.computeLineAndColumn().line);
+        if (++listed == mostFrames)
+            break;
+    }
+    AtomString name(line.toString());
+    bool isCounted = false;
+    forEachInstance(vm, [&](Instance& instance) {
+        if (std::exchange(isCounted, true) || !instance.state)
+            return;
+        instance.state->propertyCaches->countNamed("refused"_s, name.impl());
     });
 }
 
@@ -783,9 +841,10 @@ void AllocationCounts::dump(const Instance& instance, PrintStream& out)
     Lines refills;
     if (counts)
         refills = counts->m_refills;
-    // A VM's free lists are counted for its first instance.
-    if (instance.vm->aotState().instances.first() == &instance)
-        addListsInUse(instance.vm->aotState(), refills);
+    // A VM's free lists are counted for the first instance that forEachInstance() gives.
+    VMState& vmState = instance.vm->aotState();
+    if ((vmState.instances.isEmpty() ? vmState.instancesToDestroy.first() : vmState.instances.first()) == &instance)
+        addListsInUse(vmState, refills);
     dumpLines(out, "refill"_s, refills);
     if (!counts)
         return;

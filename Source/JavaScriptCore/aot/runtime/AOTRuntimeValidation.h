@@ -8,22 +8,27 @@
 #if ENABLE(AOT)
 
 #include "AOTRecordTypes.h"
+#include "AOTSlotRepresentation.h"
 #include "CollectionScope.h"
 #include "JSCJSValue.h"
 #include "MarkedBlock.h"
 #include "VM.h"
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <optional>
 #include <tuple>
 #include <wtf/BitSet.h>
 #include <wtf/HashMap.h>
+#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT {
 
 class Object;
 enum class Entry : uint16_t;
 struct FieldData;
+struct LayoutData;
+struct RuntimeType;
 
 using Typed::ValidationFailureKind;
 
@@ -128,6 +133,34 @@ OperationPermissions permissionsOf(Entry);
 using CollectionVersions = std::tuple<HeapVersion, HeapVersion, HeapVersion>;
 CollectionVersions collectionVersionsOf(VM&);
 
+// What is asked of a slot is the same for every object of a layout: whether a type describes it at all, where it lies, whether the type admits the markers for undefined and null,
+// and between which integers a number lies. It is worked out once, at the first object of the layout that is looked at.
+struct SlotCheck {
+    const FieldData* field;
+    const RuntimeType* type;
+    const SlotTraits* traits;
+    // Of a slot for integers. Empty where the type admits none.
+    int32_t leastInteger;
+    int32_t greatestInteger;
+    uint32_t offset;
+    SlotRepresentation representation;
+    bool admitsUndefined;
+    bool admitsNull;
+};
+
+struct SlotPlan {
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(SlotPlan);
+    struct Range {
+        uint16_t begin { 0 };
+        uint16_t end { 0 };
+    };
+    // Those of the cell, then those of the Extension, by granule.
+    Vector<SlotCheck> checks;
+    uint32_t numberInCell { 0 };
+    uint64_t granules { 0 };
+    std::array<Range, 64> checksOfGranule { };
+};
+
 struct RecheckedCells {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(RecheckedCells);
     struct OfBlock {
@@ -137,6 +170,10 @@ struct RecheckedCells {
     };
     UncheckedKeyHashMap<MarkedBlock*, std::unique_ptr<OfBlock>> blocks;
     uint64_t numberOfCollections { 0 };
+    // A layout is data of an image, and so are the types of its fields: a plan never goes stale.
+    UncheckedKeyHashMap<const LayoutData*, std::unique_ptr<SlotPlan>> plans;
+    const LayoutData* layoutAskedLast { nullptr };
+    const SlotPlan* planAskedLast { nullptr };
 };
 
 struct CollectionValidator {

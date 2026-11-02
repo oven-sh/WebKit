@@ -47,7 +47,7 @@ constexpr ObjectMutation mutationOf(SlotExitReason reason)
 
 ALWAYS_INLINE void validateMutation(VM& vm, const Object& object, ObjectMutation mutation)
 {
-    if (object.layout().impossibleMutations().contains(mutation) && checksClaimsAboutObjects(vm)) [[unlikely]]
+    if (object.layout().impossibleMutations().contains(mutation) && !vm.aotState().nativeTestChangesObjectsUnseen) [[unlikely]]
         crashOnImpossibleMutation(vm, object, mutation);
 }
 
@@ -55,7 +55,7 @@ ALWAYS_INLINE void validateMutation(VM& vm, const Object& object, ObjectMutation
 
 ALWAYS_INLINE void validateMutation(VM& vm, const Object& object, PropertyName name, ObjectMutation mutation)
 {
-    if (object.layout().impossibleMutations().contains(mutation) && checksClaimsAboutObjects(vm)) [[unlikely]]
+    if (object.layout().impossibleMutations().contains(mutation) && !vm.aotState().nativeTestChangesObjectsUnseen) [[unlikely]]
         crashOnImpossibleMutation(vm, object, name, mutation);
 }
 
@@ -75,7 +75,7 @@ constexpr uint16_t flagOfFieldsThatCannot(ObjectMutation mutation)
 ALWAYS_INLINE void validateMutation(VM& vm, const Object& object, const FieldData& field, ObjectMutation mutation)
 {
     validateMutation(vm, object, mutation);
-    if (field.flags & flagOfFieldsThatCannot(mutation) && checksClaimsAboutObjects(vm)) [[unlikely]]
+    if (field.flags & flagOfFieldsThatCannot(mutation) && !vm.aotState().nativeTestChangesObjectsUnseen) [[unlikely]]
         crashOnImpossibleMutation(vm, object, field, mutation);
 }
 

@@ -393,6 +393,7 @@ static void checkFieldsWithAbsentBitsAndExtraPropertiesWord(LoadedProgram& progr
 
 static void checkFieldsWithAbsentBitsWithoutExtraPropertiesWord(LoadedProgram& program)
 {
+    program.vm().aotState().nativeTestChangesObjectsUnseen = true;
     AOT_TEST_CHECK(!layoutNamed(program, "Deletable"_s).extraPropertiesSlot());
     AOT_TEST_CHECK(checkEventOnEachField(program, "Deletable"_s, Event::Delete) == 2);
     AOT_TEST_CHECK(checkEventOnEachField(program, "Deletable"_s, Event::Redefinition) == 2);
@@ -656,6 +657,7 @@ static void checkNameThatIsNoField(LoadedProgram& program)
     AOT_TEST_CHECK(put(program, withFieldOutside, nameOf(program, leaving), fittingValueFor(program, leaving)) && withFieldOutside->isInSlot(leaving));
     AOT_TEST_CHECK(withFieldOutside->orderWord() & orderWordHasFieldOutsideSlot);
 
+    program.vm().aotState().nativeTestChangesObjectsUnseen = true;
     Object* withoutWord = createFilled(program, "Deletable"_s);
     costsBefore = costsOf(program);
     Object* neighbor = createFilled(program, "Deletable"_s);
