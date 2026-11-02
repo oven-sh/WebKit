@@ -536,6 +536,8 @@ JSValue objectEntries(VM& vm, JSGlobalObject* globalObject, JSValue targetValue)
             };
 
             for (unsigned propertyIndex : indices) {
+                if (throwOutOfMemoryErrorIfOwed(vm, globalObject, scope)) [[unlikely]]
+                    return { };
                 append(numberToString(vm, propertyIndex, 10));
                 RETURN_IF_EXCEPTION(scope, { });
             }
