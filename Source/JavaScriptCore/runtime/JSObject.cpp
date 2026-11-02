@@ -889,6 +889,10 @@ bool JSObject::definePropertyOnReceiver(JSGlobalObject* globalObject, PropertyNa
         return typeError(globalObject, scope, slot.isStrictMode(), ReadonlyPropertyWriteError);
     JSObject* originalReceiver = receiver;
     receiver = receiverForDefinePropertyOnReceiver(receiver);
+    // Bun: whether the walk above goes through a proxy depends on what the proxy has cached of its handler. Such a store is
+    // judged as it is while nothing is cached, where the proxy's [[DefineOwnProperty]] asks the target: not as a store
+    // that starts at the target.
+    bool lookedThroughForwardingProxy = originalReceiver->type() == ProxyObjectType && receiver != originalReceiver;
 #if ENABLE(AOT)
     if (JSObject* definedOn = AOT::RuntimeHooks::targetThatProxyDefinesOn(vm, receiver); definedOn && definedOn->type() != ProxyObjectType && definedOn->type() != CompiledObjectType)
         receiver = definedOn;
@@ -900,7 +904,7 @@ bool JSObject::definePropertyOnReceiver(JSGlobalObject* globalObject, PropertyNa
         // Same policy as in putInlineSlow(), where the store starts at the receiver.
         LockedPropertyPolicy policy = lockedPropertyPolicy(globalObject, receiver, propertyName.uid(), false);
         bool shouldThrow = slot.isStrictMode()
-            || ((slot.context() == PutPropertySlot::ReflectSet ? policy.throwsFromReflect : policy.throwsInSloppyMode) && !specRejectsStore(globalObject, receiver, propertyName));
+            || (!lookedThroughForwardingProxy && (slot.context() == PutPropertySlot::ReflectSet ? policy.throwsFromReflect : policy.throwsInSloppyMode) && !specRejectsStore(globalObject, receiver, propertyName));
         return definePropertyOnReceiverSlow(globalObject, propertyName, value, originalReceiver, receiver, shouldThrow);
     }
 
