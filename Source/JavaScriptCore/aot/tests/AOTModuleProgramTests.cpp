@@ -795,6 +795,78 @@ function f6 name="loadB" module=m2 position=40 kind=Arrow results=[{type=anythin
 }
 )IR"_s;
 
+// first.js and main.js are entry points, and both import helpers.js, whose `var` holds a function: `export var Base = function () { this.size = 1 }`. main.js hands it to a helper that constructs what it is handed:
+// `function inherits(Below, Above) { Below.prototype = new Above() }`. The text in drains.js begins main.js before helpers.js has stored the variable, so `new Above()` throws.
+static constexpr ASCIILiteral helperThatConstructsVariableOfModuleThatRunsWhileTextLoadsItsImporter = R"IR(module m0 path="/first.js" displayPath="first.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="/helpers.js" displayPath="helpers.js" body=f1 exports=[{name="Base" variable=g0}]
+module m2 path="/drains.js" displayPath="drains.js" body=f2
+module m3 path="/main.js" displayPath="main.js" body=f3 requests=[{target=m1 completes=true}]
+entry module=m0
+entry module=m3
+evalscope e0
+layout L0 kind=Instance name="Base" module=m1 constructor=f4 fields=[{key="size" declared={type=anything}}] flags=[IsConstructorFunction]
+variable g0 name="Base" module=m1 declared={type=anything} initialization=Undefined flags=[IsImmutable]
+variable g1 name="inherits" module=m3 declared={type=function flags=[IsFromCompiler]} initialization=Function function=f5 flags=[IsImmutable]
+variable g2 name="Derived" module=m3 declared={type=function flags=[IsFromCompiler]} initialization=Function function=f6 flags=[IsImmutable]
+function f0 name="first" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="ends"
+    v3 = String string="first.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f1 name="helpers" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="begins"
+    v3 = String string="helpers.js"
+    v4 = Call v1, -, v2, v3
+    v5 = RequireModule module=m2 referrer=m1 specifier="./drains.js"
+    v6 = NewClosure function=f4
+    PutModuleVariable v6 variable=g0
+    v8 = String string="ends"
+    v9 = Call v1, -, v8, v3
+    Return
+}
+function f2 name="drains" module=m2 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = String string="import('/main.js')"
+    v2 = Undefined
+    v3 = DirectEval v1, v2 evalScope=e0
+    v4 = PropGet v0 key="register" [isFreeName]
+    v5 = Call v4, -, v3
+    Return
+}
+function f3 name="main" module=m3 kind=Module results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g1
+    v1 = GetModuleVariable variable=g2
+    v2 = GetModuleVariable variable=g0
+    v3 = Call v0, -, v1, v2
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="report" [isFreeName]
+    v6 = String string="ends"
+    v7 = String string="main.js"
+    v8 = Call v5, -, v6, v7
+    Return
+}
+function f4 name="Base" module=m1 flags=[HasThis] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="size" mode=Strict
+    Return
+}
+function f5 name="inherits" module=m3 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Construct v1
+    PropSet v0, v2 key="prototype" mode=Strict
+    Return
+}
+function f6 name="Derived" module=m3 results=[{type=anything}] {
+    Return
+}
+)IR"_s;
+
 static constexpr ASCIILiteral scriptStart = R"js(
 globalThis.report = (label, value) => print(label + ": " + value);
 globalThis.id = value => value;
@@ -1035,6 +1107,23 @@ the import(): rejected with a TypeError
 )"_s, reportRegisteredImport);
 }
 
+static void testHelperThatConstructsVariableOfModuleThatRunsWhileTextLoadsItsImporter()
+{
+    // A read of `prototype` in front of the construction would throw for another reason.
+    checkShellOutput(helperThatConstructsVariableOfModuleThatRunsWhileTextLoadsItsImporter, { "validate"_s }, R"(begins: helpers.js
+ends: helpers.js
+ends: first.js
+the import(): rejected with TypeError: undefined is not a constructor
+)"_s, R"js(.then(async () => {
+    let outcome = "pending";
+    registered.then(() => { outcome = "fulfilled"; }, error => { outcome = "rejected with " + error; });
+    for (let turn = 0; turn < 64; ++turn)
+        await null;
+    report("the import()", outcome);
+}).catch(error => print("the script threw " + error));
+)js"_s);
+}
+
 std::span<const NativeTest> moduleProgramTests()
 {
     static constexpr NativeTest tests[] = {
@@ -1051,6 +1140,7 @@ std::span<const NativeTest> moduleProgramTests()
         { "module-programs/closure-factory-of-module-that-runs-while-text-loads-its-importer"_s, testClosureFactoryOfModuleThatRunsWhileTextLoadsItsImporter },
         { "module-programs/entry-point-that-text-loads-and-runs-with-waiting-jobs"_s, testEntryPointThatTextLoadsAndRunsWithWaitingJobs },
         { "module-programs/closure-factory-that-text-calls-for-with-waiting-jobs"_s, testClosureFactoryThatTextCallsForWithWaitingJobs },
+        { "module-programs/helper-that-constructs-variable-of-module-that-runs-while-text-loads-its-importer"_s, testHelperThatConstructsVariableOfModuleThatRunsWhileTextLoadsItsImporter },
     };
     return tests;
 }

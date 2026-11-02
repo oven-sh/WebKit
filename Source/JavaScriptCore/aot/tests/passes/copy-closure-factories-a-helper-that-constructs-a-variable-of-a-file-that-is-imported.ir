@@ -1,0 +1,54 @@
+# helpers.js: export var Base = function () { this.size = 1 }   main.js: import { Base } from "./helpers.js"; function inherits(Below, Above) { Below.prototype = new Above() }   function Derived() {}   inherits(Derived, Base)
+# The call gets a copy of the helper, in which Above is the function that the `var` of helpers.js holds: copy-closure-factories-a-helper-that-constructs-what-it-is-handed.ir.
+# A name that the build does not follow may begin main.js before helpers.js has stored the variable. So the construction in the copy asks: where Above is undefined, `new Above()` runs as it is written, and throws.
+# FORM: AsRead
+# RUN: pass CopyClosureFactories
+# CHECK: outcome: Changed
+# CHECK-LABEL: function f0 name="main"
+# CHECK: [[helper]]{{*}} = NewClosure function=f5
+# CHECK-NEXT: = Call [[helper]], -, v1, v2 [isAlwaysInlined]
+# CHECK-LABEL: function f5 name="inherits"
+# CHECK: [[test]] = StrictEq v1, [[undefined]]
+# CHECK-NEXT: Branch [[test]] -> taken [[asWritten]](), notTaken
+# CHECK: [[asWritten]]() frequency=Rare:
+# CHECK-NEXT: Construct [[undefined]]
+# CHECK: [[copy]] = NewClosure function=f6
+# CHECK-NEXT: [[held]] = PropGet v1 key="prototype"
+# CHECK-NEXT: PropSet [[copy]], [[held]] key="prototype"
+# CHECK-NEXT: [[made]] = Construct [[copy]]
+# CHECK-NEXT: PropSet v0, [[made]] key="prototype"
+
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="helpers.js" displayPath="helpers.js" body=f4 exports=[{name="Base" variable=g1}]
+entry module=m0
+layout L0 kind=Instance name="Base" module=m1 constructor=f2 fields=[{key="size" declared={type=anything}}] flags=[IsConstructorFunction]
+variable g0 name="inherits" module=m0 declared={type=function flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="Base" module=m1 declared={type=anything} initialization=Undefined flags=[IsImmutable]
+variable g2 name="Derived" module=m0 declared={type=function flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = GetModuleVariable variable=g2
+    v2 = GetModuleVariable variable=g1
+    v3 = Call v0, -, v1, v2
+    Return
+}
+function f1 name="inherits" module=m0 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Construct v1
+    PropSet v0, v2 key="prototype" mode=Strict
+    Return
+}
+function f2 name="Base" module=m1 flags=[HasThis] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="size" mode=Strict
+    Return
+}
+function f3 name="Derived" module=m0 results=[{type=anything}] {
+    Return
+}
+function f4 name="helpers" module=m1 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f2
+    PutModuleVariable v0 variable=g1
+    Return
+}

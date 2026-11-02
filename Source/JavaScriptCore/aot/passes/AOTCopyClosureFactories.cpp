@@ -293,6 +293,8 @@ struct CallToCopyFor {
     FunctionID constructorHandedIn { };
     // The callee was read from a `var` of another file, which answers undefined until that file has stored it: the call asks.
     bool testsCallee { false };
+    // The same for the function that the call hands in: the construction in the copy asks.
+    bool testsConstructorHandedIn { false };
 };
 
 // A call that gets a copy, as it stood before: where the callee turns out not to be stored yet, this runs.
@@ -1251,7 +1253,7 @@ struct Copier {
             return store && analyses.dominates(store, read);
         };
         // The order in which the loader runs the files says that the other file has stored its `var`. A name that the build does not follow may begin this file before that: flow knows, and this pass runs before it.
-        auto isCalleeReadFromOtherFile = [&](const Value& definition) {
+        auto isReadOfVarOfOtherFile = [&](const Value& definition) {
             return !depth && definition.opcode == Opcode::GetModuleVariable && program.at(definition.variable()).initialization == VariableInitialization::Undefined && program.at(definition.variable()).module != caller.module;
         };
         // `var make = ..` in a function that has closures: the variable is a field of the environment of the function.
@@ -1288,7 +1290,7 @@ struct Copier {
             const Function& function = program.at(callee);
             if (!isCreatedByCaller && (!function.captures.isEmpty() || !isReadBehindItsStore(definition.variable(), point)))
                 return;
-            bool testsCallee = !isCreatedByCaller && isCalleeReadFromOtherFile(definition);
+            bool testsCallee = !isCreatedByCaller && isReadOfVarOfOtherFile(definition);
             if (constructsPrototypeObject) {
                 if (!analyses.isInCycle(point.block) && canBeCopiedWithoutItsLayout(callee)) {
                     calls.append({ point, id, callee, isCreatedByCaller ? definitionID : ValueID(), ReasonToCopy::ConstructsPrototypeObject, holder });
@@ -1304,6 +1306,7 @@ struct Copier {
                     && canBeCopiedWithoutItsLayout(constructor) && size.numberOfValuesWithClosures <= maxValuesInCopiedMaker && !size.definesWhatStandsAtOnePlace) {
                     calls.append({ point, id, callee, isCreatedByCaller ? definitionID : ValueID(), ReasonToCopy::ConstructsPrototypeObjectByWhatItIsHanded, holder, false, { }, construction->construction, constructor });
                     calls.last().testsCallee = testsCallee;
+                    calls.last().testsConstructorHandedIn = isReadOfVarOfOtherFile(handedIn);
                     return;
                 }
             }
@@ -1358,6 +1361,7 @@ struct Copier {
             FunctionID copy = copyWithItsClosures(call.callee, numberOfValuesInCopiesOfMakers);
             Vector<CallToCopyFor> construction;
             construction.append({ pointOf(program.at(copy), call.constructionInCallee), call.constructionInCallee, call.constructorHandedIn, ValueID(), ReasonToCopy::ConstructsPrototypeObject });
+            construction.last().testsCallee = call.testsConstructorHandedIn;
             copyForCalls(copy, WTF::move(construction), depth + 1);
             return copy;
         }
@@ -1407,14 +1411,15 @@ struct Copier {
     }
 
     // `import { once } from "./helpers.js"; const a = once(load);` where helpers.js has `export var once = ..`: until helpers.js has stored the variable it answers undefined, and the call throws.
-    // So in front of the call of the copy, the callee is asked for, and where it is undefined the call runs as the program writes it.
+    // So in front of the call of the copy, the callee is asked for, and where it is undefined the call runs as the program writes it. The same for `new Above()` in the copy of a helper that is handed such a variable.
     void callAsWrittenWhereCalleeIsNotStored(IRBuilder& builder, CallAsWritten&& call)
     {
         Function& caller = builder.function();
         builder.setOrigin(call.call.origin());
         ValueID callee = definitionBehindDeadZoneChecks(caller, call.call.calleeOperand());
-        // The values of a program as read have no types yet, and a test asks for the type of what it tests.
-        caller.edit(callee).type = TypeTable::anything;
+        // The values of a program as read have no types yet, and a test asks for the type of what it tests. A parameter has one.
+        if (!caller.at(callee).type)
+            caller.edit(callee).type = TypeTable::anything;
         IRBuilder::Expansion expansion = builder.beginExpansion(pointOf(caller, call.standsInFront));
         ValueID undefined = builder.appendUndefined();
         IRBuilder::BranchBlocks blocks = builder.emitBranch(builder.append(Opcode::StrictEq, { callee, undefined }), BlockFrequency::Rare, BlockFrequency::Normal);
