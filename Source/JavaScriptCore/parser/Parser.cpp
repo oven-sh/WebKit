@@ -4819,9 +4819,11 @@ namedProperty:
         auto spreadLocation = m_token.location();
         auto start = m_token.m_startPosition;
         next();
+        // A spread is reported where its operand starts.
+        auto divot = m_token.m_startPosition;
         TreeExpression elem = parseAssignmentExpression(context);
         failIfFalse(elem, "Cannot parse subject of a spread operation");
-        auto node = context.createObjectSpreadExpression(spreadLocation, elem, start, start, lastTokenEndPosition());
+        auto node = context.createObjectSpreadExpression(spreadLocation, elem, start, divot, lastTokenEndPosition());
         return context.createProperty(node, PropertyNode::Spread, SuperBinding::NotNeeded, ClassElementTag::No);
     }
     default:
@@ -5058,9 +5060,11 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseArrayLiteral
         auto spreadLocation = m_token.location();
         auto start = m_token.m_startPosition;
         next();
+        // A spread is reported where its operand starts.
+        auto divot = m_token.m_startPosition;
         auto spreadExpr = parseAssignmentExpression(context);
         failIfFalse(spreadExpr, "Cannot parse subject of a spread operation");
-        elem = context.createSpreadExpression(spreadLocation, spreadExpr, start, start, lastTokenEndPosition());
+        elem = context.createSpreadExpression(spreadLocation, spreadExpr, start, divot, lastTokenEndPosition());
     } else
         elem = parseArrayElement(context);
     failIfFalse(elem, "Cannot parse array literal element");
@@ -5082,9 +5086,11 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseArrayLiteral
             auto spreadLocation = m_token.location();
             auto start = m_token.m_startPosition;
             next();
+            // A spread is reported where its operand starts.
+            auto divot = m_token.m_startPosition;
             TreeExpression elem = parseAssignmentExpression(context);
             failIfFalse(elem, "Cannot parse subject of a spread operation");
-            auto spread = context.createSpreadExpression(spreadLocation, elem, start, start, lastTokenEndPosition());
+            auto spread = context.createSpreadExpression(spreadLocation, elem, start, divot, lastTokenEndPosition());
             tail = context.createElementList(tail, elisions, spread);
             continue;
         }
@@ -5472,11 +5478,13 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseArgument(Tre
         JSTokenLocation spreadLocation(tokenLocation());
         auto start = m_token.m_startPosition;
         next();
+        // A spread is reported where its operand starts.
+        auto divot = m_token.m_startPosition;
         TreeExpression spreadExpr = parseAssignmentExpression(context);
         propagateError();
         auto end = lastTokenEndPosition();
         type = ArgumentType::Spread;
-        return context.createSpreadExpression(spreadLocation, spreadExpr, start, start, end);
+        return context.createSpreadExpression(spreadLocation, spreadExpr, start, divot, end);
     }
 
     type = ArgumentType::Normal;
@@ -5684,9 +5692,9 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseMemberExpres
                 } else {
                     size_t usedVariablesSize = currentScope()->currentUsedVariablesSize();
                     JSTextPosition expressionEnd = lastTokenEndPosition();
-                    // A call whose callee ends in a name, or is `super`, is reported where that token starts. Any other
-                    // is reported where its callee ends: behind the `?.` of `f?.()`, the `)` of `(f)()` or the `]` of `a[b]()`.
-                    JSTextPosition callDivot = m_lastTokenType == IDENT || m_lastTokenType == SUPER ? JSTextPosition(m_lastTokenLocation.startOffset) : expressionEnd;
+                    // A call whose callee ends in a name, or is `super`, is reported where that token starts. Any other is reported where its callee ends.
+                    bool isKeywordUsedAsName = m_lastTokenType == ESCAPED_KEYWORD || (m_lastTokenType >= FirstContextualKeywordToken && m_lastTokenType <= LastContextualKeywordToken);
+                    JSTextPosition callDivot = m_lastTokenType == IDENT || m_lastTokenType == SUPER || isKeywordUsedAsName ? JSTextPosition(m_lastTokenLocation.startOffset) : expressionEnd;
                     std::optional<CallOrApplyDepthScope> callOrApplyDepthScope;
                     recordCallOrApplyDepth<TreeBuilder>(this, m_vm, callOrApplyDepthScope, base);
 
@@ -5720,8 +5728,9 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseMemberExpres
             }
             case DOT: {
                 m_parserState.nonTrivialExpressionCount++;
-                JSTextPosition expressionDivot = tokenStartPosition();
                 next(TreeBuilder::DontBuildKeywords | LexerFlags::IgnoreReservedWords);
+                // A member is reported where its name starts.
+                JSTextPosition expressionDivot = tokenStartPosition();
                 const Identifier* ident = m_token.m_data.ident;
                 auto type = DotType::Name;
                 if (match(PRIVATENAME)) {
