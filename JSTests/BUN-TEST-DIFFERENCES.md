@@ -135,7 +135,8 @@ Rules for an edit to an upstream test:
   - a name where the name starts: one that is read, called, tagged, assigned to or counted (`++x`, `x++`), and one
     that a destructuring, a `for`-`in` or a `for`-`of` assigns to (`[x] = v`, `({ a: x } = v)`, `({ x } = v)`,
     `for (x of v)`);
-  - a member at its name, where it is read and where `=` assigns to it: `a.b`, `a?.b`, `a.#b`, `super.b`;
+  - a member at its name, where it is read and where `=`, a `for`-`in` or a `for`-`of` assigns to it: `a.b`, `a?.b`,
+    `a.#b`, `super.b`;
   - a spread at the first token of its operand: in a list, in an object, in the arguments of a call and of `new`;
   - `new X(args)` at the `new`;
   - a call whose callee ends in a name, or is `super`, at that name: `f()`, `a.b()`, `a.#b()`, `super.b()`,
@@ -143,16 +144,24 @@ Rules for an edit to an upstream test:
 - V8 has `new X(args)`, a call of a name, a member at its name and a spread at its operand there. It has a name there
   unless the name is the first thing its statement evaluates (`return x` is at `return`). It reports a call of a
   reserved-word or private property (`o.catch()`, `this.#m()`) at the `(`; JSC reports it at the name: one rule for
-  every property name. Where else V8 is elsewhere (node 26.3): a member behind `?.` (`a?.b`) at the `?.`; a store
-  (`x = v`, `a.b = v`) at the `=`; a name or a member that is counted or added to (`++x`, `x++`, `x += v`, `a.b++`,
-  `a.b += v`) where its statement or the member starts, or at the operator; a spread argument at its call (the name
-  of the callee, the `new`), and a spread of a member (`...a.b`) at the member's name; the rest of a list that is
-  assigned to (`[...x] = v`) at its `...`.
+  every property name. Where else V8 is elsewhere (node 26.3): a name that is called or tagged and is not defined
+  (`f()`, `` f`t` ``) where its statement, or the initializer it stands in, starts; a member behind the first `?.` of
+  its chain at its `?.` or `.` (`a?.b`, and the `c` of `a?.b.c`); a store (`x = v`, `a.b = v`) at the `=`; a name or a
+  member that is counted or added to (`++x`, `x++`, `x += v`, `a.b++`, `a.b += v`) where its statement or the member
+  starts, or at the operator; a spread argument at its call (the name of the callee, the `new`), and a spread of a
+  member (`...a.b`) at the member's name; the rest of a list that is assigned to (`[...x] = v`) at its `...`.
 - Not changed: an index is at its `[`, a tagged template at its backquote, `new X` at its `new`, and a call of anything
   else behind its callee (`a?.()` behind the `?.`, `(f)()` behind the `)`, `a[b]()` behind the `]`). The store that
   `a.b++`, `++a.b` and `a.b += v` end with is behind the member, behind the `++` and behind the first character of the
-  operator: only their read is at the name. An object literal that starts with a spread and has no getter or setter
-  starts as a copy of that operand, and the copy is at the `{` (V8: at the operand).
+  operator: only their read is at the name. A member that a destructuring assigns to is stored at the `[` of its list
+  (`[a.b] = v`) or behind the member (`({ k: a.b } = v)`), and `delete a.b` is behind the member. An object literal
+  that starts with a spread and has no getter or setter starts as a copy of that operand, and the copy is at the `{`
+  (V8: at the operand).
+- No position of its own, as upstream: a name that is a local of its function where `++x`, the statement `x++`,
+  `x += v`, a destructuring or the head of a `for`-`in` or `for`-`of` writes to it, which throws in the name's dead
+  zone or when the name is a constant; a name that a list or a property assigns to (`[x] = v`, `({ a: x } = v)`) in
+  its dead zone in sloppy code; the read of a member that is a tag (`` a.b`t` ``). Such a frame has the position that
+  was recorded last in front of it, and its message quotes the text there.
 - Why: Bun maps a frame of the text that its transpiler prints back to the source through a source map, which knows
   tokens by where they start. Where a token ends the next one starts, so a position there names two tokens, and on a
   line of the source other than the one that was meant once the two were written on two lines. A `.` and what stands
@@ -255,7 +264,7 @@ Not upstream's: a sync neither brings nor changes them. Most are named `stress/b
 | file | what it holds the engine to |
 |---|---|
 | `stress/bun-async-context-propagation.js` | the embedder's async-context slot is captured when a job is scheduled and current while it runs |
-| `stress/bun-frame-is-where-its-token-starts.js`, `stress/bun-frame-is-where-its-token-starts-in-a-module.mjs` | A11: the line, the column and the message of a frame at a name that is read or written to, at a member, at a spread, at `new X(args)` and at a call of a name, and of the frames that are where upstream has them: an index, an optional call, a call of a callee in parentheses, of an index and of a function expression, a tagged template, the store behind a count or a sum of a member, the copy that an object literal starts with. The module has the call of `import.meta` |
+| `stress/bun-frame-is-where-its-token-starts.js`, `stress/bun-frame-is-where-its-token-starts-in-a-module.mjs` | A11: the line, the column and the message of a frame at a name that is read or written to, at a member, at a spread, at `new X(args)` and at a call of a name, and of the frames that are where upstream has them: an index, an optional call, a call of a callee in parentheses, of an index and of a function expression, a tagged template, the store behind a count or a sum of a member, the store of a member that a destructuring assigns to, a `delete` of a member, the copy that an object literal starts with. The module has the call of `import.meta` |
 | `stress/bun-aot-builtins-table.js` | the ahead-of-time compiler's table of built-ins (`Source/JavaScriptCore/aot/builtins/*.builtins.ts`) agrees with the engine. **After a sync that removes, renames, moves or reimplements a built-in that the table knows this fails, and each line it prints names the entry to fix.** |
 | `stress/sort-scratch-double-pivot.js` | double arithmetic in the comparator of an inlined sort stores no double into an Int32 array |
 | `stress/array-sort-inline-int32-double-comparator.js` | an earlier, smaller test for the sort fix |
