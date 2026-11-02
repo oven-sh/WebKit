@@ -100,7 +100,8 @@ public:
 
         // FIXME: JSCellButterfly::createFromArray should support re-using non contiguous indexing types as well.
         if (isCopyOnWrite(array->indexingMode())) {
-            if (hasContiguous(indexingType))
+            // Bun: copy-on-write storage outside the heap has no cell in front of it and may have holes. It is copied below.
+            if (hasContiguous(indexingType) && !isOutsideHeap(array->butterfly()))
                 return JSCellButterfly::fromButterfly(array->butterfly());
         }
 
