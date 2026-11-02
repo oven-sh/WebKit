@@ -291,6 +291,17 @@ struct CallToCopyFor {
     // Where the callee constructs by one of its parameters: the construction, and the function that this call hands in there.
     ValueID constructionInCallee { };
     FunctionID constructorHandedIn { };
+    // The callee was read from a `var` of another file, which answers undefined until that file has stored it: the call asks.
+    bool testsCallee { false };
+    // The same for the function that the call hands in: the construction in the copy asks.
+    bool testsConstructorHandedIn { false };
+};
+
+// A call that gets a copy, as it stood before: where the callee turns out not to be stored yet, this runs.
+struct CallAsWritten {
+    // A value that was put in front of everything the copy needs.
+    ValueID standsInFront;
+    Value call;
 };
 
 static uint64_t makeFieldKey(FieldReference field)
@@ -1241,6 +1252,10 @@ struct Copier {
             ValueID store = storesToConstants.get(variable.index() + 1);
             return store && analyses.dominates(store, read);
         };
+        // The order in which the loader runs the files says that the other file has stored its `var`. A name that the build does not follow may begin this file before that: flow knows, and this pass runs before it.
+        auto isReadOfVarOfOtherFile = [&](const Value& definition) {
+            return !depth && definition.opcode == Opcode::GetModuleVariable && program.at(definition.variable()).initialization == VariableInitialization::Undefined && program.at(definition.variable()).module != caller.module;
+        };
         // `var make = ..` in a function that has closures: the variable is a field of the environment of the function.
         auto closureStoredInto = [&](const Value& read, ProgramPoint point) -> ValueID {
             findStores();
@@ -1275,9 +1290,12 @@ struct Copier {
             const Function& function = program.at(callee);
             if (!isCreatedByCaller && (!function.captures.isEmpty() || !isReadBehindItsStore(definition.variable(), point)))
                 return;
+            bool testsCallee = !isCreatedByCaller && isReadOfVarOfOtherFile(definition);
             if (constructsPrototypeObject) {
-                if (!analyses.isInCycle(point.block) && canBeCopiedWithoutItsLayout(callee))
+                if (!analyses.isInCycle(point.block) && canBeCopiedWithoutItsLayout(callee)) {
                     calls.append({ point, id, callee, isCreatedByCaller ? definitionID : ValueID(), ReasonToCopy::ConstructsPrototypeObject, holder });
+                    calls.last().testsCallee = testsCallee;
+                }
                 return;
             }
             if (std::optional<ConstructionByParameter> construction = constructionByParameterIn(callee); construction && construction->position < value.argumentsOperands().size() && !analyses.isInCycle(point.block)) {
@@ -1287,6 +1305,8 @@ struct Copier {
                 if (constructor && !copies.get(constructor.index()) && canBeCopiedForOneCall(program.at(constructor)) && program.at(constructor).captures.isEmpty() && isReadBehindItsStore(handedIn.variable(), point)
                     && canBeCopiedWithoutItsLayout(constructor) && size.numberOfValuesWithClosures <= maxValuesInCopiedMaker && !size.definesWhatStandsAtOnePlace) {
                     calls.append({ point, id, callee, isCreatedByCaller ? definitionID : ValueID(), ReasonToCopy::ConstructsPrototypeObjectByWhatItIsHanded, holder, false, { }, construction->construction, constructor });
+                    calls.last().testsCallee = testsCallee;
+                    calls.last().testsConstructorHandedIn = isReadOfVarOfOtherFile(handedIn);
                     return;
                 }
             }
@@ -1307,6 +1327,7 @@ struct Copier {
             if (size.numberOfValuesWithClosures > (returnsClass ? maxValuesInCopiedClassFactory : isClosureFactory ? maxValuesInCopiedFactory : maxValuesInCopiedMaker) || size.definesWhatStandsAtOnePlace || (!definesClosureUnderWrittenName && analyses.isInCycle(point.block)))
                 return;
             calls.append({ point, id, callee, isCreatedByCaller ? definitionID : ValueID(), isClosureFactory ? ReasonToCopy::IsClosureFactory : ReasonToCopy::MakesWhatObjectCreateIsHanded, holder, returnsClass });
+            calls.last().testsCallee = testsCallee;
         });
         return calls;
     }
@@ -1340,6 +1361,7 @@ struct Copier {
             FunctionID copy = copyWithItsClosures(call.callee, numberOfValuesInCopiesOfMakers);
             Vector<CallToCopyFor> construction;
             construction.append({ pointOf(program.at(copy), call.constructionInCallee), call.constructionInCallee, call.constructorHandedIn, ValueID(), ReasonToCopy::ConstructsPrototypeObject });
+            construction.last().testsCallee = call.testsConstructorHandedIn;
             copyForCalls(copy, WTF::move(construction), depth + 1);
             return copy;
         }
@@ -1370,14 +1392,58 @@ struct Copier {
 
         AnalysisContext context { build, program, nullptr, nullptr, callerID };
         Function& caller = editor.at(callerID);
-        FunctionAnalyses analyses(context, caller);
-        IRBuilder builder(context, caller, types, &analyses);
+        Vector<CallAsWritten, 2> callsThatTestCallee;
+        {
+            FunctionAnalyses analyses(context, caller);
+            IRBuilder builder(context, caller, types, &analyses);
+            callCopiesInPlaceOfCallees(caller, builder, calls, callsThatTestCallee);
+        }
+        if (callsThatTestCallee.isEmpty())
+            return;
+        {
+            FunctionAnalyses analyses(context, caller);
+            IRBuilder builder(context, caller, types, &analyses);
+            for (CallAsWritten& call : callsThatTestCallee)
+                callAsWrittenWhereCalleeIsNotStored(builder, WTF::move(call));
+        }
+        removeTypesOfValues(caller);
+        compactFunction(caller);
+    }
+
+    // `import { once } from "./helpers.js"; const a = once(load);` where helpers.js has `export var once = ..`: until helpers.js has stored the variable it answers undefined, and the call throws.
+    // So in front of the call of the copy, the callee is asked for, and where it is undefined the call runs as the program writes it. The same for `new Above()` in the copy of a helper that is handed such a variable.
+    void callAsWrittenWhereCalleeIsNotStored(IRBuilder& builder, CallAsWritten&& call)
+    {
+        Function& caller = builder.function();
+        builder.setOrigin(call.call.origin());
+        ValueID callee = definitionBehindDeadZoneChecks(caller, call.call.calleeOperand());
+        // The values of a program as read have no types yet, and a test asks for the type of what it tests. A parameter has one.
+        if (!caller.at(callee).type)
+            caller.edit(callee).type = TypeTable::anything;
+        IRBuilder::Expansion expansion = builder.beginExpansion(pointOf(caller, call.standsInFront));
+        ValueID undefined = builder.appendUndefined();
+        IRBuilder::BranchBlocks blocks = builder.emitBranch(builder.append(Opcode::StrictEq, { callee, undefined }), BlockFrequency::Rare, BlockFrequency::Normal);
+        builder.moveToEndOf(blocks.taken);
+        // Flow knows what a call of undefined does, and sees no call of the function here.
+        call.call.setOperand(call.call.opcode == Opcode::Call ? OperandIndex::Call::callee : OperandIndex::Construct::callee, undefined);
+        call.call.type = TypeID();
+        builder.append(WTF::move(call.call));
+        builder.endExpansion(expansion, builder.appendUndefined());
+        builder.moveToEndOf(blocks.notTaken);
+        builder.endExpansion(expansion, builder.appendUndefined());
+    }
+
+    void callCopiesInPlaceOfCallees(Function& caller, IRBuilder& builder, const Vector<CallToCopyFor>& calls, Vector<CallAsWritten, 2>& callsThatTestCallee)
+    {
         UncheckedKeyHashMap<uint32_t, LayoutID> classesMadeByCalls;
         std::optional<ClassesBelowValues> classesBelowValues;
         for (const CallToCopyFor& call : calls) {
             if (!call.copy)
                 continue;
             builder.setOrigin(caller.at(call.call).origin());
+            // What is put in front of the call comes behind the test.
+            if (call.testsCallee)
+                callsThatTestCallee.append({ builder.insertUntypedBefore(call.point, IRBuilder::make(Opcode::Undefined)), Value(caller.at(call.call)) });
             // A closure of the copy over what the closure of the original captured.
             Value closure = call.closure ? Value(caller.at(call.closure)) : IRBuilder::make(Opcode::NewClosure);
             closure.setFunction(call.copy);

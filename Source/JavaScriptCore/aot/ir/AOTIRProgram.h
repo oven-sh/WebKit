@@ -304,6 +304,10 @@ bool isFaceOfCommonJSFile(const Program&, const Module&);
 bool isBundlerHelperNamedByProgram(const Program&, ModuleID);
 // The host asks the loader for an entry point. Where the program loads files under names that the build does not follow, it also asks for the files marked IsFoundByName, and for those that a copy from disk may import: MayBeEvicted.
 BitVector modulesThatHostAsksFor(const Program&, bool findsFilesByName, bool beginsModulesOfData = false);
+// Code that the build has not compiled names these modules, with import() and with a require() of its own: the run time lets a name pass that finds a file which the host asks for, Modules::refusesRequestFromHost().
+// Where such code comes in at any place, it names every module. A realm begins with a file that the host asks for. Where one of them alone runs code or loads a file, that one has begun in every realm
+// before such code runs: it is not among them.
+BitVector modulesThatUnseenCodeNames(const Program&, bool findsFilesByName, bool admitsAnyCode);
 // A name made at run time finds the module in the image. The image holds no code of a module of the host that has a source and this kind, and what a program writes of a module with an open namespace is the object: the loader answers for both.
 bool answersToPath(const Program&, const Module&);
 ModuleID compiledModuleWithObject(const Program&, BuiltinID);

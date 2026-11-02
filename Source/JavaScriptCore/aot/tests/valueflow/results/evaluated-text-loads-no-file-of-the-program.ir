@@ -1,5 +1,6 @@
-# Text that Function is given names no file of the program: the run time refuses it an import(), and require is no global. So the entry point is not loaded again in the middle of a module
-# that it imports, and a variable that the imported module stores before the entry point reads it is stored before every read. A load of the program's own under a name nobody knows may name the entry point
+# Text that Function is given names an entry point and no other file of the program: the run time refuses it an import() of any other. This program has one entry point, which has begun
+# before any text runs. So an import() in the text does not begin it in the middle of a module that it imports, and a variable that the imported module stores before the entry point reads it
+# is stored before every read. evaluated-text-loads-a-second-entry-point.ir has two entry points. A load of the program's own under a name nobody knows may name the entry point
 # RUN: valueflow-apply
 # CHECK: variable g0 name="value" {{*}}initialization=StoredBeforeEveryRead
 # RUN(RESULTS): valueflow-results

@@ -652,6 +652,45 @@ BitVector modulesThatHostAsksFor(const Program& program, bool findsFilesByName, 
     return modules;
 }
 
+// `export type Port = number`: the loader comes to the file, and nothing runs. A file of data holds no code.
+static bool runsCodeOrLoadsFile(const Program& program, const Module& module)
+{
+    if (module.kind == ModuleKind::Data)
+        return false;
+    if (!module.requests.isEmpty())
+        return true;
+    if (!module.body || !program.at(module.body).hasBody())
+        return false;
+    const Function& body = program.at(module.body);
+    if (body.blocks.size() != 1 || body.blocks.first().terminator.kind != TerminatorKind::Return)
+        return true;
+    return !std::ranges::all_of(body.blocks.first().values, [&](ValueID id) {
+        return body.at(id).opcode == Opcode::Undefined;
+    });
+}
+
+BitVector modulesThatUnseenCodeNames(const Program& program, bool findsFilesByName, bool admitsAnyCode)
+{
+    if (admitsAnyCode) {
+        BitVector modules(program.modules.size());
+        for (size_t index = 0; index < program.modules.size(); ++index)
+            modules.quickSet(index);
+        return modules;
+    }
+    BitVector modules = modulesThatHostAsksFor(program, findsFilesByName);
+    std::optional<size_t> begunFirst;
+    unsigned numberThatRealmsBeginWith = 0;
+    for (size_t index : modules) {
+        if (!runsCodeOrLoadsFile(program, program.modules[index]))
+            continue;
+        begunFirst = index;
+        ++numberThatRealmsBeginWith;
+    }
+    if (numberThatRealmsBeginWith == 1)
+        modules.quickClear(*begunFirst);
+    return modules;
+}
+
 bool answersToPath(const Program& program, const Module& module)
 {
     if (!isFoundByPathOf(module.kind))
