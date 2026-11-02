@@ -2120,12 +2120,19 @@ void Heap::stopIfNecessarySlow(unsigned oldState)
     // and there would be some other bit indicating whether we were in some GC phase other than the
     // NotRunning or Concurrent ones.
     if ((oldState & mutatorHasConnBit) && !(Options::runsCompiledImage() && m_collector->isNotRunning())) {
+        // Bun: a caller without heap access runs an epilogue that is pending before it conducts, as it did when this
+        // function began with handleNeedCollectionEpilogue(): the Collector asserts that none is pending.
+        bool hasAccess = oldState & hasAccessBit;
+        if (!hasAccess) [[unlikely]]
+            handleNeedCollectionEpilogue();
         collectInMutatorThread();
 
         // Conducting leaves the mutator with heap access, and resuming the world ran any epilogue.
         unsigned state = m_worldState.load();
-        RELEASE_ASSERT(state & hasAccessBit, state);
-        RELEASE_ASSERT(!(state & stoppedBit), state);
+        if (hasAccess) [[likely]] {
+            RELEASE_ASSERT(state & hasAccessBit, state);
+            RELEASE_ASSERT(!(state & stoppedBit), state);
+        }
         RELEASE_ASSERT(!(state & needCollectionEpilogueBit), state);
     }
 }
