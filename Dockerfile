@@ -416,7 +416,8 @@ ENV RELEASE_FLAGS=${RELEASE_FLAGS}
 # little: one caller is enough. So jsc must also hold no copy of glibc's always-inline wrappers (memcpy.inline, ...): a
 # wrapper that was not inlined cannot see the size of the destination, and calls the plain function.
 #
-# Where HARDENING_FLAGS has -mbranch-protection=pac-ret: Tools/Scripts/check-signed-return-addresses.py.
+# Where HARDENING_FLAGS has -mbranch-protection=pac-ret: Tools/Scripts/check-signed-return-addresses.py. Where it has
+# -DENABLE_BRANCH_TARGET_IDENTIFICATION=1: Tools/Scripts/check-landing-pads.py.
 #
 # clang searches C_INCLUDE_PATH (gcc-13's builtin-header dir) before its own
 # resource dir, so C TUs including <immintrin.h> (mimalloc static.c, -march=nehalem)
@@ -503,6 +504,7 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
         ! llvm-nm --defined-only $WEBKIT_OUT_DIR/bin/jsc | grep -E ' [a-z_0-9]+\.inline(\.llvm\.[0-9]+)?$' || { echo "error: these _FORTIFY_SOURCE wrappers were not inlined, so they check nothing" >&2; exit 1; }; \
     fi && \
     case "$HARDENING_FLAGS" in *-mbranch-protection=pac-ret*) python3 /webkit/Tools/Scripts/check-signed-return-addresses.py $WEBKIT_OUT_DIR/bin/jsc ;; esac && \
+    case "$HARDENING_FLAGS" in *-DENABLE_BRANCH_TARGET_IDENTIFICATION=1*) python3 /webkit/Tools/Scripts/check-landing-pads.py $WEBKIT_OUT_DIR/bin/jsc ;; esac && \
     cp -r $WEBKIT_OUT_DIR/lib/*.a /output/lib && \
     cp $WEBKIT_OUT_DIR/*.h /output/include && \
     cp -r $WEBKIT_OUT_DIR/bin /output/bin && \

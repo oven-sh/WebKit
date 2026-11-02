@@ -615,6 +615,15 @@ void GenerateAndAllocateRegisters::generate(CCallHelpers& jit)
         blockJumps[block].link(m_jit);
         CCallHelpers::Label label = m_jit->label();
         *context.blockLabels[block] = label;
+#if ENABLE(BRANCH_TARGET_IDENTIFICATION)
+        // The blocks that have a label in generateWithAlreadyAllocatedRegisters(): a patchpoint has their addresses, for a jump table for one.
+        for (BasicBlock* predecessor : block->predecessors()) {
+            if (predecessor->last().kind.opcode == Patch) {
+                m_jit->indirectJumpTarget();
+                break;
+            }
+        }
+#endif
 
         if (disassembler)
             disassembler->startBlock(block, *m_jit);
@@ -624,6 +633,9 @@ void GenerateAndAllocateRegisters::generate(CCallHelpers& jit)
             if (disassembler)
                 disassembler->startEntrypoint(*m_jit); 
 
+            // Bun: as in generateWithAlreadyAllocatedRegisters().
+            if (*entrypointIndex)
+                m_jit->indirectCallTarget();
             m_code.prologueGeneratorForEntrypoint(*entrypointIndex)->run(*m_jit, m_code, context);
 
             if (disassembler)

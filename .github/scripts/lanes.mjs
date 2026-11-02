@@ -71,6 +71,20 @@ const HARDENING =
 // walks the frame pointers there, as bun's crash handler does, has to take the signatures off too.
 const SIGNED_RETURN_ADDRESSES = " -mbranch-protection=pac-ret -DENABLE_RETURN_ADDRESS_SIGNING=1";
 
+// Goes with SIGNED_RETURN_ADDRESSES. Where LLInt and what the JITs generate can be reached by an indirect branch they begin with a
+// landing pad (BTI), which is a hint too, and JavaScriptCore guards their pages (--useBranchTargetIdentification): an indirect branch
+// to anything else in them traps.
+//
+// No flag for the compiler goes with it (-mbranch-protection=pac-ret+bti). The pages of C++ are not guarded: the loader guards an
+// executable only if everything that it is linked from says that it has landing pads, and of what the sysroot has (crt1.o, crti.o,
+// crtbeginS.o, libc_nonshared.a, libstdc++.a, libgcc.a) nothing does. C++ needs none to get into a guarded page either: which
+// register a jump has its target in counts only where the jump is in a guarded page itself. And with the flag the objects here would
+// say that they have landing pads, which is not true of the functions that are written in assembly in a C++ source
+// (ctiMasmProbeTrampoline, the thunks of defineUnaryDoubleOpWrapper, currentStackPointer).
+//
+// Not with the ahead-of-time compiler, which is not ready for it: whether an image has landing pads is yet to be decided.
+const LANDING_PADS = " -DENABLE_BRANCH_TARGET_IDENTIFICATION=1";
+
 // Which ICU every platform but macOS (which uses the system's) builds and bundles: icu/source.json, and nowhere else.
 const icu = JSON.parse(readFileSync(join(root, "icu/source.json"), "utf8"));
 const ICU = { ICU_VERSION: icu.version, ICU_SHA256: icu.sha256 };
@@ -110,9 +124,9 @@ const variants = {
   "assertions-coverage-aot": { buildType: "Release", mimalloc: true, assertions: true, coverage: true },
   // "aot", "lto" and "lto-aot" with ICU and WebKit compiled with HARDENING, and nothing else changed but for arm64's
   // -mtune (see MARCH_FLAG of Linux). Only what ships has a twin without the compiler, and on arm64 that twin also has
-  // SIGNED_RETURN_ADDRESSES, which the run time of compiled programs is not ready for.
+  // SIGNED_RETURN_ADDRESSES and LANDING_PADS, which the run time of compiled programs is not ready for.
   "hardened-aot": { buildType: "Release", mimalloc: true, hardened: true },
-  "lto-hardened": { buildType: "Release", mimalloc: true, lto: true, hardened: true, signedReturnAddresses: true, aot: false },
+  "lto-hardened": { buildType: "Release", mimalloc: true, lto: true, hardened: true, signedReturnAddresses: true, landingPads: true, aot: false },
   "lto-hardened-aot": { buildType: "Release", mimalloc: true, lto: true, hardened: true },
   // "lto-hardened-aot" with ENABLE_WEBASSEMBLY=0: there is no global of that name, and JavaScriptCore's code for it is not
   // in the libraries.
@@ -173,7 +187,7 @@ const platforms = [
       ENABLE_SANITIZERS: v.sanitizers ?? "",
       ENABLE_ASSERTS: v.assertions ? "ON" : "AUTO",
       ENABLE_FUZZILLI: v.coverage ? "ON" : "OFF",
-      HARDENING_FLAGS: v.hardened ? HARDENING + (arch === "arm64" && v.signedReturnAddresses ? SIGNED_RETURN_ADDRESSES : "") : "",
+      HARDENING_FLAGS: v.hardened ? HARDENING + (arch === "arm64" && v.signedReturnAddresses ? SIGNED_RETURN_ADDRESSES : "") + (arch === "arm64" && v.landingPads ? LANDING_PADS : "") : "",
       ENABLE_WEBASSEMBLY: v.webAssembly === false ? "OFF" : "ON",
       // Explicit --target: Ubuntu's clang defaults to x86_64-pc-linux-gnu, while bun's own objects and its Rust code
       // are <arch>-unknown-linux-gnu; with LTO, lld warns about the vendor mismatch once per JavaScriptCore object.
@@ -474,7 +488,7 @@ if (command === "build") {
   const build = ({ label, sources, runner, image, package_os, package_cpu, test, programs, aot, defines }) => ({ label, sources, runner, image, package_os, package_cpu, test, programs, aot, defines });
   console.log(`build=${matrix(lanes.filter(lane => !lane.test).map(build))}`);
   console.log(`build_tested=${matrix(lanes.filter(lane => lane.test).map(build))}`);
-  console.log(`test=${matrix(lanes.filter(lane => lane.test).map(lane => ({ label: lane.label, runner: lane.test_runner, quick: lane.test_quick, signs_return_addresses: lane.defines.includes("ENABLE_RETURN_ADDRESS_SIGNING=1") })))}`);
+  console.log(`test=${matrix(lanes.filter(lane => lane.test).map(lane => ({ label: lane.label, runner: lane.test_runner, quick: lane.test_quick, signs_return_addresses: lane.defines.includes("ENABLE_RETURN_ADDRESS_SIGNING=1"), has_landing_pads: lane.defines.includes("ENABLE_BRANCH_TARGET_IDENTIFICATION=1") })))}`);
   console.log(`labels=${JSON.stringify([...labels, SOURCES.label])}`);
   // Only the toolchain images that are not in the registry yet get an `image` job: normally none.
   const missing = images.filter(({ image }) => {

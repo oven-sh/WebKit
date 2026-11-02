@@ -117,6 +117,18 @@ void JITCompiler::linkOSRExits()
         nearCallThunk(osrExitThunk);
     }
 
+#if ENABLE(BRANCH_TARGET_IDENTIFICATION)
+    // genericUnwind() jumps to these, and an entrance has no room for a landing pad.
+    for (auto& callSite : m_exceptionHandlerOSRExitCallSites) {
+        Label& destination = callSite.exitInfo.m_replacementDestination;
+        if (!destination.isSet())
+            continue;
+        Label entrance = std::exchange(destination, label());
+        indirectJumpTarget();
+        jump().linkTo(entrance, this);
+    }
+#endif
+
     if (m_graph.m_plan.isUnlinked()) {
         // When jumping to OSR exit handler via exception, we do not have proper callFrameRegister and jitDataRegister.
         // We should reload appropriate callFrameRegister from VM::callFrameForCatch to materialize constants buffer register.

@@ -3260,6 +3260,7 @@ PartialResult BBQJIT::addI32WrapI64(Value operand, Value& result)
 
 void BBQJIT::emitCatchPrologue()
 {
+    m_jit.indirectJumpTarget(); // Bun: this is where a catch entrypoint begins.
     m_jit.subPtr(GPRInfo::callFrameRegister, TrustedImm32(m_frameSize), MacroAssembler::stackPointerRegister);
     if (m_info.memoryCount())
         loadWebAssemblyGlobalState(wasmBaseMemoryPointer, wasmBoundsCheckingSizeRegister);

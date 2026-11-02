@@ -3164,6 +3164,13 @@ section "trampolines"
 
 include? LowLevelInterpreterAdditions
 
+# Bun: for $vm.callIntoLLInt(). Every label but a local one begins with a landing pad by itself (asm.rb).
+if BRANCH_TARGET_IDENTIFICATION
+    global _llint_landing_pad_and_return
+    _llint_landing_pad_and_return:
+        emit "ret" # Not ret, which expects a signed return address.
+end
+
 global _llintPCRangeEnd
 _llintPCRangeEnd:
     break # FIXME: rdar://96556827

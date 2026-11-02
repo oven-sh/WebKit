@@ -199,6 +199,7 @@ void JIT::privateCompileMainPass()
         m_pcToCodeOriginMapBuilder.appendItem(bytecodeStart, CodeOrigin(m_bytecodeIndex));
 
         m_labels[m_bytecodeIndex.offset()] = bytecodeStart;
+        indirectJumpTarget(); // Bun: any of them is where an OSR exit, a switch or a throw may go on (JITCodeMap).
 
         if (JITInternal::verbose)
             dataLogLn("Baseline JIT emitting code for ", m_bytecodeIndex, " at offset ", (long)debugOffset());
@@ -767,8 +768,13 @@ RefPtr<BaselineJITCode> JIT::compileAndLinkWithoutFinalizing(JITCompilationEffor
         m_disassembler->setStartOfCode(entryLabel);
 
     // Just add a little bit of randomness to the codegen
-    if (random() & 1)
+    if (random() & 1) {
+#if ENABLE(BRANCH_TARGET_IDENTIFICATION)
+        indirectCallTarget(); // It does nothing either, and entryLabel is what is called where there is no arity check.
+#else
         nop();
+#endif
+    }
 
     emitFunctionPrologue();
     jitAssertCodeBlockOnCallFrameWithType(regT2, JITType::BaselineJIT);
@@ -826,6 +832,7 @@ RefPtr<BaselineJITCode> JIT::compileAndLinkWithoutFinalizing(JITCompilationEffor
     bool requiresArityFixup = m_unlinkedCodeBlock->numParameters() != 1;
     if (m_unlinkedCodeBlock->codeType() == FunctionCode && requiresArityFixup) {
         m_arityCheck = label();
+        indirectCallTarget(); // Bun: a call with too few arguments comes in here.
         RELEASE_ASSERT(m_unlinkedCodeBlock->codeType() == FunctionCode);
 
         unsigned numberOfParameters = m_unlinkedCodeBlock->numParameters();

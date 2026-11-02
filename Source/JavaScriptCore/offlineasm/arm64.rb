@@ -664,8 +664,31 @@ def arm64FixSpecialRegisterArithmeticMode(list)
     newList
 end
 
+# Bun: a jump with its target in x16 or x17 may land where a call may, and with it in any other register on nothing but a landing pad
+# for jumps. So the target goes into x16.
+def arm64LowerJumpsForLandingPads(list)
+    newList = []
+    list.each {
+        | node |
+        if not node.is_a? Instruction or node.opcode != "jmp" or node.operands[0].label?
+            newList << node
+        elsif node.operands.size == 1 and node.operands[0].is_a? RegisterID
+            # Without a tag it goes from one handler of IPInt to another, which are in slots of one size that some of them fill. It stays
+            # one instruction, and they begin with a landing pad for jumps.
+            newList << node
+        else
+            # From memory it is loaded there, so LLInt goes from one bytecode to the next in as many instructions as before.
+            opcode = node.operands[0].address? ? "loadp" : "move"
+            newList << Instruction.new(node.codeOrigin, opcode, [node.operands[0], ARM64_EXTRA_GPRS[0]], node.annotation)
+            newList << Instruction.new(node.codeOrigin, "jmp", [ARM64_EXTRA_GPRS[0]])
+        end
+    }
+    newList
+end
+
 class Sequence
     def getModifiedListARM64(result = @list)
+        result = arm64LowerJumpsForLandingPads(result) if $currentSettings["BRANCH_TARGET_IDENTIFICATION"]
         result = riscDropTags(result)
         getModifiedListARM64Common(result)
     end

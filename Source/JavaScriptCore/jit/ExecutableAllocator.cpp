@@ -571,6 +571,20 @@ static void registerJITUnwindInfo(PageReservation& pageReservation, void*& base,
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
+#if ENABLE(BRANCH_TARGET_IDENTIFICATION)
+bool guardExecutablePages(const void* start, const void* end, bool writable)
+{
+    constexpr int protBTI = 0x10; // Newer than the headers that this is compiled with.
+
+    // What is behind the end in its page may have no landing pads. To guard nothing would succeed.
+    if (!Options::useBranchTargetIdentification() || start == end || !isPageAligned(std::bit_cast<uintptr_t>(end)))
+        return false;
+    // This fails, and changes nothing, where the processor or the kernel is without the feature or the start is not that of a page.
+    size_t size = static_cast<const char*>(end) - static_cast<const char*>(start);
+    return !mprotect(const_cast<void*>(start), size, PROT_READ | (writable ? PROT_WRITE : 0) | PROT_EXEC | protBTI);
+}
+#endif
+
 static ALWAYS_INLINE JITReservation initializeJITPageReservation()
 {
     JITReservation reservation;
@@ -645,6 +659,9 @@ static ALWAYS_INLINE JITReservation initializeJITPageReservation()
 #endif
 
         void* reservationEnd = static_cast<uint8_t*>(reservation.base) + reservation.size;
+#if ENABLE(BRANCH_TARGET_IDENTIFICATION)
+        g_jscConfig.pagesOfJITCodeAreGuarded = guardExecutablePages(reservation.base, reservationEnd, EXECUTABLE_POOL_WRITABLE);
+#endif
         g_jscConfig.startExecutableMemory = reservation.base;
         g_jscConfig.endExecutableMemory = reservationEnd;
 

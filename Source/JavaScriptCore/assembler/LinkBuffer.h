@@ -320,6 +320,7 @@ public:
     template<PtrTag tag>
     CodeLocationLabel<tag> locationOf(Label label)
     {
+        validateIndirectBranchTarget(tag, getLinkerAddress<NoPtrTag>(applyOffset(label.m_label))); // Bun: for --validateIndirectBranchTargets.
         return CodeLocationLabel<tag>(getLinkerAddress<tag>(applyOffset(label.m_label)));
     }
 
@@ -525,6 +526,13 @@ private:
         RELEASE_ASSERT(code <= untagCodePtr<tag>(address) && untagCodePtr<tag>(address) <= static_cast<char*>(code) + size());
         return address;
     }
+
+    // Bun: with --validateIndirectBranchTargets, crashes if the address is one that an indirect branch goes to and has no landing pad.
+#if ENABLE(BRANCH_TARGET_IDENTIFICATION)
+    JS_EXPORT_PRIVATE void validateIndirectBranchTarget(PtrTag, const void*);
+#else
+    void validateIndirectBranchTarget(PtrTag, const void*) { }
+#endif
 
     JS_EXPORT_PRIVATE void linkCode(MacroAssembler&, JITCompilationEffort);
 #if ENABLE(BRANCH_COMPACTION)

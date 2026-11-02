@@ -482,13 +482,30 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 // the jsc_llint_begin and jsc_llint_end labels help lldb_webkit.py find the
 // start and end of the llint instruction range quickly.
 
+#if ENABLE(BRANCH_TARGET_IDENTIFICATION)
+// LLInt::initialize() guards what is between these. What an object file puts in one section stays in one piece. Only whole pages can
+// be guarded, and what shares a page with LLInt may have no landing pads, so the bounds are where a page begins, of 4, 16 or 64 KB.
+#define OFFLINE_ASM_ALIGNMENT_OF_BOUND "\n .balignl 65536, 0xd4388e20\n" // OFFLINE_ASM_ALIGN_TRAP() without its spacer, which would cost 64 KB where a section begins.
+#define OFFLINE_ASM_BOUND_OF_SECTIONS(bound) \
+    ".section .text.jsc_llint_bytecode,\"ax\",@progbits\n" \
+    OFFLINE_ASM_GLOBAL_LABEL_IMPL(jsc_llint_bytecode_##bound, OFFLINE_ASM_NO_ALT_ENTRY_DIRECTIVE, OFFLINE_ASM_ALIGNMENT_OF_BOUND, HIDE_SYMBOL) \
+    ".section .text.jsc_llint_webassembly,\"ax\",@progbits\n" \
+    OFFLINE_ASM_GLOBAL_LABEL_IMPL(jsc_llint_webassembly_##bound, OFFLINE_ASM_NO_ALT_ENTRY_DIRECTIVE, OFFLINE_ASM_ALIGNMENT_OF_BOUND, HIDE_SYMBOL) \
+    OFFLINE_ASM_TEXT_SECTION \
+    OFFLINE_ASM_ALIGNMENT_OF_BOUND
+#else
+#define OFFLINE_ASM_BOUND_OF_SECTIONS(bound)
+#endif
+
 #define OFFLINE_ASM_BEGIN   __asm__( \
     OFFLINE_ASM_TEXT_SECTION \
+    OFFLINE_ASM_BOUND_OF_SECTIONS(begin) \
     OFFLINE_ASM_GLOBAL_LABEL_IMPL(jsc_llint_begin, OFFLINE_ASM_NO_ALT_ENTRY_DIRECTIVE, OFFLINE_ASM_ALIGN4B, HIDE_SYMBOL) \
     OFFLINE_ASM_BEGIN_SPACER
 
 #define OFFLINE_ASM_END \
     OFFLINE_ASM_BEGIN_SPACER \
+    OFFLINE_ASM_BOUND_OF_SECTIONS(end) \
     OFFLINE_ASM_GLOBAL_LABEL_IMPL(jsc_llint_end, OFFLINE_ASM_NO_ALT_ENTRY_DIRECTIVE, OFFLINE_ASM_ALIGN4B, HIDE_SYMBOL) \
 );
 

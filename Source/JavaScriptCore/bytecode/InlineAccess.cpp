@@ -180,6 +180,7 @@ bool InlineAccess::generateSelfPropertyAccess(PropertyInlineCache& propertyCache
         return false;
 
     CCallHelpers jit;
+    jit.removeLandingPadAtStart(); // Bun: this replaces a part of other code.
 
     GPRReg base = propertyCache.baseGPR();
     GPRReg value = propertyCache.valueGPR();
@@ -249,6 +250,7 @@ bool InlineAccess::generateSelfPropertyReplace(PropertyInlineCache& propertyCach
     ASSERT(canGenerateSelfPropertyReplace(propertyCache, offset));
 
     CCallHelpers jit;
+    jit.removeLandingPadAtStart(); // Bun: this replaces a part of other code.
 
     GPRReg base = propertyCache.baseGPR();
     GPRReg value = propertyCache.valueGPR();
@@ -301,6 +303,7 @@ bool InlineAccess::generateArrayLength(PropertyInlineCache& propertyCache, JSArr
         return false;
 
     CCallHelpers jit;
+    jit.removeLandingPadAtStart(); // Bun: this replaces a part of other code.
 
     GPRReg base = propertyCache.baseGPR();
     GPRReg value = propertyCache.valueGPR();
@@ -340,6 +343,7 @@ bool InlineAccess::generateStringLength(PropertyInlineCache& propertyCache)
         return false;
 
     CCallHelpers jit;
+    jit.removeLandingPadAtStart(); // Bun: this replaces a part of other code.
 
     GPRReg base = propertyCache.baseGPR();
     GPRReg value = propertyCache.valueGPR();
@@ -368,6 +372,7 @@ bool InlineAccess::generateStringLength(PropertyInlineCache& propertyCache)
 bool InlineAccess::generateSelfInAccess(PropertyInlineCache& propertyCache, Structure* structure)
 {
     CCallHelpers jit;
+    jit.removeLandingPadAtStart(); // Bun: this replaces a part of other code.
 
     if (!hasConstantIdentifier(propertyCache.accessType))
         return false;
