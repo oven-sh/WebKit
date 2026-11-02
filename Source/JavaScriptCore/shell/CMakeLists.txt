@@ -83,6 +83,23 @@ endif ()
 
 WEBKIT_EXECUTABLE_DECLARE(jsc)
 
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" AND NOT ENABLE_C_LOOP)
+    enable_language(ASM)
+    set(testVMEntryRecord_SOURCES
+        ../API/tests/VMEntryRecordProbeX86_64.S
+        ../API/tests/testVMEntryRecord.cpp
+    )
+    set(testVMEntryRecord_DEFINITIONS ${jsc_PRIVATE_DEFINITIONS})
+    set(testVMEntryRecord_PRIVATE_INCLUDE_DIRECTORIES ${jsc_PRIVATE_INCLUDE_DIRECTORIES})
+    set(testVMEntryRecord_FRAMEWORKS ${jsc_FRAMEWORKS})
+    set(testVMEntryRecord_LIBRARIES ${CMAKE_DL_LIBS})
+    if (USE_EXTERNAL_MIMALLOC)
+        list(APPEND testVMEntryRecord_SOURCES ExternalMimallocShims.cpp)
+        list(APPEND testVMEntryRecord_LIBRARIES $<TARGET_OBJECTS:mimalloc-obj>)
+    endif ()
+    WEBKIT_EXECUTABLE_DECLARE(testVMEntryRecord)
+endif ()
+
 if (USE_BUN_JSC_ADDITIONS)
     # bun:ffi (JSC FFI) C++ unit / ABI test executable, modeled on the
     # testmasm_* variables below. Build and run it with:
@@ -329,6 +346,10 @@ WEBKIT_INCLUDE_CONFIG_FILES_IF_EXISTS()
 
 WEBKIT_EXECUTABLE(jsc)
 set_target_properties(jsc PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+if (TARGET testVMEntryRecord)
+    WEBKIT_EXECUTABLE(testVMEntryRecord)
+endif ()
 
 if (USE_BUN_JSC_ADDITIONS)
     WEBKIT_EXECUTABLE(testFFI)
