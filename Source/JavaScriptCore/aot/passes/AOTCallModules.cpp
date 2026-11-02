@@ -780,6 +780,10 @@ void callModules(ProgramEditor& editor, const FlowResults& flow, BuildContext& b
     Vector<ModuleID> moduleWithBody(program.functions.size());
     bool loadsTwoGraphsAtOnce = mayLoadTwoGraphsAtOnce(program, loops);
     bool somebodyAsksWhoRequiredWhom = asksWhoRequiredWhom(program, flow);
+    // Code that the build has not compiled calls import() with the name of one of these while a require() evaluates it. The module order of flow knows the same names.
+    BitVector isNamedByUnseenCode(modules.size());
+    if (flow.unseenCodeCanRun())
+        isNamedByUnseenCode = modulesThatUnseenCodeNames(program, flow.findsFilesOfProgramByName(), build.options().admitsUnseenCode());
     for (size_t index = 0; index < modules.size(); ++index) {
         const Module& module = modules[index];
         if (!isEvaluatedWithImporter(program, module) || needsLoader.quickGet(index))
@@ -790,7 +794,9 @@ void callModules(ProgramEditor& editor, const FlowResults& flow, BuildContext& b
         // A file that the loader has asked for has no parent, and the run time knows which of several files it has asked for.
         bool loaderIsSeenToAsk = somebodyAsksWhoRequiredWhom && module.requests.size() > 1 && module.requests[1].isHoisted;
         bool isListedFromRequireOn = module.kind == ModuleKind::SourceText && module.flags.contains(ModuleFlags::IsListedInCache);
-        if (!needsLink.quickGet(index) && isRequiredBetweenLoads && !loaderIsSeenToAsk && !isListedFromRequireOn)
+        // The run time settles the promise of an import() of a module that a require() still evaluates where that evaluation ends: Modules::evaluateWithOwnStack(). A start that is called has no such end.
+        bool isImportedWhileRequired = module.kind == ModuleKind::SourceText && isNamedByUnseenCode.quickGet(index);
+        if (!needsLink.quickGet(index) && isRequiredBetweenLoads && !loaderIsSeenToAsk && !isListedFromRequireOn && !isImportedWhileRequired)
             plan.isCalledWhereRequired.quickSet(index);
         if (!hasCode(program, module))
             continue;

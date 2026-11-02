@@ -1,0 +1,31 @@
+# main.mjs: require("./running.mjs")        running.mjs: import "./imported.mjs"; report()        built with one entry point, for a run under the inspector
+# Code comes in at any place and at any time, and the run time answers an import() of it with any file of the program. So an import() may name running.mjs while the require() evaluates it,
+# and the site asks the run time, which settles the promise of that import() where the evaluation ends.
+# OPTIONS: admit=Inspector
+# FORM: AsRead
+# RUN: pipeline CallModules
+# STATISTIC: RequireSitesBound = 0
+
+module m0 path="/main.mjs" displayPath="main.mjs" body=f0 requests=[{target=m1 kind=Require completes=true}]
+module m1 path="/running.mjs" displayPath="running.mjs" body=f1 requests=[{target=m2 completes=true}]
+module m2 path="/imported.mjs" displayPath="imported.mjs" body=f2
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    EvaluateModule module=m1 referrer=m0 [isBare]
+    Return
+# CHECK-NEXT: b0():
+# CHECK-NEXT: EvaluateRequiredModule module=m1 referrer=m0 specifier="/running.mjs"
+# CHECK-NEXT: Return
+}
+function f1 name="running" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = Call v1
+    Return
+}
+function f2 name="imported" module=m2 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = Call v1
+    Return
+}
