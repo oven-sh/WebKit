@@ -29,7 +29,7 @@ This test checks stack trace corectness in special cases.
     2   global code at stack-trace.js:100:18
 
 --> Stack Trace:
-    0   hostThrower at stack-trace.js:81:43
+    0   hostThrower at stack-trace.js:81:44
     1   global code at stack-trace.js:103:7
 
 --> Stack Trace:
@@ -253,7 +253,7 @@ This test checks stack trace corectness in special cases.
     0   throwError at stack-trace.js:142:11
     1   valueOf at stack-trace.js:149:17
     2   getter1 at stack-trace.js:152:9
-    3   nonInlineable at stack-trace.js:178:17
+    3   nonInlineable at stack-trace.js:178:18
     4   inlineable at stack-trace.js:186:14
     5   yetAnotherInlinedCall at stack-trace.js:191:7
     6   makeInlinableCall at stack-trace.js:196:9
@@ -264,7 +264,7 @@ This test checks stack trace corectness in special cases.
 --> Stack Trace:
     0   throwError at stack-trace.js:142:11
     1   getter2 at stack-trace.js:158:9
-    2   nonInlineable at stack-trace.js:180:17
+    2   nonInlineable at stack-trace.js:180:18
     3   inlineable at stack-trace.js:186:14
     4   yetAnotherInlinedCall at stack-trace.js:191:7
     5   makeInlinableCall at stack-trace.js:196:9
@@ -275,7 +275,7 @@ This test checks stack trace corectness in special cases.
 --> Stack Trace:
     0   throwError at stack-trace.js:142:11
     1   getter3 at stack-trace.js:170:13
-    2   nonInlineable at stack-trace.js:182:17
+    2   nonInlineable at stack-trace.js:182:18
     3   inlineable at stack-trace.js:186:14
     4   yetAnotherInlinedCall at stack-trace.js:191:7
     5   makeInlinableCall at stack-trace.js:196:9
@@ -287,7 +287,7 @@ This test checks stack trace corectness in special cases.
     0   throwError at stack-trace.js:142:11
     1   valueOf at stack-trace.js:166:17
     2   getter3 at stack-trace.js:172:13
-    3   nonInlineable at stack-trace.js:182:17
+    3   nonInlineable at stack-trace.js:182:18
     4   inlineable at stack-trace.js:186:14
     5   yetAnotherInlinedCall at stack-trace.js:191:7
     6   makeInlinableCall at stack-trace.js:196:9
@@ -319,12 +319,12 @@ This test checks stack trace corectness in special cases.
 --> Stack Trace:
     0   throwError at stack-trace.js:142:11
     1   dfgFunction at stack-trace.js:249:9
-    2   f at stack-trace.js:267:10
+    2   f at stack-trace.js:267:11
     3   global code at stack-trace.js:273:5
 
 --> Stack Trace:
     0   willThrow at stack-trace.js:311:19
-    1   dfg1 at stack-trace.js:322:13
+    1   dfg1 at stack-trace.js:322:14
     2   dfg2 at stack-trace.js:326:5
     3   dfg3 at stack-trace.js:330:5
     4   dfgTest at stack-trace.js:296:13
@@ -341,7 +341,7 @@ This test checks stack trace corectness in special cases.
 --> Stack Trace:
     0   inlineableThrow at stack-trace.js:305:31
     1   willThrowEventually at stack-trace.js:314:9
-    2   dfg7 at stack-trace.js:346:13
+    2   dfg7 at stack-trace.js:346:14
     3   dfg8 at stack-trace.js:350:5
     4   dfg9 at stack-trace.js:354:5
     5   dfgTest at stack-trace.js:296:13

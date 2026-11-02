@@ -17,7 +17,7 @@ obj
     .dGetter // !! error
 ;
 } catch (err) {
-    assert(err.stack.endsWith(":17:5"));
+    assert(err.stack.endsWith(":17:6")); // Bun: upstream has 17:5, the `.`. A member is reported where its name starts.
 }
 
 try {
