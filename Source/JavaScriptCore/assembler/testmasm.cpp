@@ -8835,10 +8835,14 @@ static void testMove128ToVectorComprehensive()
     testPattern(v128_t { 0xABCD1234EF005678ULL, 0xABCD1234EF005678ULL }); // Arbitrary pattern repeated
 }
 
-static void testVectorDupElement()
+template<typename T, typename Emit, typename... Arguments>
+T runWithFeatures(CPUFeatureSet, const Emit&, Arguments...);
+
+// Bun: an assembler has the CPU features of its policy, so the test takes the set that it emits for.
+static void testVectorDupElement(CPUFeatureSet features)
 {
 #if CPU(X86_64)
-    if (!MacroAssembler::supportsAVX())
+    if (!MacroAssembler::supportsAVX(features))
         return;
 #endif
 
@@ -8849,7 +8853,7 @@ static void testVectorDupElement()
     auto testLane = [&](SIMDLane simdLane, unsigned lane, bool inPlace) {
         FPRReg src = FPRInfo::argumentFPR0;
         FPRReg dest = inPlace ? src : FPRInfo::argumentFPR1;
-        auto compilation = compile([&](CCallHelpers& jit) {
+        auto [low64, high64] = runWithFeatures<std::pair<uint64_t, uint64_t>>(features, [&](CCallHelpers& jit) {
             emitFunctionPrologue(jit);
             jit.move128ToVector(input, src);
             jit.vectorDupElement(simdLane, CCallHelpers::TrustedImm32(lane), src, dest);
@@ -8864,7 +8868,6 @@ static void testVectorDupElement()
         for (unsigned i = 0; i < 16; ++i)
             expected.u8x16[i] = input.u8x16[lane * elementSize + i % elementSize];
 
-        auto [low64, high64] = invoke<std::pair<uint64_t, uint64_t>>(compilation);
         CHECK_EQ(low64, expected.u64x2[0]);
         CHECK_EQ(high64, expected.u64x2[1]);
     };
@@ -8876,6 +8879,16 @@ static void testVectorDupElement()
         }
     }
 }
+
+#if CPU(X86_64)
+static void testVectorDupElementWithoutAVX2()
+{
+    CPUFeatureSet host = CPUFeatureSet::host();
+    if (!MacroAssembler::supportsAVX2(host))
+        return;
+    testVectorDupElement(CPUFeatureSet::fromBits(host.bits() & ~CPUFeatureSet().with(CPUFeature::AVX2).bits()));
+}
+#endif
 
 #if CPU(ARM64)
 // Test half-precision FMOV encoding (cmode=0b1110, op=1)
@@ -11855,7 +11868,10 @@ void run(const char* filter) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
     RUN(testMove32ToFloatComprehensive());
     RUN(testMove64ToDoubleComprehensive());
     RUN(testMove128ToVectorComprehensive());
-    RUN(testVectorDupElement());
+    RUN(testVectorDupElement(CPUFeatureSet::host()));
+#if CPU(X86_64)
+    RUN(testVectorDupElementWithoutAVX2());
+#endif
 
     RUN(testMove32ToFloatX64());
     RUN(testMove64ToDoubleX64());
@@ -11920,18 +11936,6 @@ void run(const char* filter) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
 
     for (auto& thread : threads)
         thread->waitForCompletion();
-
-#if CPU(X86_64)
-    // CPU feature flags are process-wide, so a fallback path can only be forced once no other test is running.
-    if (shouldRun("testVectorDupElementWithoutAVX2") && MacroAssembler::supportsAVX2()) {
-        numberOfTests++;
-        dataLog("testVectorDupElementWithoutAVX2...\n");
-        MacroAssembler::s_avx2CheckState = MacroAssembler::CPUIDCheckState::Clear;
-        testVectorDupElement();
-        MacroAssembler::s_avx2CheckState = MacroAssembler::CPUIDCheckState::Set;
-        dataLog("testVectorDupElementWithoutAVX2: OK!\n");
-    }
-#endif
 
     crashLock.lock();
     dataLog("Completed ", numberOfTests, " tests\n");
