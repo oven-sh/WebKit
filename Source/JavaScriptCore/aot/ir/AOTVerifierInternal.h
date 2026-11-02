@@ -148,6 +148,7 @@ private:
     void verifyLoopMarks();
 
     void verifyGuards();
+    String describeWhatMayEnd(BlockID blockOfUser, ValueID guard, const Value& user);
     void verifyProofs();
     void verifyOperandKindsWithoutChecks();
     void verifyStoredTypesWithoutChecks();

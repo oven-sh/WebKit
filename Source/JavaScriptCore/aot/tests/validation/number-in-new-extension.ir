@@ -1,0 +1,83 @@
+# interface Box { r0: number .. r12: number; late0?: number; late1?: number }  const late = () => { box.late0 = 1.5 }, other = () => { another.late1 = 0.5 }
+# A number needs no barrier of its own. But the thirteen required fields leave no room in the cell, so late0 and late1 lie in the Extension, and the store in late() makes the Extension:
+# from then on the owner names it, and the collector finds it through the owner alone. The owner is old and marked, so a collection of the young looks at it again only if the store has said so.
+# other() goes first: the first allocation behind a collection finds no free cell at hand and is left to the run time, which has a barrier of its own. The one in late() is made by the stub.
+# FORM: AsRead
+# RUN(SLOTS): plan-slots layouts
+# RUN: run-in-shell --verifyGC=1 globalThis.register = (late, read, other) => { gc(); other(); late(); edenGC(); read(); };
+# OPTIONS: references=narrow testing=NoLayoutIsMadeSeldom
+# SLOTS: "late0" JSValue out@
+# CHECK-NOT: GC Verifier
+# CHECK: 2.5 1.5 undefined
+# CHECK: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 name="Box" fields=[{key="r0" declared={type=number} flags=[IsRequired]}, {key="r1" declared={type=number} flags=[IsRequired]}, {key="r2" declared={type=number} flags=[IsRequired]}, {key="r3" declared={type=number} flags=[IsRequired]}, {key="r4" declared={type=number} flags=[IsRequired]}, {key="r5" declared={type=number} flags=[IsRequired]}, {key="r6" declared={type=number} flags=[IsRequired]}, {key="r7" declared={type=number} flags=[IsRequired]}, {key="r8" declared={type=number} flags=[IsRequired]}, {key="r9" declared={type=number} flags=[IsRequired]}, {key="r10" declared={type=number} flags=[IsRequired]}, {key="r11" declared={type=number} flags=[IsRequired]}, {key="r12" declared={type=number} flags=[IsRequired]}, {key="late0" declared={type=number}}, {key="late1" declared={type=number}}]
+layout L1 kind=Environment fields=[{key="held0" declared={type=anything}}, {key="held1" declared={type=anything}}, {key="held2" declared={type=anything}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Double number=2.5
+    v1 = NewObject layout=L1 fields=[]
+    v2 = NewObject -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 layout=L0 fields=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+    v3 = FinishObject v2
+    PutEnvironmentField v1, v3 layout=L1 field=0
+    v5 = NewObject -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 layout=L0 fields=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+    v6 = FinishObject v5
+    PutEnvironmentField v1, v6 layout=L1 field=1
+    v8 = NewObject -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 layout=L0 fields=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+    v9 = FinishObject v8
+    PutEnvironmentField v1, v9 layout=L1 field=2
+    v11 = NewClosure v1 function=f1
+    v12 = NewClosure v1 function=f2
+    v13 = NewClosure v1 function=f4
+    v14 = Builtin builtin=GlobalThis
+    v15 = PropGet v14 key="register" [isFreeName]
+    v16 = Call v15, -, v11, v12, v13
+    Return
+}
+function f1 name="late" captures=[{type=env L1}] results=[{type=undefined}] {
+  b0(v0: env L1):
+    v1 = GetEnvironmentField v0 layout=L1 field=0
+    v2 = Double number=1.5
+    PropSet v1, v2 key="late0"
+    Return
+}
+function f2 name="read" captures=[{type=env L1}] results=[{type=undefined}] {
+  b0(v0: env L1):
+    v1 = NewClosure function=f3
+    v2 = GetEnvironmentField v0 layout=L1 field=0
+    v3 = Call v1, -, v2
+    v4 = GetEnvironmentField v0 layout=L1 field=1
+    v5 = Call v1, -, v4
+    v6 = GetEnvironmentField v0 layout=L1 field=2
+    v7 = Call v1, -, v6
+    Return
+}
+function f3 name="show" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="r0"
+    v2 = PropGet v0 key="r1"
+    v3 = PropGet v0 key="r2"
+    v4 = PropGet v0 key="r3"
+    v5 = PropGet v0 key="r4"
+    v6 = PropGet v0 key="r5"
+    v7 = PropGet v0 key="r6"
+    v8 = PropGet v0 key="r7"
+    v9 = PropGet v0 key="r8"
+    v10 = PropGet v0 key="r9"
+    v11 = PropGet v0 key="r10"
+    v12 = PropGet v0 key="r11"
+    v13 = PropGet v0 key="r12"
+    v14 = PropGet v0 key="late0"
+    v15 = PropGet v0 key="late1"
+    v16 = Builtin builtin=GlobalThis
+    v17 = PropGet v16 key="print" [isFreeName]
+    v18 = Call v17, -, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15
+    Return v18
+}
+function f4 name="other" captures=[{type=env L1}] results=[{type=undefined}] {
+  b0(v0: env L1):
+    v1 = GetEnvironmentField v0 layout=L1 field=1
+    v2 = Double number=0.5
+    PropSet v1, v2 key="late1"
+    Return
+}

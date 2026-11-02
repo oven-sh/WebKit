@@ -178,6 +178,8 @@ JS_EXPORT_PRIVATE void forEachFirstLoad(VM&, const ScopedLambda<void(const Strin
 JS_EXPORT_PRIVATE void noteFirstLoadInEarlierProcess(VM&, const String& path, bool wasSynchronous);
 // ModuleHost::callInLaterTurn.
 JS_EXPORT_PRIVATE void deliverTextThatWaits(VM&);
+// The host of a test run calls this when all that a delivery has queued has run, and before anything else does.
+JS_EXPORT_PRIVATE void didRunJobsBehindDelivery(VM&);
 // The loader fetches the module for an import() in another image. Asked before the record is made.
 JS_EXPORT_PRIVATE bool textOfFetchedModuleComesInLaterTurn(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void holdTextOfFetchedModule(JSGlobalObject*, ModuleID, JSPromise* fetched, AbstractModuleRecord*);

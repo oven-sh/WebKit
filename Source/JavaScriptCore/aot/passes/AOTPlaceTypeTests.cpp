@@ -3147,6 +3147,7 @@ struct TestPlacer {
     Vector<ValueID> changedValues { };
     Vector<std::pair<ValueID, TypeID>, 4> ownTypesOfRepresentatives { };
     Vector<ValueID, 4> castsToTypesOfOperands { };
+    size_t numberOfValuesBeforeTests { 0 };
 
     PassOutcome run()
     {
@@ -3155,7 +3156,7 @@ struct TestPlacer {
         findStretchesThatGuessLayouts();
 
         auto blocksBeforeSplitting = function.blocks;
-        size_t numberOfValuesBeforeSplitting = function.values.size();
+        numberOfValuesBeforeTests = function.values.size();
 
         // A proof adopted on an edge that also carries tests has to become a parameter of the block the tests stand in.
         splitTestedEdges();
@@ -3170,7 +3171,7 @@ struct TestPlacer {
         if (!numberOfGuardedStretches()) {
             // Left split, the function would be simplified, planned, split and rejected again in every round of the fixpoint.
             function.replaceBlocks(WTF::move(blocksBeforeSplitting));
-            function.editAllValues().shrink(numberOfValuesBeforeSplitting);
+            function.editAllValues().shrink(numberOfValuesBeforeTests);
             analyses.didChangeControlFlow();
             return PassOutcome::Unchanged;
         }
@@ -4005,7 +4006,7 @@ struct TestPlacer {
                 guards.appendIfNotContains(proof);
                 return;
             }
-            if (std::optional<TypeID> castType = findTypeOfOperand(test, *prerequisite.narrowedOperand, proof)) {
+            if (std::optional<TypeID> castType = findTypeOfOperand(test, *prerequisite.narrowedOperand, proof); castType && isTypedAsBeforeTests(test.operand(*prerequisite.narrowedOperand))) {
                 proof = emit(makeAssumeType(proof, emit(IRBuilder::make(Opcode::Specified)), Proven::behindFact(claimOfCast(*castType, test.operand(*prerequisite.narrowedOperand)))));
                 castsToTypesOfOperands.append(proof);
             }
@@ -4054,6 +4055,11 @@ struct TestPlacer {
         if (both.isNever() || both == passedType || (hasToBeInteger && !both.hasOnlyPrimitives(Primitive::Integer)))
             return std::nullopt;
         return types.intern(both);
+    }
+
+    bool isTypedAsBeforeTests(ValueID value) const
+    {
+        return value.index() < numberOfValuesBeforeTests || context.build.isSabotaged(Sabotage::TestsKeepTheTypesTheyWereMadeWith);
     }
 
     TypeID claimOfCast(TypeID typeWithStandIn, ValueID operand) const
@@ -4198,6 +4204,8 @@ struct TestPlacer {
     // One value stands for everything that has the identity of the tested value. The site was planned with the type of its own operand, which a branch or a cast may have narrowed in another way than the test.
     ValueID narrowToOperand(ValueID passed, ValueID operand, ProgramPoint point)
     {
+        if (!isTypedAsBeforeTests(operand))
+            return passed;
         Type passedType = types.at(function.at(passed).type);
         Type operandType = types.at(function.at(operand).type);
         if (passedType.isSubsetOf(operandType, context.program))
@@ -4642,7 +4650,7 @@ struct TestPlacer {
                     continue;
                 }
                 // What a value defined behind the edge says holds from its definition on.
-                if (!analyses.dominates(current, pointOfTest) || !isReachedByCastIn(target, use))
+                if (!analyses.dominates(current, pointOfTest) || !isReachedByCastIn(target, use) || !isTypedAsBeforeTests(current))
                     continue;
                 // The type of the value may say what no test finds out, such as what flow proved about a class.
                 if (!narrowing.castType) {

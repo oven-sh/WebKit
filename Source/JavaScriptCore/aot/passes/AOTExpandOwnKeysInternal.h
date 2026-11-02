@@ -60,6 +60,8 @@ Vector<ValueID, 4> findKeyListsToExpand(FunctionPassContext&);
 struct AllocationAtPoint {
     ValueID allocation;
     ProgramPoint point;
+    // An assignment asks the objects above its target for a setter.
+    bool isAssignedTo { false };
 };
 
 // Answers for the sources and targets of all the sites of a function with one solve.

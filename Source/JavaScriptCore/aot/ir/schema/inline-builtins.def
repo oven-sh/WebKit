@@ -50,7 +50,7 @@ inline MathMinOfArray MathMaxOfArray ; reads(ArrayStorage, Elements[Array]) ; fa
 inline CallNumberConstructor NumberToString ParseInt ; asOverload ; family MathBuiltin
 inline NumberToStringAppend ; asOverload ; family MathBuiltin ; formOnly
 inline MathAbs MathFloor MathCeil MathTrunc MathRound MathFround MathF16Round MathSqrt MathPow MathMin MathMax MathImul MathClz32 MathSign MathFunction(MathFunctionKind) MathATan2 MathHypot IsNaN IsFinite NumberIsNaN NumberIsFinite NumberIsInteger NumberIsSafeInteger ; none ; family MathBuiltin ; optionalSlowPath
-inline MathRandom ; UsesRuntime ; family MathBuiltin ; optionalSlowPath
+inline MathRandom ; UsesRuntime reads(ExternalState) writes(ExternalState) ; family MathBuiltin ; optionalSlowPath
 inline DateGetField(DateField, TimeZone) DateToISOString ; asOverload ; family DateBuiltin
 inline DateNow ; reads(ExternalState) writes(ExternalState) ; family DateBuiltin ; optionalSlowPath
 inline DateGetTime DateGetMilliseconds ; reads(InternalFields) ; family DateBuiltin ; optionalSlowPath

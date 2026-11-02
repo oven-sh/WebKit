@@ -212,6 +212,8 @@ OwnerBarrier BarrierEmitter::barrierOfExtension(const ValueContext& store) const
 
 void BarrierEmitter::markCardOfStatics(uint32_t offsetInStatics)
 {
+    if (m_function.kind != FunctionKind::Module && m_options.recorded.isSabotaged(Sabotage::FunctionsMarkNoCard))
+        return;
     InstanceSizes sizes = inputs().instanceSizes;
     ptrdiff_t offsetOfCardsFromStatics = InstanceLayout::offsetOfCards(sizes) - InstanceLayout::offsetOfStatics(sizes);
     ptrdiff_t card = offsetInStatics >> InstanceLayout::cardShift;

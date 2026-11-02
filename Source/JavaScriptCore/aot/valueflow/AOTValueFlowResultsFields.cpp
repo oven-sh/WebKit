@@ -1091,21 +1091,48 @@ struct FieldResults {
     // To a field that holds a plain value, a spread is a store of an unknown value.
     OptionSet<Actor> actorsOpenOnFieldsOfObjectsWith(LayoutID id) const { return stores.getsCopiedProperties(id) ? actorsOpenOnObjectsWith(id) - Actor::KeysNobodyKnows : actorsOpenOnObjectsWith(id); }
 
-    OptionSet<Actor> findActorsOpenOnObjectsWith(LayoutID id, std::span<const AnswersAboutObject> answers) const
+    // What all members of a set say together.
+    struct AnswersAboutObjects : AnswersAboutObject {
+        bool isHeldByNativeCode { false };
+        uint32_t numberOfObjectsRead { 0 };
+
+        void add(const AnswersAboutObjects& other)
+        {
+            open.add(other.open);
+            isMadeByRowThatNamesLayoutOrByOperation &= other.isMadeByRowThatNamesLayoutOrByOperation;
+            isHeldByNativeCode |= other.isHeldByNativeCode;
+        }
+    };
+
+    AnswersAboutObjects answersAboutMembersOf(ValueSetID objects, std::span<const AnswersAboutObject> answers) const
     {
-        constexpr OptionSet<Actor> makers { Actor::Creation, Actor::Table, Actor::NativeCode };
-        ValueSetID objects = layoutsOfObjects.objectsWith(id);
         RELEASE_ASSERT(!ValueSets::isComplement(objects));
-        AnswersAboutObject all { { }, true };
+        AnswersAboutObjects all { { { }, true } };
         sets.forEachMember(objects, [&](ValueFlowObjectID object) {
             all.open.add(answers[object.index()].open);
             all.isMadeByRowThatNamesLayoutOrByOperation &= answers[object.index()].isMadeByRowThatNamesLayoutOrByOperation;
+            ++all.numberOfObjectsRead;
         });
+        all.isHeldByNativeCode = sets.meet(objects, inputs.solver().possibleValuesOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::HeldByNativeCode)));
+        return all;
+    }
+
+    OptionSet<Actor> findActorsOpenOnObjectsWith(LayoutID id, std::span<const AnswersAboutObject> answers, const AnswersAboutObjects& aboutObjectsOfEveryEscapedClass, const AnswersAboutObjects& aboutObjectsOfEveryLostClass, uint32_t& numberOfObjectsRead) const
+    {
+        constexpr OptionSet<Actor> makers { Actor::Creation, Actor::Table, Actor::NativeCode };
+        ValueSetID objects = layoutsOfObjects.objectsWith(id);
+        LayoutsOfObjects::PartsOfObjects parts = layoutsOfObjects.partsOfObjectsWith(id);
+        AnswersAboutObjects all = answersAboutMembersOf(parts.own, answers);
+        numberOfObjectsRead = all.numberOfObjectsRead;
+        if (parts.holdsObjectsOfEveryEscapedClass)
+            all.add(aboutObjectsOfEveryEscapedClass);
+        if (parts.holdsObjectsOfEveryLostClass)
+            all.add(aboutObjectsOfEveryLostClass);
         OptionSet<Actor> open = all.open & actorsThatCanWrite(PlaceKind::Field);
         if (open.containsAny(makers) && (all.isMadeByRowThatNamesLayoutOrByOperation || makerAboveClassesHasAccountedFor(id) || everyClassAboveListsOwnNames(objects)))
             open.remove(makers);
         // No row describes the native code that holds an object.
-        if (sets.meet(objects, inputs.solver().possibleValuesOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::HeldByNativeCode))))
+        if (all.isHeldByNativeCode)
             open.add(Actor::NativeCode);
         // Nobody lists where the objects are made.
         if (application.layouts[id.index()].flow.allocationClasses.isEmpty())
@@ -1122,9 +1149,13 @@ struct FieldResults {
     void findActorsOpenOnObjects()
     {
         Vector<ValueSetID> objectsOfLayouts;
+        for (ValueSetID shared : { layoutsOfObjects.objectsOfEveryEscapedClass(), layoutsOfObjects.objectsOfEveryLostClass() }) {
+            if (shared != ValueSets::nothing)
+                objectsOfLayouts.append(shared);
+        }
         for (uint32_t index = 0; index < numberOfLayouts; ++index) {
-            if (hasObjects(LayoutID(index)) && layoutsOfObjects.objectsWith(LayoutID(index)) != ValueSets::nothing)
-                objectsOfLayouts.append(layoutsOfObjects.objectsWith(LayoutID(index)));
+            if (hasObjects(LayoutID(index)) && layoutsOfObjects.partsOfObjectsWith(LayoutID(index)).own != ValueSets::nothing)
+                objectsOfLayouts.append(layoutsOfObjects.partsOfObjectsWith(LayoutID(index)).own);
         }
         Vector<ValueFlowObjectID> objects;
         {
@@ -1138,11 +1169,19 @@ struct FieldResults {
             ValueFlowObjectID object = objects[position];
             answers[object.index()] = { actorsOpenOn(inputs, object), isMadeByRowThatNamesLayoutOrByOperation(object) };
         });
+        AnswersAboutObjects aboutObjectsOfEveryEscapedClass = answersAboutMembersOf(layoutsOfObjects.objectsOfEveryEscapedClass(), answers.span());
+        AnswersAboutObjects aboutObjectsOfEveryLostClass = answersAboutMembersOf(layoutsOfObjects.objectsOfEveryLostClass(), answers.span());
         actorsOpenOnObjectsOfLayouts = Vector<OptionSet<Actor>>(numberOfLayouts);
+        Vector<uint32_t> numbersOfObjectsRead;
+        numbersOfObjectsRead.fill(0u, numberOfLayouts);
         forEachIndexInParallel(loops, numberOfLayouts, [&](unsigned index) {
             if (hasObjects(LayoutID(index)))
-                actorsOpenOnObjectsOfLayouts[index] = findActorsOpenOnObjectsWith(LayoutID(index), answers.span());
+                actorsOpenOnObjectsOfLayouts[index] = findActorsOpenOnObjectsWith(LayoutID(index), answers.span(), aboutObjectsOfEveryEscapedClass, aboutObjectsOfEveryLostClass, numbersOfObjectsRead[index]);
         });
+        uint64_t numberOfObjectsRead = aboutObjectsOfEveryEscapedClass.numberOfObjectsRead + aboutObjectsOfEveryLostClass.numberOfObjectsRead;
+        for (uint32_t number : numbersOfObjectsRead)
+            numberOfObjectsRead += number;
+        build.statistics().count(StatisticID::ObjectsReadForActorsOpenOnLayouts, numberOfObjectsRead);
     }
 
     using WritesSeen = Vector<Write, 4>;

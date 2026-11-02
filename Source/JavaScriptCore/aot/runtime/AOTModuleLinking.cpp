@@ -85,7 +85,9 @@ StarExportResolution::Type Modules::resolveRequiredName(ModuleID exporter, const
     RELEASE_ASSERT(exporterData.capturesExports() || exporterData.hasExportTable());
     bool hasExport = exporterData.capturesExports() ? hasCapturedExport(exporter, name) : !!m_table.findExport(exporter, name.impl());
     RETURN_IF_EXCEPTION(scope, StarExportResolution::Type::Error);
-    return hasExport ? StarExportResolution::Type::Resolved : StarExportResolution::Type::NotFound;
+    if (hasExport)
+        return StarExportResolution::Type::Resolved;
+    return m_table.isAmbiguousExport(exporter, name.string()) ? StarExportResolution::Type::Ambiguous : StarExportResolution::Type::NotFound;
 }
 
 // Of a module of this image, or of the module of another image that a record of this one stands for.
@@ -1123,8 +1125,13 @@ void Modules::endMockLaidOverFile(ModuleID file)
     }
 
     for (ModuleID handedOn : std::exchange(loaded.namespacesReplacedByMock, { })) {
-        ensureLoaded(handedOn).handedOnInPlaceOfNamespace.set(*this, JSValue());
-        m_namespacesReplacedByMock.clear(handedOn.index());
+        LoadedModule& target = ensureLoaded(handedOn);
+        target.mocksThatReplaceNamespace.removeFirst(file);
+        bool isLeft = !target.mocksThatReplaceNamespace.isEmpty();
+        target.handedOnInPlaceOfNamespace.set(*this, isLeft ? storedValue(realm, target.handedOnByMocks, Identifier::from(vm, target.mocksThatReplaceNamespace.last().index())) : JSValue());
+        if (!isLeft)
+            target.handedOnByMocks.set(*this, nullptr);
+        m_namespacesReplacedByMock.set(handedOn.index(), isLeft);
         didReplaceNamespaceHandedOn(handedOn);
     }
     if (JSObject* variables = loaded.variablesBeforeMock) {

@@ -97,6 +97,7 @@ struct LinkContext {
     macro(JSValue, answerOfMockWhileOriginalRuns) \
     macro(JSObject*, exportsAddedByMock) \
     macro(JSValue, handedOnInPlaceOfNamespace) \
+    macro(JSObject*, handedOnByMocks) \
     macro(JSValue, errorKeptByLoader) \
     macro(JSObject*, exportsWhileRequired) \
     macro(JSObject*, capturedExports) \
@@ -234,7 +235,7 @@ public:
     JSObject* namespaceOfModuleItself(ModuleID);
     JSValue importModuleItselfBesideMock(ModuleID, JSValue answerOfImport);
     bool isHiddenInModuleItself(ModuleID, unsigned index) const;
-    JSValue readExportOfModuleItself(ModuleID, unsigned index);
+    JSValue readExportOfModuleItself(ModuleID, unsigned index, bool neverReadsMock = false);
     // `bun test` takes whoever imports a module out of its loader when a mock of the module ends, and when a mock is laid over what an earlier test file loaded. A mock of such an importer
     // comes ahead of its load, though the body has run here.
     enum class ImportersLetGo : bool { All, AllButThoseThatThisTestFileLinkedToModule };
@@ -383,6 +384,8 @@ public:
     void dropErrorsOfLoadsEndedByMockOf(ModuleID mocked);
     void dropErrorOfMockKeptByLoader(ModuleID);
     void dropErrorsOfLoadsThatCameTo(const ScopedLambda<bool(ModuleID)>& isMocked);
+    bool hasMockOfLibraryModule(ModuleID module) const { return m_libraryModulesWithMock.get(module.index()); }
+    void takeFailedLoadsOutOfLoader(const ScopedLambda<bool(ModuleID)>& isMocked);
     bool standsForFileWithKey(ModuleID, const Identifier& key);
     JSValue errorOfLoadEndedByMock(ModuleID module) const { return m_modulesWithLoadEndedByMock.get(module.index()) ? loadedIfExists(module)->errorKeptByLoader.get() : JSValue(); }
     JSObject* capturedExports(ModuleID);
@@ -632,6 +635,7 @@ public:
     bool wasImportedWhileItRan(ModuleID file) const;
     bool loaderHasFileThatThrew(ModuleID file);
     bool isAwaitedByImport(ModuleID file);
+    bool isAwaitedByImportFromBeforeItRan(ModuleID file);
     void dropErrorOfFile(ModuleID fileOrFace);
     void didLoseErrorOfModule(const Identifier& key);
     void evaluateCommonJSForLoader(ModuleID file);
@@ -681,7 +685,7 @@ public:
     enum class AskedBy : bool { Loader, Import };
     bool textOfImportComesInLaterTurn(ModuleID, AskedBy);
     bool hasTextAtHand() const;
-    void didBeginTurn() { m_isInJobsBehindDelivery = false; }
+    void didRunJobsBehindDelivery() { m_isInJobsBehindDelivery = false; }
     bool isFirstTextThatWaitsOnlyDelayed() const { return !m_textsThatWait.isEmpty() && m_textsThatWait[m_numberOfTextsThatHaveCome].isOnlyDelayed; }
     // No text of the program is read, and all of the program is one image.
     bool loadsAsExecutableDoes() const;
@@ -752,6 +756,8 @@ private:
         // `export * from "./leaf.cjs"`: the values of the mock went over names of these, which keep what was replaced.
         Vector<ModuleID> modulesBehindStarsUnderMock;
         Vector<ModuleID> namespacesReplacedByMock;
+        // Of the module whose object is handed on: the mocked modules whose mocks give a value in its place, the latest last.
+        Vector<ModuleID> mocksThatReplaceNamespace;
         bool capturedFieldsAreOfESModule { false };
         bool capturedFieldsAreOfRuntimeModule { false };
         Identifier resolvedKey;
@@ -768,6 +774,8 @@ private:
         bool wasRequiredBehindMock { false };
         // Of a CommonJS file: didLoseErrorOfModule().
         bool wasReachedBySecondLoad { false };
+        // Of a CommonJS file that a require() runs: the first import() of it was called meanwhile.
+        bool wasFirstImportedByCallWhileItRan { false };
         bool isBeingLoadedByLoader { false };
         BitVector ambiguousExports;
         std::unique_ptr<SourceOrigin> sourceOrigin;
@@ -1083,6 +1091,8 @@ private:
     // A statement came to them when the factory failed, so the loader keeps their records too: the next statement gets the error, and the factory is not asked. An import() of such a module drops the
     // record and asks the factory; a require() asks the factory and leaves the record.
     BitVector m_mockedModulesWithErrorKeptByLoader;
+    bool m_loaderMayHoldLoadsThatFactoryEnded { false };
+    std::optional<ModuleID> m_moduleThatProgramImportsNow;
     BitVector m_modulesWithMockThatWaited;
     // A mock stood in place of the module while its importers ran, and has ended. They read the names of the module itself now, whose body has yet to run.
     BitVector m_modulesOwedToImportersThatRan;
@@ -1303,6 +1313,7 @@ private:
     void setAsideNamespaceUnderMock(ModuleID);
     bool m_makesNamespaceOfModuleItself { false };
     std::optional<ModuleID> m_moduleReadPastItsMock;
+    bool m_mockNeverAnswersForModuleReadPast { false };
     UncheckedKeyHashMap<ModuleID, MockOverModuleThatHasRun> m_mocksOverModulesThatHaveRun;
     struct FirstMockInTestFile {
         uint32_t moment;

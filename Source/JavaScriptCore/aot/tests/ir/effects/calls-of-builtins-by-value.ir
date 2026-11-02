@@ -27,11 +27,11 @@ function f2 name="calls" parameters=[{type=builtin(MathRandom)}, {type=builtin(A
     Return
 }
 # CHECK-LABEL: function f2
-# CHECK-NEXT: v9 Call: reads(RuntimeState) writes(RuntimeState)
+# CHECK-NEXT: v9 Call: reads(ExternalState, RuntimeState) writes(ExternalState, RuntimeState)
 # CHECK-NEXT: v10 Call: reads(StringStorage, AllocatorState, RuntimeState) writes(StringStorage, AllocatorState, RuntimeState) throws collects
 # CHECK-NEXT: v11 Call: {{*}}callsUnknownCode
 # CHECK-NEXT: v12 Call: {{*}}callsUnknownCode
 # CHECK-NEXT: v13 Call: writes(ModuleVariables/1)
 # CHECK-NEXT: v14 Call: {{*}}callsUnknownCode
-# CHECK-NEXT: v15 Call: reads(RuntimeState) writes(ModuleVariables/1, RuntimeState)
+# CHECK-NEXT: v15 Call: reads(ExternalState, RuntimeState) writes(ModuleVariables/1, ExternalState, RuntimeState)
 # CHECK-NEXT: v16 Call: {{*}}callsUnknownCode

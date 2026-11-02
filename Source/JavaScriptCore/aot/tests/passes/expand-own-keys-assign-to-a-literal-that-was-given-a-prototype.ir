@@ -1,0 +1,31 @@
+# An assignment asks the objects above its target for a setter, which runs between the reads of the source. The expansion reads every field first,
+# so Object.assign to a literal that was given a prototype, as `{ __proto__: above }` and Object.create(above) are, stays a call
+# FORM: Prepared
+# OPTIONS: heat=EverythingIsHot check=VerifyEachPass
+# RUN: pass ExpandOwnKeys
+# STATISTIC: OwnKeyWalksExpanded = 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Empty"
+layout L1 name="Defaults" fields=[{key="a" declared={type=number}}, {key="b" declared={type=string}}] flow={constructorOrders=[{fields=[0, 1]}]}
+
+function f0 name="givenPrototype" parameters=[{type=object}, {type=object}] results=[{type=anything}] {
+  b0(v0: object ~ L1, v1: object):
+    v2 = NewObject layout=L0 fields=[]
+    SetLiteralPrototype v2, v1
+    v4 = CallBuiltin -, v2, v0 overload=ObjectAssign/0
+    Return v4
+# CHECK: SetLiteralPrototype v2, v1
+# CHECK-NEXT: v4:{{*}}= CallBuiltin -, v2, v0 overload=ObjectAssign/0
+# CHECK-NEXT: Return v4
+# CHECK-NOT: PropSet
+}
+
+function f1 name="ordinaryPrototype" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object ~ L1):
+    v1 = NewObject layout=L0 fields=[]
+    v2 = CallBuiltin -, v1, v0 overload=ObjectAssign/0
+    Return v2
+# CHECK: PropSet v1, {{*}} key="a"
+# CHECK-NEXT: PropSet v1, {{*}} key="b"
+}

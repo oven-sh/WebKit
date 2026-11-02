@@ -976,8 +976,10 @@ function buildHostObjects(context: AttachmentContext): ModelHostObject[] {
     }));
     const described = declared.function === null ? null : builder.resolve(declared.function, source);
     const prototype = declared.prototype === null ? null : resolveObject(builder, declared.prototype, source);
+    const holder = declared.holder === null ? null : builder.resolve(declared.holder, source);
     if ((declared.function !== null && described === null) || (declared.prototype !== null && prototype === null))
       continue;
+    if (declared.holder !== null && holder === null) continue;
     objects.push({
       cell: builder.internName(declared.cell, "Text"),
       function: described,
@@ -991,6 +993,8 @@ function buildHostObjects(context: AttachmentContext): ModelHostObject[] {
       internalFields: internalFields.flatMap(({ index, uses }) => (uses === null ? [] : [{ index, uses }])),
       keepsStringsOfStoredValues: declared.keepsStringsOfStoredValues,
       nativeAccessors: declared.nativeAccessors.map(name => builder.internComponent(name)),
+      lockedNames: declared.lockedNames.map(name => builder.internComponent(name)),
+      holder,
       platforms: declared.platforms,
       source,
     });

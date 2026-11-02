@@ -942,9 +942,10 @@ bool FramePlanner::mayLeakContentsThrough(const ObjectUse& entry) const
     return *known;
 }
 
+// Whoever is lent a closure and does not borrow it moves it to the heap, with what it holds.
 bool FramePlanner::leaksContents(ObjectID cell) const
 {
-    return std::ranges::any_of(m_escape.usesOf(cell), [&](const ObjectUse& entry) {
+    return isLent(cell) || std::ranges::any_of(m_escape.usesOf(cell), [&](const ObjectUse& entry) {
         return mayLeakContentsThrough(entry);
     });
 }

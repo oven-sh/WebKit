@@ -1390,12 +1390,17 @@ bool guardProvesSlotFilled(FunctionAnalyses& analyses, const Value& slotOperatio
         return false;
 
     const Program& program = analyses.program();
-    bool testOfCellAnswers = isAnsweredByTestOfCell(program, slotOperation);
+    std::optional<bool> testOfCellAnswers;
+    auto askTestOfCell = [&] {
+        if (!testOfCellAnswers)
+            testOfCellAnswers = isAnsweredByTestOfCell(program, slotOperation);
+        return *testOfCellAnswers;
+    };
     ValueID object = analyses.identityOf(slotOperation.objectOperand());
     bool isProven = std::ranges::any_of(analyses.guardFacts(guard).facts, [&](const GuardFact& fact) {
         if (fact.subject != object)
             return false;
-        return provesSlotFilled(program, analyses.function(), fact, slotOperation.key()) || (testOfCellAnswers && fact.proves(Proof::BirthFieldsFilled)) || isFilledBehindEveryAllocation(analyses, fact, slotOperation);
+        return provesSlotFilled(program, analyses.function(), fact, slotOperation.key()) || (fact.proves(Proof::BirthFieldsFilled) && askTestOfCell()) || isFilledBehindEveryAllocation(analyses, fact, slotOperation);
     });
     RELEASE_ASSERT(mayBeProven || !isProven);
     return isProven;

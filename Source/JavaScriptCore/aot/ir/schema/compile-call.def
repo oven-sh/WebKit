@@ -197,11 +197,12 @@ enum Sabotage {
     ReadsEnterNoGetterThatEscaped
     RopesPassForFlatStrings
     EscapedObjectsBearOnlyTheirOwnMarks
+    FunctionsMarkNoCard
 }
 flags Instrumentation { CountBranches CountArrivals }
 flags AdmittedCode { Inspector ReplacedBuiltins FilesRunByHost }
 flags ExcludedCode { EvaluatedText FunctionSource CodeOutsideImage HostEvaluatedText ForeignCalls ForeignCallsOfUnseenCode LibraryText }
-flags OutputOptions { Obfuscate SharesRealms HoldsLibraryAlone RunsInSeveralRealms }
+flags OutputOptions { Obfuscate SharesRealms RunsInSeveralRealms }
 record SwitchRange abi { firstID: UInt32 count: UInt32 }
 record DroppedGuardWords abi { opcode: UInt32 ordinal: UInt32 }
 record PredictionFailureWords abi { period: UInt32 seed: UInt32 }
@@ -211,7 +212,7 @@ record BisectionSwitches abi {
     droppedGuard: DroppedGuardWords predictionFailure: PredictionFailureWords flowSchedule: FlowScheduleWords
 }
 record ImagesBelowWords abi { address: UInt64 size: UInt64 }
-record TargetOptions abi { features: UInt64 featuresKeptOnlyWhenNamed: UInt64[8] imagesBelow: ImagesBelowWords referenceLibraryImage: ImagesBelowWords architecture: Architecture referenceWidth: ReferenceWidth imageForm: ImageForm reserved: UInt32 }
+record TargetOptions abi { features: UInt64 featuresKeptOnlyWhenNamed: UInt64[8] imagesBelow: ImagesBelowWords architecture: Architecture referenceWidth: ReferenceWidth imageForm: ImageForm reserved: UInt32 }
 record CompileOptions abi {
     bisection: BisectionSwitches target: TargetOptions loweredLimitValue: UInt64 sizeClassProgression: Double removedFeatures: UInt64[8] executableIdentity: UInt8[16] size: UInt32
     action: CompileAction mismatchPolicy: MismatchPolicy checks: CheckSet reports: ReportSet testing: TestingSwitch instrumentation: Instrumentation

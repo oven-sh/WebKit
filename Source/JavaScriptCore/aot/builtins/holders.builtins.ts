@@ -511,10 +511,12 @@ export default b.declarations(
   }),
   b.class("%MapIterator%", {
     ...lockedIteratorColumns,
+    jsType: "JSMapIteratorType",
     proto: { next: libraryStep("MapIteratorPrototype", "next", iteratorResult) },
   }),
   b.class("%SetIterator%", {
     ...lockedIteratorColumns,
+    jsType: "JSSetIteratorType",
     proto: { next: libraryStep("SetIteratorPrototype", "next", iteratorResult) },
   }),
   b.class("%StringIterator%", {

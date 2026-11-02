@@ -135,34 +135,7 @@ void BuiltinTableOfBuild::lockByNames(BuiltinID wholeObject)
     m_closedKeys.insert(position, BuiltinClosedKeys { wholeObject, m_closedSymbols.last().span(), { } });
 }
 
-// The names that no test run adds stay closed, each by itself.
-void BuiltinTableOfBuild::openToNames(BuiltinID holder)
-{
-    lockByNames(holder);
-    Vector<BuiltinName> closed(m_table.closedKeysOf(holder));
-    size_t position = std::ranges::lower_bound(m_closedKeys, holder, { }, &BuiltinClosedKeys::holder) - m_closedKeys.begin();
-    bool hasRecord = position < m_closedKeys.size() && m_closedKeys[position].holder == holder;
-    if (hasRecord)
-        closed = Vector<BuiltinName>(m_closedKeys[position].names);
-    for (uint32_t index = 0; index < m_table.nameCount(); ++index) {
-        BuiltinName name(index);
-        if (name && !m_table.isSymbolName(name) && !m_table.findOwnMember(holder, name) && !m_table.canTakeNameInTestRuns(holder, name) && !std::ranges::binary_search(m_table.openNamesOf(holder), name))
-            closed.append(name);
-    }
-    AOT::sort(closed);
-    closed.shrink(closed.size() - std::ranges::unique(closed).size());
-    m_closedSymbols.append(WTF::move(closed));
-    if (hasRecord)
-        m_closedKeys[position] = BuiltinClosedKeys { holder, m_closedSymbols.last().span(), { } };
-    else
-        m_closedKeys.insert(position, BuiltinClosedKeys { holder, m_closedSymbols.last().span(), { } });
-    for (uint32_t index = 0; index < m_builtins.size(); ++index) {
-        if (BuiltinID(index) == holder || m_builtins[index].sameObjectAs == holder)
-            m_builtins[index].flags.remove(BuiltinFlag::IsClosedToOtherNames);
-    }
-}
-
-void BuiltinTableOfBuild::unlock(std::span<const BuiltinID> members, std::span<const BuiltinID> holdersOfNewNames, bool opensEveryHolder)
+void BuiltinTableOfBuild::unlock(std::span<const BuiltinID> members, std::span<const BuiltinID> holdersOfNewNames)
 {
     RELEASE_ASSERT(m_builtins.isEmpty());
     for (BuiltinID member : members) {
@@ -170,7 +143,7 @@ void BuiltinTableOfBuild::unlock(std::span<const BuiltinID> members, std::span<c
         if (m_table.contains(member) && (m_table.canBeReplacedInTestRuns(member) || m_table.at(member).mutability == BuiltinMutability::ConstantUnlessWritten))
             m_unlockedMembers.append(member);
     }
-    if (m_unlockedMembers.isEmpty() && holdersOfNewNames.empty() && !opensEveryHolder)
+    if (m_unlockedMembers.isEmpty() && holdersOfNewNames.empty())
         return;
     m_builtins = Vector<Builtin>(m_data.builtins);
     m_lockedObjects = Vector<BuiltinID>(m_data.runtime.lockedObjects);
@@ -185,10 +158,6 @@ void BuiltinTableOfBuild::unlock(std::span<const BuiltinID> members, std::span<c
     }
     for (BuiltinID holder : holdersOfNewNames)
         lockByNames(holder);
-    for (uint32_t index = 0; opensEveryHolder && index < m_builtins.size(); ++index) {
-        if (m_table.canonicalID(BuiltinID(index)) == BuiltinID(index) && m_table.canTakeNameInTestRuns(BuiltinID(index), { }))
-            openToNames(BuiltinID(index));
-    }
     m_data.builtins = m_builtins.span();
     m_data.runtime.lockedMembers = m_lockedMembers.span();
     m_data.runtime.lockedObjects = m_lockedObjects.span();
@@ -217,8 +186,8 @@ void Program::unlockReplaceableBuiltins()
         holdersOfNewNames.append(opened.holder);
         m_namesOpenedSomewhere.set(opened.name.index());
     }
-    m_tableOfBuild.unlock(members.span(), holdersOfNewNames.span(), takesAnyNameFromTests);
-    m_testsReplaceBuiltins = takesAnyNameFromTests || !openedNames.isEmpty() || !losesLockOfTable.isEmpty();
+    m_tableOfBuild.unlock(members.span(), holdersOfNewNames.span());
+    m_testsReplaceBuiltins = !openedNames.isEmpty() || !losesLockOfTable.isEmpty();
     if (unlockedBuiltins().empty() && openedNames.isEmpty())
         return;
 

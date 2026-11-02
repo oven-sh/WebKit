@@ -401,6 +401,8 @@ function dumpHostObject(object: ModelHostObject): DumpedHostObject {
     })),
     keepsStringsOfStoredValues: object.keepsStringsOfStoredValues,
     nativeAccessors: object.nativeAccessors.map(spellingOf),
+    lockedNames: object.lockedNames.map(spellingOf),
+    holder: object.holder?.token ?? null,
     platforms: inListOrder(targetPlatforms, object.platforms),
   };
 }

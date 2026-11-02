@@ -336,12 +336,6 @@ public:
             } else
                 reportInvalid(m_wire.target.imagesBelow.size);
         }
-        if (m_wire.target.referenceLibraryImage.size) {
-            if (options.holdsLibraryAlone())
-                options.referenceLibraryImage = std::span { std::bit_cast<const uint8_t*>(static_cast<uintptr_t>(m_wire.target.referenceLibraryImage.address)), static_cast<size_t>(m_wire.target.referenceLibraryImage.size) };
-            else
-                reportInvalid(m_wire.target.referenceLibraryImage.size);
-        }
         options.executableIdentity = m_wire.executableIdentity;
         options.removedFeatures = m_wire.removedFeatures;
         options.featuresKeptOnlyWhenNamed = m_wire.target.featuresKeptOnlyWhenNamed;

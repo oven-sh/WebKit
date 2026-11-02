@@ -64,7 +64,6 @@ bool Reader::readReplaceableBuiltins()
         AOT::sort(members, { }, &ReplaceableBuiltin::member);
         members.shrink(members.size() - std::ranges::unique(members, { }, &ReplaceableBuiltin::member).size());
     }
-    m_program.takesAnyNameFromTests = m_build.options().holdsLibraryAlone();
     if (bool byRule = m_build.recordedOptions().isSabotaged(Sabotage::MemoryRunsOutWhenCountedByRule); byRule != lackOfMemoryThrowsByRule) [[unlikely]]
         lackOfMemoryThrowsByRule = byRule;
     m_program.unlockReplaceableBuiltins();

@@ -1,0 +1,24 @@
+# Who names the heap of a field whose reading takes more for granted than a type says, and who calls a function that trusts its caller: <name> | <file> | <how often> | <why each is right>.
+# aot/codegen/generator/reads-that-assume.ts holds the sources to these counts in every build. A declaration and a definition count as well.
+JSString_value | builtins/AOTHashTableBuiltinEmitter.cpp | 5 | two test the rope bit next to the load, in front of any read through the word; three only compare the word with another one, which is right for a rope too
+JSString_value | codegen/AOTInnerPointerValidation.cpp | 1 | a list of heaps, no load
+JSString_value | codegen/AOTPrimitiveEmitter.h | 1 | isRopeString(): it is the test
+JSString_value | codegen/AOTRuntimeValidationEmitter.cpp | 1 | tests the rope bit next to the load
+JSString_value | codegen/AOTStringBuilderEmitter.cpp | 1 | tests the rope bit, reads nothing through the word
+JSString_value | codegen/AOTStringBuiltinEmitter.cpp | 1 | tests the rope bit next to the load
+JSString_value | codegen/AOTStringEmitter.cpp | 7 | implOfFlatString() takes a FlatStringCell; viewOfFlatString() is listed below; three test the rope bit next to the load; one reads behind the stub that has resolved the rope in place, or off the base of a substring, which is flat; one reads what FlattenString has just made
+JSString_value | codegen/AOTStringEmitterComparisons.cpp | 4 | areBoth8Bit() is listed below; one only compares the word with the address of an atom; two test the rope bit next to the load
+JSString_value | codegen/AOTStringSwitch.cpp | 1 | tests the rope bit next to the load
+flatStringWrittenHere | builtins/AOTHashTableBuiltinEmitter.cpp | 1 | the cell is the key in its boxed form with the box taken off: a key without a number in its type is handed on as it came
+flatStringWrittenHere | codegen/AOTStringEmitter.cpp | 2 | the definition; flatStringAssumedBy() hands it the cell that it has just made of the same value
+flatStringWrittenHere | codegen/AOTStringEmitter.h | 1 | the declaration
+flatStringAssumedBy | codegen/AOTStringEmitter.cpp | 2 | the definition; under a sabotage alone, which shows that it stops the build
+flatStringAssumedBy | codegen/AOTStringEmitter.h | 1 | the declaration
+viewOfFlatString | builtins/AOTMathBuiltinEmitterNumbers.cpp | 1 | behind isRopeString() of the same cell
+viewOfFlatString | codegen/AOTStringBuiltinEmitter.cpp | 5 | each behind isRopeString() of the same cell
+viewOfFlatString | codegen/AOTStringEmitter.cpp | 1 | the definition
+viewOfFlatString | codegen/AOTStringEmitter.h | 1 | the declaration
+viewOfFlatString | codegen/AOTStringEmitterComparisons.cpp | 1 | behind isRopeString() of the same cell
+areBoth8Bit | codegen/AOTOperatorEmitterEquality.cpp | 1 | both operands are one character read off a string, which is flat; such a read inherits nothing, because the prototypes of built-ins are read-only in compiled code
+areBoth8Bit | codegen/AOTStringEmitter.h | 1 | the declaration
+areBoth8Bit | codegen/AOTStringEmitterComparisons.cpp | 1 | the definition

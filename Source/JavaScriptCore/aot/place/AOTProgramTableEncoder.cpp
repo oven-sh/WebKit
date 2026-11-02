@@ -3666,16 +3666,8 @@ static void encodeBuiltinAndBigIntTables(TableEncoder& encoder)
     for (BuiltinID member : constantBuiltinMembersToLock(encoder.program, encoder.flow))
         members.append(member.index());
     BitVector unlocked = encoder.flow.builtinMembersWrittenInSharedRealm();
-    // What an image that holds the library alone takes for unlocked is whatever any run may open. The images over it take over what is listed here, so it lists what it writes itself.
-    if (!encoder.build.options().holdsLibraryAlone()) {
-        for (BuiltinID member : encoder.program.unlockedBuiltins())
-            unlocked.set(member.index());
-    } else if (const ImagesBelow* library = encoder.build.referenceLibraryImage()) {
-        unlocked.clearAll();
-        library->forEachUnlockedBuiltinMember([&](BuiltinID member) {
-            unlocked.set(member.index());
-        });
-    }
+    for (BuiltinID member : encoder.program.unlockedBuiltins())
+        unlocked.set(member.index());
     for (size_t member : unlocked)
         members.append(static_cast<uint32_t>(member) | ProgramTables::unlockedBuiltinMember);
     for (const OpenedName& opened : encoder.program.openedNames)

@@ -145,15 +145,20 @@ LayoutsOfObjects::LayoutsOfObjects(const ValueFlowResultInputs& inputs, ValueFlo
                 m_objectsOfLayout[index] = makers.of(worker).of(objectsOfLayouts.subspan(firstObjectOfLayout[index], firstObjectOfLayout[index + 1] - firstObjectOfLayout[index]));
         });
     }
-    auto addToEach = [&](const Vector<LayoutID>& layouts, const Vector<ValueFlowObjectID>& objects) {
+    m_partsOfObjectsOfLayout = m_objectsOfLayout.map([](ValueSetID own) {
+        return PartsOfObjects { own };
+    });
+    auto addToEach = [&](const Vector<LayoutID>& layouts, const Vector<ValueFlowObjectID>& objects, ValueSetID& set, bool PartsOfObjects::* holds) {
         if (objects.isEmpty())
             return;
-        ValueSetID set = maker.of(objects.span());
-        for (LayoutID layout : layouts)
+        set = maker.of(objects.span());
+        for (LayoutID layout : layouts) {
             m_objectsOfLayout[layout.index()] = maker.unite(m_objectsOfLayout[layout.index()], set);
+            m_partsOfObjectsOfLayout[layout.index()].*holds = true;
+        }
     };
-    addToEach(m_escapedClasses, objectsOfEveryEscapedClass);
-    addToEach(m_lostClasses, objectsOfEveryLostClass);
+    addToEach(m_escapedClasses, objectsOfEveryEscapedClass, m_objectsOfEveryEscapedClass, &PartsOfObjects::holdsObjectsOfEveryEscapedClass);
+    addToEach(m_lostClasses, objectsOfEveryLostClass, m_objectsOfEveryLostClass, &PartsOfObjects::holdsObjectsOfEveryLostClass);
 }
 
 static Vector<PropertyKeyID> sortedKeysOf(const StoresIntoObjects& stores)

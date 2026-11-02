@@ -274,6 +274,16 @@ public:
 
     ValueSetID objectsWith(LayoutID layout) const { return m_objectsOfLayout[layout.index()]; }
 
+    // The same objects in parts. Thousands of layouts may hold the shared sets: what is asked of every member is asked of those once.
+    struct PartsOfObjects {
+        ValueSetID own { ValueSets::nothing };
+        bool holdsObjectsOfEveryEscapedClass { false };
+        bool holdsObjectsOfEveryLostClass { false };
+    };
+    PartsOfObjects partsOfObjectsWith(LayoutID layout) const { return m_partsOfObjectsOfLayout[layout.index()]; }
+    ValueSetID objectsOfEveryEscapedClass() const { return m_objectsOfEveryEscapedClass; }
+    ValueSetID objectsOfEveryLostClass() const { return m_objectsOfEveryLostClass; }
+
 private:
     struct SelectedLayouts {
         uint32_t list { 0 };
@@ -303,6 +313,9 @@ private:
     Vector<LayoutID> m_escapedClasses;
     Vector<LayoutID> m_lostClasses;
     Vector<ValueSetID> m_objectsOfLayout;
+    Vector<PartsOfObjects> m_partsOfObjectsOfLayout;
+    ValueSetID m_objectsOfEveryEscapedClass { ValueSets::nothing };
+    ValueSetID m_objectsOfEveryLostClass { ValueSets::nothing };
 };
 
 struct StoredUnderKey {

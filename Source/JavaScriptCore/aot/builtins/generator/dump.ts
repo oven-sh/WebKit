@@ -294,6 +294,8 @@ export interface DumpedHostObject {
   fields: { name: string | null; value: DumpedPlace }[];
   keepsStringsOfStoredValues: boolean;
   nativeAccessors: string[];
+  lockedNames: string[];
+  holder: string | null;
   platforms: TargetPlatform[];
 }
 

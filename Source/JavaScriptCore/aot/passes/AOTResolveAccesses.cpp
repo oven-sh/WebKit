@@ -756,8 +756,10 @@ static bool listFirstStoresAtAllocation(FunctionPassContext& context, IRBuilder&
         state.placeTakenTo[index] = placeOfLastStore;
     };
     leavePlace(object.place);
-    for (uint32_t index : listedStores)
+    for (uint32_t index : listedStores) {
+        explainOperationThatGoes(function, values[index], InPlaceOfOperation::NothingByProofOfThePass);
         leavePlace(index);
+    }
     for (uint32_t index : movedBehindAllocation) {
         valuesAtPlace.append(function.at(state.block).values[index]);
         leavePlace(index);

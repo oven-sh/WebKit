@@ -1,6 +1,7 @@
 enum StatisticID {
     None
     SourceFilesChecked SourceFilesInferred SourceFilesTypesOnly SourceFilesData SourceFilesRuntime SourceFilesDemoted SourceFilesOfBunParsed SourceBytes SourceLines
+    SourceBytesOfPackages SourceLinesOfPackages SourceBytesOfDeclarations SourceLinesOfDeclarations SourceBytesOfBun SourceLinesOfBun
     AotFilesUsed CheckerQueries CheckerQueriesGivenUp CheckerMembersGivenUp UnionMembersCompared BuiltinTypesDegradedToViews ModulesBound FunctionsLowered
     KnownHelperFunctions KnownHelperCalls
     FunctionsDroppedByLink ProgramBytes EngineRuns WholeEngineRuns
@@ -30,7 +31,7 @@ enum StatisticID {
     FunctionsTypedFromNever FunctionsTypedFromChanges FunctionsTypedAsBefore ValuesTypedFromChanges
     FunctionPassRunsSkipped
     EffectsComputed EffectsKept
-    HandedOnReferencesRead OperandsSummarizedForFrames FunctionsBelowEntrancesInCyclesVisited ValuesReadForClassesBelowCopies MembersReadForTypesOfCopies
+    HandedOnReferencesRead OperandsSummarizedForFrames FunctionsBelowEntrancesInCyclesVisited ValuesReadForClassesBelowCopies MembersReadForTypesOfCopies ObjectsReadForActorsOpenOnLayouts
     BlocksReadForDefinitionsThroughTests BlocksVisitedForCyclesAvoidingBlocks BlocksReadForLoopsInsideLoops
     StackChecksCoveredByCallers StackChecksDeferredToCallee TailRecursionsEliminated ReturnCallsDemoted ResultsBoxedForTailCalls SecondaryEntries ParametersLetGo
     StretchesGuarded TypeTestsPlaced TypeTestsTypedByOtherOperands StretchesNotClonable GuardsEliminated QuestionsAboutWhoEndsGuards UnionsSplit LoopParametersTestedInFrontOfLoops FailedTestsReadForSubjects

@@ -40,6 +40,7 @@
 #include "Reg.h"
 #include "SubspaceInlines.h"
 #include <array>
+#include <bit>
 #include <wtf/DataLog.h>
 #include <wtf/HexNumber.h>
 #include <wtf/Lock.h>
@@ -642,7 +643,12 @@ static constexpr auto traitsOfEveryRepresentation = [] {
     return traits;
 }();
 
-std::optional<SlotOutsideType> findSlotOutsideType(VM& vm, const Object& object)
+#if COMPILER(CLANG)
+#pragma clang attribute push(__attribute__((minsize)), apply_to = function)
+#endif
+
+// Field by field, in the order of the layout. It names the slot once the plan has found one, so a report reads the same whatever the order of the plan is.
+static NEVER_INLINE std::optional<SlotOutsideType> findSlotOutsideTypeFieldByField(VM& vm, const Object& object)
 {
     State& state = object.state();
     const LayoutData& layout = object.layout();
@@ -702,6 +708,143 @@ std::optional<SlotOutsideType> findSlotOutsideType(VM& vm, const Object& object)
             return SlotOutsideType { &field, bits, true, value };
     }
     return std::nullopt;
+}
+
+static NEVER_INLINE const SlotPlan& makePlan(RecheckedCells& rechecked, State& state, const LayoutData& layout)
+{
+    auto plan = makeUnique<SlotPlan>();
+    auto checkOf = [&](const FieldData& field) {
+        SlotRepresentation representation = field.slot.representation();
+        const RuntimeType& type = state.objects->layouts.typeOf(field);
+        OptionSet<PrimitiveSet> primitives = type.primitiveSet();
+        int64_t least = representation == SlotRepresentation::OptionalInt32 ? minInlineInt32 : std::numeric_limits<int32_t>::min();
+        int64_t greatest = std::numeric_limits<int32_t>::max();
+        if (auto range = type.integerRange()) {
+            least = std::max(least, range->first);
+            greatest = std::min(greatest, range->second);
+        }
+        if (!primitives.contains(PrimitiveSet::Integer) || least > greatest) {
+            least = 1;
+            greatest = 0;
+        }
+        return SlotCheck {
+            .field = &field,
+            .type = &type,
+            .traits = &traitsOfEveryRepresentation[static_cast<size_t>(representation)],
+            .leastInteger = static_cast<int32_t>(least),
+            .greatestInteger = static_cast<int32_t>(greatest),
+            .offset = field.slot.offset,
+            .representation = representation,
+            .admitsUndefined = field.slotHoldsUndefinedAndNull || primitives.contains(PrimitiveSet::Undefined),
+            .admitsNull = field.slotHoldsUndefinedAndNull || primitives.contains(PrimitiveSet::Null),
+        };
+    };
+    // A brand is a class token, and what the slot of an accessor holds is not the value of the property. No type describes either.
+    auto isDescribed = [](const FieldData& field) {
+        return !field.isBrand() && !field.isAccessor();
+    };
+    Vector<const FieldData*, 16> fieldsOfExtension;
+    for (const FieldData& field : layout.fields()) {
+        if (!isDescribed(field))
+            continue;
+        if (field.isOutOfLine())
+            fieldsOfExtension.append(&field);
+        else
+            plan->checks.append(checkOf(field));
+    }
+    plan->numberInCell = plan->checks.size();
+    std::ranges::stable_sort(fieldsOfExtension, { }, [](const FieldData* field) {
+        return granuleOf(field->slot.offset);
+    });
+    for (const FieldData* field : fieldsOfExtension) {
+        unsigned granule = granuleOf(field->slot.offset);
+        SlotPlan::Range& range = plan->checksOfGranule[granule];
+        if (!(plan->granules & granuleBitOf(field->slot.offset))) {
+            plan->granules |= granuleBitOf(field->slot.offset);
+            range.begin = static_cast<uint16_t>(plan->checks.size());
+        }
+        plan->checks.append(checkOf(*field));
+        range.end = static_cast<uint16_t>(plan->checks.size());
+    }
+    RELEASE_ASSERT(plan->checks.size() <= std::numeric_limits<uint16_t>::max());
+    return *rechecked.plans.add(&layout, WTF::move(plan)).iterator->value;
+}
+
+#if COMPILER(CLANG)
+#pragma clang attribute pop
+#endif
+
+static ALWAYS_INLINE const SlotPlan& planOf(VM& vm, State& state, const LayoutData& layout)
+{
+    if (!vm.aotState().recheckedCells) [[unlikely]]
+        vm.aotState().recheckedCells = makeUnique<RecheckedCells>();
+    RecheckedCells& rechecked = *vm.aotState().recheckedCells;
+    if (rechecked.layoutAskedLast == &layout) [[likely]]
+        return *rechecked.planAskedLast;
+    auto found = rechecked.plans.find(&layout);
+    const SlotPlan& plan = found == rechecked.plans.end() ? makePlan(rechecked, state, layout) : *found->value;
+    rechecked.layoutAskedLast = &layout;
+    rechecked.planAskedLast = &plan;
+    return plan;
+}
+
+// What findSlotOutsideTypeFieldByField() asks of one field, in the same order.
+static ALWAYS_INLINE bool isOutsideType(VM& vm, State& state, const Object& object, const SlotCheck& check, const void* slot)
+{
+    const SlotTraits& traits = *check.traits;
+    uint64_t bits = readSlotBits(check.representation, slot);
+    if (bits == (traits.hasAbsent ? traits.absentBits : 0))
+        return false;
+    if ((traits.hasUndefined && bits == traits.undefinedBits) || (traits.hasNull && bits == traits.nullBits))
+        return !(bits == traits.undefinedBits ? check.admitsUndefined : check.admitsNull);
+    if (check.representation == SlotRepresentation::Int32 || check.representation == SlotRepresentation::OptionalInt32) {
+        int32_t integer = static_cast<int32_t>(bits);
+        return integer < check.leastInteger || integer > check.greatestInteger;
+    }
+    if (traits.valueKind == SlotValueKind::LiteralString && isLiteralStringWord(bits))
+        return !slotMayHoldLiteralString(*state.instance.program, *check.type, bits);
+    if (!isFormOfValue(vm, check.representation, traits, bits, cageBaseOf(&object)))
+        return true;
+    JSValue value = traits.valueKind == SlotValueKind::DeferredClosure ? JSValue(cellInSlot(check.representation, slot, cageBaseOf(&object))) : readSlot(check.representation, slot, *state.strings);
+    if (!value)
+        return false;
+    if (value.isCell() && value.asCell()->type() == CompiledEnvironmentType)
+        return false;
+    return !slotMayHold(state, *check.type, value);
+}
+
+static ALWAYS_INLINE bool hasSlotOutsideType(VM& vm, const Object& object)
+{
+    State& state = object.state();
+    const SlotPlan& plan = planOf(vm, state, object.layout());
+    std::span<const SlotCheck> checks = plan.checks.span();
+    for (const SlotCheck& check : checks.first(plan.numberInCell)) {
+        if (isOutsideType(vm, state, object, check, &object.at<uint8_t>(check.offset))) [[unlikely]]
+            return true;
+    }
+    if (!plan.granules)
+        return false;
+    Extension* extension = object.extension();
+    if (!extension)
+        return false;
+    // Only what the Extension of this object holds.
+    for (uint64_t held = extension->granuleBits() & plan.granules; held; held &= held - 1) {
+        SlotPlan::Range range = plan.checksOfGranule[std::countr_zero(held)];
+        for (const SlotCheck& check : checks.subspan(range.begin, range.end - range.begin)) {
+            if (isOutsideType(vm, state, object, check, extension->slot(check.offset))) [[unlikely]]
+                return true;
+        }
+    }
+    return false;
+}
+
+std::optional<SlotOutsideType> findSlotOutsideType(VM& vm, const Object& object)
+{
+    bool hasOne = hasSlotOutsideType(vm, object);
+    ASSERT(hasOne == !!findSlotOutsideTypeFieldByField(vm, object));
+    if (!hasOne) [[likely]]
+        return std::nullopt;
+    return findSlotOutsideTypeFieldByField(vm, object);
 }
 
 #if COMPILER(CLANG)

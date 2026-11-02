@@ -666,6 +666,9 @@ struct BuiltinHostObject {
     bool keepsStringsOfStoredValues { false };
     // For each of these names the object has an accessor whose getter and setter are native code.
     std::span<const BuiltinName> nativeAccessors { };
+    // The build reads what lies under these names, so native code locks them in a compiled program. The holder is the member that hands out the object.
+    std::span<const BuiltinName> lockedNames { };
+    BuiltinID holder { };
     // The systems on which native code makes the object.
     OptionSet<BuiltinPlatform> platforms { everyBuiltinPlatform };
 };
@@ -1114,13 +1117,11 @@ public:
 
     const BuiltinTable& table() const LIFETIME_BOUND { return m_table; }
     // `members` ascend. Leaves out a locked member that canBeReplacedInTestRuns() refuses. `holdersOfNewNames`: the objects that get a name of their own opened, which the caller keeps.
-    // `opensEveryHolder`: every object takes whatever name canTakeNameInTestRuns() admits.
-    void unlock(std::span<const BuiltinID> members, std::span<const BuiltinID> holdersOfNewNames, bool opensEveryHolder = false);
+    void unlock(std::span<const BuiltinID> members, std::span<const BuiltinID> holdersOfNewNames);
     std::span<const BuiltinID> unlockedMembers() const LIFETIME_BOUND { return m_unlockedMembers.span(); }
 
 private:
     void lockByNames(BuiltinID wholeObject);
-    void openToNames(BuiltinID holder);
 
     BuiltinTableData m_data;
     Vector<Builtin> m_builtins;

@@ -347,7 +347,7 @@ public:
     void write(const BuiltinHostObject& hostObject)
     {
         object("cell"_s, PlainName { hostObject.nativeCell }, "function"_s, hostObject.function, "prototype"_s, hostObject.prototype, "fields"_s, hostObject.fields,
-            "keepsStringsOfStoredValues"_s, hostObject.keepsStringsOfStoredValues, "nativeAccessors"_s, hostObject.nativeAccessors, "platforms"_s, hostObject.platforms);
+            "keepsStringsOfStoredValues"_s, hostObject.keepsStringsOfStoredValues, "nativeAccessors"_s, hostObject.nativeAccessors, "lockedNames"_s, hostObject.lockedNames, "holder"_s, hostObject.holder, "platforms"_s, hostObject.platforms);
     }
 
     void write(const FeatureUseSummary& summary)

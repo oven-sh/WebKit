@@ -33,7 +33,6 @@ public:
     static std::unique_ptr<ImagesBelow> tryCreate(std::span<const std::span<const uint8_t>> images);
 
     unsigned count() const { return m_images.size(); }
-    bool hasPrebuiltLibrary() const { return m_images.first()->holdsLibraryAlone(); }
     const ImageNumberRanges& numbersOfLast() const { return m_images.last()->header().numbers; }
     uint32_t capacityOfStringHeaders() const { return m_images.first()->header().numbers.capacityOfStringHeaders; }
     // Image::layoutIndicesBelow() of the image that is built.

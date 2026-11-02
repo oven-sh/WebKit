@@ -1466,6 +1466,11 @@ PassOutcome Pipeline::runProgramPass(PassID id)
             output.flow->setBorrowedParameters(m_analyses.borrowedParameters());
             ProgramCachesWithScratchTypes caches(m_program, m_build);
             output.flow->setFrameArrayParameters(computeFrameArrayParameters(m_program, m_build));
+            // The verifier asks the same tables whether a callee keeps what lies in a frame. A test that runs this pass alone has not handed it the results of flow.
+            if (VerifierInputs inputs = m_runner.verifierInputs(); !inputs.flow) {
+                inputs.flow = &flow();
+                m_runner.setVerifierInputs(inputs);
+            }
         }
         *output.frameAllocation = edit(id, allocateInFrames, inputsFor(id), *output.flow, m_build);
         return m_runner.lastProgramPassOutcome();

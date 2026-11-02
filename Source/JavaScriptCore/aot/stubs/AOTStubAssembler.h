@@ -176,6 +176,8 @@ public:
     void jumpThroughHandlerTable(BaseIndex tableEntry, std::span<const StubKey> handlers);
     void callThroughHandlerTable(BaseIndex tableEntry, std::span<const StubKey> handlers);
 
+    // In place of the assembler's own, which pads with breakpoints on ARM64.
+    void align();
     void bindEntry(StubKey entry) { bindEntryAt(entry, label()); }
     Label bindReturnLabel(StubFrameKind);
 

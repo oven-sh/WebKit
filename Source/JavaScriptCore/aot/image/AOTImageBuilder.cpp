@@ -750,8 +750,6 @@ static void writeHeader(ImageHeader& header, const ImageWriterInputs& parts, con
         flags.add(ImageFlag::IsObfuscated);
     if (context.options().sharesRealms())
         flags.add(ImageFlag::SharesRealms);
-    if (context.options().holdsLibraryAlone())
-        flags.add(ImageFlag::HoldsLibraryAlone);
     header.numbers = {
         .shapesBelow = context.imagesBelow() ? context.imagesBelow()->numbersOfLast().lastShape : 0,
         .lastShape = parts.inputs.pipeline.placement->shapes().numberOfShapes(),
