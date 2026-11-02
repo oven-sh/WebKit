@@ -375,10 +375,14 @@ struct CastSimplification : Rewrite {
             settleProofsBehindAnsweredChecks(function, claimsBehindChecks.span(), marksOfChecks());
     }
 
-    std::tuple<ValueID, TypeID, uint32_t> keyOf(ValueID id)
+    // Which test a cast is: of which value, with which result, and what it asks. A RequireType asks for the type that it names, every other cast for what its opcode says.
+    // Two of them that let the same values of a typed operand through are two tests all the same: where the check that typed the operand goes, they differ again.
+    using TestOfCast = std::tuple<ValueID, TypeID, uint32_t, TypeID>;
+
+    TestOfCast keyOf(ValueID id)
     {
         const Value& cast = at(id);
-        return { substitution.resolve(cast.operand(0)), cast.type, static_cast<uint32_t>(cast.opcode) };
+        return { substitution.resolve(cast.operand(0)), cast.type, static_cast<uint32_t>(cast.opcode), cast.opcode == Opcode::RequireType ? cast.requiredType() : TypeID() };
     }
 
     uint64_t bindingOf(const Value& access)
@@ -435,7 +439,7 @@ struct CastSimplification : Rewrite {
             Vector<uint64_t> hiddenBindingsPastDeadZone;
         };
         const Dominators& dominators = analyses.dominators();
-        HashMap<std::tuple<ValueID, TypeID, uint32_t>, ValueID> passed;
+        HashMap<TestOfCast, ValueID> passed;
         // A number stands for a variable, or for a field of the environment that a value of the function holds. In the order in which they were found: one that is found again further down is not listed twice.
         Vector<uint64_t> bindingsPastDeadZone;
         HashSet<uint64_t> isPastDeadZone;

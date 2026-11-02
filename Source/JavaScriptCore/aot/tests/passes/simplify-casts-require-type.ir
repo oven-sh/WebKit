@@ -3,6 +3,7 @@
 # it come to say of it, and the test stays without a reader for Select to hand back to its link.
 # It is a test of the language: it stays while a check stands in front of its operand, and the generic version has it. What the value was in front of the check may answer it all the
 # same, and then it goes.
+# Two tests that ask for other types are two tests, also where the type that a check gave their operand lets the same values through both: the generic version has both.
 # FORM: Prepared
 # OPTIONS: check=VerifyEachPass
 # RUN: pass SimplifyCasts VerifyProgram
@@ -87,6 +88,19 @@ function f8 name="answeredInFrontOfCheck" parameters=[{type=object}] results=[{t
 # CHECK: v1: L0 = Check v0 expectedType=L0 site=w0
 # CHECK-NEXT: Return v1
 }
+
+function f9 name="twoTestsThatAskForOtherTypesBehindCheck" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Check v0 expectedType=object site=w0 cause=MayFail
+    v2 = RequireType v1 requiredType=null|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate
+    v3 = RequireType v1 requiredType=object runtimeError=IteratorResultNotObject
+    Return v3
+# CHECK: = RequireType v1 requiredType=null|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate
+# CHECK-NEXT: = RequireType v1 requiredType=object runtimeError=IteratorResultNotObject
+}
 # VERSIONS-LABEL: function f7 name="behindCheck"
 # VERSIONS-NOT: = Check
 # VERSIONS: = RequireType v0 requiredType=null|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate
+# VERSIONS-LABEL: function f9 name="twoTestsThatAskForOtherTypesBehindCheck"
+# VERSIONS-NOT: = Check
+# VERSIONS: = RequireType v0 requiredType=null|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate
+# VERSIONS-NEXT: = RequireType {{*}} requiredType=object runtimeError=IteratorResultNotObject
