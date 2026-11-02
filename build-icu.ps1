@@ -102,8 +102,10 @@ if (-not (Test-Path $ICU_SOURCE_DIR)) {
     $extractDir = Split-Path -Parent $OutputDir
     tar.exe -xzf $ICU_TARBALL -C $extractDir
     if ($LASTEXITCODE -ne 0) { throw "tar failed with exit code $LASTEXITCODE" }
-    # The patch has to stay a plain diff: in a directory of a repository, git apply skips a "diff --git" one and exits with 0.
+    # A patch has to stay a plain diff: in a directory of a repository, git apply skips a "diff --git" one and exits with 0.
     git -C $OutputDir apply --ignore-whitespace (Join-Path $PSScriptRoot "icu/decnum-allocation-failure.patch")
+    if ($LASTEXITCODE -ne 0) { throw "git apply failed with exit code $LASTEXITCODE" }
+    git -C $OutputDir apply --ignore-whitespace (Join-Path $PSScriptRoot "icu/decimfmt-default-locale-symbols.patch")
     if ($LASTEXITCODE -ne 0) { throw "git apply failed with exit code $LASTEXITCODE" }
     Set-Content -Path $ICU_SOURCE_STAMP -Value $ICU_VERSION
 }
