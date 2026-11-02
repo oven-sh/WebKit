@@ -229,6 +229,12 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
 #endif
     // 3. Let realm be module.[[Realm]].
     // 4. Assert: realm is not undefined.
+    // Armed before step 6: the exception check behind it can begin a termination, and Link() then puts the module back to UNLINKED.
+    auto cleanup = WTF::makeScopeExit([&] {
+        if (!m_initialized)
+            m_moduleEnvironment.clear();
+    });
+
     SymbolTable* symbolTable = nullptr;
     if (jsModule) {
         // 5. Let env be NewModuleEnvironment(realm.[[GlobalEnv]]).
@@ -241,11 +247,6 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
         setModuleEnvironment(globalObject, env);
         RETURN_IF_EXCEPTION(scope, void());
     }
-
-    auto cleanup = WTF::makeScopeExit([&] {
-        if (!m_initialized)
-            m_moduleEnvironment.clear();
-    });
 
     // 7. For each ImportEntry Record in of module.[[ImportEntries]], do
     // Steps 7.b onward for one entry; the caller checks for an exception.
