@@ -1,0 +1,31 @@
+# function nine(a, b, c, d, e, f, g, h, i) { i() }
+# pick = nine.bind(receiver); pick.call(null, 0, 0, 0, 0, 0, 0, 0, 0, cb)
+# The call of the bound function goes through a description of the call that lists its first eight arguments and holds the later ones together. The group of the target keeps nine
+# positions for the sake of nine, so the description hands the later arguments to the ninth position too: cb reaches the ninth parameter, beside undefined (primitive 0), since the
+# description does not say which later positions were filled. Without that, the ninth parameter would hold nothing, and cb would be reported unreached.
+# RUN: valueflow-solve calls primitives
+# CHECK: f1 v9 -> primitive0 f2
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Receiver"
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = PropGet v0 key="bind"
+    v2 = NewObject layout=L0 fields=[]
+    v3 = Call v1, v0, v2 calleeKey="bind"
+    v4 = NewClosure function=f2
+    v5 = Integer integer=0
+    v6 = PropGet v3 key="call"
+    v7 = Call v6, v3, v5, v5, v5, v5, v5, v5, v5, v5, v5, v4 calleeKey="call"
+    Return
+}
+function f1 name="nine" module=m0 parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v9 = Call v8, -
+    Return
+}
+function f2 name="cb" module=m0 results=[{type=anything}] {
+    Return
+}

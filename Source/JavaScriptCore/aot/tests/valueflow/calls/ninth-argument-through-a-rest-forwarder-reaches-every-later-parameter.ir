@@ -1,0 +1,36 @@
+# function both(a, b, c, d, e, f, g, h, i, j) { i(); j() }  function wrap(...args) { both(...args) }
+# wrap(0, 0, 0, 0, 0, 0, 0, 0, nine, ten)
+# The cells of a rest array go by the positions every group keeps, eight: the ninth and the tenth argument lie among the later arguments of wrap's array, and the spread hands them to
+# the ninth and the tenth parameter of both together, with undefined (primitive 0). The build names both under MaxGroupedArgumentsOfOtherCalls, as the direct call would under the limit.
+# LOSS: MaxGroupedArgumentsOfOtherCalls x1 f1
+# RUN: valueflow-solve calls primitives
+# CHECK: f1 v10 -> primitive0 f3 f4
+# CHECK: f1 v11 -> primitive0 f3 f4
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewClosure function=f4
+    v4 = Integer integer=0
+    v5 = Call v1, -, v4, v4, v4, v4, v4, v4, v4, v4, v2, v3
+    Return
+}
+function f1 name="both" module=m0 parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v10 = Call v8, -
+    v11 = Call v9, -
+    Return
+}
+function f2 name="wrap" module=m0 flags=[HasRestParameter] parameters=[{type=Array}] results=[{type=anything}] {
+    v1 = NewClosure function=f1
+    v2 = CallList v1, -, v0
+    Return v2
+}
+function f3 name="nine" module=m0 results=[{type=anything}] {
+    Return
+}
+function f4 name="ten" module=m0 results=[{type=anything}] {
+    Return
+}

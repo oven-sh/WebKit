@@ -1,0 +1,32 @@
+# function walk8(a, b, c, d, e, f, g, h) { h() }  function walk9(a, b, c, d, e, f, g, h, i) { i() }
+# fn = walk8; fn = walk9; fn(0, 0, 0, 0, 0, 0, 0, eight)
+# The group keeps nine positions, and the call fills eight: the ninth parameter of walk9 is undefined (primitive 0) alone, and the eighth parameter of walk8 gets the eighth argument alone.
+# RUN: valueflow-solve calls primitives
+# CHECK: f1 v8 -> f3
+# CHECK: f2 v9 -> primitive0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="fn" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    PutModuleVariable v0 variable=g0
+    PutModuleVariable v1 variable=g0
+    v5 = GetModuleVariable variable=g0
+    v6 = Integer integer=0
+    v7 = Call v5, -, v6, v6, v6, v6, v6, v6, v6, v2
+    Return
+}
+function f1 name="walk8" module=m0 parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v8 = Call v7, -
+    Return
+}
+function f2 name="walk9" module=m0 parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v9 = Call v8, -
+    Return
+}
+function f3 name="eight" module=m0 results=[{type=anything}] {
+    Return
+}

@@ -930,15 +930,61 @@ const ValueFlowRareFactsOfText* ValueFlowRuleContext::rareFactsOfText(const Valu
     return &*found;
 }
 
+// The same callees always get the same group, whoever asks: the count is a function of the callees alone. A group of callees that are all functions of the program keeps a node for each
+// position up to the most positional parameters among them. One that a built-in, an object nobody knows or a closure that an entry table describes may be called through keeps the fewest:
+// the tables read the arguments by position up to that count, and what is behind it from laterArguments.
+unsigned ValueFlowRuleContext::numberOfArgumentsGroupedFor(ClimbingSet callees) const
+{
+    const ValueFlowSolverInput& input = m_solver.m_input;
+    if (!input.universe || !input.program || input.mostGroupedArguments <= fewestGroupedArguments)
+        return fewestGroupedArguments;
+    if (ValueSets::isComplement(callees.m_set) || numberOfMembers(callees) > input.mostMembersToldApart)
+        return fewestGroupedArguments;
+    const ValueFlowUniverse& universe = *input.universe;
+    const Program& program = *input.program;
+    unsigned most = fewestGroupedArguments;
+    bool isEveryCalleeAFunction = true;
+    forEachMemberInLine(callees, [&](ValueFlowObjectID callee) {
+        if (!isEveryCalleeAFunction)
+            return;
+        FunctionID function = universe.closureFunction(callee);
+        if (!function || sets().contains(universe.builtinTables().closuresThatEntriesDescribe(), callee)) {
+            isEveryCalleeAFunction = false;
+            return;
+        }
+        most = std::max<unsigned>(most, program.at(function).numberOfPositionalParameters());
+    });
+    if (!isEveryCalleeAFunction)
+        return fewestGroupedArguments;
+    return static_cast<unsigned>(std::min<uint64_t>(most, input.mostGroupedArguments));
+}
+
 ValueFlowCallGroup ValueFlowRuleContext::group(ClimbingSet callees, ValueFlowCallKind kind, ValueFlowCalleeOrigin origin, ValueFlowArgumentsLeftOut leftOut)
 {
     bool mayBeWhateverHasEscaped = origin == ValueFlowCalleeOrigin::Value && kind != ValueFlowCallKind::Get && kind != ValueFlowCallKind::Set;
     if (mayBeWhateverHasEscaped && m_solver.m_input.nodes && m_solver.m_input.universe && sets().contains(callees.m_set, ValueFlowUniverse::unknownObject()))
         add(nodes().ofHost(ValueFlowHostNode::ValueNobodyKnowsIsCalled), ClimbingSet(leavesOutSomeUnknownSource() ? universe().undefinedValue() : universe().unknownObjectAlone()));
-    ValueFlowCallGroup group = callGroupAt(nodeFor(ValueFlowNodeKey::callGroup(callees.m_set, kind, m_markerEntered)));
+    unsigned numberOfArguments = numberOfArgumentsGroupedFor(callees);
+    ValueFlowCallGroup group = callGroupAt(nodeFor(ValueFlowNodeKey::callGroup(callees.m_set, kind, m_markerEntered, numberOfArguments)), numberOfArguments);
     if (kind == ValueFlowCallKind::CallByNativeCode && leftOut == ValueFlowArgumentsLeftOut::AnyOfThem && m_solver.m_input.universe)
         add(group.anyArgumentLeftOut(), ClimbingSet(universe().undefinedValue()));
     return group;
+}
+
+// The group that the statement of this turn runs for. A part of a larger group keeps as many arguments as the whole, which may be more than its own callees ask for.
+ValueFlowCallGroup ValueFlowRuleContext::groupOfKey()
+{
+    const ValueFlowNodeKey& key = keyOfStatement();
+    ASSERT(key.kind == ValueFlowMadeNodeKind::CallGroup && key.markerOfCallGroup() == m_markerEntered);
+    return callGroupAt(nodeFor(key), key);
+}
+
+uint64_t ValueFlowRuleContext::mostGroupedArguments() const { return m_solver.m_input.mostGroupedArguments; }
+
+void ValueFlowRuleContext::noteParameterBehindGroupedArguments(FunctionID function, LimitID limit)
+{
+    ASSERT(limit == LimitID::MaxGroupedArguments || limit == LimitID::MaxGroupedArgumentsOfOtherCalls);
+    (limit == LimitID::MaxGroupedArguments ? m_log.functionsWithParametersBehindGroupedArguments : m_log.functionsWithParametersBehindGroupedArgumentsOfOtherCalls).append(function);
 }
 
 ValueFlowNodeID ValueFlowRuleContext::hub(ValueFlowBehaviorID behavior)

@@ -837,7 +837,7 @@ struct ValueFlowBuiltinApplication {
     // Not listed: a value that nobody knows is called, and the built-in has escaped.
     bool isCalleeListed { true };
     ValueSetID thisValue { ValueSets::nothing };
-    Vector<ValueSetID, numberOfGroupedArguments> arguments;
+    Vector<ValueSetID, fewestGroupedArguments> arguments;
     ValueSetID otherArguments { ValueSets::nothing };
 
     BuiltinCallMode mode() const;

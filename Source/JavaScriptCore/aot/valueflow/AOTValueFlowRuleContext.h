@@ -214,6 +214,11 @@ public:
     ValueFlowNodeID lookup(ClimbingSet receivers, ValueFlowName, LookupUse = LookupUse::Any);
     bool runsCodeThatRecordsDescribe() const;
     ValueFlowCallGroup group(ClimbingSet callees, ValueFlowCallKind, ValueFlowCalleeOrigin = ValueFlowCalleeOrigin::Value, ValueFlowArgumentsLeftOut = ValueFlowArgumentsLeftOut::AnyOfThem);
+    ValueFlowCallGroup groupOfKey();
+    unsigned numberOfArgumentsGroupedFor(ClimbingSet callees) const;
+    uint64_t mostGroupedArguments() const;
+    // A parameter of the function lies behind the positions its group keeps: under the limit, or through a call that keeps the fewest (MaxGroupedArgumentsOfOtherCalls).
+    void noteParameterBehindGroupedArguments(FunctionID, LimitID);
     ValueFlowNodeID hub(ValueFlowBehaviorID);
     ValueFlowNodeID masked(ValueFlowNodeID, ValueSetID mask, ValueFlowMaskKind = ValueFlowMaskKind::Plain);
 

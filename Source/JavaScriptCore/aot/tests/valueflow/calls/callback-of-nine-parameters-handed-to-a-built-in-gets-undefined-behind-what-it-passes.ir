@@ -1,0 +1,29 @@
+# function cb(a, b, c, d, e, f, g, h, i) { i(); d() }
+# [1].forEach(cb); cb(0, 0, 0, 0, 0, 0, 0, 0, nine)
+# forEach hands its callback three positions, and says so. The group of its call keeps nine positions for the sake of cb: the ninth parameter is undefined (primitive 0) through forEach,
+# as the fourth is, and the ninth argument of the direct call reaches it beside that.
+# RUN: valueflow-solve calls primitives
+# CHECK: f1 v9 -> primitive0 f2
+# CHECK: f1 v10 -> primitive0 primitive4
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Integer integer=1
+    v3 = NewArray v2 contents=anything
+    v4 = PropGet v3 key="forEach"
+    v5 = Call v4, v3, v0 calleeKey="forEach"
+    v6 = Integer integer=0
+    v7 = Call v0, -, v6, v6, v6, v6, v6, v6, v6, v6, v1
+    Return
+}
+function f1 name="cb" module=m0 parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v9 = Call v8, -
+    v10 = Call v3, -
+    Return
+}
+function f2 name="nine" module=m0 results=[{type=anything}] {
+    Return
+}

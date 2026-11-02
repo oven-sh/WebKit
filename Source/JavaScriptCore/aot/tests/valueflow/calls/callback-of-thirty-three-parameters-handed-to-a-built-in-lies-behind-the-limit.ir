@@ -1,0 +1,24 @@
+# function cb(p0, .., p32) { p32(); p31() }
+# [1].forEach(cb)
+# A callback with more positional parameters than the limit lets a group keep: the group keeps 32, and forEach says it passes three. Parameter 32 has a node of its own, and is
+# undefined (primitive 0) for what forEach leaves out. Parameter 33 lies behind the group, and receives every later argument, none here, and undefined. The build reports the limit.
+# LOSS: MaxGroupedArguments x1 f1
+# RUN: valueflow-solve calls primitives
+# CHECK: f1 v33 -> primitive0
+# CHECK: f1 v34 -> primitive0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Integer integer=1
+    v2 = NewArray v1 contents=anything
+    v3 = PropGet v2 key="forEach"
+    v4 = Call v3, v2, v0 calleeKey="forEach"
+    Return
+}
+function f1 name="cb" module=m0 parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v33 = Call v32, -
+    v34 = Call v31, -
+    Return
+}

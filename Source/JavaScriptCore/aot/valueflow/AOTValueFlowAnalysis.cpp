@@ -658,6 +658,7 @@ ValueFlowSolution::ValueFlowSolution(Program& program, BuildContext& build, Valu
         .mostSetMembers = build.limit(LimitID::MaxValueFlowSetMembers),
         .mostMembersToldApart = build.limit(LimitID::MaxValueFlowMembersToldApart),
         .mostObjectsListedByMember = build.limit(LimitID::MaxValueFlowObjectsListedByMember),
+        .mostGroupedArguments = std::min<uint64_t>(build.limit(LimitID::MaxGroupedArguments), mostGroupedArguments),
         .remembersWhoLoggedEachEdge = witnesses == Witnesses::ForEveryEdge || hasFlag(build.options().reports, ReportSet::Flow),
         .isAskedHowValuesCame = waysOfValues == WaysOfValues::AreAskedFor,
         .leavesOutWhatIsCovered = coveredMembers == CoveredMembers::AreLeftOut,

@@ -78,15 +78,16 @@ static ALWAYS_INLINE OptionSet<TraitOfMadeNodes> traitsOfMadeNodes(ValueFlowMade
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static ALWAYS_INLINE void forEachEdgeToPart(ValueFlowMadeNodeKind kindOfPart, ValueFlowNodeID first, ValueFlowNodeID firstOfPart, NOESCAPE const Invocable<void(ValueFlowEdge)> auto& functor)
+// A part of a call group has the layout of the whole: the same count of argument nodes, so that each node of the whole hands on to the node of the part at its offset.
+static ALWAYS_INLINE void forEachEdgeToPart(const ValueFlowNodeKey& keyOfPart, ValueFlowNodeID first, ValueFlowNodeID firstOfPart, NOESCAPE const Invocable<void(ValueFlowEdge)> auto& functor)
 {
-    if (kindOfPart != ValueFlowMadeNodeKind::CallGroup) {
-        bool takesFromPart = kindOfPart == ValueFlowMadeNodeKind::ReadUnderKind || kindOfPart == ValueFlowMadeNodeKind::Lookup;
+    if (keyOfPart.kind != ValueFlowMadeNodeKind::CallGroup) {
+        bool takesFromPart = keyOfPart.kind == ValueFlowMadeNodeKind::ReadUnderKind || keyOfPart.kind == ValueFlowMadeNodeKind::Lookup;
         functor(takesFromPart ? ValueFlowEdge { firstOfPart, first } : ValueFlowEdge { first, firstOfPart });
         return;
     }
-    ValueFlowCallGroup group = callGroupAt(first);
-    for (unsigned offset = 0; offset < ValueFlowNodeKey::numberOfNodesOfCallGroup; ++offset) {
+    ValueFlowCallGroup group = callGroupAt(first, keyOfPart);
+    for (unsigned offset = 0; offset < keyOfPart.numberOfNodes(); ++offset) {
         ValueFlowEdge down { ValueFlowNodeID(first.index() + offset), ValueFlowNodeID(firstOfPart.index() + offset) };
         bool comesBack = down.from == group.result || down.from == group.thrown;
         functor(comesBack ? ValueFlowEdge { down.to, down.from } : down);
@@ -1458,7 +1459,7 @@ private:
             m_setsOfParts.shrink(0);
             m_maker->appendParts(key.set, m_setsOfParts);
             for (ValueSetID part : m_setsOfParts)
-                wishes.append(Wish { number, ValueFlowNodeKey::callGroup(part, key.callKind(), key.markerOfCallGroup()) });
+                wishes.append(Wish { number, ValueFlowNodeKey::callGroup(part, key.callKind(), key.markerOfCallGroup(), key.numberOfArgumentsOfCallGroup()) });
             if (m_setsOfParts.isEmpty())
                 makeStatement(number);
             break;
@@ -1929,7 +1930,7 @@ void ValueFlowSolver::makeNodesOf(std::span<KeyToMake> keys)
             m_partsOfMadeNodes[firstPart + index] = wish.granted | (isLast ? isLastPart : 0);
             if (!index || wishes[index - 1].madeNodes != wish.madeNodes)
                 made.setFirstPart(firstPart + index);
-            forEachEdgeToPart(wish.key.kind, made.first, m_madeNodes[wish.granted].first, [&](ValueFlowEdge toPart) {
+            forEachEdgeToPart(wish.key, made.first, m_madeNodes[wish.granted].first, [&](ValueFlowEdge toPart) {
                 m_edgesOfRound[edge++] = toPart;
             });
         }
@@ -1952,9 +1953,9 @@ ValueFlowStatement ValueFlowSolver::statementMadeWith(const MadeNodes& made)
     const ValueFlowNodeKey& key = made.key;
     ValueFlowStatement statement;
     statement.kind = key.kind == ValueFlowMadeNodeKind::Lookup ? ValueFlowStatementKind::Lookup : key.kind == ValueFlowMadeNodeKind::CallGroup ? ValueFlowStatementKind::CallGroup : ValueFlowStatementKind::Behavior;
-    statement.result = key.kind == ValueFlowMadeNodeKind::CallGroup ? callGroupAt(made.first).result : made.first;
+    statement.result = key.kind == ValueFlowMadeNodeKind::CallGroup ? callGroupAt(made.first, key).result : made.first;
     if (key.kind == ValueFlowMadeNodeKind::CallGroup)
-        statement.thrown = callGroupAt(made.first).thrown;
+        statement.thrown = callGroupAt(made.first, key).thrown;
     return statement;
 }
 
@@ -2041,7 +2042,7 @@ ValueSetID ValueFlowSolver::followedProxiesThatMoreMayBeDoneTo()
     };
     // A built-in that lists an argument, or asks an operand about one property of its own, asks a proxy by its traps, whoever calls it.
     auto isOnlyListedByCalleesOf = [&](const ValueFlowNodeKey& key, const ValueFlowCallGroup& group, ValueFlowNodeID node) {
-        bool isArgument = node.index() >= group.firstArgument.index() && node.index() < group.firstArgument.index() + numberOfGroupedArguments;
+        bool isArgument = node.index() >= group.firstArgument.index() && node.index() < group.firstArgument.index() + group.numberOfArguments;
         if (ValueSets::isComplement(key.set) || (!isArgument && node != group.thisValue))
             return false;
         BuiltinOperand operand = isArgument ? BuiltinOperand::argument(node.index() - group.firstArgument.index()) : BuiltinOperand::receiver();
@@ -2103,7 +2104,8 @@ ValueSetID ValueFlowSolver::followedProxiesThatMoreMayBeDoneTo()
                     break;
                 for (unsigned offset = 0; offset < key.numberOfNodes(); ++offset) {
                     ValueFlowNodeID node(made.first.index() + offset);
-                    if (node != callGroupAt(made.first).result && node != callGroupAt(made.first).thrown && !isOnlyListedByCalleesOf(key, callGroupAt(made.first), node))
+                    ValueFlowCallGroup group = callGroupAt(made.first, key);
+                    if (node != group.result && node != group.thrown && !isOnlyListedByCalleesOf(key, group, node))
                         note(m_graph.valueOf(node));
                 }
                 break;
@@ -2438,8 +2440,12 @@ std::optional<uint32_t> ValueFlowSolver::makeNodesWhereAskedFor(const ValueFlowN
         number = give(log.recordsToGive, 1, 64, [&](uint32_t count) {
             return static_cast<uint32_t>(m_madeNodes.makeRoomToFill(count));
         });
-        if (key.kind == ValueFlowMadeNodeKind::CallGroup)
-            made.first = ValueFlowNodeID(give(log.nodesOfCallGroupsToGive, ValueFlowNodeKey::numberOfNodesOfCallGroup, 16 * ValueFlowNodeKey::numberOfNodesOfCallGroup, takeNodes));
+        // Groups of the fewest arguments, nearly all of them, take their nodes from a block a thread keeps. The few with more take theirs whole: a block hands out one size.
+        constexpr unsigned nodesOfUsualCallGroup = ValueFlowNodeKey::numberOfNodesOfCallGroupWith(fewestGroupedArguments);
+        if (key.kind == ValueFlowMadeNodeKind::CallGroup && key.numberOfNodes() != nodesOfUsualCallGroup)
+            made.first = ValueFlowNodeID(takeNodes(key.numberOfNodes()));
+        else if (key.kind == ValueFlowMadeNodeKind::CallGroup)
+            made.first = ValueFlowNodeID(give(log.nodesOfCallGroupsToGive, nodesOfUsualCallGroup, 16 * nodesOfUsualCallGroup, takeNodes));
         else
             made.first = ValueFlowNodeID(give(log.nodesToGive, 1, 256, takeNodes));
         if (hasStatement) {
@@ -2460,7 +2466,7 @@ std::optional<uint32_t> ValueFlowSolver::makeNodesWhereAskedFor(const ValueFlowN
     auto join = [&](const ValueFlowNodeKey& keyOfPart) {
         std::optional<uint32_t> part = findOrMakeNodesWhereAskedFor(keyOfPart, keyOfPart.hash(), log, maker);
         parts.append(*part);
-        forEachEdgeToPart(keyOfPart.kind, made.first, m_madeNodes[*part].first, [&](ValueFlowEdge toPart) {
+        forEachEdgeToPart(keyOfPart, made.first, m_madeNodes[*part].first, [&](ValueFlowEdge toPart) {
             log.edgesOfMadeNodes.append(toPart);
         });
     };
@@ -2479,7 +2485,7 @@ std::optional<uint32_t> ValueFlowSolver::makeNodesWhereAskedFor(const ValueFlowN
         break;
     case ValueFlowMadeNodeKind::CallGroup:
         for (ValueSetID part : setsOfParts)
-            join(ValueFlowNodeKey::callGroup(part, key.callKind(), key.markerOfCallGroup()));
+            join(ValueFlowNodeKey::callGroup(part, key.callKind(), key.markerOfCallGroup(), key.numberOfArgumentsOfCallGroup()));
         break;
     case ValueFlowMadeNodeKind::Masked:
         log.edgesOfMadeNodes.append(ValueFlowEdge { key.maskedNode(), made.first });
@@ -4352,6 +4358,10 @@ bool ValueFlowSolver::merge()
         }
         for (ValueFlowStatementID statement : thread->log.statementsWithMembersNotToldApart)
             m_statementsWithMembersNotToldApart.set(statement.index());
+        for (FunctionID function : thread->log.functionsWithParametersBehindGroupedArguments)
+            m_functionsWithParametersBehindGroupedArguments.set(function.index());
+        for (FunctionID function : thread->log.functionsWithParametersBehindGroupedArgumentsOfOtherCalls)
+            m_functionsWithParametersBehindGroupedArgumentsOfOtherCalls.set(function.index());
         for (ValueFlowStatementID statement : thread->log.statementsThatAskProxiesByTheirTraps)
             m_statementsThatAskProxiesByTheirTraps.set(statement.index());
         for (RuntimeFunctionID function : thread->log.libraryFunctionsLacked)
@@ -6559,7 +6569,7 @@ bool ValueFlowSolver::takesArgumentsOfCallGroup(ValueFlowNodeID node) const
     const ValueFlowNodeKey* key = keyOfMadeNode(node);
     if (!key || key->kind != ValueFlowMadeNodeKind::CallGroup)
         return false;
-    ValueFlowCallGroup group = callGroupAt(firstOfMadeNodesAt(indexOfMadeNodes(*key)));
+    ValueFlowCallGroup group = callGroupAt(firstOfMadeNodesAt(indexOfMadeNodes(*key)), *key);
     return node == group.otherArguments || node == group.laterArguments || node.index() >= group.firstArgument.index();
 }
 
@@ -6926,6 +6936,10 @@ void ValueFlowSolver::report()
         ValueFlowStatement statement = copyOfStatementAt(ValueFlowStatementID(index));
         build.gaveUp(LimitID::MaxValueFlowMembersToldApart, Subject { .function = statement.function, .value = statement.site });
     }
+    for (size_t index : m_functionsWithParametersBehindGroupedArguments)
+        build.gaveUp(LimitID::MaxGroupedArguments, Subject { .function = FunctionID(index) });
+    for (size_t index : m_functionsWithParametersBehindGroupedArgumentsOfOtherCalls)
+        build.gaveUp(LimitID::MaxGroupedArgumentsOfOtherCalls, Subject { .function = FunctionID(index) });
     build.statistics().count(hitsOf(LimitID::MaxValueFlowSetMembers), m_counters.nodesSaturated);
     build.statistics().count(StatisticID::LayoutsOutsideFamily, m_counters.nodesHoldingObjectsOutsideFamily);
     build.statistics().count(StatisticID::FlowEdgesLogged, m_counters.edgesLogged);
@@ -7763,7 +7777,7 @@ void ValueFlowSolver::dumpBytesByTable() const
     auto addListsOfStatements = [&](const auto&... lists) {
         (bytes.addList(statements, lists), ...);
     };
-    addBitsOfStatements(m_isReached, m_hasStatementOfBodyRun, m_isDue, m_isDear, m_hasLongRowBehindIt, m_hasRunInTurn, m_isDueLast, m_statementsWithMembersNotToldApart, m_statementsThatAskProxiesByTheirTraps);
+    addBitsOfStatements(m_isReached, m_hasStatementOfBodyRun, m_isDue, m_isDear, m_hasLongRowBehindIt, m_hasRunInTurn, m_isDueLast, m_statementsWithMembersNotToldApart, m_functionsWithParametersBehindGroupedArguments, m_functionsWithParametersBehindGroupedArgumentsOfOtherCalls, m_statementsThatAskProxiesByTheirTraps);
     for (StatementsWaitingForNodes& waiting : m_statementsWaitingForNodes) {
         Locker locker { waiting.lock };
         bytes.addMap(statements, waiting.firstOfNode);
@@ -7881,7 +7895,7 @@ void ValueFlowSolver::forEachListOfOneRound(auto& solver, NOESCAPE const auto& f
         visit("logs: nodes read"_s, log.nodesRead);
         visit("logs: records asked for"_s, log.madeNodesAskedFor);
         visit("logs: parts watched"_s, log.partsWatched, log.partsWatchedLast);
-        visit("logs: the rest"_s, log.made, log.madeWhereAskedFor, log.madeWithStatementToRun, log.askedForAtRest, log.recordsOfRunsWhereMade, log.whoReached, log.rememberedByStatementsRunWhereMade, log.partsOfMadeNodes, log.reached, log.uses, log.statementsWithMembersNotToldApart, log.functionsAsked, log.valuesShown, log.nodesAskedWhetherEmpty, log.namesWatched);
+        visit("logs: the rest"_s, log.made, log.madeWhereAskedFor, log.madeWithStatementToRun, log.askedForAtRest, log.recordsOfRunsWhereMade, log.whoReached, log.rememberedByStatementsRunWhereMade, log.partsOfMadeNodes, log.reached, log.uses, log.statementsWithMembersNotToldApart, log.functionsWithParametersBehindGroupedArguments, log.functionsWithParametersBehindGroupedArgumentsOfOtherCalls, log.functionsAsked, log.valuesShown, log.nodesAskedWhetherEmpty, log.namesWatched);
         visit("logs: the rest"_s, thread->thrownOfStatementsThatWait, thread->statementsFound, thread->dueInNextTurn, thread->bodiesReached, thread->namesWatched, thread->numberOfMadeNode);
         constexpr ASCIILiteral sorted = "logs: sorted by shard"_s;
         visitEach(sorted, thread->partsWatchedOfShard);

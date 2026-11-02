@@ -414,7 +414,11 @@ constexpr bool isConstruction(ValueFlowCallKind kind)
     return kind == ValueFlowCallKind::Construct || kind == ValueFlowCallKind::ConstructByNativeCode;
 }
 
-inline constexpr unsigned numberOfGroupedArguments = 8;
+// A group of callees keeps one node for each of the first positions of a call, and one node, laterArguments, for every position behind them. Every group keeps the first eight. A group
+// whose callees are all functions of the program keeps as many as the most positional parameters among them, up to MaxGroupedArguments: a parameter with a node of its own receives the
+// arguments at its position alone, a parameter behind the last node receives every later argument and undefined.
+inline constexpr unsigned fewestGroupedArguments = 8;
+inline constexpr unsigned mostGroupedArguments = 32;
 
 struct ValueFlowCallGroup {
     ValueFlowNodeID thisValue;
@@ -424,9 +428,14 @@ struct ValueFlowCallGroup {
     ValueFlowNodeID laterArguments;
     ValueFlowNodeID result;
     ValueFlowNodeID thrown;
+    unsigned numberOfArguments { fewestGroupedArguments };
 
-    ValueFlowNodeID argument(unsigned index) const { return ValueFlowNodeID(firstArgument.index() + index); }
-    ValueFlowNodeID argumentAt(unsigned position) const { return position < numberOfGroupedArguments ? argument(position) : laterArguments; }
+    ValueFlowNodeID argument(unsigned index) const
+    {
+        ASSERT(index < numberOfArguments);
+        return ValueFlowNodeID(firstArgument.index() + index);
+    }
+    ValueFlowNodeID argumentAt(unsigned position) const { return position < numberOfArguments ? argument(position) : laterArguments; }
     // A call has no new.target. In a group of calls by native code that node holds undefined once a caller does not say which arguments it leaves out: then any parameter may be undefined.
     ValueFlowNodeID anyArgumentLeftOut() const { return newTarget; }
 };

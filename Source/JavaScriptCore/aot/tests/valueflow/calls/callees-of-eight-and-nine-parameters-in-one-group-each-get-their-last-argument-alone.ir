@@ -1,0 +1,39 @@
+# function walk8(a, b, c, d, e, f, g, h) { h() }  function walk9(a, b, c, d, e, f, g, h, i) { i() }
+# fn = walk8; fn = walk9; fn(0, 0, 0, 0, 0, 0, 0, eight, nine)
+# The group keeps nine positions, the most among its callees. The eighth argument reaches the eighth parameter of walk8 alone, the ninth the ninth parameter of walk9 alone.
+# RUN: valueflow-solve calls primitives
+# CHECK: f1 v8 -> f3
+# CHECK: f2 v9 -> f4
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f3
+# UNREACHED-NOT: unreached f4
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="fn" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewClosure function=f4
+    PutModuleVariable v0 variable=g0
+    PutModuleVariable v1 variable=g0
+    v6 = GetModuleVariable variable=g0
+    v7 = Integer integer=0
+    v8 = Call v6, -, v7, v7, v7, v7, v7, v7, v7, v2, v3
+    Return
+}
+function f1 name="walk8" module=m0 parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v8 = Call v7, -
+    Return
+}
+function f2 name="walk9" module=m0 parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v9 = Call v8, -
+    Return
+}
+function f3 name="eight" module=m0 results=[{type=anything}] {
+    Return
+}
+function f4 name="nine" module=m0 results=[{type=anything}] {
+    Return
+}

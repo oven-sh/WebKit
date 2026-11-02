@@ -1,0 +1,152 @@
+# function both(a, b, c, d, e, f, g, h, i, j) { i(); j() }  function other0() {} .. function other23() {}
+# fn = both; fn = other0; ..; fn = other23; fn(0, 0, 0, 0, 0, 0, 0, 0, nine, ten)
+# A group of more callees than fit one word is made of parts, one statement each. A part keeps as many positions as the whole, ten here for the sake of both, so the ninth and the
+# tenth argument reach the ninth and the tenth parameter of both alone, as in ninth-argument-reaches-the-ninth-parameter-alone.ir.
+# RUN: valueflow-solve calls primitives
+# CHECK: f1 v10 -> f2
+# CHECK: f1 v11 -> f3
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="fn" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    PutModuleVariable v0 variable=g0
+    v4 = NewClosure function=f4
+    PutModuleVariable v4 variable=g0
+    v6 = NewClosure function=f5
+    PutModuleVariable v6 variable=g0
+    v8 = NewClosure function=f6
+    PutModuleVariable v8 variable=g0
+    v10 = NewClosure function=f7
+    PutModuleVariable v10 variable=g0
+    v12 = NewClosure function=f8
+    PutModuleVariable v12 variable=g0
+    v14 = NewClosure function=f9
+    PutModuleVariable v14 variable=g0
+    v16 = NewClosure function=f10
+    PutModuleVariable v16 variable=g0
+    v18 = NewClosure function=f11
+    PutModuleVariable v18 variable=g0
+    v20 = NewClosure function=f12
+    PutModuleVariable v20 variable=g0
+    v22 = NewClosure function=f13
+    PutModuleVariable v22 variable=g0
+    v24 = NewClosure function=f14
+    PutModuleVariable v24 variable=g0
+    v26 = NewClosure function=f15
+    PutModuleVariable v26 variable=g0
+    v28 = NewClosure function=f16
+    PutModuleVariable v28 variable=g0
+    v30 = NewClosure function=f17
+    PutModuleVariable v30 variable=g0
+    v32 = NewClosure function=f18
+    PutModuleVariable v32 variable=g0
+    v34 = NewClosure function=f19
+    PutModuleVariable v34 variable=g0
+    v36 = NewClosure function=f20
+    PutModuleVariable v36 variable=g0
+    v38 = NewClosure function=f21
+    PutModuleVariable v38 variable=g0
+    v40 = NewClosure function=f22
+    PutModuleVariable v40 variable=g0
+    v42 = NewClosure function=f23
+    PutModuleVariable v42 variable=g0
+    v44 = NewClosure function=f24
+    PutModuleVariable v44 variable=g0
+    v46 = NewClosure function=f25
+    PutModuleVariable v46 variable=g0
+    v48 = NewClosure function=f26
+    PutModuleVariable v48 variable=g0
+    v50 = NewClosure function=f27
+    PutModuleVariable v50 variable=g0
+    v52 = GetModuleVariable variable=g0
+    v53 = Integer integer=0
+    v54 = Call v52, -, v53, v53, v53, v53, v53, v53, v53, v53, v1, v2
+    Return
+}
+function f1 name="both" module=m0 parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v10 = Call v8, -
+    v11 = Call v9, -
+    Return
+}
+function f2 name="nine" module=m0 results=[{type=anything}] {
+    Return
+}
+function f3 name="ten" module=m0 results=[{type=anything}] {
+    Return
+}
+function f4 name="other0" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f5 name="other1" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f6 name="other2" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f7 name="other3" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f8 name="other4" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f9 name="other5" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f10 name="other6" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f11 name="other7" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f12 name="other8" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f13 name="other9" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f14 name="other10" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f15 name="other11" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f16 name="other12" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f17 name="other13" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f18 name="other14" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f19 name="other15" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f20 name="other16" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f21 name="other17" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f22 name="other18" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f23 name="other19" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f24 name="other20" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f25 name="other21" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f26 name="other22" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f27 name="other23" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}

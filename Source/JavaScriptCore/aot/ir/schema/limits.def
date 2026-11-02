@@ -58,6 +58,8 @@ enum LimitID (stage: Stage, protects: Protects, degradesTo: DegradesTo, valueOnA
     MaxValueFlowSetMembers(AnalyzeFlow, CompileTime, DeclaredType, 16777216, 16777216, 16777216, "shapes and callees tracked per value")
     MaxValueFlowMembersToldApart(AnalyzeFlow, CompileTime, NotOptimized, 64, 64, 0, "receivers of a method call or names of a computed key looked at one by one")
     MaxValueFlowObjectsListedByMember(AnalyzeFlow, CompileTime, NotOptimized, 1024, 1024, 1024, "objects of one receiver that whole-program analysis links one by one; more are linked through the parts they share, with the same result: a choice of method, nothing is given up")
+    MaxGroupedArguments(AnalyzeFlow, Memory, DeclaredType, 32, 32, 8, "positional parameters of a function that whole-program analysis follows one by one through the calls that reach only functions of the program; a parameter behind them receives every later argument")
+    MaxGroupedArgumentsOfOtherCalls(AnalyzeFlow, Memory, DeclaredType, 8, 8, 8, "positional parameters followed one by one through a call that may also reach a built-in or a value nobody knows, through a rest parameter handed on, or through more functions than are told apart; a parameter behind them receives every later argument")
     MaxAppendedFieldsPerLayout(AnalyzeFlow, Memory, OutOfLineStorage, 96, 96, 0, "properties added to an object type after creation that get a place in every object of the type; the rest are stored outside it: a choice between the size of each object and the speed of those properties")
 
     MaxOptimizationRounds(Optimize, CompileTime, NotOptimized, 8, 8, 0, "optimization passes over a function")

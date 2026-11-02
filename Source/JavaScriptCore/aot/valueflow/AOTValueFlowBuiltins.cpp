@@ -281,6 +281,12 @@ void passOperandsOf(const ValueFlowBuiltinCall& call, const ValueFlowCallGroup& 
         context.add(group.thisValue, context.universe().undefinedValue());
     for (unsigned index = 0; index < call.arguments.size(); ++index)
         context.connect(call.arguments[index], group.argumentAt(index));
+    // A description lists the first positions and holds the later ones together. A group that keeps more positions than the description lists takes the later ones at each of those, and they may be absent there.
+    bool passesLaterArguments = call.laterArguments.node || (call.laterArguments.constant && call.laterArguments.constant != ValueSets::nothing);
+    for (unsigned index = call.arguments.size(); passesLaterArguments && index < group.numberOfArguments; ++index) {
+        context.connect(call.laterArguments, group.argument(index));
+        context.add(group.argument(index), context.universe().undefinedValue());
+    }
     context.connect(call.laterArguments, group.laterArguments);
     context.connect(call.otherArguments, group.otherArguments);
     passNoFurtherArguments(context, group, call.argumentsMayBeAbsent || call.otherArguments.node ? 0 : call.arguments.size());
@@ -2999,7 +3005,7 @@ private:
     }
 
     // The positions that parameters of the callees take, where all of them are functions of typed text and few enough to look at. What lies behind them reaches a rest parameter, which holds
-    // what is passed and nothing for what is not.
+    // what is passed and nothing for what is not. The group may keep fewer positions than that: applyCallback cuts the count down to what it keeps.
     std::optional<unsigned> positionsOfParametersOf(ClimbingSet callees)
     {
         AOT_THRESHOLD(unsigned, mostCalleesLookedAt, 4);
@@ -3011,7 +3017,7 @@ private:
             if (!function || m_context.sets().contains(m_tables.closuresThatEntriesDescribe(), closure) || !m_context.program().at(function).has(FunctionFlags::IsChecked))
                 positions = std::nullopt;
             else if (positions)
-                positions = std::min(numberOfGroupedArguments, std::max(*positions, m_context.program().at(function).numberOfPositionalParameters()));
+                positions = std::max(*positions, m_context.program().at(function).numberOfPositionalParameters());
         });
         return positions;
     }
@@ -3153,6 +3159,8 @@ private:
         forEachPartOfCallees(m_context, applyBuiltinsCalledInPlace(callback, calleesOf(callback)), [&](ClimbingSet callees) {
             std::optional<unsigned> positionsOfParameters = callback.spreadArguments.kind == BuiltinPlaceKind::None ? positionsOfParametersOf(callees) : std::nullopt;
             ValueFlowCallGroup group = m_context.group(callees, callback.constructs ? ValueFlowCallKind::ConstructByNativeCode : ValueFlowCallKind::CallByNativeCode, originOfOperands(), positionsOfParameters ? ValueFlowArgumentsLeftOut::SaidByCaller : ValueFlowArgumentsLeftOut::AnyOfThem);
+            if (positionsOfParameters)
+                positionsOfParameters = std::min(*positionsOfParameters, group.numberOfArguments);
             if (callback.constructs) {
                 if (callback.newTarget.kind == BuiltinPlaceKind::None)
                     m_context.add(group.newTarget, callees);
@@ -4345,7 +4353,7 @@ void enterCodeThatEntryDescribes(ValueFlowObjectID closure, ValueFlowRuleContext
     ValueSetID passed = context.maker().unite(universe.anyPrimitive(), context.maker().of(universe.resultOf(entry, 0)));
     ValueFlowCallGroup group = context.group(only(context, closure), ValueFlowCallKind::CallByHost);
     context.add(group.thisValue, passed);
-    for (unsigned index = 0; index < numberOfGroupedArguments; ++index)
+    for (unsigned index = 0; index < group.numberOfArguments; ++index)
         context.add(group.argument(index), passed);
     context.add(group.laterArguments, passed);
     context.add(group.otherArguments, passed);
@@ -4448,10 +4456,12 @@ void callOtherCallables(ClimbingSet callees, ValueFlowCallKind kind, const Value
     callOtherCallables(callees, describeBuiltinUse(kind, call, context), context);
 }
 
+// A group that a built-in or another callable may be called through keeps the fewest arguments: the tables read the positions behind them from laterArguments.
 static void withDescriptionOf(ValueFlowCallKind kind, const ValueFlowCallGroup& group, NOESCAPE const Invocable<void(ValueFlowBuiltinCall&)> auto& functor)
 {
-    std::array<ValueFlowOperand, numberOfGroupedArguments> arguments;
-    for (unsigned index = 0; index < numberOfGroupedArguments; ++index)
+    ASSERT(group.numberOfArguments == fewestGroupedArguments);
+    std::array<ValueFlowOperand, fewestGroupedArguments> arguments;
+    for (unsigned index = 0; index < fewestGroupedArguments; ++index)
         arguments[index] = operandOfBuiltinAt(group.argument(index));
     ValueFlowBuiltinCall description { .kind = kind, .thisValue = operandOfBuiltinAt(isConstruction(kind) ? group.newTarget : group.thisValue), .arguments = arguments, .argumentsMayBeAbsent = true,
         .otherArguments = operandOfBuiltinAt(group.otherArguments), .laterArguments = operandOfBuiltinAt(group.laterArguments), .result = group.result, .thrown = group.thrown };

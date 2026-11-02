@@ -69,6 +69,7 @@ struct ValueFlowSolverInput {
     uint64_t mostSetMembers { UINT64_MAX };
     uint64_t mostMembersToldApart { UINT64_MAX };
     uint64_t mostObjectsListedByMember { UINT64_MAX };
+    uint64_t mostGroupedArguments { Typed::mostGroupedArguments };
     bool remembersWhoLoggedEachEdge { false };
     bool isAskedHowValuesCame { true };
     bool leavesOutWhatIsCovered { false };
@@ -1415,6 +1416,8 @@ private:
     Vector<OptionSet<ObjectMutation>> m_marksOfObject;
     Vector<OptionSet<BuiltinUse>> m_usesOfBuiltin;
     BitVector m_statementsWithMembersNotToldApart;
+    BitVector m_functionsWithParametersBehindGroupedArguments;
+    BitVector m_functionsWithParametersBehindGroupedArgumentsOfOtherCalls;
     BitVector m_statementsThatAskProxiesByTheirTraps;
     BitVector m_libraryFunctionsLacked;
     ValueSetID followedProxiesThatMoreMayBeDoneTo();

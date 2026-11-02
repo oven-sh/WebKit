@@ -1,0 +1,36 @@
+# function both(a, b, c, d, e, f, g, h, i, j) { i(); j() }
+# fn = both; fn = Math.random; fn.call(0, 0, 0, 0, 0, 0, 0, 0, 0, nine, ten)
+# A group that a built-in may be called through keeps the fewest positions, eight: the tables of the built-ins read the arguments by those positions. So the ninth and the tenth parameter
+# of both receive both later arguments and undefined (primitive 0), and the build reports the function under MaxGroupedArgumentsOfOtherCalls, not under the limit, which did not cut here.
+# LOSS: MaxGroupedArgumentsOfOtherCalls x1 f1
+# RUN: valueflow-solve calls primitives
+# CHECK: f1 v10 -> primitive0 f2 f3
+# CHECK: f1 v11 -> primitive0 f2 f3
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="fn" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = Builtin builtin=MathRandom
+    PutModuleVariable v0 variable=g0
+    PutModuleVariable v3 variable=g0
+    v6 = GetModuleVariable variable=g0
+    v7 = Integer integer=0
+    v8 = PropGet v6 key="call"
+    v9 = Call v8, v6, v7, v7, v7, v7, v7, v7, v7, v7, v7, v1, v2
+    Return
+}
+function f1 name="both" module=m0 parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v10 = Call v8, -
+    v11 = Call v9, -
+    Return
+}
+function f2 name="nine" module=m0 results=[{type=anything}] {
+    Return
+}
+function f3 name="ten" module=m0 results=[{type=anything}] {
+    Return
+}

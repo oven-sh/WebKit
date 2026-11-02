@@ -1,0 +1,32 @@
+# function both(a, b, c, d, e, f, g, h, i, j) { i(); j() }
+# both(0, 0, 0, 0, 0, 0, 0, 0, nine, ten)
+# A group keeps a node for each position up to the most positional parameters among its callees. So the ninth argument reaches the ninth parameter alone, the tenth the tenth alone, and
+# neither parameter may be undefined (primitive 0): the call spelled both positions out. Its pair with a lower limit is ninth-argument-behind-the-limit-reaches-every-later-parameter.ir.
+# RUN: valueflow-solve calls primitives
+# CHECK: f1 v10 -> f2
+# CHECK: f1 v11 -> f3
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f2
+# UNREACHED-NOT: unreached f3
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = Integer integer=0
+    v4 = Call v0, -, v3, v3, v3, v3, v3, v3, v3, v3, v1, v2
+    Return
+}
+function f1 name="both" module=m0 parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v10 = Call v8, -
+    v11 = Call v9, -
+    Return
+}
+function f2 name="nine" module=m0 results=[{type=anything}] {
+    Return
+}
+function f3 name="ten" module=m0 results=[{type=anything}] {
+    Return
+}

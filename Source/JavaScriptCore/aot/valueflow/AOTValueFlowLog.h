@@ -81,7 +81,11 @@ struct ValueFlowNodeKey {
     // An edge stays in the graph when the statement that logged it asks for something else. So this read shares no node with the read of the same objects that a statement has connected whole.
     static ValueFlowNodeKey readOfWhatLetsInUnseenCode(ValueSetID set, ValueFlowName name) { return { ValueFlowMadeNodeKind::Read, static_cast<uint8_t>(static_cast<uint8_t>(name.kind) | isOfWhatLetsInUnseenCode), name.payload, set }; }
     static ValueFlowNodeKey underKind(ValueFlowMadeNodeKind kind, ValueSetID set, ValueFlowNameKind nameKind) { return { kind, static_cast<uint8_t>(nameKind), 0, set }; }
-    static ValueFlowNodeKey callGroup(ValueSetID callees, ValueFlowCallKind kind, ValueFlowObjectID marker = { }) { return { ValueFlowMadeNodeKind::CallGroup, static_cast<uint8_t>(kind), marker ? marker.index() + 1 : 0, callees }; }
+    static ValueFlowNodeKey callGroup(ValueSetID callees, ValueFlowCallKind kind, ValueFlowObjectID marker = { }, unsigned numberOfArguments = fewestGroupedArguments)
+    {
+        ASSERT(numberOfArguments >= fewestGroupedArguments && numberOfArguments <= mostGroupedArguments);
+        return { ValueFlowMadeNodeKind::CallGroup, static_cast<uint8_t>(static_cast<uint8_t>(kind) | (numberOfArguments - fewestGroupedArguments) << numberOfArgumentsShift), marker ? marker.index() + 1 : 0, callees };
+    }
     static ValueFlowNodeKey instance(ValueFlowNodeID node, ValueSetID markerAlone) { return { ValueFlowMadeNodeKind::Instance, 0, node.index(), markerAlone }; }
     static ValueFlowNodeKey markersOf(FunctionID function) { return { ValueFlowMadeNodeKind::Instance, 1, function.index(), { } }; }
     static ValueFlowNodeKey restArgument(FunctionID function, unsigned index, ValueSetID markerAlone) { return { ValueFlowMadeNodeKind::Instance, static_cast<uint8_t>(2 + index), function.index(), markerAlone }; }
@@ -99,8 +103,9 @@ struct ValueFlowNodeKey {
     bool readsOnlyWhatLetsInUnseenCode() const { return kind == ValueFlowMadeNodeKind::Read && (detail & isOfWhatLetsInUnseenCode); }
     static ValueFlowNodeKey readOutsideEnumerations(ValueSetID set, ValueFlowName name) { return { ValueFlowMadeNodeKind::Read, static_cast<uint8_t>(static_cast<uint8_t>(name.kind) | isOutsideEnumerations), name.payload, set }; }
     ValueFlowNameKind kindThatStandsForName() const { return kind == ValueFlowMadeNodeKind::Read && (detail & isOutsideEnumerations) ? ValueFlowNameKind::GetterOutsideEnumerations : name().kind; }
-    ValueFlowCallKind callKind() const { return static_cast<ValueFlowCallKind>(detail); }
+    ValueFlowCallKind callKind() const { return static_cast<ValueFlowCallKind>(detail & ((1 << numberOfArgumentsShift) - 1)); }
     ValueFlowObjectID markerOfCallGroup() const { return payload ? ValueFlowObjectID(payload - 1) : ValueFlowObjectID(); }
+    unsigned numberOfArgumentsOfCallGroup() const { return fewestGroupedArguments + (detail >> numberOfArgumentsShift); }
     bool isInstanceOfNode() const { return kind == ValueFlowMadeNodeKind::Instance && !detail; }
     ValueFlowNodeID nodeOfInstance() const { return ValueFlowNodeID(payload); }
     ValueFlowBehaviorID behavior() const { return ValueFlowBehaviorID(payload); }
@@ -108,7 +113,7 @@ struct ValueFlowNodeKey {
     ValueFlowMaskKind maskKind() const { return static_cast<ValueFlowMaskKind>(detail); }
     std::optional<ValueFlowUnknownSource> unknownSource() const { return detail ? std::optional(static_cast<ValueFlowUnknownSource>(detail - 1)) : std::nullopt; }
 
-    unsigned numberOfNodes() const { return kind == ValueFlowMadeNodeKind::CallGroup ? numberOfNodesOfCallGroup : 1; }
+    unsigned numberOfNodes() const { return kind == ValueFlowMadeNodeKind::CallGroup ? numberOfNodesOfCallGroupWith(numberOfArgumentsOfCallGroup()) : 1; }
     uint32_t hash() const
     {
         uint64_t hash = (static_cast<uint64_t>(payload) << 32 | set.index()) * 0x9e3779b97f4a7c15ull;
@@ -118,7 +123,12 @@ struct ValueFlowNodeKey {
 
     friend bool operator==(const ValueFlowNodeKey& a, const ValueFlowNodeKey& b) { return a.payload == b.payload && a.set == b.set && a.kind == b.kind && a.detail == b.detail; }
 
-    static constexpr unsigned numberOfNodesOfCallGroup = 6 + numberOfGroupedArguments;
+    // The nodes of a call group: its six named nodes, then one for each argument position it keeps.
+    static constexpr unsigned numberOfNamedNodesOfCallGroup = 6;
+    static constexpr unsigned numberOfNodesOfCallGroupWith(unsigned numberOfArguments) { return numberOfNamedNodesOfCallGroup + numberOfArguments; }
+    static constexpr unsigned numberOfArgumentsShift = 3;
+    static_assert(static_cast<unsigned>(ValueFlowCallKind::CallByHost) < 1u << numberOfArgumentsShift);
+    static_assert(mostGroupedArguments - fewestGroupedArguments < 1u << (8 - numberOfArgumentsShift));
     static constexpr uint8_t isForCall = 0x80;
     static constexpr uint8_t isByNativeWalk = 0x40;
     static constexpr uint8_t isOfWhatLetsInUnseenCode = isForCall;
@@ -137,12 +147,19 @@ static_assert(sizeof(ValueFlowNodeKey) == 12);
 static_assert(static_cast<uint8_t>(ValueFlowNameKind::NamespaceExports) < ValueFlowNodeKey::isByNativeWalk);
 static_assert(static_cast<uint8_t>(ValueFlowNameKind::GetterOutsideEnumerations) < ValueFlowNodeKey::isByNativeWalk);
 
-inline ValueFlowCallGroup callGroupAt(ValueFlowNodeID first)
+inline ValueFlowCallGroup callGroupAt(ValueFlowNodeID first, unsigned numberOfArguments)
 {
     auto at = [&](unsigned offset) {
         return ValueFlowNodeID(first.index() + offset);
     };
-    return { at(0), at(1), at(6), at(2), at(5), at(3), at(4) };
+    static_assert(ValueFlowNodeKey::numberOfNamedNodesOfCallGroup == 6);
+    return { at(0), at(1), at(6), at(2), at(5), at(3), at(4), numberOfArguments };
+}
+
+inline ValueFlowCallGroup callGroupAt(ValueFlowNodeID first, const ValueFlowNodeKey& key)
+{
+    ASSERT(key.kind == ValueFlowMadeNodeKind::CallGroup);
+    return callGroupAt(first, key.numberOfArgumentsOfCallGroup());
 }
 
 class ValueFlowRoundLog {
@@ -221,7 +238,7 @@ public:
         auto shrinkToNothing = [](auto&... lists) {
             (lists.shrink(0), ...);
         };
-        shrinkToNothing(made, edges, reached, whoReached, uses, m_usesLogged, statementsWithMembersNotToldApart, statementsThatAskProxiesByTheirTraps, libraryFunctionsLacked, runs, nodesRead, functionsAsked, madeNodesAskedFor, valuesShown, partsWatched, partsWatchedLast, nodesAskedWhetherEmpty, namesWatched);
+        shrinkToNothing(made, edges, reached, whoReached, uses, m_usesLogged, statementsWithMembersNotToldApart, functionsWithParametersBehindGroupedArguments, functionsWithParametersBehindGroupedArgumentsOfOtherCalls, statementsThatAskProxiesByTheirTraps, libraryFunctionsLacked, runs, nodesRead, functionsAsked, madeNodesAskedFor, valuesShown, partsWatched, partsWatchedLast, nodesAskedWhetherEmpty, namesWatched);
         numberOfMadeNodes = 0;
         numberMadeWhereAskedFor = 0;
         m_madeByKey = HashedIndex();
@@ -251,6 +268,9 @@ public:
     Vector<FunctionID> reached;
     Vector<Use> uses;
     Vector<ValueFlowStatementID> statementsWithMembersNotToldApart;
+    // Functions entered by a call group with a parameter behind the last argument position the group keeps a node for: under the limit, and through a call that keeps the fewest.
+    Vector<FunctionID> functionsWithParametersBehindGroupedArguments;
+    Vector<FunctionID> functionsWithParametersBehindGroupedArgumentsOfOtherCalls;
     Vector<ValueFlowStatementID> statementsThatAskProxiesByTheirTraps;
     Vector<RuntimeFunctionID> libraryFunctionsLacked;
     Vector<Run> runs;

@@ -157,7 +157,7 @@ void callInProtocol(ValueFlowRuleContext& context, const ValueFlowProtocolCall& 
         });
     }
 
-    RELEASE_ASSERT(call.arguments.size() <= numberOfGroupedArguments);
+    RELEASE_ASSERT(call.arguments.size() <= fewestGroupedArguments);
     ClimbingSet others = context.restrict(call.callees, context.maker().intersect(universe.callables(), ValueSets::complement(universe.builtinFunctionsOfProtocols())));
     forEachPartOfCallees(context, others, [&](ClimbingSet callees) {
         ValueFlowCallGroup group = context.group(callees, ValueFlowCallKind::CallByNativeCode, call.origin);

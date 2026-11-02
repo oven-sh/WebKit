@@ -1,0 +1,41 @@
+# function both(a, b, c, d, e, f, g, h, i, j) { i(); j() }  function tail(first, ...others) { others[8]() }
+# fn = both; fn = tail; fn(0, 0, 0, 0, 0, 0, 0, 0, nine, ten)
+# The group of both callees keeps ten positions for the sake of both: the ninth and the tenth parameter of both receive their own argument alone. For tail, the arguments at the
+# positions the group keeps lie in the rest array with the rest: a read of the array finds every argument (0 is primitive 4) beside undefined (primitive 0).
+# RUN: valueflow-solve calls primitives
+# CHECK: f1 v10 -> f3
+# CHECK: f1 v11 -> f4
+# CHECK: f2 v4 -> primitive0 primitive4 f3 f4
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="fn" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewClosure function=f4
+    PutModuleVariable v0 variable=g0
+    PutModuleVariable v1 variable=g0
+    v6 = GetModuleVariable variable=g0
+    v7 = Integer integer=0
+    v8 = Call v6, -, v7, v7, v7, v7, v7, v7, v7, v7, v2, v3
+    Return
+}
+function f1 name="both" module=m0 parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v10 = Call v8, -
+    v11 = Call v9, -
+    Return
+}
+function f2 name="tail" module=m0 flags=[HasRestParameter] parameters=[{type=anything}, {type=Array}] results=[{type=anything}] {
+    v2 = Integer integer=8
+    v3 = ElemGet v1, v2
+    v4 = Call v3, -
+    Return
+}
+function f3 name="nine" module=m0 results=[{type=anything}] {
+    Return
+}
+function f4 name="ten" module=m0 results=[{type=anything}] {
+    Return
+}

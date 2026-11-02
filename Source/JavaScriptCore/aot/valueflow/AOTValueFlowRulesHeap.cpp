@@ -1216,11 +1216,11 @@ bool HeapRule::readsRestArgumentOfInstance()
         return false;
 
     const Value& key = function.at(definitionThroughSameValues(function, operation().operand(At::ElemGet::property)));
-    unsigned numberOfKnownPositions = numberOfGroupedArguments - std::min(numberOfGroupedArguments, positional);
+    unsigned numberOfKnownPositions = fewestGroupedArguments - std::min(fewestGroupedArguments, positional);
     if (key.opcode != Opcode::Integer || key.integer() < 0 || static_cast<uint64_t>(key.integer()) >= numberOfKnownPositions)
         return false;
     connect(m_context.restArgumentOfRun(m_statement.function, key.integer()), m_statement.result);
-    connect(m_context.restArgumentOfRun(m_statement.function, numberOfGroupedArguments), m_statement.result);
+    connect(m_context.restArgumentOfRun(m_statement.function, fewestGroupedArguments), m_statement.result);
     add(m_statement.result, m_universe.undefinedValue());
     return true;
 }

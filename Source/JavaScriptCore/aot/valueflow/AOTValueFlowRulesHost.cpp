@@ -88,13 +88,13 @@ static void passFromNativeCode(ValueFlowRuleContext& context, FunctionID functio
     const ValueFlowUniverse& universe = context.universe();
     ValueFlowNodeID parameter = context.nodes().entryParameter(function, index);
     bool isRestParameter = callee.has(FunctionFlags::HasRestParameter) && index == callee.firstParameterIndex() + callee.numberOfPositionalParameters();
-    if (ValueFlowNodeID passedAtAnyIndex = isRestParameter ? context.restArgumentEntered(function, numberOfGroupedArguments) : ValueFlowNodeID())
+    if (ValueFlowNodeID passedAtAnyIndex = isRestParameter ? context.restArgumentEntered(function, fewestGroupedArguments) : ValueFlowNodeID())
         context.add(passedAtAnyIndex, unknown);
     if (isRestParameter || callee.hiddenRestParameterIndex() == index) {
         ClimbingSet rest = only(context, universe.restArrayOf(function));
         context.add(parameter, rest);
         context.add(context.written(rest, { ValueFlowNameKind::Elements, 0 }), unknown);
-        context.add(context.written(rest, { ValueFlowNameKind::RestArgument, numberOfGroupedArguments + 1 }), unknown);
+        context.add(context.written(rest, { ValueFlowNameKind::RestArgument, fewestGroupedArguments + 1 }), unknown);
         return;
     }
     if (callee.argumentCountParameterIndex() == index) {

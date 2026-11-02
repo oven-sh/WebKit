@@ -18,7 +18,8 @@ void runValueFlowRule(const ValueFlowStatement&, ValueFlowRuleContext&);
 
 ValueSetID unknownValue(ValueFlowRuleContext&, ValueFlowUnknownSource);
 ValueSetID undescribedValueThatIsNoBuffer(ValueFlowRuleContext&);
-void passNoFurtherArguments(ValueFlowRuleContext&, const ValueFlowCallGroup&, unsigned numberOfArguments, unsigned numberOfPositionsTaken = numberOfGroupedArguments);
+// Adds undefined to the positions from numberOfArguments up to numberOfPositionsTaken, or to every position the group keeps a node for.
+void passNoFurtherArguments(ValueFlowRuleContext&, const ValueFlowCallGroup&, unsigned numberOfArguments, std::optional<unsigned> numberOfPositionsTaken = std::nullopt);
 
 ValueFlowObjectsToldApart tellObjectsApart(ValueFlowRuleContext&, ClimbingSet knownObjects);
 void passKnownReceiversToWhatTheyFind(ValueFlowRuleContext&, ClimbingSet receivers, ValueFlowName, ValueFlowNodeID receiversAnswered);

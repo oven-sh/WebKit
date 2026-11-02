@@ -833,13 +833,15 @@ static void forEachBuiltinAppliedByGroup(const ValueFlowResultInputs& inputs, co
     if (builtinCallees == ValueSets::nothing && boundFunctions.isEmpty())
         return;
 
-    ValueFlowCallGroup group = callGroupAt(first);
+    ValueFlowCallGroup group = callGroupAt(first, key);
     bool isAccessorCall = kind == ValueFlowCallKind::Get || kind == ValueFlowCallKind::Set;
     ValueFlowBuiltinApplication application;
     application.thisValue = solver.possibleValuesOf(isConstruction(kind) ? group.newTarget : group.thisValue);
-    for (unsigned index = 0; index < numberOfGroupedArguments; ++index)
+    for (unsigned index = 0; index < fewestGroupedArguments; ++index)
         application.arguments.append(solver.possibleValuesOf(group.argument(index)));
     application.otherArguments = maker.unite(solver.possibleValuesOf(group.otherArguments), solver.possibleValuesOf(group.laterArguments));
+    for (unsigned index = fewestGroupedArguments; index < group.numberOfArguments; ++index)
+        application.otherArguments = maker.unite(application.otherArguments, solver.possibleValuesOf(group.argument(index)));
     if (passesAnyOf(application, wantedOperands)) {
         inputs.sets().forEachMemberInLine(builtinCallees, [&](ValueFlowObjectID callee) {
             bool isFunction = inputs.sets().contains(universe.builtinFunctions(), callee);

@@ -2170,7 +2170,7 @@ struct FieldResults {
         BitVector layouts(numberOfLayouts);
         Vector<ValueSetID> resultsOfConstructions = collectFromCallGroups<ValueSetID>(inputs, heap, [&](const ValueFlowNodeKey& key, ValueFlowNodeID first, Vector<ValueSetID>& found) {
             if (key.callKind() == ValueFlowCallKind::ConstructByNativeCode)
-                found.append(inputs.solver().possibleValuesOf(callGroupAt(first).result));
+                found.append(inputs.solver().possibleValuesOf(callGroupAt(first, key).result));
         });
         if (resultsOfConstructions.isEmpty())
             return layouts;

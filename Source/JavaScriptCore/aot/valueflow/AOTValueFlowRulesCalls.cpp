@@ -100,32 +100,34 @@ static void passThis(ValueFlowRuleContext& context, const ValueFlowStatement& st
     context.add(thisValue, passedReceivers.objects);
 }
 
-void passNoFurtherArguments(ValueFlowRuleContext& context, const ValueFlowCallGroup& group, unsigned numberOfArguments, unsigned numberOfPositionsTaken)
+void passNoFurtherArguments(ValueFlowRuleContext& context, const ValueFlowCallGroup& group, unsigned numberOfArguments, std::optional<unsigned> numberOfPositionsTaken)
 {
-    for (unsigned index = numberOfArguments; index < numberOfPositionsTaken; ++index)
+    for (unsigned index = numberOfArguments; index < numberOfPositionsTaken.value_or(group.numberOfArguments); ++index)
         context.add(group.argument(index), context.universe().undefinedValue());
 }
 
-static unsigned numberOfPositionsTakenBy(ValueFlowRuleContext& context, ClimbingSet closures)
+// How many of the group's argument positions its callees read. A position behind the last one never needs undefined added.
+static unsigned numberOfPositionsTakenBy(ValueFlowRuleContext& context, ClimbingSet closures, const ValueFlowCallGroup& group)
 {
     AOT_THRESHOLD(unsigned, mostCalleesLookedAt, 4);
+    unsigned every = group.numberOfArguments;
     if (context.numberOfMembers(closures) > mostCalleesLookedAt)
-        return numberOfGroupedArguments;
+        return every;
     const ValueFlowUniverse& universe = context.universe();
     unsigned positions = 0;
     context.forEachMemberInLine(closures, [&](ValueFlowObjectID closure) {
-        if (positions == numberOfGroupedArguments)
+        if (positions == every)
             return;
         FunctionID function = universe.closureFunction(closure);
         if (!function || context.sets().contains(universe.builtinTables().closuresThatEntriesDescribe(), closure)) {
-            positions = numberOfGroupedArguments;
+            positions = every;
             return;
         }
         const Function& callee = context.program().at(function);
         if (callee.has(FunctionFlags::HasRestParameter) || callee.hiddenRestParameterIndex())
-            positions = numberOfGroupedArguments;
+            positions = every;
         else
-            positions = std::min(numberOfGroupedArguments, std::max(positions, callee.numberOfPositionalParameters()));
+            positions = std::min(every, std::max(positions, callee.numberOfPositionalParameters()));
     });
     return positions;
 }
@@ -309,8 +311,10 @@ static constexpr ValueFlowCellName restArgument(unsigned index)
     return ValueFlowCellName { ValueFlowNameKind::RestArgument, index };
 }
 
-static constexpr ValueFlowCellName laterRestArguments = restArgument(numberOfGroupedArguments);
-static constexpr ValueFlowCellName otherRestArguments = restArgument(numberOfGroupedArguments + 1);
+// The cells of a rest array: one for each of the first positions of a call, which every group keeps a node for, then the arguments at later positions, then the arguments whose positions
+// nobody knows. The groups that enter a function may keep different counts of positions: the cells go by the count they all keep, so that a reader finds what any of them wrote.
+static constexpr ValueFlowCellName laterRestArguments = restArgument(fewestGroupedArguments);
+static constexpr ValueFlowCellName otherRestArguments = restArgument(fewestGroupedArguments + 1);
 
 static ValueID findCallThatAloneTakesRestArray(ValueFlowRuleContext& context, FunctionID id)
 {
@@ -346,19 +350,29 @@ static ValueID findCallThatAloneTakesRestArray(ValueFlowRuleContext& context, Fu
     return call;
 }
 
-static bool passRestArrayByPosition(ValueFlowRuleContext& context, const ValueFlowStatement& statement, const ValueFlowCallGroup& group)
+static bool passRestArrayByPosition(ValueFlowRuleContext& context, const ValueFlowStatement& statement, ClimbingSet callees, const ValueFlowCallGroup& group)
 {
     const Function& function = context.program().at(statement.function);
     if (findCallThatAloneTakesRestArray(context, statement.function) != statement.site)
         return false;
     ClimbingSet rest = only(context, context.universe().restArrayOf(statement.function));
-    unsigned numberOfKnownPositions = numberOfGroupedArguments - std::min(numberOfGroupedArguments, function.numberOfPositionalParameters());
+    unsigned positional = function.numberOfPositionalParameters();
+    unsigned numberOfKnownPositions = fewestGroupedArguments - std::min(fewestGroupedArguments, positional);
     for (unsigned index = 0; index < numberOfKnownPositions; ++index)
         context.connect(context.read(rest, restArgument(index)), group.argument(index));
+    // The later arguments lie together: a position behind the known ones takes them all, and may have been left out. A callee whose parameter stands there is told, as at a direct call.
     ValueFlowNodeID later = context.read(rest, laterRestArguments);
-    for (unsigned index = numberOfKnownPositions; index < numberOfGroupedArguments; ++index) {
+    for (unsigned index = numberOfKnownPositions; index < group.numberOfArguments; ++index) {
         context.connect(later, group.argument(index));
         context.add(group.argument(index), context.universe().undefinedValue());
+    }
+    if (group.numberOfArguments > numberOfKnownPositions && context.numberOfMembers(callees) <= context.mostMembersToldApart()) {
+        const ValueFlowUniverse& universe = context.universe();
+        context.forEachMemberInLine(callees, [&](ValueFlowObjectID callee) {
+            FunctionID calleeFunction = universe.closureFunction(callee);
+            if (calleeFunction && context.program().at(calleeFunction).numberOfPositionalParameters() > numberOfKnownPositions)
+                context.noteParameterBehindGroupedArguments(calleeFunction, LimitID::MaxGroupedArgumentsOfOtherCalls);
+        });
     }
     context.connect(later, group.laterArguments);
     context.connect(context.read(rest, otherRestArguments), group.otherArguments);
@@ -382,7 +396,7 @@ static void passOperands(ValueFlowRuleContext& context, const ValueFlowStatement
     std::span<const ValueFlowOperand> operands = context.operandsOf(statement);
     std::span<const ValueFlowOperand> arguments = operands.subspan(2);
     ValueFlowCallGroup group = context.group(callees, kind, origin);
-    unsigned numberOfPositionsTaken = numberOfPositionsTakenBy(context, callees);
+    unsigned numberOfPositionsTaken = numberOfPositionsTakenBy(context, callees, group);
     ValueSetID answeredObjects = ValueSets::anything;
     if (kind == ValueFlowCallKind::Call)
         passThis(context, statement, operands[1], passedReceivers, group.thisValue);
@@ -396,7 +410,7 @@ static void passOperands(ValueFlowRuleContext& context, const ValueFlowStatement
     }
     if (passesList(statement.opcode)) {
         ClimbingSet lists = context.valueOf(arguments[0]);
-        bool passesRestArray = passRestArrayByPosition(context, statement, group);
+        bool passesRestArray = passRestArrayByPosition(context, statement, callees, group);
         if (passesRestArray)
             lists = context.restrict(lists, ValueSets::complement(context.maker().of(context.universe().restArrayOf(statement.function))));
         if (!passesRestArray || context.meet(lists, ValueSets::anything)) {
@@ -1007,13 +1021,18 @@ static void passArguments(ValueFlowRuleContext& context, const ValueFlowCallGrou
     unsigned first = callee.firstParameterIndex();
     unsigned positional = callee.numberOfPositionalParameters();
     bool callersSayWhatTheyLeaveOut = kind == ValueFlowCallKind::Call || kind == ValueFlowCallKind::Construct || kind == ValueFlowCallKind::CallByHost;
+    unsigned grouped = group.numberOfArguments;
+    // A parameter behind the positions the group keeps receives every later argument, and undefined: the callers that left its position out are not told from the ones that filled it.
+    // The limit cut the group down where it keeps as many as the limit allows. Otherwise the group keeps the fewest for the sake of a callee that is no function of the program.
+    if (positional > grouped)
+        context.noteParameterBehindGroupedArguments(function, grouped >= context.mostGroupedArguments() ? LimitID::MaxGroupedArguments : LimitID::MaxGroupedArgumentsOfOtherCalls);
     for (unsigned index = 0; index < positional; ++index) {
         ValueFlowNodeID parameter = nodes.entryParameter(function, first + index);
         context.connect(group.argumentAt(index), parameter);
         context.connect(group.otherArguments, parameter);
-        if (kind == ValueFlowCallKind::CallByNativeCode && index < numberOfGroupedArguments)
+        if (kind == ValueFlowCallKind::CallByNativeCode && index < grouped)
             context.connect(group.anyArgumentLeftOut(), parameter);
-        else if (!callersSayWhatTheyLeaveOut || index >= numberOfGroupedArguments)
+        else if (!callersSayWhatTheyLeaveOut || index >= grouped)
             context.add(parameter, universe.undefinedValue());
     }
 
@@ -1024,25 +1043,29 @@ static void passArguments(ValueFlowRuleContext& context, const ValueFlowCallGrou
     ClimbingSet rest = only(context, universe.restArrayOf(function));
     context.add(nodes.entryParameter(function, hasRest ? first + positional : *hiddenRest), rest);
     ValueFlowNodeID contents = context.written(rest, elementsName);
-    for (unsigned index = positional; index < numberOfGroupedArguments; ++index)
+    for (unsigned index = positional; index < grouped; ++index)
         context.connect(group.argument(index), contents);
     context.connect(group.laterArguments, contents);
     context.connect(group.otherArguments, contents);
+    // The cells of the rest array go by the positions every group keeps: what a wider group keeps behind them lies among the later arguments, where a narrower group put it.
+    unsigned numberOfKnownPositions = std::min(grouped, fewestGroupedArguments);
     if (context.restArgumentEntered(function, 0)) {
-        for (unsigned index = positional; index < numberOfGroupedArguments; ++index)
-            context.connect(group.argument(index), context.restArgumentEntered(function, index - positional));
-        context.connect(group.laterArguments, context.restArgumentEntered(function, numberOfGroupedArguments));
-        context.connect(group.otherArguments, context.restArgumentEntered(function, numberOfGroupedArguments));
+        for (unsigned index = positional; index < grouped; ++index)
+            context.connect(group.argument(index), context.restArgumentEntered(function, index < numberOfKnownPositions ? index - positional : fewestGroupedArguments));
+        context.connect(group.laterArguments, context.restArgumentEntered(function, fewestGroupedArguments));
+        context.connect(group.otherArguments, context.restArgumentEntered(function, fewestGroupedArguments));
     }
     if (!findCallThatAloneTakesRestArray(context, function))
         return;
 
-    for (unsigned index = positional; index < numberOfGroupedArguments; ++index) {
+    for (unsigned index = positional; index < numberOfKnownPositions; ++index) {
         ValueFlowNodeID argument = context.written(rest, restArgument(index - positional));
         context.connect(group.argument(index), argument);
         if (!callersSayWhatTheyLeaveOut)
             context.add(argument, universe.undefinedValue());
     }
+    for (unsigned index = numberOfKnownPositions; index < grouped; ++index)
+        context.connect(group.argument(index), context.written(rest, laterRestArguments));
     context.connect(group.laterArguments, context.written(rest, laterRestArguments));
     context.connect(group.otherArguments, context.written(rest, otherRestArguments));
 }
@@ -1206,20 +1229,20 @@ void runCallGroup(const ValueFlowStatement& statement, ValueFlowRuleContext& con
     ClimbingSet key = context.setOfKey();
     ValueFlowCallKind kind = context.callKindOfKey();
     ValueFlowRuleContext::InstanceEntered instance(context, context.markerOfKey());
-    ValueFlowCallGroup group = context.group(key, kind, ValueFlowCalleeOrigin::MemberFoundUnderName, ValueFlowArgumentsLeftOut::SaidByCaller);
+    ValueFlowCallGroup group = context.groupOfKey();
 
     auto handOperandsToCodeNobodySees = [&] {
         ValueFlowNodeID escaped = ValueFlowProgramNodes::escaped();
         ValueFlowNodeID operands = context.nodes().ofHost(ValueFlowHostNode::OperandsHandedToUnseenCode);
         context.connect(group.thisValue, operands);
-        for (unsigned index = 0; index < numberOfGroupedArguments; ++index)
+        for (unsigned index = 0; index < group.numberOfArguments; ++index)
             context.connect(group.argument(index), operands);
         context.connect(group.laterArguments, operands);
         context.connect(group.otherArguments, operands);
         context.connect(group.thisValue, escaped);
         if (group.newTarget)
             context.connect(group.newTarget, escaped);
-        for (unsigned index = 0; index < numberOfGroupedArguments; ++index)
+        for (unsigned index = 0; index < group.numberOfArguments; ++index)
             carryOut(context, group.argument(index));
         carryOut(context, group.laterArguments);
         carryOut(context, group.otherArguments);

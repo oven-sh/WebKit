@@ -155,7 +155,7 @@ ValueFlowLayoutsOfSites findLayoutsOfSites(const ValueFlowResultInputs& inputs)
         AOT::sort(constructorFunctions);
         constructorFunctions.shrink(constructorFunctions.size() - std::ranges::unique(constructorFunctions).size());
 
-        sets.forEachMember(maker.intersect(closuresIn(solver.possibleValuesOf(callGroupAt(node).newTarget)), newTargetsFromOperands), [&](ValueFlowObjectID newTarget) {
+        sets.forEachMember(maker.intersect(closuresIn(solver.possibleValuesOf(callGroupAt(node, *solver.keyOfMadeNode(node)).newTarget)), newTargetsFromOperands), [&](ValueFlowObjectID newTarget) {
             LayoutID layout = program.at(universe.closureFunction(newTarget)).constructedClass;
             if (!layout || (!constructsFunctionWithoutLayout && getsOwnLayoutFromEach(layout, constructorFunctions.span())))
                 return;
