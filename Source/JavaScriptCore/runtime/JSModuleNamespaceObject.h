@@ -65,6 +65,9 @@ public:
     DECLARE_EXPORT_INFO;
 
 #if USE(BUN_JSC_ADDITIONS)
+    // [[Get]], [[HasProperty]] and [[GetOwnProperty]] of a namespace object that reads every export from `source`. See
+    // AbstractModuleRecord::getLiveExportSlot().
+    static bool getOwnPropertySlotOfLiveExportsSource(JSGlobalObject*, JSObject* namespaceObject, JSObject* source, PropertyName, PropertySlot&);
     bool overrideExportValue(JSGlobalObject*, PropertyName, JSValue);
     void overrideExports(JSGlobalObject* globalObject, const WTF::Function<bool(JSGlobalObject* globalObject, const Identifier& exportName, JSC::JSValue &result)>& iter);
 #endif
@@ -84,7 +87,6 @@ private:
     bool getOwnPropertySlotCommon(JSGlobalObject*, PropertyName, PropertySlot&);
 #if USE(BUN_JSC_ADDITIONS)
     bool getOwnPropertySlotForLiveExports(JSGlobalObject*, PropertyName, PropertySlot&);
-    void setLiveAccessorSlot(PropertySlot&, const PropertySlot& sourceSlot, unsigned attributes);
     std::optional<bool> getOwnPropertySlotIfDeferredOrLive(JSGlobalObject*, PropertyName, PropertySlot&);
     JSObject* liveExportsSource() const { return m_isDeferredOrLive && m_moduleRecord->hasLiveExports() ? m_moduleRecord->liveExportsSource() : nullptr; }
 #endif

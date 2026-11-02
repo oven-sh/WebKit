@@ -2447,45 +2447,71 @@ void AbstractModuleRecord::setLiveExportsSource(VM& vm, JSObject* source)
     m_liveExportsSource.set(vm, this, source);
 }
 
-bool AbstractModuleRecord::getLiveExportSlot(JSGlobalObject* globalObject, PropertyName exportName, PropertySlot& sourceSlot)
+bool AbstractModuleRecord::getLiveExportSlot(JSGlobalObject* globalObject, JSObject* source, PropertyName exportName, JSObject* slotBase, PropertySlot& slot)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    ASSERT(m_hasLiveExports);
     ASSERT(exportName != vm.propertyNames->starNamespacePrivateName);
-    ASSERT(!sourceSlot.isVMInquiry());
+    ASSERT(!slot.isVMInquiry());
 
-    // The source can be (or forward to) a namespace object backed by this same record, which recurses without pushing a JS frame.
+    // The source can be (or forward to) a namespace object backed by the record it is the source of, which recurses without
+    // pushing a JS frame.
     if (!vm.isSafeToRecurseSoft()) [[unlikely]] {
         throwStackOverflowError(globalObject, scope);
         return false;
     }
 
-    JSObject* source = m_liveExportsSource.get();
-    if (!source) [[unlikely]] {
-        if (sourceSlot.internalMethodType() == PropertySlot::InternalMethodType::Get) {
-            RefPtr uid = exportName.uid();
-            throwVMError(globalObject, scope, createTDZError(globalObject, *uid));
-        }
+    PropertySlot sourceSlot(source, slot.internalMethodType());
+    bool hasExport = source->methodTable()->getOwnPropertySlot(source, globalObject, exportName, sourceSlot);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!hasExport)
         return false;
+
+    unsigned attributes = sourceSlot.attributes() & PropertyAttribute::DontEnum;
+    if (slot.internalMethodType() == PropertySlot::InternalMethodType::HasProperty) {
+        slot.setValue(slotBase, attributes, jsUndefined());
+        return true;
     }
-    RELEASE_AND_RETURN(scope, source->getPropertySlot(globalObject, exportName, sourceSlot));
+    if (sourceSlot.isAccessor()) {
+        slot.disableCaching();
+        slot.setGetterSlot(slotBase, attributes | PropertyAttribute::Accessor, sourceSlot.getterSetter());
+        slot.setThisValue(sourceSlot.thisValue());
+        return true;
+    }
+    JSValue value = sourceSlot.getValue(globalObject, exportName);
+    RETURN_IF_EXCEPTION(scope, false);
+    slot.setValue(slotBase, attributes, value);
+    return true;
 }
 
-bool AbstractModuleRecord::getReexportedLiveExportSlot(JSGlobalObject* globalObject, PropertyName exportName, PropertySlot& sourceSlot)
+JSObject* AbstractModuleRecord::liveExportsSourceForRead(JSGlobalObject* globalObject, PropertyName exportName)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    ASSERT(sourceSlot.internalMethodType() == PropertySlot::InternalMethodType::Get);
+    ASSERT(m_hasLiveExports);
 
-    if (JSObject* source = m_liveExportsSource.get()) [[likely]] {
-        PropertySlot hasSlot(source, PropertySlot::InternalMethodType::HasProperty);
-        bool hasExport = getLiveExportSlot(globalObject, exportName, hasSlot);
-        RETURN_IF_EXCEPTION(scope, false);
-        if (!hasExport)
-            return false;
+    JSObject* source = m_liveExportsSource.get();
+    if (!source) [[unlikely]] {
+        RefPtr uid = exportName.uid();
+        throwVMError(globalObject, scope, createTDZError(globalObject, *uid));
     }
-    RELEASE_AND_RETURN(scope, getLiveExportSlot(globalObject, exportName, sourceSlot));
+    return source;
+}
+
+bool AbstractModuleRecord::getReexportedLiveExportSlot(JSGlobalObject* globalObject, PropertyName exportName, JSObject* slotBase, PropertySlot& slot)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    ASSERT(slot.internalMethodType() == PropertySlot::InternalMethodType::Get);
+
+    JSObject* source = liveExportsSourceForRead(globalObject, exportName);
+    RETURN_IF_EXCEPTION(scope, false);
+    PropertySlot hasSlot(source, PropertySlot::InternalMethodType::HasProperty);
+    bool hasExport = getLiveExportSlot(globalObject, source, exportName, source, hasSlot);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!hasExport)
+        return false;
+    RELEASE_AND_RETURN(scope, getLiveExportSlot(globalObject, source, exportName, slotBase, slot));
 }
 
 JSValue AbstractModuleRecord::getLiveExport(JSGlobalObject* globalObject, PropertyName exportName)
@@ -2493,12 +2519,14 @@ JSValue AbstractModuleRecord::getLiveExport(JSGlobalObject* globalObject, Proper
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    PropertySlot sourceSlot(m_liveExportsSource.get(), PropertySlot::InternalMethodType::Get);
-    bool hasExport = getLiveExportSlot(globalObject, exportName, sourceSlot);
+    JSObject* source = liveExportsSourceForRead(globalObject, exportName);
+    RETURN_IF_EXCEPTION(scope, { });
+    PropertySlot slot(source, PropertySlot::InternalMethodType::Get);
+    bool hasExport = getLiveExportSlot(globalObject, source, exportName, source, slot);
     RETURN_IF_EXCEPTION(scope, { });
     if (!hasExport)
         return jsUndefined();
-    RELEASE_AND_RETURN(scope, sourceSlot.getValue(globalObject, exportName));
+    RELEASE_AND_RETURN(scope, slot.getValue(globalObject, exportName));
 }
 
 JSValue AbstractModuleRecord::getReexportedLiveExport(JSGlobalObject* globalObject, PropertyName exportName)
@@ -2506,12 +2534,12 @@ JSValue AbstractModuleRecord::getReexportedLiveExport(JSGlobalObject* globalObje
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    PropertySlot sourceSlot(m_liveExportsSource.get(), PropertySlot::InternalMethodType::Get);
-    bool hasExport = getReexportedLiveExportSlot(globalObject, exportName, sourceSlot);
+    PropertySlot slot(this, PropertySlot::InternalMethodType::Get);
+    bool hasExport = getReexportedLiveExportSlot(globalObject, exportName, this, slot);
     RETURN_IF_EXCEPTION(scope, { });
     if (!hasExport)
         return jsUndefined();
-    RELEASE_AND_RETURN(scope, sourceSlot.getValue(globalObject, exportName));
+    RELEASE_AND_RETURN(scope, slot.getValue(globalObject, exportName));
 }
 #endif
 

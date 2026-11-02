@@ -315,28 +315,20 @@ std::optional<bool> JSModuleNamespaceObject::getOwnPropertySlotIfDeferredOrLive(
         return std::nullopt;
 
     // Re-exported from a live record. Its module environment may have no binding with this name.
-    AbstractModuleRecord* exporter = exportEntry.moduleRecord.get();
-    PropertySlot sourceSlot(exporter->liveExportsSource(), PropertySlot::InternalMethodType::Get);
-    bool hasExport = exporter->getReexportedLiveExportSlot(globalObject, exportEntry.localName, sourceSlot);
+    PropertySlot read(this, PropertySlot::InternalMethodType::Get);
+    bool hasExport = exportEntry.moduleRecord->getReexportedLiveExportSlot(globalObject, exportEntry.localName, this, read);
     RETURN_IF_EXCEPTION(scope, std::nullopt);
-    // [[GetOwnProperty]] describes a binding of this namespace object, so it has to read the value, as for any other binding.
-    if (hasExport && sourceSlot.isAccessor() && slot.internalMethodType() == PropertySlot::InternalMethodType::Get) {
-        setLiveAccessorSlot(slot, sourceSlot, PropertyAttribute::DontDelete | PropertyAttribute::Accessor);
+    // [[GetOwnProperty]] describes a binding of this namespace object, so it reads the value, as for any other binding.
+    if (hasExport && read.isAccessor() && slot.internalMethodType() == PropertySlot::InternalMethodType::Get) {
+        slot.disableCaching();
+        slot.setGetterSlot(this, PropertyAttribute::DontDelete | PropertyAttribute::Accessor, read.getterSetter());
+        slot.setThisValue(read.thisValue());
         return true;
     }
-    JSValue value = hasExport ? sourceSlot.getValue(globalObject, exportEntry.localName) : jsUndefined();
+    JSValue value = hasExport ? read.getValue(globalObject, exportEntry.localName) : jsUndefined();
     RETURN_IF_EXCEPTION(scope, std::nullopt);
     slot.setValue(this, static_cast<unsigned>(PropertyAttribute::DontDelete), value);
     return true;
-}
-
-// An accessor of a live export's source is called by whoever reads `slot`, on the object the source names, and by nothing that
-// only describes the property.
-void JSModuleNamespaceObject::setLiveAccessorSlot(PropertySlot& slot, const PropertySlot& sourceSlot, unsigned attributes)
-{
-    slot.disableCaching();
-    slot.setGetterSlot(this, attributes, sourceSlot.getterSetter());
-    slot.setThisValue(sourceSlot.thisValue());
 }
 
 // The namespace object of a live record forwards to liveExportsSource(), writes included.
@@ -344,50 +336,50 @@ bool JSModuleNamespaceObject::getOwnPropertySlotForLiveExports(JSGlobalObject* g
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    AbstractModuleRecord* moduleRecord = m_moduleRecord.get();
-    auto internalMethodType = slot.internalMethodType();
 
-    if (internalMethodType == PropertySlot::InternalMethodType::VMInquiry) {
+    if (slot.internalMethodType() == PropertySlot::InternalMethodType::VMInquiry) {
         slot.setValue(this, static_cast<unsigned>(PropertyAttribute::None), jsUndefined());
         return false;
     }
 
-    // A Get of a name the source doesn't have is undefined, except for `__esModule`, which is then this object's own.
-    if (internalMethodType == PropertySlot::InternalMethodType::Get && propertyName == vm.propertyNames->__esModule) {
-        PropertySlot hasSlot(moduleRecord->liveExportsSource(), PropertySlot::InternalMethodType::HasProperty);
-        bool hasExport = moduleRecord->getLiveExportSlot(globalObject, propertyName, hasSlot);
-        RETURN_IF_EXCEPTION(scope, false);
-        if (!hasExport)
-            RELEASE_AND_RETURN(scope, Base::getOwnPropertySlot(this, globalObject, propertyName, slot));
-    }
-
-    PropertySlot sourceSlot(moduleRecord->liveExportsSource(), internalMethodType);
-    bool hasExport = moduleRecord->getLiveExportSlot(globalObject, propertyName, sourceSlot);
-    RETURN_IF_EXCEPTION(scope, false);
-    if (!hasExport) {
-        if (internalMethodType == PropertySlot::InternalMethodType::Get) {
-            slot.setValue(this, static_cast<unsigned>(PropertyAttribute::None), jsUndefined());
-            return true;
-        }
+    JSObject* source = m_moduleRecord->liveExportsSource();
+    if (!source) [[unlikely]] {
         if (propertyName == vm.propertyNames->__esModule)
             RELEASE_AND_RETURN(scope, Base::getOwnPropertySlot(this, globalObject, propertyName, slot));
-        return false;
+        if (slot.internalMethodType() != PropertySlot::InternalMethodType::Get)
+            return false;
+        RELEASE_AND_RETURN(scope, !!m_moduleRecord->liveExportsSourceForRead(globalObject, propertyName));
     }
-    if (internalMethodType == PropertySlot::InternalMethodType::HasProperty) {
-        slot.setValue(this, static_cast<unsigned>(PropertyAttribute::None), jsUndefined());
-        return true;
+    RELEASE_AND_RETURN(scope, getOwnPropertySlotOfLiveExportsSource(globalObject, this, source, propertyName, slot));
+}
+
+bool JSModuleNamespaceObject::getOwnPropertySlotOfLiveExportsSource(JSGlobalObject* globalObject, JSObject* namespaceObject, JSObject* source, PropertyName propertyName, PropertySlot& slot)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto internalMethodType = slot.internalMethodType();
+
+    // A Get of a name the source doesn't have is undefined, except for `__esModule`, which is then the namespace object's own.
+    if (internalMethodType == PropertySlot::InternalMethodType::Get && propertyName == vm.propertyNames->__esModule) {
+        PropertySlot hasSlot(source, PropertySlot::InternalMethodType::HasProperty);
+        bool hasExport = AbstractModuleRecord::getLiveExportSlot(globalObject, source, propertyName, source, hasSlot);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!hasExport)
+            RELEASE_AND_RETURN(scope, Base::getOwnPropertySlot(namespaceObject, globalObject, propertyName, slot));
     }
 
     // The properties are configurable and writable, because [[Delete]], [[DefineOwnProperty]] and [[Set]] go to the source too.
-    unsigned attributes = sourceSlot.attributes() & PropertyAttribute::DontEnum;
-    if (sourceSlot.isAccessor()) {
-        setLiveAccessorSlot(slot, sourceSlot, attributes | PropertyAttribute::Accessor);
+    bool hasExport = AbstractModuleRecord::getLiveExportSlot(globalObject, source, propertyName, namespaceObject, slot);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (hasExport)
+        return true;
+    if (internalMethodType == PropertySlot::InternalMethodType::Get) {
+        slot.setValue(namespaceObject, static_cast<unsigned>(PropertyAttribute::None), jsUndefined());
         return true;
     }
-    JSValue value = sourceSlot.getValue(globalObject, propertyName);
-    RETURN_IF_EXCEPTION(scope, false);
-    slot.setValue(this, attributes, value);
-    return true;
+    if (propertyName == vm.propertyNames->__esModule)
+        RELEASE_AND_RETURN(scope, Base::getOwnPropertySlot(namespaceObject, globalObject, propertyName, slot));
+    return false;
 }
 #endif
 
