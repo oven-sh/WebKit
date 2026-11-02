@@ -524,7 +524,7 @@ first = new Error().line; shouldBe(frameOf(first, function run() {
     Reflect.construct(f, [], boom);
 }), "3:13 boom", "a call of `new.target` whose `target` is on a line of its own");
 
-// As upstream: an index at its `[`, a call behind a callee that ends in no name, a template at its backquote, the store behind a count or a sum, the copy that an object literal without a getter or setter starts with.
+// As upstream: an index at its `[`, a call behind a callee that ends in no name, a template at its backquote, the store behind a count or a sum, the store of a member that a destructuring assigns to, a `delete` behind its member, the copy that an object literal without a getter or setter starts with.
 
 first = new Error().line; shouldBe(frameOf(first, function f() {
     use(object.nothing
@@ -572,6 +572,25 @@ first = new Error().line; shouldBe(frameOf(first, function f() {
         .p
         += 1;
 }), "3:10 boom", "the store of a member that is added to");
+
+first = new Error().line; shouldBe(frameOf(first, function f() {
+    [
+        object
+            .setter
+    ] = [1];
+}), "1:5 boom", "the store of a member in a list that is assigned to");
+
+first = new Error().line; shouldBe(frameOf(first, function f() {
+    ({ k:
+        object
+            .setter
+    } = { k: 1 });
+}), "3:20 boom", "the store of a member that a property is assigned to");
+
+first = new Error().line; shouldBe(frameOf(first, function f() {
+    delete object.nothing
+        .x;
+}), "2:11 undefined is not an object (evaluating 'delete object.nothing\n        .x')", "a member of nothing that is deleted");
 
 first = new Error().line; shouldBe(frameOf(first, function f() {
     use({ ...
