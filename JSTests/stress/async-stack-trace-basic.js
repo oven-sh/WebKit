@@ -84,12 +84,12 @@ function shouldThrowAsync(run, errorType, message, stackFunctions) {
                 await one(1);
             }, Error, "error",
             [
-                ["two", "78:24"],
-                ["async one", "69:18"],
-                ["async test", "84:26"],
+                ["two", "78:15"], // Bun: upstream has 78:24, where the token ends
+                ["async one", "69:15"], // Bun: upstream has 69:18, where the token ends
+                ["async test", "84:23"], // Bun: upstream has 84:26, where the token ends
                 ["drainMicrotasks", "[native code]"],
-                ["shouldThrowAsync", "19:20"],
-                ["global code", "82:25"]
+                ["shouldThrowAsync", "19:5"], // Bun: upstream has 19:20, where the token ends
+                ["global code", "82:9"] // Bun: upstream has 82:25, where the token ends
             ],
         );
         drainMicrotasks();
@@ -121,11 +121,11 @@ function shouldThrowAsync(run, errorType, message, stackFunctions) {
             }, TypeError, "Cannot convert a symbol to a number",
             [
                 ["two", "114:16"],
-                ["async one", "105:25"],
-                ["async test", "120:26"],
+                ["async one", "105:22"], // Bun: upstream has 105:25, where the token ends
+                ["async test", "120:23"], // Bun: upstream has 120:26, where the token ends
                 ["drainMicrotasks", "[native code]"],
-                ["shouldThrowAsync", "19:20"],
-                ["global code", "118:25"]
+                ["shouldThrowAsync", "19:5"], // Bun: upstream has 19:20, where the token ends
+                ["global code", "118:9"] // Bun: upstream has 118:25, where the token ends
             ],
         );
         drainMicrotasks();
@@ -167,12 +167,12 @@ function shouldThrowAsync(run, errorType, message, stackFunctions) {
                 await callOne(1);
             }, Error, "error",
             [
-                ["two", "161:24"],
-                ["async one", "156:29"],
-                ["async test", "167:30"],
+                ["two", "161:15"], // Bun: upstream has 161:24, where the token ends
+                ["async one", "156:22"], // Bun: upstream has 156:29, where the token ends
+                ["async test", "167:23"], // Bun: upstream has 167:30, where the token ends
                 ["drainMicrotasks", "[native code]"],
-                ["shouldThrowAsync", "19:20"],
-                ["global code", "165:25"]
+                ["shouldThrowAsync", "19:5"], // Bun: upstream has 19:20, where the token ends
+                ["global code", "165:9"] // Bun: upstream has 165:25, where the token ends
             ],
         );
         drainMicrotasks();
@@ -206,13 +206,13 @@ function shouldThrowAsync(run, errorType, message, stackFunctions) {
                 await one(1);
             }, Error, "error",
             [
-                ["throwError", "200:24"],
-                ["two", "196:25"],
-                ["async one", "187:18"],
-                ["async test", "206:26"],
+                ["throwError", "200:15"], // Bun: upstream has 200:24, where the token ends
+                ["two", "196:15"], // Bun: upstream has 196:25, where the token ends
+                ["async one", "187:15"], // Bun: upstream has 187:18, where the token ends
+                ["async test", "206:23"], // Bun: upstream has 206:26, where the token ends
                 ["drainMicrotasks", "[native code]"],
-                ["shouldThrowAsync", "19:20"],
-                ["global code", "204:25"]
+                ["shouldThrowAsync", "19:5"], // Bun: upstream has 19:20, where the token ends
+                ["global code", "204:9"] // Bun: upstream has 204:25, where the token ends
             ],
         );
         drainMicrotasks();

@@ -1,10 +1,10 @@
 # Where this fork's tests differ from upstream's, and why
 
-`JSTests/`, `LayoutTests/js` and the PerformanceTests collections are upstream's tests. This fork changes 129 of them and
+`JSTests/`, `LayoutTests/js` and the PerformanceTests collections are upstream's tests. This fork changes 155 of them and
 three runner scripts. Every change is listed here by the reason for it, so that after an upstream sync a failing test can
 be sorted into one of three piles:
 
-1. **The fork behaves differently on purpose.** Update the expectation. Sections A1–A10 list every such behavior, how to
+1. **The fork behaves differently on purpose.** Update the expectation. Sections A1–A11 list every such behavior, how to
    recognize it in a failure, and the fork code that causes it. If a failure matches one of these and the fork code is
    still there, the test is the thing to change.
 2. **The test cannot pass in a mode or build we run.** Skip it in that mode only, with the reason. Section B.
@@ -127,6 +127,71 @@ Rules for an edit to an upstream test:
 - `stress/intl-extended-timezone-names.js`: CLDR 49 removed zh-Hant's short names for America/Los_Angeles: `PDT` → `GMT-7`,
   `PT` → `洛杉磯時間`.
 
+### A11. A frame is where a token starts: a name, a member, a spread, `new X(args)`, a call of a name
+
+- Upstream reports a name, `new X(args)` and a call where a token ends (behind the name, behind the callee), a member
+  at its `.` or `?.`, a spread behind its `...`, and a name that `for`-`in` or `for`-`of` assigns to at the `in` or
+  `of`. The fork reports:
+  - a name where the name starts: one that is read, called, tagged, assigned to or counted (`++x`, `x++`), and one
+    that a destructuring, a `for`-`in` or a `for`-`of` assigns to (`[x] = v`, `({ a: x } = v)`, `({ x } = v)`,
+    `for (x of v)`);
+  - a member at its name, where it is read and where `=`, a `for`-`in` or a `for`-`of` assigns to it: `a.b`, `a?.b`,
+    `a.#b`, `super.b`;
+  - a spread at the first token of its operand: in a list, in an object, in the arguments of a call and of `new`;
+  - `new X(args)` at the `new`;
+  - a call whose callee ends in a name, or is `super`, at that name: `f()`, `a.b()`, `a.#b()`, `super.b()`,
+    `new.target()`, `import.meta()`, and `let()`, `yield()` and `await()` where those are names.
+- V8 has `new X(args)`, a call of a name, a member at its name and a spread at its operand there. It has a name there
+  unless the name is the first thing its statement evaluates (`return x` is at `return`). It reports a call of a
+  reserved-word or private property (`o.catch()`, `this.#m()`) at the `(`; JSC reports it at the name: one rule for
+  every property name. Where else V8 is elsewhere (node 26.3): a name that is called or tagged and is not defined
+  (`f()`, `` f`t` ``) where its statement, or the initializer it stands in, starts; a member behind the first `?.` of
+  its chain at its `?.` or `.` (`a?.b`, and the `c` of `a?.b.c`); a store (`x = v`, `a.b = v`) at the `=`; a name or a
+  member that is counted or added to (`++x`, `x++`, `x += v`, `a.b++`, `a.b += v`) where its statement or the member
+  starts, or at the operator; a spread argument at its call (the name of the callee, the `new`), and a spread of a
+  member (`...a.b`) at the member's name; the rest of a list that is assigned to (`[...x] = v`) at its `...`.
+- Not changed: an index is at its `[`, a tagged template at its backquote, `new X` at its `new`, and a call of anything
+  else behind its callee (`a?.()` behind the `?.`, `(f)()` behind the `)`, `a[b]()` behind the `]`). The store that
+  `a.b++`, `++a.b` and `a.b += v` end with is behind the member, behind the `++` and behind the first character of the
+  operator: only their read is at the name. A member that a destructuring assigns to is stored at the `[` of its list
+  (`[a.b] = v`) or behind the member (`({ k: a.b } = v)`), and `delete a.b` is behind the member. An object literal
+  that starts with a spread and has no getter or setter starts as a copy of that operand, and the copy is at the `{`
+  (V8: at the operand).
+- No position of its own, as upstream: a name that is a local of its function where `++x`, the statement `x++`,
+  `x += v`, a destructuring or the head of a `for`-`in` or `for`-`of` writes to it, which throws in the name's dead
+  zone or when the name is a constant; a name that a list or a property assigns to (`[x] = v`, `({ a: x } = v)`) in
+  its dead zone in sloppy code; the read of a member that is a tag (`` a.b`t` ``). Such a frame has the position that
+  was recorded last in front of it, and its message quotes the text there.
+- Why: Bun maps a frame of the text that its transpiler prints back to the source through a source map, which knows
+  tokens by where they start. Where a token ends the next one starts, so a position there names two tokens, and on a
+  line of the source other than the one that was meant once the two were written on two lines. A `.` and what stands
+  between a `...` and its operand are no tokens of a source map at all: a position there is taken for the token in
+  front of it.
+- Fork code: `bytecompiler/NodesCodegen.cpp`, where a name is recorded (`ResolveNode::emitBytecode`, the nodes that
+  call, tag, increment or assign to a name, `BindingNode::bindValue`, `AssignmentElementNode::bindValue`,
+  `ForInNode::emitLoopHeader` and `ForOfNode::emitBytecode`: the divot is where the name starts, and the range is
+  upstream's), and `parser/Parser.cpp` (`parseMemberExpression`: `new` with arguments, `callDivot`, and the `DOT` case,
+  which takes the position behind its `next()`; the four places that parse the `...` of a spread, which do the same;
+  `parseArguments`, where a list of arguments with a spread in it is where the list starts).
+- Recognize: the line is the same unless the two tokens are on two lines. The column is smaller by the length of the
+  name (a name, a call), is that of the `new`, is larger by the length of the `.` or `?.` (a member), and is that of
+  the name where upstream has that of an `in` or `of`. A spread has upstream's column unless something stands between
+  its `...` and its operand. The message, and the text it quotes, do not change.
+- Files (34). Only positions change in each, and in the baselines only columns:
+  - `stress/async-stack-trace-basic.js`, `-bound-functions-basic`, `-nested`, `-nested-deep`, `-promise-all-basic`,
+    `-promise-allSettled-basic`, `-promise-any-basic`, `-promise-race-basic`, `-switch`: 212 frames
+  - `stress/multiline-token-error-column.js` (both columns), `stress/get-property-cache-error.js` (the column),
+    `stress/regress-267728.js` (the column of the member on a line of its own)
+  - `ChakraCore/test/`: `Basics/bug650104`, `Error/NativeErrors_v4`, `Error/inlineSameFunc`,
+    `Error/validate_line_column`, `LetConst/defer2`, `LetConst/defer5`, `Object/forIn.error`,
+    `StackTrace/ErrorPrototype`, `StackTrace/FunctionName.js`, `es6/unicode_blue_533163_utf8`, `fieldopts/fieldhoist6`,
+    `6b`, `7`, `_negzero`, `_nullfieldhoist`, `_undefined_global`, `_unreachable` (all `.baseline-jsc`): 76 positions
+  - `LayoutTests/js/stack-trace-expected.txt`: 292 positions
+  - `LayoutTests/imported/w3c/web-platform-tests/wasm/core/`: `call_ref`, `return_call_indirect`, `return_call_ref`,
+    `unreached-invalid` (all `.wast.js-expected.txt`): the 207 positions in the stacks of their expected failures
+- The fork's own `stress/bytecode-optimizer-exceptions.js` has 36 of these positions in `__expect`. To record them
+  again, run the file with `--useBytecodeOptimizer=0`.
+
 ---
 
 ## B. The test cannot pass in a mode or build we run: narrowed, not changed
@@ -199,6 +264,7 @@ Not upstream's: a sync neither brings nor changes them. Most are named `stress/b
 | file | what it holds the engine to |
 |---|---|
 | `stress/bun-async-context-propagation.js` | the embedder's async-context slot is captured when a job is scheduled and current while it runs |
+| `stress/bun-frame-is-where-its-token-starts.js`, `stress/bun-frame-is-where-its-token-starts-in-a-module.mjs` | A11: the line, the column and the message of a frame at a name that is read or written to, at a member, at a spread, at `new X(args)` and at a call of a name, and of the frames that are where upstream has them: an index, an optional call, a call of a callee in parentheses, of an index and of a function expression, a tagged template, the store behind a count or a sum of a member, the store of a member that a destructuring assigns to, a `delete` of a member, the copy that an object literal starts with. The module has the call of `import.meta` |
 | `stress/bun-aot-builtins-table.js` | the ahead-of-time compiler's table of built-ins (`Source/JavaScriptCore/aot/builtins/*.builtins.ts`) agrees with the engine. **After a sync that removes, renames, moves or reimplements a built-in that the table knows this fails, and each line it prints names the entry to fix.** |
 | `stress/sort-scratch-double-pivot.js` | double arithmetic in the comparator of an inlined sort stores no double into an Int32 array |
 | `stress/array-sort-inline-int32-double-comparator.js` | an earlier, smaller test for the sort fix |
@@ -244,7 +310,7 @@ the programs that test ahead-of-time compilation are in Bun's `test/aot`.
 
 ## E. After a sync: a failing test, step by step
 
-1. Does the difference match A1–A10 exactly (same text, same shape)? Check that the fork code named there is still in the
+1. Does the difference match A1–A11 exactly (same text, same shape)? Check that the fork code named there is still in the
    tree, then update the expectation with a `// Bun:` comment and add the file to its list here.
 2. Does it fail only in one mode or only with ASan, for a reason in the test and not the engine (it counts JIT compiles,
    depends on allocation never failing, needs more than 300 s)? Narrow it as in B.

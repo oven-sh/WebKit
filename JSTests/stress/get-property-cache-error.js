@@ -15,6 +15,6 @@ for (let i = 0; i < 1000; ++i) {
     if (i == 900) {
         // now it does
         Error.stackTraceLimit = 10
-        expected = 32   
+        expected = 27 // Bun: upstream has 32, where `Error` ends. A call of a name is reported where the name starts.
     }
 }

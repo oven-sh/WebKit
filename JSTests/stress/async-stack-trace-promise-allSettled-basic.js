@@ -60,11 +60,11 @@ function unwrap(promise) {
     shouldBe(results.length, 1);
     shouldBe(results[0].status, "rejected");
     testStack(results[0].reason, [
-      ["thrower", "53:59"],
-      ["async run", "55:36"],
+      ["thrower", "53:50"], // Bun: upstream has 53:59, where the token ends
+      ["async run", "55:26"], // Bun: upstream has 55:36, where the token ends
       ["drainMicrotasks", "[native code]"],
-      ["unwrap", "47:18"],
-      ["global code", "59:27"]
+      ["unwrap", "47:3"], // Bun: upstream has 47:18, where the token ends
+      ["global code", "59:21"] // Bun: upstream has 59:27, where the token ends
     ]);
   }
 }
@@ -98,25 +98,25 @@ function unwrap(promise) {
     shouldBe(results[3].status, "rejected");
     shouldBe(results[4].status, "rejected");
     testStack(results[1].reason, [
-      ["task1", "78:20"],
-      ["async run", "89:36"],
+      ["task1", "78:11"], // Bun: upstream has 78:20, where the token ends
+      ["async run", "89:26"], // Bun: upstream has 89:36, where the token ends
       ["drainMicrotasks", "[native code]"],
-      ["unwrap", "47:18"],
-      ["global code", "93:27"]
+      ["unwrap", "47:3"], // Bun: upstream has 47:18, where the token ends
+      ["global code", "93:21"] // Bun: upstream has 93:27, where the token ends
     ]);
     testStack(results[3].reason, [
-      ["task2", "85:20"],
-      ["async run", "89:36"],
+      ["task2", "85:11"], // Bun: upstream has 85:20, where the token ends
+      ["async run", "89:26"], // Bun: upstream has 89:36, where the token ends
       ["drainMicrotasks", "[native code]"],
-      ["unwrap", "47:18"],
-      ["global code", "93:27"]
+      ["unwrap", "47:3"], // Bun: upstream has 47:18, where the token ends
+      ["global code", "93:21"] // Bun: upstream has 93:27, where the token ends
     ]);
     testStack(results[4].reason, [
-      ["task3", "87:52"],
-      ["async run", "89:36"],
+      ["task3", "87:43"], // Bun: upstream has 87:52, where the token ends
+      ["async run", "89:26"], // Bun: upstream has 89:36, where the token ends
       ["drainMicrotasks", "[native code]"],
-      ["unwrap", "47:18"],
-      ["global code", "93:27"]
+      ["unwrap", "47:3"], // Bun: upstream has 47:18, where the token ends
+      ["global code", "93:21"] // Bun: upstream has 93:27, where the token ends
     ]);
   }
 }

@@ -302,9 +302,9 @@ bool ResolveNode::getFromScopeCanThrow(BytecodeGenerator& generator) const
 RegisterID* ResolveNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
 {
     Variable var = generator.variable(m_ident);
-    JSTextPosition divot = m_start + m_ident.length();
+    JSTextPosition end = m_start + m_ident.length();
     if (RegisterID* local = var.local()) {
-        generator.emitExpressionInfo(divot, m_start, divot);
+        generator.emitExpressionInfo(m_start, m_start, end);
         generator.emitTDZCheckIfNecessary(var, local, nullptr);
         if (dst == generator.ignoredResult())
             return nullptr;
@@ -313,7 +313,7 @@ RegisterID* ResolveNode::emitBytecode(BytecodeGenerator& generator, RegisterID* 
         return generator.move(dst, local);
     }
     
-    generator.emitExpressionInfo(divot, m_start, divot);
+    generator.emitExpressionInfo(m_start, m_start, end);
     RefPtr<RegisterID> scope = generator.emitResolveScope(dst, var);
     RegisterID* finalDest = generator.finalDestination(dst);
     if (!generator.needsTDZCheck(var))
@@ -412,8 +412,8 @@ RegisterID* TaggedTemplateNode::emitBytecode(BytecodeGenerator& generator, Regis
             tag = generator.newTemporary();
             base = generator.newTemporary();
 
-            JSTextPosition newDivot = divotStart() + identifier.length();
-            generator.emitExpressionInfo(newDivot, divotStart(), newDivot);
+            JSTextPosition nameEnd = divotStart() + identifier.length();
+            generator.emitExpressionInfo(divotStart(), divotStart(), nameEnd);
             generator.move(base.get(), generator.emitResolveScope(base.get(), var));
             generator.emitGetFromScope(tag.get(), base.get(), var, ThrowIfNotFound);
             generator.emitTDZCheckIfNecessary(var, tag.get(), nullptr);
@@ -1416,8 +1416,8 @@ RegisterID* EvalFunctionCallNode::emitBytecode(BytecodeGenerator& generator, Reg
     if (local)
         generator.emitLoad(callArguments.thisRegister(), jsUndefined());
     else {
-        JSTextPosition newDivot = divotStart() + 4;
-        generator.emitExpressionInfo(newDivot, divotStart(), newDivot);
+        JSTextPosition nameEnd = divotStart() + 4;
+        generator.emitExpressionInfo(divotStart(), divotStart(), nameEnd);
         generator.move(
             callArguments.thisRegister(),
             generator.emitResolveScope(callArguments.thisRegister(), var));
@@ -1576,9 +1576,9 @@ RegisterID* FunctionCallResolveNode::emitBytecode(BytecodeGenerator& generator, 
     Variable var = generator.variable(m_ident);
     RefPtr<RegisterID> local = var.local();
     RefPtr<RegisterID> func;
-    JSTextPosition newDivot = divotStart() + m_ident.length();
+    JSTextPosition nameEnd = divotStart() + m_ident.length();
     if (local) {
-        generator.emitExpressionInfo(newDivot, divotStart(), newDivot);
+        generator.emitExpressionInfo(divotStart(), divotStart(), nameEnd);
         generator.emitTDZCheckIfNecessary(var, local.get(), nullptr);
         if (m_args->hasAssignments())
             func = generator.move(generator.tempDestination(dst), local.get());
@@ -1594,7 +1594,7 @@ RegisterID* FunctionCallResolveNode::emitBytecode(BytecodeGenerator& generator, 
         // local variable, then it's not one of our built-in constructors.
         expectedFunction = NoExpectedFunction;
     } else {
-        generator.emitExpressionInfo(newDivot, divotStart(), newDivot);
+        generator.emitExpressionInfo(divotStart(), divotStart(), nameEnd);
         generator.move(
             callArguments.thisRegister(),
             generator.emitResolveScope(callArguments.thisRegister(), var));
@@ -2791,9 +2791,9 @@ RegisterID* PostfixNode::emitResolve(BytecodeGenerator& generator, RegisterID* d
     const Identifier& ident = resolve->identifier();
 
     Variable var = generator.variable(ident);
-    JSTextPosition newDivot = divotStart() + ident.length();
+    JSTextPosition nameEnd = divotStart() + ident.length();
     if (RegisterID* local = var.local()) {
-        generator.emitExpressionInfo(newDivot, divotStart(), newDivot);
+        generator.emitExpressionInfo(divotStart(), divotStart(), nameEnd);
         generator.emitTDZCheckIfNecessary(var, local, nullptr);
         RefPtr<RegisterID> localReg = local;
         if (var.isReadOnly()) {
@@ -2805,7 +2805,7 @@ RegisterID* PostfixNode::emitResolve(BytecodeGenerator& generator, RegisterID* d
         return oldValue.unsafeGet();
     }
 
-    generator.emitExpressionInfo(newDivot, divotStart(), newDivot);
+    generator.emitExpressionInfo(divotStart(), divotStart(), nameEnd);
     RefPtr<RegisterID> scope = generator.emitResolveScope(nullptr, var);
     RefPtr<RegisterID> value = generator.emitGetFromScope(generator.newTemporary(), scope.get(), var, ThrowIfNotFound);
     generator.emitTDZCheckIfNecessary(var, value.get(), nullptr);
@@ -3105,7 +3105,7 @@ RegisterID* PrefixNode::emitResolve(BytecodeGenerator& generator, RegisterID* ds
         return generator.move(dst, localReg.get());
     }
 
-    generator.emitExpressionInfo(divot(), divotStart(), divotEnd());
+    generator.emitExpressionInfo(resolve->position(), divotStart(), divotEnd());
     RefPtr<RegisterID> scope = generator.emitResolveScope(dst, var);
     RefPtr<RegisterID> value = generator.emitGetFromScope(generator.newTemporary(), scope.get(), var, ThrowIfNotFound);
     generator.emitTDZCheckIfNecessary(var, value.get(), nullptr);
@@ -3977,7 +3977,7 @@ static ALWAYS_INLINE RegisterID* emitReadModifyAssignment(BytecodeGenerator& gen
 
 RegisterID* ReadModifyResolveNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
 {
-    JSTextPosition newDivot = divotStart() + m_ident.length();
+    JSTextPosition nameEnd = divotStart() + m_ident.length();
     Variable var = generator.variable(m_ident);
     if (RegisterID* local = var.local()) {
         generator.emitTDZCheckIfNecessary(var, local, nullptr);
@@ -4001,7 +4001,7 @@ RegisterID* ReadModifyResolveNode::emitBytecode(BytecodeGenerator& generator, Re
         return generator.move(dst, result);
     }
 
-    generator.emitExpressionInfo(newDivot, divotStart(), newDivot);
+    generator.emitExpressionInfo(divotStart(), divotStart(), nameEnd);
     RefPtr<RegisterID> scope = generator.emitResolveScope(nullptr, var);
     RefPtr<RegisterID> value = generator.emitGetFromScope(generator.newTemporary(), scope.get(), var, ThrowIfNotFound);
     generator.emitTDZCheckIfNecessary(var, value.get(), nullptr);
@@ -4040,7 +4040,7 @@ static ALWAYS_INLINE void emitShortCircuitAssignment(BytecodeGenerator& generato
 
 RegisterID* ShortCircuitReadModifyResolveNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
 {
-    JSTextPosition newDivot = divotStart() + m_ident.length();
+    JSTextPosition nameEnd = divotStart() + m_ident.length();
 
     Variable var = generator.variable(m_ident);
     bool isReadOnly = var.isReadOnly();
@@ -4092,7 +4092,7 @@ RegisterID* ShortCircuitReadModifyResolveNode::emitBytecode(BytecodeGenerator& g
         return generator.move(dst, result.get());
     }
 
-    generator.emitExpressionInfo(newDivot, divotStart(), newDivot);
+    generator.emitExpressionInfo(divotStart(), divotStart(), nameEnd);
     RefPtr<RegisterID> scope = generator.emitResolveScope(nullptr, var);
 
     RefPtr<RegisterID> uncheckedResult = generator.newTemporary();
@@ -4147,7 +4147,7 @@ RegisterID* AssignResolveNode::emitBytecode(BytecodeGenerator& generator, Regist
 {
     Variable var = generator.variable(m_ident);
     bool isReadOnly = var.isReadOnly() && m_assignmentContext != AssignmentContext::ConstDeclarationStatement && !isUsingOrAwaitUsingAssignmentContext(m_assignmentContext);
-    JSTextPosition newDivot = divotStart() + m_ident.length();
+    JSTextPosition nameEnd = divotStart() + m_ident.length();
     if (RegisterID* local = var.local()) {
         RegisterID* result = nullptr;
 
@@ -4155,7 +4155,7 @@ RegisterID* AssignResolveNode::emitBytecode(BytecodeGenerator& generator, Regist
             result = generator.emitNode(dst, m_right); // Execute side effects first.
 
             if (m_assignmentContext == AssignmentContext::AssignmentExpression) {
-                generator.emitExpressionInfo(newDivot, divotStart(), newDivot);
+                generator.emitExpressionInfo(divotStart(), divotStart(), nameEnd);
                 generator.emitTDZCheckIfNecessary(var, local, nullptr);
             }
 
@@ -4166,7 +4166,7 @@ RegisterID* AssignResolveNode::emitBytecode(BytecodeGenerator& generator, Regist
             generator.emitNode(tempDst.get(), m_right); // Execute side effects first.
 
             if (m_assignmentContext == AssignmentContext::AssignmentExpression) {
-                generator.emitExpressionInfo(newDivot, divotStart(), newDivot);
+                generator.emitExpressionInfo(divotStart(), divotStart(), nameEnd);
                 generator.emitTDZCheckIfNecessary(var, local, nullptr);
             }
 
@@ -4188,16 +4188,16 @@ RegisterID* AssignResolveNode::emitBytecode(BytecodeGenerator& generator, Regist
     }
 
     if (generator.ecmaMode().isStrict())
-        generator.emitExpressionInfo(newDivot, divotStart(), newDivot);
+        generator.emitExpressionInfo(divotStart(), divotStart(), nameEnd);
     RefPtr<RegisterID> scope = generator.emitResolveScope(nullptr, var);
     if (m_assignmentContext == AssignmentContext::AssignmentExpression) {
-        generator.emitExpressionInfo(newDivot, divotStart(), newDivot);
+        generator.emitExpressionInfo(divotStart(), divotStart(), nameEnd);
         generator.emitTDZCheckIfNecessary(var, nullptr, scope.get());
     }
     if (dst == generator.ignoredResult())
         dst = nullptr;
     RefPtr<RegisterID> result = generator.emitNode(dst, m_right); // Execute side effects first.
-    generator.emitExpressionInfo(newDivot, divotStart(), newDivot);
+    generator.emitExpressionInfo(divotStart(), divotStart(), nameEnd);
     if (isReadOnly) {
         bool threwException = generator.emitReadOnlyExceptionIfNeeded(var);
         if (threwException)
@@ -4750,7 +4750,7 @@ RegisterID* ForInNode::tryGetBoundLocal(BytecodeGenerator& generator)
 
 void ForInNode::emitLoopHeader(BytecodeGenerator& generator, RegisterID* propertyName)
 {
-    auto lambdaEmitResolveVariable = [&] (const Identifier& ident) {
+    auto lambdaEmitResolveVariable = [&] (const Identifier& ident, const JSTextPosition& nameStart) {
         Variable var = generator.variable(ident);
         if (RegisterID* local = var.local()) {
             if (var.isReadOnly())
@@ -4758,11 +4758,11 @@ void ForInNode::emitLoopHeader(BytecodeGenerator& generator, RegisterID* propert
             generator.move(local, propertyName);
         } else {
             if (generator.ecmaMode().isStrict())
-                generator.emitExpressionInfo(divot(), divotStart(), divotEnd());
+                generator.emitExpressionInfo(nameStart, divotStart(), divotEnd());
             if (var.isReadOnly())
                 generator.emitReadOnlyExceptionIfNeeded(var);
             RefPtr<RegisterID> scope = generator.emitResolveScope(nullptr, var);
-            generator.emitExpressionInfo(divot(), divotStart(), divotEnd());
+            generator.emitExpressionInfo(nameStart, divotStart(), divotEnd());
             generator.emitPutToScope(scope.get(), var, propertyName, generator.ecmaMode().isStrict() ? ThrowIfNotFound : DoNotThrowIfNotFound, InitializationMode::NotInitialization);
         }
         generator.emitProfileType(propertyName, var, m_lexpr->position(), m_lexpr->position() + ident.length());
@@ -4770,13 +4770,13 @@ void ForInNode::emitLoopHeader(BytecodeGenerator& generator, RegisterID* propert
 
     if (m_lexpr->isResolveNode()) {
         const Identifier& ident = static_cast<ResolveNode*>(m_lexpr)->identifier();
-        lambdaEmitResolveVariable(ident);
+        lambdaEmitResolveVariable(ident, m_lexpr->position());
         return;
     }
 
     if (m_lexpr->isAssignResolveNode()) {
-        const Identifier& ident = static_cast<AssignResolveNode*>(m_lexpr)->identifier();
-        lambdaEmitResolveVariable(ident);
+        AssignResolveNode* assignNode = static_cast<AssignResolveNode*>(m_lexpr);
+        lambdaEmitResolveVariable(assignNode->identifier(), assignNode->divotStart());
         return;
     }
 
@@ -4922,11 +4922,11 @@ void ForOfNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
                     generator.move(local, value);
                 } else {
                     if (generator.ecmaMode().isStrict())
-                        generator.emitExpressionInfo(divot(), divotStart(), divotEnd());
+                        generator.emitExpressionInfo(m_lexpr->position(), divotStart(), divotEnd());
                     if (var.isReadOnly() && !isUsingDeclaration)
                         generator.emitReadOnlyExceptionIfNeeded(var);
                     RefPtr<RegisterID> scope = generator.emitResolveScope(nullptr, var);
-                    generator.emitExpressionInfo(divot(), divotStart(), divotEnd());
+                    generator.emitExpressionInfo(m_lexpr->position(), divotStart(), divotEnd());
                     generator.emitPutToScope(scope.get(), var, value, generator.ecmaMode().isStrict() ? ThrowIfNotFound : DoNotThrowIfNotFound, isUsingDeclaration ? InitializationMode::ConstInitialization : InitializationMode::NotInitialization);
                 }
                 generator.emitProfileType(value, var, m_lexpr->position(), m_lexpr->position() + ident.length());
@@ -6557,9 +6557,9 @@ void BindingNode::bindValue(BytecodeGenerator& generator, RegisterID* value) con
         return;
     }
     if (generator.ecmaMode().isStrict())
-        generator.emitExpressionInfo(divotEnd(), divotStart(), divotEnd());
+        generator.emitExpressionInfo(divotStart(), divotStart(), divotEnd());
     RefPtr<RegisterID> scope = generator.emitResolveScope(nullptr, var);
-    generator.emitExpressionInfo(divotEnd(), divotStart(), divotEnd());
+    generator.emitExpressionInfo(divotStart(), divotStart(), divotEnd());
     if (m_bindingContext == AssignmentContext::AssignmentExpression)
         generator.emitTDZCheckIfNecessary(var, nullptr, scope.get());
     if (isReadOnly) {
@@ -6692,7 +6692,7 @@ void AssignmentElementNode::bindValue(BytecodeGenerator& generator, RegisterID* 
             return;
         }
         if (generator.ecmaMode().isStrict())
-            generator.emitExpressionInfo(divotEnd(), divotStart(), divotEnd());
+            generator.emitExpressionInfo(lhs->position(), divotStart(), divotEnd());
         RefPtr<RegisterID> scope = generator.emitResolveScope(nullptr, var);
         generator.emitTDZCheckIfNecessary(var, nullptr, scope.get());
         if (isReadOnly) {
@@ -6700,7 +6700,7 @@ void AssignmentElementNode::bindValue(BytecodeGenerator& generator, RegisterID* 
             if (threwException)
                 return;
         }
-        generator.emitExpressionInfo(divotEnd(), divotStart(), divotEnd());
+        generator.emitExpressionInfo(lhs->position(), divotStart(), divotEnd());
         if (!isReadOnly) {
             generator.emitPutToScope(scope.get(), var, value, generator.ecmaMode().isStrict() ? ThrowIfNotFound : DoNotThrowIfNotFound, InitializationMode::NotInitialization);
             generator.emitProfileType(value, var, divotStart(), divotEnd());

@@ -161,21 +161,21 @@ for (let i = 0; i < testLoopCount; i++) {
             await level1();
         }, Error, "error",
         [
-            ["problematicFunction", "154:20"],
-            ["level10", "141:30"],
-            ["async level9", "130:18"],
-            ["async level8", "124:17"],
-            ["async level7", "119:17"],
-            ["async level6", "112:17"],
-            ["async level5", "105:17"],
-            ["async level4", "97:17"],
-            ["async level3", "85:17"],
-            ["async level2", "77:17"],
-            ["async level1", "69:17"],
-            ["async test", "161:25"],
+            ["problematicFunction", "154:11"], // Bun: upstream has 154:20, where the token ends
+            ["level10", "141:11"], // Bun: upstream has 141:30, where the token ends
+            ["async level9", "130:11"], // Bun: upstream has 130:18, where the token ends
+            ["async level8", "124:11"], // Bun: upstream has 124:17, where the token ends
+            ["async level7", "119:11"], // Bun: upstream has 119:17, where the token ends
+            ["async level6", "112:11"], // Bun: upstream has 112:17, where the token ends
+            ["async level5", "105:11"], // Bun: upstream has 105:17, where the token ends
+            ["async level4", "97:11"], // Bun: upstream has 97:17, where the token ends
+            ["async level3", "85:11"], // Bun: upstream has 85:17, where the token ends
+            ["async level2", "77:11"], // Bun: upstream has 77:17, where the token ends
+            ["async level1", "69:11"], // Bun: upstream has 69:17, where the token ends
+            ["async test", "161:19"], // Bun: upstream has 161:25, where the token ends
             ["drainMicrotasks", "[native code]"],
-            ["shouldThrowAsync", "19:20"],
-            ["global code", "159:21"]
+            ["shouldThrowAsync", "19:5"], // Bun: upstream has 19:20, where the token ends
+            ["global code", "159:5"] // Bun: upstream has 159:21, where the token ends
         ],
     );
     drainMicrotasks();
