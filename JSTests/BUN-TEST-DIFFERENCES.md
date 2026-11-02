@@ -127,21 +127,47 @@ Rules for an edit to an upstream test:
 - `stress/intl-extended-timezone-names.js`: CLDR 49 removed zh-Hant's short names for America/Los_Angeles: `PDT` → `GMT-7`,
   `PT` → `洛杉磯時間`.
 
-### A11. A frame is where its token starts: a name, a spread, `new X(args)`, a call of a name
+### A11. A frame is where a token starts: a name, a member, a spread, `new X(args)`, a call of a name
 
-- Upstream reports these four where the token ends: a name behind the name, a spread behind its `...`, `new X(args)` and
-  a call behind the callee. The fork reports them where the token starts: at the name, at the `...`, at the `new`, and,
-  for a call whose callee ends in a name (`f()`, `a.b()`, `a.#b()`) or is `super`, at that name. V8 has all four there.
-- Not changed: a member is at its `.` or `[`, a tagged template at its backquote, `new X` at its `new`, and a call of
-  anything else behind its callee (`a?.()` behind the `?.`, `(f)()` behind the `)`, `a[b]()` behind the `]`).
+- Upstream reports a name, `new X(args)` and a call where a token ends (behind the name, behind the callee), a member
+  at its `.` or `?.`, a spread behind its `...`, and a name that `for`-`in` or `for`-`of` assigns to at the `in` or
+  `of`. The fork reports:
+  - a name where the name starts: one that is read, called, tagged, assigned to or counted (`++x`, `x++`), and one
+    that a destructuring, a `for`-`in` or a `for`-`of` assigns to (`[x] = v`, `({ a: x } = v)`, `({ x } = v)`,
+    `for (x of v)`);
+  - a member at its name, where it is read and where `=` assigns to it: `a.b`, `a?.b`, `a.#b`, `super.b`;
+  - a spread at the first token of its operand: in a list, in an object, in the arguments of a call and of `new`;
+  - `new X(args)` at the `new`;
+  - a call whose callee ends in a name, or is `super`, at that name: `f()`, `a.b()`, `a.#b()`, `super.b()`,
+    `new.target()`, `import.meta()`, and `let()`, `yield()` and `await()` where those are names.
+- V8 has `new X(args)`, a call of a name, a member at its name and a spread at its operand there. It has a name there
+  unless the name is the first thing its statement evaluates (`return x` is at `return`). It reports a call of a
+  reserved-word or private property (`o.catch()`, `this.#m()`) at the `(`; JSC reports it at the name: one rule for
+  every property name. Where else V8 is elsewhere (node 26.3): a member behind `?.` (`a?.b`) at the `?.`; a store
+  (`x = v`, `a.b = v`) at the `=`; a name or a member that is counted or added to (`++x`, `x++`, `x += v`, `a.b++`,
+  `a.b += v`) where its statement or the member starts, or at the operator; a spread argument at its call (the name
+  of the callee, the `new`), and a spread of a member (`...a.b`) at the member's name; the rest of a list that is
+  assigned to (`[...x] = v`) at its `...`.
+- Not changed: an index is at its `[`, a tagged template at its backquote, `new X` at its `new`, and a call of anything
+  else behind its callee (`a?.()` behind the `?.`, `(f)()` behind the `)`, `a[b]()` behind the `]`). The store that
+  `a.b++`, `++a.b` and `a.b += v` end with is behind the member, behind the `++` and behind the first character of the
+  operator: only their read is at the name. An object literal that starts with a spread and has no getter or setter
+  starts as a copy of that operand, and the copy is at the `{` (V8: at the operand).
 - Why: Bun maps a frame of the text that its transpiler prints back to the source through a source map, which knows
   tokens by where they start. Where a token ends the next one starts, so a position there names two tokens, and on a
-  line of the source other than the one that was meant once the two were written on two lines.
-- Fork code: `bytecompiler/NodesCodegen.cpp`, where a name is recorded (`ResolveNode::emitBytecode` and the nodes that
-  call, tag, increment or assign to a name: `nameEnd` is the end of the range, and no longer the divot), and
-  `parser/Parser.cpp` (`parseMemberExpression`: `new` with arguments, and `callDivot`; the five places that parse `...`).
-- Recognize: the line is the same unless the name or callee and what follows it are on two lines. The column is smaller
-  by the length of the name, or is that of the `new`. The message, and the text it quotes, do not change.
+  line of the source other than the one that was meant once the two were written on two lines. A `.` and what stands
+  between a `...` and its operand are no tokens of a source map at all: a position there is taken for the token in
+  front of it.
+- Fork code: `bytecompiler/NodesCodegen.cpp`, where a name is recorded (`ResolveNode::emitBytecode`, the nodes that
+  call, tag, increment or assign to a name, `BindingNode::bindValue`, `AssignmentElementNode::bindValue`,
+  `ForInNode::emitLoopHeader` and `ForOfNode::emitBytecode`: the divot is where the name starts, and the range is
+  upstream's), and `parser/Parser.cpp` (`parseMemberExpression`: `new` with arguments, `callDivot`, and the `DOT` case,
+  which takes the position behind its `next()`; the four places that parse the `...` of a spread, which do the same;
+  `parseArguments`, where a list of arguments with a spread in it is where the list starts).
+- Recognize: the line is the same unless the two tokens are on two lines. The column is smaller by the length of the
+  name (a name, a call), is that of the `new`, is larger by the length of the `.` or `?.` (a member), and is that of
+  the name where upstream has that of an `in` or `of`. A spread has upstream's column unless something stands between
+  its `...` and its operand. The message, and the text it quotes, do not change.
 - Files (33). Only positions change in each, and in the baselines only columns:
   - `stress/async-stack-trace-basic.js`, `-bound-functions-basic`, `-nested`, `-nested-deep`, `-promise-all-basic`,
     `-promise-allSettled-basic`, `-promise-any-basic`, `-promise-race-basic`, `-switch`: 212 frames
@@ -228,7 +254,7 @@ Not upstream's: a sync neither brings nor changes them. Most are named `stress/b
 | file | what it holds the engine to |
 |---|---|
 | `stress/bun-async-context-propagation.js` | the embedder's async-context slot is captured when a job is scheduled and current while it runs |
-| `stress/bun-frame-is-where-its-token-starts.js` | A11: the line, the column and the message of a frame at a name, a spread, `new X(args)` and a call of a name, and of the frames that are where upstream has them: a member, an optional call, a call of a callee in parentheses, of an index and of a function expression, a tagged template |
+| `stress/bun-frame-is-where-its-token-starts.js`, `stress/bun-frame-is-where-its-token-starts-in-a-module.mjs` | A11: the line, the column and the message of a frame at a name that is read or written to, at a member, at a spread, at `new X(args)` and at a call of a name, and of the frames that are where upstream has them: an index, an optional call, a call of a callee in parentheses, of an index and of a function expression, a tagged template, the store behind a count or a sum of a member, the copy that an object literal starts with. The module has the call of `import.meta` |
 | `stress/bun-aot-builtins-table.js` | the ahead-of-time compiler's table of built-ins (`Source/JavaScriptCore/aot/builtins/*.builtins.ts`) agrees with the engine. **After a sync that removes, renames, moves or reimplements a built-in that the table knows this fails, and each line it prints names the entry to fix.** |
 | `stress/sort-scratch-double-pivot.js` | double arithmetic in the comparator of an inlined sort stores no double into an Int32 array |
 | `stress/array-sort-inline-int32-double-comparator.js` | an earlier, smaller test for the sort fix |
