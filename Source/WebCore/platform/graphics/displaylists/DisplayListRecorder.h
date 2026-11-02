@@ -46,7 +46,7 @@ class Gradient;
 class SourceImage;
 class VideoFrame;
 
-struct ImageDrawingOptions;
+struct RasterDrawingOptions;
 
 namespace DisplayList {
 
@@ -110,6 +110,7 @@ protected:
     WEBCORE_EXPORT void updateStateForClip(const FloatRect&);
     WEBCORE_EXPORT void updateStateForClipRoundedRect(const FloatRoundedRect&);
     WEBCORE_EXPORT void updateStateForClipPath(const Path&);
+    WEBCORE_EXPORT void updateStateForClipTransformedPath(const AffineTransform&, const Path&);
     WEBCORE_EXPORT void updateStateForClipOut(const FloatRect&);
     WEBCORE_EXPORT void updateStateForClipOut(const Path&);
     WEBCORE_EXPORT void updateStateForClipOutRoundedRect(const FloatRoundedRect&);
@@ -138,7 +139,7 @@ private:
 
     WEBCORE_EXPORT void didUpdateState(GraphicsContextState&) final;
 
-    WEBCORE_EXPORT void drawConsumingImageBuffer(RefPtr<ImageBuffer>, const FloatRect& destination, const FloatRect& source, ImageDrawingOptions) final;
+    WEBCORE_EXPORT void drawConsumingImageBuffer(RefPtr<ImageBuffer>, const FloatRect& destination, const FloatRect& source, RasterDrawingOptions) final;
     WEBCORE_EXPORT AffineTransform getCTM(GraphicsContext::IncludeDeviceScale = PossiblyIncludeDeviceScale) const final;
     WEBCORE_EXPORT IntRect clipBounds() const final;
 

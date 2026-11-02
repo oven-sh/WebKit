@@ -259,6 +259,7 @@ if (ENABLE_JAVASCRIPTCORE)
         Tests/JavaScriptCore/RegularExpression.cpp
         Tests/JavaScriptCore/StrongBlock.cpp
         Tests/JavaScriptCore/UnsafeCallerFrame.cpp
+        Tests/JavaScriptCore/WeakSet.cpp
     )
 
     set(TestJavaScriptCore_LIBRARIES
@@ -319,6 +320,7 @@ if (ENABLE_WEBCORE)
         Tests/WebCore/DigitalCredentialsRequestDataBuilder.cpp
         Tests/WebCore/DisplayListRecorderTests.cpp
         Tests/WebCore/DisplayRefreshMonitorManager.cpp
+        Tests/WebCore/DocumentCheckedPtr.cpp
         Tests/WebCore/DocumentOrder.cpp
         Tests/WebCore/FidoHidMessageTest.cpp
         Tests/WebCore/FileMonitor.cpp
@@ -373,6 +375,7 @@ if (ENABLE_WEBCORE)
         Tests/WebCore/PublicSuffix.cpp
         Tests/WebCore/PushDatabase.cpp
         Tests/WebCore/PushMessageCrypto.cpp
+        Tests/WebCore/PushPullFIFOTest.cpp
         Tests/WebCore/QuirkMatchPattern.cpp
         Tests/WebCore/Quirks.cpp
         Tests/WebCore/RegionTests.cpp
@@ -396,6 +399,7 @@ if (ENABLE_WEBCORE)
         Tests/WebCore/TextIterator.cpp
         Tests/WebCore/TextMeasurementCache.cpp
         Tests/WebCore/TimeRanges.cpp
+        Tests/WebCore/TrackPrivateChangedCallbacks.cpp
         Tests/WebCore/TransformationMatrix.cpp
         Tests/WebCore/U2fCommandConstructorTest.cpp
         Tests/WebCore/URLParserTextEncoding.cpp
@@ -655,6 +659,7 @@ if (ENABLE_WEBKIT)
             Tests/IPC/EventTests.cpp
             Tests/IPC/IPCEventTests.cpp
             Tests/IPC/IPCTestUtilities.cpp
+            Tests/IPC/MachMessageTests.cpp
             Tests/IPC/MessageLogEndToEndTests.cpp
             Tests/IPC/MessageLogTests.cpp
             Tests/IPC/MessageSenderTests.cpp
@@ -676,6 +681,7 @@ if (ENABLE_WEBKIT)
             ${WebKit_FRAMEWORK_HEADERS_DIR}
             ${WEBKIT_DIR}/Platform
             ${WEBKIT_DIR}/Platform/IPC
+            ${WEBKIT_DIR}/Platform/IPC/cocoa
             ${WEBKIT_DIR}/Shared
             ${WEBKIT_DIR}/Shared/API/c
             ${WebKit_DERIVED_SOURCES_DIR}

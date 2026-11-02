@@ -77,8 +77,8 @@
 #include <pal/text/TextEncoding.h>
 #include "UserGestureIndicator.h"
 #include <JavaScriptCore/ContentSearchUtilities.h>
-#include <JavaScriptCore/IdentifiersFactory.h>
 #include <JavaScriptCore/RegularExpression.h>
+#include <wtf/CheckedRef.h>
 #include <wtf/HashSet.h>
 #include <wtf/ListHashSet.h>
 #include <wtf/Stopwatch.h>
@@ -139,9 +139,12 @@ Inspector::Protocol::ErrorStringOr<void> InspectorPageAgent::enable()
 
     agents->setEnabledPageAgent(this);
 
-    Ref stopwatch = protect(environment())->executionStopwatch();
-    stopwatch->reset();
-    stopwatch->start();
+    CheckedRef environment = this->environment();
+    if (!environment->executionStopwatchIsSharedAcrossProcesses()) {
+        Ref stopwatch = environment->executionStopwatch();
+        stopwatch->reset();
+        stopwatch->start();
+    }
 
     defaultUserPreferencesDidChange();
 

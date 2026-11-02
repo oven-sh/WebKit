@@ -1,13 +1,4 @@
 {
-    "TestAuthentication": {
-        "subtests": {
-            "/webkit/Authentication/authentication-success": {
-                "expected": {
-                    "wpe": {"status": ["PASS", "TIMEOUT", "FAIL"], "bug": "webkit.org/b/281822"}
-                }
-            }
-        }
-    },
     "TestBackForwardList": {
         "subtests": {
             "/webkit/BackForwardList/list-limit-and-cache": {
@@ -177,13 +168,6 @@
             },
             "/webkit/WebKitWebView/fullscreen": {
                 "expected": {"gtk": {"status": ["SKIP"], "bug": "webkit.org/b/248203"}}
-            }
-        }
-    },
-    "TestWebViewEditor": {
-        "subtests": {
-            "/webkit/WebKitWebView/cut-copy-paste/editable": {
-                "expected": {"gtk": {"status": ["FAIL", "PASS", "TIMEOUT"], "bug": "webkit.org/b/263417"}}
             }
         }
     },

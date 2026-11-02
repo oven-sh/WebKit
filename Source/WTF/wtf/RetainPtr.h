@@ -109,13 +109,16 @@ public:
 
     void clear();
 
+    // Return U, not StorageType: a dependent return type keeps ARC from checking the other overload's attribute.
     template<typename U = StorageType>
-    [[nodiscard]] std::enable_if_t<IsNSType<U> && std::is_same_v<U, StorageType>, StorageType> leakRef() NS_RETURNS_RETAINED {
+        requires (std::same_as<U, StorageType> && NSType<U>)
+    [[nodiscard]] U leakRef() NS_RETURNS_RETAINED {
         return std::exchange(m_ptr, nullptr);
     }
 
     template<typename U = StorageType>
-    [[nodiscard]] std::enable_if_t<!IsNSType<U> && std::is_same_v<U, StorageType>, StorageType> leakRef() CF_RETURNS_RETAINED {
+        requires (std::same_as<U, StorageType> && !NSType<U>)
+    [[nodiscard]] U leakRef() CF_RETURNS_RETAINED {
         return std::exchange(m_ptr, nullptr);
     }
 
@@ -420,7 +423,7 @@ inline CFHashCode safeCFHash(CFTypeRef a)
 }
 
 template<typename T, typename U>
-SUPPRESS_NODELETE ALWAYS_INLINE void LEGACY_NODELETE lazyInitialize(const RetainPtr<T>& ptr, RetainPtr<U>&& obj)
+NODELETE SUPPRESS_NODELETE ALWAYS_INLINE void lazyInitialize(const RetainPtr<T>& ptr, RetainPtr<U>&& obj)
 {
     RELEASE_ASSERT(!ptr);
     const_cast<RetainPtr<T>&>(ptr) = std::move(obj);

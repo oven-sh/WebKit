@@ -162,13 +162,6 @@ struct SeekTarget {
     WEBCORE_EXPORT String toString() const;
 };
 
-enum class MediaPlatformType {
-    Mock,
-    AVFObjC,
-    GStreamer,
-    Remote
-};
-
 enum class MediaPlayerType {
     Null,
     Mock,
@@ -848,6 +841,7 @@ private:
     void loadWithNextMediaEngine(const MediaPlayerFactory*);
     CheckedPtr<const MediaPlayerFactory> nextMediaEngine(const MediaPlayerFactory*);
     void reloadTimerFired();
+    void setPlayerPrivate(RefPtr<MediaPlayerPrivateInterface>&&);
 
     // When the engine fallback chain is exhausted on FormatError/DecodeError and we haven't yet
     // sniffed the body, fetch a short prefix of the resource, determine the actual Content-Type
@@ -865,6 +859,8 @@ private:
 
     WeakPtr<MediaPlayerClient> m_client;
     Timer m_reloadTimer;
+    // Read on the audio render thread through audioSourceProvider(). Write it only through
+    // setPlayerPrivate().
     RefPtr<MediaPlayerPrivateInterface> m_private;
     WeakPtr<const MediaPlayerFactory> m_currentMediaEngine;
     WeakHashSet<const MediaPlayerFactory> m_attemptedEngines;

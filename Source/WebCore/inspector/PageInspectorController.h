@@ -57,6 +57,7 @@ namespace WebCore {
 
 class DOMWrapperWorld;
 class DebuggerSuspensionController;
+class FrameDebuggerAgent;
 class GraphicsContext;
 class InspectorDOMAgent;
 class InspectorInstrumentation;
@@ -113,6 +114,7 @@ public:
     WEBCORE_EXPORT void disconnectRemoteInstrumentation();
 
     void inspect(Node*);
+    static bool isCoveredByPageDOMAgent(const LocalFrame&);
     WEBCORE_EXPORT bool LEGACY_NODELETE shouldShowOverlay() const;
     WEBCORE_EXPORT void drawHighlight(GraphicsContext&) const;
     WEBCORE_EXPORT void getHighlight(InspectorOverlay::Highlight&, InspectorOverlay::CoordinateSystem) const;
@@ -143,6 +145,9 @@ public:
     WEBCORE_EXPORT void suspendForDebuggerSession(DebuggerPauseSessionIdentifier);
     WEBCORE_EXPORT void resumeFromDebuggerSession(DebuggerPauseSessionIdentifier);
 
+    void mainFrameStartedLoading();
+    void endPauseSuppressionForNavigation();
+
     Inspector::InspectorAgent& ensureInspectorAgent();
     InspectorDOMAgent& ensureDOMAgent();
     WEBCORE_EXPORT InspectorPageAgent& ensurePageAgent();
@@ -157,11 +162,14 @@ public:
     Inspector::InspectorEvaluateHandler evaluateHandler() const override;
     void frontendInitialized() override;
     WEBCORE_EXPORT WTF::Stopwatch& LEGACY_NODELETE executionStopwatch() const final;
+    bool executionStopwatchIsSharedAcrossProcesses() const final { return m_executionStopwatchIsShared; }
     JSC::Debugger* debugger() override;
     void forEachDebugger(NOESCAPE const WTF::Function<void(JSC::Debugger&)>&) override;
     JSC::VM& vm() override;
 
 private:
+    void forEachEnabledFrameDebuggerAgent(NOESCAPE const Function<void(FrameDebuggerAgent&)>&);
+
     friend class InspectorInstrumentation;
 
     PageAgentContext pageAgentContext();
@@ -191,6 +199,8 @@ private:
     bool m_isAutomaticInspection { false };
     bool m_pauseAfterInitialization = { false };
     bool m_didCreateLazyAgents { false };
+    bool m_executionStopwatchIsShared { false };
+    bool m_isSuppressingPausesForNavigation { false };
 };
 
 } // namespace WebCore

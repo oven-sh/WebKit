@@ -182,6 +182,7 @@
 #import <WebCore/SharedMemory.h>
 #import <WebCore/StylePrimitiveNumericTypes+Evaluation.h>
 #import <WebCore/StyleProperties.h>
+#import <WebCore/Text.h>
 #import <WebCore/TextIndicator.h>
 #import <WebCore/TextIterator.h>
 #import <WebCore/UserAgent.h>
@@ -582,6 +583,12 @@ static double scaleAfterViewportWidthChange(double currentScale, bool scaleToFit
     // end up zoomed too far in landscape->portrait, and too close in portrait->landscape.
     double widthToKeepInView = visibleHorizontalFraction * newContentSize.width();
     double newScale = unobscuredWidthInScrollViewCoordinates / widthToKeepInView;
+    if (!std::isfinite(newScale)) {
+        // An empty content size can make newScale NaN, which the clamp below lets through.
+        scale = viewportConfiguration.initialScale();
+        LOG(VisibleRects, "scaleAfterViewportWidthChange content width is empty, using initial scale: %.2f", scale);
+        return scale;
+    }
     scale = std::max(std::min(newScale, viewportConfiguration.maximumScale()), viewportConfiguration.minimumScale());
     LOG(VisibleRects, "scaleAfterViewportWidthChange scaling content to fit: %.2f", scale);
     return scale;
@@ -1965,7 +1972,7 @@ void WebPage::requestEvasionRectsAboveSelection(CompletionHandler<void(const Vec
         return;
     }
 
-    auto unobscuredContentArea = RefPtr(localMainFrame->view())->unobscuredContentRect().area();
+    auto unobscuredContentArea = RefPtr(localMainFrame->view())->unobscuredContentRect().area<RecordOverflow>();
     if (unobscuredContentArea.hasOverflowed()) {
         reply({ });
         return;
@@ -2337,7 +2344,7 @@ void WebPage::requestAutocorrectionData(const String& textForAutocorrection, Com
         selectionGeometries = RenderObject::collectSelectionGeometries(*range).geometries;
 
     auto rootViewSelectionRects = selectionGeometries.map([&](const auto& selectionGeometry) -> FloatRect {
-        return frame->view()->contentsToMainFrameView(selectionGeometry.rect());
+        return protect(frame->view())->contentsToMainFrameView(selectionGeometry.rect());
     });
 
     bool multipleFonts = false;
@@ -3295,7 +3302,7 @@ void WebPage::updateTextAutosizingEnablementFromInitialScale(double initialScale
     if (shouldEnable == m_page->settings().textAutosizingEnabled())
         return;
 
-    m_page->settings().setTextAutosizingEnabled(shouldEnable);
+    protect(m_page->settings())->setTextAutosizingEnabled(shouldEnable);
 }
 
 void WebPage::resetIdempotentTextAutosizingIfNeeded(double previousInitialScale)
@@ -3999,8 +4006,8 @@ void WebPage::drawPrintingPagesToSnapshotiOS(RemoteSnapshotIdentifier snapshotId
     ASSERT(coreFrame->document()->printing());
 
     auto mediaBox = FloatRect { 0, 0, printInfo.availablePaperWidth, printInfo.availablePaperHeight };
-    if (!printInfo.snapshotFirstPage && m_printContext && m_printContext->pageCount())
-        mediaBox = m_printContext->pageRect(0);
+    if (!printInfo.snapshotFirstPage)
+        mediaBox = printedPageMediaBox(printInfo);
 
     recordRemoteSnapshot(snapshotIdentifier, frameID, RemoteSnapshotRole::Root, RenderingMode::PDFDocument, mediaBox, mediaBox.size(), MainRunLoopSuccessCallbackAggregator::create(WTF::move(completionHandler)), [&](GraphicsContext& context) {
         if (printInfo.snapshotFirstPage) {
@@ -4520,7 +4527,7 @@ void WebPage::focusTextInputContextAndPlaceCaret(const ElementContext& elementCo
 
     // FIXME: Do not focus an element if it moved or the caret point is outside its bounds
     // because we only want to do so if the caret can be placed.
-    UserGestureIndicator gestureIndicator { IsProcessingUserGesture::Yes, &target->document() };
+    UserGestureIndicator gestureIndicator { IsProcessingUserGesture::Yes, protect(target->document()).ptr() };
     SetForScope userIsInteractingChange { m_userIsInteracting, true };
     protect(corePage())->focusController().setFocusedElement(target.get(), targetFrame.ptr());
 
@@ -4691,7 +4698,7 @@ void WebPage::computeEnclosingLayerID(EditorState& state, const VisibleSelection
 
     auto scrollOffsetAndNodeIDForLayer = [](RenderLayer* layer) -> std::pair<ScrollOffset, std::optional<ScrollingNodeID>> {
         CheckedRef renderer = layer->renderer();
-        WeakPtr scrollableArea = [&] -> ScrollableArea* {
+        CheckedPtr scrollableArea = [&] -> ScrollableArea* {
             if (renderer->isRenderView())
                 return protect(renderer->document())->isTopDocument() ? nullptr : renderer->frame().view();
 

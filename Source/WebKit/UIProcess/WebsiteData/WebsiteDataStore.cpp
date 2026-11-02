@@ -2147,6 +2147,19 @@ void WebsiteDataStore::setUserAgentStringQuirkForTesting(const String& domain, c
     completionHandler();
 }
 
+void WebsiteDataStore::setLinkDecorationFilteringDataForTesting(Vector<String>&& queryParameters, CompletionHandler<void()>&& completionHandler)
+{
+#if ENABLE(ADVANCED_PRIVACY_PROTECTIONS)
+    auto filteringData = WTF::map(WTF::move(queryParameters), [](String&& queryParameter) {
+        return WebCore::LinkDecorationFilteringData { WebCore::RegistrableDomain { }, { }, WTF::move(queryParameter) };
+    });
+    LinkDecorationFilteringController::sharedSingleton().setCachedListDataForTesting(WTF::move(filteringData));
+#else
+    UNUSED_PARAM(queryParameters);
+#endif
+    completionHandler();
+}
+
 void WebsiteDataStore::requestLocalNetworkAccessPermission(WebPageProxyIdentifier pageID, WebCore::ClientOrigin&& origin, WebCore::IPAddressSpace addressSpace, CompletionHandler<void(WebCore::PermissionState)>&& completionHandler)
 {
     auto key = LocalNetworkAccessPermissionKey { WTF::move(origin), addressSpace };
@@ -2939,11 +2952,15 @@ void WebsiteDataStore::download(const DownloadProxy& downloadProxy, const String
     std::optional<NavigatingToAppBoundDomain> isAppBound = NavigatingToAppBoundDomain::No;
     WebCore::ResourceRequest updatedRequest(downloadProxy.request());
     std::optional<WebCore::SecurityOriginData> topOrigin;
+    OptionSet<WebCore::AdvancedPrivacyProtections> advancedPrivacyProtections;
     // Request's firstPartyForCookies will be used as Original URL of the download request.
     // We set the value to top level document's URL.
     if (RefPtr initiatingPage = downloadProxy.originatingPage()) {
 #if ENABLE(APP_BOUND_DOMAINS)
         isAppBound = initiatingPage->isTopFrameNavigatingToAppBoundDomain();
+#endif
+#if ENABLE(ADVANCED_PRIVACY_PROTECTIONS)
+        advancedPrivacyProtections = initiatingPage->advancedPrivacyProtectionsPolicies();
 #endif
 
         auto& initiatingPageURL = initiatingPage->pageLoadState().url();
@@ -2959,7 +2976,7 @@ void WebsiteDataStore::download(const DownloadProxy& downloadProxy, const String
             updatedRequest.setHTTPUserAgent(WebPageProxy::standardUserAgent());
     }
     updatedRequest.setIsTopSite(false);
-    protect(networkProcess())->send(Messages::NetworkProcess::DownloadRequest(m_sessionID, downloadProxy.downloadID(), updatedRequest, topOrigin, isAppBound, suggestedFilename), 0);
+    protect(networkProcess())->send(Messages::NetworkProcess::DownloadRequest(m_sessionID, downloadProxy.downloadID(), updatedRequest, topOrigin, isAppBound, advancedPrivacyProtections, suggestedFilename), 0);
 }
 
 void WebsiteDataStore::resumeDownload(const DownloadProxy& downloadProxy, const API::Data& resumeData, const String& path, CallDownloadDidStart callDownloadDidStart)
@@ -3159,6 +3176,16 @@ void WebsiteDataStore::clearStorageAccessForTesting(CompletionHandler<void()>&& 
 void WebsiteDataStore::isStorageSuspendedForTesting(CompletionHandler<void(bool)>&& completionHandler)
 {
     protect(networkProcess())->isStorageSuspendedForTesting(m_sessionID, WTF::move(completionHandler));
+}
+
+void WebsiteDataStore::canPrefetchDNSForTesting(CompletionHandler<void(bool)>&& completionHandler)
+{
+    protect(networkProcess())->canPrefetchDNSForTesting(m_sessionID, WTF::move(completionHandler));
+}
+
+void WebsiteDataStore::prefetchedDNSHostnameCountForTesting(CompletionHandler<void(uint64_t)>&& completionHandler)
+{
+    protect(networkProcess())->prefetchedDNSHostnameCountForTesting(WTF::move(completionHandler));
 }
 
 #if HAVE(WEBCONTENTRESTRICTIONS)

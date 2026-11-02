@@ -27,6 +27,7 @@
 
 #pragma once
 
+#include <WebCore/AffineTransform.h>
 #include <WebCore/ImageBufferAllocator.h>
 #include <WebCore/ImageBufferBackend.h>
 #include <WebCore/ImageBufferFormat.h>
@@ -181,9 +182,6 @@ public:
     // Useful when caller can guarantee the use of the NativeImage ends "immediately", before the next draw to this ImageBuffer.
     WEBCORE_EXPORT virtual RefPtr<NativeImage> createNativeImageReference() const;
     WEBCORE_EXPORT virtual bool isRemoteImageBufferProxy() const;
-
-    WEBCORE_EXPORT virtual RefPtr<NativeImage> filteredNativeImage(Filter&);
-    RefPtr<NativeImage> filteredNativeImage(Filter&, Function<void(GraphicsContext&)> drawCallback);
 
 #if HAVE(IOSURFACE)
     WEBCORE_EXPORT IOSurface* surface();

@@ -2583,6 +2583,31 @@ RenderLayer::EnclosingCompositingLayerStatus RenderLayer::enclosingCompositingLa
     return { };
 }
 
+RenderLayer* RenderLayer::enclosingRepaintTargetLayer(IncludeSelfOrNot includeSelf) const
+{
+    auto repaintTargetForLayer = [](const RenderLayer& layer) -> RenderLayer* {
+        if (compositedWithOwnBackingStore(layer))
+            return const_cast<RenderLayer*>(&layer);
+
+        if (layer.paintsIntoProvidedBacking())
+            return layer.backingProviderLayer();
+
+        return nullptr;
+    };
+
+    if (includeSelf == IncludeSelf) {
+        if (auto* repaintTarget = repaintTargetForLayer(*this))
+            return repaintTarget;
+    }
+
+    for (const RenderLayer* curr = paintOrderParent(); curr; curr = curr->paintOrderParent()) {
+        if (auto* repaintTarget = repaintTargetForLayer(*curr))
+            return repaintTarget;
+    }
+
+    return nullptr;
+}
+
 RenderLayer* RenderLayer::enclosingPixelMovingFilterLayer(IncludeSelfOrNot includeSelf) const
 {
     const RenderLayer* curr = (includeSelf == IncludeSelf) ? this : parent();
@@ -3546,20 +3571,6 @@ void RenderLayer::paintLayerWithEffects(GraphicsContext& context, const LayerPai
             OptionSet<PaintBehavior> paintBehavior = PaintBehavior::Normal;
             if (paintFlags.contains(PaintLayerFlag::PaintingOverflowContents))
                 paintBehavior.add(PaintBehavior::CompositedOverflowScrollContent);
-
-            // Always apply SVG viewport clipping in coordinate system before the SVG viewBox transformation is applied.
-            if (CheckedPtr svgRoot = dynamicDowncast<RenderSVGRoot>(renderer())) {
-                if (svgRoot->shouldApplyViewportClip()) {
-                    auto newRect = svgRoot->borderBoxRect();
-
-                    auto offsetFromParent = offsetFromAncestor(clipRectsContext.rootLayer);
-                    auto offsetForThisLayer = offsetFromParent + paintingInfo.subpixelOffset;
-                    auto devicePixelSnappedOffsetForThisLayer = toFloatSize(roundPointToDevicePixels(toLayoutPoint(offsetForThisLayer), renderer().document().deviceScaleFactor()));
-                    newRect.move(devicePixelSnappedOffsetForThisLayer.width(), devicePixelSnappedOffsetForThisLayer.height());
-
-                    clipRect.intersect(newRect);
-                }
-            }
 
             // Push the parent coordinate space's clip.
             parent()->clipToRect(context, stateSaver, regionContextStateSaver, paintingInfo, paintBehavior, clipRect);
@@ -5357,7 +5368,7 @@ ClipRects* RenderLayer::clipRects(const ClipRectsContext& context) const
 bool RenderLayer::clipCrossesPaintingBoundary() const
 {
     return parent()->enclosingPaginationLayer(IncludeCompositedPaginatedLayers) != enclosingPaginationLayer(IncludeCompositedPaginatedLayers)
-        || parent()->enclosingCompositingLayerForRepaint().layer != enclosingCompositingLayerForRepaint().layer;
+        || parent()->enclosingRepaintTargetLayer() != enclosingRepaintTargetLayer();
 }
 
 void RenderLayer::calculateClipRects(const ClipRectsContext& clipRectsContext, ClipRects& clipRects) const
@@ -5535,8 +5546,11 @@ ClipRect RenderLayer::calculateBackgroundClipRect(const ClipRectsContext& clipRe
 
 ClipRect RenderLayer::calculateBackgroundRect(const ClipRectsContext& clipRectsContext, const LayoutSize& offsetFromRoot) const
 {
-    auto backgroundRect = calculateBackgroundClipRect(clipRectsContext, offsetFromRoot);
+    return calculateBackgroundRect(clipRectsContext, offsetFromRoot, calculateBackgroundClipRect(clipRectsContext, offsetFromRoot));
+}
 
+ClipRect RenderLayer::calculateBackgroundRect(const ClipRectsContext& clipRectsContext, const LayoutSize& offsetFromRoot, ClipRect backgroundRect) const
+{
     if (clipRectsContext.options.contains(ClipRectsOption::OutsideFilter) || !renderer().hasClipOrNonVisibleOverflow())
         return backgroundRect;
 
@@ -5567,8 +5581,11 @@ ClipRect RenderLayer::calculateBackgroundRect(const ClipRectsContext& clipRectsC
 
 ClipRect RenderLayer::calculateForegroundRect(const ClipRectsContext& clipRectsContext, const LayoutSize& offsetFromRoot) const
 {
-    auto foregroundRect = calculateBackgroundClipRect(clipRectsContext, offsetFromRoot);
+    return calculateForegroundRect(clipRectsContext, offsetFromRoot, calculateBackgroundClipRect(clipRectsContext, offsetFromRoot));
+}
 
+ClipRect RenderLayer::calculateForegroundRect(const ClipRectsContext& clipRectsContext, const LayoutSize& offsetFromRoot, ClipRect foregroundRect) const
+{
     if (clipRectsContext.options.contains(ClipRectsOption::OutsideFilter) || !renderer().hasNonVisibleOverflow())
         return foregroundRect;
 
@@ -5591,8 +5608,10 @@ ClipRect RenderLayer::calculateForegroundRect(const ClipRectsContext& clipRectsC
 LayerFragment::Rects RenderLayer::calculateRects(const ClipRectsContext& clipRectsContext, const LayoutSize& offsetFromRoot, const LayoutRect& paintDirtyRect) const
 {
     auto layerBounds = LayoutRect(toLayoutPoint(offsetFromRoot), size());
-    auto backgroundRect = calculateBackgroundRect(clipRectsContext, offsetFromRoot);
-    auto foregroundRect = calculateForegroundRect(clipRectsContext, offsetFromRoot);
+    // Both rects start from the same ancestor-derived clip, which is costly to compute, so compute it once.
+    auto backgroundClipRect = calculateBackgroundClipRect(clipRectsContext, offsetFromRoot);
+    auto backgroundRect = calculateBackgroundRect(clipRectsContext, offsetFromRoot, backgroundClipRect);
+    auto foregroundRect = calculateForegroundRect(clipRectsContext, offsetFromRoot, WTF::move(backgroundClipRect));
     return { layerBounds, paintDirtyRect, backgroundRect, foregroundRect };
 }
 
@@ -6531,7 +6550,7 @@ void RenderLayer::createReflection()
     ASSERT(!m_reflection);
     m_reflection = createRenderer<RenderReplica>(renderer().document(), createReflectionStyle());
     // FIXME: A renderer should be a child of its parent!
-    m_reflection->m_parent = &renderer(); // We create a 1-way connection.
+    m_reflection->setParent(&renderer()); // We create a 1-way connection.
     m_reflection->initializeStyle();
 }
 
@@ -6542,7 +6561,7 @@ void RenderLayer::removeReflection()
             removeChild(*layer);
     }
 
-    m_reflection->m_parent = nullptr;
+    m_reflection->setParent(nullptr);
     m_reflection = nullptr;
 }
 

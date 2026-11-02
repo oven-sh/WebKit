@@ -190,6 +190,12 @@ void RecorderImpl::clipPath(const Path& path, WindRule rule)
     m_items.append(ClipPath(path, rule));
 }
 
+void RecorderImpl::clipTransformedPath(const AffineTransform& pathTransform, const Path& path, WindRule rule)
+{
+    updateStateForClipTransformedPath(pathTransform, path);
+    m_items.append(ClipTransformedPath(pathTransform, path, rule));
+}
+
 void RecorderImpl::drawFilteredImageBuffer(ImageBuffer* sourceImage, const FloatRect& sourceImageRect, Filter& filter, FilterResults&)
 {
     appendStateChangeItemIfNecessary();
@@ -223,13 +229,13 @@ void RecorderImpl::drawDisplayList(const DisplayList& displayList, ControlFactor
     m_items.append(DrawDisplayList(Ref { displayList }));
 }
 
-void RecorderImpl::drawImageBuffer(ImageBuffer& imageBuffer, const FloatRect& destRect, const FloatRect& srcRect, ImageDrawingOptions options)
+void RecorderImpl::drawImageBuffer(ImageBuffer& imageBuffer, const FloatRect& destRect, const FloatRect& srcRect, RasterDrawingOptions options)
 {
     appendStateChangeItemIfNecessary();
     m_items.append(DrawImageBuffer(imageBuffer, destRect, srcRect, options));
 }
 
-void RecorderImpl::drawNativeImage(const NativeImage& image, const FloatRect& destRect, const FloatRect& srcRect, ImageDrawingOptions options)
+void RecorderImpl::drawNativeImage(const NativeImage& image, const FloatRect& destRect, const FloatRect& srcRect, RasterDrawingOptions options)
 {
     appendStateChangeItemIfNecessary();
     m_items.append(DrawNativeImage(image, destRect, srcRect, options));
@@ -241,13 +247,13 @@ void RecorderImpl::drawSystemImage(SystemImage& systemImage, const FloatRect& de
     m_items.append(DrawSystemImage(systemImage, destinationRect));
 }
 
-void RecorderImpl::drawPattern(const NativeImage& image, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImageDrawingOptions options)
+void RecorderImpl::drawPattern(const NativeImage& image, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, RasterDrawingOptions options)
 {
     appendStateChangeItemIfNecessary();
     m_items.append(DrawPatternNativeImage(image, destRect, tileRect, patternTransform, phase, spacing, options));
 }
 
-void RecorderImpl::drawPattern(ImageBuffer& imageBuffer, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImageDrawingOptions options)
+void RecorderImpl::drawPattern(ImageBuffer& imageBuffer, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, RasterDrawingOptions options)
 {
     appendStateChangeItemIfNecessary();
     m_items.append(DrawPatternImageBuffer(imageBuffer, destRect, tileRect, patternTransform, phase, spacing, options));
@@ -374,7 +380,7 @@ void RecorderImpl::fillEllipse(const FloatRect& rect)
 }
 
 #if ENABLE(VIDEO)
-void RecorderImpl::drawVideoFrame(const VideoFrame&, const FloatRect&, ShouldDiscardAlpha, ImageDrawingOptions)
+void RecorderImpl::drawVideoFrame(const VideoFrame&, const FloatRect&, ShouldDiscardAlpha, RasterDrawingOptions)
 {
     appendStateChangeItemIfNecessary();
     // FIXME: TODO

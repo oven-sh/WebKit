@@ -114,6 +114,9 @@ fast/webcodecs/audio-data-copy-to-planar-frame-offset.html [ Skip ]
 # WebGPU is disabled
 http/tests/webgpu [ Skip ]
 fast/webgpu [ Skip ]
+
+# WebGL video-format tests: the baselines record macOS decoder and WebGL video upload behaviour.
+webgl/video-formats [ Skip ]
 inspector/canvas/console-record-webgpu.html [ Skip ]
 inspector/canvas/create-context-webgpu.html [ Skip ]
 inspector/canvas/recording-webgpu-frameCount.html [ Skip ]
@@ -885,6 +888,9 @@ http/tests/resourceLoadStatistics/only-accept-first-party-cookies-with-third-par
 http/tests/resourceLoadStatistics/only-partitioned-third-party-cookies.https.html [ Skip ]
 http/tests/resourceLoadStatistics/only-partitioned-cookies-after-redirect.https.html [ Skip ]
 http/tests/resourceLoadStatistics/only-partitioned-cookies-after-redirect-fetch.https.html [ Skip ]
+
+http/tests/resourceLoadStatistics/log-cross-site-load-with-filtered-link-decoration-and-fragment.html [ Skip ]
+http/tests/resourceLoadStatistics/log-cross-site-load-with-filtered-link-decoration.html [ Skip ]
 
 http/tests/cookies/multiple-cookies-iframes.https.html [ Skip ]
 http/tests/cookies/multiple-cookies.https.html [ Skip ]
@@ -4512,6 +4518,7 @@ fast/text/international/thai-line-breaks.html [ Failure Pass ]
 
 # Doesn't support variable fonts
 fast/text/variations [ Skip ]
+fast/text/variations/font-weight-gpu-process.html [ Pass ]
 
 fast/images/image-alt-text-vertical.html [ ImageOnlyFailure ]
 

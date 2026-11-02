@@ -1011,15 +1011,15 @@ CallGraph buildCallGraph(const Program& program, const FlowResults& flow, BuildC
         }
         callsUnknownCode[index] = body.callsUnknownCode;
         for (FunctionID target : body.directCallees)
-            WTF::atomicExchangeAdd(&directCallSites[target.index()], 1u, std::memory_order_relaxed);
+            WTF::atomicExchangeAdd<MemoryOrder::Relaxed>(&directCallSites[target.index()], 1u);
         for (FunctionID target : body.otherReferences) {
-            if (!WTF::atomicLoad(&hasOtherReference[target.index()], std::memory_order_relaxed))
-                WTF::atomicStore(&hasOtherReference[target.index()], static_cast<uint8_t>(1), std::memory_order_relaxed);
+            if (!WTF::atomicLoad<MemoryOrder::Relaxed>(&hasOtherReference[target.index()]))
+                WTF::atomicStore<MemoryOrder::Relaxed>(&hasOtherReference[target.index()], static_cast<uint8_t>(1));
         }
         for (CalleeSetID set : body.calleeSets)
-            WTF::atomicExchangeAdd(&calleeSetCallSites[set.index()], 1u, std::memory_order_relaxed);
+            WTF::atomicExchangeAdd<MemoryOrder::Relaxed>(&calleeSetCallSites[set.index()], 1u);
         for (CalleeSetID set : body.enteredSets)
-            WTF::atomicExchangeAdd(&enteredSetCallSites[set.index()], 1u, std::memory_order_relaxed);
+            WTF::atomicExchangeAdd<MemoryOrder::Relaxed>(&enteredSetCallSites[set.index()], 1u);
     });
     std::partial_sum(calleeOffsets.begin(), calleeOffsets.end(), calleeOffsets.begin());
     callees.grow(calleeOffsets[count]);
@@ -1111,14 +1111,14 @@ CallGraph buildCallGraph(const Program& program, const FlowResults& flow, BuildC
         if (!numberOfSites)
             return;
         for (FunctionID callee : program.at(CalleeSetID(index)).followed().value())
-            WTF::atomicExchangeAdd(&linkedCallSites[callee.index()], numberOfSites, std::memory_order_relaxed);
+            WTF::atomicExchangeAdd<MemoryOrder::Relaxed>(&linkedCallSites[callee.index()], numberOfSites);
     });
     forEachIndexInParallel(loops, enteredSetCallSites.size(), [&](unsigned index) {
         uint32_t numberOfSites = enteredSetCallSites[index];
         if (!numberOfSites)
             return;
         for (FunctionID entrypoint : program.at(CalleeSetID(index)).written().functions)
-            WTF::atomicExchangeAdd(&directCallSites[entrypoint.index()], numberOfSites, std::memory_order_relaxed);
+            WTF::atomicExchangeAdd<MemoryOrder::Relaxed>(&directCallSites[entrypoint.index()], numberOfSites);
     });
     times.didFinish("addUpReferences"_s);
     markRecordReferences(program, hasOtherReference, loops);

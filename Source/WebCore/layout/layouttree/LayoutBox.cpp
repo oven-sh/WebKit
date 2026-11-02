@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2018-2024 Apple Inc. All rights reserved.
+ * Copyright (C) 2018-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,6 +31,7 @@
 #include "LayoutContainingBlockChainIterator.h"
 #include "LayoutElementBox.h"
 #include "LayoutInitialContainingBlock.h"
+#include "LayoutInlineTextBox.h"
 #include "LayoutShape.h"
 #include "LayoutState.h"
 #include "RenderElementInlines.h"
@@ -41,51 +42,50 @@
 namespace WebCore {
 namespace Layout {
 
-WTF_MAKE_TZONE_ALLOCATED_IMPL(Box);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Box::BoxRareData);
 
-
-Box::Box(ElementAttributes&& elementAttributes, Style::ComputedStyle&& style, std::unique_ptr<Style::ComputedStyle>&& firstLineStyle, EnumSet<BaseTypeFlag> baseTypeFlags)
-    : m_nodeType(elementAttributes.nodeType)
-    , m_isAnonymous(static_cast<bool>(elementAttributes.isAnonymous))
+Box::Box(Style::ComputedStyle&& style, EnumSet<BaseTypeFlag> baseTypeFlags)
+    : m_nodeType(baseTypeFlags.contains(InlineTextBoxFlag) ? NodeType::Text : NodeType::GenericElement)
+    , m_isAnonymous(baseTypeFlags.contains(InlineTextBoxFlag))
     , m_baseTypeFlags(baseTypeFlags.toRaw())
     , m_style(WTF::move(style))
 {
-    if (firstLineStyle)
-        ensureRareData().firstLineStyle = WTF::move(firstLineStyle);
 }
 
 Box::~Box()
 {
     if (m_hasRareData) [[unlikely]]
-        removeRareData();
-    if (m_renderer)
-        m_renderer->clearLayoutBox();
+        removeBoxRareData();
 }
 
-UniqueRef<Box> Box::removeFromParent()
+void Box::setElementAttributes(ElementAttributes elementAttributes)
 {
-    auto& nextOrFirst = m_previousSibling ? m_previousSibling->m_nextSibling : m_parent->m_firstChild;
-    auto& previousOrLast = m_nextSibling ? m_nextSibling->m_previousSibling : m_parent->m_lastChild;
-
-    ASSERT(nextOrFirst.get() == this);
-    ASSERT(previousOrLast.get() == this);
-
-    auto ownedSelf = std::exchange(nextOrFirst, std::exchange(m_nextSibling, nullptr));
-
-    previousOrLast = std::exchange(m_previousSibling, nullptr);
-    m_parent = nullptr;
-
-    return makeUniqueRefFromNonNullUniquePtr(WTF::move(ownedSelf));
+    m_nodeType = elementAttributes.nodeType;
+    m_isAnonymous = elementAttributes.isAnonymous == IsAnonymous::Yes;
 }
 
-void Box::updateStyle(Style::ComputedStyle&& newStyle, std::unique_ptr<Style::ComputedStyle>&& newFirstLineStyle)
+void Box::clearFormattingContextData()
 {
-    m_style = WTF::move(newStyle);
+    if (auto* elementBox = dynamicDowncast<ElementBox>(*this)) {
+        elementBox->m_replacedData = nullptr;
+        elementBox->m_baselineForIntegration = { };
+    }
+
+    if (hasBoxRareData())
+        removeBoxRareData();
+    m_isAnonymousTextIndentCandidateForIntegration = false;
+#if ASSERT_ENABLED
+    m_primaryLayoutState = nullptr;
+#endif
+    m_cachedGeometryForPrimaryLayoutState = nullptr;
+}
+
+void Box::setFirstLineStyle(std::unique_ptr<Style::ComputedStyle>&& newFirstLineStyle)
+{
     if (newFirstLineStyle)
-        ensureRareData().firstLineStyle = WTF::move(newFirstLineStyle);
-    else if (hasRareData())
-        rareData().firstLineStyle = { };
+        ensureBoxRareData().firstLineStyle = WTF::move(newFirstLineStyle);
+    else if (hasBoxRareData())
+        boxRareData().firstLineStyle = { };
 }
 
 bool Box::establishesFormattingContext() const
@@ -341,7 +341,7 @@ bool Box::isLayoutContainmentBox() const
 
 bool Box::isRubyAnnotationBox() const
 {
-    return m_style.display() == Style::DisplayType::RubyText && m_parent && m_parent->isRuby();
+    return m_style.display() == Style::DisplayType::RubyText && parent().isRuby();
 }
 
 bool Box::isInterlinearRubyAnnotationBox() const
@@ -386,7 +386,7 @@ bool Box::isInternalTableBox() const
 
 bool Box::isRubyBase() const
 {
-    return style().display() == Style::DisplayType::RubyBase && m_parent && m_parent->isRuby();
+    return style().display() == Style::DisplayType::RubyBase && parent().isRuby();
 }
 
 const Box* Box::nextInFlowSibling() const
@@ -486,7 +486,8 @@ bool Box::isOverflowVisible() const
         return true;
     }
     if (is<InitialContainingBlock>(*this)) {
-        auto* documentBox = downcast<ElementBox>(*this).firstChild();
+        // The document box is a child of RenderView's box.
+        auto* documentBox = downcast<ElementBox>(*downcast<ElementBox>(*this).firstChild()).firstChild();
         if (!documentBox || !documentBox->isDocumentBox())
             return isOverflowVisible;
         auto* elementBox = dynamicDowncast<ElementBox>(*documentBox);
@@ -523,14 +524,14 @@ bool Box::isPaddingApplicable() const
 
 const LayoutShape* Box::shape() const
 {
-    if (!hasRareData())
+    if (!hasBoxRareData())
         return nullptr;
-    return rareData().shape.get();
+    return boxRareData().shape.get();
 }
 
 void Box::setShape(RefPtr<const LayoutShape> shape)
 {
-    ensureRareData().shape = WTF::move(shape);
+    ensureBoxRareData().shape = WTF::move(shape);
 }
 
 const ElementBox* Box::associatedRubyAnnotationBox() const
@@ -545,34 +546,36 @@ const ElementBox* Box::associatedRubyAnnotationBox() const
     return dynamicDowncast<ElementBox>(next);
 }
 
-Box::RareDataMap& Box::rareDataMap()
+Box::BoxRareDataMap& Box::boxRareDataMap()
 {
-    static NeverDestroyed<RareDataMap> map;
+    static NeverDestroyed<BoxRareDataMap> map;
     return map;
 }
 
 // The analyzer cannot verify that HashMap::get() does not destroy anything; a lookup never does.
-SUPPRESS_NODELETE const Box::BoxRareData& Box::rareData() const
+SUPPRESS_NODELETE const Box::BoxRareData& Box::boxRareData() const
 {
-    ASSERT(hasRareData());
-    return *rareDataMap().get(this);
+    ASSERT(hasBoxRareData());
+    return *boxRareDataMap().get(this);
 }
 
-Box::BoxRareData& Box::rareData()
+Box::BoxRareData& Box::boxRareData()
 {
-    ASSERT(hasRareData());
-    return *rareDataMap().get(this);
+    ASSERT(hasBoxRareData());
+    return *boxRareDataMap().get(this);
 }
 
-Box::BoxRareData& Box::ensureRareData()
+Box::BoxRareData& Box::ensureBoxRareData()
 {
     setHasRareData(true);
-    return *rareDataMap().ensure(this, [] { return makeUnique<BoxRareData>(); }).iterator->value;
+    return *boxRareDataMap().ensure(this, [] {
+        return makeUnique<BoxRareData>();
+    }).iterator->value;
 }
 
-void Box::removeRareData()
+void Box::removeBoxRareData()
 {
-    rareDataMap().remove(this);
+    boxRareDataMap().remove(this);
     setHasRareData(false);
 }
 
@@ -615,6 +618,15 @@ const ElementBox& containingBlock(const Box& layoutBox)
 
     ASSERT_NOT_REACHED();
     return layoutBox.parent();
+}
+
+const Style::ComputedStyle& Box::firstLineStyleForText() const
+{
+    ASSERT(isInlineTextBox());
+    SUPPRESS_UNCHECKED_LOCAL auto* parent = RenderObject::fromLayoutBox(*this).parent();
+    ASSERT(parent);
+    auto& parentFirstLineStyle = parent->firstLineStyle();
+    return &parentFirstLineStyle == &parent->style() ? m_style : parentFirstLineStyle;
 }
 
 UsedStyle Box::usedStyle() const

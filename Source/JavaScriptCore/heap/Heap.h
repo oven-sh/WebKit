@@ -367,6 +367,8 @@ public:
     static JSC::Heap* heap(const HeapCell*);
 
     bool isMarked(const void*);
+    // In loops, pass markingVersion to avoid redundant loads
+    static bool isMarked(HeapVersion markingVersion, const void*);
     static bool testAndSetMarked(HeapVersion, const void*);
 
     static inline size_t cellSize(const void*);
@@ -497,7 +499,7 @@ public:
 
     void completeAllJITPlans();
 
-    void reportBytesMarked(size_t bytes) { m_bytesMarkedThisCycle.exchangeAdd(bytes, std::memory_order_relaxed); }
+    void reportBytesMarked(size_t bytes) { m_bytesMarkedThisCycle.exchangeAdd<MemoryOrder::Relaxed>(bytes); }
 
     // Note that:
     // 1. Use this API to report non-GC memory referenced by GC objects. Be sure to
@@ -641,6 +643,10 @@ public:
 
     unsigned weakBlockCount() const { return m_weakBlockCount; }
 
+    // Guards changes to each WeakSet's m_blocks, so that WeakSet::finalizeDeadHandles() can walk a
+    // WeakSet off the mutator. Never hold it across a finalizer, since clear() may take it.
+    Lock& weakBlockLock() WTF_RETURNS_LOCK(m_weakBlockLock) { return m_weakBlockLock; }
+
 #if ENABLE(RESOURCE_USAGE)
     size_t blockBytesAllocated() const { return m_blockBytesAllocated; }
 #endif
@@ -772,11 +778,11 @@ private:
     static constexpr size_t minExtraMemory = 256;
     
     class CFinalizerOwner final : public WeakHandleOwner {
-        void finalize(Handle<Unknown>, void* context) final;
+        FinalizeResult finalize(Handle<Unknown>, void* context) final;
     };
 
     class LambdaFinalizerOwner final : public WeakHandleOwner {
-        void finalize(Handle<Unknown>, void* context) final;
+        FinalizeResult finalize(Handle<Unknown>, void* context) final;
     };
 
     Lock& lock() LIFETIME_BOUND { return m_lock; }
@@ -802,10 +808,9 @@ private:
     void resumeTheMutator();
     
     JS_EXPORT_PRIVATE void stopIfNecessarySlow();
-    bool stopIfNecessarySlow(unsigned extraStateBits);
+    void stopIfNecessarySlow(unsigned extraStateBits);
     
-    template<typename Func>
-    void waitForCollector(NOESCAPE const Func&);
+    void waitForCollector(NOESCAPE const ConstInvocable<bool()> auto& isDone);
     
     JS_EXPORT_PRIVATE void acquireAccessSlow();
     JS_EXPORT_PRIVATE void releaseAccessSlow();
@@ -1013,6 +1018,7 @@ private:
     Seconds m_lastEdenGCLength { 10_ms };
 #endif
 
+    Lock m_weakBlockLock;
     DoublyLinkedList<WeakBlock> m_detachedWeakBlocks;
     DoublyLinkedList<WeakBlock> m_pooledWeakBlocks;
     unsigned m_pooledWeakBlockCount { 0 };

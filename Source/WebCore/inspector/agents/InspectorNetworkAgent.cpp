@@ -47,6 +47,7 @@
 #include "FrameLoader.h"
 #include "HTTPHeaderMap.h"
 #include "HTTPHeaderNames.h"
+#include "HTTPParsers.h"
 #include "InspectorDOMAgent.h"
 #include "InspectorNetworkIntercept.h"
 #include "InspectorResourceType.h"
@@ -199,10 +200,10 @@ RefPtr<Inspector::Protocol::Network::Response> InspectorNetworkAgent::buildObjec
     return responseObject;
 }
 
-Ref<Inspector::Protocol::Network::CachedResource> InspectorNetworkAgent::buildObjectForCachedResource(CachedResource* cachedResource)
+Ref<Inspector::Protocol::Network::CachedResource> InspectorNetworkAgent::buildObjectForCachedResource(CachedResource* cachedResource, const URL& url)
 {
     auto resourceObject = Inspector::Protocol::Network::CachedResource::create()
-        .setUrl(cachedResource->url().string())
+        .setUrl(url.string())
         .setType(ResourceUtilities::cachedResourceTypeToProtocol(*cachedResource))
         .setBodySize(cachedResource->encodedSize())
         .release();
@@ -354,20 +355,14 @@ void InspectorNetworkAgent::didReceiveResponse(ResourceLoaderIdentifier identifi
     
     // FIXME: <webkit.org/b/216125> 304 Not Modified responses for XHR/Fetch do not have all their information from the cache.
     if (isNotModified && (type == ResourceType::XHR || type == ResourceType::Fetch) && (!cachedResource || !cachedResource->encodedSize())) {
-        if (auto previousResourceData = m_resourcesData->dataForURL(response.url().string())) {
-            if (previousResourceData->hasContent())
-                m_resourcesData->setResourceContent(requestId, previousResourceData->content(), previousResourceData->base64Encoded());
-            else if (previousResourceData->hasBufferedData()) {
-                previousResourceData->buffer()->forEachSegmentAsSharedBuffer([&](auto&& buffer) {
-                    m_resourcesData->maybeAddResourceData(requestId, buffer);
-                });
-            }
-            
+        if (auto previousResourceData = m_resourcesData->dataForURL(response.url().string()); previousResourceData && previousResourceData->hasContent()) {
+            m_resourcesData->setResourceContent(requestId, previousResourceData->content(), previousResourceData->base64Encoded());
+
             resourceResponse->setString("mimeType"_s, previousResourceData->mimeType());
-            
+
             resourceResponse->setInteger("status"_s, previousResourceData->httpStatusCode());
             resourceResponse->setString("statusText"_s, previousResourceData->httpStatusText());
-            
+
             resourceResponse->setString("source"_s, Inspector::Protocol::Helpers::getEnumConstantValue(Inspector::Protocol::Network::Response::Source::DiskCache));
         }
     }
@@ -420,7 +415,7 @@ void InspectorNetworkAgent::didFinishLoading(ResourceLoaderIdentifier identifier
     if (loader && loader->frameLoader() && m_resourcesData->resourceType(requestId) == ResourceType::Document)
         m_resourcesData->addResourceSharedBuffer(requestId, protect(loader->frameLoader()->documentLoader())->mainResourceData(), protect(loader->frame()->document())->encoding());
 
-    m_resourcesData->maybeDecodeDataToContent(requestId);
+    m_resourcesData->loadingFinished(requestId);
 
     String sourceMappingURL;
     NetworkResourcesData::ResourceData const* resourceData = m_resourcesData->data(requestId);
@@ -444,6 +439,7 @@ void InspectorNetworkAgent::didFailLoading(ResourceLoaderIdentifier identifier, 
         return;
 
     String requestId = IdentifiersFactory::requestId(identifier.toUInt64());
+    m_resourcesData->loadingFailed(requestId);
 
     if (loader && m_resourcesData->resourceType(requestId) == ResourceType::Document) {
         RefPtr frame = loader->frame();
@@ -457,7 +453,7 @@ void InspectorNetworkAgent::didFailLoading(ResourceLoaderIdentifier identifier, 
     m_frontendDispatcher->loadingFailed(requestId, timestamp(), error.localizedDescription(), error.isCancellation());
 }
 
-void InspectorNetworkAgent::didLoadResourceFromMemoryCache(DocumentLoader* loader, CachedResource& resource)
+void InspectorNetworkAgent::didLoadResourceFromMemoryCache(DocumentLoader* loader, CachedResource& resource, const URL& url)
 {
     ASSERT(loader);
     if (!loader)
@@ -476,7 +472,7 @@ void InspectorNetworkAgent::didLoadResourceFromMemoryCache(DocumentLoader* loade
     // instead of whatever ResourceResponse::Source the CachedResources's response has.
     // The frontend already knows for certain that this was served from the memory cache.
 
-    m_frontendDispatcher->requestServedFromMemoryCache(requestId, frameId, loaderId, loader->url().string(), timestamp(), WTF::move(initiatorObject), buildObjectForCachedResource(&resource));
+    m_frontendDispatcher->requestServedFromMemoryCache(requestId, frameId, loaderId, loader->url().string(), timestamp(), WTF::move(initiatorObject), buildObjectForCachedResource(&resource, url));
 }
 
 void InspectorNetworkAgent::setInitialScriptContent(ResourceLoaderIdentifier identifier, const String& sourceString)
@@ -1034,7 +1030,7 @@ Inspector::Protocol::ErrorStringOr<void> InspectorNetworkAgent::interceptWithRes
     if (!!statusText)
         overrideResponse.setHTTPStatusText(String { statusText });
     if (!!mimeType)
-        overrideResponse.setMimeType(String { mimeType });
+        overrideResponse.setMimeType(extractMIMETypeFromMediaType(mimeType));
     if (headers) {
         HTTPHeaderMap explicitHeaders;
         for (auto& header : *headers) {

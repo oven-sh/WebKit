@@ -4838,7 +4838,7 @@ void UnlinkedFunctionExecutable::materializeDeferredNameSlow() const
     auto* self = const_cast<UnlinkedFunctionExecutable*>(this);
     auto v = m_members.pending().record->slotsView();
     self->m_ecmaName = v.name->decode(*m_members.pending().decoder);
-    WTF::atomicStore(&self->m_nameIsDeferred, false, std::memory_order_release); // tryGetEcmaNameConcurrently()
+    WTF::atomicStore<MemoryOrder::Release>(&self->m_nameIsDeferred, false); // tryGetEcmaNameConcurrently()
     if (!v.tdz && !v.rareData && !m_scalarsAreDeferred)
         materializeDeferredMembersSlow(); // nothing else is in the record, so let go of the Decoder now
 }

@@ -802,7 +802,7 @@ ParkedBodies::ParkedBodies(std::span<Function> functions, const ParallelLoops& l
     forEachIndexInParallel(loops, functions.size(), [&](unsigned index) {
         Function& function = m_functions[index];
         bool isParked = !function.bodyIsReleased && function.hasBody();
-        m_states[index].store(isParked ? IsParked : WasNeverParked, std::memory_order_relaxed);
+        m_states[index].store<MemoryOrder::Relaxed>(isParked ? IsParked : WasNeverParked);
         if (!isParked)
             return;
         m_bodies[index] = ParkedBody(function.storageOfBlocks(), function.storageOfValues());
@@ -846,21 +846,21 @@ void ParkedBodies::parkAgain()
         uint32_t index = earlier[position];
         Function& function = m_functions[index];
         m_bodies[index] = ParkedBody(function.storageOfBlocks(), function.storageOfValues());
-        m_states[index].store(IsParked, std::memory_order_relaxed);
+        m_states[index].store<MemoryOrder::Relaxed>(IsParked);
     });
 }
 
 void ParkedBodies::takeAllBack()
 {
     forEachIndexInParallel(m_loops, m_functions.size(), [&](unsigned index) {
-        uint8_t state = m_states[index].load(std::memory_order_relaxed);
+        uint8_t state = m_states[index].load<MemoryOrder::Relaxed>();
         if (state == WasNeverParked)
             return;
         Function& function = m_functions[index];
         if (state == IsParked)
             m_bodies[index].takeInto(function.storageOfBlocks(), function.storageOfValues());
         function.bodyIsReleased = false;
-        m_states[index].store(WasNeverParked, std::memory_order_relaxed);
+        m_states[index].store<MemoryOrder::Relaxed>(WasNeverParked);
     });
 }
 

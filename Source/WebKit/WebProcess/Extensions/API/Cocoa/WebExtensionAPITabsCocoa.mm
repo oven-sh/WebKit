@@ -163,6 +163,30 @@ static bool parseTabIdentifiers(NSObject *tabIDs, Vector<WebExtensionTabIdentifi
     return true;
 }
 
+SUPPRESS_NODELETE NSDictionary *WebExtensionAPITabs::tabStatus()
+{
+    // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/tabs/TabStatus
+
+    static NSDictionary *statuses = @{
+        @"LOADING": loadingKey,
+        @"COMPLETE": completeKey,
+    };
+
+    return statuses;
+}
+
+SUPPRESS_NODELETE NSDictionary *WebExtensionAPITabs::windowType()
+{
+    // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/tabs/WindowType
+
+    static NSDictionary *types = @{
+        @"NORMAL": normalKey,
+        @"POPUP": popupKey,
+    };
+
+    return types;
+}
+
 bool WebExtensionAPITabs::parseTabCreateOptions(NSDictionary *options, WebExtensionTabParameters& parameters, NSString *sourceKey, NSString **outExceptionString)
 {
     if (!parseTabUpdateOptions(options, parameters, sourceKey, outExceptionString))
@@ -1005,6 +1029,7 @@ void WebExtensionAPITabs::sendMessage(WebFrame& frame, double tabID, const Strin
         contentWorldType(),
         frame.url(),
         documentIdentifier,
+        std::nullopt, // windowIdentifier
     };
 
     bool userGesture = WebCore::UserGestureIndicator::processingUserGesture();
@@ -1047,6 +1072,7 @@ RefPtr<WebExtensionAPIPort> WebExtensionAPITabs::connect(WebFrame& frame, JSCont
         contentWorldType(),
         frame.url(),
         documentIdentifier,
+        std::nullopt, // windowIdentifier
     };
 
     Ref port = WebExtensionAPIPort::create(*this, frame.page()->webPageProxyIdentifier(), WebExtensionContentWorldType::ContentScript, resolvedName);
@@ -1057,7 +1083,7 @@ RefPtr<WebExtensionAPIPort> WebExtensionAPITabs::connect(WebFrame& frame, JSCont
             return;
 
         port->setError(globalContext.get(), protect(runtime())->reportError(result.error().createNSString().get(), globalContext.get()));
-        port->disconnect();
+        port->fireDisconnectEventIfNeeded();
     }, extensionContext().identifier());
 
     return port;

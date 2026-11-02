@@ -169,6 +169,9 @@ namespace JSC::B3 {
     macro(JSSymbolTableObject_symbolTable, JSSymbolTableObject::offsetOfSymbolTable(), Mutability::Mutable) \
     FOR_EACH_JSWEBASSEMBLY_ABSTRACT_FIELD(macro) \
     macro(NativeExecutable_asString, NativeExecutable::offsetOfAsString(), Mutability::Mutable) \
+    macro(ProxyObject_handlerStructureID, ProxyObject::offsetOfHandlerStructureID(), Mutability::Mutable) \
+    macro(ProxyObject_handlerPrototypeStructureID, ProxyObject::offsetOfHandlerPrototypeStructureID(), Mutability::Mutable) \
+    macro(ProxyObject_handlerTrapsOffsetsCache, ProxyObject::offsetOfHandlerTrapsOffsetsCache(), Mutability::Mutable) \
     macro(RegExp_flags, RegExp::offsetOfFlags(), Mutability::Mutable) \
     macro(RegExp_minimumSize, RegExp::offsetOfMinimumSize(), Mutability::Mutable) \
     macro(RegExpObject_regExpAndFlags, RegExpObject::offsetOfRegExpAndFlags(), Mutability::Mutable) \

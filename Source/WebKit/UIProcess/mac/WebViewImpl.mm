@@ -63,7 +63,6 @@
 #import "RemoteScrollingCoordinatorProxy.h"
 #import "TextChecker.h"
 #import "TextCheckerState.h"
-#import "TiledCoreAnimationDrawingAreaProxy.h"
 #import "TransientZoomState.h"
 #import "UIGamepadProvider.h"
 #import "UndoOrRedo.h"
@@ -85,6 +84,7 @@
 #import "WKTextSelectionController.h"
 #import "WKViewLayoutStrategy.h"
 #import "WKWebViewMac.h"
+#import "WKWebViewPrivateForTestingMac.h"
 #import "WebBackForwardList.h"
 #import <WebCore/ColorSpace.h>
 #import "WebEditCommandProxy.h"
@@ -1360,25 +1360,6 @@ WebViewImpl::WebViewImpl(WKWebView *view, WebProcessPool& processPool, Ref<API::
     if (isInBaseSystem())
         setWindowOcclusionDetectionEnabled(false);
 
-#if ENABLE(TILED_CA_DRAWING_AREA)
-    auto useRemoteLayerTree = [&]() {
-        bool result = false;
-#if ENABLE(REMOTE_LAYER_TREE_ON_MAC_BY_DEFAULT)
-        result = true;
-#endif
-        if (RetainPtr<id> useRemoteLayerTreeBoolean = [[NSUserDefaults standardUserDefaults] objectForKey:@"WebKit2UseRemoteLayerTreeDrawingArea"])
-            result = [useRemoteLayerTreeBoolean boolValue];
-
-        if (protect(m_page->preferences())->siteIsolationEnabled())
-            result = true;
-
-        return result;
-    };
-
-    if (useRemoteLayerTree())
-        m_drawingAreaType = DrawingAreaType::RemoteLayerTree;
-#endif
-
     [view addTrackingArea:m_primaryTrackingArea.get()];
     [view addTrackingArea:m_flagsChangedEventMonitorTrackingArea.get()];
 
@@ -2049,25 +2030,12 @@ CGSize WebViewImpl::fixedLayoutSize() const
 
 Ref<WebKit::DrawingAreaProxy> WebViewImpl::createDrawingAreaProxy(WebProcessProxy& webProcessProxy)
 {
-#if ENABLE(TILED_CA_DRAWING_AREA)
-    switch (m_drawingAreaType) {
-    case DrawingAreaType::TiledCoreAnimation:
-        return TiledCoreAnimationDrawingAreaProxy::create(m_page, webProcessProxy);
-    case DrawingAreaType::RemoteLayerTree:
-        return RemoteLayerTreeDrawingAreaProxyMac::create(m_page, webProcessProxy);
-    }
-    ASSERT_NOT_REACHED();
-#endif
     return RemoteLayerTreeDrawingAreaProxyMac::create(m_page, webProcessProxy);
 }
 
 bool WebViewImpl::isUsingUISideCompositing() const
 {
-#if ENABLE(TILED_CA_DRAWING_AREA)
-    return m_drawingAreaType == DrawingAreaType::RemoteLayerTree;
-#else
     return true;
-#endif
 }
 
 void WebViewImpl::setDrawingAreaSize(CGSize size)
@@ -2194,7 +2162,6 @@ void WebViewImpl::setSizeToContentAutoSizeMaximumSize(CGSize sizeToContentAutoSi
     bool expandsToFit = sizeToContentAutoSizeMaximumSize.width > 0 && sizeToContentAutoSizeMaximumSize.height > 0;
 
     m_page->setSizeToContentAutoSizeMaximumSize(WebCore::IntSize(sizeToContentAutoSizeMaximumSize));
-    m_page->setMainFrameIsScrollable(!expandsToFit);
 
     setClipsToVisibleRect(expandsToFit);
 }
@@ -2658,6 +2625,8 @@ void WebViewImpl::pageDidScroll(const IntPoint& scrollOffset)
     // While a selection-drag is autoscrolling, keep extending the selection toward the
     // last drag point as the content scrolls underneath it.
     [m_textSelectionController reextendSelectionForAutoscrollIfNeeded];
+
+    [m_appKitGestureController cancelClickHighlight];
 #endif
 
 #if ENABLE(HORIZONTAL_BANNER_VIEW_OVERLAYS)
@@ -2674,13 +2643,6 @@ void WebViewImpl::pageDidScroll(const IntPoint& scrollOffset)
 #endif
         [protect(view()) didChangeValueForKey:@"hasScrolledContentsUnderTitlebar"];
     }
-}
-
-void WebViewImpl::didEndSyntheticMomentumScrolling()
-{
-#if HAVE(APPKIT_GESTURES_SUPPORT)
-    [appKitGestureController() didEndSyntheticMomentumScrolling];
-#endif
 }
 
 #if ENABLE(CONTENT_INSET_BACKGROUND_FILL)
@@ -2750,6 +2712,18 @@ void WebViewImpl::setFullScreenTitlebarOverlayHeight(CGFloat fullScreenTitlebarO
         m_page->setFullScreenTitlebarOverlayIsRevealed(isRevealed);
 
     updateScrollPocket();
+}
+
+bool WebViewImpl::isInElementFullScreenWindow() const
+{
+#if ENABLE(FULLSCREEN_API)
+    if (!m_fullScreenWindowController)
+        return false;
+    RetainPtr window = [m_view.get() window];
+    return window && window == [m_fullScreenWindowController window];
+#else
+    return false;
+#endif
 }
 #endif
 
@@ -3990,6 +3964,10 @@ void WebViewImpl::dismissContentRelativeChildWindowsFromViewOnly()
 #if HAVE(TRANSLATION_UI_SERVICES) && ENABLE(CONTEXT_MENUS)
     [std::exchange(m_lastContextMenuTranslationPopover, nil).get() close];
 #endif
+
+#if HAVE(APPKIT_GESTURES_SUPPORT)
+    [m_appKitGestureController cancelClickHighlight];
+#endif
 }
 
 bool WebViewImpl::hasContentRelativeChildViews() const
@@ -4481,30 +4459,6 @@ void WebViewImpl::toolTipChanged(const String& oldToolTip, const String& newTool
     }
 }
 
-void WebViewImpl::enterAcceleratedCompositingWithRootLayer(CALayer *rootLayer)
-{
-    // This is the process-swap case. We add the new layer behind the existing root layer and mark it as hidden.
-    // This way, the new layer gets accelerated compositing but won't be visible until
-    // setAcceleratedCompositingRootLayer() is called by didFirstLayerFlush(), in order to prevent flashing.
-    if (m_rootLayer && rootLayer && m_rootLayer != rootLayer) {
-        if (m_thumbnailView)
-            return;
-
-        [rootLayer web_disableAllActions];
-
-        [CATransaction begin];
-        [CATransaction setDisableActions:YES];
-
-        rootLayer.hidden = YES;
-        [retainPtr([m_layerHostingView layer]) insertSublayer:rootLayer atIndex:0];
-
-        [CATransaction commit];
-        return;
-    }
-
-    setAcceleratedCompositingRootLayer(rootLayer);
-}
-
 void WebViewImpl::setAcceleratedCompositingRootLayer(CALayer *rootLayer)
 {
     [rootLayer web_disableAllActions];
@@ -4764,7 +4718,7 @@ static void performDragWithLegacyFiles(WebPageProxy& page, Box<Vector<String>>&&
     });
 }
 
-static bool handleLegacyFilesPromisePasteboard(id<NSDraggingInfo> draggingInfo, Box<WebCore::DragData>&& dragData, WebPageProxy& page, RetainPtr<NSView<WebViewImplDelegate>> view)
+static bool handleLegacyFilesPromisePasteboard(id<NSDraggingInfo> draggingInfo, Box<WebCore::DragData>&& dragData, WebPageProxy& page, RetainPtr<WKWebView> view)
 {
     // FIXME: legacyFilesPromisePasteboardTypeSingleton() contains UTIs, not path names. Also, it's not
     // guaranteed that the count of UTIs equals the count of files, since some clients only write
@@ -5231,7 +5185,7 @@ void WebViewImpl::writePromisedImageDragDataToPasteboard(NSPasteboard *pasteboar
             [pasteboard setData:imageData.get() forType:data.imageUTI.createNSString().get()];
     }
 
-    if (RetainPtr tiffData = image->adapter().tiffRepresentation(WebCore::ConcreteObjectSize::fixed(image->size())))
+    if (RetainPtr tiffData = image->adapter().tiffRepresentation(WebCore::ImageDrawDescriptor { WebCore::ConcreteObjectSize::fixed(image->size()) }))
         [pasteboard setData:bridge_cast(WTF::move(tiffData)) forType:WebCore::legacyTIFFPasteboardTypeSingleton()];
 
     if (RefPtr archiveBuffer = data.archiveBuffer) {
@@ -5265,7 +5219,7 @@ void WebViewImpl::provideDataForPasteboard(NSPasteboard *pasteboard, NSString *t
 
     // FIXME: Need to support NSRTFDPboardType.
     if ([type isEqual:WebCore::legacyTIFFPasteboardTypeSingleton()])
-        [pasteboard setData:(__bridge NSData *)RetainPtr { promisedImage->adapter().tiffRepresentation(WebCore::ConcreteObjectSize::fixed(promisedImage->size())) }.get() forType:WebCore::legacyTIFFPasteboardTypeSingleton()];
+        [pasteboard setData:(__bridge NSData *)RetainPtr { promisedImage->adapter().tiffRepresentation(WebCore::ImageDrawDescriptor { WebCore::ConcreteObjectSize::fixed(promisedImage->size()) }) }.get() forType:WebCore::legacyTIFFPasteboardTypeSingleton()];
 }
 
 static BOOL fileExists(NSString *path)
@@ -5720,6 +5674,10 @@ void WebViewImpl::scrollWheel(NSEvent *event)
 
     if (event.phase == NSEventPhaseBegan)
         dismissContentRelativeChildWindowsWithAnimation(false);
+
+#if HAVE(APPKIT_GESTURES_SUPPORT)
+    [m_appKitGestureController interruptMomentumForScrollWheelEvent];
+#endif
 
 #if HAVE(NSREFRESHCONTROLLER)
     updateRefreshControllerForWheelEvent(event);
@@ -7019,9 +6977,9 @@ void WebViewImpl::rightMouseUp(NSEvent *event)
     nativeMouseEventHandler(event, WebEventInputSource::UserDriven);
 }
 
-void WebViewImpl::mouseMovedInternal(NSEvent *event)
+void WebViewImpl::mouseMovedInternal(NSEvent *event, WebEventInputSource inputSource)
 {
-    nativeMouseEventHandlerInternal(event, WebEventInputSource::UserDriven);
+    nativeMouseEventHandlerInternal(event, inputSource);
 }
 
 void WebViewImpl::mouseDownInternal(NSEvent *event, WebEventInputSource inputSource, WebCore::PlatformMouseEvent::CanInitiateDrag canInitiateDrag)
@@ -7039,7 +6997,7 @@ void WebViewImpl::mouseDraggedInternal(NSEvent *event, WebEventInputSource input
     nativeMouseEventHandlerInternal(event, inputSource, canInitiateDrag);
 }
 
-void WebViewImpl::mouseMoved(NSEvent *event)
+void WebViewImpl::mouseMoved(NSEvent *event, WebEventInputSource inputSource)
 {
     if (m_ignoresNonWheelEvents || m_ignoresMouseMoveEvents)
         return;
@@ -7056,7 +7014,7 @@ void WebViewImpl::mouseMoved(NSEvent *event)
     if (view == [view window].firstResponder && !NSPointInRect(locationInView, [view visibleRect]))
         return;
 
-    mouseMovedInternal(event);
+    mouseMovedInternal(event, inputSource);
 }
 
 static _WKRectEdge LEGACY_NODELETE toWKRectEdge(WebCore::RectEdges<bool> edges)
@@ -7278,7 +7236,7 @@ void WebViewImpl::updateTouchBar()
             touchBar = [m_mediaTouchBarProvider respondsToSelector:@selector(touchBar)] ? [(id)m_mediaTouchBarProvider.get() touchBar] : [(id)m_mediaTouchBarProvider.get() touchBar];
     } else if ([m_mediaTouchBarProvider playbackControlsController]) {
         if (m_clientWantsMediaPlaybackControlsView) {
-            if ([m_view.get() respondsToSelector:@selector(_web_didRemoveMediaControlsManager)] && m_view.getAutoreleased() == protect(window()).get().firstResponder)
+            if (m_view.getAutoreleased() == protect(window()).get().firstResponder)
                 [m_view.get() _web_didRemoveMediaControlsManager];
         }
         [m_mediaTouchBarProvider setPlaybackControlsController:nil];
@@ -7636,7 +7594,7 @@ void WebViewImpl::updateMediaTouchBar()
         return;
     }
 
-    if (m_playbackControlsManager && m_view.getAutoreleased() == protect(window()).get().firstResponder && [m_view.get() respondsToSelector:@selector(_web_didAddMediaControlsManager:)])
+    if (m_playbackControlsManager && m_view.getAutoreleased() == protect(window()).get().firstResponder)
         [m_view.get() _web_didAddMediaControlsManager:m_mediaPlaybackControlsView.get()];
 #endif
 }
@@ -8426,6 +8384,11 @@ void WebViewImpl::invalidateCachedPositionInformation()
 void WebViewImpl::positionInformationDidChange(const InteractionInformationAtPosition& info)
 {
     [m_appKitGestureController positionInformationDidChange:info];
+}
+
+void WebViewImpl::installClickHighlightView(NSView *highlightView)
+{
+    [protect(view()) addSubview:highlightView positioned:NSWindowAbove relativeTo:m_layerHostingView];
 }
 
 void WebViewImpl::beginSuppressingSingleClickGestureForTextSelection()

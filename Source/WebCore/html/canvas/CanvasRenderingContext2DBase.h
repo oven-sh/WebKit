@@ -347,6 +347,8 @@ public:
         // The font description `unparsedFont` was resolved against. Relative values in the font
         // shorthand depend on it, so `font` is stale once it no longer matches the canvas element.
         FontCascadeDescription fontResolutionBase;
+        // Likewise for the root element's font, which root font relative values depend on.
+        FontCascadeDescription rootFontResolutionBase;
 
         RefPtr<CanvasLayerContextSwitcher> targetSwitcher;
 
@@ -422,7 +424,7 @@ protected:
 
     bool usesCSSCompatibilityParseMode() const { return m_usesCSSCompatibilityParseMode; }
 
-    void LEGACY_NODELETE updateStateTransform(const AffineTransform&);
+    void updateStateTransform(const AffineTransform&);
 
     RefPtr<ImageBuffer> allocateImageBuffer() const;
     RefPtr<ImageBuffer> createCompatibleImageBuffer(GraphicsContext&, const FloatSize&) const;
@@ -464,7 +466,7 @@ private:
 #if ENABLE(PIXEL_FORMAT_RGBA16F)
     void setDynamicRangeLimit(PlatformDynamicRangeLimit) final;
     std::optional<double> getEffectiveDynamicRangeLimitValue() const final;
-    ImageDrawingOptions drawingOptionsForDisplay() const final;
+    RasterDrawingOptions drawingOptionsForDisplay() const final;
 #endif
 
     void realizeSavesLoop();
@@ -521,7 +523,7 @@ private:
 
     FloatRect LEGACY_NODELETE inflatedStrokeRect(const FloatRect&) const;
 
-    template<class T> void fullCanvasCompositedDrawImage(T&, const FloatRect&, const FloatRect&, CompositeOperator, ImageDrawingOptions = { });
+    void fullCanvasCompositedDraw(const FloatRect& destination, CompositeOperator, const auto& draw);
 
     RefPtr<ImageBuffer> surfaceBufferToImageBuffer(SurfaceBuffer) final;
     RefPtr<NativeImage> surfaceBufferToNativeImage(SurfaceBuffer) final;

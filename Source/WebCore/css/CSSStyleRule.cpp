@@ -70,6 +70,11 @@ CSSStyleRule::~CSSStyleRule()
     if (m_propertiesCSSOMWrapper)
         m_propertiesCSSOMWrapper->clearParentRule();
 
+    for (auto& wrapper : m_childRuleCSSOMWrappers) {
+        if (wrapper)
+            wrapper->setParentRule(nullptr);
+    }
+
     if (hasCachedSelectorText()) {
         selectorTextCache().remove(this);
         setHasCachedSelectorText(false);
@@ -262,6 +267,8 @@ ExceptionOr<unsigned> CSSStyleRule::insertRule(const String& ruleString, unsigne
         m_styleRule = *styleRuleWithNesting;
     }
 
+    if (styleSheet)
+        protect(styleSheet->contents())->adoptScopeRules(*newRule);
     downcast<StyleRuleWithNesting>(m_styleRule.get()).nestedRules().insert(index, newRule.releaseNonNull());
     m_childRuleCSSOMWrappers.insert(index, RefPtr<CSSRule>());
     return index;

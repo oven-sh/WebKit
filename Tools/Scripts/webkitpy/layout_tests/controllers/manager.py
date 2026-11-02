@@ -315,6 +315,7 @@ class Manager(object):
         else:
             should_run_pixel_test = True
 
+        expectations = self._expectations[(self._current_driver_name, device_type)]
         return TestInput(
             test_file,
             timeout=timeout,
@@ -322,6 +323,7 @@ class Manager(object):
             needs_servers=test_file.needs_any_server,
             should_dump_jsconsolelog_in_stderr=should_dump_jsconsolelog_in_stderr,
             should_run_pixel_test=should_run_pixel_test,
+            expected_results=frozenset(expectations.filtered_expectations_for_test(test_file.test_path, self._options.pixel_tests or bool(test_file.reference_files), self._options.world_leaks)),
         )
 
     def _test_is_slow(self, test_file, device_type):
@@ -380,6 +382,8 @@ class Manager(object):
                     _log.critical('')
                     _log.critical('--test-list file "{}" not found'.format(list_path))
                     return test_run_results.RunDetails(exit_code=-1)
+
+        self._port.warn_about_ignored_sanitizer_options()
 
         overall_initial_results = None
         overall_retry_results = None

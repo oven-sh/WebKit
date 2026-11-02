@@ -116,13 +116,7 @@ public:
         return kind;
     }
     
-    Relationship()
-        : m_left(nullptr)
-        , m_right(nullptr)
-        , m_kind(Equal)
-        , m_offset(0)
-    {
-    }
+    Relationship() = default;
 
     // left <kind> (right + offset)
     Relationship(NodeFlowProjection left, NodeFlowProjection right, Kind kind, int offset = 0)
@@ -1003,10 +997,10 @@ private:
         RELEASE_ASSERT_NOT_REACHED();
     }
     
-    NodeFlowProjection m_left;
-    NodeFlowProjection m_right;
-    Kind m_kind;
-    int m_offset; // This offset can be arbitrarily large.
+    NodeFlowProjection m_left { nullptr };
+    NodeFlowProjection m_right { nullptr };
+    Kind m_kind { Equal };
+    int m_offset { 0 }; // This offset can be arbitrarily large.
 };
 
 typedef UncheckedKeyHashMap<NodeFlowProjection, Vector<Relationship>> RelationshipMap;
@@ -1023,8 +1017,7 @@ public:
 
     struct RangeBound {
         int32_t value;
-        Node* proofLeft { nullptr };
-        Node* proofRight { nullptr };
+        Relationship proof { };
     };
 
     std::optional<std::tuple<RangeBound, RangeBound>> LEGACY_NODELETE rangeFor(Node* node)
@@ -1044,14 +1037,12 @@ public:
             int32_t candidateMin = relationship.minValueOfLeft();
             if (candidateMin > minBound.value) {
                 minBound.value = candidateMin;
-                minBound.proofLeft = relationship.left().node();
-                minBound.proofRight = relationship.right().node();
+                minBound.proof = relationship;
             }
             int32_t candidateMax = relationship.maxValueOfLeft();
             if (candidateMax < maxBound.value) {
                 maxBound.value = candidateMax;
-                maxBound.proofLeft = relationship.left().node();
-                maxBound.proofRight = relationship.right().node();
+                maxBound.proof = relationship;
             }
         }
         return std::tuple { minBound, maxBound };
@@ -1074,9 +1065,11 @@ public:
 
     void pinRangeBoundProof(const RangeBound& bound)
     {
-        if (Node* right = bound.proofRight; right && !right->isConstant())
+        if (!bound.proof)
+            return;
+        if (Node* right = bound.proof.right().node(); right && !right->isConstant())
             right->mergeFlags(NodeMustGenerate);
-        if (Node* left = bound.proofLeft; left && !left->isConstant())
+        if (Node* left = bound.proof.left().node(); left && !left->isConstant())
             left->mergeFlags(NodeMustGenerate);
     }
 

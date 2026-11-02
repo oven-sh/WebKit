@@ -5917,6 +5917,8 @@ class RunAPITests(shell.Test, ResultsDBReportMixin, AddToLogMixin, ShellMixin):
             first_results_failing_tests = set(self.getProperty('api_first_run_failures', set()))
             second_results_failing_tests = set(self.getProperty('api_second_run_failures', set()))
             list_failed_tests_with_change = sorted(first_results_failing_tests.union(second_results_failing_tests))
+            if platform in ['gtk', 'wpe']:
+                list_failed_tests_with_change = sorted({test.split(':', 1)[0] for test in list_failed_tests_with_change})
             if list_failed_tests_with_change:
                 self.command = self.command + [quote(t) for t in list_failed_tests_with_change]
         if SHOULD_FILTER_LOGS is True:
@@ -7763,6 +7765,8 @@ class Canonicalize(steps.ShellSequence, ShellMixin, AddToLogMixin):
 
         commands = [self.shell_command('rm .git/identifiers.json || {}'.format(self.shell_exit_0()))]
         if self.rebase_enabled:
+            if head_ref:
+                commands += [['git', 'checkout', '--progress', head_ref]]
             commands += [['git', 'pull', remote, base_ref, '--rebase']]
             self.verify_commit_count_command = self.shell_command(f'test "$(git rev-list --count FETCH_HEAD..HEAD)" -eq {self.getProperty("commit_count", 1)}')
             commands.append(self.verify_commit_count_command)

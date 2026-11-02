@@ -1503,6 +1503,10 @@ RefPtr<WebGPU::BindGroup> Device::createBindGroup(const WebGPU::BindGroupDescrip
                     return BindGroup::createInvalid(*this);
                 }
                 Ref externalTexture = metal(externalTextureResource->get());
+                if (&externalTexture->device() != this) {
+                    VALIDATION_ERROR(@"External texture was created from a different device");
+                    return BindGroup::createInvalid(*this);
+                }
                 auto textureData = createExternalTextureFromPixelBuffer(protect(externalTexture->pixelBuffer()), externalTexture->colorSpace(), PremultiplyAlpha::Yes);
                 id<MTLTexture> texture0 = textureData.texture0 ?: placeholderTexture(WebGPU::TextureFormat::Bgra8unorm);
                 auto metalStage = metalRenderStage(stage);
@@ -1738,7 +1742,27 @@ bool BindGroup::updateExternalTextures(WebGPU::ExternalTexture& apiExternalTextu
 {
     // Every WebGPU::ExternalTexture that reaches a WebGPU::Metal::BindGroup is a WebGPU::Metal::ExternalTexture.
     auto& externalTexture = downcast<ExternalTexture>(apiExternalTexture);
-    if (!m_bindGroupLayout || externalTexture.openCommandEncoderCount())
+    if (m_renderBundleConsumerCount)
+        return false;
+
+    if (!m_bindGroupLayout || &externalTexture.device() != m_device.ptr())
+        return false;
+
+    bool foundBoundExternalTexture = false;
+    for (auto& resource : m_resources) {
+        for (auto& resourceUsage : resource.resourceUsages) {
+            auto* boundExternalTexture = std::get_if<RefPtr<const ExternalTexture>>(&resourceUsage.resource);
+            if (!boundExternalTexture || !*boundExternalTexture)
+                continue;
+
+            if (boundExternalTexture->get() != &externalTexture || (*boundExternalTexture)->openCommandEncoderCount())
+                return false;
+
+            foundBoundExternalTexture = true;
+        }
+    }
+
+    if (!foundBoundExternalTexture)
         return false;
 
     Ref device = m_device;
@@ -1841,10 +1865,14 @@ void LEGACY_NODELETE wgpuBindGroupAddRef(WGPUBindGroup bindGroup)
 
 void wgpuBindGroupRelease(WGPUBindGroup bindGroup)
 {
-    WebGPU::Metal::fromAPI(bindGroup).deref();
+    @autoreleasepool {
+        WebGPU::Metal::fromAPI(bindGroup).deref();
+    }
 }
 
 void wgpuBindGroupSetLabel(WGPUBindGroup bindGroup, WGPUStringView label)
 {
-    protect(WebGPU::Metal::fromAPI(bindGroup))->setLabel(WebGPU::Metal::fromAPI(label));
+    @autoreleasepool {
+        protect(WebGPU::Metal::fromAPI(bindGroup))->setLabel(WebGPU::Metal::fromAPI(label));
+    }
 }

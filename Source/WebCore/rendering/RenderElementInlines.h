@@ -30,22 +30,13 @@
 
 namespace WebCore {
 
-inline UsedStyle RenderObject::usedStyle() const
-{
-    if (isRenderText())
-        return m_parent->usedStyle();
-    return downcast<RenderElement>(*this).usedStyle();
-}
-
+inline UsedStyle RenderObject::usedStyle() const { return UsedStyle { *this }; }
 inline UsedStyle RenderObject::firstLineUsedStyle() const
 {
     if (isRenderText())
-        return m_parent->firstLineUsedStyle();
-    return downcast<RenderElement>(*this).firstLineUsedStyle();
+        return UsedStyle { *this, layoutBox().firstLineStyle() };
+    return UsedStyle { *this, uncheckedDowncast<RenderElement>(*this).firstLineStyle() };
 }
-
-inline UsedStyle RenderElement::usedStyle() const { return UsedStyle { *this }; }
-inline UsedStyle RenderElement::firstLineUsedStyle() const { return UsedStyle { *this, firstLineStyle() }; }
 inline Overflow RenderElement::effectiveOverflowBlockDirection() const { return writingMode().isHorizontal() ? effectiveOverflowY() : effectiveOverflowX(); }
 inline Overflow RenderElement::effectiveOverflowInlineDirection() const { return writingMode().isHorizontal() ? effectiveOverflowX() : effectiveOverflowY(); }
 inline Element* RenderElement::element() const { return downcast<Element>(RenderObject::node()); }
@@ -96,6 +87,16 @@ inline bool RenderElement::isAnonymousBlock() const
         && !isRenderMultiColumnSet()
         && !isRenderView()
         && !isViewTransitionContainingBlock();
+}
+
+inline bool RenderElement::mayHaveFirstLineStyle() const
+{
+    // As firstLineStyle() finds it. Anonymous blocks use the parent's, if they are its first in-flow child.
+    if (isAnonymousBlock()) {
+        SUPPRESS_UNCHECKED_LOCAL auto* parentRenderer = parent();
+        return parentRenderer && parentRenderer->style().pseudoElementStyle({ PseudoElementType::FirstLine });
+    }
+    return style().pseudoElementStyle({ PseudoElementType::FirstLine });
 }
 
 inline bool RenderElement::isBlockContainer() const

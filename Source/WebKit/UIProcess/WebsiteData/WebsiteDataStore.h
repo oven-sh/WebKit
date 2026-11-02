@@ -226,6 +226,7 @@ public:
 
     void clearResourceLoadStatisticsInWebProcesses(CompletionHandler<void()>&&);
     void setUserAgentStringQuirkForTesting(const String& domain, const String& userAgentString, CompletionHandler<void()>&&);
+    void setLinkDecorationFilteringDataForTesting(Vector<String>&& queryParameters, CompletionHandler<void()>&&);
     void setPrivateTokenIPCForTesting(bool enabled);
     void requestLocalNetworkAccessPermission(WebPageProxyIdentifier, WebCore::ClientOrigin&&, WebCore::IPAddressSpace, CompletionHandler<void(WebCore::PermissionState)>&&);
     void queryLocalNetworkAccessPermission(std::optional<WebPageProxyIdentifier>, const WebCore::ClientOrigin&, WebCore::IPAddressSpace, CompletionHandler<void(std::optional<WebCore::PermissionState>)>&&);
@@ -545,6 +546,8 @@ public:
     void setStorageAccessPermissionForTesting(bool, WebPageProxyIdentifier, const String& topFrameDomain, const String& subFrameDomain, CompletionHandler<void()>&&);
     void clearStorageAccessForTesting(CompletionHandler<void()>&&);
     void isStorageSuspendedForTesting(CompletionHandler<void(bool)>&&);
+    void canPrefetchDNSForTesting(CompletionHandler<void(bool)>&&);
+    void prefetchedDNSHostnameCountForTesting(CompletionHandler<void(uint64_t)>&&);
 
 #if HAVE(WEBCONTENTRESTRICTIONS)
     void installMockParentalControlsURLFilterForTesting(Vector<URL>&& blockedURLs, std::span<const uint8_t> replacementData, CompletionHandler<void()>&&);

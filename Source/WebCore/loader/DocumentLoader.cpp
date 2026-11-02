@@ -483,7 +483,7 @@ void DocumentLoader::notifyFinished(CachedResource& resource, const NetworkLoadM
 
 void DocumentLoader::finishedLoading()
 {
-    // If the prefetch response was not successful, remove the failed prefetch from the memory cache and retry the navigation as a continuing load.
+    // If the prefetch response can't serve this navigation, remove the prefetch from the memory cache and retry the navigation as a continuing load.
     if (m_prefetchResponseFailed) {
         RefPtr frame = m_frame;
         if (!frame)
@@ -500,6 +500,8 @@ void DocumentLoader::finishedLoading()
         FrameLoadRequest frameLoadRequest { document.copyRef(), protect(document->securityOrigin()), WTF::move(request), { }, InitiatedByMainFrame::Unknown };
         frameLoadRequest.setIsRequestFromClientOrUserInput();
         frameLoadRequest.setShouldTreatAsContinuingLoad(ShouldTreatAsContinuingLoad::YesAfterProvisionalLoadStarted);
+        if (auto navigationID = takeNavigationID())
+            frameLoadRequest.setNavigationID(*navigationID);
         frame->loader().load(WTF::move(frameLoadRequest));
         return;
     }
@@ -800,7 +802,7 @@ void DocumentLoader::willSendRequest(ResourceRequest&& newRequest, const Resourc
     if (!newRequest.url().host().isEmpty() && SecurityOrigin::shouldIgnoreHost(newRequest.url())) {
         auto url = newRequest.url();
         url.removeHostAndPort();
-        newRequest.setURL(WTF::move(url));
+        newRequest.setURL(WTF::move(url), newRequest.didFilterLinkDecoration());
     }
 
 #if ENABLE(CONTENT_FILTERING)
@@ -2037,7 +2039,7 @@ URL DocumentLoader::documentURL() const
 // FIXME: This method seems to violate the encapsulation of this class.
 void DocumentLoader::setResponseMIMEType(const String& responseMIMEType)
 {
-    m_response.setMimeType(String { responseMIMEType });
+    m_response.setMimeType(extractMIMETypeFromMediaType(responseMIMEType));
 }
 
 #endif
@@ -2433,7 +2435,7 @@ void DocumentLoader::loadMainResource(ResourceRequest&& request)
     // the fragment identifier, so add that back in.
     // Otherwise, if the main resource was loaded from a prefetch, we need to conserve the redirect URL here
     if (equalIgnoringFragmentIdentifier(m_request.url(), updatedRequest.url()) || (m_mainResource && m_mainResource->options().cachingPolicy == CachingPolicy::AllowCachingMainResourcePrefetch))
-        updatedRequest.setURL(URL { m_request.url() });
+        updatedRequest.setURL(URL { m_request.url() }, m_request.didFilterLinkDecoration());
     setRequest(WTF::move(updatedRequest));
 }
 

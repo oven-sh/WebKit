@@ -44,6 +44,10 @@ class TextStream;
 
 namespace WebCore {
 
+namespace Layout {
+class Box;
+}
+
 class AffineTransform;
 class Color;
 class ControlPart;
@@ -93,10 +97,6 @@ struct SimpleRange;
 struct VisibleRectContext;
 struct VisibleRectState;
 
-namespace Layout {
-class Box;
-}
-
 namespace Style {
 class ComputedStyle;
 class PseudoElementRequest;
@@ -114,6 +114,7 @@ enum class StyleColorOptions : uint8_t;
 typedef const void* WrappedImagePtr;
 
 // Base class for all rendering tree objects.
+// Only RenderElement and RenderText derive from RenderObject directly. Their second base is their layout box.
 class RenderObject : public CanMakeSingleThreadWeakPtr<RenderObject>, public CanMakeCheckedPtr<RenderObject> {
     WTF_MAKE_PREFERABLY_COMPACT_TZONE_ALLOCATED(RenderObject);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderObject);
@@ -348,10 +349,13 @@ public:
     virtual ~RenderObject();
 
     Type type() const { return m_type; }
-    Layout::Box* layoutBox() { return m_layoutBox.get(); }
-    const Layout::Box* layoutBox() const { return m_layoutBox.get(); }
-    void LEGACY_NODELETE setLayoutBox(Layout::Box&);
-    void LEGACY_NODELETE clearLayoutBox();
+
+    // The layout box is part of the renderer. Defined in RenderText.h.
+    ALWAYS_INLINE Layout::Box& layoutBox() LIFETIME_BOUND;
+    ALWAYS_INLINE const Layout::Box& layoutBox() const LIFETIME_BOUND;
+    // Not for the initial containing block, which has no renderer.
+    ALWAYS_INLINE static RenderObject& fromLayoutBox(Layout::Box&);
+    ALWAYS_INLINE static const RenderObject& fromLayoutBox(const Layout::Box&);
 
     WEBCORE_EXPORT RenderTheme& theme() const;
 
@@ -605,7 +609,8 @@ public:
     bool isRenderOrLegacyRenderSVGHiddenContainer() const { return isRenderSVGHiddenContainer() || isLegacyRenderSVGHiddenContainer(); }
     bool isRenderOrLegacyRenderSVGModelObject() const { return isRenderSVGModelObject() || isLegacyRenderSVGModelObject(); }
     bool isRenderOrLegacyRenderSVGResourceFilterPrimitive() const { return isRenderSVGResourceFilterPrimitive() || isLegacyRenderSVGResourceFilterPrimitive(); }
-    bool isSVGLayerAwareRenderer() const { return isRenderSVGRoot() || isRenderSVGModelObject() || isRenderSVGText() || isRenderSVGInline() || isRenderSVGForeignObject(); }
+    bool isSVGLayerAwareDescendantRenderer() const { return isRenderSVGModelObject() || isRenderSVGText() || isRenderSVGInline() || isRenderSVGForeignObject(); }
+    bool isSVGLayerAwareRenderer() const { return isRenderSVGRoot() || isSVGLayerAwareDescendantRenderer(); }
     bool isSVGRenderer() const { return isRenderOrLegacyRenderSVGRoot() || isRenderOrLegacyRenderSVGModelObject() || isRenderSVGBlock() || isRenderSVGInline(); }
 
     // FIXME: Those belong into a SVG specific base-class for all renderers (see above)
@@ -762,10 +767,10 @@ public:
     bool isAncestorContainerOfRenderer(const RenderObject&) const;
 
     RenderElement* markContainingBlocksForLayout(RenderElement* layoutRoot = nullptr);
-    inline void setNeedsLayout(MarkingBehavior = MarkingBehavior::MarkContainingBlockChain);
+    inline void setNeedsLayout(MarkingBehavior = MarkingBehavior::ContainingBlockChain);
     enum class HadSkippedLayout { No, Yes };
     void clearNeedsLayout(HadSkippedLayout = HadSkippedLayout::No);
-    void invalidateContentLogicalWidths(MarkingBehavior = MarkingBehavior::MarkContainingBlockChain, const RenderBlock* ancestorUpdateBoundary = nullptr);
+    void invalidateContentLogicalWidths(MarkingBehavior = MarkingBehavior::ContainingBlockChain, const RenderBlock* ancestorUpdateBoundary = nullptr);
     void clearContentLogicalWidthsInvalidation() { m_stateBitfields.setFlag(StateFlag::ContentLogicalWidthsInvalidated, { }); }
 
     void notifyInspectorOfLayoutInvalidate();
@@ -1074,7 +1079,6 @@ public:
     virtual void imageChanged(WrappedImagePtr, const IntRect* = nullptr) { }
     virtual bool allowsAnimation() const { return true; }
     virtual bool canDestroyDecodedData() const { return true; }
-    virtual bool useSystemDarkAppearance() const { return false; }
     virtual VisibleInViewportState imageFrameAvailable(CachedImage&, ImageAnimatingState, const IntRect*);
     virtual VisibleInViewportState imageVisibleInViewport(const Document&) const { return VisibleInViewportState::No; }
     virtual void didRemoveCachedImageClient(CachedImage&) { }
@@ -1165,7 +1169,6 @@ private:
         void imageChanged(CachedImage*, const IntRect* = nullptr) final;
         bool allowsAnimation() const final;
         bool canDestroyDecodedData() const final;
-        bool useSystemDarkAppearance() const final;
         VisibleInViewportState imageFrameAvailable(CachedImage&, ImageAnimatingState, const IntRect*) final;
         VisibleInViewportState imageVisibleInViewport(const Document&) const final;
         void didRemoveCachedImageClient(CachedImage&) final;
@@ -1293,7 +1296,6 @@ private:
     SingleThreadPackedWeakPtr<RenderObject> m_next;
     const TypeSpecificFlags m_typeSpecificFlags;
 
-    CheckedPtr<Layout::Box> m_layoutBox;
     const RefPtr<CachedImageListener> m_cachedImageClient;
 
     // FIXME: This should be RenderElementRareData.
@@ -1305,7 +1307,7 @@ private:
 
         bool hasReflection { false };
         bool hasOutlineAutoAncestor { false };
-        // Dirty bit was set with MarkingBehavior::MarkOnlyThis
+        // Dirty bit was set with MarkingBehavior::OnlyThis
         bool contentLogicalWidthsInvalidationIsMarkOnlyThis { false };
         bool isYouTubeReplacement { false };
 

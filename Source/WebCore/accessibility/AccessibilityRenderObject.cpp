@@ -86,11 +86,11 @@
 #include "Image.h"
 #include "ImageOverlay.h"
 #include "InlineIteratorBoxInlines.h"
+#include "InlineIteratorLineBox.h"
 #include "InlineIteratorLogicalOrderTraversal.h"
 #include "InlineIteratorTextBox.h"
 #include "LegacyRenderSVGRoot.h"
 #include "LegacyRenderSVGShape.h"
-#include "LineSelection.h"
 #include "LocalFrame.h"
 #include "LocalizedStrings.h"
 #include "Logging.h"
@@ -1645,7 +1645,7 @@ AXTextRuns AccessibilityRenderObject::textRuns()
 
         auto textRun = textBox->textRun(InlineIterator::TextRunMode::Editing);
         auto lineBox = textBox->lineBox();
-        lineHeight = LineSelection::logicalRect(lineBox).height();
+        lineHeight = lineBox.contentLogicalRectAdjustedForAdjacentLineBoxes().height();
 
         // Compute distanceFromBoundsInDirection only for the first text box on each
         // line. Multiple text boxes can share a line (e.g. due to inline formatting
@@ -3212,7 +3212,15 @@ bool AccessibilityRenderObject::hasSameStyle(AXCoreObject& object)
     if (!m_renderer || !renderer)
         return false;
 
-    return m_renderer->style() == renderer->style();
+    // Non-inherited properties like the background color come from the parent of text.
+    auto styleForComparison = [](const RenderObject& renderer) -> const Style::ComputedStyle* {
+        if (is<RenderText>(renderer))
+            return renderer.parent() ? &renderer.parent()->style() : nullptr;
+        return &renderer.style();
+    };
+    CheckedPtr style = styleForComparison(*m_renderer);
+    CheckedPtr otherStyle = styleForComparison(*renderer);
+    return style && otherStyle && *style == *otherStyle;
 }
 
 bool AccessibilityRenderObject::hasUnderline() const

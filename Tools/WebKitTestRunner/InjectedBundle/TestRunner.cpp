@@ -1073,6 +1073,11 @@ void TestRunner::setStatisticsCrossSiteLoadWithLinkDecoration(JSStringRef fromHo
     }));
 }
 
+void TestRunner::setStatisticsLinkDecorationFilteringData(JSStringRef queryParameter)
+{
+    postSynchronousMessage("SetStatisticsLinkDecorationFilteringData", toWK(queryParameter));
+}
+
 void TestRunner::setStatisticsTimeToLiveUserInteraction(double seconds)
 {
     postSynchronousMessage("SetStatisticsTimeToLiveUserInteraction", seconds);
@@ -1623,6 +1628,11 @@ bool TestRunner::shouldDumpAllFrameScrollPositions() const
 void TestRunner::setHasMouseDeviceForTesting(bool hasMouseDevice)
 {
     postSynchronousPageMessage("SetHasMouseDeviceForTesting", hasMouseDevice);
+}
+
+void TestRunner::setHasFakePaymentUIForTesting(bool hasFakePaymentUI)
+{
+    postSynchronousPageMessage("SetHasFakePaymentUIForTesting", hasFakePaymentUI);
 }
 
 void TestRunner::exitImmersive()

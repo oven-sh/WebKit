@@ -570,6 +570,7 @@
 		07AA27602F83C3A900FE10FC /* Exceptions for "Tests" folder in "TestWebKitAPI" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				WebCore/cocoa/ScrollAnimationSmoothTests.swift,
 				"WebKit/WebPage/AppKit Gesture Tests/AppKitGesturesTestsSupport.swift",
 				"WebKit/WebPage/AppKit Gesture Tests/BasicAppKitGesturesTests.swift",
 				"WebKit/WebPage/AppKit Gesture Tests/DoubleClickGesturesTests.swift",
@@ -599,6 +600,7 @@
 				WebKit/WKWebView/CodingTests.swift,
 				WebKit/WKWebView/HTTP2Server.swift,
 				WebKit/WKWebView/HTTP3Server.swift,
+				WebKit/WKWebView/PDFLookUpTests.swift,
 				WebKit/WKWebView/SiteIsolationContentsOfAllFramesTests.swift,
 				WebKit/WKWebView/SiteIsolationCookieTests.swift,
 				WebKit/WKWebView/SiteIsolationDataDetectionTests.swift,
@@ -610,6 +612,7 @@
 				WebKit/WKWebView/SiteIsolationNavigationTests.swift,
 				WebKit/WKWebView/SiteIsolationServiceWorkerTests.swift,
 				WebKit/WKWebView/SiteIsolationSessionStateTests.swift,
+				WebKit/WKWebView/SiteIsolationTextExtractionTests.swift,
 				WebKit/WKWebView/SiteIsolationTextFragmentTests.swift,
 				WebKit/WKWebView/SiteIsolationUIDelegateTests.swift,
 				WebKit/WKWebView/SiteIsolationUserAgentTests.swift,
@@ -778,6 +781,7 @@
 				JavaScriptCore/MarkedVector.cpp,
 				JavaScriptCore/PropertySlot.cpp,
 				JavaScriptCore/StrongBlock.cpp,
+				JavaScriptCore/WeakSet.cpp,
 				Misc/TestRunnerTests.cpp,
 				TestWebKitAPIAdditionsHook.mm,
 				WebCore/AffineTransform.cpp,
@@ -847,6 +851,7 @@
 				WebCore/DigitalCredentialsRequestDataBuilder.cpp,
 				WebCore/DisplayListRecorderTests.cpp,
 				WebCore/DisplayRefreshMonitorManager.cpp,
+				WebCore/DocumentCheckedPtr.cpp,
 				WebCore/DocumentOrder.cpp,
 				WebCore/FidoHidMessageTest.cpp,
 				WebCore/FileMonitor.cpp,
@@ -906,6 +911,7 @@
 				WebCore/PublicSuffix.cpp,
 				WebCore/PushDatabase.cpp,
 				WebCore/PushMessageCrypto.cpp,
+				WebCore/PushPullFIFOTest.cpp,
 				WebCore/QuirkMatchPattern.cpp,
 				WebCore/Quirks.cpp,
 				WebCore/RegionTests.cpp,
@@ -931,6 +937,7 @@
 				WebCore/TextIterator.cpp,
 				WebCore/TextMeasurementCache.cpp,
 				WebCore/TimeRanges.cpp,
+				WebCore/TrackPrivateChangedCallbacks.cpp,
 				WebCore/TransformationMatrix.cpp,
 				WebCore/U2fCommandConstructorTest.cpp,
 				WebCore/URLParserTextEncoding.cpp,
@@ -1127,6 +1134,7 @@
 				WebKit/WKWebView/mac/ContextMenuMouseEvents.mm,
 				WebKit/WKWebView/mac/ContextMenuTests.mm,
 				WebKit/WKWebView/mac/CrossPartitionFileSchemeAccess.mm,
+				WebKit/WKWebView/mac/DataListTests.mm,
 				WebKit/WKWebView/mac/DateInputTests.mm,
 				WebKit/WKWebView/mac/DeviceScaleFactorOnBack.mm,
 				WebKit/WKWebView/mac/DisableAutomaticSpellingCorrection.mm,
@@ -1454,6 +1462,7 @@
 				IPC/IPCEventTests.cpp,
 				IPC/IPCSerialization.mm,
 				IPC/IPCTestUtilities.cpp,
+				IPC/MachMessageTests.cpp,
 				IPC/MessageLogEndToEndTests.cpp,
 				IPC/MessageLogTests.cpp,
 				IPC/MessageSenderTests.cpp,
@@ -1513,6 +1522,7 @@
 				WGSL/ParserTests.cpp,
 				WGSL/TestWGSLAPI.cpp,
 				WGSL/TypeCheckingTests.mm,
+				WebGPU/UncapturedErrorCallbackTests.cpp,
 			);
 			target = 3A15783C28D1505B00142DB1 /* TestWGSL */;
 		};
@@ -1574,7 +1584,6 @@
 				WebKit/WKWebView/BundleRetainPagePlugIn.mm,
 				WebKit/WKWebView/CancelFontSubresourcePlugIn.mm,
 				WebKit/WKWebView/ClearWrappersNavigatePlugIn.mm,
-				WebKit/WKWebView/ClickAutoFillButton.mm,
 				WebKit/WKWebView/ContentFilteringPlugIn.mm,
 				WebKit/WKWebView/ContentWorldPlugIn.mm,
 				WebKit/WKWebView/GetComputedStyleAfterIframeRemovalPlugIn.mm,

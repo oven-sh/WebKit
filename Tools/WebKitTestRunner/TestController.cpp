@@ -1273,6 +1273,10 @@ void TestController::resumeBackgroundFetch(WKStringRef)
 {
 }
 
+void TestController::setStatisticsLinkDecorationFilteringData(WKStringRef)
+{
+}
+
 void TestController::simulateClickBackgroundFetch(WKStringRef)
 {
 }
@@ -5892,6 +5896,12 @@ void TestController::setResourceMonitorList(WKStringRef rulesText, CompletionHan
 
 #if !PLATFORM(IOS_FAMILY)
 void TestController::setHasMouseDeviceForTesting(bool)
+{
+}
+#endif
+
+#if !PLATFORM(MAC)
+void TestController::setHasFakePaymentUIForTesting(bool)
 {
 }
 #endif

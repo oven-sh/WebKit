@@ -74,7 +74,6 @@ public:
     static LineLayout* containing(RenderObject&);
     static const LineLayout* containing(const RenderObject&);
 
-    static bool canUseForIntrinsicWidthComputation(const RenderBlockFlow&);
     static bool shouldInvalidateLineLayoutAfterContentChange(const RenderBlockFlow& parent, const RenderObject& rendererWithNewContent, const LineLayout&);
     static bool shouldInvalidateLineLayoutAfterTreeMutation(const RenderBlockFlow& parent, const RenderObject& renderer, const LineLayout&, bool isRemoval);
 
@@ -82,17 +81,18 @@ public:
 
     std::optional<LayoutRect> updateOverflow();
 
-    static void updateStyle(const RenderObject&);
+    static void updateStyle(const RenderElement&);
 
     // Partial invalidation.
-    bool insertedIntoTree(const RenderElement& parent, RenderObject& child);
-    bool removedFromTree(const RenderElement& parent, RenderObject& child);
-    bool updateTextContent(const RenderText&, std::optional<size_t> offset, size_t oldLength);
+    bool insertedIntoTree(RenderObject& child);
+    bool removedFromTree(RenderObject& child);
+    bool updateTextContent(RenderText&, std::optional<size_t> offset, size_t oldLength);
     bool rootStyleWillChange(const RenderBlockFlow&, const Style::ComputedStyle& newStyle);
     bool styleWillChange(const RenderElement&, const Style::ComputedStyle& newStyle, Style::Difference);
     bool boxContentWillChange(const RenderBox&);
 
     std::pair<LayoutUnit, LayoutUnit> computeIntrinsicWidthConstraints();
+    void resetIntrinsicWidthConstraints();
 
     enum class ForceFullLayout : bool { No, Yes };
     std::optional<LayoutRect> layout(RenderBlockFlow::MarginInfo&, ForceFullLayout = ForceFullLayout::No);
@@ -195,7 +195,7 @@ private:
     const Layout::LayoutState& layoutState() const LIFETIME_BOUND { return *m_layoutState; }
 
     Layout::InlineDamage& ensureLineDamage() LIFETIME_BOUND;
-    void removeLayoutBox(const RenderElement& parent, RenderObject& child);
+    void removeLayoutBox(RenderObject& child);
     void releaseContentRebuiltFromDamage();
 
     const Layout::ElementBox& rootLayoutBox() const { return *m_rootLayoutBox; }

@@ -491,11 +491,16 @@ size_t Storage::estimateRecordsSize(unsigned recordCount, unsigned blobCount) co
 
 void Storage::synchronize()
 {
-    ASSERT(RunLoop::isMain());
+    assertIsMainThread();
 
     if (m_synchronizationInProgress || m_shrinkInProgress)
         return;
     m_synchronizationInProgress = true;
+
+    for (auto& operation : m_pendingWriteOperations)
+        m_recordFilterHashesAddedDuringSynchronization.append(operation->record().key.hash());
+    for (auto& operation : m_activeWriteOperations.values())
+        m_recordFilterHashesAddedDuringSynchronization.append(operation->record().key.hash());
 
     LOG(NetworkCacheStorage, "(NetworkProcess) synchronizing cache");
 
@@ -820,6 +825,19 @@ void Storage::removeFromPendingWriteOperations(const Key& key)
 
         m_pendingWriteOperations.remove(found);
     }
+}
+
+Vector<Key> Storage::pendingWriteKeys(const String& type, const std::optional<String>& partition) const
+{
+    assertIsMainThread();
+
+    Vector<Key> keys;
+    for (auto& operation : m_pendingWriteOperations) {
+        auto& key = operation->record().key;
+        if (key.type() == type && (!partition || equalIgnoringNullity(key.partition(), *partition)))
+            keys.append(key);
+    }
+    return keys;
 }
 
 void Storage::remove(const Key& key)
@@ -1272,6 +1290,12 @@ void Storage::clear(String&& type, WallTime modifiedSinceTime, CompletionHandler
     if (m_blobFilter)
         m_blobFilter->clear();
     m_approximateRecordsSize = 0;
+
+    m_pendingWriteOperations.removeAllMatching([&type, modifiedSinceTime](auto& operation) {
+        assertIsMainThread();
+
+        return (type.isEmpty() || operation->record().key.type() == type) && operation->record().timeStamp >= modifiedSinceTime;
+    });
 
     ioQueue().dispatch([this, protectedThis = Ref { *this }, modifiedSinceTime, completionHandler = WTF::move(completionHandler), type = WTF::move(type).isolatedCopy()] () mutable {
         auto recordsPath = this->recordsPathIsolatedCopy();

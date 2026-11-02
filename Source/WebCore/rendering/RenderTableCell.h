@@ -144,7 +144,8 @@ protected:
 
 private:
     void styleDidChange(Style::Difference, const Style::ComputedStyle* oldStyle) override;
-    void computeIntrinsicLogicalWidthContributions() override;
+    std::pair<LayoutUnit, LayoutUnit> computeIntrinsicLogicalWidthContributions() override;
+    void constrainIntrinsicLogicalWidthContributionsByMinMax(LayoutUnit& minContentLogicalWidthContribution, LayoutUnit& maxContentLogicalWidthContribution) const final;
 
     LayoutUnit containingBlockLogicalWidthForContent() const override;
 

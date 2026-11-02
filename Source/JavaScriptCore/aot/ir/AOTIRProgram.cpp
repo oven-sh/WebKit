@@ -991,7 +991,7 @@ Layout& ProgramEditor::atForHiddenFields(LayoutID id)
 
 Variable& ProgramEditor::at(VariableID id)
 {
-    WTF::atomicStore(&m_isChangedVariable[id.index()], static_cast<uint8_t>(1), std::memory_order_relaxed);
+    WTF::atomicStore<MemoryOrder::Relaxed>(&m_isChangedVariable[id.index()], static_cast<uint8_t>(1));
     return m_program.at(id);
 }
 

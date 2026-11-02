@@ -63,7 +63,7 @@
 #include "RemotePageProxy.h"
 #include "RemoteWorkerType.h"
 #include "SandboxExtension.h"
-#include "SecurityFlagsController.h"
+#include "SecurityFlags.h"
 #include "ShouldGrandfatherStatistics.h"
 #include "StorageAccessStatus.h"
 #include "ViewSnapshotStore.h"
@@ -207,7 +207,7 @@ void NetworkProcessProxy::sendCreationParametersToNewProcess()
 
     NetworkProcessCreationParameters parameters;
     parameters.auxiliaryProcessParameters = auxiliaryProcessParameters();
-    parameters.securityFlags.replaceWith(SecurityFlagsController::singleton().securityFlags());
+    parameters.securityFlags.replaceWith(securityFlags());
     parameters.urlSchemesRegisteredAsSecure = copyToVector(LegacyGlobalSettings::singleton().schemesToRegisterAsSecure());
     parameters.urlSchemesRegisteredAsBypassingContentSecurityPolicy = copyToVector(LegacyGlobalSettings::singleton().schemesToRegisterAsBypassingContentSecurityPolicy());
     parameters.urlSchemesRegisteredAsLocal = copyToVector(LegacyGlobalSettings::singleton().schemesToRegisterAsLocal());
@@ -407,7 +407,7 @@ void NetworkProcessProxy::sharedPreferencesForWebProcessDidChange(WebProcessProx
     sendWithAsyncReply(Messages::NetworkProcess::SharedPreferencesForWebProcessDidChange { webProcessProxy.coreProcessIdentifier(), WTF::move(sharedPreferencesForWebProcess) }, WTF::move(completionHandler));
 }
 
-void NetworkProcessProxy::securityFlagsDidChange(const SecurityFlags& securityFlags)
+void NetworkProcessProxy::securityFlagsDidChange(const SecurityFlags::Storage& securityFlags)
 {
     send(Messages::NetworkProcess::SecurityFlagsDidChange { securityFlags }, 0);
 }
@@ -1506,6 +1506,16 @@ void NetworkProcessProxy::sendProcessWillSuspendImminentlyForTesting()
 void NetworkProcessProxy::isStorageSuspendedForTesting(PAL::SessionID sessionID, CompletionHandler<void(bool)>&& completionHandler)
 {
     sendWithAsyncReply(Messages::NetworkProcess::IsStorageSuspendedForTesting(sessionID), WTF::move(completionHandler), 0, { }, ShouldStartProcessThrottlerActivity::No);
+}
+
+void NetworkProcessProxy::canPrefetchDNSForTesting(PAL::SessionID sessionID, CompletionHandler<void(bool)>&& completionHandler)
+{
+    sendWithAsyncReply(Messages::NetworkProcess::CanPrefetchDNSForTesting(sessionID), WTF::move(completionHandler), 0);
+}
+
+void NetworkProcessProxy::prefetchedDNSHostnameCountForTesting(CompletionHandler<void(uint64_t)>&& completionHandler)
+{
+    sendWithAsyncReply(Messages::NetworkProcess::PrefetchedDNSHostnameCountForTesting(), WTF::move(completionHandler), 0);
 }
 
 static bool s_suspensionAllowedForTesting { true };

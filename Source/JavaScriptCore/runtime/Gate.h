@@ -61,6 +61,7 @@ namespace JSC {
     v(op_async_iterator_open, JSEntryPtrTag) \
     v(op_async_iterator_next, JSEntryPtrTag) \
     v(op_call_varargs, JSEntryPtrTag) \
+    v(op_call_varargs_with_spread, JSEntryPtrTag) \
     v(op_construct_varargs, JSEntryPtrTag) \
     v(op_super_construct_varargs, JSEntryPtrTag) \
     v(op_call_direct_eval_slow, JSEntrySlowPathPtrTag) \
@@ -72,6 +73,8 @@ namespace JSC {
     v(exitImplantedSliceGate, NoPtrTag) \
     v(getSentinelFrameReturnPCGate, NoPtrTag) \
     v(wasmRestoreFrame, NoPtrTag) \
+    v(crossInstanceRestoreFrameOriginalReturnPCRetag, NoPtrTag) \
+    v(crossInstanceRestoreFrameReturnAddressToRestoreFrameGate, NoPtrTag) \
 
 #define JSC_WASM_GATE_OPCODES(v) \
     v(wasm_ipint_call, WasmEntryPtrTag) \

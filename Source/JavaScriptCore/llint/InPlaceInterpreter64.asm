@@ -3910,6 +3910,32 @@ macro simdLoadSplat64()
     end
 end
 
+# A scalar FP load clears the upper lanes of the vector register on ARM64 and X86_64.
+macro simdLoad32Zero()
+    if ARM64 or ARM64E or X86_64
+        loadf [t0], ft0
+        pushVec(ft0)
+    else
+        loadi [t0], t0
+        subp V128ISize, sp
+        storei t0, [sp]
+        storei 0, 4[sp]
+        storeq 0, 8[sp]
+    end
+end
+
+macro simdLoad64Zero()
+    if ARM64 or ARM64E or X86_64
+        loadd [t0], ft0
+        pushVec(ft0)
+    else
+        loadq [t0], t0
+        subp V128ISize, sp
+        storeq t0, [sp]
+        storeq 0, 8[sp]
+    end
+end
+
 # 0xFD 0x00 - 0xFD 0x0B: memory
 
 ipintOp(_simd_v128_load_mem, macro()
@@ -5402,11 +5428,7 @@ ipintOp(_simd_v128_load32_zero_mem, macro()
     # v128.load32_zero - load 32-bit value from memory and zero-pad to 128 bits
     popMemoryAddress(t0)
     loadStoreMakePointerFast([t4], t0, 4, t1, t2, .simd_v128_load32_zero_slow_path)
-    loadi [t0], t0
-    subp V128ISize, sp
-    storei t0, [sp]
-    storei 0, 4[sp]
-    storeq 0, 8[sp]
+    simdLoad32Zero()
     leap 2[t4], PC
     nextIPIntInstruction()
 end)
@@ -5415,10 +5437,7 @@ ipintOp(_simd_v128_load64_zero_mem, macro()
     # v128.load64_zero - load 64-bit value from memory and zero-pad to 128 bits
     popMemoryAddress(t0)
     loadStoreMakePointerFast([t4], t0, 8, t1, t2, .simd_v128_load64_zero_slow_path)
-    loadq [t0], t0
-    subp V128ISize, sp
-    storeq t0, [sp]
-    storeq 0, 8[sp]
+    simdLoad64Zero()
     leap 2[t4], PC
     nextIPIntInstruction()
 end)
@@ -11054,20 +11073,13 @@ _ipint_op_memory_atomic_wait64:
 
 .simd_v128_load32_zero_slow_path:
     loadStoreMakePointerSlow(t4, t0, 4, t1, t2, t5, t6)
-    loadi [t0], t0
-    subp V128ISize, sp
-    storei t0, [sp]
-    storei 0, 4[sp]
-    storeq 0, 8[sp]
+    simdLoad32Zero()
     move t4, PC
     nextIPIntInstruction()
 
 .simd_v128_load64_zero_slow_path:
     loadStoreMakePointerSlow(t4, t0, 8, t1, t2, t5, t6)
-    loadq [t0], t0
-    subp V128ISize, sp
-    storeq t0, [sp]
-    storeq 0, 8[sp]
+    simdLoad64Zero()
     move t4, PC
     nextIPIntInstruction()
 
@@ -11754,6 +11766,13 @@ end
     # need a common entrypoint because of x86 PC base
     jmp .ipint_mint_arg_dispatch
 
+if ARM64E
+    global _crossInstanceRestoreFrameOriginalReturnPCRetagTrampoline
+    global _crossInstanceRestoreFrameOriginalReturnPCRetagGateAfter
+    global _crossInstanceRestoreFrameTaggedRestoreFramePtrTrampoline
+    global _crossInstanceRestoreFrameTaggedRestoreFramePtrGateAfter
+end
+
 .ipint_tail_call_common:
     # Check if we need to insert a restore frame for cross-instance tail calls.
     # Registers on entry:
@@ -11784,7 +11803,19 @@ end
 
     loadp [cfr], t5
     storep t5, [t4]                         # originalCallerFrame
-if ARM64E or RETURN_ADDRESS_SIGNING
+if ARM64E
+    leap _g_config, t5
+    jmp JSCConfigGateMapOffset + (constexpr Gate::crossInstanceRestoreFrameOriginalReturnPCRetag) * PtrSize[t5], NativeToJITGatePtrTag
+    # For useJIT=0
+    _crossInstanceRestoreFrameOriginalReturnPCRetagTrampoline:
+    loadp ReturnPC[cfr], lr
+    addp CallerFrameAndPCSize, cfr, t5
+    untagReturnAddress t5
+    addp CallerFrameAndPCSize, t4, t5
+    tagReturnAddress t5
+    storep lr, ReturnPC[t4]                 # originalReturnPC (resigned for restore_cfr)
+    _crossInstanceRestoreFrameOriginalReturnPCRetagGateAfter:
+elsif RETURN_ADDRESS_SIGNING
     loadp ReturnPC[cfr], lr
     addp CallerFrameAndPCSize, cfr, t5
     untagReturnAddress t5
@@ -11832,19 +11863,22 @@ end
     storep t4, [cfr]                        # CallerFrame = restore_cfr
 
 if ARM64E
-    leap _g_config, t4
-    loadp JSCConfigGateMapOffset + (constexpr Gate::wasmRestoreFrame) * PtrSize[t4], t4
-    removeCodePtrTag t4
+    pcrtoaddr _wasm_restore_frame_return, lr
+    leap _g_config, t5
+    jmp JSCConfigGateMapOffset + (constexpr Gate::crossInstanceRestoreFrameReturnAddressToRestoreFrameGate) * PtrSize[t5], NativeToJITGatePtrTag
+    _crossInstanceRestoreFrameTaggedRestoreFramePtrTrampoline:
     addp CallerFrameAndPCSize, cfr, t5
-    tagCodePtr t4, t5
+    tagReturnAddress t5
+    storep lr, ReturnPC[cfr]                # ReturnPC = wasmRestoreFrame gate
+    _crossInstanceRestoreFrameTaggedRestoreFramePtrGateAfter:
 else
     pcrtoaddr _wasm_restore_frame_return, t4
     if RETURN_ADDRESS_SIGNING
         addp CallerFrameAndPCSize, cfr, t5
         tagCodePtr t4, t5
     end
-end
     storep t4, ReturnPC[cfr]                # ReturnPC = wasmRestoreFrame gate
+end
 
 .ipint_tail_call_no_restore_frame:
     # Free up r0 to be used as argument register

@@ -60,6 +60,7 @@
 @property (readonly, nonatomic) WKUserContentController *userContentContoller;
 @property (readonly, nonatomic) SettingsController *settingsController;
 @property (readonly, nonatomic) WKPreferences *defaultPreferences;
+@property (readonly, nonatomic) BOOL automationAcceptsInsecureCertificates;
 
 @end
 
@@ -68,3 +69,7 @@
 - (BrowserAppDelegate *)browserAppDelegate;
 
 @end
+
+// MiniBrowser's own settings. Use this instead of [NSUserDefaults standardUserDefaults], except for
+// settings that WebKit or the system read themselves.
+NSUserDefaults *MiniBrowserUserDefaults(void);

@@ -313,7 +313,6 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case Int52Rep:
     case BooleanToNumber:
     case FiatInt52:
-    case HasIndexedProperty:
     case CheckStructureImmediate:
     case GetMyArgumentByVal:
     case GetMyArgumentByValOutOfBounds:
@@ -430,6 +429,7 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case GetVectorLength:
     case ArrayPop:
     case ArrayShift:
+    case HasIndexedProperty:
     case StringAt:
     case StringCharAt:
     case StringCharCodeAt:
@@ -672,6 +672,7 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case Construct:
     case DirectConstruct:
     case CallVarargs:
+    case CallVarargsWithSpread:
     case CallDirectEval:
     case TailCallVarargsInlinedCaller:
     case TailCallForwardVarargsInlinedCaller:
@@ -683,6 +684,8 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case CallCustomAccessorSetter:
     case VarargsLength:
     case LoadVarargs:
+    case VarargsLengthWithSpread:
+    case LoadVarargsWithSpread:
     case CallForwardVarargs:
     case ConstructForwardVarargs:
     case NewObject:
@@ -706,6 +709,7 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case NewSet:
     case NewWeakMap:
     case NewWeakSet:
+    case NewProxyObject:
     case NewSymbol:
     case ProfileType:
     case ProfileControlFlow:

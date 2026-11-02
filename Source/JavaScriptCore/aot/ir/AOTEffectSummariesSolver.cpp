@@ -1790,7 +1790,7 @@ void EffectSummarizer::listUsers()
     firstUser.fill(0, numberOfFunctions + 1);
     forEachIndexInParallel(loops, numberOfFunctions, [&](unsigned index) {
         m_kept.m_bodies[index].forEachFunctionInDependencies(FunctionID(index), [&](FunctionID named) {
-            WTF::atomicExchangeAdd(&firstUser[named.index()], 1u, std::memory_order_relaxed);
+            WTF::atomicExchangeAdd<MemoryOrder::Relaxed>(&firstUser[named.index()], 1u);
         });
     });
     uint32_t numberOfUsers = 0;
@@ -1801,7 +1801,7 @@ void EffectSummarizer::listUsers()
     Vector<uint32_t> nextUser(firstUser.span().first(numberOfFunctions));
     forEachIndexInParallel(loops, numberOfFunctions, [&](unsigned index) {
         m_kept.m_bodies[index].forEachFunctionInDependencies(FunctionID(index), [&](FunctionID named) {
-            m_kept.m_users[WTF::atomicExchangeAdd(&nextUser[named.index()], 1u, std::memory_order_relaxed)] = FunctionID(index);
+            m_kept.m_users[WTF::atomicExchangeAdd<MemoryOrder::Relaxed>(&nextUser[named.index()], 1u)] = FunctionID(index);
         });
     });
     forEachIndexInParallel(loops, numberOfFunctions, [&](unsigned index) {

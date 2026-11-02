@@ -29,7 +29,6 @@
 #if ENABLE(WEBGL)
 
 #include "ANGLEInstancedArrays.h"
-#include "BitmapImage.h"
 #include "BufferSource.h"
 #include "CachedImage.h"
 #include "CanvasDrawImageSizing.h"
@@ -616,6 +615,13 @@ void WebGLRenderingContextBase::initializeContextState()
     m_supportedTexImageSourceFormats.addAll(supportedFormatsES2);
     m_supportedTexImageSourceTypes.addAll(supportedTypesES2);
     m_packReverseRowOrderSupported = context->enableExtension(GCGLExtension::ANGLE_pack_reverse_row_order);
+#if ENABLE(VIDEO)
+    // A restored context counts its copies from the start and does not know the forced upload path.
+    m_lastVideoUploadForTesting = { };
+    m_videoCopiesForTesting = 0;
+    if (m_videoUploadPathForTesting == VideoUploadPathForTesting::Hardware) [[unlikely]]
+        context->setVideoUploadHardwareOnlyForTesting(true);
+#endif
 }
 
 void WebGLRenderingContextBase::initializeDefaultObjects()
@@ -3369,16 +3375,11 @@ static TexImageSourceImage nativeImageForTexImageSource(Image& image, ConcreteOb
     // Images without encoded data are backed by image buffers, which hold premultiplied alpha.
     RefPtr data = image.data();
     if (!data)
-        return { image.currentNativeImage(concreteObjectSize), AlphaPremultiplication::Premultiplied };
+        return { image.currentNativeImage(ImageDrawDescriptor { concreteObjectSize }), AlphaPremultiplication::Premultiplied };
     bool hasAlpha = !image.currentFrameKnownToBeOpaque();
-    if (ignoreGammaAndColorProfile || (hasAlpha && !premultiplyAlpha)) {
-        auto decodedImage = BitmapImage::create(nullptr, premultiplyAlpha ? AlphaOption::Premultiplied : AlphaOption::NotPremultiplied, ignoreGammaAndColorProfile ? GammaAndColorProfileOption::Ignored : GammaAndColorProfileOption::Applied);
-        decodedImage->setData(WTF::move(data), true);
-        if (!decodedImage->frameCount())
-            return { };
-        return { decodedImage->currentNativeImage(), std::nullopt };
-    }
-    return { image.currentNativeImage(concreteObjectSize), std::nullopt };
+    if (ignoreGammaAndColorProfile || (hasAlpha && !premultiplyAlpha))
+        return { NativeImage::create(*data, premultiplyAlpha ? AlphaOption::Premultiplied : AlphaOption::NotPremultiplied, ignoreGammaAndColorProfile ? GammaAndColorProfileOption::Ignored : GammaAndColorProfileOption::Applied), std::nullopt };
+    return { image.currentNativeImage(ImageDrawDescriptor { concreteObjectSize }), std::nullopt };
 }
 
 ExceptionOr<void> WebGLRenderingContextBase::texImageSourceHelper(TexImageFunctionID functionID, GCGLenum target, GCGLint level, GCGLint internalformat, GCGLint border, GCGLenum format, GCGLenum type, GCGLint xoffset, GCGLint yoffset, GCGLint zoffset, const IntRect& inputSourceImageRect, GCGLsizei depth, GCGLint unpackImageHeight, TexImageSource&& source)
@@ -3565,6 +3566,77 @@ ExceptionOr<void> WebGLRenderingContextBase::texImageSource(TexImageFunctionID f
 }
 
 #if ENABLE(VIDEO)
+// The upload restrictions of GraphicsContextGL::copyTextureFromVideoFrame(). Returns the reason the
+// copy is not tried, or nullopt.
+// FIXME: The current restrictions require that target should be TEXTURE_2D, format should be RGB or RGBA,
+// type should be UNSIGNED_BYTE and level should be 0. It may be lifted in the future.
+std::optional<WebGLRenderingContextBase::VideoUploadDecision> WebGLRenderingContextBase::videoUploadGate(TexImageFunctionID functionID, GCGLenum target, bool sourceImageRectIsDefault, GCGLenum format, GCGLenum type, GCGLint level) const
+{
+    if (m_videoUploadPathForTesting == VideoUploadPathForTesting::Software) [[unlikely]]
+        return VideoUploadDecision::Forced;
+    if (functionID != TexImageFunctionID::TexImage2D)
+        return VideoUploadDecision::GateFunction;
+    if (target != GraphicsContextGL::TEXTURE_2D)
+        return VideoUploadDecision::GateTarget;
+    if (!sourceImageRectIsDefault)
+        return VideoUploadDecision::GateSourceRect;
+    if ((format != GraphicsContextGL::RGB && format != GraphicsContextGL::RGBA) || type != GraphicsContextGL::UNSIGNED_BYTE)
+        return VideoUploadDecision::GateCombination;
+    if (level)
+        return VideoUploadDecision::GateLevel;
+    return std::nullopt;
+}
+
+WebGLRenderingContextBase::VideoUploadStatus WebGLRenderingContextBase::copyVideoFrameToTexture(VideoFrame& videoFrame, WebGLTexture& texture, ASCIILiteral functionName, GCGLint level, GCGLint internalformat, GCGLenum format, GCGLenum type)
+{
+    bool hardwareOnly = m_videoUploadPathForTesting == VideoUploadPathForTesting::Hardware;
+    bool copied = protect(m_context)->copyTextureFromVideoFrame(videoFrame, texture.object(), level, internalformat, format, type, m_unpackPremultiplyAlpha, m_unpackFlipY);
+    m_lastVideoUploadForTesting = { m_lastVideoUploadForTesting.sequence + 1, VideoUploadDecision::Copy, hardwareOnly, copied, ++m_videoCopiesForTesting };
+    if (copied)
+        return VideoUploadStatus::Done;
+    if (hardwareOnly) [[unlikely]] {
+        synthesizeGLError(GraphicsContextGL::INVALID_OPERATION, functionName, "hardware video upload not possible"_s);
+        return VideoUploadStatus::Done;
+    }
+    return VideoUploadStatus::UseSoftwarePath;
+}
+
+WebGLRenderingContextBase::VideoUploadStatus WebGLRenderingContextBase::recordSoftwareVideoUpload(VideoUploadDecision decision, ASCIILiteral functionName)
+{
+    bool hardwareOnly = m_videoUploadPathForTesting == VideoUploadPathForTesting::Hardware;
+    m_lastVideoUploadForTesting = { m_lastVideoUploadForTesting.sequence + 1, decision, hardwareOnly, false, 0 };
+    if (hardwareOnly) [[unlikely]] {
+        synthesizeGLError(GraphicsContextGL::INVALID_OPERATION, functionName, "hardware video upload not possible"_s);
+        return VideoUploadStatus::Done;
+    }
+    return VideoUploadStatus::UseSoftwarePath;
+}
+
+void WebGLRenderingContextBase::setVideoUploadPathForTesting(VideoUploadPathForTesting path)
+{
+    m_videoUploadPathForTesting = path;
+    if (RefPtr context = m_context)
+        context->setVideoUploadHardwareOnlyForTesting(path == VideoUploadPathForTesting::Hardware);
+}
+
+std::optional<WebGLRenderingContextBase::VideoUploadRecordForTesting> WebGLRenderingContextBase::lastVideoUploadForTesting()
+{
+    auto& last = m_lastVideoUploadForTesting;
+    if (!last.sequence)
+        return std::nullopt;
+    auto notCopiedPath = last.hardwareOnly ? VideoUploadPathTakenForTesting::None : VideoUploadPathTakenForTesting::Software;
+    VideoUploadRecordForTesting record { last.sequence, notCopiedPath, last.decision, std::nullopt };
+    if (last.decision != VideoUploadDecision::Copy)
+        return record;
+    if (last.copied)
+        record.path = VideoUploadPathTakenForTesting::Hardware;
+    RefPtr context = m_context;
+    auto copy = context ? context->lastVideoUploadForTesting() : std::nullopt;
+    if (copy && copy->sequence == last.copyNumber)
+        record.copy = *copy;
+    return record;
+}
+
 ExceptionOr<void> WebGLRenderingContextBase::texImageSource(TexImageFunctionID functionID, GCGLenum target, GCGLint level, GCGLint internalformat, GCGLint border, GCGLenum format, GCGLenum type, GCGLint xoffset, GCGLint yoffset, GCGLint zoffset, const IntRect& inputSourceImageRect, GCGLsizei depth, GCGLint unpackImageHeight, HTMLVideoElement& source)
 {
     auto functionName = texImageFunctionName(functionID);
@@ -3589,19 +3661,18 @@ ExceptionOr<void> WebGLRenderingContextBase::texImageSource(TexImageFunctionID f
 
     // Go through the fast path doing a GPU-GPU textures copy without a readback to system memory if possible.
     // Otherwise, it will fall back to the normal SW path.
-    // FIXME: The current restrictions require that format shoud be RGB or RGBA,
-    // type should be UNSIGNED_BYTE and level should be 0. It may be lifted in the future.
-    if (functionID == TexImageFunctionID::TexImage2D && sourceImageRectIsDefault && texture
-        && (format == GraphicsContextGL::RGB || format == GraphicsContextGL::RGBA)
-        && type == GraphicsContextGL::UNSIGNED_BYTE
-        && !level) {
-        if (RefPtr player = source.player()) {
-            if (RefPtr videoFrame = player->videoFrameForCurrentTime()) {
-                if (protect(graphicsContextGL())->copyTextureFromVideoFrame(*videoFrame, texture->object(), target, level, internalformat, format, type, m_unpackPremultiplyAlpha, m_unpackFlipY))
-                return { };
-            }
-        }
+    auto decision = videoUploadGate(functionID, target, sourceImageRectIsDefault, format, type, level);
+    if (!decision) {
+        RefPtr<VideoFrame> videoFrame;
+        if (RefPtr player = source.player())
+            videoFrame = player->videoFrameForCurrentTime();
+        if (!videoFrame)
+            decision = VideoUploadDecision::NoFrame;
+        else if (copyVideoFrameToTexture(*videoFrame, *texture, functionName, level, internalformat, format, type) == VideoUploadStatus::Done)
+            return { };
     }
+    if (decision && recordSoftwareVideoUpload(*decision, functionName) == VideoUploadStatus::Done)
+        return { };
 
     // Fallback pure SW path.
     RefPtr image = videoFrameToNativeImage(source, functionName);
@@ -3661,14 +3732,16 @@ ExceptionOr<void> WebGLRenderingContextBase::texImageSource(TexImageFunctionID f
 
     // Go through the fast path doing a GPU-GPU textures copy without a readback to system memory if possible.
     // Otherwise, it will fall back to the normal SW path.
-    // FIXME: The current restrictions require that format shoud be RGB or RGBA,
-    // type should be UNSIGNED_BYTE and level should be 0. It may be lifted in the future.
     bool sourceImageRectIsDefault = inputSourceImageRect == sentinelEmptyRect() || inputSourceImageRect == IntRect(0, 0, frameSize.width(), frameSize.height());
     RefPtr context = m_context;
-    if (isVideoFrameFormatEligibleToCopy(source) && functionID == TexImageFunctionID::TexImage2D && texture && (format == GraphicsContextGL::RGB || format == GraphicsContextGL::RGBA) && sourceImageRectIsDefault && type == GraphicsContextGL::UNSIGNED_BYTE && !level) {
-        if (context->copyTextureFromVideoFrame(*internalFrame, texture->object(), target, level, internalformat, format, type, m_unpackPremultiplyAlpha, m_unpackFlipY))
+    auto decision = videoUploadGate(functionID, target, sourceImageRectIsDefault, format, type, level);
+    if (!decision && !isVideoFrameFormatEligibleToCopy(source))
+        decision = VideoUploadDecision::GateVideoFrameFormat;
+    if (!decision) {
+        if (copyVideoFrameToTexture(*internalFrame, *texture, functionName, level, internalformat, format, type) == VideoUploadStatus::Done)
             return { };
-    }
+    } else if (recordSoftwareVideoUpload(*decision, functionName) == VideoUploadStatus::Done)
+        return { };
 
     // Fallback pure SW path.
     RefPtr image = context->videoFrameToNativeImage(*internalFrame);
@@ -3856,7 +3929,7 @@ bool WebGLRenderingContextBase::validateReadPixelsDimensions(GCGLint width, GCGL
         synthesizeGLError(GraphicsContextGL::INVALID_OPERATION, "readPixels"_s, "invalid pack parameters"_s);
         return false;
     }
-    auto skipAndWidth = Checked<GCGLint> { m_packParameters.skipPixels } + width;
+    auto skipAndWidth = Checked<GCGLint, RecordOverflow> { m_packParameters.skipPixels } + width;
     if (skipAndWidth.hasOverflowed() || skipAndWidth > dataStoreWidth) {
         synthesizeGLError(GraphicsContextGL::INVALID_OPERATION, "readPixels"_s, "invalid pack parameters"_s);
         return false;
@@ -4512,7 +4585,7 @@ RefPtr<NativeImage> WebGLRenderingContextBase::drawImageIntoBuffer(const SizedIm
 
     FloatRect srcRect(FloatPoint(), sizedImage.concreteObjectSize.size());
     FloatRect destRect(FloatPoint(), size);
-    protect(sizedImage.image)->draw(buf->context(), sizedImage.concreteObjectSize, destRect, srcRect);
+    protect(sizedImage.image)->draw(buf->context(), ImageDrawDescriptor { sizedImage.concreteObjectSize }, destRect, srcRect);
     // FIXME: createNativeImageReference() does not make sense for GPUP.
     // Instead, should fix by GPUP side upload.
     return buf->createNativeImageReference();

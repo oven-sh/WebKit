@@ -387,7 +387,7 @@ SideTables encodeSideTables(const LinkedFunctions& functions, std::span<const Ve
         encodeHandlers(handlers, sites.handlers.span());
         if (hasPositions) {
             encodePositions(positions[position], sites, callSites[position].span().data(), position % PositionIndex::functionsBetween ? OwnPosition::of(functions[position - 1].sites) : OwnPosition { });
-            numberOfPositions.exchangeAdd(sites.positions.size(), std::memory_order_relaxed);
+            numberOfPositions.exchangeAdd<MemoryOrder::Relaxed>(sites.positions.size());
         }
         Vector<std::pair<uint32_t, uint32_t>> constructedCallees(sites.constructedCallees.size(), [&](size_t index) {
             const ConstructedCallee& row = sites.constructedCallees[index];

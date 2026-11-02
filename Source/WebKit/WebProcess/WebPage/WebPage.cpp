@@ -69,6 +69,7 @@
 #include "NotificationPermissionRequestManager.h"
 #include "PageBanner.h"
 #include "PageInspectorTarget.h"
+#include "PageScaleFactor.h"
 #include "PlaybackSessionContextIdentifier.h"
 #include "PluginView.h"
 #include "PolicyDecision.h"
@@ -187,12 +188,12 @@
 #include <WebCore/ArchiveResource.h>
 #include <WebCore/BackForwardCache.h>
 #include <WebCore/BackForwardController.h>
-#include <WebCore/BitmapImage.h>
 #include <WebCore/CSSValueKeywords.h>
 #include <WebCore/CachedImage.h>
 #include <WebCore/CachedPage.h>
 #include <WebCore/CaptionUserPreferences.h>
 #include <WebCore/Chrome.h>
+#include <WebCore/ColorAppearance.h>
 #include <WebCore/CommonVM.h>
 #include <WebCore/ContactsRequestData.h>
 #include <WebCore/ContainerNodeInlines.h>
@@ -292,6 +293,7 @@
 #include <WebCore/NotificationController.h>
 #include <WebCore/OriginAccessPatterns.h>
 #include <WebCore/Page.h>
+#include <WebCore/PageColorSampler.h>
 #include <WebCore/PageConfiguration.h>
 #include <WebCore/PageGroup.h>
 #include <WebCore/PageInspectorController.h>
@@ -649,9 +651,6 @@ WebPage::WebPage(PageIdentifier pageID, WebPageCreationParameters&& parameters)
     , m_pageGroup(WebProcess::singleton().webPageGroup(WTF::move(parameters.pageGroupData)))
     , m_userAgent(WTF::move(parameters.userAgent))
     , m_hasCustomUserAgent(parameters.hasCustomUserAgent)
-#if ENABLE(TILED_CA_DRAWING_AREA)
-    , m_drawingAreaType(parameters.drawingAreaType)
-#endif
     , m_alwaysShowsHorizontalScroller { parameters.alwaysShowsHorizontalScroller }
     , m_alwaysShowsVerticalScroller { parameters.alwaysShowsVerticalScroller }
     , m_shouldRenderDOMInGPUProcess { parameters.shouldRenderDOMInGPUProcess }
@@ -780,9 +779,6 @@ WebPage::WebPage(PageIdentifier pageID, WebPageCreationParameters&& parameters)
     auto shouldBlockIOKit = m_shouldRenderDOMInGPUProcess
 #if ENABLE(WEBGL)
         && parameters.store.getBoolValueForKey(WebPreferencesKey::useGPUProcessForWebGLEnabledKey())
-#if ENABLE(TILED_CA_DRAWING_AREA)
-        && m_drawingAreaType == DrawingAreaType::RemoteLayerTree
-#endif
 #endif
         && parameters.store.getBoolValueForKey(WebPreferencesKey::useGPUProcessForCanvasRenderingEnabledKey())
         && parameters.store.getBoolValueForKey(WebPreferencesKey::useGPUProcessForMediaEnabledKey());
@@ -1302,12 +1298,6 @@ void WebPage::updateAfterDrawingAreaCreation(const WebPageCreationParameters& pa
 #if PLATFORM(COCOA)
     m_page->settings().setForceCompositingMode(true);
 #endif
-#if ENABLE(TILED_CA_DRAWING_AREA)
-    if (parameters.drawingAreaType == DrawingAreaType::TiledCoreAnimation) {
-        if (auto viewExposedRect = parameters.viewExposedRect)
-            protect(drawingArea())->setViewExposedRect(viewExposedRect);
-    }
-#endif
 }
 
 void WebPage::constructFrameTree(WebFrame& parent, const FrameTreeCreationParameters& treeCreationParameters)
@@ -1511,6 +1501,81 @@ void WebPage::broadcastFrameGeometryUpdatesIfNeeded()
 
     if (!updates.isEmpty())
         send(Messages::WebPageProxy::HandleFrameGeometryUpdates(updates));
+}
+
+void WebPage::setFixedContainerEdgeSamplingSides(FrameIdentifier frameID, RectEdges<bool> sides)
+{
+    RefPtr webFrame = WebProcess::singleton().webFrame(frameID);
+    RefPtr coreFrame = webFrame ? webFrame->coreLocalFrame() : nullptr;
+    if (sides == RectEdges<bool> { } || !coreFrame || !coreFrame->isRootFrame() || coreFrame->isMainFrame() || webFrame->page() != this) {
+        m_fixedContainerEdgeSampling.remove(frameID);
+        return;
+    }
+
+    auto& sampling = m_fixedContainerEdgeSampling.add(frameID, FixedContainerEdgeSampling { }).iterator->value;
+    sampling.sides = sides;
+    sampling.lastSent = std::nullopt;
+    if (RefPtr drawingArea = this->drawingArea())
+        drawingArea->triggerRenderingUpdate();
+}
+
+static FloatRect fixedContainerEdgeSampleRect(LocalFrame& frame, BoxSide side)
+{
+    RefPtr view = frame.view();
+    RefPtr mainFrameView = protect(frame.mainFrame())->virtualView();
+    if (!view || !mainFrameView)
+        return { };
+
+    auto viewportRect = mainFrameView->layoutViewportRect();
+    viewportRect.contract({ PageColorSampler::fixedContainerSampleRectMargin });
+    FloatRect rect { PageColorSampler::fixedContainerSampleRect(viewportRect, side) };
+    rect.scale(protect(frame.mainFrame())->frameScaleFactor());
+    rect = view->rootViewToContentsAcrossIsolatedFrames(mainFrameView->contentsToRootView(rect));
+    rect.intersect(view->visibleContentRect());
+    return rect;
+}
+
+Vector<std::pair<FrameIdentifier, FixedContainerEdges>> WebPage::sampleFixedContainerEdges(const Vector<FrameIdentifier>& rootsWithLayerChanges)
+{
+    Vector<std::pair<FrameIdentifier, FixedContainerEdges>> results;
+    m_fixedContainerEdgeSampling.removeIf([&](auto& entry) {
+        RefPtr webFrame = WebProcess::singleton().webFrame(entry.key);
+        RefPtr frame = webFrame ? webFrame->coreLocalFrame() : nullptr;
+        if (!frame)
+            return true;
+
+        auto& sampling = entry.value;
+        if (sampling.lastSent && !rootsWithLayerChanges.contains(entry.key))
+            return false;
+
+        auto edges = sampling.lastSent.value_or(FixedContainerEdges { });
+        bool sampledAnySide = false;
+        Ref localFrame = *frame;
+        for (auto side : allBoxSides) {
+            if (!sampling.sides.at(side))
+                continue;
+
+            if (sampling.lastSent && sampling.lastSent->hasFixedEdge(side))
+                continue;
+
+            auto rect = fixedContainerEdgeSampleRect(*frame, side);
+            if (rect.isEmpty())
+                continue;
+
+            auto result = PageColorSampler::predominantColor(localFrame, LayoutRect { rect });
+            edges.colors.setAt(side, WTF::visit([](auto edge) -> FixedContainerEdge {
+                return edge;
+            }, result));
+            sampledAnySide = true;
+        }
+
+        if (sampledAnySide && sampling.lastSent != edges) {
+            sampling.lastSent = edges;
+            results.append({ entry.key, WTF::move(edges) });
+        }
+        return false;
+    });
+    return results;
 }
 
 void WebPage::updateChildFrameVisibleRectsFromParent(WebCore::Frame& parentCoreFrame)
@@ -1860,6 +1925,7 @@ WebPage::~WebPage()
     WebStorageNamespaceProvider::decrementUseCount(sessionStorageNamespaceIdentifier());
 
 #if ENABLE(GPU_PROCESS) && HAVE(VISIBILITY_PROPAGATION_VIEW)
+    assertIsMainRunLoop();
     if (RefPtr gpuProcessConnection = WebProcess::singleton().existingGPUProcessConnection())
         gpuProcessConnection->destroyVisibilityPropagationContextForPage(*this);
 #endif // ENABLE(GPU_PROCESS)
@@ -2572,7 +2638,7 @@ void WebPage::loadDataInFrame(std::span<const uint8_t> data, String&& type, Stri
     ASSERT(&mainWebFrame() != frame);
 
     Ref sharedBuffer = SharedBuffer::create(data);
-    ResourceResponse response(URL { baseURL }, WTF::move(type), sharedBuffer->size(), WTF::move(encodingName));
+    auto response = ResourceResponse::responseForMIMEType(URL { baseURL }, type, sharedBuffer->size(), encodingName);
     SubstituteData substituteData(WTF::move(sharedBuffer), URL { baseURL }, WTF::move(response), SubstituteData::SessionHistoryVisibility::Hidden);
     m_pendingAgentClusterAssignment = agentClusterAssignment;
     auto pendingAgentClusterAssignmentScope = makeScopeExit([this] {
@@ -2803,7 +2869,7 @@ void WebPage::loadData(LoadParameters&& loadParameters)
     if (loadParameters.isServiceWorkerLoad && corePage())
         corePage()->markAsServiceWorkerPage();
 
-    ResourceResponse response(URL(), WTF::move(loadParameters.MIMEType), sharedBuffer->size(), WTF::move(loadParameters.encodingName));
+    auto response = ResourceResponse::responseForMIMEType(URL(), loadParameters.MIMEType, sharedBuffer->size(), loadParameters.encodingName);
     m_pendingAgentClusterAssignment = loadParameters.agentClusterAssignment;
     auto pendingAgentClusterAssignmentScope = makeScopeExit([this] {
         m_pendingAgentClusterAssignment = std::nullopt;
@@ -2825,7 +2891,7 @@ void WebPage::loadAlternateHTML(LoadParameters&& loadParameters)
     }
     protect(m_mainFrame->coreLocalFrame()->loader())->setProvisionalLoadErrorBeingHandledURL(provisionalLoadErrorURL);
 
-    ResourceResponse response(URL(), WTF::move(loadParameters.MIMEType), sharedBuffer->size(), WTF::move(loadParameters.encodingName));
+    auto response = ResourceResponse::responseForMIMEType(URL(), loadParameters.MIMEType, sharedBuffer->size(), loadParameters.encodingName);
     m_pendingAgentClusterAssignment = loadParameters.agentClusterAssignment;
     auto pendingAgentClusterAssignmentScope = makeScopeExit([this] {
         m_pendingAgentClusterAssignment = std::nullopt;
@@ -3077,7 +3143,7 @@ void WebPage::didSetTextZoomFactor(double zoomFactor)
 {
 #if ENABLE(PDF_PLUGIN)
     if (RefPtr pluginView = mainFramePlugIn(); pluginView && pluginView->pluginHandlesPageScaleFactor())
-        return pluginView->setPageScaleFactor(zoomFactor, std::nullopt);
+        return pluginView->setClampedPageScaleFactor(zoomFactor);
 #endif
 
     if (!m_page)
@@ -3107,7 +3173,7 @@ void WebPage::didSetPageZoomFactor(double zoomFactor)
 #if ENABLE(PDF_PLUGIN)
     if (RefPtr pluginView = mainFramePlugIn(); pluginView && pluginView->pluginHandlesPageScaleFactor()) {
         // Note that this maps page *zoom* factor to page *scale* factor.
-        pluginView->setPageScaleFactor(zoomFactor, std::nullopt);
+        pluginView->setClampedPageScaleFactor(zoomFactor);
         return;
     }
 #endif
@@ -3281,6 +3347,12 @@ void WebPage::platformDidScalePage()
 
 void WebPage::scalePage(double scale, const IntPoint& origin)
 {
+    // WebPageProxy::didSetPageScaleFactor() terminates this process for an out-of-range scale factor.
+    if (!isValidScaleFactor(scale)) [[unlikely]] {
+        WEBPAGE_RELEASE_LOG_ERROR(ViewState, "scalePage: refusing to apply out-of-range scale factor %f", scale);
+        return;
+    }
+
     didScalePage(scale, origin);
     send(Messages::WebPageProxy::DidSetPageScaleFactor(scale));
 }
@@ -3325,6 +3397,12 @@ void WebPage::didScaleView(double scale)
 
 void WebPage::scaleView(double scale)
 {
+    // See scalePage(): WebPageProxy::viewScaleFactorDidChange() enforces the same range.
+    if (!isValidScaleFactor(scale)) [[unlikely]] {
+        WEBPAGE_RELEASE_LOG_ERROR(ViewState, "scaleView: refusing to apply out-of-range scale factor %f", scale);
+        return;
+    }
+
     if (scale == viewScaleFactor())
         return;
     didScaleView(scale);
@@ -3707,7 +3785,7 @@ RefPtr<ShareableBitmap> WebPage::shareableBitmapForNodeIncludingOffscreen(Node& 
         if (imageElement) {
             if (RefPtr cachedImage = imageElement->cachedImage()) {
                 if (RefPtr image = cachedImage->image()) {
-                    if (RefPtr nativeImage = image->currentNativeImage(DefaultSizing { }.resolve(image->naturalDimensions())))
+                    if (RefPtr nativeImage = image->currentNativeImage(ImageDrawDescriptor { DefaultSizing { }.resolve(image->naturalDimensions()) }))
                         bitmap = ShareableBitmap::createFromImageDraw(*nativeImage, ColorSpace::SRGB());
                 }
             }
@@ -4065,8 +4143,8 @@ RefPtr<WebContextMenu> WebPage::contextMenuAtPointInWindow(FrameIdentifier frame
 
     // Simulate a mouse click to generate the correct menu.
     PlatformMouseEvent mousePressEvent(point, point, MouseButton::Right, PlatformEvent::Type::MousePressed, 1, { }, MonotonicTime::now(), WebCore::ForceAtClick, WebCore::SyntheticClickType::NoTap, MouseEventInputSource::UserDriven);
-    coreFrame->eventHandler().handleMousePressEvent(mousePressEvent);
-    bool handled = coreFrame->eventHandler().sendContextMenuEvent(mousePressEvent);
+    auto pressResult = coreFrame->eventHandler().handleMousePressEvent(mousePressEvent);
+    bool handled = !pressResult.wasHandledByPageOverlay() && coreFrame->eventHandler().sendContextMenuEvent(mousePressEvent);
     RefPtr menu = handled ? &contextMenu() : nullptr;
     PlatformMouseEvent mouseReleaseEvent(point, point, MouseButton::Right, PlatformEvent::Type::MouseReleased, 1, { }, MonotonicTime::now(), WebCore::ForceAtClick, WebCore::SyntheticClickType::NoTap, MouseEventInputSource::UserDriven);
     coreFrame->eventHandler().handleMouseReleaseEvent(mouseReleaseEvent);
@@ -5228,7 +5306,8 @@ void WebPage::requestFrameScreenPosition(FrameIdentifier frameID)
 
 void WebPage::scheduleAccessibilityFrameGeometryUpdate()
 {
-    send(Messages::WebPageProxy::ScheduleAccessibilityFrameGeometryUpdate());
+    if (AXObjectCache::accessibilityEnabled())
+        send(Messages::WebPageProxy::ScheduleAccessibilityFrameGeometryUpdate());
 }
 #endif
 
@@ -5695,11 +5774,7 @@ void WebPage::updatePreferences(const WebPreferencesStore& store)
 
 #if ENABLE(GPU_PROCESS)
     bool usingGPUProcessForDOMRendering = m_shouldRenderDOMInGPUProcess
-#if ENABLE(TILED_CA_DRAWING_AREA)
-        && DrawingArea::supportsGPUProcessRendering(m_drawingAreaType);
-#else
         && DrawingArea::supportsGPUProcessRendering();
-#endif
     WebProcess::singleton().setUseGPUProcessForDOMRendering(usingGPUProcessForDOMRendering);
 #endif // ENABLE(GPU_PROCESS)
 
@@ -5707,6 +5782,7 @@ void WebPage::updatePreferences(const WebPreferencesStore& store)
     m_ipcTestingAPIEnabled = store.getBoolValueForKey(WebPreferencesKey::ipcTestingAPIEnabledKey());
 
     protect(WebProcess::singleton().parentProcessConnection())->setIgnoreInvalidMessageForTesting();
+    assertIsMainRunLoop();
     if (auto* gpuProcessConnection = WebProcess::singleton().existingGPUProcessConnection())
         gpuProcessConnection->connection().setIgnoreInvalidMessageForTesting();
 #if ENABLE(MODEL_PROCESS)
@@ -7341,7 +7417,7 @@ void WebPage::setContentInversion(ContentInversion contentInversion)
 
 void WebPage::setUseColorAppearance(bool useDarkAppearance, bool useElevatedUserInterfaceLevel)
 {
-    protect(corePage())->setUseColorAppearance(useDarkAppearance, useElevatedUserInterfaceLevel);
+    protect(corePage())->setUseColorAppearance(useDarkAppearance ? WebCore::UseDarkAppearance::Yes : WebCore::UseDarkAppearance::No, useElevatedUserInterfaceLevel ? WebCore::UseElevatedUserInterfaceLevel::Yes : WebCore::UseElevatedUserInterfaceLevel::No);
 
     if (m_inspectorUI)
         m_inspectorUI->effectiveAppearanceDidChange(useDarkAppearance ? WebCore::InspectorFrontendClient::Appearance::Dark : WebCore::InspectorFrontendClient::Appearance::Light);
@@ -7466,8 +7542,7 @@ void WebPage::computePagesForPrintingImpl(FrameIdentifier frameID, const PrintIn
         PrintContextAccessScope scope { *this };
         resultPageRects = printContext->pageRects();
         computedPageMargin = printContext->computedPageMargin(printInfo.margin);
-        auto computedPageSize = printContext->computedPageSize(FloatSize(printInfo.availablePaperWidth, printInfo.availablePaperHeight), printInfo.margin);
-        resultTotalScaleFactorForPrinting = printContext->computeAutomaticScaleFactor(computedPageSize) * printInfo.pageSetupScaleFactor;
+        resultTotalScaleFactorForPrinting = totalScaleFactorForPrinting(*printContext, printInfo);
     }
 #if PLATFORM(COCOA)
     else
@@ -7477,6 +7552,13 @@ void WebPage::computePagesForPrintingImpl(FrameIdentifier frameID, const PrintIn
     // If we're asked to print, we should actually print at least a blank page.
     if (resultPageRects.isEmpty())
         resultPageRects.append(IntRect(0, 0, 1, 1));
+}
+
+// Converts page rects from CSS px to points.
+float WebPage::totalScaleFactorForPrinting(PrintContext& printContext, const PrintInfo& printInfo)
+{
+    auto computedPageSize = printContext.computedPageSize(FloatSize(printInfo.availablePaperWidth, printInfo.availablePaperHeight), printInfo.margin);
+    return printContext.computeAutomaticScaleFactor(computedPageSize) * printInfo.pageSetupScaleFactor;
 }
 
 void WebPage::paintRemoteFrameContents(FrameIdentifier frameID, const IntRect& rect, GraphicsContext& context)
@@ -8958,9 +9040,7 @@ void WebPage::loadAndDecodeImage(WebCore::ResourceRequest&& request, std::option
         if (!result)
             return completionHandler(makeUnexpected(WTF::move(result.error())));
 
-        Ref bitmapImage = WebCore::BitmapImage::create(nullptr);
-        bitmapImage->setData(result->ptr(), true);
-        RefPtr nativeImage = bitmapImage->primaryNativeImage();
+        RefPtr nativeImage = NativeImage::create(result->get());
         if (!nativeImage)
             return completionHandler(makeUnexpected(decodeError(url)));
 
@@ -9829,7 +9909,7 @@ void WebPage::updateAttachmentIcon(const String& identifier, std::optional<Share
                     return;
                 }
             } else {
-                attachment->updateIconForNarrowLayout(BitmapImage::create(*icon), size);
+                attachment->updateIconForNarrowLayout(icon->createNativeImage(), size);
                 return;
             }
         }
@@ -10087,6 +10167,7 @@ bool WebPage::usesEphemeralSession() const
 void WebPage::configureLoggingChannel(const String& channelName, WTFLogChannelState state, WTFLogLevel level)
 {
 #if ENABLE(GPU_PROCESS)
+    assertIsMainRunLoop();
     if (RefPtr gpuProcessConnection = WebProcess::singleton().existingGPUProcessConnection())
         gpuProcessConnection->configureLoggingChannel(channelName, state, level);
 #endif
@@ -10497,8 +10578,7 @@ void WebPage::updateWithTextRecognitionResult(const TextRecognitionResult& resul
         return;
     }
 
-    RefPtr frame = htmlElementToUpdate->document().frame();
-    RefPtr localRoot = frame ? &frame->rootFrame() : nullptr;
+    RefPtr localRoot { htmlElementToUpdate->document().rootFrame() };
     RefPtr localRootView = localRoot ? localRoot->view() : nullptr;
     if (!localRootView) {
         completionHandler(TextRecognitionUpdateResult::NoText);
@@ -10805,6 +10885,8 @@ void WebPage::scrollToEdge(WebCore::RectEdges<bool> edges, WebCore::ScrollIsAnim
 
     auto options = WebCore::ScrollPositionChangeOptions::createProgrammatic();
     options.animated = animated;
+    if (animated == WebCore::ScrollIsAnimated::Yes)
+        options.animationCurve = WebCore::documentEdgeScrollAnimationCurve();
 
     frameView->scrollToEdgeWithOptions(edges, options);
 }
@@ -10933,9 +11015,7 @@ void WebPage::updatePrefersNonBlinkingCursor()
 
 bool WebPage::isUsingUISideCompositing() const
 {
-#if ENABLE(TILED_CA_DRAWING_AREA)
-    return m_drawingAreaType == DrawingAreaType::RemoteLayerTree;
-#elif PLATFORM(COCOA)
+#if PLATFORM(COCOA)
     return true;
 #else
     return false;
@@ -11201,7 +11281,9 @@ void WebPage::requestAllTextAndRects(CompletionHandler<void(Vector<std::pair<Str
     if (!page)
         return completion({ });
 
-    completion(TextExtraction::extractAllTextAndRects(*page));
+    completion(WTF::map(TextExtraction::extractAllTextAndRects(*page), [](auto&& textAndRect) {
+        return std::pair { WTF::move(textAndRect.first), textAndRect.second.raw() };
+    }));
 }
 
 void WebPage::requestTargetedElement(TargetedElementRequest&& request, CompletionHandler<void(Vector<WebCore::TargetedElementInfo>&&)>&& completion)

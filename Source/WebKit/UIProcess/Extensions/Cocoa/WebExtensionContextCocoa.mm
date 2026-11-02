@@ -360,6 +360,10 @@ std::expected<bool, RefPtr<API::Error>> WebExtensionContext::unload()
 
     m_privilegedIdentifier = std::nullopt;
 
+#if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/WebExtensionContextAdditions.h>)
+    additionsDidUnload();
+#endif
+
     m_actionsToPerformAfterBackgroundContentLoads.clear();
     m_backgroundContentEventListeners.clear();
     m_backgroundContentHasLoadedOnce = false;
@@ -1029,6 +1033,50 @@ RefPtr<WebExtensionTab> WebExtensionContext::getTab(WebPageProxyIdentifier webPa
     return getCurrentTab(webPageProxyIdentifier, includeExtensionViews, ignoreExtensionAccess);
 }
 
+std::optional<WebExtensionWindowIdentifier> WebExtensionContext::windowIdentifierForPage(WebPageProxyIdentifier webPageProxyIdentifier) const
+{
+    // A page in a tab uses the window of that tab, and has no window when the tab has none.
+    if (RefPtr tab = getTab(webPageProxyIdentifier)) {
+        RefPtr window = tab->window();
+        return window ? std::optional(window->identifier()) : std::nullopt;
+    }
+
+    // Action popups are bound to the window of their tab, or of the action when it has no tab.
+    for (auto entry : m_popupPageActionMap) {
+        if (entry.key.identifier() != webPageProxyIdentifier)
+            continue;
+
+        Ref action = entry.value;
+        RefPtr tab = action->tab();
+        RefPtr window = tab ? tab->window() : action->window();
+        return window ? std::optional(window->identifier()) : std::nullopt;
+    }
+
+#if ENABLE(WK_WEB_EXTENSIONS_SIDEBAR)
+    // Sidebars are bound to the window of their tab, or of the sidebar when it has no tab.
+    for (auto entry : m_sidebarPageMap) {
+        if (entry.key.identifier() != webPageProxyIdentifier)
+            continue;
+
+        RefPtr sidebar = entry.value.get();
+        if (!sidebar)
+            continue;
+
+        if (auto tab = sidebar->tab()) {
+            RefPtr window = tab.value()->window();
+            return window ? std::optional(window->identifier()) : std::nullopt;
+        }
+
+        if (auto window = sidebar->window())
+            return window.value()->identifier();
+
+        return std::nullopt;
+    }
+#endif // ENABLE(WK_WEB_EXTENSIONS_SIDEBAR)
+
+    return std::nullopt;
+}
+
 RefPtr<WebExtensionTab> WebExtensionContext::getCurrentTab(WebPageProxyIdentifier webPageProxyIdentifier, IncludeExtensionViews includeExtensionViews, IgnoreExtensionAccess ignoreExtensionAccess) const
 {
     RefPtr<WebExtensionTab> result;
@@ -1424,6 +1472,10 @@ void WebExtensionContext::didCloseTab(WebExtensionTab& tab, WindowIsClosing wind
     tab.didClose();
     forgetTab(tab.identifier());
 
+#if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/WebExtensionContextAdditions.h>)
+    additionsDidCloseTab(tab);
+#endif
+
     if (!isLoaded() || !tab.extensionHasAccess() || suppressEvents == SuppressEvents::Yes)
         return;
 
@@ -1683,6 +1735,10 @@ void WebExtensionContext::didCommitLoadForFrame(WebPageProxyIdentifier pageID, c
         // Clear tab action customizations.
         if (RefPtr tabAction = m_actionTabMap.get(*tab))
             tabAction->clearCustomizations();
+
+#if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/WebExtensionContextAdditions.h>)
+        additionsDidCommitLoad(*tab);
+#endif
 
         // Clear activeTab permissions and user gesture if the site changed.
         auto temporaryPattern = tab->temporaryPermissionMatchPattern();

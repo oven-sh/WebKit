@@ -129,6 +129,10 @@ public:
     const RemoteLayerTreeHost& remoteLayerTreeHost() const LIFETIME_BOUND { return *m_remoteLayerTreeHost; }
     std::unique_ptr<RemoteLayerTreeHost> detachRemoteLayerTreeHost();
 
+#if ENABLE(GAZE_GLOW_FOR_INTERACTION_REGIONS)
+    void updateDeferredInteractionRegions();
+#endif
+
     virtual Ref<RemoteScrollingCoordinatorProxy> createScrollingCoordinatorProxy() const = 0;
 
     void acceleratedAnimationDidStart(WebCore::PlatformLayerIdentifier, const String& key, MonotonicTime startTime);
@@ -189,9 +193,6 @@ protected:
     std::unique_ptr<RemoteLayerTreeHost> m_remoteLayerTreeHost;
     bool m_needsDisplayRefreshCallbacksForDrawing { false };
 private:
-#if ENABLE(TILED_CA_DRAWING_AREA)
-    DrawingAreaType type() const final { return DrawingAreaType::RemoteLayerTree; }
-#endif
 
     void remotePageProcessDidTerminate(WebCore::ProcessIdentifier) final;
     void sizeDidChange() final;

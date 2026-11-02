@@ -98,13 +98,13 @@ static bool hasStringsForMessagesOnly(Typed::TerminatorKind)
 
 static void addRelaxed(uint32_t& counter)
 {
-    WTF::atomicExchangeAdd(&counter, 1u, std::memory_order_relaxed);
+    WTF::atomicExchangeAdd<MemoryOrder::Relaxed>(&counter, 1u);
 }
 
 static void atomicMinRelaxed(FunctionID& minimum, FunctionID candidate)
 {
-    for (FunctionID current = WTF::atomicLoad(&minimum, std::memory_order_relaxed); candidate < current && !WTF::atomicCompareExchangeWeakRelaxed(&minimum, current, candidate);)
-        current = WTF::atomicLoad(&minimum, std::memory_order_relaxed);
+    for (FunctionID current = WTF::atomicLoad<MemoryOrder::Relaxed>(&minimum); candidate < current && !WTF::atomicCompareExchangeWeakRelaxed(&minimum, current, candidate);)
+        current = WTF::atomicLoad<MemoryOrder::Relaxed>(&minimum);
 }
 
 static BitVector toBitVector(const FastBitVector& bits)

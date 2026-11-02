@@ -61,6 +61,7 @@
 #include "JSWrapperObject.h"
 #include "KeyAtomStringCache.h"
 #include "NumericStrings.h"
+#include "ProxyObject.h"
 #include "RegExpObject.h"
 #include "BrandedStructure.h"
 #include "ScopedArguments.h"

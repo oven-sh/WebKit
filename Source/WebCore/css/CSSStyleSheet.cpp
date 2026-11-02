@@ -274,7 +274,8 @@ void CSSStyleSheet::forEachStyleScope(NOESCAPE const Function<void(Style::Scope&
         apply(*scope);
         return;
     }
-    for (Ref treeScope : m_adoptingTreeScopes)
+
+    for (const auto& treeScope : copyToVectorOf<Ref<ContainerNode>>(m_adoptingTreeScopes))
         apply(protect(styleScopeFor(treeScope)));
 }
 
@@ -290,6 +291,7 @@ WebCoreOpaqueRoot CSSStyleSheet::opaqueRootForGCThread()
     if (m_ownerNode)
         return root(m_ownerNode.get());
     if (SUPPRESS_UNCOUNTED_LOCAL SUPPRESS_UNCHECKED_LOCAL CSSImportRule* ownerRule = m_ownerRule.get()) {
+        Locker ruleLocker { ownerRule->opaqueRootLockForGC() };
         // Cannot ref on the GC thread, same as ownerRule above.
         if (SUPPRESS_UNCOUNTED_LOCAL auto* parentSheet = ownerRule->parentStyleSheet())
             return parentSheet->opaqueRootForGCThread();

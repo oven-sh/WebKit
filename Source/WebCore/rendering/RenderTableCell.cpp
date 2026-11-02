@@ -214,7 +214,7 @@ Style::PreferredSize RenderTableCell::logicalWidthFromColumns(RenderTableCol* fi
     return Style::PreferredSize::Fixed { colWidthSum };
 }
 
-void RenderTableCell::computeIntrinsicLogicalWidthContributions()
+std::pair<LayoutUnit, LayoutUnit> RenderTableCell::computeIntrinsicLogicalWidthContributions()
 {
     // The child cells rely on the grids up in the sections to do their computeIntrinsicLogicalWidthContributions work.
     // Normally the sections are set up early, as table cells are added, but relayout can cause the cells to be freed, leaving stale pointers in the sections' grids.
@@ -228,9 +228,15 @@ void RenderTableCell::computeIntrinsicLogicalWidthContributions()
     auto overridingLogicalHeight = this->overridingBorderBoxLogicalHeight();
     if (overridingLogicalHeight)
         setOverridingBorderBoxLogicalHeight({ });
-    RenderBlockFlow::computeIntrinsicLogicalWidthContributions();
+    auto contributions = RenderBlockFlow::computeIntrinsicLogicalWidthContributions();
     if (overridingLogicalHeight)
         setOverridingBorderBoxLogicalHeight(*overridingLogicalHeight);
+    return contributions;
+}
+
+void RenderTableCell::constrainIntrinsicLogicalWidthContributionsByMinMax(LayoutUnit& minContentLogicalWidthContribution, LayoutUnit& maxContentLogicalWidthContribution) const
+{
+    RenderBlockFlow::constrainIntrinsicLogicalWidthContributionsByMinMax(minContentLogicalWidthContribution, maxContentLogicalWidthContribution);
 
     if (!element() || !document().inQuirksMode() || !element()->hasAttributeWithoutSynchronization(nowrapAttr))
         return;
@@ -240,7 +246,7 @@ void RenderTableCell::computeIntrinsicLogicalWidthContributions()
         // In quirks mode, when nowrap is set on a cell that also has an explicit fixed width,
         // WinIE/Moz treat the fixed width as the minimum width of the cell. Affected the top
         // of hiptop.com.
-        m_minContentLogicalWidthContribution = std::max(adjustBorderBoxLogicalWidthForBoxSizing(LayoutUnit(fixedLogicalWidth->resolveZoom(usedZoom))), m_minContentLogicalWidthContribution);
+        minContentLogicalWidthContribution = std::max(adjustBorderBoxLogicalWidthForBoxSizing(LayoutUnit(fixedLogicalWidth->resolveZoom(usedZoom))), minContentLogicalWidthContribution);
     }
 }
 
@@ -381,7 +387,7 @@ void RenderTableCell::setCellLogicalWidth(LayoutUnit logicalWidthInTableDirectio
     if (logicalWidthInTableDirection == logicalSizeInTableDirection)
         return;
 
-    setNeedsLayout(MarkingBehavior::MarkOnlyThis);
+    setNeedsLayout(MarkingBehavior::OnlyThis);
     setCellWidthChanged(true);
 
     if (!isOrthogonal()) {
@@ -411,7 +417,7 @@ void RenderTableCell::layout()
     if (isBaselineAligned() && section()->rowBaseline(rowIndex()) && cellBaselinePosition() > section()->rowBaseline(rowIndex())) {
         LayoutUnit newIntrinsicPaddingBefore = std::max<LayoutUnit>(0, intrinsicPaddingBefore() - std::max<LayoutUnit>(0, cellBaselinePosition() - oldCellBaseline));
         setIntrinsicPaddingBefore(newIntrinsicPaddingBefore);
-        setNeedsLayout(MarkingBehavior::MarkOnlyThis);
+        setNeedsLayout(MarkingBehavior::OnlyThis);
         layoutBlock(cellWidthChanged() ? RelayoutChildren::Yes : RelayoutChildren::No);
     }
     invalidateHasEmptyCollapsedBorders();
@@ -503,7 +509,7 @@ LayoutUnit RenderTableCell::minLogicalWidthForColumnSizing()
         return RenderBlockFlow::minContentLogicalWidthContribution();
 
     auto computingPreferredSize = SetForScope<bool> { m_isComputingPreferredSize, true };
-    setNeedsLayout(MarkingBehavior::MarkOnlyThis);
+    setNeedsLayout(MarkingBehavior::OnlyThis);
     layoutIfNeeded();
     ASSERT(m_orthogonalCellContentIntrinsicHeight.has_value());
     return std::max(logicalHeight(), m_orthogonalCellContentIntrinsicHeight.value_or(0_lu));
@@ -515,7 +521,7 @@ LayoutUnit RenderTableCell::maxLogicalWidthForColumnSizing()
         return RenderBlockFlow::maxContentLogicalWidthContribution();
 
     auto computingPreferredSize = SetForScope<bool> { m_isComputingPreferredSize, true };
-    setNeedsLayout(MarkingBehavior::MarkOnlyThis);
+    setNeedsLayout(MarkingBehavior::OnlyThis);
     layoutIfNeeded();
     ASSERT(m_orthogonalCellContentIntrinsicHeight.has_value());
     return std::max(logicalHeight(), m_orthogonalCellContentIntrinsicHeight.value_or(0_lu));
