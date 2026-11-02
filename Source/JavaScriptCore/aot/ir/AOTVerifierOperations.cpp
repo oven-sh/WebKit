@@ -407,6 +407,15 @@ void FunctionVerifier::verifyCast(BlockID block, ValueID id, const Value& value)
     case Opcode::RequireObjectCoercible:
     case Opcode::RequireObject:
         return;
+    case Opcode::RequireType: {
+        // The test runs, as that of a check does: nothing that only a proof tells apart is in its type.
+        // The refusal of a prototype lets through what its error names, and nothing else: the link that it is handed back to refuses just that.
+        const Type& required = m_program.at(value.requiredType());
+        bool refusesSomethingElse = value.runtimeError() == RuntimeErrorKind::PrototypeIsNeitherObjectNorNull && required != Type::object().withPrimitives(Primitive::Null);
+        if (!required.isJavaScriptValue() || hasClassProofs(required) || hasUntestableBuiltins(required) || refusesSomethingElse)
+            fail(InternalErrorKind::PayloadOutOfRange, block, id);
+        return;
+    }
     default:
         RELEASE_ASSERT_NOT_REACHED();
     }

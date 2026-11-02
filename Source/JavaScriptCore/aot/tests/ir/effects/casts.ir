@@ -100,3 +100,17 @@ function f6 name="typeTests" parameters=[{type=anything}, {type=string}, {type=o
 # ONLY-NOT: reads(S
 # ONLY-NOT: reads(A
 # ONLY-NOT: nknownCode
+function f7 name="requireType" parameters=[{type=object}, {type=L0}, {type=null|object}, {type=undefined|object}, {type=anything}] results=[{type=undefined}] {
+    v5 = RequireType v0 requiredType=null|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate
+    v6 = RequireType v1 requiredType=null|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate
+    v7 = RequireType v2 requiredType=null|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate
+    v8 = RequireType v3 requiredType=null|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate
+    v9 = RequireType v4 requiredType=null|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate
+    Return
+}
+# CHECK-LABEL: function f7
+# CHECK-NEXT: v5 RequireType: none
+# CHECK-NEXT: v6 RequireType: none
+# CHECK-NEXT: v7 RequireType: none
+# CHECK-NEXT: v8 RequireType: throws
+# CHECK-NEXT: v9 RequireType: throws

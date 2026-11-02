@@ -26,9 +26,17 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static constexpr OpcodeSet repeatableCasts { Opcode::Check, Opcode::CheckInitialized, Opcode::RequireObjectCoercible, Opcode::RequireObject };
+// The casts that test: a check, and what the language asks of a value. The same test of the same value passes wherever it has passed.
+static constexpr OpcodeSet repeatableCasts = [] {
+    OpcodeSet opcodes;
+    for (Opcode opcode : allMembersOf<Opcode>) {
+        if (simplifiableCasts.contains(opcode) && !isCastWithoutTest(opcode))
+            opcodes.add(opcode);
+    }
+    return opcodes;
+}();
 
-static_assert((simplifiableCasts | repeatableCasts) == simplifiableCasts);
+static_assert(repeatableCasts.contains(Opcode::Check) && !repeatableCasts.contains(Opcode::Upcast));
 static_assert(simplifiableCasts.contains(Opcode::AssumeType));
 
 namespace {
@@ -367,10 +375,14 @@ struct CastSimplification : Rewrite {
             settleProofsBehindAnsweredChecks(function, claimsBehindChecks.span(), marksOfChecks());
     }
 
-    std::tuple<ValueID, TypeID, uint32_t> keyOf(ValueID id)
+    // Which test a cast is: of which value, with which result, and what it asks. A RequireType asks for the type that it names, every other cast for what its opcode says.
+    // Two of them that let the same values of a typed operand through are two tests all the same: where the check that typed the operand goes, they differ again.
+    using TestOfCast = std::tuple<ValueID, TypeID, uint32_t, TypeID>;
+
+    TestOfCast keyOf(ValueID id)
     {
         const Value& cast = at(id);
-        return { substitution.resolve(cast.operand(0)), cast.type, static_cast<uint32_t>(cast.opcode) };
+        return { substitution.resolve(cast.operand(0)), cast.type, static_cast<uint32_t>(cast.opcode), cast.opcode == Opcode::RequireType ? cast.requiredType() : TypeID() };
     }
 
     uint64_t bindingOf(const Value& access)
@@ -427,7 +439,7 @@ struct CastSimplification : Rewrite {
             Vector<uint64_t> hiddenBindingsPastDeadZone;
         };
         const Dominators& dominators = analyses.dominators();
-        HashMap<std::tuple<ValueID, TypeID, uint32_t>, ValueID> passed;
+        HashMap<TestOfCast, ValueID> passed;
         // A number stands for a variable, or for a field of the environment that a value of the function holds. In the order in which they were found: one that is found again further down is not listed twice.
         Vector<uint64_t> bindingsPastDeadZone;
         HashSet<uint64_t> isPastDeadZone;
@@ -440,6 +452,10 @@ struct CastSimplification : Rewrite {
         auto addDominatingCast = [&](ValueID id) {
             passed.add(keyOf(id), id);
             addedCasts.append(id);
+            // Nobody reads what the refusal of a link has let through: the link takes the value as it arrived, and so does an access, with what the names that are read from it come to say of it.
+            // Select hands a test that nobody reads back to its link (leaveRefusalsToPrototypeLinks).
+            if (isRefusalOfPrototype(at(id)))
+                return;
             ValueID object = analyses.sameObjectThroughCasts(id).valueInFrontOfFacts();
             ValueID before = narrowestCast[object.index()];
             if (before && typeOf(before).isSubsetOf(typeOf(id), program))

@@ -4,6 +4,7 @@
 # RUN(UNDEFINED): known-value function=f2 assume=v0:undefined
 # RUN(FIVE): known-value function=f2 assume=v0:5
 # RUN(OBJECT): known-value function=f2 assume=v0:object
+# RUN(NULL): known-value function=f2 assume=v0:null
 # RUN(NOTHING): known-value function=f2
 # RUN(TYPES): known-value function=f3
 # RUN(CASES): known-value function=f4
@@ -84,6 +85,7 @@ function f2 name="casts" parameters=[{type=anything}] results=[{type=anything}] 
     v4 = Check v0 expectedType=number
     v5 = RequireObjectCoercible v0 name="x"
     v6 = RequireObject v0
+    v7 = RequireType v0 requiredType=null|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate
     Return v0
 }
 # UNDEFINED: v1 evaluated: Undefined
@@ -92,24 +94,30 @@ function f2 name="casts" parameters=[{type=anything}] results=[{type=anything}] 
 # UNDEFINED: v4 evaluated: Unknown
 # UNDEFINED: v5 evaluated: Unknown
 # UNDEFINED: v6 evaluated: Unknown
+# UNDEFINED: v7 evaluated: Unknown
 # FIVE: v1 evaluated: Integer 5
 # FIVE: v2 evaluated: Integer 5
 # FIVE: v3 evaluated: Integer 5
 # FIVE: v4 evaluated: Integer 5
 # FIVE: v5 evaluated: Integer 5
 # FIVE: v6 evaluated: Unknown
+# FIVE: v7 evaluated: Unknown
 # OBJECT: v1 evaluated: Object
 # OBJECT: v2 evaluated: Object
 # OBJECT: v3 evaluated: Object
 # OBJECT: v4 evaluated: Unknown
 # OBJECT: v5 evaluated: Object
 # OBJECT: v6 evaluated: Object
+# OBJECT: v7 evaluated: Object
+# NULL: v6 evaluated: Unknown
+# NULL: v7 evaluated: Null
 # NOTHING: v1 evaluated: Unknown
 # NOTHING: v2 evaluated: Unknown
 # NOTHING: v3 evaluated: Unknown
 # NOTHING: v4 evaluated: Unknown
 # NOTHING: v5 evaluated: Unknown
 # NOTHING: v6 evaluated: Unknown
+# NOTHING: v7 evaluated: Unknown
 
 function f3 name="types" parameters=[{type=L0}, {type=L0|L1}, {type=undefined|L0}, {type=object}, {type=L0|f0}, {type=f0}, {type=function}, {type=7}, {type=int[7, 8]}, {type="a"}, {type="a"|"b"}, {type=null}] results=[{type=undefined}] {
 # REPEAT: i = 0..11

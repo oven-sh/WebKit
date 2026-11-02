@@ -504,10 +504,7 @@ static PassOutcome removeLinksOfUnusedObjects(FunctionPassContext& context)
             const Value& link = function.at(values[index]);
             if (link.opcode != Opcode::SetLiteralPrototype || link.replacedCalleeOperand() || link.replacedThisOperand())
                 continue;
-            // Anything else is refused with an error.
-            const Type& prototype = context.program.typeOf(function, link.prototypeOperand());
-            bool isTaken = prototype.hasObjects() ? !(prototype.primitives & ~Primitive::Null) : prototype.hasOnlyPrimitives(Primitive::Null);
-            if (function.at(link.objectOperand()).opcode == Opcode::NewObject && useLists.useCount(link.objectOperand()) == 1 && (isTaken || !link.refusesOtherValues()))
+            if (function.at(link.objectOperand()).opcode == Opcode::NewObject && useLists.useCount(link.objectOperand()) == 1 && !mayRefuseItsPrototype(context.program, function, link))
                 erased.set(index);
         }
         if (erased.isEmpty())

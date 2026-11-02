@@ -54,19 +54,20 @@ function f4 name="underAnything" parameters=[{type=anything}] results=[{type=any
     "globalThis.describe = object => (Object.getPrototypeOf(object) === null) + ' ' + Object.keys(object).join() + ' ' + JSON.stringify(object);" \
     "globalThis.publish = function (withoutPrototype, filledWithoutPrototype, underObjectOrNull, underAnything) { " statements " };"_s
 
+static constexpr ASCIILiteral optionWords[] = {
+    "validate"_s,
+    "disable=flow-results"_s,
+    "references=narrow"_s,
+    "heat=EverythingIsHot"_s,
+    "heat=EverythingIsCold"_s,
+    "disable=rule:PropertyRun"_s,
+    "disable=pass:SinkAllocations"_s,
+};
+
 static void checkUnderEveryOption(ASCIILiteral statementsBeforeProgram, ASCIILiteral expectedOutput)
 {
-    static constexpr ASCIILiteral words[] = {
-        "validate"_s,
-        "disable=flow-results"_s,
-        "references=narrow"_s,
-        "heat=EverythingIsHot"_s,
-        "heat=EverythingIsCold"_s,
-        "disable=rule:PropertyRun"_s,
-        "disable=pass:SinkAllocations"_s,
-    };
     checkOutputOfProgramInShell(programText, expectedOutput, { }, statementsBeforeProgram);
-    for (ASCIILiteral word : words)
+    for (ASCIILiteral word : optionWords)
         checkOutputOfProgramInShell(programText, expectedOutput, { word }, statementsBeforeProgram);
 }
 
@@ -94,6 +95,79 @@ static void testOtherValuesThrow()
         "true\ntrue\ntrue\ntrue\ntrue\n"_s);
 }
 
+// const members = { get size() { return this.items } }   function g() { return tick() }   function make(proto) { const made = Object.create(proto); made.items = g(); return made }
+// report(make(members).size)   try { make(1); report("no error") } catch (error) { report(error.message) }
+// Nobody outside sees make(): what it creates is an object of a layout, and the allocation lists what g() answers.
+static constexpr ASCIILiteral closedProgramText = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 fields=[{key="size" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="g" module=m0 declared={type=anything} flags=[IsImmutable]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    PutModuleVariable v0 variable=g0
+    v2 = NewClosure function=f2
+    v3 = NewObject layout=L0
+    v4 = NewClosure function=f3
+    DefineGetter v3, v4 key="size"
+    v6 = FinishObject v3
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="report" [isFreeName]
+    v9 = Call v2, -, v6
+    v10 = PropGet v9 key="size"
+    v11 = Call v8, -, v10
+    Jump -> next b1()
+  b1() handler=b3():
+    v12 = Integer integer=1
+    v13 = Call v2, -, v12
+    v14 = String string="no error"
+    v15 = Call v8, -, v14
+    Jump -> next b2()
+  b2():
+    Return
+  b3() role=CatchHandler:
+    v16 = CatchValue
+    v17 = PropGet v16 key="message"
+    v18 = Call v8, -, v17
+    Jump -> next b2()
+}
+function f1 name="g" results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="tick" [isFreeName]
+    v2 = Call v1, -
+    Return v2
+}
+function f2 name="make" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectCreate
+    v3 = Call v2, v1, v0
+    v4 = GetModuleVariable variable=g0
+    v5 = Call v4, -
+    PropSet v3, v5 key="items"
+    Return v3
+}
+function f3 name="size" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = PropGet v0 key="items"
+    Return v1
+}
+)IR"_s;
+
+// The built-in refuses its argument before it makes anything, so nothing that the text has behind the call has run when the error is thrown.
+static void testOtherValuesThrowBeforeWhatFollowsTheCreation()
+{
+    static constexpr ASCIILiteral wordsOfPasses[] = {
+        "disable=pass:InlineCalls"_s,
+        "disable=pass:SimplifyCasts"_s,
+        "disable=pass:EliminateRedundantReads"_s,
+    };
+    ASCIILiteral statements = "globalThis.ticks = 0; globalThis.tick = () => ++ticks; globalThis.report = text => print(text, ticks);"_s;
+    ASCIILiteral expectedOutput = "1 1\nObject prototype may only be an Object or null. 1\n"_s;
+    checkOutputOfProgramInShell(closedProgramText, expectedOutput, { }, statements);
+    for (ASCIILiteral word : optionWords)
+        checkOutputOfProgramInShell(closedProgramText, expectedOutput, { word }, statements);
+    for (ASCIILiteral word : wordsOfPasses)
+        checkOutputOfProgramInShell(closedProgramText, expectedOutput, { word }, statements);
+}
+
 static void testObjectsSurviveCollections()
 {
     checkUnderEveryOption(WITH_PUBLISHED_FUNCTIONS("let kept = []; let wrong = 0; for (let index = 0; index < 60000; ++index) { let object = filledWithoutPrototype(index, kept, index + 0.5); if (!(index % 10000)) { kept[kept.length] = object; gc(); } if (Object.getPrototypeOf(object) !== null || Object.getPrototypeOf(withoutPrototype()) !== null || object.third !== index + 0.5) ++wrong; } print(wrong); print(kept.length); for (let index = 0; index < kept.length; ++index) print(kept[index].first + ' ' + (kept[index].second === kept) + ' ' + Object.keys(kept[index]).join());"),
@@ -107,6 +181,7 @@ std::span<const NativeTest> objectCreateProgramTests()
         { "object-create/stores-follow-the-creation"_s, testStoresFollowTheCreation },
         { "object-create/object-and-null-alternate"_s, testObjectAndNullAlternate },
         { "object-create/other-values-throw"_s, testOtherValuesThrow },
+        { "object-create/other-values-throw-before-what-follows-the-creation"_s, testOtherValuesThrowBeforeWhatFollowsTheCreation },
         { "object-create/objects-survive-collections"_s, testObjectsSurviveCollections },
     };
     return tests;

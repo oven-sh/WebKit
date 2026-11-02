@@ -1,0 +1,190 @@
+# Where a link that refuses its prototype went behind something that the program sees, a test stands in its place and the link refuses nothing. Behind the last pass that moves code the
+# link refuses again where nothing that the program can see is left between the two: it refuses on the path that it takes for a prototype that it has not met, so a test that passes costs
+# nothing. The test stays where a call or another test that may throw stands between, where the link is in another block, and where something reads what has passed it.
+# A link that is handed another value, and the link of a literal below the same value at another place of the program, are not the link of that call. Neither is a link that
+# refuses already, and a test with another error refuses for somebody else.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass Select
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Made" fields=[{key="first" declared={type=number}}, {key="second" declared={type=number}}]
+function f0 name="somebody" parameters=[{type=anything}] results=[{type=number}]
+
+function f1 name="nothing-between" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    v2 = RequireType v1 requiredType=null|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate
+    v3 = NewObject -, v0 layout=L0 fields=[0]
+    SetLiteralPrototype v3, v1
+    v5 = FinishObject v3
+    Return v5
+# CHECK-NEXT: b0(v0: number, v1: anything):
+# CHECK-NEXT: v3: L0 = NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: SetLiteralPrototype v3, v1 [refusesOtherValues]
+# CHECK-NEXT: v5: L0 = FinishObject v3
+}
+
+function f2 name="what-leaves-no-trace-between" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    v2 = RequireType v1 requiredType=null|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate
+    v3 = Add v0, v0
+    v4 = NewObject -, v0, v3 layout=L0 fields=[0, 1]
+    SetLiteralPrototype v4, v1
+    v6 = FinishObject v4
+    Return v6
+# CHECK-NOT: RequireType
+# CHECK: SetLiteralPrototype v4, v1 [refusesOtherValues]
+}
+
+function f3 name="a-call-between" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    v2 = RequireType v1 requiredType=null|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate
+    v3 = CallDirect v0 function=f0
+    v4 = NewObject -, v0, v3 layout=L0 fields=[0, 1]
+    SetLiteralPrototype v4, v1
+    v6 = FinishObject v4
+    Return v6
+# CHECK-NEXT: b0(v0: number, v1: anything):
+# CHECK-NEXT: v2: null|object = RequireType v1 requiredType=null|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate
+# CHECK-NEXT: v3: number = CallDirect v0 function=f0
+# CHECK-NEXT: v4: L0 = NewObject -, v0, v3 layout=L0 fields=[0, 1]
+# CHECK-NEXT: SetLiteralPrototype v4, v1
+# CHECK-NOT: refusesOtherValues
+# CHECK: v6: L0 = FinishObject v4
+}
+
+function f4 name="the-test-of-another-creation-between" parameters=[{type=number}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = RequireType v1 requiredType=null|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate
+    v4 = RequireType v2 requiredType=null|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate
+    v5 = NewObject -, v0 layout=L0 fields=[0]
+    SetLiteralPrototype v5, v2
+    v7 = FinishObject v5
+    v8 = NewObject -, v0 layout=L0 fields=[0]
+    SetLiteralPrototype v8, v1
+    v10 = FinishObject v8
+    v11 = CallDirect v7 function=f0
+    Return v10
+# CHECK-NEXT: b0(v0: number, v1: anything, v2: anything):
+# CHECK-NEXT: v3: null|object = RequireType v1 requiredType=null|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate
+# CHECK-NEXT: v5: L0 = NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: SetLiteralPrototype v5, v2 [refusesOtherValues]
+# CHECK-NEXT: v7: L0 = FinishObject v5
+# CHECK-NEXT: v8: L0 = NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: SetLiteralPrototype v8, v1
+# CHECK-NOT: refusesOtherValues
+}
+
+function f5 name="what-passed-is-read" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    v2 = RequireType v1 requiredType=null|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate
+    v3 = NewObject -, v0 layout=L0 fields=[0]
+    SetLiteralPrototype v3, v1
+    v5 = FinishObject v3
+    v6 = TypeTest v2 testedType=null
+    Return v6
+# CHECK: = RequireType v1
+# CHECK: SetLiteralPrototype v3, v1
+# CHECK-NOT: refusesOtherValues
+}
+
+function f6 name="the-link-in-another-block" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    v2 = RequireType v1 requiredType=null|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate
+    Jump -> next b1()
+  b1():
+    v3 = NewObject -, v0 layout=L0 fields=[0]
+    SetLiteralPrototype v3, v1
+    v5 = FinishObject v3
+    Return v5
+# CHECK: = RequireType v1
+# CHECK: SetLiteralPrototype v3, v1
+# CHECK-NOT: refusesOtherValues
+}
+
+function f7 name="a-link-that-is-handed-another-value" parameters=[{type=number}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = RequireType v1 requiredType=null|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate
+    v4 = NewObject -, v0 layout=L0 fields=[0]
+    SetLiteralPrototype v4, v2
+    v6 = FinishObject v4
+    Return v6
+# CHECK: = RequireType v1
+# CHECK: SetLiteralPrototype v4, v2
+# CHECK-NOT: refusesOtherValues
+}
+
+function f8 name="the-link-of-a-literal-at-another-place" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    v2 = RequireType v1 requiredType=null|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate @10
+    v3 = NewObject -, v0 layout=L0 fields=[0] @20
+    SetLiteralPrototype v3, v1 @20
+    v5 = FinishObject v3 @20
+    Return v5
+# CHECK: = RequireType v1
+# CHECK: SetLiteralPrototype v3, v1 @20
+# CHECK-NOT: refusesOtherValues
+}
+
+function f9 name="the-value-behind-a-cast" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    v2 = RequireType v1 requiredType=null|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate
+    v3 = Upcast v1 castType=anything
+    v4 = NewObject -, v0 layout=L0 fields=[0]
+    SetLiteralPrototype v4, v3
+    v6 = FinishObject v4
+    Return v6
+# CHECK-NOT: RequireType
+# CHECK: SetLiteralPrototype v4, {{*}} [refusesOtherValues]
+}
+
+function f10 name="two-tests-in-one-block" parameters=[{type=number}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = RequireType v1 requiredType=null|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate
+    v4 = NewObject -, v0 layout=L0 fields=[0]
+    SetLiteralPrototype v4, v1
+    v6 = FinishObject v4
+    v7 = RequireType v2 requiredType=null|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate
+    v8 = NewObject -, v0 layout=L0 fields=[0]
+    SetLiteralPrototype v8, v2
+    v10 = FinishObject v8
+    v11 = CallDirect v6 function=f0
+    Return v10
+# CHECK-NEXT: b0(v0: number, v1: anything, v2: anything):
+# CHECK-NEXT: v4: L0 = NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: SetLiteralPrototype v4, v1 [refusesOtherValues]
+# CHECK-NEXT: v6: L0 = FinishObject v4
+# CHECK-NEXT: v8: L0 = NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: SetLiteralPrototype v8, v2 [refusesOtherValues]
+# CHECK-NEXT: v10: L0 = FinishObject v8
+}
+
+function f11 name="tests-in-two-blocks" parameters=[{type=number}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = RequireType v1 requiredType=null|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate
+    v4 = NewObject -, v0 layout=L0 fields=[0]
+    SetLiteralPrototype v4, v1
+    v6 = FinishObject v4
+    v7 = CallDirect v6 function=f0
+    Jump -> next b1()
+  b1():
+    v8 = RequireType v2 requiredType=null|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate
+    v9 = NewObject -, v0 layout=L0 fields=[0]
+    SetLiteralPrototype v9, v2
+    v11 = FinishObject v9
+    Return v11
+# CHECK-NOT: RequireType
+# CHECK: SetLiteralPrototype v4, v1 [refusesOtherValues]
+# CHECK-NOT: RequireType
+# CHECK: SetLiteralPrototype v9, v2 [refusesOtherValues]
+}
+
+function f12 name="a-test-that-refuses-for-somebody-else" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    v2 = RequireType v1 requiredType=null|object runtimeError=IteratorResultNotObject
+    v3 = NewObject -, v0 layout=L0 fields=[0]
+    SetLiteralPrototype v3, v1
+    v5 = FinishObject v3
+    Return v5
+# CHECK: = RequireType v1
+# CHECK: SetLiteralPrototype v3, v1
+# CHECK-NOT: refusesOtherValues
+}
+
+function f13 name="a-link-that-refuses-itself" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    v2 = RequireType v1 requiredType=null|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate
+    v3 = NewObject -, v0 layout=L0 fields=[0]
+    SetLiteralPrototype v3, v1 [refusesOtherValues]
+    v5 = FinishObject v3
+    Return v5
+# CHECK: = RequireType v1
+# CHECK: SetLiteralPrototype v3, v1 [refusesOtherValues]
+}

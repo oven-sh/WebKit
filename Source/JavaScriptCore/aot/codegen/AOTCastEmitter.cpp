@@ -67,17 +67,17 @@ void CastEmitter::requireObjectCoercible(const ValueContext& value)
     emitter<ThrowEmitter>().requireNotNullish(value, get(source), typeOf(source), value->nullishAccess(), value->name());
 }
 
-void CastEmitter::generateRequireObject(const ValueContext& value)
+void CastEmitter::requireType(const ValueContext& value, TypeID required)
 {
     ValueID source = value->valueOperand();
     Operand operand = get(source);
-    const TypeTestPlan& plan = planFor(source, TypeTable::object);
+    const TypeTestPlan& plan = planFor(source, required);
     if (plan.verdict != TypeTestVerdict::AlwaysPasses) {
-        LBasicBlock isNotObject = newBlock();
+        LBasicBlock isOutside = newBlock();
         LBasicBlock continuation = newBlock();
-        branchOnType(operand, plan, { normalEdge(continuation), rareEdge(isNotObject) });
+        branchOnType(operand, plan, { normalEdge(continuation), rareEdge(isOutside) });
 
-        m_out.appendTo(isNotObject);
+        m_out.appendTo(isOutside);
         callVoidOperation(value, RuntimeOperation::ThrowRuntimeError, { word32(static_cast<int32_t>(value->runtimeError())) }, { .isOnRarePath = true });
         m_out.unreachable();
 

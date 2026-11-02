@@ -1,0 +1,28 @@
+# The link to the prototype refuses what Object.create does not take, and is charged nothing for that. Where a test stands for the refusal, the function is worth what it was: whether it
+# is inlined does not turn on where the refusal stands.
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass SummarizeForInlining
+# CHECK: f1: barrier=None bytes=112
+# CHECK-NEXT: f2: barrier=None bytes=112
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Made" fields=[{key="first" declared={type=number}}]
+function f0 name="somebody" parameters=[{type=anything}] results=[{type=number}]
+
+function f1 name="theLinkRefuses" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    v2 = CallDirect v0 function=f0
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    SetLiteralPrototype v3, v1 [refusesOtherValues]
+    v5 = FinishObject v3
+    Return v5
+}
+
+function f2 name="aTestRefuses" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    v2 = RequireType v1 requiredType=null|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate
+    v3 = CallDirect v0 function=f0
+    v4 = NewObject -, v3 layout=L0 fields=[0]
+    SetLiteralPrototype v4, v1
+    v6 = FinishObject v4
+    Return v6
+}

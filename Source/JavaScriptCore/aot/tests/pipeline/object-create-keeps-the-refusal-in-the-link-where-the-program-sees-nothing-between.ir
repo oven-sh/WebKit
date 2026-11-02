@@ -1,0 +1,114 @@
+# const sized = { get size() { return this.items } }   const counted = { get count() { return this.more } }   function seven() { return 7 }
+# function plain(proto) { const made = Object.create(proto); made.items = 7; return made }   function behindCall(proto) { const made = Object.create(proto); made.more = seven(); return made }
+# report(plain(sized).size)   report(behindCall(counted).count)   try { plain(1); report("no error") } catch (error) { report(error.message) }   try { behindCall(1); report("no error") } catch (error) { report(error.message) }
+# In plain() the allocation passes a number on its way to the first store. The program sees nothing of that: no test is made, and the link refuses as it did.
+# In behindCall() it passes a call, so a test stays where the link stood. Then the call is inlined and leaves a number. Behind selection the link refuses again, and the test is gone.
+# FORM: AsRead
+# OPTIONS: check=VerifyEachPass
+# RUN(LISTED): pipeline ResolveAccesses
+# RUN(SELECTED): pipeline Select
+# RUN: run-in-shell globalThis.report = text => print(text);
+# LISTED-LABEL: function f2 name="plain"
+# LISTED-NOT: RequireType
+# LISTED: = NewObject -,
+# LISTED-NEXT: SetLiteralPrototype {{*}}[refusesOtherValues]
+# LISTED-LABEL: function f3 name="behindCall"
+# LISTED: = RequireType v0 requiredType=null|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate
+# LISTED: = NewObject -,
+# LISTED-NEXT: SetLiteralPrototype
+# LISTED-NOT: refusesOtherValues
+# SELECTED-LABEL: function f2 name="plain"
+# SELECTED-NOT: RequireType
+# SELECTED: SetLiteralPrototype {{*}}[refusesOtherValues]
+# SELECTED-LABEL: function f3 name="behindCall"
+# SELECTED-NOT: RequireType
+# SELECTED: SetLiteralPrototype {{*}}[refusesOtherValues]
+# CHECK: 7
+# CHECK-NEXT: 7
+# CHECK-NEXT: Object prototype may only be an Object or null.
+# CHECK-NEXT: Object prototype may only be an Object or null.
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 fields=[{key="size" declared={type=anything} flags=[IsRequired]}]
+layout L1 fields=[{key="count" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="seven" module=m0 declared={type=anything} flags=[IsImmutable]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    PutModuleVariable v0 variable=g0
+    v2 = NewClosure function=f2
+    v3 = NewClosure function=f3
+    v4 = NewObject layout=L0
+    v5 = NewClosure function=f4
+    DefineGetter v4, v5 key="size"
+    v7 = FinishObject v4
+    v8 = NewObject layout=L1
+    v9 = NewClosure function=f5
+    DefineGetter v8, v9 key="count"
+    v11 = FinishObject v8
+    v12 = Builtin builtin=GlobalThis
+    v13 = PropGet v12 key="report" [isFreeName]
+    v14 = Call v2, -, v7
+    v15 = PropGet v14 key="size"
+    v16 = Call v13, -, v15
+    v17 = Call v3, -, v11
+    v18 = PropGet v17 key="count"
+    v19 = Call v13, -, v18
+    Jump -> next b1()
+  b1() handler=b3():
+    v20 = Integer integer=1
+    v21 = Call v2, -, v20
+    v22 = String string="no error"
+    v23 = Call v13, -, v22
+    Jump -> next b2()
+  b2():
+    Jump -> next b4()
+  b3() role=CatchHandler:
+    v24 = CatchValue
+    v25 = PropGet v24 key="message"
+    v26 = Call v13, -, v25
+    Jump -> next b2()
+  b4() handler=b6():
+    v27 = Integer integer=1
+    v28 = Call v3, -, v27
+    v29 = String string="no error"
+    v30 = Call v13, -, v29
+    Jump -> next b5()
+  b5():
+    Return
+  b6() role=CatchHandler:
+    v31 = CatchValue
+    v32 = PropGet v31 key="message"
+    v33 = Call v13, -, v32
+    Jump -> next b5()
+}
+function f1 name="seven" results=[{type=anything}] {
+    v0 = Integer integer=7
+    Return v0
+}
+function f2 name="plain" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectCreate
+    v3 = Call v2, v1, v0
+    v4 = Integer integer=7
+    PropSet v3, v4 key="items"
+    Return v3
+}
+function f3 name="behindCall" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectCreate
+    v3 = Call v2, v1, v0
+    v4 = GetModuleVariable variable=g0
+    v5 = Call v4, -
+    PropSet v3, v5 key="more"
+    Return v3
+}
+function f4 name="size" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = PropGet v0 key="items"
+    Return v1
+}
+function f5 name="count" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = PropGet v0 key="more"
+    Return v1
+}

@@ -1,0 +1,80 @@
+# A RequireType of an object that the pass holds itself passes where the object is inside the required type: it goes, and the pass says why. Null, which Object.create takes, passes too.
+# Where one of the values that meet is refused, the test stays on the way of that value, and nothing follows it there.
+# The type of the operand need not name the object: what the pass holds answers, and the pass says why the test goes.
+# FORM: Prepared optimizing
+# OPTIONS: check=VerifyEachPass
+# RUN: pass SinkAllocations EliminateDeadCode
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Found" fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=number} flags=[IsRequired]}]
+
+function f0 name="aFreshObject" parameters=[{type=number}, {type=number}] results=[{type=anything}] {
+  b0(v0: number, v1: number):
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = RequireType v2 requiredType=null|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate
+    v4 = PropGet v2 key="a" receivers=[L0]
+    Return v4
+# CHECK-NEXT: b0(v0: number, v1: number):
+# CHECK-NEXT: = Upcast v0 castType=anything
+# CHECK-NEXT: Return v4
+}
+
+function f1 name="aFreshObjectOrNull" parameters=[{type=number}, {type=number}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: number, v1: number, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    Jump -> next b3(v3)
+  b2():
+    v4 = Null
+    Jump -> next b3(v4)
+  b3(v5: null|L0):
+    v6 = RequireType v5 requiredType=null|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate
+    v7 = ToBoolean v5
+    Branch v7 -> taken b4(| 0), notTaken b5()
+  b4(v8: L0):
+    v9 = PropGet v8 key="a" receivers=[L0]
+    Return v9
+  b5():
+    Return
+# CHECK-NOT: RequireType
+# CHECK-NOT: NewObject
+}
+
+function f2 name="aFreshObjectOrUndefined" parameters=[{type=number}, {type=number}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: number, v1: number, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    Jump -> next b3(v3)
+  b2():
+    v4 = Undefined
+    Jump -> next b3(v4)
+  b3(v5: undefined|L0):
+    v6 = RequireType v5 requiredType=null|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate
+    v7 = TypeTest v5 testedType=L0
+    Branch v7 -> taken b4(| 0), notTaken b5()
+  b4(v8: L0):
+    v9 = PropGet v8 key="a" receivers=[L0]
+    Return v9
+  b5():
+    Return
+# CHECK-NOT: NewObject
+# CHECK: frequency=Rare:
+# CHECK-NEXT: = Undefined
+# CHECK-NEXT: never = RequireType {{*}} requiredType=null|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate
+# CHECK-NEXT: Unreachable
+# CHECK-NOT: RequireType
+}
+
+function f3 name="aFreshObjectThatItsTypeDoesNotName" parameters=[{type=number}, {type=number}] results=[{type=anything}] {
+  b0(v0: number, v1: number):
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    Jump -> next b1(v2)
+  b1(v3: anything):
+    v4: null|object = RequireType v3 requiredType=null|object runtimeError=PrototypeIsNeitherObjectNorNull calledBuiltin=ObjectCreate
+    v5 = PropGet v2 key="a" receivers=[L0]
+    Return v5
+# CHECK-NOT: RequireType
+# CHECK-NOT: NewObject
+}

@@ -26,11 +26,13 @@ public:
     void generateCheckInitialized(const ValueContext&);
     void generateRequireObjectCoercible(const ValueContext&);
     void requireObjectCoercible(const ValueContext&);
-    void generateRequireObject(const ValueContext&);
+    void generateRequireObject(const ValueContext& value) { requireType(value, TypeTable::object); }
+    void generateRequireType(const ValueContext& value) { requireType(value, value->requiredType()); }
     void generateTypeTest(const ValueContext&);
 
 private:
     const TypeTestPlan& planFor(ValueID operand, TypeID to) { return typeTestPlanFor(m_function.at(operand).type, representationOf(operand), to); }
+    void requireType(const ValueContext&, TypeID);
     void testAheadOfNullishCheck(const ValueContext& test, Operand);
     void testAtLandingOfMisfit(const ValueContext& test, ValueID call, const CodeGenerator::LandingOfMisfit&, const TypeTestPlan&);
 };

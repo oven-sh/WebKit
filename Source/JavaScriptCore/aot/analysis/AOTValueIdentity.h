@@ -50,6 +50,21 @@ ValueID sameObjectBehindFacts(const Function&, ValueID);
 RootThroughCasts sameObjectThroughConversionsToObject(const Function&, ValueID);
 ValueID definitionThroughUpcasts(const Function&, ValueID);
 
+// Object.create refuses what is neither an object nor null, and the link to the prototype does that for the call. Whether this link may be handed such a value.
+inline bool mayRefuseItsPrototype(const Program& program, const Function& function, const Value& link)
+{
+    if (!link.refusesOtherValues())
+        return false;
+    const Type& prototype = program.typeOf(function, link.prototypeOperand());
+    return prototype.hasObjects() ? !!(prototype.primitives & ~Primitive::Null) : !prototype.hasOnlyPrimitives(Primitive::Null);
+}
+
+// The test that stands for that refusal where the link itself has gone behind something that the program can see: listFirstStoresAtAllocations().
+inline bool isRefusalOfPrototype(const Value& value)
+{
+    return value.opcode == Opcode::RequireType && value.runtimeError() == RuntimeErrorKind::PrototypeIsNeitherObjectNorNull;
+}
+
 inline bool leavesDeadZoneBehind(const Program& program, const Function& function, const Value& value)
 {
     if (value.opcode == Opcode::CheckInitialized)
