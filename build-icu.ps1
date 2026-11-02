@@ -79,7 +79,7 @@ $ICU_SOURCE_STAMP = Join-Path $OutputDir "source-version.txt"
 if (Test-Path $ICU_SOURCE_DIR) {
     $have = if (Test-Path $ICU_SOURCE_STAMP) { (Get-Content $ICU_SOURCE_STAMP -Raw).Trim() } else { "" }
     if ($have -ne $ICU_VERSION) {
-        Write-Host ":: $ICU_SOURCE_DIR is ICU '$have', not $ICU_VERSION: removing it"
+        Write-Host ":: $ICU_SOURCE_DIR is ICU '$have', not ${ICU_VERSION}: removing it"
         Remove-Item -Recurse -Force $ICU_SOURCE_DIR
     }
 }
