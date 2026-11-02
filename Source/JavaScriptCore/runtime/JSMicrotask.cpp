@@ -2528,8 +2528,11 @@ static void runBunInvokeJobWithArguments(JSGlobalObject* globalObject, VM& vm, I
 #if ENABLE(AOT) && OS(WINDOWS) && COMPILER(CLANG)
 // As LEAVE_FOR_COMPILED_JOB: MUST_TAIL_CALL is empty on Windows, and the frame has to end here there too.
 #define JSC_LEAVE_FOR_INTERNAL_MICROTASK_JOB [[clang::musttail]] return
-#else
+#elif USE(BUN_JSC_ADDITIONS)
 #define JSC_LEAVE_FOR_INTERNAL_MICROTASK_JOB MUST_TAIL_CALL return
+#else
+// A job has the fourth argument in its signature and the dispatcher has not, so this is no tail call.
+#define JSC_LEAVE_FOR_INTERNAL_MICROTASK_JOB return
 #endif
 
 #if USE(BUN_JSC_ADDITIONS)
@@ -2538,6 +2541,9 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
 void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotask task, uint8_t payload, JSValue argument0, JSValue argument1, JSValue argument2, MicrotaskCallCache* microtaskCallCache)
 #endif
 {
+#if !USE(BUN_JSC_ADDITIONS)
+    JSValue argument3;
+#endif
     switch (task) {
 #define JSC_DISPATCH_INTERNAL_MICROTASK_JOB(name) \
     case InternalMicrotask::name: \
