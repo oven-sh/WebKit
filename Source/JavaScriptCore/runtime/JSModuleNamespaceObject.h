@@ -84,6 +84,7 @@ private:
     bool getOwnPropertySlotCommon(JSGlobalObject*, PropertyName, PropertySlot&);
 #if USE(BUN_JSC_ADDITIONS)
     bool getOwnPropertySlotForLiveExports(JSGlobalObject*, PropertyName, PropertySlot&);
+    void setLiveAccessorSlot(PropertySlot&, const PropertySlot& sourceSlot, unsigned attributes);
     std::optional<bool> getOwnPropertySlotIfDeferredOrLive(JSGlobalObject*, PropertyName, PropertySlot&);
     JSObject* liveExportsSource() const { return m_isDeferredOrLive && m_moduleRecord->hasLiveExports() ? m_moduleRecord->liveExportsSource() : nullptr; }
 #endif
