@@ -4949,7 +4949,7 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
 
 void Modules::holdImportBehindLoad(ModuleID root, ModuleID module, std::optional<int64_t> referrerAsyncOrder, JSPromise* promise, uint32_t jobsWaited)
 {
-    m_importsBehindLoads.append(ImportBehindLoad { root, module, referrerAsyncOrder, Strong<JSPromise>(*m_instance.vm, promise), m_roundsOfJobs - std::min(jobsWaited, m_roundsOfJobs), root == module || leadsTo(root, module) });
+    m_importsBehindLoads.append(ImportBehindLoad { root, module, referrerAsyncOrder, Strong<JSPromise>(*m_instance.vm, promise), m_roundsOfJobs - std::min(jobsWaited, m_roundsOfJobs), root == module || leadsTo(root, module), currentAsyncContext() });
     queueJobOfRound(module);
 }
 
@@ -5082,6 +5082,9 @@ void Modules::resumeImportsBehindLoad(ModuleID root)
         // The job of this round is among them. It is spent in a job of the call's own: the graph it waited for may not have run yet.
         SetForScope jobsWaited(m_jobsThatCallHasWaited, import.isOfGraph ? 0 : m_roundsOfJobs - import.roundAtCall + 1);
         SetForScope isOfGraphThatRan(m_isCallMadeAgainOfGraphThatRan, import.isOfGraph);
+        // The call is made again as a job of its own would make it: under the async context of the call, and under none where it had none.
+        AsyncContextSwapScope asyncContextOfCall(vm, m_instance.globalObject, import.asyncContext.get());
+        ModuleEvaluationAsyncContextScope jobOfImport(vm, m_instance.globalObject, import.asyncContext.get());
         JSPromise* loaded = startImport(import.module, import.referrerAsyncOrder, ImportCaller::CompiledCode, TextOfImport::HasCome, promise);
         if (scope.exception()) [[unlikely]] {
             if (vm.isTerminationException(scope.exception()))

@@ -1381,6 +1381,8 @@ private:
         uint32_t roundAtCall;
         // The module runs with the graph that the call waits for: the call has nothing of its own to load, and settles behind that one.
         bool isOfGraph;
+        // The async context of the call, which the call is made again under. Empty where there is none.
+        Strong<Unknown> asyncContext { };
     };
     Vector<ImportBehindLoad> m_importsBehindLoads;
     void holdImportBehindLoad(ModuleID root, ModuleID, std::optional<int64_t> referrerAsyncOrder, JSPromise*, uint32_t jobsWaited);
