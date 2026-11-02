@@ -29,6 +29,21 @@
 
 namespace WTF {
 
+MessageStatus trySendMessageScoped(const ThreadSuspendLocker& locker, Thread& thread, NOESCAPE const ThreadMessage& message)
+{
+    auto result = thread.trySuspend(locker);
+    if (!result)
+        return MessageStatus::SuspensionFailed;
+    if (*result == Thread::SuspendResult::TemporarilyUnavailable)
+        return MessageStatus::TemporarilyUnavailable;
+
+    PlatformRegisters registers;
+    thread.getRegisters(locker, registers);
+    message(registers);
+    thread.resume(locker);
+    return MessageStatus::MessageRan;
+}
+
 MessageStatus sendMessageScoped(const ThreadSuspendLocker& locker, Thread& thread, NOESCAPE const ThreadMessage& message)
 {
     auto result = thread.suspend(locker);
