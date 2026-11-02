@@ -69,6 +69,18 @@ async function shouldThrowAsync(func, errorType) {
 
         // importing non-existent ref fails
         await shouldThrowAsync(async () => { let x = await realm.importValue(importPath, "nothing"); }, TypeError);
+        // so does a name that only an ordinary object would inherit: a module namespace has a null prototype
+        await shouldThrowAsync(async () => { let x = await realm.importValue(importPath, "toString"); }, TypeError);
+        await shouldThrowAsync(async () => { let x = await realm.importValue(importPath, "__proto__"); }, TypeError);
+        await shouldThrowAsync(async () => { let x = await realm.importValue(importPath, "__esModule"); }, TypeError);
+
+        // an export that exists with the value undefined is not missing
+        shouldBe(await realm.importValue(importPath, "undefinedValue"), undefined);
+        // and a live binding that is still undefined reads its current value each time
+        shouldBe(await realm.importValue(importPath, "notYet"), undefined);
+        let innerSetNotYet = await realm.importValue(importPath, "setNotYet");
+        innerSetNotYet("now");
+        shouldBe(await realm.importValue(importPath, "notYet"), "now");
 
         // importing from non-existent file fails
         await shouldThrowAsync(async () => { let x = await realm.importValue("random", "nothing"); }, TypeError);
