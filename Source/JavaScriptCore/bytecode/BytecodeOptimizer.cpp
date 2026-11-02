@@ -424,7 +424,7 @@ void BytecodeOptimizerAccess::decode()
                     break;
                 default:
                     // Operands that name the start of a register range are not individually renameable.
-                    if ((insn.opcode == op_new_array || insn.opcode == op_new_array_with_spread) && name == BytecodeOperandName::argv)
+                    if ((insn.opcode == op_new_array || insn.opcode == op_new_array_with_spread || insn.opcode == op_call_varargs_with_spread) && name == BytecodeOperandName::argv)
                         break;
                     if (insn.opcode == op_strcat && name == BytecodeOperandName::src)
                         break;
@@ -528,6 +528,14 @@ void BytecodeOptimizerAccess::computeImplicitUses(Insn& insn)
     case op_call_varargs:
         varargsLike(insn.instruction->as<OpCallVarargs>());
         break;
+    case op_call_varargs_with_spread: {
+        // The arguments are a range of registers, as op_new_array_with_spread has them, and the callee frame is built
+        // from firstFree on, as op_call_varargs builds it.
+        auto op = insn.instruction->as<OpCallVarargsWithSpread>();
+        range(op.m_argv, -1, op.m_argc);
+        varargsLike(op);
+        break;
+    }
     case op_tail_call_varargs:
         varargsLike(insn.instruction->as<OpTailCallVarargs>());
         break;
@@ -1753,6 +1761,7 @@ bool BytecodeOptimizerAccess::eliminateRedundantTDZChecks()
             case op_call:
             case op_construct:
             case op_call_varargs:
+            case op_call_varargs_with_spread:
             case op_construct_varargs:
             case op_get_by_id:
             case op_get_by_val:

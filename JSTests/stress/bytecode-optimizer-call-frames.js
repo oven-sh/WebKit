@@ -34,6 +34,35 @@ shouldBe(nested(1) + "," + nested(10), "24,51", "nested calls as arguments");
     shouldBe(spreadCall(1, 2, 3, 4), "1,2,3,4,x,y,z", "spread tail call");
 })();
 
+// A call with a spread argument among other arguments (op_call_varargs_with_spread) builds the callee frame from its
+// firstFree register on, as op_call_varargs does: a value that is live across the call is not in a register above that.
+(function () {
+    function count() { return arguments.length; }
+    function first(t) { return t; }
+    function readsAfterCall(object, callee, args, start, number) {
+        switch (start) {
+        case 0:
+            let x;
+        case 1: {
+            const r = callee(1, ...args, number + (number + (x = object.p)));
+            return x;
+        }
+        }
+    }
+    function passesOnAfterCall(object, callee, args, next) {
+        const t = object.b;
+        callee(1, ...args);
+        return next(t, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+    }
+    for (let n = 0; n < 8; n++) {
+        const args = [];
+        for (let i = 0; i < n; i++)
+            args.push(7000 + i);
+        shouldBe(readsAfterCall({ p: 1000 }, count, args, 0, 7), 1000, "value read after a call with " + n + " spread arguments");
+        shouldBe(passesOnAfterCall({ b: 1000 }, count, args, first), 1000, "value passed on after a call with " + n + " spread arguments");
+    }
+})();
+
 function jsNull() { return null; }
 function run(f) { try { return String(f()); } catch (e) { return e.constructor.name; } }
 class A { constructor() { this.v = "a"; } }
