@@ -686,6 +686,7 @@ JSArray* Monitoring::state()
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
     listAppend(globalObject, state, what);
+    RETURN_IF_EXCEPTION(scope, nullptr);
     m_runtime.setSlot(Runtime::Slot::Monitoring, state);
     return state;
 }

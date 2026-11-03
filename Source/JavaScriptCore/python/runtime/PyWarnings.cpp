@@ -76,6 +76,7 @@ static JSArray* warningsState(JSGlobalObject* globalObject)
     listAppend(globalObject, state, jsUndefined());
     RETURN_IF_EXCEPTION(scope, nullptr);
     listAppend(globalObject, state, jsNumber(0));
+    RETURN_IF_EXCEPTION(scope, nullptr);
     rt.setSlot(Runtime::Slot::Warnings, state);
     return state;
 }
@@ -86,6 +87,7 @@ static JSValue warningsContextVariable(JSGlobalObject* globalObject)
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSArray* state = warningsState(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
     JSValue variable = listGet(state, WarningsContext);
     if (!isNone(variable))
         return variable;
