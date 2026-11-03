@@ -544,6 +544,9 @@ JSCell* wholeThatPartRefersTo(JSCell* cell)
     if (cell->type() == PyObjectType) {
         if (auto* frame = PyFrame::tryFrom(cell))
             return frame->generator();
+        // The code keeps its code object, once there is one.
+        if (auto* code = PyCode::tryFrom(cell))
+            return code->executable()->pythonCodeObject() == code ? code->executable() : nullptr;
     }
     return nullptr;
 }

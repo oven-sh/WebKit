@@ -63,8 +63,7 @@ bool Runtime::tryEnterFrame()
 }
 
 Runtime::Runtime(JSGlobalObject* globalObject)
-    : codeObjects(globalObject->vm())
-    , m_vm(globalObject->vm())
+    : m_vm(globalObject->vm())
     , m_globalObject(globalObject)
     , m_dictKey(PrivateName::PrivateSymbol, "__dict__"_s)
     , m_hiddenKeys { PrivateName(PrivateName::PrivateSymbol, "hidden0"_s), PrivateName(PrivateName::PrivateSymbol, "hidden1"_s), PrivateName(PrivateName::PrivateSymbol, "hidden2"_s), PrivateName(PrivateName::PrivateSymbol, "hidden3"_s) }

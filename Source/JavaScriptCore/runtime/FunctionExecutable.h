@@ -268,6 +268,26 @@ public:
         ensureRareData().m_cachedPolyProtoStructureID.set(vm, this, structure);
     }
 
+    // For code written in Python: its code object (function.__code__, frame.f_code), once something has asked for it. It lives
+    // as long as the code does: programs keep weak references to it, and tables by its id().
+    JSCell* pythonCodeObject() const
+    {
+        if (m_rareData) [[unlikely]]
+            return m_rareData->m_pythonCodeObject.get();
+        return nullptr;
+    }
+    void setPythonCodeObject(VM& vm, JSCell* code)
+    {
+        ensureRareData().m_pythonCodeObject.set(vm, this, code);
+    }
+
+    // For code written in Python: the code of the functions it defines, which are constants of it. A CodeBlock that has not run
+    // for a while is dropped and made again when it is needed; these stay, so that the functions it makes then have the same
+    // code object as those it made before.
+    FunctionExecutable* pythonFunctionExpression(VM&, unsigned index, unsigned numberOfFunctionExpressions, UnlinkedFunctionExecutable*);
+    // code.replace(co_consts=...), before the code has run.
+    JS_EXPORT_PRIVATE void setPythonFunctionExpression(VM&, unsigned index, unsigned numberOfFunctionExpressions, FunctionExecutable*);
+
     InlineWatchpointSet& ensurePolyProtoWatchpoint()
     {
         if (!m_polyProtoWatchpoint)
@@ -318,6 +338,8 @@ public:
         WriteBarrierStructureID m_cachedPolyProtoStructureID;
         std::unique_ptr<TemplateObjectMap> m_templateObjectMap;
         WriteBarrier<JSString> m_asString;
+        WriteBarrier<JSCell> m_pythonCodeObject;
+        FixedVector<WriteBarrier<FunctionExecutable>> m_pythonFunctionExpressions;
         unsigned m_functionStart { UINT_MAX };
         unsigned m_functionEnd { UINT_MAX };
     };

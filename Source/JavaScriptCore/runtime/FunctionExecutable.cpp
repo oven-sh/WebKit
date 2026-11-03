@@ -103,6 +103,12 @@ void FunctionExecutable::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     if (RareData* rareData = thisObject->m_rareData.get()) {
         visitor.append(rareData->m_cachedPolyProtoStructureID);
         visitor.append(rareData->m_asString);
+        visitor.append(rareData->m_pythonCodeObject);
+        {
+            Locker locker { thisObject->cellLock() };
+            for (auto& functionExpression : rareData->m_pythonFunctionExpressions)
+                visitor.append(functionExpression);
+        }
         if (TemplateObjectMap* map = rareData->m_templateObjectMap.get()) {
             Locker locker { thisObject->cellLock() };
             for (auto& entry : *map)
@@ -240,6 +246,29 @@ void FunctionExecutable::overrideInfo(const FunctionOverrideInfo& overrideInfo)
     rareData.m_parametersStartOffset = overrideInfo.parametersStartOffset;
     rareData.m_functionStart = overrideInfo.functionStart;
     rareData.m_functionEnd = overrideInfo.functionEnd;
+}
+
+void FunctionExecutable::setPythonFunctionExpression(VM& vm, unsigned index, unsigned numberOfFunctionExpressions, FunctionExecutable* executable)
+{
+    RareData& rareData = ensureRareData();
+    if (rareData.m_pythonFunctionExpressions.size() != numberOfFunctionExpressions) {
+        RELEASE_ASSERT(rareData.m_pythonFunctionExpressions.isEmpty());
+        FixedVector<WriteBarrier<FunctionExecutable>> functionExpressions(numberOfFunctionExpressions);
+        Locker locker { cellLock() };
+        rareData.m_pythonFunctionExpressions = WTF::move(functionExpressions);
+    }
+    rareData.m_pythonFunctionExpressions[index].set(vm, this, executable);
+}
+
+FunctionExecutable* FunctionExecutable::pythonFunctionExpression(VM& vm, unsigned index, unsigned numberOfFunctionExpressions, UnlinkedFunctionExecutable* unlinkedExecutable)
+{
+    if (m_rareData && m_rareData->m_pythonFunctionExpressions.size() == numberOfFunctionExpressions) {
+        if (FunctionExecutable* executable = m_rareData->m_pythonFunctionExpressions[index].get())
+            return executable;
+    }
+    FunctionExecutable* executable = unlinkedExecutable->link(vm, topLevelExecutable(), source(), std::nullopt, NoIntrinsic, isInsideOrdinaryFunction());
+    setPythonFunctionExpression(vm, index, numberOfFunctionExpressions, executable);
+    return executable;
 }
 
 auto FunctionExecutable::ensureTemplateObjectMap(VM&) -> TemplateObjectMap&

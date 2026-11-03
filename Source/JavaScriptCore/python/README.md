@@ -130,6 +130,12 @@ become a trailing object, whole floats become numbers.
   finalization, but not when it is made: most are done long before the next collection. It is written down
   (`noteFinalizableGenerator`), and those still unfinished when a collection comes are registered then.
 
+**Code objects.** The code is a `FunctionExecutable`; a code object (`PyCode`) is made for it when something asks (`f.__code__`, `frame.f_code`,
+`co_consts`), and from then on the executable holds it, so it is one object for as long as the code is there: programs keep weak
+references to code objects and tables by their `id()`. JSC drops a `CodeBlock` that has not run for a while and links it again when it is
+called. The executables of the functions that Python code defines do not go with it (`FunctionExecutable::pythonFunctionExpression()`): they are
+constants of the code, and the functions made after have the same code object as those made before.
+
 **Exceptions** are JSC exceptions whose value is a `PyException`. The unwinder tells the runtime about each Python frame it
 passes (`addTracebackEntry`), which is how tracebacks are built. A frame that has not got as far as the program's own code
 (`PythonMark::Start`) is not in the traceback: arguments that do not fit, the first iterable of a generator expression.
@@ -505,7 +511,7 @@ What every program pays, with the sizes of a release build for x86-64:
 | `VM` (one) | 72 bytes of 110,984: 56 in `Heap` (the list of runtimes, two more owners of finalizers, a subspace pointer), 8 in `VMTraps`, 8 of padding |
 | `JSLock` (one per VM) | 72 bytes: the list of parked threads |
 | `JSGlobalObject` | 8 bytes: the pointer to the runtime |
-| `UnlinkedCodeBlock::RareData`, `UnlinkedFunctionExecutable::RareData` | 8 bytes each, where there is rare data. `CodeBlock`, `UnlinkedCodeBlock`, `UnlinkedFunctionExecutable`, `CallLinkInfo`, `Structure`, `JSString`, `JSArray`, `JSFunction`: nothing |
+| `UnlinkedCodeBlock::RareData`, `UnlinkedFunctionExecutable::RareData` | 8 bytes each, where there is rare data; `FunctionExecutable::RareData` 16. `CodeBlock`, `UnlinkedCodeBlock`, `UnlinkedFunctionExecutable`, `CallLinkInfo`, `Structure`, `JSString`, `JSArray`, `JSFunction`: nothing |
 | `JSType`, opcodes, `SpeculatedType`, `UseKind`, `VMTraps` | 19 of the 256 cell types, 55 of the 255 opcodes, 1 of 64 bits, 1 of 64 kinds, 1 of 32 bits |
 | `==` on two objects, DFG and FTL | nothing where the site has seen only plain objects (instances of classes are), only arrays or only functions. Otherwise, for each operand not known to be something else: subtract, compare, branch |
 | `==`, `<`, `+`, `-`... in the slow paths | for each operand that is a cell: the same test, before the conversion to a primitive |

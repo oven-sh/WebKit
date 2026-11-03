@@ -86,6 +86,11 @@ public:
         bool isUsed { true }; // False: it only went into making another constant.
     };
     Vector<Constant> constants;
+    // The constants are no longer those of the text: code.replace(co_consts=...).
+    bool hasReplacedConstants { false };
+    // It has put other code in the place of one of the functions. That has a text of its own, so marshal,
+    // which writes one text for all the code, cannot write this.
+    bool hasFunctionsFromElsewhere { false };
 
     // A generator function only binds its arguments. The body is another function, this index among those of the code block.
     static constexpr unsigned generatorBodyIndex = 0;

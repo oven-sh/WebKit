@@ -259,6 +259,8 @@ MarshalledCodeHeader MarshalledCodeHeader::read(std::span<const uint8_t, size> b
 bool writeMarshalledCode(JSGlobalObject* globalObject, PyCode* code, Vector<uint8_t>& out)
 {
     FunctionExecutable* executable = code->executable();
+    if (code->codeInfo().hasFunctionsFromElsewhere)
+        return false;
     Monitoring::OriginalInstructions originalInstructions(runtime(globalObject).monitoring());
     RefPtr<CachedBytecode> payload = encodePythonCode(getVM(globalObject), executable->unlinkedExecutable(), executable->source());
     if (!payload || payload->size() > std::numeric_limits<int32_t>::max())

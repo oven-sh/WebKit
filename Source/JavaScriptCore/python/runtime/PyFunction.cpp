@@ -1100,13 +1100,13 @@ PyCode* PyCode::of(JSGlobalObject* globalObject, FunctionExecutable* executable)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
-    if (PyCode* existing = rt.codeObjects.get(executable))
-        return existing;
+    if (JSCell* existing = executable->pythonCodeObject())
+        return uncheckedDowncast<PyCode>(existing);
     auto* code = new (NotNull, allocateCell<PyCode>(vm)) PyCode(vm, rt.structure<PyCode>(), rt.codeType());
     code->finishCreation(vm);
     code->m_executable.set(vm, code, executable);
     code->m_codeFlags = code->codeInfo().flags;
-    rt.codeObjects.set(executable, code);
+    executable->setPythonCodeObject(vm, code);
     return code;
 }
 
@@ -1150,6 +1150,7 @@ DEFINE_VISIT_CHILDREN(PyCode);
 // result. These only describe the code then. What runs goes by the CodeInfo: a traceback shows the names that has.
 static constexpr unsigned codeReplacedField = 0;
 static constexpr unsigned codePositionsField = 1; // See codePositions().
+static constexpr unsigned codeBytesField = 2; // co_code, once it has been asked for: tracers look at it for every line.
 
 static JSValue codeReplaced(JSGlobalObject* globalObject, JSValue self, ASCIILiteral name)
 {
@@ -1291,6 +1292,20 @@ static JSValue codeGetCellVars(JSGlobalObject* globalObject, JSValue self)
 // The constants, as CPython would have them, or nearly: it works out more from constants than is done here. It leaves out
 // those its instructions do not need: what went into making another constant, and what there are instructions to load
 // without one. But never the first, where the docstring would be.
+// The items of co_consts.
+template<typename Function>
+static void forEachConstantShown(JSGlobalObject* globalObject, PyCode* code, CodeBlock* codeBlock, const Function& function)
+{
+    bool isFirst = true;
+    for (auto& constant : code->codeInfo().constants) {
+        JSValue value = constant.reg.isValid() ? codeBlock->getConstant(constant.reg) : JSValue(PyCode::of(globalObject, codeBlock->functionExpr(constant.functionIndex)));
+        bool needsNoConstant = isNone(value) || value.isBoolean() || (isSmallInt(value) && smallIntValue(value) >= -1 && smallIntValue(value) <= 255) || (value.isString() && !asString(value)->length());
+        if (isFirst || (constant.isUsed && !needsNoConstant))
+            function(constant, value);
+        isFirst = false;
+    }
+}
+
 static JSValue codeGetConsts(JSGlobalObject* globalObject, JSValue self)
 {
     VM& vm = getVM(globalObject);
@@ -1299,12 +1314,9 @@ static JSValue codeGetConsts(JSGlobalObject* globalObject, JSValue self)
     CodeBlock* codeBlock = codeBlockOf(globalObject, code);
     RETURN_IF_EXCEPTION(scope, { });
     MarkedArgumentBuffer constants;
-    for (auto& constant : code->codeInfo().constants) {
-        JSValue value = constant.reg.isValid() ? codeBlock->getConstant(constant.reg) : JSValue(PyCode::of(globalObject, codeBlock->functionExpr(constant.functionIndex)));
-        bool needsNoConstant = isNone(value) || value.isBoolean() || (isSmallInt(value) && smallIntValue(value) >= -1 && smallIntValue(value) <= 255) || (value.isString() && !asString(value)->length());
-        if (constants.isEmpty() || (constant.isUsed && !needsNoConstant))
-            constants.append(value);
-    }
+    forEachConstantShown(globalObject, code, codeBlock, [&](const CodeInfo::Constant&, JSValue value) {
+        constants.append(value);
+    });
     RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, spanOf(constants)));
 }
 
@@ -1410,7 +1422,7 @@ static bool codesAreEqual(JSGlobalObject* globalObject, PyCode* a, PyCode* b)
     const SourceCode& firstSource = a->executable()->source();
     const SourceCode& secondSource = b->executable()->source();
     bool sameColumn = codeStartColumn(firstSource) == codeStartColumn(secondSource);
-    if (firstSource.view() == secondSource.view() && sameColumn)
+    if (firstSource.view() == secondSource.view() && sameColumn && !first.hasReplacedConstants && !second.hasReplacedConstants)
         return true;
     // Not every instruction has its place recorded. Where the code starts tells two lambdas of a line apart. (The text of code made from a tree is blank.)
     auto hasText = [](const SourceCode& source) {
@@ -1507,6 +1519,79 @@ static PyCode* describeAnew(JSGlobalObject* globalObject, PyCode* fresh, const S
     return PyCode::ofWithFlags(globalObject, fresh->executable(), flags);
 }
 
+// replace(co_consts=...). The instructions stay, so a constant can only make way for one that they can do the same with: a number,
+// a str or a bytes for another of its type, the code of a function for code that wants as many cells of the enclosing function.
+struct ReplacedConstant {
+    CodeInfo::Constant constant;
+    JSValue value; // Kept alive by the tuple it is from.
+};
+
+// False: an exception.
+static bool codeFindReplacedConstants(JSGlobalObject* globalObject, PyCode* code, PyTuple* wanted, Vector<ReplacedConstant>& result)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    CodeBlock* codeBlock = codeBlockOf(globalObject, code);
+    RETURN_IF_EXCEPTION(scope, false);
+    Vector<ReplacedConstant> current;
+    forEachConstantShown(globalObject, code, codeBlock, [&](const CodeInfo::Constant& constant, JSValue value) {
+        current.append({ constant, value });
+    });
+    if (current.size() != wanted->length()) {
+        raiseNotImplementedError(globalObject, scope, "code.replace() cannot change the number of constants"_s);
+        return false;
+    }
+    for (unsigned i = 0; i < current.size(); ++i) {
+        JSValue before = current[i].value;
+        JSValue after = wanted->at(i);
+        if (before == after)
+            continue;
+        if (auto* codeBefore = PyCode::tryFrom(before)) {
+            auto* codeAfter = PyCode::tryFrom(after);
+            if (!codeAfter || codeAfter->codeInfo().freeVariables.size() != codeBefore->codeInfo().freeVariables.size()) {
+                raiseNotImplementedError(globalObject, scope, "code.replace() can only put code with as many free variables in the place of code in co_consts"_s);
+                return false;
+            }
+        } else {
+            bool same = constantsAreTheSame(globalObject, before, after);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (same)
+                continue;
+            PyType* type = typeOf(globalObject, before);
+            Runtime& rt = runtime(globalObject);
+            bool isSimple = type == rt.intType() || type == rt.floatType() || type == rt.complexType() || type == rt.strType() || type == rt.bytesType();
+            if (!isSimple || typeOf(globalObject, after) != type) {
+                raiseNotImplementedError(globalObject, scope, "code.replace() can only put a number, a str or a bytes in the place of another of the same type in co_consts"_s);
+                return false;
+            }
+        }
+        result.append({ current[i].constant, after });
+    }
+    return true;
+}
+
+// `fresh` is code that nobody has seen yet, and that has not run.
+static void codeChangeConstants(JSGlobalObject* globalObject, PyCode* fresh, const Vector<ReplacedConstant>& changes)
+{
+    VM& vm = getVM(globalObject);
+    FunctionExecutable* owner = fresh->executable();
+    UnlinkedFunctionCodeBlock* codeBlock = owner->unlinkedExecutable()->codeBlocksDecodingCached(vm).first;
+    if (fresh->codeInfo().isGeneratorLike()) {
+        UnlinkedFunctionExecutable* body = codeBlock->functionExpr(CodeInfo::generatorBodyIndex);
+        owner = owner->pythonFunctionExpression(vm, CodeInfo::generatorBodyIndex, codeBlock->numberOfFunctionExprs(), body);
+        codeBlock = body->codeBlocksDecodingCached(vm).first;
+    }
+    fresh->codeInfo().hasReplacedConstants |= !changes.isEmpty();
+    for (auto& change : changes) {
+        if (change.constant.reg.isValid()) {
+            codeBlock->constantRegister(change.constant.reg).set(vm, codeBlock, change.value);
+            continue;
+        }
+        owner->setPythonFunctionExpression(vm, change.constant.functionIndex, codeBlock->numberOfFunctionExprs(), PyCode::from(change.value)->executable());
+        fresh->codeInfo().hasFunctionsFromElsewhere = true;
+    }
+}
+
 static JSValue codeReplace(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
 {
     Runtime& rt = runtime(globalObject);
@@ -1538,6 +1623,7 @@ static JSValue codeReplace(JSGlobalObject* globalObject, JSValue self, const Cal
     auto flags = code->flags();
     JSValue before = hiddenField(globalObject, self, codeReplacedField);
     PyDict* replaced = before ? PyDict::from(before)->copy(globalObject) : PyDict::create(globalObject);
+    Vector<ReplacedConstant> replacedConstants;
     // In the order of the parameters, not of the arguments.
     for (auto& field : fields) {
         JSValue value;
@@ -1574,7 +1660,10 @@ static JSValue codeReplace(JSGlobalObject* globalObject, JSValue self, const Cal
             flags = OptionSet<CodeFlag>::fromRaw(static_cast<uint32_t>(value.asInt32()));
         else if (field.describesOnly)
             replaced->set(vm, name, value);
-        else {
+        else if (field.name == "co_consts"_s) {
+            if (failed(scope, codeFindReplacedConstants(globalObject, code, PyTuple::from(value), replacedConstants)))
+                return { };
+        } else {
             // FIXME: The instructions are not CPython's, and cannot be made from these.
             JSValue current = getAttr(globalObject, self, name);
             RETURN_IF_EXCEPTION(scope, { });
@@ -1586,11 +1675,14 @@ static JSValue codeReplace(JSGlobalObject* globalObject, JSValue self, const Cal
                 return raiseNotImplementedError(globalObject, scope, "code.replace() cannot change "_s, field.name);
         }
     }
-    if (replaced->size()) {
+    if (replaced->size() || !replacedConstants.isEmpty()) {
         // The result has instructions of its own (see describeAnew()): what marshal would write and read back.
         Vector<uint8_t> bytes;
         PyCode* copy = !before && writeMarshalledCode(globalObject, code, bytes) ? codeFromLineTable(globalObject, bytes.span()) : nullptr;
+        if (!copy && !replacedConstants.isEmpty())
+            return raiseNotImplementedError(globalObject, scope, "code.replace() cannot change co_consts of code that is itself the result of replace()"_s);
         if (copy) {
+            codeChangeConstants(globalObject, copy, replacedConstants);
             auto text = [&](ASCIILiteral name) -> String {
                 JSValue value = replaced->get(internString(vm, name));
                 return value ? String(strValue(value)->value(globalObject)) : String();
@@ -1850,6 +1942,8 @@ static JSValue codeGetCode(JSGlobalObject* globalObject, JSValue self)
 
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (JSValue known = hiddenField(globalObject, self, codeBytesField))
+        return known;
     CodeBlock* codeBlock = codeBlockOf(globalObject, PyCode::from(self));
     RETURN_IF_EXCEPTION(scope, { });
     Vector<uint8_t> code;
@@ -1979,7 +2073,10 @@ static JSValue codeGetCode(JSGlobalObject* globalObject, JSValue self)
             break;
         }
     }
-    RELEASE_AND_RETURN(scope, PyBytes::create(globalObject, code.span()));
+    JSValue result = PyBytes::create(globalObject, code.span());
+    RETURN_IF_EXCEPTION(scope, { });
+    setHiddenField(globalObject, self, codeBytesField, result);
+    return result;
 }
 
 // (In CPython too it is a "line_iterator".)

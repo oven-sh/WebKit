@@ -625,9 +625,6 @@ public:
     // The objects whose repr() is being computed, to catch one that contains itself.
     Vector<JSCell*, 8> reprStack;
 
-    // The code object of each piece of code that has been asked for one, for as long as something holds it.
-    WeakGCMap<FunctionExecutable*, PyCode> codeObjects;
-
     // See StrView.
     std::unique_ptr<StrIndexCache, void (*)(StrIndexCache*)> strIndexCache { nullptr, nullptr };
 
