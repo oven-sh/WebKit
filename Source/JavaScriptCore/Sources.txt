@@ -910,6 +910,7 @@ python/runtime/PyQueue.cpp
 python/runtime/PyRandom.cpp
 python/runtime/PyRange.cpp
 python/runtime/PyReduce.cpp
+python/runtime/PyRemoteDebugging.cpp
 python/runtime/PyRuntime.cpp
 python/runtime/PySelect.cpp
 python/runtime/PySet.cpp

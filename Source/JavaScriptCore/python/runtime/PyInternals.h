@@ -458,6 +458,7 @@ void initializeMmapModule(JSGlobalObject*, PyModule*); // mmap
 void initializeMultiprocessingModule(JSGlobalObject*, PyModule*); // _multiprocessing
 void initializePosixShmemModule(JSGlobalObject*, PyModule*); // _posixshmem (PyMmap.cpp)
 void initializePosixSubprocessModule(JSGlobalObject*, PyModule*); // _posixsubprocess
+void initializeRemoteDebuggingModule(JSGlobalObject*, PyModule*); // _remote_debugging
 void initializeSelectModule(JSGlobalObject*, PyModule*); // select
 void initializeSocketModule(JSGlobalObject*, PyModule*); // _socket
 void initializeSyslogModule(JSGlobalObject*, PyModule*); // syslog

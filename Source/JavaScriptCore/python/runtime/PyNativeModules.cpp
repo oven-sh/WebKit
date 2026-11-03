@@ -152,6 +152,7 @@ static constexpr NativeModuleDef nativeModuleTable[] = {
     { "_multiprocessing"_s, initializeMultiprocessingModule },
     { "_posixshmem"_s, initializePosixShmemModule },
     { "_posixsubprocess"_s, initializePosixSubprocessModule },
+    { "_remote_debugging"_s, initializeRemoteDebuggingModule },
     { "_signal"_s, initializeSignalModule },
     { "_socket"_s, initializeSocketModule },
     // sysconfig: f"_sysconfigdata_{sys.abiflags}_{sys.platform}_{sys.implementation._multiarch}"
