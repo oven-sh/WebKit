@@ -17,6 +17,7 @@
 #include "AOTLayoutUses.h"
 #include "AOTNarrowFieldTypes.h"
 #include "AOTPropertyAccessCache.h"
+#include "AOTRowsOfLayouts.h"
 #include "AOTSchemaWalkers.h"
 #include "AOTThreads.h"
 #include "AOTTypeArena.h"
@@ -141,16 +142,22 @@ const FieldFlow& flowOf(const Program& program, FieldReference reference)
     return fieldAt(program, declarationOf(program, reference)).flow;
 }
 
-bool hasOnlyCompiledBases(const Program& program, LayoutID id)
+BitVector findLayoutsWithOnlyCompiledBases(const Program& program)
 {
-    LayoutID current = declaredLayoutOf(program, id);
-    for (size_t steps = 0; current && steps < program.layouts.size(); ++steps) {
-        const Layout& layout = program.at(current);
+    BitVector declaredLayouts = answerAlongRows(program.layouts.size(), false, [&](LayoutID id) -> StepAlongRow {
+        const Layout& layout = program.at(id);
         if (!layout.has(LayoutFlags::HasHeritage))
-            return true;
-        current = layout.base;
+            return { true, { } };
+        if (!layout.base)
+            return { false, { } };
+        return { std::nullopt, layout.base };
+    });
+    BitVector result(program.layouts.size());
+    for (uint32_t index = 0; index < program.layouts.size(); ++index) {
+        if (LayoutID declared = declaredLayoutOf(program, LayoutID(index)); declared && declaredLayouts.quickGet(declared.index()))
+            result.quickSet(index);
     }
-    return false;
+    return result;
 }
 
 bool isNeverRedefined(const Program& program, FieldReference reference)
@@ -260,7 +267,7 @@ static std::optional<FieldReference> findFieldByWalk(const Program& program, Lay
     return std::nullopt;
 }
 
-// All classes of a row from one that is asked up to the one that holds the field have the same answer. A walk that has gone some way keeps the answer for one in every few classes that it passes, and ends at the first for which it is kept.
+// All classes of a row from one that is asked up to the one that holds the field have the same answer. A walk that has gone some way keeps the answer for one in every few classes that it passes, and ends at the first for which it is kept. Which classes those are follows from their numbers, so a walk looks for an answer nowhere else.
 static NEVER_INLINE std::optional<FieldReference> findFieldInLongRow(const Program& program, LayoutID id, PropertyKeyID key, BaseChain chain)
 {
     PropertyAccessCache* cache = TypeTable::isProvisional(key) ? nullptr : program.propertyAccessCache();
@@ -283,11 +290,10 @@ static NEVER_INLINE std::optional<FieldReference> findFieldInLongRow(const Progr
         const Layout& layout = program.at(current);
         if (auto field = layout.findField(key))
             return keep(FieldReference { current, *field });
-        if (!TypeTable::isProvisional(current)) {
+        if (PropertyAccessCache::keepsFieldsAbove(current) && !TypeTable::isProvisional(current)) {
             if (const PropertyAccessCache::FieldAbove* kept = cache->fieldsAbove.find(computeHash(current, key, chain), isAnswerFor(current)))
                 return keep(kept->value);
-            if (steps % PropertyAccessCache::classesBetweenFieldsKept == PropertyAccessCache::classesBetweenFieldsKept - 1)
-                passed.append(current);
+            passed.append(current);
         }
         current = baseOf(layout, chain);
     }
@@ -330,22 +336,18 @@ LayoutID predictedHeritageOf(const Layout& layout)
 static NEVER_INLINE BuiltinClassID builtinBaseClassOfLongRow(const Program& program, LayoutID id)
 {
     PropertyAccessCache* cache = program.propertyAccessCache();
+    std::span<std::atomic<uint32_t>> known = cache ? cache->builtinBases.mutableSpan() : std::span<std::atomic<uint32_t>>();
     Vector<LayoutID, 8> passed;
-    auto isAnswerFor = [](LayoutID wanted) {
-        return [wanted](const PropertyAccessCache::BuiltinBase& entry) {
-            return entry.key == wanted;
-        };
-    };
     auto keep = [&](BuiltinClassID answer) {
         for (LayoutID layout : passed)
-            cache->builtinBases.add(computeHash(layout), PropertyAccessCache::BuiltinBase { layout, answer }, isAnswerFor(layout));
+            known[layout.index()].store(answer ? answer.index() + 2 : 1, std::memory_order_relaxed);
         return answer;
     };
     LayoutID current = id;
     for (size_t steps = 0; current && steps < program.layouts.size(); ++steps) {
-        if (cache && !TypeTable::isProvisional(current)) {
-            if (const PropertyAccessCache::BuiltinBase* kept = cache->builtinBases.find(computeHash(current), isAnswerFor(current)))
-                return keep(kept->value);
+        if (current.index() < known.size()) {
+            if (uint32_t kept = known[current.index()].load(std::memory_order_relaxed))
+                return keep(kept == 1 ? BuiltinClassID() : BuiltinClassID(kept - 2));
             passed.append(current);
         }
         const LayoutFlow& flow = program.at(current).flow;

@@ -54,10 +54,20 @@ void MapSetBuiltinEmitter::createIterator(const InlineCall& call, HashTableOwner
 
 void MapSetBuiltinEmitter::lookUpWeakTable(const InlineCall& call, WeakLookup lookup)
 {
+    HashTableBuiltinEmitter& tables = emitter<HashTableBuiltinEmitter>();
+    if (std::optional<Boxed> found = lookup == WeakLookup::MapGet ? tables.valueFoundFor(call.context().valueID()) : std::nullopt) {
+        finish(call, *found);
+        return;
+    }
+    // `if (!state.has(receiver)) throw ..; return state.get(receiver)`: one search answers both.
+    ValueID getBehindHas = lookup == WeakLookup::MapHas ? tables.findGetBehindHas(call, InlineBuiltin::WeakMapGet) : ValueID();
+    if (getBehindHas)
+        lookup = WeakLookup::MapFind;
+
     CellPointer table = cellOperand(call.receiver());
     Boxed key = boxedOperand(call.context(), call.argument(0));
     if (call.context().shape() != CodeShape::Compact) {
-        probeWeakTable(call, lookup, table, key);
+        probeWeakTable(call, lookup, table, key, getBehindHas);
         return;
     }
     auto lookUpInStub = [&](StubKey stub) {
@@ -67,6 +77,12 @@ void MapSetBuiltinEmitter::lookUpWeakTable(const InlineCall& call, WeakLookup lo
     case WeakLookup::MapGet:
         finish(call, lookUpInStub(weakMapGet()));
         return;
+    case WeakLookup::MapFind: {
+        Boxed found = lookUpInStub(weakMapFind());
+        tables.didFindValueFor(getBehindHas, found);
+        finish(call, Condition(m_out.notZero64(found.value())));
+        return;
+    }
     case WeakLookup::MapHas:
         finish(call, unboxBoolean(lookUpInStub(weakMapHas())));
         return;
@@ -77,7 +93,7 @@ void MapSetBuiltinEmitter::lookUpWeakTable(const InlineCall& call, WeakLookup lo
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-void MapSetBuiltinEmitter::probeWeakTable(const InlineCall& call, WeakLookup lookup, CellPointer table, Boxed key)
+void MapSetBuiltinEmitter::probeWeakTable(const InlineCall& call, WeakLookup lookup, CellPointer table, Boxed key, ValueID getBehindHas)
 {
     using MapBucket = WeakMapBucket<WeakMapBucketDataKeyValue>;
     using SetBucket = WeakMapBucket<WeakMapBucketDataKey>;
@@ -123,6 +139,16 @@ void MapSetBuiltinEmitter::probeWeakTable(const InlineCall& call, WeakLookup loo
         m_out.appendTo(absent);
         join.add(undefined());
         finish(call, join.finish());
+        return;
+    }
+    if (lookup == WeakLookup::MapFind) {
+        Join<Boxed> join(m_out);
+        join.add(Boxed(m_out.load64(bucket, m_heaps.WeakMapBucket_value)));
+        m_out.appendTo(absent);
+        join.add(boxedConstant(JSValue()));
+        Boxed valueOrNothing = join.finish();
+        emitter<HashTableBuiltinEmitter>().didFindValueFor(getBehindHas, valueOrNothing);
+        finish(call, Condition(m_out.notZero64(valueOrNothing.value())));
         return;
     }
     Join<Condition> join(m_out);

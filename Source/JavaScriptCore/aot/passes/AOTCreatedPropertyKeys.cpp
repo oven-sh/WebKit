@@ -55,11 +55,24 @@ static ReturnedStrings findReturnedStrings(const Program& program, FunctionID id
         if (value && !isVisited.set(value.index()))
             worklist.append(value);
     };
-    auto addArgumentsFor = [&](ValueID parameter, const Target& target) {
-        const auto& parameters = function.at(target.block).parameters;
-        for (uint32_t index = 0; index < target.arguments.size(); ++index) {
-            if (parameters[index] == parameter)
-                add(target.arguments[index]);
+    // Made when the first parameter is met: the targets that lead into each block, in the order of the blocks that hold them, and where each parameter stands.
+    struct PlaceOfParameter {
+        BlockID block;
+        uint32_t index { 0 };
+    };
+    Vector<Vector<const Target*, 2>> targetsInto;
+    Vector<PlaceOfParameter> placeOfParameter;
+    auto noteTargets = [&] {
+        targetsInto.grow(function.blocks.size());
+        placeOfParameter.grow(function.values.size());
+        for (uint32_t blockIndex = 0; blockIndex < function.blocks.size(); ++blockIndex) {
+            const Block& block = function.at(BlockID(blockIndex));
+            for (uint32_t index = 0; index < block.parameters.size(); ++index)
+                placeOfParameter[block.parameters[index].index()] = { BlockID(blockIndex), index };
+            for (const Target& target : block.terminator.targets)
+                targetsInto[target.block.index()].append(&target);
+            if (block.handler)
+                targetsInto[block.handler->block.index()].append(&*block.handler);
         }
     };
     for (const Block& block : function.blocks) {
@@ -74,11 +87,14 @@ static ReturnedStrings findReturnedStrings(const Program& program, FunctionID id
         if (ValueID definition = sameObjectThroughCasts(function, returned).valueInFrontOfFacts(); definition != returned)
             add(definition);
         else if (value.opcode == Opcode::Parameter) {
-            for (const Block& block : function.blocks) {
-                for (const Target& target : block.terminator.targets)
-                    addArgumentsFor(returned, target);
-                if (block.handler)
-                    addArgumentsFor(returned, *block.handler);
+            if (targetsInto.isEmpty())
+                noteTargets();
+            PlaceOfParameter place = placeOfParameter[returned.index()];
+            if (!place.block)
+                continue;
+            for (const Target* target : targetsInto[place.block.index()]) {
+                if (place.index < target->arguments.size())
+                    add(target->arguments[place.index]);
             }
         } else if (value.opcode == Opcode::CallDirect)
             result.forwarded.append(value.function());

@@ -14,6 +14,8 @@
 #include "AOTBuiltinIDs.h"
 #include "AOTCallEmitter.h"
 #include "AOTCellAllocationEmitter.h"
+#include "AOTClosureWord.h"
+#include "AOTCoroutineWords.h"
 #include "AOTCoroutines.h"
 #include "AOTFrameMapEmitter.h"
 #include "AOTFunctionAnalyses.h"
@@ -66,7 +68,7 @@ LValue SavedFrameEmitter::driverAsPassed(ValueID driver)
     return in<Boxed>(driver).value();
 }
 
-StubCallResult SavedFrameEmitter::suspend(const ValueContext& value, StubKey key, std::initializer_list<LValue> operands, ValueID driverID)
+StubCallResult SavedFrameEmitter::suspend(const ValueContext& value, StubKey key, std::initializer_list<LValue> operands, ValueID driverID, RunsCodeOfAwaited runsCodeOfAwaited)
 {
     const StubCatalog& catalog = inputs().stubCatalog;
     const StubSummary& summary = catalog.summaryOf(key);
@@ -108,7 +110,7 @@ StubCallResult SavedFrameEmitter::suspend(const ValueContext& value, StubKey key
     // A function that waits is on no stack, and a trace lists it by this site.
     Origin originOfSuspension = value.origin();
     originOfSuspension.isTailCall = false;
-    uint32_t site = calls.addSite(value, { .origin = originOfSuspension });
+    uint32_t site = calls.addSite(value, { .origin = originOfSuspension, .callerHasLeft = runsCodeOfAwaited == RunsCodeOfAwaited::BehindFunction });
     patchpoint->setGenerator([records = &m_records, build = &build(), function = m_id, valueID = value.id(), subject = analyses().subject(value.id()), key, site, roots, driverChild, siteWordGPR = siteWordRegister.gpr()](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         std::optional<uint64_t> word = FrameMapEmitter::siteWordFor(records->frameMaps, params, roots, driverChild);
@@ -175,7 +177,7 @@ void SavedFrameEmitter::generateAwaitBySavingFrame(const ValueContext& value)
     switch (kindOfFunction()) {
     case CoroutineKind::AsyncFunction: {
         AwaitedOperand form = value->takesExtraTurn() ? AwaitedOperand::ValueAfterTurn : isBodyOfModuleEvaluatedByRequire(m_program, m_function) ? AwaitedOperand::ValueInModuleBody : AwaitedOperand::Value;
-        define(value, Boxed(suspend(value, awaitBySavingFrame(form), { in<Boxed>(awaited).value() }, driver).first));
+        define(value, Boxed(suspend(value, awaitBySavingFrame(form), { in<Boxed>(awaited).value() }, driver, value->takesExtraTurn() ? RunsCodeOfAwaited::InFrameOfFunction : RunsCodeOfAwaited::BehindFunction).first));
         return;
     }
     case CoroutineKind::AsyncGenerator:
@@ -204,7 +206,7 @@ void SavedFrameEmitter::generateAwaitCallBySavingFrame(const ValueContext& value
         arguments.append(get(argument));
     arguments.append(undefined());
     Boxed returned = emitter<CallEmitter>().callDirect(value, value->function(), arguments.span(), { .callerSuspendsAtReturn = true }).as<Boxed>();
-    define(value, Boxed(suspend(value, awaitCallBySavingFrame(), { returned.value() }, value->promiseOperand()).first));
+    define(value, Boxed(suspend(value, awaitCallBySavingFrame(), { returned.value() }, value->promiseOperand(), RunsCodeOfAwaited::BehindFunction).first));
 }
 
 void SavedFrameEmitter::suspendGenerator(const ValueContext& value, GeneratorSuspension form)
@@ -240,6 +242,10 @@ void SavedFrameEmitter::generateYieldBySavingFrame(const ValueContext& value)
 void SavedFrameEmitter::generateNewHeapFrame(const ValueContext& value)
 {
     CellPointer generator = in<CellPointer>(value->generatorOperand());
+    // A generator whose prototype object is still to be made finds its function here: Generator::createWithoutPrototype. No other generator has a use for the word.
+    std::optional<CellPointer> function;
+    if (ValueID callee = value->calleeOperand())
+        function = in<CellPointer>(callee);
     uint32_t numberOfWords = value->numberOfWords();
     const B3::AbstractHeap& words = m_heaps.entire(AbstractHeap::InternalFields);
     B3::PatchpointValue* address = m_out.patchpoint(B3::pointerType());
@@ -269,7 +275,7 @@ void SavedFrameEmitter::generateNewHeapFrame(const ValueContext& value)
             static_assert(SavedFrame::offsetOfKind() == SavedFrame::offsetOfLiveSlotMapOffsetPlusOne() + 4 && SavedFrame::offsetOfFlags() == SavedFrame::offsetOfKind() + 3 && !static_cast<int32_t>(CoroutineKind::Generator) && !static_cast<int32_t>(SavedFrame::Continuation::None));
             m_out.store64(m_out.constInt64(static_cast<int64_t>(static_cast<uint64_t>(SavedFrame::isHeapFrameFlag) << 56)), word(SavedFrame::offsetOfLiveSlotMapOffsetPlusOne()));
             m_out.store64(resumeAddress.value(), word(SavedFrame::offsetOfResumeAddress()));
-            m_out.store64(frame.value(), word(SavedFrame::offsetOfPromiseOrWaiter()));
+            m_out.store64(function ? function->value() : frame.value(), word(SavedFrame::offsetOfPromiseOrWaiter()));
             m_out.store64(m_out.int64Zero, word(SavedFrame::offsetOfPreservedRegister()));
             m_out.store64(m_out.int64Zero, word(SavedFrame::offsetOfAsyncContext()));
             for (uint32_t index = 0; index < numberOfWords; ++index)
@@ -278,9 +284,14 @@ void SavedFrameEmitter::generateNewHeapFrame(const ValueContext& value)
         emitter<BarrierEmitter>().fenceAfterInitialization();
         join.add(frame);
         m_out.appendTo(slowPath);
-        join.add(callOperation<CellPointer>(value, RuntimeOperation::NewHeapFrame, { word32(static_cast<int32_t>(numberOfWords)), resumeAddress }, { .isOnRarePath = true }));
+        CellPointer madeByRuntime = callOperation<CellPointer>(value, RuntimeOperation::NewHeapFrame, { word32(static_cast<int32_t>(numberOfWords)), resumeAddress }, { .isOnRarePath = true });
+        if (function)
+            m_out.store64(function->value(), m_out.address(words, madeByRuntime.value(), SavedFrame::offsetOfPromiseOrWaiter()));
+        join.add(madeByRuntime);
         result = join.finish();
     }
+    if (function && value.shape() != CodeShape::Fast)
+        m_out.store64(function->value(), m_out.address(words, result.value(), SavedFrame::offsetOfPromiseOrWaiter()));
     m_out.store64(result.value(), m_out.address(words, generator.value(), Generator::offsetOfSavedFrame()));
     emitter<BarrierEmitter>().barrier(value, generator);
     define(value, Boxed(result.value()));
@@ -382,7 +393,7 @@ CellPointer SavedFrameEmitter::allocateGenerator(std::optional<CellPointer> clos
     }
 
     CellAllocationEmitter& cells = emitter<CellAllocationEmitter>();
-    Pointer allocator = cells.allocatorForSize(loadImmutablePointer(AOT_INSTANCE_OFFSET(allocation.cellSpace)), sizeof(Generator));
+    Pointer allocator(m_out.loadPtr(mutableInstanceField(AOT_INSTANCE_OFFSET(coroutines.generatorAllocator))));
     branchUnless(Condition(m_out.notNull(allocator.value())), slowPath);
     CellPointer result = cells.allocateHeapCell(allocator, sizeof(Generator), slowPath);
     {
@@ -401,19 +412,60 @@ CellPointer SavedFrameEmitter::allocateGenerator(std::optional<CellPointer> clos
     return result;
 }
 
+// A function that nobody has asked for its `prototype` has none: it remembers no Structure for its generators and keeps nothing outside its cell. Its generator finds the function in its
+// heap frame: Generator::createWithoutPrototype. Hardly any generator function is ever asked, and the stub serves those that were.
+CellPointer SavedFrameEmitter::allocateGeneratorWithoutPrototype(CellPointer closure, LBasicBlock wasAsked, LBasicBlock slowPath)
+{
+    static_assert(Generator::offsetOfTakesPrototypeFromFunction() == Generator::offsetOfHasOtherPrototype() + 1 && Generator::offsetOfHasOtherPrototype() + 4 == sizeof(Generator));
+    static_assert(numberOfStatesOfGeneratorFunctions == 256);
+    // What a function owns lies outside its cell: without that storage it has no `prototype`, whatever else it remembers.
+    branchUnless(Condition(m_out.isNull(m_out.loadPtr(closure.value(), m_heaps.JSObject_butterfly))), wasAsked);
+    LValue place = m_out.load8ZeroExt32(m_out.address(m_heaps.entire(AbstractHeap::InternalFields), closure.value(), offsetOfClosureEntry + ClosureWord::functionShift / 8));
+    LValue state = m_out.load8ZeroExt32(m_out.address(m_heaps.AOTInstance_mutableFields, m_out.add(m_instance, m_out.zeroExtPtr(place)), AOT_INSTANCE_OFFSET(coroutines.statesOfGeneratorFunctions)));
+    branchUnless(Condition(m_out.equal(state, m_out.constInt32(static_cast<int32_t>(GeneratorFunctionState::MakesGeneratorsWithoutPrototype)))), wasAsked);
+    Integer header(m_out.load64(mutableInstanceField(AOT_INSTANCE_OFFSET(coroutines.headerOfGeneratorsWithoutPrototype))));
+
+    CellAllocationEmitter& cells = emitter<CellAllocationEmitter>();
+    Pointer allocator(m_out.loadPtr(mutableInstanceField(AOT_INSTANCE_OFFSET(coroutines.generatorAllocator))));
+    branchUnless(Condition(m_out.notNull(allocator.value())), slowPath);
+    CellPointer result = cells.allocateHeapCell(allocator, sizeof(Generator), slowPath);
+    {
+        CodeGenerator::InitializationScope scope(generator());
+        cells.storeHeader(result, header);
+        m_out.storePtr(m_out.intPtrZero, result.value(), m_heaps.JSNonArray_butterfly);
+        m_out.store64(m_out.int64Zero, m_out.address(m_heaps.entire(AbstractHeap::InternalFields), result.value(), Generator::offsetOfSavedFrame()));
+        m_out.store32(m_out.int32Zero, stateOf(result));
+        m_out.store32(m_out.constInt32(1 << 8), m_out.address(m_heaps.entire(AbstractHeap::PrototypeLinks), result.value(), Generator::offsetOfHasOtherPrototype()));
+    }
+    emitter<BarrierEmitter>().fenceAfterInitialization();
+    return result;
+}
+
 // The closure of a generator function has the full form, whoever calls it.
 void SavedFrameEmitter::generateNewGenerator(const ValueContext& value)
 {
     std::optional<CellPointer> closure;
     if (value->calleeOperand())
         closure = in<CellPointer>(value->calleeOperand());
+    bool getsHeapFrame = closure && value->getsHeapFrame() && findMakerOfHeapFrameBehind(m_program, m_function, m_function.at(value.block()), value.id());
+    NewGeneratorKind kind = getsHeapFrame ? NewGeneratorKind::SyncWithHeapFrame : NewGeneratorKind::Sync;
     if (closure && value.shape() != CodeShape::Fast) {
-        define(value, CellPointer(callStub(value, AOT::newGenerator(NewGeneratorKind::Sync), { closure->value() }).first));
+        define(value, CellPointer(callStub(value, AOT::newGenerator(kind), { closure->value() }).first));
         return;
     }
 
     LBasicBlock slowPath = newBlock();
     Join<CellPointer> join(m_out);
+    if (kind == NewGeneratorKind::SyncWithHeapFrame) {
+        LBasicBlock wasAsked = newBlock();
+        join.add(allocateGeneratorWithoutPrototype(*closure, wasAsked, slowPath));
+        m_out.appendTo(wasAsked);
+        join.add(CellPointer(callStub(value, AOT::newGenerator(kind), { closure->value() }).first));
+        m_out.appendTo(slowPath);
+        join.add(callOperation<CellPointer>(value, RuntimeOperation::NewGenerator, { boxCell(*closure), word32(static_cast<int32_t>(kind)) }, { .isOnRarePath = true }));
+        define(value, join.finish());
+        return;
+    }
     join.add(allocateGenerator(closure, slowPath));
 
     m_out.appendTo(slowPath);
@@ -472,7 +524,7 @@ void SavedFrameEmitter::generateReturnAsyncResult(const ValueContext& value)
 {
     Boxed promise = in<Boxed>(value->promiseOperand());
     Boxed result = in<Boxed>(value->valueOperand());
-    define(value, Boxed(callStub(value, returnAsyncResult(), { promise.value(), result.value() }).first));
+    define(value, Boxed(callStub(value, returnAsyncResult(), { promise.value(), result.value() }, { .callerHasLeft = true }).first));
 }
 
 void SavedFrameEmitter::generatePromiseAllOfElements(const ValueContext& value)

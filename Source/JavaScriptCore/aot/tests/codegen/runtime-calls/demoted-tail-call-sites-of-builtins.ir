@@ -8,9 +8,9 @@
 # CHECK: f2: size={{*}} tailCallSites=
 # CHECK-NEXT: f3: size=
 # CHECK-NOT: tailCallSites
-# CHECK: f8: size={{*}} sites=3 {{*}} tailCallSites=1
-# CHECK-NEXT: f9: size={{*}} sites=2
-# CHECK-NOT: tailCallSites
+# CHECK: f7: size={{*}} sites=2 {{*}} tailCallSites=2
+# CHECK-NEXT: f8: size={{*}} sites=3 {{*}} tailCallSites=3
+# CHECK-NEXT: f9: size={{*}} sites=3 {{*}} tailCallSites=2
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="markedCallBuiltin" parameters=[{type=string}] results=[{type=anything}] {

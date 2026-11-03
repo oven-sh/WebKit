@@ -1,5 +1,5 @@
 # An object passed to a callee that gives back what it reads from it is in the caller's frame: only what the object holds leaves. So what such an object holds is on the heap.
-# The inner object gets into the outer one by a store: the second under its name, which the allocation does not list
+# The inner object gets into the outer one by a store: it stands behind a read of the outer object, so the allocation does not list it
 # FORM: AsRead
 # RUN: pipeline AllocateInFrames
 # OPTIONS: check=VerifyEachPass only-passes=ComputeEffectSummaries,ResolveCalls,ResolveAccesses,AllocateInFrames
@@ -31,7 +31,7 @@ function f1 name="fieldGivenBack" parameters=[{type=anything}] results=[{type=an
 function f2 name="heldObjectGivenBack" parameters=[{type=anything}] results=[{type=anything}] {
     v1 = NewObject -, v0 layout=L1 fields=[0]
     v2 = NewObject -, v0 layout=L2 fields=[0]
-    PropSet v2, v0 key="inner" mode=Strict
+    v3 = PropGet v2 key="inner"
     PropSet v2, v1 key="inner" mode=Strict
     v5 = CallDirect v2 function=f5
     Return v5
@@ -42,7 +42,7 @@ function f2 name="heldObjectGivenBack" parameters=[{type=anything}] results=[{ty
 function f3 name="heldObjectTested" parameters=[{type=anything}] results=[{type=anything}] {
     v1 = NewObject -, v0 layout=L3 fields=[0]
     v2 = NewObject -, v0 layout=L4 fields=[0]
-    PropSet v2, v0 key="inner" mode=Strict
+    v3 = PropGet v2 key="inner"
     PropSet v2, v1 key="inner" mode=Strict
     v5 = CallDirect v2 function=f6
     Return v5

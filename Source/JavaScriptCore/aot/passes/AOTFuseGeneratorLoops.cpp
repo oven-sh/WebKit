@@ -380,6 +380,67 @@ static bool firstRunAlwaysEndsAt(FunctionAnalyses& bodyAnalyses, std::span<const
     return true;
 }
 
+// A variable of the machine is set to constants alone, and they meet in parameters of blocks. nullopt: something else arrives.
+static std::optional<Vector<int64_t, 8>> findIntegersThatArrive(const Function& function, FunctionAnalyses& analyses, ValueID subject)
+{
+    Vector<int64_t, 8> integers;
+    Vector<ValueID, 8> worklist { subject };
+    BitVector isSeen(function.values.size());
+    while (!worklist.isEmpty()) {
+        ValueID id = worklist.takeLast();
+        if (isSeen.set(id.index()))
+            continue;
+        const Value& value = function.at(id);
+        if (value.opcode == Opcode::Integer) {
+            integers.appendIfNotContains(value.integer());
+            continue;
+        }
+        if (value.opcode != Opcode::Parameter)
+            return std::nullopt;
+        ValueLocation location = analyses.useLists().locationOf(id);
+        for (Edge edge : analyses.cfg().incomingEdges(location.block)) {
+            ValueID passed = valuePassedOn(function, edge, location.index);
+            if (!passed)
+                return std::nullopt;
+            worklist.append(passed);
+        }
+    }
+    return integers;
+}
+
+// The graph lets every site go on behind every yield and every yield come back to every site. Where a generator is stepped once, or never comes to a yield, some of those ways are never taken,
+// and behind them a variable that lives across a yield has nothing but the value it was seeded with.
+static bool dropCasesThatNeverArrive(IRBuilder& builder, FunctionAnalyses& analyses, BlockID block, std::optional<int64_t> valueOfOtherwise)
+{
+    Function& function = builder.function();
+    if (!analyses.cfg().isReachable(block) || function.at(block).terminator.kind != TerminatorKind::Switch)
+        return false;
+    const Terminator& terminator = function.at(block).terminator;
+    ValueID subject = terminator.subjectOperand();
+    std::optional<Vector<int64_t, 8>> arriving = findIntegersThatArrive(function, analyses, subject);
+    if (!arriving)
+        return false;
+    auto cases = terminator.cases();
+    Vector<std::pair<int64_t, Target>> kept;
+    for (uint32_t index = 0; index < cases.size(); ++index) {
+        if (arriving->contains(cases[index]))
+            kept.append({ cases[index], terminator.targets[index] });
+    }
+    bool keepsOtherwise = !valueOfOtherwise || arriving->contains(*valueOfOtherwise);
+    if ((kept.size() == cases.size() && keepsOtherwise) || (kept.isEmpty() && !keepsOtherwise))
+        return false;
+    Target otherwise = keepsOtherwise ? terminator.otherwise() : kept.takeLast().second;
+    builder.setOrigin(terminator.origin());
+    function.edit(block, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator = Terminator { };
+    builder.moveToEndOf(block);
+    if (kept.isEmpty())
+        builder.emitJump(otherwise.block, WTF::move(otherwise.arguments));
+    else
+        builder.emitSwitch(subject, WTF::move(kept), WTF::move(otherwise));
+    analyses.didChangeControlFlow();
+    return true;
+}
+
 static void fuseGenerator(FunctionPassContext& pass, IRBuilder& builder, const FusionCandidate& candidate)
 {
     RELEASE_ASSERT(candidate.sites[startSite].step == candidate.body.startAtCreation);
@@ -624,6 +685,20 @@ static void fuseGenerator(FunctionPassContext& pass, IRBuilder& builder, const F
         repair.addDefinition(repair.addVariable(seeds[index]), definitions[index]);
     repair.run();
     builder.setHandler(std::nullopt);
+
+    int64_t lastSite = static_cast<int64_t>(siteCuts.size()) - 1;
+    while (dropCasesThatNeverArrive(builder, analyses, enter, std::nullopt) || dropCasesThatNeverArrive(builder, analyses, leave, lastSite) || dropCasesThatNeverArrive(builder, analyses, failed, lastSite)) { }
+
+    // A body that never comes to a yield never comes back: it throws while it takes its parameters apart, and what stood behind the call that started it is left without a way to it.
+    if (function.listenerForOperationsThatGo()) [[unlikely]] {
+        const CFG& cfg = analyses.cfg();
+        for (uint32_t index = 0; index < function.blocks.size(); ++index) {
+            if (cfg.isReachable(BlockID(index)))
+                continue;
+            for (ValueID value : function.at(BlockID(index)).values)
+                explainOperationThatGoes(function, value, InPlaceOfOperation::NothingBecauseNothingComesHere);
+        }
+    }
 }
 
 // FuseGeneratorLoops: the search.
@@ -1079,6 +1154,7 @@ static bool isHeldOnlyByIteratorHelper(FunctionPassContext& pass, const EscapeAn
         case Opcode::IsGeneratorUnstarted:
         case Opcode::MarkGeneratorRunning:
         case Opcode::TakeGeneratorStepStatus:
+        case Opcode::ReleaseHint:
             return true;
         default:
             return false;

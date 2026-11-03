@@ -130,6 +130,7 @@
 
 #if ENABLE(AOT)
 #include "AOTCompiledStructure.h"
+#include "AOTGenerator.h"
 #include "AOTModuleRecord.h"
 #include "AOTStringBuilderStorage.h"
 #endif

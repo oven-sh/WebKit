@@ -86,6 +86,9 @@ class KnownPositionTypes {
 public:
     virtual ~KnownPositionTypes() = default;
     virtual std::optional<Type> find(const DeclaredType&) const = 0;
+
+    // `for (let i = 0; i < n; i++) use(i)` with `n: number`: see typeAfterStepOfOne(). The code of a step keeps a number that may pass 2 ** 53 as a double, so only whoever types for what is handed on asks for this.
+    bool stepsOfOneStayIntegers { false };
 };
 
 struct TypingContext {
@@ -115,6 +118,7 @@ Type computeResultType(const TypingContext&, const Value&);
 TypeID computeResultTypeID(const TypingContext&, const Value&);
 Type computeResultType(const TypingContext&, const Value& producer, uint32_t resultIndex);
 Type computeOperatorResultType(const TypingContext&, Opcode, std::span<const Type> operandTypes);
+std::optional<Type> typeAfterStepOfOne(Opcode, std::span<const Type* const> operandTypes);
 std::optional<Type> tryWidestNaturalTypeOf(const Value&);
 
 const OpcodeSet& opcodesTypedFromNarrowedRecords();

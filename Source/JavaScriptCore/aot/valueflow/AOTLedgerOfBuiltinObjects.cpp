@@ -61,6 +61,7 @@ LedgerOfBuiltinObjects::LedgerOfBuiltinObjects(const ValueFlowResultInputs& inpu
     };
     noteHoldersIn(inputs.solver().possibleValuesOf(ValueFlowProgramNodes::escaped()), m_escaped);
     noteHoldersIn(inputs.solver().possibleValuesOf(ValueFlowProgramNodes::lost()), m_lost);
+    noteHoldersIn(inputs.solver().possibleValuesOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::AnswersThatNoReadLists)), m_answersThatNoReadLists);
     noteHoldersIn(inputs.solver().possibleValuesOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::BuiltinsHeldWithoutBeingListed)), m_mayBeHeldWithoutBeingListed);
     noteWrites(heap.index());
 }
@@ -282,7 +283,8 @@ auto LedgerOfBuiltinObjects::accountOfPrototypeLink(BuiltinID holder) const -> A
     Receiver receiver = holder.index();
     Account account { { }, codeNobodySeesThatWrites(holder) };
     account.seen.append(m_writesOfPrototypeLinks[receiver].span());
-    if ((m_lost.get(receiver) && m_ofPrototypeLinks.get(m_untrackedObject)) || (m_escaped.get(receiver) && m_ofPrototypeLinks.get(m_unknownObject)))
+    bool mayBeUnknownObject = m_escaped.get(receiver) || (m_answersThatNoReadLists.get(receiver) && m_builtins.at(holder).kind == BuiltinKind::Prototype && !m_builtins.hasLockedPrototypeLink(holder));
+    if ((m_lost.get(receiver) && m_ofPrototypeLinks.get(m_untrackedObject)) || (mayBeUnknownObject && m_ofPrototypeLinks.get(m_unknownObject)))
         account.open.add(Actor::ReceiversNobodyKnows);
     return account;
 }

@@ -319,7 +319,11 @@ static OwnProperties readOwnProperties(ValueFlowRuleContext& context, ClimbingSe
 
     OwnProperties properties;
     properties.held = sourcesOf(context.readWhatWasWritten(holders, valueName));
-    ClimbingSet getters = context.valueOf(context.readWhatWasWritten(holders, getterName));
+    ClimbingSet getters = context.valueOf(context.readWhatWasWritten(holders, getterName, ValueFlowRuleContext::ReadUse::OutsideEnumerations));
+    if (getterName.kind == ValueFlowNameKind::Getter && isHostFlagRaised(context, ValueFlowHostNode::GettersAreFoundUnderNamesOfEnumerations)) {
+        ClimbingSet sources = context.restrict(context.valueOf(context.readWhatWasWritten(holders, gettersCopiedFromName)), universe.knownObjects());
+        getters = context.unite(getters, context.valueOf(context.lookup(sources, valueName)));
+    }
     auto readWhatIsStoredThrough = [&](ValueSetID placeholder, ValueFlowNodeID covered) {
         if (!context.holdsAnyOf(holders, covered))
             return;
@@ -334,7 +338,7 @@ static OwnProperties readOwnProperties(ValueFlowRuleContext& context, ClimbingSe
         readsTable |= universe.kindOf(object) == ValueFlowObjectKind::Builtin;
     });
     if (readsTable)
-        properties.held.nodes.append(context.lookup(context.restrict(holders, universe.builtinObjects()), valueName));
+        properties.held.nodes.append(context.lookup(context.restrict(holders, universe.builtinObjects()), key ? valueName : everyOwnPropertyName));
 
     if (context.contains(values, ValueFlowUniverse::unknownObject()))
         properties.others.constant = ClimbingSet(unknownValue(context, ValueFlowUnknownSource::ContentsOfEscapedObject));
@@ -537,6 +541,16 @@ static void tieNamespaceToExports(ValueFlowRuleContext& context, ModuleID id, Ve
             namespacesInside.append(entry.module);
             if (entry.phase == ImportPhase::Evaluation) {
                 context.add(location, exportedNamespace);
+                // A mock that is laid over a module that hands the object on gives what it likes in its place, to every module that hands it on. Its factory may have asked for the original.
+                bool mayBeReplacedByMock = module.flags.contains(ModuleFlags::MayBeMocked) || std::ranges::any_of(program.modules, [&](const Module& other) {
+                    return other.flags.contains(ModuleFlags::MayBeMocked) && std::ranges::any_of(other.exports, [&](const ModuleExport& handedOn) {
+                        return handedOn.kind == ModuleExportKind::Namespace && handedOn.module == entry.module;
+                    });
+                });
+                if (mayBeReplacedByMock) {
+                    context.add(ValueFlowProgramNodes::escaped(), exportedNamespace);
+                    context.add(location, unknownValue(context, ValueFlowUnknownSource::UndescribedNativeResult));
+                }
                 break;
             }
             context.add(ValueFlowProgramNodes::escaped(), exportedNamespace);
@@ -808,9 +822,6 @@ static void passOperandsOfBody(ValueFlowRuleContext& context, const Module& modu
 
     ValueFlowNodeID escaped = ValueFlowProgramNodes::escaped();
     context.connect(nodes.thrown(body), escaped);
-    // What is thrown or what a promise is rejected with ends at the host where nobody catches it. The host prints it the way console.error does, whatever lies inside it too.
-    if (!isHostFlagRaised(context, ValueFlowHostNode::HostChoosesOperands) && mayProgramHaveStoredMethodThatHostLooksFor(context))
-        letHostChooseOperands(context);
     if (function.isUnsplitCoroutine()) {
         context.add(escaped, only(context, universe.coroutineResultOf(body)));
         for (unsigned index = 0; index < function.results.size(); ++index)
@@ -969,8 +980,12 @@ void requireModule(const ValueFlowStatement& statement, ValueFlowRuleContext& co
     if (const Module& required = context.program().at(module); statement.result && !required.flags.contains(ModuleFlags::IsLibrary) && (required.kind == ModuleKind::SourceText || required.kind == ModuleKind::Data))
         context.connect(context.nodes().ofHost(ValueFlowHostNode::ExportsOfEntriesStoredInModuleCache), statement.result);
     // Modules::requireThroughCache()
-    if (statement.result && requireAddsToRequireCache(context.program(), context.program().at(statement.function).module, module))
+    if (statement.result && requireAddsToRequireCache(context.program(), context.program().at(statement.function).module, module)) {
         context.connect(context.nodes().ofHost(ValueFlowHostNode::ExportsOfEntriesStoredInModuleCache), statement.result);
+        // Modules::requireCacheEntry(): the entry of a module that a statement has listed holds the namespace object.
+        if (isHostFlagRaised(context, ValueFlowHostNode::EntriesOfModuleCacheAreRead) && libraryModulesListedInRequireCacheForStatements(context.program()).contains(module))
+            connect(context, namespaceOf(context, module), statement.result);
+    }
     // Modules::mockWhatRequireAnswered(): what the factory of a mock gave.
     if (const Module& required = context.program().at(module); statement.result && (required.kind == ModuleKind::SourceText || required.kind == ModuleKind::Data) && !required.runtimeModule && required.flags.contains(ModuleFlags::MayBeMocked)) {
         context.add(statement.result, unknownValue(context, ValueFlowUnknownSource::UndescribedNativeResult));
@@ -1013,6 +1028,10 @@ static void loadByUnknownName(const ValueFlowStatement& statement, ValueFlowRule
         letModulesBeLoadedByName(context, answers);
     answerWithWhatLoaderMakesOfData(statement, context, target);
     context.connect(context.nodes().ofHost(answers), target);
+    // A test run loads a native addon that the build has not found, wherever the load is written.
+    ModuleID module = context.program().at(statement.function).module;
+    if (module && context.program().at(module).flags.contains(ModuleFlags::LoadsCompiledFilesAlone))
+        context.add(target, unknownValue(context, ValueFlowUnknownSource::UndescribedNativeResult));
 }
 
 static ValueFlowNodeID settledValueOfPromiseAt(const ValueFlowStatement& statement, ValueFlowRuleContext& context)

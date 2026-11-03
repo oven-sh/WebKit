@@ -1,11 +1,75 @@
 # Whether two values are strictly equal never changes, and the comparison runs no code of the program: two values from outside the loop are compared once, in front of the loop. What the loop defines is compared in the loop.
+# A comparison of two values nobody knows may flatten a rope, and memory may run out. So it goes in front of the loop only where the first turn is sure to run it: a loop that makes no turn throws nothing.
+# Behind a test that may fail at once, that test is asked once more where the loop is entered, and the comparison stands behind it. The two sides join in one block, which is all that enters the loop
 # FORM: Prepared
 # OPTIONS: check=VerifyEachPass
 # RUN: pass HoistLoopInvariantReads
-# STATISTIC: HoistLoopInvariantReadsChanges = 1
+# STATISTIC: HoistLoopInvariantReadsChanges = 3
 
 module m0 path="main.js" displayPath="main.js"
-function f0 name="valuesFromOutside" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+function f0 name="valuesFromOutside" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = StrictEq v0, v1
+    Branch v3 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b1()
+  b3():
+    Return v0
+# CHECK: b0(
+# CHECK-NEXT: v3: boolean = StrictEq v0, v1
+# CHECK: b1():
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: Branch v3 -> taken b2(), notTaken b3()
+}
+
+function f1 name="valueOfTheLoop" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    Jump -> next b1(v0)
+  b1(v2):
+    LoopHint
+    v4 = StrictEq v2, v1
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v5 = Undefined
+    Jump -> next b1(v5)
+  b3():
+    Return v2
+# CHECK: b1(v2
+# CHECK: = StrictEq v2, v1
+}
+
+function f2 name="behindATestThatMayFailAtOnce" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Branch v2 -> taken b2(), notTaken b4()
+  b2():
+    v4 = StrictEq v0, v1
+    Branch v4 -> taken b1(), notTaken b3()
+  b3():
+    Jump -> next b1()
+  b4():
+    Return v0
+# CHECK: b0(
+# CHECK-NEXT: Branch v2 -> taken [[turns2]](), notTaken [[none2]]()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: Branch v2 -> taken b2(), notTaken b4()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: [[fact2]]: fact = Specified
+# CHECK-NEXT: v4: boolean = AssumeType [[same2]], [[fact2]] provenType=boolean
+# CHECK: [[turns2]]():
+# CHECK-NEXT: [[made2]]: boolean = StrictEq v0, v1
+# CHECK-NEXT: Jump -> next [[join2]]([[made2]])
+# CHECK-NEXT: [[none2]]():
+# CHECK-NEXT: [[nothing2]]: boolean|unspecified = Unspecified valueType=boolean
+# CHECK-NEXT: Jump -> next [[join2]]([[nothing2]])
+# CHECK-NEXT: [[join2]]([[same2]]: boolean|unspecified):
+# CHECK-NEXT: Jump -> next b1()
+}
+
+function f3 name="twoNumbersBehindThatTest" parameters=[{type=number}, {type=number}, {type=boolean}] results=[{type=anything}] {
     Jump -> next b1()
   b1():
     LoopHint
@@ -23,17 +87,23 @@ function f0 name="valuesFromOutside" parameters=[{type=anything}, {type=anything
 # CHECK-NEXT: Branch v4 -> taken b1(), notTaken b3()
 }
 
-function f1 name="valueOfTheLoop" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-    Jump -> next b1(v0)
-  b1(v2):
+# The call may throw, and then the first turn never gets to the comparison
+function f4 name="behindACallOfThatTurn" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
     LoopHint
-    v4 = StrictEq v2, v1
-    Branch v4 -> taken b2(), notTaken b3()
+    Branch v2 -> taken b2(), notTaken b4()
   b2():
-    v5 = Undefined
-    Jump -> next b1(v5)
+    v4 = Call v0
+    v5 = StrictEq v0, v1
+    Branch v5 -> taken b1(), notTaken b3()
   b3():
-    Return v2
-# CHECK: b1(v2
-# CHECK: = StrictEq v2, v1
+    Jump -> next b1()
+  b4():
+    Return v0
+# CHECK: b0(
+# CHECK-NEXT: Jump -> next b1()
+# CHECK: b2():
+# CHECK-NEXT: = Call v0
+# CHECK-NEXT: v5: boolean = StrictEq v0, v1
 }

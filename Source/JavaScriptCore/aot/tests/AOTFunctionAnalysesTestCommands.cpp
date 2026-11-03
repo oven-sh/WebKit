@@ -391,7 +391,12 @@ static void forEachSection(PrintStream& out, Session& session, const AnalysisOpt
     }, SectionRequirement::ReachableFromWord);
     section("cycles-avoiding-blocks"_s, [&] {
         for (BlockID block : reachableBlocks()) {
-            auto isAvoided = [&](BlockID avoidedBlock) { return analyses.cfg().isInCycleAvoiding(block, avoidedBlock); };
+            auto isAvoided = [&](BlockID avoidedBlock) {
+                uint64_t numberOfBlocksVisited = 0;
+                bool isInCycle = analyses.cfg().isInCycleAvoiding(block, avoidedBlock);
+                RELEASE_ASSERT(analyses.blockCycles().isInCycleAvoiding(block, avoidedBlock, numberOfBlocksVisited) == isInCycle);
+                return isInCycle;
+            };
             dumpLine(out, block, " in cycle avoiding: "_s, reachableBlocksMatching(isAvoided));
         }
     });
@@ -442,6 +447,7 @@ void runAnalyses(TestCommandContext& context)
     CommandWords words(context);
     FlowPreparation preparation = prepareFlow(context, words);
     std::optional<FunctionID> onlyFunction = words.parseOptional("function"_s, functionParser(program));
+    SavedFrames savedFrames = words.parseFlag("as-the-verifier"_s) ? SavedFrames::AreOutOfReach : SavedFrames::AreUnknownMemory;
     if (words.hasFailed())
         return;
 
@@ -450,7 +456,7 @@ void runAnalyses(TestCommandContext& context)
         if (!program.at(id).hasBody() || (onlyFunction && *onlyFunction != id))
             continue;
 
-        Session session(context, id, preparation.flowOrNull(), preparation.effectsOrNull());
+        Session session(context, id, preparation.flowOrNull(), preparation.effectsOrNull(), savedFrames);
         CommandWords optionWords = words;
         AnalysisOptions options = parseAnalysisOptions(optionWords, session.function);
         Vector<bool> isRequested;

@@ -27,6 +27,7 @@ static_assert(SourceLocation { } == noSourceLocation, "A default-constructed rec
 static auto sortKeyOf(const FlowIndirectCall& call) { return std::tuple(call.caller, call.site, call.callee, call.kind); }
 static auto sortKeyOf(const FlowBoundFunctionUse& use) { return std::tuple(use.target, use.numberOfBoundArguments); }
 static auto sortKeyOf(const FlowBoundFunctionAtSite& bound) { return std::tuple(bound.site, bound.use, bound.target, bound.numberOfBoundArguments); }
+static auto sortKeyOf(const FlowBuiltinBoundAtSite& bound) { return bound.site; }
 static auto sortKeyOf(const FlowClosureStoredUnderKey& stored) { return std::tuple(stored.key, stored.function); }
 static auto sortKeyOf(const FlowProxiesSeenAtSite& seen) { return seen.site; }
 static auto sortKeyOf(const FlowSinkOperand& operand) { return std::tuple(operand.call, operand.operandIndex); }
@@ -68,6 +69,7 @@ static void checkTableOrder(const FlowResultTables& tables)
     RELEASE_ASSERT(isStrictlyAscending(tables.sites.sinkOperands));
     RELEASE_ASSERT(isStrictlyAscending(tables.sites.typedResultCalls));
     RELEASE_ASSERT(isStrictlyAscending(tables.sites.boundFunctionsAtSites));
+    RELEASE_ASSERT(isStrictlyAscending(tables.sites.builtinsBoundAtSites));
     RELEASE_ASSERT(isStrictlyAscending(tables.sites.closuresStoredUnderKeys));
     RELEASE_ASSERT(isStrictlyAscending(tables.sites.dataNodes));
 
@@ -231,6 +233,12 @@ Expected<std::span<const FlowBoundFunctionAtSite>> FlowResults::boundFunctionsSe
     return std::span<const FlowBoundFunctionAtSite>(first, end);
 }
 
+BuiltinID FlowResults::builtinBehindBoundFunctionsCalledAt(AccessSiteID site) const
+{
+    const FlowBuiltinBoundAtSite* bound = site ? findRecord(m_tables.sites.builtinsBoundAtSites, site) : nullptr;
+    return bound ? bound->target : BuiltinID();
+}
+
 Expected<std::span<const FlowClosureStoredUnderKey>> FlowResults::closuresSeenStoredUnder(PropertyKeyID key) const
 {
     auto [first, end] = std::ranges::equal_range(m_tables.sites.closuresStoredUnderKeys, key, { }, &FlowClosureStoredUnderKey::key);
@@ -349,6 +357,8 @@ std::span<const FlowIndirectCall> FlowResults::indirectCallsFrom(FunctionID call
 bool builtinHolderNeverGains(const FlowBuiltinTables& tables, BuiltinID holder, PropertyKeyID key)
 {
     if (!tables.intactHolders.get(holder.index()))
+        return false;
+    if (tables.holdersReachedThroughUnknownObject.get(holder.index()) && (tables.isEveryKeyWrittenThroughUnknownObject || tables.keysWrittenThroughUnknownObject.get(key.index())))
         return false;
     const BuiltinUseRecord* uses = findRecord(tables.uses, holder.index());
     if (uses && OptionSet<BuiltinUse>::fromRaw(static_cast<uint32_t>(uses->uses)).contains(BuiltinUse::Escaped))

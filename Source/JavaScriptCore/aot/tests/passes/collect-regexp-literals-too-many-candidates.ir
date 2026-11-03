@@ -1,15 +1,11 @@
-# 65 texts at one call are over RegExpCandidatesPerSite: no candidate, one warning. 64 at another call are all kept
+# However many texts flow names for one call, each is a candidate: 65 at one call, 64 at another
 # FORM: AsRead
 # RUN: pipeline CollectRegExpLiterals
 # OPTIONS: only-passes=AnalyzeFlow
-# DIAGNOSTIC: RegExpWithoutCode 1
-# LOSS: RegExpCandidatesPerSite x1 f1
-# STATISTIC: RegExpCandidatesPerSiteHits = 1
-# STATISTIC: CollectRegExpLiteralsChanges = 64
-# CHECK: regexp requests: 64
-# CHECK-NEXT: 0 candidate "few0+" flags=- sites=f2:v2
-# CHECK-COUNT-62: candidate "few{{*}}+" flags=- sites=f2:v2
-# CHECK-NEXT: 63 candidate "few63+" flags=- sites=f2:v2
+# STATISTIC: CollectRegExpLiteralsChanges = 129
+# CHECK: regexp requests: 129
+# CHECK-COUNT-65: candidate "many{{*}}+" flags=- sites=f1:v2
+# CHECK-COUNT-64: candidate "few{{*}}+" flags=- sites=f2:v2
 # CHECK-NEXT: module m0
 
 module m0 path="main.js" displayPath="main.js" body=f0
@@ -27,13 +23,13 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 
-function f1 name="oneTextTooMany" parameters=[{type=string}] results=[{type=anything}] {
+function f1 name="manyTexts" parameters=[{type=string}] results=[{type=anything}] {
     v1 = Builtin builtin=RegExp
     v2 = Construct v1, -, v0 @10
     Return v2
 }
 
-function f2 name="asManyAsAllowed" parameters=[{type=string}] results=[{type=anything}] {
+function f2 name="oneTextFewer" parameters=[{type=string}] results=[{type=anything}] {
     v1 = Builtin builtin=RegExp
     v2 = Construct v1, -, v0 @20
     Return v2

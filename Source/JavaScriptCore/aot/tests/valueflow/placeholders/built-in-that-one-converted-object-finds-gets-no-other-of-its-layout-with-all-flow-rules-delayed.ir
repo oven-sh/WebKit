@@ -1,0 +1,39 @@
+# OPTIONS: testing=DelayFlowRules,DelayOtherFlowRules
+# OPTIONS: limit=MaxValueFlowMembersToldApart:1
+# RUN: valueflow-solve unreached
+# CHECK: unreached f1
+# CHECK-NEXT: unreached f2
+# RUN(ESCAPED): valueflow-why escaped=f1 escaped=f2 escaped-layout=L1
+# ESCAPED: escaped=f1
+# ESCAPED-NEXT: not held
+# ESCAPED: escaped=f2
+# ESCAPED-NEXT: not held
+# ESCAPED: escaped-layout=L1
+# ESCAPED: n0 escaped
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Plain" fields=[{key="held" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Either" fields=[{key="valueOf" declared={type=anything}}, {key="given" declared={type=anything}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = Integer integer=1
+    v3 = Add v1, v2
+    v4 = Builtin builtin=DatePrototypeSymbolToPrimitive
+    v5 = NewObject -, v4 layout=L1 fields=[0]
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="somethingThatNoTableLists" [isFreeName]
+    PropSet v5, v7 key="valueOf"
+    v9 = Add v5, v2
+    v10 = NewClosure function=f2
+    v11 = NewObject -, v10 layout=L1 fields=[1]
+    v12 = Add v11, v2
+    Return
+}
+function f1 name="held" kind=Arrow results=[{type=anything}] {
+    Return
+}
+function f2 name="given" kind=Arrow results=[{type=anything}] {
+    Return
+}

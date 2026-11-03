@@ -167,7 +167,7 @@ static void generatePutKnownFieldThatTakesAnyValue(StubAssembler& jit)
     jit.linkToStub(isLeftToStubForAnyField, putKnownField(mode));
 }
 
-static void generatePutKnownFieldAcceptingAnyNumber(StubAssembler& jit)
+static void generatePutKnownFieldAcceptingAnyNumber(StubAssembler& jit, SlotRepresentation representation)
 {
     static_assert(traitsOf(SlotRepresentation::OptionalDouble).absentBits == absentDouble && !traitsOf(SlotRepresentation::Double).hasAbsent);
     const PutMode mode = static_cast<PutMode>(jit.key().form());
@@ -191,6 +191,13 @@ static void generatePutKnownFieldAcceptingAnyNumber(StubAssembler& jit)
     isLeftToStubForAnyField.append(jit.branchTest32(CCallHelpers::NonZero, Address(object, offsetOfOrderWord), TrustedImm32(integrityBitsBlockingStore(operationFor(mode)))));
     jit.load32(Address(record, OBJECT_OFFSETOF(FieldData, slot)), offset);
     jit.and32(TrustedImm32(SlotData::maxOffset), offset);
+    if (representation == SlotRepresentation::JSValue) {
+        isLeftToStubForAnyField.append(jit.branchTest64(CCallHelpers::Zero, slot));
+        jit.store64(value, slot);
+        jit.returnToCaller();
+        jit.linkToStub(isLeftToStubForAnyField, putKnownField(mode));
+        return;
+    }
     jit.load64(slot, scratch);
     isLeftToStubForAnyField.append(jit.branch64(CCallHelpers::Equal, scratch, TrustedImm64(static_cast<int64_t>(absentDouble))));
     Jump isNotInt32 = jit.branchIfNotInt32(value);
@@ -208,8 +215,8 @@ static void generatePutKnownFieldAcceptingAnyNumber(StubAssembler& jit)
 
 void generatePutKnownField(StubAssembler& jit)
 {
-    if (jit.key().count() == 2) {
-        generatePutKnownFieldAcceptingAnyNumber(jit);
+    if (jit.key().count() >= 2) {
+        generatePutKnownFieldAcceptingAnyNumber(jit, jit.key().count() == 2 ? SlotRepresentation::Double : SlotRepresentation::JSValue);
         return;
     }
     if (jit.key().count()) {

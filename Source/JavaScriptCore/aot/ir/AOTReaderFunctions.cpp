@@ -472,6 +472,10 @@ Failure Reader::readFunction(uint32_t index, Function& function, SeenInBody& see
         m_build.statistics().count(StatisticID::FunctionsWithTypesCheckedAtEntry);
     }
     function.capabilities = initialCapabilitiesOf(function);
+#if AOT_STAMPS_VALUE_IDS
+    // Here, by the thread that has read the function: other functions are still being read.
+    function.stampNumbersInPlace();
+#endif
 
     const auto& options = m_build.options();
     if (!options.verifiesProgram && !options.isVerifyOnly())

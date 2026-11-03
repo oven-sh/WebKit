@@ -13,6 +13,7 @@
 # CHECK-NEXT: = Branch(
 # CHECK: = Load({{*}}offset = 8, {{*}}Reads:JSRopeString_fiber0, {{*}}:StrictEq)
 # CHECK: = Equal(
+# CHECK-NEXT: = Patchpoint({{*}}:ColdAny, {{*}}:StrictEq)
 # CHECK-NEXT: = Branch(
 # CHECK: Reads:StringImpl_length
 # CHECK-LABEL: end of function

@@ -10,6 +10,7 @@
 
 #include "AOTRegExpRecord.h"
 #include "AOTStubBlob.h"
+#include "AOTStubDescriptor.h"
 #include "AOTTraceFrame.h"
 #include "JSCellButterfly.h"
 #include "MarkedBlockCage.h"
@@ -67,6 +68,11 @@ void Image::useNoneOnThisThread()
     t_currentImage = nullptr;
     t_usesNoImage = true;
     s_current.store(differsByThread(), std::memory_order_release);
+}
+
+bool Image::usesNoneOnThisThread()
+{
+    return t_usesNoImage;
 }
 
 const Image* Image::find(std::span<const uint8_t> bytes)
@@ -209,6 +215,14 @@ static bool hasWellFormedTables(const ImageHeader& header, std::span<const uint8
         && numberOfElements(ImageSection::StringHeaders) >= header.numbers.endOfStringHeaders - header.numbers.firstStringHeader;
 }
 
+// The word `cpu` names another CPU than the engine's own. RecordedOptions::isCompatibleWithProcess() asks whether this one has what the image needs.
+static bool hasStampOfThisRuntime(const ImageHeader& header, size_t size, const std::array<uint8_t, 16>& identity)
+{
+    if (header.stamp == imageStamp(CPUFeatureSet::buildTarget(), identity))
+        return true;
+    return size >= sizeof(ImageHeader) && header.stamp == imageStamp(CPUFeatureSet::fromBits(static_cast<uint32_t>(header.options.targetFeatures)), identity);
+}
+
 Wire::ImageVerdict Image::check(std::span<const uint8_t> bytes, const std::array<uint8_t, 16>& identity)
 {
     uint64_t magic;
@@ -225,7 +239,7 @@ Wire::ImageVerdict Image::check(std::span<const uint8_t> bytes, const std::array
     auto& header = *reinterpret_cast<const ImageHeader*>(bytes.data());
     if (header.identity != identity)
         return Wire::ImageVerdict::IdentityMismatch;
-    if (header.stamp != imageStamp(CPUFeatureSet::buildTarget(), identity))
+    if (!hasStampOfThisRuntime(header, bytes.size(), identity))
         return Wire::ImageVerdict::StampMismatch;
     if (bytes.size() < sizeof(ImageHeader) || header.size > bytes.size())
         return Wire::ImageVerdict::Truncated;
@@ -247,7 +261,7 @@ static const ImageHeader* findHeaderOfThisCompiler(std::span<const uint8_t> byte
     if (bytes.size() < sizeof(ImageHeader) || std::bit_cast<uintptr_t>(bytes.data()) % imageSectionAlignment)
         return nullptr;
     auto* header = reinterpret_cast<const ImageHeader*>(bytes.data());
-    if (header->magic != imageMagic || header->stamp != imageStamp(CPUFeatureSet::buildTarget(), header->identity))
+    if (header->magic != imageMagic || !hasStampOfThisRuntime(*header, bytes.size(), header->identity))
         return nullptr;
     return header;
 }

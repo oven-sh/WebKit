@@ -30,6 +30,8 @@ public:
     Boxed box(const OperationContext& context, Operand operand, const Type& type) { return box(context, operand, type, isSeldomEntered(context)); }
     // In the arm of an operation that seldom runs, however often its block is entered: a number is boxed by the stub.
     Boxed boxInArm(const OperationContext& context, Operand operand, const Type& type) { return box(context, operand, type, true); }
+    // The engine takes the storage of a list from the form of the word that it is given, and the compiler from the type. See unbox().
+    Operand inFormOfType(Operand operand, const Type& type) { return operand.is<Boxed>() && type.isInt32() ? Operand(boxInt32(unbox(operand.as<Boxed>(), type, Representation::Int32).as<Word32>())) : operand; }
     Operand unbox(Boxed, const Type&, Representation, NumberUnboxing = NumberUnboxing::Branches);
     Operand toOptional(Operand, const Type&, Representation);
     // For the code of an operation whose result is produced in one representation and wanted in another.

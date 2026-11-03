@@ -153,4 +153,4 @@ function f1 name="total" module=m0 flags=[IsChecked, HasExplicitName] length=1 t
 # X64LOOP: loop #{{*}}, instructions: 22, patchpoints: 1
 # ARM64LOOP: loop #{{*}}, instructions: 23, patchpoints: 1
 # X64: instructions: 106, patchpoints: 2, rare instructions: 14
-# ARM64: instructions: 87, patchpoints: 1, rare instructions: 13
+# ARM64: instructions: 118, patchpoints: 2, rare instructions: 17

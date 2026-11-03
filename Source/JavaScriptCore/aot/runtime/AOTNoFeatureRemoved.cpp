@@ -39,4 +39,8 @@ extern "C" const char* Bun__removableFeatureName(uint16_t)
     return nullptr;
 }
 
+extern "C" void Bun__didFinishFirstCollectionOfCompiledProgram()
+{
+}
+
 } // namespace JSC

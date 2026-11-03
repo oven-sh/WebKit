@@ -137,6 +137,11 @@ static void emitCallOfUncreatedClosure(StubAssembler& jit, unsigned count)
     jit.and32(TrustedImm32(FieldRecordIndex::indexMask), index);
     jit.lshift32(TrustedImm32(fieldSizeShift), index);
     loadStructure(jit, thisGPR, layout);
+    // The closure in the frame would be of this instance. The closure of a field is of the instance of its object.
+    if (!jit.options().hasOneInstance) {
+        jit.move(layout, word);
+        otherwise.append(branchIfNotOfThisRealm(jit, word));
+    }
     jit.loadPtr(Address(layout, CompiledStructure::offsetOfLayout()), layout);
     jit.addPtr(layout, field);
     jit.load32(inField(OBJECT_OFFSETOF(FieldData, slot)), word);
@@ -209,6 +214,9 @@ static void emitReadMethodAndCall(StubAssembler& jit, unsigned count)
     jit.callStub(getById());
     // Whatever the read throws or runs is shown where the read is written. The call comes behind.
     jit.bindReturnLabel(StubFrameKind::MethodRead);
+    // What the caller expects of the method has waited in these words. The read may have run a getter or a trap, out of compiled code too, and that has left its own calls in them.
+    if (jit.options().validates)
+        jit.store64(TrustedImm32(-1), Address(instanceGPR, AOT_INSTANCE_OFFSET(scratch.expectedCall.site)));
     Jump notCell = jit.branchIfNotCell(R0);
     jit.move(R0, calleeGPR);
     jit.load64(Address(sp, sizeof(EncodedJSValue)), thisGPR);

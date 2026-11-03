@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuildContext.h"
 #include "AOTBuiltinTypes.h"
 #include "AOTInlineBuiltinForms.h"
 #include "AOTLoopEntry.h"
@@ -17,6 +18,10 @@
 #include <algorithm>
 #include <optional>
 #include <span>
+
+#if COMPILER(CLANG)
+#pragma clang attribute push(__attribute__((minsize)), apply_to = function)
+#endif
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -229,5 +234,9 @@ void selectMoveLookupTablesToHeap(SelectionContext& context)
 }
 
 } } } // namespace JSC::AOT::Typed
+
+#if COMPILER(CLANG)
+#pragma clang attribute pop
+#endif
 
 #endif // ENABLE(AOT)

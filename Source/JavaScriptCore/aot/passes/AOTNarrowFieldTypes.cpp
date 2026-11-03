@@ -14,6 +14,7 @@
 #include "AOTCellFormat.h"
 #include "AOTCellSizeClasses.h"
 #include "AOTCurrentWork.h"
+#include "AOTEffectsOfOperands.h"
 #include "AOTFlowSiteData.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTFunctionEditing.h"
@@ -161,6 +162,7 @@ static std::optional<FieldEvidence> collectFieldEvidence(const Program& program,
 {
     struct ScannedType {
         LayoutSetID layouts;
+        BuiltinID onlyBuiltin;
         bool listsFunctions : 1 { false };
         bool listsOnlyFunctions : 1 { false };
     };
@@ -190,6 +192,8 @@ static std::optional<FieldEvidence> collectFieldEvidence(const Program& program,
             types[index].layouts = type.layouts;
             types[index].listsFunctions = !type.functions.isEmpty();
             types[index].listsOnlyFunctions = !type.functions.isEmpty() && !type.anyObject && type.classes.isEmpty() && !type.layouts && type.builtins.isEmpty();
+            if (type.builtins.size() == 1 && !type.primitives && !type.anyObject && !type.anyFunction && type.functions.isEmpty() && type.classes.isEmpty() && !type.layouts)
+                types[index].onlyBuiltin = *type.builtins.begin();
         }
     });
 
@@ -228,6 +232,7 @@ static std::optional<FieldEvidence> collectFieldEvidence(const Program& program,
                 ValueID callee = value.opcode == Opcode::Call ? value.operand(OperandIndex::Call::callee) : ValueID();
                 bool namesItsCallees = value.opcode == Opcode::CallDirect || (callee && expectedOrTypeOf(callee).listsOnlyFunctions);
                 bool isCastOfValue = !namesItsCallees && isCast(value.opcode);
+                BuiltinID builtin = callee && function.at(callee).type ? types[function.at(callee).type.index()].onlyBuiltin : BuiltinID();
                 if (isCastOfValue && !expectedOrTypeOf(valueID).layouts)
                     noteKept(value.operand(0), kept);
                 value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
@@ -235,8 +240,13 @@ static std::optional<FieldEvidence> collectFieldEvidence(const Program& program,
                     if (!info.uses.contains(OperandUse::Retains))
                         return;
                     noteHandedOn(operand, info);
-                    if (!namesItsCallees && !isCastOfValue)
-                        noteKept(operand, kept);
+                    if (namesItsCallees || isCastOfValue)
+                        return;
+                    // A descriptor, a list of options: the built-in reads it and lets it go.
+                    std::optional<uint32_t> argument = builtin ? value.variadicOperandIndex(operandIndex) : std::nullopt;
+                    if (argument && !outlivesCallOf(program, builtin, *argument).predicted())
+                        return;
+                    noteKept(operand, kept);
                 });
             }
             block.terminator.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
@@ -379,9 +389,14 @@ static bool isDeclaredObjectLayout(LayoutKind kind)
     return isObjectLayout(kind) && kind != LayoutKind::BuiltinResult;
 }
 
-static bool hasSlots(const Program& program, LayoutID id)
+static BitVector findLayoutsWithSlots(const Program& program)
 {
-    return isDeclaredObjectLayout(program.at(id).kind) && hasOnlyCompiledBases(program, id);
+    BitVector result = findLayoutsWithOnlyCompiledBases(program);
+    for (uint32_t index = 0; index < program.layouts.size(); ++index) {
+        if (!isDeclaredObjectLayout(program.layouts[index].kind))
+            result.quickClear(index);
+    }
+    return result;
 }
 
 // What the packer will most likely give a field of this type. It knows more by then: which fields need a state for "absent", which references must stay wide.
@@ -480,11 +495,12 @@ static void widenSlotTypesToTestedTypes(Program& program, const ParallelLoops& l
 void markEnforcedFields(Program& program, BuildContext& build)
 {
     const ParallelLoops& loops = build.parallelLoops();
+    BitVector layoutsWithSlots = findLayoutsWithSlots(program);
     forEachIndexInParallel(loops, program.layouts.size(), [&](unsigned layoutIndex) {
         Layout& layout = program.layouts[layoutIndex];
         if (!isDeclaredObjectLayout(layout.kind))
             return;
-        bool hasSlots = hasOnlyCompiledBases(program, LayoutID(layoutIndex));
+        bool hasSlots = layoutsWithSlots.quickGet(layoutIndex);
         for (Field& field : layout.fields) {
             if (!field.flags.contains(FieldFlags::IsInherited))
                 field.flags.set(FieldFlags::IsEnforced, hasSlots && !field.declared.isExpected());
@@ -806,8 +822,9 @@ Vector<Int32ParameterCandidate> narrowFieldTypes(Program& program, BuildContext&
     std::atomic<bool> hasCountedFields { false };
     Vector<BitVector> fieldsAddedTo(program.layouts.size());
     std::atomic<bool> hasFieldsAddedTo { false };
+    BitVector layoutsWithSlots = findLayoutsWithSlots(program);
     Vector<FieldToNarrow> fields = collectInParallel<FieldToNarrow>(loops, program.layouts.size(), [&](unsigned layoutIndex, Vector<FieldToNarrow>& found) {
-        if (!hasSlots(program, LayoutID(layoutIndex)))
+        if (!layoutsWithSlots.quickGet(layoutIndex))
             return;
         for (uint32_t fieldIndex = 0; fieldIndex < program.layouts[layoutIndex].fields.size(); ++fieldIndex) {
             FieldReference reference { LayoutID(layoutIndex), fieldIndex };
@@ -834,7 +851,7 @@ Vector<Int32ParameterCandidate> narrowFieldTypes(Program& program, BuildContext&
         constexpr uint32_t saved = widthOf(SlotRepresentation::OptionalDouble) - widthOf(SlotRepresentation::OptionalInt32);
         Vector<FieldReference> fieldsThatMakeCellsSmaller = collectInParallel<FieldReference>(loops, program.layouts.size(), [&](unsigned layoutIndex, Vector<FieldReference>& found) {
             const Layout& layout = program.layouts[layoutIndex];
-            if (!hasSlots(program, LayoutID(layoutIndex)) || layout.flow.allocation == AllocationState::NeverAllocated)
+            if (!layoutsWithSlots.quickGet(layoutIndex) || layout.flow.allocation == AllocationState::NeverAllocated)
                 return;
             Vector<FieldReference, 8> held;
             uint32_t bytes = offsetOfFirstField;
@@ -859,7 +876,7 @@ Vector<Int32ParameterCandidate> narrowFieldTypes(Program& program, BuildContext&
         constexpr uint32_t added = widthOf(SlotRepresentation::OptionalInt64) - widthOf(SlotRepresentation::OptionalInt32);
         Vector<FieldReference> fieldsWithoutRoom = collectInParallel<FieldReference>(loops, program.layouts.size(), [&](unsigned layoutIndex, Vector<FieldReference>& found) {
             const Layout& layout = program.layouts[layoutIndex];
-            if (!hasSlots(program, LayoutID(layoutIndex)) || layout.flow.allocation == AllocationState::NeverAllocated)
+            if (!layoutsWithSlots.quickGet(layoutIndex) || layout.flow.allocation == AllocationState::NeverAllocated)
                 return;
             Vector<FieldReference, 8> held;
             // A store into such a field is tested, and what fails the test goes to the extra properties, which have a word in the cell.
@@ -960,8 +977,9 @@ void expectFieldsOutsideTestedCode(ProgramEditor& editor, const Heat& heat, Buil
 {
     const Program& program = editor.program();
     const ParallelLoops& loops = build.parallelLoops();
+    BitVector layoutsWithSlots = findLayoutsWithSlots(program);
     Vector<FieldReference> fields = collectInParallel<FieldReference>(loops, program.layouts.size(), [&](unsigned layoutIndex, Vector<FieldReference>& found) {
-        if (!hasSlots(program, LayoutID(layoutIndex)))
+        if (!layoutsWithSlots.quickGet(layoutIndex))
             return;
         const Vector<Field>& fieldsOfLayout = program.layouts[layoutIndex].fields;
         for (uint32_t index = 0; index < fieldsOfLayout.size(); ++index) {
@@ -973,8 +991,34 @@ void expectFieldsOutsideTestedCode(ProgramEditor& editor, const Heat& heat, Buil
         return;
     sortAndRemoveRepeated(fields);
     BitVector keys;
-    for (FieldReference field : fields)
-        keys.set(fieldAt(program, field).key.index());
+    Vector<PropertyKeyID> keysInOrder;
+    for (FieldReference field : fields) {
+        PropertyKeyID key = fieldAt(program, field).key;
+        if (!keys.set(key.index()))
+            keysInOrder.append(key);
+    }
+    auto positionOf = [&](FieldReference field) -> std::optional<size_t> {
+        FieldReference declaration = declarationOf(program, field);
+        auto position = std::ranges::lower_bound(fields, declaration);
+        if (position == fields.end() || *position != declaration)
+            return std::nullopt;
+        return position - fields.begin();
+    };
+    // What an access may mean of whose receiver nothing is known goes by its key alone.
+    Vector<uint32_t> numberOfKey(FillWith { }, keys.size(), UINT32_MAX);
+    for (uint32_t number = 0; number < keysInOrder.size(); ++number)
+        numberOfKey[keysInOrder[number].index()] = number;
+    Vector<Vector<uint32_t>> fieldsOfAnyLayoutWithKey(keysInOrder.size());
+    forEachIndexInParallel(loops, keysInOrder.size(), [&](unsigned number) {
+        Vector<uint32_t>& found = fieldsOfAnyLayoutWithKey[number];
+        for (LayoutID layout : program.layoutsWithName(keysInOrder[number])) {
+            std::optional<FieldReference> field = findField(program, layout, keysInOrder[number], BaseChain::Predicted);
+            if (std::optional<size_t> position = field ? positionOf(*field) : std::nullopt)
+                found.append(static_cast<uint32_t>(*position));
+        }
+        sortAndRemoveRepeated(found);
+    });
+    Vector<uint8_t> hasNothingLeftToSay(FillWith { }, keysInOrder.size(), uint8_t { 0 });
 
     // Where a test may be placed the form pays. Elsewhere it costs an access by name wherever the object is known to have the field.
     constexpr uint8_t inCodeThatMayGetTests = 1 << 0;
@@ -988,11 +1032,10 @@ void expectFieldsOutsideTestedCode(ProgramEditor& editor, const Heat& heat, Buil
         AnalysisContext context { build, program, nullptr, nullptr, id };
         std::optional<FunctionAnalyses> analyses;
         auto note = [&](BlockID block, FieldReference field, NOESCAPE const Invocable<bool()> auto& goesByNameWithoutTests) {
-            FieldReference declaration = declarationOf(program, field);
-            auto position = std::ranges::lower_bound(fields, declaration);
-            if (position == fields.end() || *position != declaration)
+            std::optional<size_t> position = positionOf(field);
+            if (!position)
                 return;
-            AtomicRef<uint8_t> where(whereNamed[position - fields.begin()]);
+            AtomicRef<uint8_t> where(whereNamed[*position]);
             uint8_t known = where.load(std::memory_order_relaxed);
             if (known & inCodeThatMayGetTests)
                 return;
@@ -1028,8 +1071,23 @@ void expectFieldsOutsideTestedCode(ProgramEditor& editor, const Heat& heat, Buil
                 noteFieldOf(layout, false);
             // PlaceTypeTests guesses the layout of such a receiver by the names that are asked of it.
             if (!query->receivers.isProven() && expected.isEmpty()) {
-                for (LayoutID layout : program.layoutsWithName(query->key))
-                    noteFieldOf(layout, false);
+                uint32_t number = numberOfKey[query->key.index()];
+                AtomicRef<uint8_t> nothingLeft(hasNothingLeftToSay[number]);
+                if (nothingLeft.load(std::memory_order_relaxed))
+                    return;
+                const Vector<uint32_t>& meant = fieldsOfAnyLayoutWithKey[number];
+                bool isNews = std::ranges::any_of(meant, [&](uint32_t position) {
+                    return !(AtomicRef<uint8_t>(whereNamed[position]).load(std::memory_order_relaxed) & inCodeThatMayGetTests);
+                });
+                if (isNews) {
+                    if (!analyses)
+                        analyses.emplace(context, function);
+                    if (!mayPlaceTestsOfAccessesByName(heat, *analyses, block))
+                        return;
+                    for (uint32_t position : meant)
+                        AtomicRef<uint8_t>(whereNamed[position]).fetch_or(inCodeThatMayGetTests, std::memory_order_relaxed);
+                }
+                nothingLeft.store(1, std::memory_order_relaxed);
             }
         });
     });

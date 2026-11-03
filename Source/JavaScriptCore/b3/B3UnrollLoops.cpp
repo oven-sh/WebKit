@@ -362,7 +362,7 @@ private:
     // How far the counter goes from the first of the turns that are written out to the last.
     int64_t roomForTurnsBehindFirst(const Plan& plan) const
     {
-        return plan.step * static_cast<int64_t>(plan.factor - (m_proc.policy().validation.leavesRoomForOneTurnTooFew ? 2 : 1));
+        return plan.step * static_cast<int64_t>(plan.factor - (m_proc.policy().validation.reservesOneIterationTooFew ? 2 : 1));
     }
 
     // Two reads of one place in front of the loop, with nothing between them that writes there.
@@ -378,7 +378,7 @@ private:
             unsigned numberOfBlocks = 0;
             for (BasicBlock* block = second->owner;; block = block->predecessor(0)) {
                 for (Value* between : *block) {
-                    if ((between->effects().writes.overlaps(first->range()) || between->effects().fence) && !m_proc.policy().validation.overlooksWritesBetweenReadsOfBound)
+                    if ((between->effects().writes.overlaps(first->range()) || between->effects().fence) && !m_proc.policy().validation.ignoresWritesBetweenLoadsOfBound)
                         return false;
                 }
                 if (block == first->owner)

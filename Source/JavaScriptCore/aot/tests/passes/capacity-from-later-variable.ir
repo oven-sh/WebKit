@@ -1,0 +1,82 @@
+# `const list = [first]; for (let i = 0; i < others.length; i++) list.push(i)`: the variable that holds the other list is read behind the literal.
+# Where nothing that anybody could tell lies between the two, the variable is read again in front of the literal, and the literal is told how many elements come.
+# FORM: Prepared
+# RUN: pass PlanArrayCapacities
+# STATISTIC: ArrayCapacitiesPlanned = 1
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="others" module=m0 declared={type=Array<number>} initialization=Undefined
+function f0 name="readsBehindTheLiteral" parameters=[{type=int[0, 7]}] results=[{type=Array<number>}] {
+    v1 = NewArray v0 contents=number
+    v2 = Integer integer=0
+    v3 = GetModuleVariable variable=g0
+    v4 = CallBuiltin v3 overload=ArrayPrototypeLength/0 builtinCallForm=Whole
+    Jump -> next b1(v2)
+  b1(v5):
+    LoopHint
+    v7 = Less v5, v4
+    Branch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8):
+    v9 = CallBuiltin v1, v8 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v10 = Integer integer=1
+    v11 = Add v8, v10
+    Jump -> next b1(v11)
+  b3():
+    Return v1
+# CHECK: = GetModuleVariable variable=g0
+# CHECK: = NewArray v0 {{*}}capacity=
+# CHECK: = GetModuleVariable variable=g0
+}
+
+function f1 name="storesToTheVariableBetween" parameters=[{type=int[0, 7]}, {type=Array<number>}] results=[{type=Array<number>}] {
+    v2 = NewArray v0 contents=number
+    v3 = Integer integer=0
+    PutModuleVariable v1 variable=g0
+    v5 = GetModuleVariable variable=g0
+    v6 = CallBuiltin v5 overload=ArrayPrototypeLength/0 builtinCallForm=Whole
+    Jump -> next b1(v3)
+  b1(v7):
+    LoopHint
+    v9 = Less v7, v6
+    Branch v9 -> taken b2(| 0), notTaken b3()
+  b2(v10):
+    v11 = CallBuiltin v2, v10 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v12 = Integer integer=1
+    v13 = Add v10, v12
+    Jump -> next b1(v13)
+  b3():
+    Return v2
+# CHECK: = NewArray v0
+# CHECK-NOT: capacity=
+# CHECK: PutModuleVariable
+}
+
+function f2 name="callsSomebodyBetween" parameters=[{type=int[0, 7]}] results=[{type=Array<number>}] {
+    v1 = NewArray v0 contents=number
+    v2 = Integer integer=0
+    v3 = CallDirect v0 function=f3
+    v4 = GetModuleVariable variable=g0
+    v5 = CallBuiltin v4 overload=ArrayPrototypeLength/0 builtinCallForm=Whole
+    Jump -> next b1(v2)
+  b1(v6):
+    LoopHint
+    v8 = Less v6, v5
+    Branch v8 -> taken b2(| 0), notTaken b3()
+  b2(v9):
+    v10 = CallBuiltin v1, v9 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v11 = Integer integer=1
+    v12 = Add v9, v11
+    Jump -> next b1(v12)
+  b3():
+    Return v1
+# CHECK: = NewArray v0
+# CHECK-NOT: capacity=
+# CHECK: CallDirect
+}
+
+function f3 name="replacesTheList" parameters=[{type=int[0, 7]}] results=[{type=undefined}] {
+    v1 = NewArray v0, v0, v0 contents=number
+    PutModuleVariable v1 variable=g0
+    v3 = Undefined
+    Return v3
+}

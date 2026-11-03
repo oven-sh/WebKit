@@ -10,6 +10,7 @@
 
 #include "AOTCallSiteTable.h"
 #include "AOTCheckedFrameCells.h"
+#include "AOTCompiledCaller.h"
 #include "AOTGenerator.h"
 #include "AOTImage.h"
 #include "AOTInstance.h"
@@ -469,7 +470,18 @@ static ALWAYS_INLINE std::optional<HandlerType> findHandlerInRun(VM& vm, CallFra
 
 std::optional<HandlerType> findNearestHandler(VM& vm, CallFrame* stubFrame)
 {
-    return findHandlerInRun<HandlerSearch::Nearest>(vm, stubFrame, stackPointerOfCaller(stubFrame), stubFrame->callerFrameOrEntryFrame(), vm.topEntryFrame);
+    EntryFrame* entryFrame = vm.topEntryFrame;
+    // An operation of compiled code has entered the VM for a built-in function, as for a getter that `super.name` finds. It hands the throw on to the code that called it.
+    if (stubFrame->callerFrameOrEntryFrame() == entryFrame && !isOperationFrameRecord(vm, stubFrame)) {
+        if (stubFrame->isNativeCalleeFrame() || stubFrame->codeBlock())
+            return std::nullopt;
+        VMEntryRecord* entry = vmEntryRecord(entryFrame);
+        stubFrame = entry->prevTopCallFrame();
+        if (!isOperationFrameRecord(vm, stubFrame))
+            return std::nullopt;
+        entryFrame = entry->prevTopEntryFrame();
+    }
+    return findHandlerInRun<HandlerSearch::Nearest>(vm, stubFrame, stackPointerOfCaller(stubFrame), stubFrame->callerFrameOrEntryFrame(), entryFrame);
 }
 
 void JIT_OPERATION_ATTRIBUTES checkThatThrowingCallHasSite(Instance* instance, CallFrame* stubFrame)

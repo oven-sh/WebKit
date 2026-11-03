@@ -1,0 +1,31 @@
+# RUN: valueflow-solve unreached
+# CHECK: unreached f2
+# RUN(THIS): valueflow-why values=f0:v8 values=f1:v1
+# THIS: values=f0:v8
+# THIS: operand 1 {{*}} 1 members: [[proxy]]
+# THIS: values=f1:v1
+# THIS: operand 0 {{*}} 1 members: [[proxy]]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Target" fields=[{key="m" declared={type=anything} flags=[IsRequired]}, {key="held" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Handler"
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = NewObject layout=L1 fields=[]
+    v4 = Builtin builtin=Proxy
+    v5 = Construct v4, -, v2, v3
+    v6 = Integer integer=1
+    v7 = PropGet v5 key="m"
+    v8 = Call v7, v5 calleeKey="m"
+    Return
+}
+function f1 name="m" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    Return
+}
+function f2 name="held" kind=Arrow results=[{type=anything}] {
+    Return
+}

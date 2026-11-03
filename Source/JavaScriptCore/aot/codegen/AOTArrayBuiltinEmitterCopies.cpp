@@ -385,7 +385,7 @@ void ArrayBuiltinEmitter::spliceInline(const InlineCall& call, Integer start, in
     Word32 mode = elements().indexingMode(array, IndexingShapeAndWritabilityMask);
     elements().forEachFormByShape(mode, &ElementAccessEmitter::hasWritableShape, candidateFormsOf(call), outOfLine, [&](const ArrayStorageForm& form) {
         emitArm(splice, form);
-    });
+    }, firstCandidateFormOf(call));
 }
 
 // `let at: number` that only ever holds whole numbers is a double for all that its type says: the code asks it.

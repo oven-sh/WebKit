@@ -242,6 +242,7 @@ uint64_t EscapeAnalysis::solve()
     computeUses(results, inputs.useLists, useReasons.span());
     computeStates();
     takeSets(results);
+    m_objectsInLocalHeapWords = WTF::move(results.objectsInLocalHeapWords);
     if (m_tracksOnlyEntryParameters)
         m_liveInstances.fill(LiveInstances::Unknown, m_objects.size());
     m_remembersAnswersFromTypes = inputs.remembersAnswersFromTypes;
@@ -617,6 +618,8 @@ bool mayNameUnescapedAllocation(const Function& function, ValueID value)
         }
         if (definition.opcode != Opcode::GetHeapFrameWord && definingOpcodes.contains(definition.opcode))
             return true;
+        if (accessesLocalHeapWords(function, definition))
+            return true;
         definition.forEachOperand([&](ValueID operand, uint32_t) {
             definitions.appendIfNotContains(operand);
         });
@@ -655,6 +658,8 @@ static BitVector collectWatchedValues(const EscapeAnalysis& escape, std::span<co
 static LiveInstances computeLiveInstancesAt(const EscapeAnalysis& escape, const Liveness::LocalCalc& liveBeforeAllocation, const WatchedObjects& watchedObjects)
 {
     for (ObjectID object : watchedObjects.objects()) {
+        if (escape.isInLocalHeapWords(object))
+            return LiveInstances::Unknown;
         for (ValueID alias : escape.aliasesOf(object)) {
             if (liveBeforeAllocation.isLive(alias))
                 return LiveInstances::Unknown;
@@ -663,7 +668,7 @@ static LiveInstances computeLiveInstancesAt(const EscapeAnalysis& escape, const 
     return LiveInstances::AtMostOne;
 }
 
-void EscapeAnalysis::computeLiveInstances(const CFG& cfg, const UseLists& useLists, const ScopedLambda<const BlockCycles&()>& cycles)
+void EscapeAnalysis::computeLiveInstances(const CFG& cfg, const UseLists& useLists, const ScopedLambda<const BlockCycles&()>& cycles, OutOfSight outOfSight)
 {
     RELEASE_ASSERT(!m_hasLiveInstances);
     m_hasLiveInstances = true;
@@ -741,6 +746,49 @@ void EscapeAnalysis::computeLiveInstances(const CFG& cfg, const UseLists& useLis
             }
         }
     }
+
+    if (outOfSight == OutOfSight::NotAsked)
+        return;
+    BitVector mayGoOutOfSight(m_objects.size());
+    for (const AllocationInCycle& candidate : candidates) {
+        if (!candidate.isMadeOnEdge && m_objects[candidate.object.index()].state == EscapeState::Escapes && !isInLocalHeapWords(candidate.object))
+            mayGoOutOfSight.quickSet(candidate.object.index());
+    }
+    if (mayGoOutOfSight.isEmpty())
+        return;
+    m_allocationsInSightAtEnd.grow(cfg.numNodes());
+    BitVector isInSight(m_objects.size());
+    Vector<ObjectID, 16> inSight;
+    auto add = [&](ObjectID object) {
+        if (!isInSight.quickSet(object.index()))
+            inSight.append(object);
+    };
+    for (BlockID block : cfg.reversePostOrder()) {
+        if (!isInCycle(block))
+            continue;
+        Liveness::LocalCalc live(liveness, block);
+        live.forEachLive([&](ValueID value) {
+            for (ObjectID object : pointsTo(value).objects)
+                add(object);
+        });
+        for (size_t next = 0; next < inSight.size(); ++next) {
+            ObjectID container = inSight[next];
+            if (isOpenContainer(m_objects[container.index()]))
+                continue;
+            for (ObjectID content : contentsOf(container))
+                add(content);
+        }
+        Vector<ObjectID, 2> allocations;
+        for (ObjectID object : inSight) {
+            isInSight.quickClear(object.index());
+            if (mayGoOutOfSight.quickGet(object.index()))
+                allocations.append(object);
+        }
+        inSight.shrink(0);
+        AOT::sortInLine(allocations);
+        m_allocationsInSightAtEnd[block.index()] = WTF::move(allocations);
+    }
+    m_allocationsThatMayGoOutOfSight = WTF::move(mayGoOutOfSight);
 }
 
 std::optional<ObjectID> EscapeAnalysis::objectDefinedBy(ValueID value) const
@@ -775,7 +823,8 @@ EscapeAnalysis::AllocationSet EscapeAnalysis::allocationSetOf(ValueID value) con
     ValueSetID id = m_setOfValue[value.index()];
     if (!id) {
         // The function that resumes a generator reads the words of the frame before it stores any, and returns behind its stores: what a word holds an earlier run has put there.
-        bool isWordOfOwnFrame = m_function.role == FunctionRole::CoroutineBody && m_function.at(sameObjectThroughCasts(m_function, value).valueInFrontOfFacts()).opcode == Opcode::GetHeapFrameWord;
+        const Value& definition = m_function.at(sameObjectThroughCasts(m_function, value).valueInFrontOfFacts());
+        bool isWordOfOwnFrame = m_function.role == FunctionRole::CoroutineBody && definition.opcode == Opcode::GetHeapFrameWord && !accessesLocalHeapWords(m_function, definition);
         return { m_emptySet, true, isWordOfOwnFrame, nullptr };
     }
     const StoredSet& set = m_sets[id.index()];

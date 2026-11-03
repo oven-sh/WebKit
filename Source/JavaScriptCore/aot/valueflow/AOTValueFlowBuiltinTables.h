@@ -56,6 +56,8 @@ public:
     ValueSetID membersOfWhilePristine(BuiltinTypeID type) const { return m_membersOfTypeWhilePristine[type.index()]; }
     ValueFlowObjectID objectStandingFor(BuiltinClassID builtinClass) const { return m_objectStandingForClass[builtinClass.index()]; }
     ValueSetID classesSurelyOf(BuiltinTypeID type) const { return m_classesSurelyOfType[type.index()]; }
+    // The classes that the type names and those below them, whatever it says of what their instances hold: what the host's test for the class lets through.
+    ValueSetID classesNamedBy(BuiltinTypeID type) const { return m_classesNamedByType[type.index()]; }
     ValueSetID classesOfWhilePristine(BuiltinTypeID type) const { return m_classesOfTypeWhilePristine[type.index()]; }
     // An object passes the test for the type only if it was made as one of these. `anything` where the class that an object was made as does not decide the test.
     ValueSetID classesThatMayBeOf(BuiltinTypeID type) const { return m_classesThatMayBeOfType[type.index()]; }
@@ -67,6 +69,7 @@ public:
     ValueFlowBehaviorID behaviorThatAsksProxies(ValueFlowBehaviorID behavior) const { return m_behaviorsThatAskProxies.get(behavior.index()); }
     const ValueFlowBehavior& at(ValueFlowBehaviorID behavior) const LIFETIME_BOUND { return m_behaviors[behavior.index()]; }
     unsigned numberOfBehaviors() const { return m_behaviors.size(); }
+    std::span<const BuiltinID> builtinsThatReachAboveTheirOperands() const { return m_builtinsThatReachAboveTheirOperands.span(); }
     ValueFlowBehaviorID conversionToPrimitive() const { return m_conversionToPrimitive; }
     ValueFlowBehaviorID listOfKeysThatTrapAnswers() const { return m_listOfKeysThatTrapAnswers; }
     ValueFlowBehaviorID descriptorThatTrapAnswers() const { return m_descriptorThatTrapAnswers; }
@@ -94,6 +97,7 @@ private:
     Vector<ValueSetID> m_membersOfTypeWhilePristine;
     Vector<ValueFlowObjectID> m_objectStandingForClass;
     Vector<ValueSetID> m_classesSurelyOfType;
+    Vector<ValueSetID> m_classesNamedByType;
     Vector<ValueSetID> m_classesOfTypeWhilePristine;
     Vector<ValueSetID> m_classesThatMayBeOfType;
     ValueSetID m_objectsStandingForClasses;
@@ -101,6 +105,7 @@ private:
     Vector<Vector<BuiltinClassID, 1>> m_classesAtOrBelow;
     Vector<ValueFlowBehavior> m_behaviors;
     HashMap<const BuiltinParameter*, ValueFlowBehaviorID> m_behaviorOfParameter;
+    Vector<BuiltinID> m_builtinsThatReachAboveTheirOperands;
     HashMap<const OperandInfo*, ValueFlowBehaviorID> m_behaviorOfOperand;
     HashMap<uint32_t, ValueFlowBehaviorID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_behaviorsThatAskProxies;
     ValueFlowBehaviorID m_conversionToPrimitive;

@@ -16,13 +16,16 @@ enum class KeyComparison : uint8_t { AnyValue, String, Bits };
 enum class CompactTableOwner : uint8_t { Map, Set };
 
 constexpr StubKey mapGet(KeyComparison comparison) { return StubKey(StubFamily::MapGet).withForm(static_cast<uint8_t>(comparison)); }
+constexpr StubKey mapFind(KeyComparison comparison) { return StubKey(StubFamily::MapFind).withForm(static_cast<uint8_t>(comparison)); }
 constexpr StubKey mapHas(KeyComparison comparison) { return StubKey(StubFamily::MapHas).withForm(static_cast<uint8_t>(comparison)); }
-constexpr StubKey setHas(KeyComparison comparison) { return StubKey(StubFamily::SetHas).withForm(static_cast<uint8_t>(comparison)); }
+// The search reads the keys alone, which lie in a Set as they lie in a Map.
+constexpr StubKey setHas(KeyComparison comparison) { return mapHas(comparison); }
 constexpr StubKey mapSet(KeyComparison comparison) { return StubKey(StubFamily::MapSet).withForm(static_cast<uint8_t>(comparison)); }
 constexpr StubKey setAdd(KeyComparison comparison) { return StubKey(StubFamily::SetAdd).withForm(static_cast<uint8_t>(comparison)); }
 constexpr StubKey mapDelete(KeyComparison comparison) { return StubKey(StubFamily::MapDelete).withForm(static_cast<uint8_t>(comparison)); }
 constexpr StubKey setDelete(KeyComparison comparison) { return StubKey(StubFamily::SetDelete).withForm(static_cast<uint8_t>(comparison)); }
 constexpr StubKey weakMapGet() { return StubKey(StubFamily::WeakMapGet); }
+constexpr StubKey weakMapFind() { return StubKey(StubFamily::WeakMapFind); }
 constexpr StubKey weakMapHas() { return StubKey(StubFamily::WeakMapHas); }
 constexpr StubKey weakSetHas() { return StubKey(StubFamily::WeakSetHas); }
 constexpr StubKey newMap() { return StubKey(StubFamily::NewMap); }

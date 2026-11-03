@@ -316,7 +316,7 @@ JSCell* ProgramStrings::keyCell(VM& vm, uint32_t number)
     if (JSCell* cell = keyCellIfCreated(number))
         return cell;
     DeferGCForAWhile deferGC(vm);
-    const Identifier& name = vm.aotState().identifiers->identifier(m_tables.keyCellIdentifiers()[number]);
+    const Identifier& name = identifiersOf(m_instance).identifier(m_tables.keyCellIdentifiers()[number]);
     RELEASE_ASSERT(!name.isNull());
     JSCell* created;
     if (auto* symbol = dynamicDowncast<SymbolImpl>(name.impl()))
@@ -354,7 +354,7 @@ void ProgramStrings::willAnalyzeHeap(VM& vm)
     ProgramIdentifiers& identifiers = *vm.aotState().identifiers;
     auto ensureName = [&](uint32_t name, SlotData slot) {
         if (name && traitsOf(slot.representation()).holdsCell)
-            identifiers.identifier(name);
+            identifiersOf(m_instance).identifier(name);
     };
     for (uint32_t shape = 1; shape <= m_tables.numberOfShapes; ++shape) {
         if (!m_tables.layouts()[shape])

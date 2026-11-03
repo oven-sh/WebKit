@@ -401,7 +401,7 @@ void ValueSets::InternedRuns::addBytesTo(ValueFlowBytesByTable& bytes, ASCIILite
 void ValueSetMaker::addBytesTo(ValueFlowBytesByTable& bytes) const
 {
     constexpr ASCIILiteral remembered = "set makers: results remembered"_s;
-    bytes.add(remembered, sizeof(m_rememberedSets));
+    bytes.addList(remembered, m_rememberedSets);
     bytes.addList(remembered, m_rememberedEntries);
     bytes.addList(remembered, m_rememberedBlocks);
     bytes.addMap(remembered, m_setOfRange);
@@ -827,11 +827,21 @@ bool ValueSets::setsOfSeveralMembersMeet(ValueSetID first, ValueSetID second) co
     return !storedSetIsSubset(first, complement(second));
 }
 
-ValueSetMaker::ValueSetMaker(ValueSets& sets)
-    : m_sets(sets)
-    , m_rememberedEntries(static_cast<size_t>(1) << bitsOfRememberedEntries)
-    , m_rememberedBlocks(static_cast<size_t>(1) << bitsOfRememberedBlocks)
+void ValueSetMaker::remember(Remembers remembers)
 {
+    unsigned bits = remembers == Remembers::ByTheSizeOfTheUniverse ? std::clamp<unsigned>(std::bit_width(m_sets.sizeOfUniverse()), 12, 22) - 6 : 0;
+    m_bitsOfRememberedSets = std::max(13u, bits);
+    m_bitsOfRememberedEntries = std::max(11u, bits);
+    m_bitsOfRememberedBlocks = std::max(12u, bits);
+    m_rememberedSets = Vector<Remembered>(static_cast<size_t>(1) << m_bitsOfRememberedSets);
+    m_rememberedEntries = Vector<RememberedEntries>(static_cast<size_t>(1) << m_bitsOfRememberedEntries);
+    m_rememberedBlocks = Vector<Remembered>(static_cast<size_t>(1) << m_bitsOfRememberedBlocks);
+}
+
+ValueSetMaker::ValueSetMaker(ValueSets& sets, Remembers remembers)
+    : m_sets(sets)
+{
+    remember(remembers);
     m_roomForBlocks.freeRuns = &m_freeRuns[0];
     m_roomForGroups.freeRuns = &m_freeRuns[1];
     m_roomForLists.freeRuns = &m_freeRuns[2];
@@ -849,7 +859,7 @@ uint32_t ValueSetMaker::combineBlocks(Operation operation, uint32_t first, uint3
     if (operation != Operation::Subtract && first > second)
         std::swap(first, second);
     uint32_t key = second | static_cast<uint32_t>(operation) << 30;
-    Remembered& remembered = m_rememberedBlocks[placeInTable(first, key, bitsOfRememberedBlocks)];
+    Remembered& remembered = m_rememberedBlocks[placeInTable(first, key, m_bitsOfRememberedBlocks)];
     if (remembered.first == first && remembered.second == key)
         return remembered.result;
 
@@ -959,7 +969,7 @@ uint64_t ValueSetMaker::combineEntries(Operation operation, uint64_t first, uint
     uint32_t firstPlace = ValueSets::placeOf(first) & ~(ValueSets::placesPerGroup - 1);
     bool isRemembered = ValueSets::isGroup(first) || ValueSets::isGroup(second);
     uint32_t detail = 1 + static_cast<uint32_t>(operation) + (ValueSets::placeOf(first) % ValueSets::placesPerGroup << 2) + (ValueSets::placeOf(second) % ValueSets::placesPerGroup << 8);
-    RememberedEntries& remembered = m_rememberedEntries[placeInTable(static_cast<uint32_t>(first) + detail * 0xc2b2ae35u, static_cast<uint32_t>(second), bitsOfRememberedEntries)];
+    RememberedEntries& remembered = m_rememberedEntries[placeInTable(static_cast<uint32_t>(first) + detail * 0xc2b2ae35u, static_cast<uint32_t>(second), m_bitsOfRememberedEntries)];
     if (isRemembered && remembered.first == static_cast<uint32_t>(first) && remembered.second == static_cast<uint32_t>(second) && remembered.detail == detail)
         return static_cast<uint64_t>(remembered.placeOfResult) << 32 | remembered.result;
 
@@ -1617,7 +1627,7 @@ NEVER_INLINE ValueSetID ValueSetMaker::intersectDifferentSets(ValueSetID first, 
 {
     if (first.index() > second.index())
         std::swap(first, second);
-    Remembered& remembered = m_rememberedSets[placeInTable(first.index(), second.index(), bitsOfRememberedSets)];
+    Remembered& remembered = m_rememberedSets[placeInTable(first.index(), second.index(), m_bitsOfRememberedSets)];
     if (remembered.first == first.index() && remembered.second == second.index() && remembered.result != intersectionIsNotEmpty) [[likely]]
         return ValueSetID(remembered.result);
     return intersectUncached(first, second, remembered);
@@ -1648,7 +1658,7 @@ NEVER_INLINE bool ValueSetMaker::nonEmptySetsMeet(ValueSetID first, ValueSetID s
 {
     if (first.index() > second.index())
         std::swap(first, second);
-    Remembered& remembered = m_rememberedSets[placeInTable(first.index(), second.index(), bitsOfRememberedSets)];
+    Remembered& remembered = m_rememberedSets[placeInTable(first.index(), second.index(), m_bitsOfRememberedSets)];
     if (remembered.first == first.index() && remembered.second == second.index() && !ValueSets::isComplement(ValueSetID(remembered.result))) [[likely]]
         return remembered.result;
     return meetUncached(first, second, remembered);

@@ -1,5 +1,5 @@
 # An object literal and a class lie below one interface. The numbers of one are narrower than those of the other, and the class never gives "label" anything but undefined.
-# Each name gets the representation that holds what both layouts hold, and one location. The cell of Full has no byte to spare, so its "end" stays as narrow as it is
+# Each name gets the representation that holds what both layouts hold, and one location. The cell of Full has no byte to spare, so its "end" stays as narrow as it is, and so does the "end" that is read beside it. "pos" has 32 bits, for which both cells have the room
 # FORM: AsRead
 # OPTIONS: only-passes=ResolveAccesses references=narrow testing=NoLayoutIsMadeSeldom
 # RUN: plan-slots layouts accesses
@@ -57,7 +57,7 @@ function f1 name="Span" kind=BaseConstructor flags=[HasNewTarget] parameters=[{t
 # CHECK: L2 CompiledObject size=32
 # CHECK-NEXT: "end" Uint8 @
 # CHECK: "pos" {L0 L1} read
-# CHECK-NEXT: one location Uint16 @
+# CHECK-NEXT: one location Int32 @
 # CHECK: "end" {L0 L1} read
 # CHECK-NEXT: one location Uint16 @
 # CHECK: "end" {L0 L2} read

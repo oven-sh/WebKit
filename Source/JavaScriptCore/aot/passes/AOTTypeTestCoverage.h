@@ -14,6 +14,7 @@
 #include <ranges>
 #include <span>
 #include <wtf/BitVector.h>
+#include <wtf/HashMap.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/StdLibExtras.h>
 
@@ -111,6 +112,8 @@ struct ConditionGroups {
     struct WrittenByWriter {
         uint32_t writer { 0 };
         GuardWriter::WrittenDependencies written;
+        bool hasAskedForAllocations { false };
+        std::optional<BitVector> allocationsWhoseProofsEnd;
     };
 
     FunctionAnalyses& analyses;
@@ -120,6 +123,18 @@ struct ConditionGroups {
     BitVector subjectsFromOutside;
     Vector<WrittenByWriter> writtenOfGroups;
     uint32_t numberOfWriters { 0 };
+
+private:
+    void listConditionsOfObjects();
+    bool findConditionsWithinReachOf(GuardWriter&);
+
+    // Made when the first writer asks. A condition on allocations of the function stands under each of them, and the last writer that reaches one of them stands with the condition.
+    bool hasConditionsOfObjects { false };
+    BitVector isAboutAllocationsAlone;
+    HashMap<uint32_t, Vector<uint32_t, 1>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> conditionsOfObjects;
+    Vector<uint32_t> lastWriterWithinReach;
+    // What the subject itself may be, for those conditions.
+    Vector<Vector<ObjectID, 1>> allocationsOfSubjects;
 };
 
 // A value of any other operation suspends nothing and writes nothing.

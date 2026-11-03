@@ -78,6 +78,10 @@ void throwErrorIn(JSGlobalObject* realm)
 
 namespace JSC {
 
+extern "C" void Bun__didFinishFirstCollectionOfCompiledProgram()
+{
+}
+
 extern "C" void Bun__abortForRemovedFeature(uint16_t feature)
 {
     AOT_TEST_CHECK(AOT::handlerLog.isAbortExpected);

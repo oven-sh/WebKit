@@ -37,6 +37,8 @@ bool canHaveTableEntrypoint(const Program&, TypeArena&, FunctionID method, Metho
 bool canHaveTableEntrypoint(const Program&, TypeArena&, FunctionID method, std::span<const TypeID> given);
 // The layouts whose objects find the method under the name as the classes are defined. The entrypoint takes `this` to be of one of them, so the table has it in the rows of no other.
 LayoutList receiversOfTableEntrypoint(const Program&, PropertyKeyID, FunctionID method);
+// The same for every method of the name at once: each layout beside the method whose entrypoint takes it, sorted.
+Vector<std::pair<LayoutID, FunctionID>> receiversOfTableEntrypoints(const Program&, PropertyKeyID);
 
 MethodSelector selectorOfTableFunction(const Function& lookupOrEntrypoint);
 MethodSelector selectorOf(const Program&, const Value& tableCall);

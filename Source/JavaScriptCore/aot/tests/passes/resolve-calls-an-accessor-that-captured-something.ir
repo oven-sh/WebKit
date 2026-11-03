@@ -1,0 +1,77 @@
+# `Object.defineProperties(State.prototype, { open: flag(1), busy: flag(2) })`: the accessors are function objects of one function, and what each captured lies in its function object.
+# Where one class that is evaluated once has the accessor, every receiver finds one function object. It is read from where the class has it, and the function is called directly with what it captured.
+# That takes more code than the lookup by name, so only hot code has it: resolve-calls-accessors.ir has the read in other code.
+# FORM: Prepared
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass ResolveCalls
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="State" constructor=f0 flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{key="open" kind=Getter function=f1 mutability=Fixed}, {key="open" kind=Setter function=f2 mutability=Fixed}, {key="busy" kind=Getter function=f1}, {key="busy" kind=Setter function=f2}] namedMembers=[{key="open" kind=Getter function=f1 mutability=Fixed}, {key="open" kind=Setter function=f2 mutability=Fixed}, {key="busy" kind=Getter function=f1}, {key="busy" kind=Setter function=f2}]}
+layout L1 kind=Instance name="Other" constructor=f3 flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{key="open" kind=Getter function=f1 mutability=Fixed}, {key="open" kind=Setter function=f2 mutability=Fixed}] namedMembers=[{key="open" kind=Getter function=f1 mutability=Fixed}, {key="open" kind=Setter function=f2 mutability=Fixed}]}
+layout L2 kind=Instance name="MadeAgain" constructor=f4 flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype]} classFlow={prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{key="open" kind=Getter function=f1 mutability=Fixed}] namedMembers=[{key="open" kind=Getter function=f1 mutability=Fixed}]}
+layout L3 kind=Instance name="Plain" constructor=f11 fields=[{key="open" declared={type=anything} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+function f0 name="State" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f1 name="get" kind=Method flags=[HasThis] captures=[{type=number}] thisType={type=object} results=[{type=anything}] {
+    Return v0
+}
+function f2 name="set" kind=Method flags=[HasThis] captures=[{type=number}] thisType={type=object} parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f3 name="Other" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f4 name="MadeAgain" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+
+function f5 name="read" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="open"
+    Return v1
+# CHECK: b0(v0: L0):
+# CHECK-NEXT: [[getter]]: f1 = GetAccessorOfMember v0 key="open" valueType=f1
+# CHECK-NEXT: [[captured]]: number = GetCapture [[getter]] function=f1
+# CHECK-NEXT: = CallDirect [[captured]], v0 function=f1
+# CHECK-NOT: PropGet
+}
+function f6 name="store" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+    PropSet v0, v1 key="open"
+    Return v1
+# CHECK: b0(v0: L0, v1: anything):
+# CHECK-NEXT: [[setter]]: f2 = GetAccessorOfMember v0 key="open" valueType=f2 [isSetter]
+# CHECK-NEXT: [[capturedBySetter]]: number = GetCapture [[setter]] function=f2
+# CHECK-NEXT: = CallDirect [[capturedBySetter]], v0, v1 function=f2
+# CHECK-NOT: PropSet
+}
+function f7 name="read-of-a-member-that-may-change" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="busy"
+    Return v1
+# CHECK: [[isUnchanged]]: boolean = AreMembersUnchanged conditions=[{{*}}layout=L0{{*}}key="busy"{{*}}]
+# CHECK-NEXT: Branch [[isUnchanged]] -> taken [[unchanged]]
+# CHECK: [[unchanged]]():
+# CHECK-NEXT: [[guarded]]: f1 = GetAccessorOfMember v0 key="busy" valueType=f1
+# CHECK: = CallDirect {{*}}, v0 function=f1
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: = PropGet v0 key="busy"
+}
+# Each class has a function object of its own.
+function f8 name="two-classes-have-it" parameters=[{type=L0|L1}] results=[{type=anything}] {
+    v1 = PropGet v0 key="open"
+    Return v1
+# CHECK: b0(v0: L0|L1):
+# CHECK-NEXT: = PropGet v0 key="open"
+# CHECK-NEXT: Return v1
+}
+# So has each evaluation.
+function f9 name="the-class-is-made-again" parameters=[{type=L2}] results=[{type=anything}] {
+    v1 = PropGet v0 key="open"
+    Return v1
+# CHECK: b0(v0: L2):
+# CHECK-NEXT: = PropGet v0 key="open"
+# CHECK-NEXT: Return v1
+}
+# A field of one class and such an accessor of another: nothing says which comes more often.
+function f10 name="another-class-has-a-field" parameters=[{type=L0|L3}] results=[{type=anything}] {
+    v1 = PropGet v0 key="open"
+    Return v1
+# CHECK: b0(v0: L0|L3):
+# CHECK-NEXT: = PropGet v0 key="open"
+# CHECK-NEXT: Return v1
+}
+function f11 name="Plain" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]

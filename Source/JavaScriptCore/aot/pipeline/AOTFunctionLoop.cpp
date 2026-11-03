@@ -15,6 +15,7 @@
 #include "AOTEffectSummaries.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTFunctionQueue.h"
+#include "AOTHeat.h"
 #include "AOTInterningPhases.h"
 #include "AOTPassRunner.h"
 #include "AOTPhaseTimes.h"

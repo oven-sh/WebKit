@@ -57,6 +57,7 @@
 #include "B3PhaseScope.h"
 #include "B3Policy.h"
 #include "B3Procedure.h"
+#include "B3PromoteLoopMemory.h"
 #include "B3ReduceDoubleToFloat.h"
 #include "B3ReduceStrength.h"
 #include "B3RotateLoops.h"
@@ -254,7 +255,7 @@ static constexpr Step steps[] = {
     { "findLoops"_s,
         [](Procedure& procedure, const PipelineState&) {
             const LoopPolicy& loops = procedure.policy().loops;
-            return procedure.optLevel() >= 2 && (loops.rotates || loops.foldsComparisonsWithBounds || loops.versions || loops.vectorizes || loops.unrolls);
+            return procedure.optLevel() >= 2 && (loops.rotates || loops.foldsComparisonsWithBounds || loops.versions || loops.vectorizes || loops.unrolls || loops.promotesMemory);
         },
         [](Procedure& procedure, PipelineState& state) -> Cleanups {
             state.hasLoops = procedure.hasCycle() && procedure.naturalLoops().numLoops();
@@ -331,6 +332,11 @@ static constexpr Step steps[] = {
     { "hoistLoopInvariantValues"_s,
         [](Procedure&, const PipelineState& state) { return state.didMoveTestsOutOfLoops; },
         runPass<hoistLoopInvariantValues> },
+    { "promoteLoopMemory"_s,
+        [](Procedure& procedure, const PipelineState& state) { return state.hasLoops && procedure.policy().loops.promotesMemory; },
+        [](Procedure& procedure, PipelineState&) {
+            return cleanupsIfChanged(promoteLoopMemory(procedure), { Cleanup::FixSSA, Cleanup::EliminateDeadCode });
+        } },
 #if ENABLE(WEBASSEMBLY)
     { "eliminateWasmGCAllocations"_s,
         [](Procedure& procedure, const PipelineState&) { return procedure.optLevel() >= 2 && procedure.usesWasmGCStructAllocations() && procedure.policy().upstream.eliminatesWasmGCAllocations; },

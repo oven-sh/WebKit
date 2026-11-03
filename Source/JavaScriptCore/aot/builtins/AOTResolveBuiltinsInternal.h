@@ -100,6 +100,7 @@ void emitListCalls(FunctionPassContext&, std::span<const ListCallSite>);
 struct ForwardedTailCall {
     ValueSite site;
     ForwardedCallPlan plan;
+    StringID calleeName;
 };
 
 struct CalledOperandTest {
@@ -117,6 +118,7 @@ void rewriteForwardedTailCalls(FunctionPassContext&, std::span<const ForwardedTa
 struct CallOfOwnArguments {
     ValueSite site;
     ForwardedCallPlan plan;
+    StringID calleeName;
 };
 
 Vector<CallOfOwnArguments> planCallsOfOwnArguments(FunctionPassContext&);

@@ -31,8 +31,7 @@ function f5 name="Circle" kind=DerivedConstructor flags=[HasNewTarget] results=[
 function f6 name="oneCallee" parameters=[{type=f0}, {type=anything}, {type=Array<anything, pristine[Storage, Names]>}] results=[{type=anything}] {
     v3 = CallList v0, v1, v2
     Return v3
-# CHECK: [[length6]]: {{*}} = PropGet v2 key="length"
-# CHECK-NEXT: [[count6]]: {{*}} = ToLength [[length6]]
+# CHECK: [[count6]]: {{*}} = CallBuiltin v2 overload=ArrayPrototypeLength/0
 # CHECK-NEXT: [[limit6]]: 65535 = Integer integer=65535
 # CHECK-NEXT: [[fits6]]: boolean = LessEq [[count6]], [[limit6]]
 # CHECK-NEXT: Branch [[fits6]] ->

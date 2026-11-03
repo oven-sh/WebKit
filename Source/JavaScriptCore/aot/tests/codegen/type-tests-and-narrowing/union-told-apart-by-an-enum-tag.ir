@@ -110,11 +110,11 @@ function f1 name="total" module=m0 position=141 flags=[IsChecked, HasExplicitNam
     Return v15
 }
 
-# A tag of two enum members is one byte in the object. `node.kind === Kind.Leaf` loads the byte and branches on it: there is no comparison to make with zero. The tag decides the layout, so the fields of either arm are plain loads.
+# `node.kind === Kind.Leaf` loads the tag of two enum members and branches on it: there is no comparison to make with zero. The tag decides the layout, so the fields of either arm are plain loads.
 # CHECK-LABEL: name="total" role=Source
 # CHECK-NEXT: BB#0:
 # CHECK-NEXT: Int64 b@[[node]] = ArgumentReg(
-# CHECK-NEXT: Int32 b@[[kind]] = Load8Z(b@[[node]], offset = 16, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
+# CHECK-NEXT: Int32 b@[[kind]] = Load(b@[[node]], offset = 16, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
 # CHECK-NEXT: Branch(b@[[kind]], Terminal
 # CHECK-NEXT: Successors: Then:#[[pair]], Else:#[[leaf]]
 # CHECK-NEXT: BB#[[pair]]:

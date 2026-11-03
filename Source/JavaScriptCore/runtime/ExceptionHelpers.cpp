@@ -349,6 +349,10 @@ JSObject* createErrorForDuplicateGlobalVariableDeclaration(JSGlobalObject* globa
 
 JSObject* createErrorForInvalidGlobalFunctionDeclaration(JSGlobalObject* globalObject, const Identifier& ident)
 {
+#if ENABLE(AOT)
+    if (globalObject->structure()->isImmutableProperty(ident.impl())) [[unlikely]]
+        return createTypeError(globalObject, withAOTErrorNote(makeString("Cannot declare '"_s, ident.string(), "': compiled code treats the global '"_s, ident.string(), "' as a constant, so code from a string can't replace it with a top-level function"_s)));
+#endif
     String message = tryMakeString("Can't declare global function '"_s, ident.string(), "': property must be either configurable or both writable and enumerable"_s);
     if (!message) [[unlikely]]
         message = "Can't declare global function: property must be either configurable or both writable and enumerable"_s;

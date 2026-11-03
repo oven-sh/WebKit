@@ -770,11 +770,14 @@ class ValueSetMaker {
     WTF_MAKE_NONCOPYABLE(ValueSetMaker);
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ValueSetMaker);
 public:
-    explicit ValueSetMaker(ValueSets&);
+    enum class Remembers : bool { AsUsual, ByTheSizeOfTheUniverse };
+    explicit ValueSetMaker(ValueSets&, Remembers = Remembers::AsUsual);
 
     const ValueSets& sets() const { return m_sets; }
     // For when sets are freed: what is remembered may name one of them.
     void forgetWhatIsRemembered();
+    void remember(Remembers);
+    size_t numberOfResultsRemembered() const { return m_rememberedSets.size() + m_rememberedEntries.size() + m_rememberedBlocks.size(); }
     // For a maker whose owner writes its sets down where nobody looks for them. Call before the first set is made.
     void keepEverySetMade() { m_roomForLists.runsToKeep = &m_setsToKeep; }
     void keepSetsToKeep();
@@ -847,9 +850,6 @@ private:
         uint64_t hashOfMembers { 0 };
     };
 
-    static constexpr unsigned bitsOfRememberedSets = 13;
-    static constexpr unsigned bitsOfRememberedEntries = 11;
-    static constexpr unsigned bitsOfRememberedBlocks = 12;
     AOT_CLASS_THRESHOLD(uint32_t, mostMembersOfSetWithoutParts, 16);
     AOT_CLASS_THRESHOLD(uint32_t, mostMembersOfListGatheredFrom, 256);
 
@@ -897,7 +897,10 @@ private:
     ValueSets::InternedRuns::Room m_roomForLists;
     std::array<ValueSets::InternedRuns::FreeRuns, 3> m_freeRuns;
     Vector<uint32_t> m_setsToKeep;
-    std::array<Remembered, 1u << bitsOfRememberedSets> m_rememberedSets { };
+    unsigned m_bitsOfRememberedSets { 0 };
+    unsigned m_bitsOfRememberedEntries { 0 };
+    unsigned m_bitsOfRememberedBlocks { 0 };
+    Vector<Remembered> m_rememberedSets;
     Vector<RememberedEntries> m_rememberedEntries;
     Vector<Remembered> m_rememberedBlocks;
     HashMap<uint64_t, ValueSetID, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_setOfRange;

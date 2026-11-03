@@ -403,6 +403,27 @@ private:
         }
     }
 
+    // `{ first, get second() {}, third }`: what a stub or the run time creates has its place among the keys where it stands in the source, like what a store to a slot creates.
+    enum class CreatedAs : bool { PlainProperty, Accessor };
+    void appendFieldCreationsOutsideCode(LayoutSetID receivers, std::span<const PropertyKeyID> keys, CreatedAs createdAs)
+    {
+        if (!receivers)
+            return;
+        const SlotPlan& slots = m_context.slots();
+        for (LayoutID member : m_program.at(receivers).seen().predicted()) {
+            if (!m_context.isCompiledObject(member) || slots.layout(member).keysAreNeverEnumerated)
+                continue;
+            for (PropertyKeyID key : keys) {
+                std::optional<FieldIndex> field = key ? m_program.at(member).findField(key) : std::nullopt;
+                if (!field)
+                    continue;
+                bool isCreated = createdAs == CreatedAs::Accessor ? slots.slot(member, *field).hasStorage() : slots.slot(member, *field).canBeCreatedByStore() && fieldAt(m_program, declarationOf(m_program, { member, *field })).form.isEmpty();
+                if (isCreated)
+                    m_sites->sourceFieldCreations.append(FieldCreationUse { member, { *field } });
+            }
+        }
+    }
+
     void appendCell(BuiltinCellKey key)
     {
         if (key.hasCell(m_program.builtins()))
@@ -649,7 +670,19 @@ private:
         case Opcode::DefineAccessors:
             for (PropertyKeyID key : value.keys())
                 appendKeyCell(key);
+            appendFieldCreationsOutsideCode(knownSetOf(value.objectOperand()), value.keys(), CreatedAs::Accessor);
             break;
+        case Opcode::DefineGetter:
+        case Opcode::DefineSetter: {
+            PropertyKeyID key = value.key();
+            appendFieldCreationsOutsideCode(knownSetOf(value.objectOperand()), singleElementSpan(key), CreatedAs::Accessor);
+            break;
+        }
+        case Opcode::PropDefine: {
+            PropertyKeyID key = value.key();
+            appendFieldCreationsOutsideCode(value.receivers(), singleElementSpan(key), CreatedAs::PlainProperty);
+            break;
+        }
         case Opcode::DefineOwnProperty:
             appendFieldCreationByDefinition(value);
             break;
@@ -662,6 +695,10 @@ private:
         case Opcode::PropSet:
             if (value.isFreeName())
                 sites.globalBindingSites.append(GlobalBindingSite { { value.key(), true, true }, m_id, point, id, true });
+            else {
+                PropertyKeyID key = value.key();
+                appendFieldCreationsOutsideCode(value.receivers(), singleElementSpan(key), CreatedAs::PlainProperty);
+            }
             break;
         default:
             break;

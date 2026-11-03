@@ -202,6 +202,9 @@ struct OrdersOfLayout {
     uint32_t shape;
     uint32_t numberOfAddedOrders;
     AddedOrder** addedOrders;
+    uint16_t heldOrdersFound;
+    uint16_t heldOrdersMadeAfterFindingOne;
+    uint32_t heldOrdersMadeWithoutSearch;
 };
 
 struct Continuation {
@@ -264,8 +267,10 @@ struct KeyOrderTable::Storage {
         uint32_t count;
     };
 
-    Storage(ZeroedPages& pages, const ProgramTables& tables)
+    Storage(ZeroedPages& pages, const ProgramTables& tables, VM& vm)
         : tables(tables)
+        , maxFieldsInOrder(runtimeLimitValue(vm, LimitID::FieldsInKeyOrder))
+        , maxOrdersPerLayout(runtimeLimitValue(vm, LimitID::KeyOrdersPerLayout))
         , layouts(pages)
         , continuations(pages)
         , keyLists(pages)
@@ -293,7 +298,7 @@ struct KeyOrderTable::Storage {
             return *known;
         }
         ASSERT(layout.numberOfOrders <= maxKeyOrdersPerLayout);
-        OrdersOfLayout& orders = layouts.add({ layout.shape, 0, nullptr });
+        OrdersOfLayout& orders = layouts.add({ layout.shape, 0, nullptr, 0, 0, 0 });
         ordersAskedForLast = &orders;
         if (!layout.numberOfOrders)
             addOrder(orders, { });
@@ -419,6 +424,8 @@ struct KeyOrderTable::Storage {
     }
 
     const ProgramTables& tables;
+    const uint64_t maxFieldsInOrder;
+    const uint64_t maxOrdersPerLayout;
     Arena orderArena;
     Arena listArena;
     FlatTable<OrdersOfLayout> layouts;
@@ -432,7 +439,7 @@ struct KeyOrderTable::Storage {
 KeyOrderTable::KeyOrderTable(State& state)
     : m_state(state)
     , m_tables(state.tables)
-    , m_storage(makeUnique<Storage>(state.pages, state.tables))
+    , m_storage(makeUnique<Storage>(state.pages, state.tables, *state.instance.vm))
 {
     Instance& instance = state.instance;
     instance.objects.keyLists = state.tableArena.allocate<KeyListCacheEntry>(numberOfKeyLists);
@@ -564,7 +571,7 @@ bool KeyOrderTable::positionsExtraKeys(const LayoutData& layout, uint32_t orderW
 std::optional<uint32_t> KeyOrderTable::orderStartingWith(const LayoutData& layout, std::span<const uint16_t> entries)
 {
     VM& vm = *m_state.instance.vm;
-    if (entries.size() > runtimeLimitValue(vm, LimitID::FieldsInKeyOrder)) {
+    if (entries.size() > m_storage->maxFieldsInOrder) {
         countLimitHit(vm, LimitID::FieldsInKeyOrder);
         return std::nullopt;
     }
@@ -584,7 +591,7 @@ std::optional<uint32_t> KeyOrderTable::orderStartingWith(const LayoutData& layou
         }
     }
     uint32_t added = layout.numberOfOrders + orders.numberOfAddedOrders;
-    if (added >= runtimeLimitValue(vm, LimitID::KeyOrdersPerLayout)) {
+    if (added >= storage.maxOrdersPerLayout) {
         countLimitHit(vm, LimitID::KeyOrdersPerLayout);
         return std::nullopt;
     }
@@ -663,7 +670,7 @@ std::optional<uint32_t> KeyOrderTable::orderAfterCreating(const LayoutData& layo
     uint32_t before = orderWordOf(order, count);
     if (const Continuation* known = storage.continuations.find(layout.shape, before, entry))
         return publish(orderWordOf(known->next, count + 1));
-    if (order >= layout.numberOfOrders && count == entries.size() && count < runtimeLimitValue(*m_state.instance.vm, LimitID::FieldsInKeyOrder)) {
+    if (order >= layout.numberOfOrders && count == entries.size() && count < storage.maxFieldsInOrder) {
         RELEASE_ASSERT(entry <= maxKeyOrderEntry);
         storage.append(orders.addedOrders[order - layout.numberOfOrders], singleElementSpan(entry));
         return publish(orderWordOf(order, count + 1));
@@ -678,6 +685,33 @@ std::optional<uint32_t> KeyOrderTable::orderAfterCreating(const LayoutData& layo
     return publish(*result);
 }
 
+void KeyOrderTable::didFindHeldOrder(const LayoutData& layout)
+{
+    AOT_THRESHOLD(uint16_t, numberRemembered, 1 << 12);
+    OrdersOfLayout& orders = m_storage->ordersOf(layout);
+    if (++orders.heldOrdersFound < numberRemembered)
+        return;
+    orders.heldOrdersFound /= 2;
+    orders.heldOrdersMadeAfterFindingOne /= 2;
+}
+
+void KeyOrderTable::didMakeHeldOrderAfterFindingOne(const LayoutData& layout)
+{
+    OrdersOfLayout& orders = m_storage->ordersOf(layout);
+    if (orders.heldOrdersMadeAfterFindingOne < orders.heldOrdersFound)
+        ++orders.heldOrdersMadeAfterFindingOne;
+}
+
+bool KeyOrderTable::shouldSearchForHeldOrder(const LayoutData& layout)
+{
+    AOT_THRESHOLD(uint32_t, numberFoundBeforeJudging, 64);
+    AOT_THRESHOLD(uint32_t, ordersMadeBetweenSearches, 16);
+    OrdersOfLayout& orders = m_storage->ordersOf(layout);
+    if (orders.heldOrdersFound < numberFoundBeforeJudging || orders.heldOrdersMadeAfterFindingOne * 8 < orders.heldOrdersFound * 7)
+        return true;
+    return !(++orders.heldOrdersMadeWithoutSearch % ordersMadeBetweenSearches);
+}
+
 // No order continues another from the end of an added one: orderAfterCreating() and orderStartingWith() both make the added order longer there. So nothing is known or published about this step yet.
 std::optional<uint32_t> KeyOrderTable::tryAppendToAddedOrder(const LayoutData& layout, uint32_t orderWord, const FieldData& field)
 {
@@ -688,7 +722,7 @@ std::optional<uint32_t> KeyOrderTable::tryAppendToAddedOrder(const LayoutData& l
     Storage& storage = *m_storage;
     AddedOrder*& added = storage.ordersOf(layout).addedOrders[order - layout.numberOfOrders];
     uint32_t count = countOf(orderWord);
-    if (count != added->length || count >= runtimeLimitValue(*m_state.instance.vm, LimitID::FieldsInKeyOrder))
+    if (count != added->length || count >= storage.maxFieldsInOrder)
         return std::nullopt;
     uint16_t entry = static_cast<uint16_t>(layout.indexOf(field));
     ASSERT(!storage.continuations.find(layout.shape, orderWord, entry));
@@ -756,7 +790,7 @@ static KeyOrderTransition& placeOfKeyOrderTransition(KeyOrderTransition* transit
     return transitions[index];
 }
 
-// Only the thread that runs the instance adds transitions, so it reads them as compiled code does, without the lock.
+// Only the thread that runs the instance reads and adds transitions, and they name no cell: no lock.
 std::optional<uint32_t> KeyOrderTable::publishedTransition(const LayoutData& layout, uint32_t orderAndCountBefore, const FieldData& field, uint32_t numberOfExtraKeys) const
 {
     ASSERT(!(orderAndCountBefore & ~orderAndCountMask));
@@ -778,14 +812,12 @@ void KeyOrderTable::publishTransition(const LayoutData& layout, uint32_t orderAn
     uint32_t key = transitionKeyFor(slotKey, numberOfExtraKeys);
     uint64_t before = static_cast<uint64_t>(shapeWordOf(layout.shape)) << 32 | orderAndCountBefore;
     ObjectWords& words = m_state.instance.objects;
-    Locker locker { m_state.caches->lock() };
     uint32_t mask = words.keyOrderTransitionMask;
     KeyOrderTransition& transition = placeOfKeyOrderTransition(words.keyOrderTransitions, mask, before, key);
     if (!transition.isEmpty())
         return;
     transition.orderAndCountAfter = orderAndCountAfter;
     transition.key = key;
-    WTF::storeStoreFence();
     transition.orderAndShapeWordsBefore = before;
     if (++m_numberOfTransitions * maxTransitionLoadDenominator > (static_cast<uint64_t>(mask) + 1) * maxTransitionLoadNumerator)
         growTransitions();

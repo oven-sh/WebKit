@@ -1,0 +1,204 @@
+# function make(n) {
+#   return { n };
+# }
+# function use(value) {
+#   globalThis.seen = value;
+# }
+# function letsGoOfLast(a, b, c, d, e, f, g, h, i, x) {
+#   use(x);
+#   x = null;
+#   use(a);
+#   use(b);
+#   use(c);
+#   use(d);
+#   use(e);
+#   use(f);
+#   use(g);
+#   use(h);
+#   use(i);
+# }
+# function keepsLast(a, b, c, d, e, f, g, h, i, x) {
+#   use(x);
+#   use(a);
+#   use(b);
+#   use(c);
+#   use(d);
+#   use(e);
+#   use(f);
+#   use(g);
+#   use(h);
+#   use(i);
+# }
+# letsGoOfLast(make(1), make(2), make(3), make(4), make(5), make(6), make(7), make(8), make(9), make(10));
+# keepsLast(make(1), make(2), make(3), make(4), make(5), make(6), make(7), make(8), make(9), make(10));
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN(X64): lower-to-air f3 f4
+# REQUIRES(X64): x86_64 unsanitized-code
+
+layout L0 module=m0 position=28 fields=[{key="n" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+variable g0 name="use" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" flags=[KeepsError] body=f0 positions={lineStarts=[0, 19, 35, 37, 59, 86, 88, 142, 152, 164, 174, 184, 194, 204, 214, 224, 234, 244, 254, 256, 307, 317, 327, 337, 347, 357, 367, 377, 387, 397, 407, 409, 514, 616]} functionText="function make(n) {\x0a  return { n };\x0a}\x0afunction use(value) {\x0a  globalThis.seen = value;\x0a}\x0afunction letsGoOfLast(a, b, c, d, e, f, g, h, i, x) {\x0a  use(x);\x0a  x = null;\x0a  use(a);\x0a  use(b);\x0a  use(c);\x0a  use(d);\x0a  use(e);\x0a  use(f);\x0a  use(g);\x0a  use(h);\x0a  use(i);\x0a}\x0afunction keepsLast(a, b, c, d, e, f, g, h, i, x) {\x0a  use(x);\x0a  use(a);\x0a  use(b);\x0a  use(c);\x0a  use(d);\x0a  use(e);\x0a  use(f);\x0a  use(g);\x0a  use(h);\x0a  use(i);\x0a}\x0aletsGoOfLast(make(1), make(2), make(3), make(4), make(5), make(6), make(7), make(8), make(9), make(10));\x0akeepsLast(make(1), make(2), make(3), make(4), make(5), make(6), make(7), make(8), make(9), make(10));\x0a" namespaceLayout=L(m0)
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v2 = NewClosure function=f3 @0
+    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v4 = NewClosure function=f4 @0
+    v5 = Convert v4 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v6 = Integer integer=1 @427
+    v7 = Call v1, -, v6 calleeName="make" @422
+    v8 = Convert v7 declared={type=undefined|null|L0 flags=[IsExpected]} @422
+    v9 = Integer integer=2 @436
+    v10 = Call v1, -, v9 calleeName="make" @431
+    v11 = Convert v10 declared={type=undefined|null|L0 flags=[IsExpected]} @431
+    v12 = Integer integer=3 @445
+    v13 = Call v1, -, v12 calleeName="make" @440
+    v14 = Convert v13 declared={type=undefined|null|L0 flags=[IsExpected]} @440
+    v15 = Integer integer=4 @454
+    v16 = Call v1, -, v15 calleeName="make" @449
+    v17 = Convert v16 declared={type=undefined|null|L0 flags=[IsExpected]} @449
+    v18 = Integer integer=5 @463
+    v19 = Call v1, -, v18 calleeName="make" @458
+    v20 = Convert v19 declared={type=undefined|null|L0 flags=[IsExpected]} @458
+    v21 = Integer integer=6 @472
+    v22 = Call v1, -, v21 calleeName="make" @467
+    v23 = Convert v22 declared={type=undefined|null|L0 flags=[IsExpected]} @467
+    v24 = Integer integer=7 @481
+    v25 = Call v1, -, v24 calleeName="make" @476
+    v26 = Convert v25 declared={type=undefined|null|L0 flags=[IsExpected]} @476
+    v27 = Integer integer=8 @490
+    v28 = Call v1, -, v27 calleeName="make" @485
+    v29 = Convert v28 declared={type=undefined|null|L0 flags=[IsExpected]} @485
+    v30 = Integer integer=9 @499
+    v31 = Call v1, -, v30 calleeName="make" @494
+    v32 = Convert v31 declared={type=undefined|null|L0 flags=[IsExpected]} @494
+    v33 = Integer integer=10 @508
+    v34 = Call v1, -, v33 calleeName="make" @503
+    v35 = Convert v34 declared={type=undefined|null|L0 flags=[IsExpected]} @503
+    v36 = Call v3, -, v8, v11, v14, v17, v20, v23, v26, v29, v32, v35 calleeName="letsGoOfLast" @409
+    v37 = Integer integer=1 @529
+    v38 = Call v1, -, v37 calleeName="make" @524
+    v39 = Convert v38 declared={type=undefined|null|L0 flags=[IsExpected]} @524
+    v40 = Integer integer=2 @538
+    v41 = Call v1, -, v40 calleeName="make" @533
+    v42 = Convert v41 declared={type=undefined|null|L0 flags=[IsExpected]} @533
+    v43 = Integer integer=3 @547
+    v44 = Call v1, -, v43 calleeName="make" @542
+    v45 = Convert v44 declared={type=undefined|null|L0 flags=[IsExpected]} @542
+    v46 = Integer integer=4 @556
+    v47 = Call v1, -, v46 calleeName="make" @551
+    v48 = Convert v47 declared={type=undefined|null|L0 flags=[IsExpected]} @551
+    v49 = Integer integer=5 @565
+    v50 = Call v1, -, v49 calleeName="make" @560
+    v51 = Convert v50 declared={type=undefined|null|L0 flags=[IsExpected]} @560
+    v52 = Integer integer=6 @574
+    v53 = Call v1, -, v52 calleeName="make" @569
+    v54 = Convert v53 declared={type=undefined|null|L0 flags=[IsExpected]} @569
+    v55 = Integer integer=7 @583
+    v56 = Call v1, -, v55 calleeName="make" @578
+    v57 = Convert v56 declared={type=undefined|null|L0 flags=[IsExpected]} @578
+    v58 = Integer integer=8 @592
+    v59 = Call v1, -, v58 calleeName="make" @587
+    v60 = Convert v59 declared={type=undefined|null|L0 flags=[IsExpected]} @587
+    v61 = Integer integer=9 @601
+    v62 = Call v1, -, v61 calleeName="make" @596
+    v63 = Convert v62 declared={type=undefined|null|L0 flags=[IsExpected]} @596
+    v64 = Integer integer=10 @610
+    v65 = Call v1, -, v64 calleeName="make" @605
+    v66 = Convert v65 declared={type=undefined|null|L0 flags=[IsExpected]} @605
+    v67 = Call v5, -, v39, v42, v45, v48, v51, v54, v57, v60, v63, v66 calleeName="keepsLast" @514
+    v68 = Undefined @514
+    Return v68 @514
+}
+function f1 name="use" module=m0 position=37 text={start=37 end=87} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @37
+  b1():
+    v1 = Builtin builtin=GlobalThis @61
+    v2 = PropGet v1 key="globalThis" [isFreeName] @61
+    v3 = Convert v2 declared={type=builtin(GlobalThis) flags=[IsExpected]} @61
+    PropSet v3, v0 key="seen" @61
+    v5 = Undefined @61
+    Return v5 @61
+}
+function f2 name="make" module=m0 text={end=36} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|L0 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @0
+  b1():
+    v1 = NewObject -, v0 layout=L0 fields=[0] @28
+    v2 = FinishObject v1 @28
+    v3 = Convert v2 declared={type=undefined|null|L0 flags=[IsExpected]} @28
+    Return v3 @28
+}
+function f3 name="letsGoOfLast" module=m0 position=88 text={start=88 end=255} flags=[HasExplicitName] length=10 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}, {type=undefined|null|L0 flags=[IsExpected]}, {type=undefined|null|L0 flags=[IsExpected]}, {type=undefined|null|L0 flags=[IsExpected]}, {type=undefined|null|L0 flags=[IsExpected]}, {type=undefined|null|L0 flags=[IsExpected]}, {type=undefined|null|L0 flags=[IsExpected]}, {type=undefined|null|L0 flags=[IsExpected]}, {type=undefined|null|L0 flags=[IsExpected]}, {type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0, v1: undefined|null|L0, v2: undefined|null|L0, v3: undefined|null|L0, v4: undefined|null|L0, v5: undefined|null|L0, v6: undefined|null|L0, v7: undefined|null|L0, v8: undefined|null|L0, v9: undefined|null|L0):
+    Jump -> next b1() @88
+  b1():
+    v10 = GetModuleVariable variable=g0 @144
+    v11 = Call v10, -, v9 calleeName="use" @144
+    v12 = Null @158
+    v13 = Convert v12 declared={type=undefined|null|L0 flags=[IsExpected]} @154
+    ReleaseHint v9 @154
+    v15 = GetModuleVariable variable=g0 @166
+    v16 = Call v15, -, v0 calleeName="use" @166
+    v17 = GetModuleVariable variable=g0 @176
+    v18 = Call v17, -, v1 calleeName="use" @176
+    v19 = GetModuleVariable variable=g0 @186
+    v20 = Call v19, -, v2 calleeName="use" @186
+    v21 = GetModuleVariable variable=g0 @196
+    v22 = Call v21, -, v3 calleeName="use" @196
+    v23 = GetModuleVariable variable=g0 @206
+    v24 = Call v23, -, v4 calleeName="use" @206
+    v25 = GetModuleVariable variable=g0 @216
+    v26 = Call v25, -, v5 calleeName="use" @216
+    v27 = GetModuleVariable variable=g0 @226
+    v28 = Call v27, -, v6 calleeName="use" @226
+    v29 = GetModuleVariable variable=g0 @236
+    v30 = Call v29, -, v7 calleeName="use" @236
+    v31 = GetModuleVariable variable=g0 @246
+    v32 = Call v31, -, v8 calleeName="use" @246
+    v33 = Undefined @246
+    Return v33 @246
+}
+function f4 name="keepsLast" module=m0 position=256 text={start=256 end=408} flags=[HasExplicitName] length=10 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}, {type=undefined|null|L0 flags=[IsExpected]}, {type=undefined|null|L0 flags=[IsExpected]}, {type=undefined|null|L0 flags=[IsExpected]}, {type=undefined|null|L0 flags=[IsExpected]}, {type=undefined|null|L0 flags=[IsExpected]}, {type=undefined|null|L0 flags=[IsExpected]}, {type=undefined|null|L0 flags=[IsExpected]}, {type=undefined|null|L0 flags=[IsExpected]}, {type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0, v1: undefined|null|L0, v2: undefined|null|L0, v3: undefined|null|L0, v4: undefined|null|L0, v5: undefined|null|L0, v6: undefined|null|L0, v7: undefined|null|L0, v8: undefined|null|L0, v9: undefined|null|L0):
+    Jump -> next b1() @256
+  b1():
+    v10 = GetModuleVariable variable=g0 @309
+    v11 = Call v10, -, v9 calleeName="use" @309
+    v12 = GetModuleVariable variable=g0 @319
+    v13 = Call v12, -, v0 calleeName="use" @319
+    v14 = GetModuleVariable variable=g0 @329
+    v15 = Call v14, -, v1 calleeName="use" @329
+    v16 = GetModuleVariable variable=g0 @339
+    v17 = Call v16, -, v2 calleeName="use" @339
+    v18 = GetModuleVariable variable=g0 @349
+    v19 = Call v18, -, v3 calleeName="use" @349
+    v20 = GetModuleVariable variable=g0 @359
+    v21 = Call v20, -, v4 calleeName="use" @359
+    v22 = GetModuleVariable variable=g0 @369
+    v23 = Call v22, -, v5 calleeName="use" @369
+    v24 = GetModuleVariable variable=g0 @379
+    v25 = Call v24, -, v6 calleeName="use" @379
+    v26 = GetModuleVariable variable=g0 @389
+    v27 = Call v26, -, v7 calleeName="use" @389
+    v28 = GetModuleVariable variable=g0 @399
+    v29 = Call v28, -, v8 calleeName="use" @399
+    v30 = Undefined @399
+    Return v30 @399
+}
+entry module=m0
+
+# The tenth parameter comes in a word that the caller stored it to, and waits for the call in a slot of this frame. The collector reads both for as long as the function runs.
+# X64-LABEL: name="letsGoOfLast" role=Source
+# X64: Patch
+# X64-NEXT: Move $0, {{*}}(%rsp)
+# X64-NEXT: Move $0, {{*}}(%rsp)
+# X64-LABEL: end of function
+# X64-LABEL: name="keepsLast" role=Source
+# X64-NOT: Move $0,
+# X64-LABEL: end of function

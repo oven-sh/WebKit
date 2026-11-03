@@ -484,6 +484,8 @@ export interface ModelHostObject {
   internalFields: readonly ModelHostObjectInternalField[];
   keepsStringsOfStoredValues: boolean;
   nativeAccessors: readonly ModelName[];
+  lockedNames: readonly ModelName[];
+  holder: ModelBuiltin | null;
   platforms: readonly TargetPlatform[];
   source: Source;
 }
@@ -608,6 +610,7 @@ export interface ModelClass {
   namesMadeByStaticMembers: readonly { name: ModelName; member: ModelName }[];
   namesReadToDescribeInstances: readonly ModelName[];
   constructorOnlyReadsPrototypeOfNewTarget: boolean;
+  constructorAdder: ModelName | null;
   slots: readonly ModelSlot[];
   stateHeap: Heap | null;
   types: readonly ModelTypeName[];

@@ -11,6 +11,7 @@
 #include "AOTArrivalSiteNumbers.h"
 #include "AOTConstantEmitter.h"
 #include "AOTFieldTable.h"
+#include "AOTFlowResults.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTElementAccessEmitter.h"
 #include "AOTIdentifierNumbering.h"
@@ -64,6 +65,16 @@ std::optional<uint32_t> AccessEmitter::findIdentifierNumber(const OperationConte
     return number;
 }
 
+bool AccessEmitter::isSymbolOfRealm(PropertyKeyID key) const
+{
+    return m_program.at(key).kind == PropertyKeyKind::CreatedSymbol && inputs().flow.programInstances() != ProgramInstances::AtMostOne && m_placement.keyCell(key);
+}
+
+Boxed AccessEmitter::cellOfKey(const OperationContext& context, PropertyKeyID key)
+{
+    return boxCell(emitter<ConstantEmitter>().keyConstant(context, key));
+}
+
 // What a table remembers of an access pays where the access comes again. The body of a CommonJS module is not proven to run once, and runs again only after its entry left the cache of `require`.
 bool AccessEmitter::comesAgain(const OperationContext& context)
 {
@@ -71,7 +82,7 @@ bool AccessEmitter::comesAgain(const OperationContext& context)
 }
 
 // The call has the effects of the operation and not those of the access it stands before. An access that writes nothing would leave a call that writes nothing, which B3 removes.
-void AccessEmitter::recordArrival(const OperationContext& context, Boxed receiver, uint32_t part)
+void AccessEmitter::recordArrival(const OperationContext& context, Boxed receiver, uint32_t part, ValueID key)
 {
     const ArrivalSiteNumbers& sites = inputs().arrivalSites;
     if (!sites.isCounting())
@@ -79,7 +90,7 @@ void AccessEmitter::recordArrival(const OperationContext& context, Boxed receive
     std::optional<uint32_t> number = sites.numberOf(m_id, context.valueID(), part);
     if (!number)
         return;
-    Operand arguments[] { receiver, word32(static_cast<int32_t>(*number)) };
+    Operand arguments[] { receiver, key ? in<Boxed>(key) : Boxed(m_out.constInt64(0)), word32(static_cast<int32_t>(*number)) };
     callWithoutSite(RuntimeOperation::RecordArrival, arguments, Representation::Void, { .isOnRarePath = true });
 }
 
@@ -105,6 +116,8 @@ StubKey AccessEmitter::stubThatReadsAtSite(uint32_t identifierNumber, ValueID re
 
 Boxed AccessEmitter::getById(const OperationContext& context, Boxed receiver, PropertyKeyID key, SiteCacheID cache, std::optional<Origin> origin, ValueID receiverID)
 {
+    if (isSymbolOfRealm(key))
+        return getByVal(context, receiver, cellOfKey(context, key));
     recordArrival(context, receiver);
     std::optional<uint32_t> identifier = findIdentifierNumber(context, key);
     if (!identifier)
@@ -154,6 +167,8 @@ Boxed AccessEmitter::getMemberAboveEmptySlot(const ValueContext& value)
 {
     Boxed receiver = in<Boxed>(value->receiverOperand());
     PropertyKeyID key = value->key();
+    if (isSymbolOfRealm(key))
+        return getByVal(value, receiver, cellOfKey(value, key));
     SiteCacheID cache = value->siteCache();
     std::optional<uint32_t> identifier = build().identifierNumbering().numberOf(key);
     // A read above the object asks this site, and only this read fills it.
@@ -272,7 +287,7 @@ void AccessEmitter::generateDidReadAbove(const ValueContext& value)
 Boxed AccessEmitter::getByTablesOrNothing(const ValueContext& value)
 {
     std::optional<uint32_t> identifier = build().identifierNumbering().numberOf(value->key());
-    if (!identifier || !RowDisplacementTable::hasColumn(*identifier) || value.shape() == CodeShape::Compact)
+    if (!identifier || !RowDisplacementTable::hasColumn(*identifier) || value.shape() == CodeShape::Compact || isSymbolOfRealm(value->key()))
         return Boxed(m_out.constInt64(0));
     constexpr ptrdiff_t front = AOT_INSTANCE_OFFSET(propertyCaches) + PropertyCacheWords::offsetOfFront(SlotAccess::Read);
     constexpr uint32_t biasedBitsOfAbsent = static_cast<uint8_t>(Slot::Kind::Absent) ^ PackedSlot::ownInlineValueBits;
@@ -351,7 +366,7 @@ Boxed AccessEmitter::getMemberAboveLayouts(const ValueContext& value)
     SiteCacheID cache = value->siteCache();
     std::optional<uint32_t> identifier = build().identifierNumbering().numberOf(value->key());
     bool asksSiteInLine = cache && identifier && value.shape() == CodeShape::Fast && value->receivers() && typeOf(value->objectOperand()).isObject() && m_program.nameClassOf(value->key()) != NameClass::Length;
-    if (!asksSiteInLine || !comesAgain(value))
+    if (!asksSiteInLine || !comesAgain(value) || isSymbolOfRealm(value->key()))
         return getById(value, receiver, value->key(), cache, std::nullopt, value->objectOperand());
 
     recordArrival(value, receiver);
@@ -367,6 +382,10 @@ Boxed AccessEmitter::getMemberAboveLayouts(const ValueContext& value)
 
 void AccessEmitter::putById(const OperationContext& context, Boxed receiver, PropertyKeyID key, Boxed value, PutMode mode, SiteCacheID cache)
 {
+    if (isSymbolOfRealm(key)) {
+        putByVal(context, receiver, cellOfKey(context, key), value, mode);
+        return;
+    }
     recordArrival(context, receiver);
     std::optional<uint32_t> identifier = findIdentifierNumber(context, key);
     if (!identifier)
@@ -390,6 +409,8 @@ void AccessEmitter::putById(const OperationContext& context, Boxed receiver, Pro
 
 Condition AccessEmitter::hasById(const OperationContext& context, Boxed receiver, PropertyKeyID key)
 {
+    if (isSymbolOfRealm(key))
+        return hasByVal(context, receiver, cellOfKey(context, key));
     recordArrival(context, receiver);
     std::optional<uint32_t> identifier = findIdentifierNumber(context, key);
     if (!identifier)
@@ -566,6 +587,57 @@ void AccessEmitter::generateGetCachedGetter(const ValueContext& value)
     m_out.appendTo(findsNoGetter);
     join.add(undefined());
     define(value, join.finish());
+}
+
+// The guards in front of it say that the object finds the accessor where the class has it, whatever Structure the object has. So what the site found for one object is what every object finds.
+void AccessEmitter::generateGetAccessorOfMember(const ValueContext& value)
+{
+    SiteCacheID cache = value->siteCache();
+    std::optional<uint32_t> identifier = findIdentifierNumber(value, value->key());
+    if (!identifier) {
+        define(value, CellPointer(m_out.intPtrZero));
+        return;
+    }
+
+    CellPointer object = in<CellPointer>(value->objectOperand());
+    Pointer site = siteCacheAddress(cache);
+    auto askRunTime = [&] {
+        return callOperation<CellPointer>(value, RuntimeOperation::FindAccessorOfMemberAndFillSiteCache, { object, word32(static_cast<int32_t>(*identifier)), site }, { .isOnRarePath = !!cache });
+    };
+    auto functionOf = [&](CellPointer accessor) {
+        return CellPointer(m_out.load64(m_out.address(m_heaps.root, accessor.value(), value->isSetter() ? GetterSetter::offsetOfSetter() : GetterSetter::offsetOfGetter())));
+    };
+    if (!cache || value.shape() != CodeShape::Fast) {
+        define(value, functionOf(askRunTime()));
+        return;
+    }
+
+    auto partOfSlot = [&](ptrdiff_t offset) {
+        return m_out.address(m_heaps.AOTInstance_siteCaches, site.value(), offset);
+    };
+    LBasicBlock isEmpty = newBlock();
+    Join<CellPointer> join(m_out);
+    branchUnless(equal(Word32(m_out.load8ZeroExt32(partOfSlot(Slot::offsetOfKind()))), static_cast<int32_t>(Slot::Kind::Getter)), isEmpty);
+    Pointer holder(m_out.load64(partOfSlot(Slot::offsetOfPayload())));
+    Pointer butterfly(m_out.loadPtr(m_out.address(m_heaps.root, holder.value(), JSObject::butterflyOffset())));
+    Pointer storage = select(hasBits(Word32(m_out.load8ZeroExt32(partOfSlot(Slot::offsetOfFlags()))), Slot::isOutOfLine), butterfly, holder);
+    LValue offset = m_out.shl(m_out.signExt32To64(m_out.load16SignExt32(partOfSlot(Slot::offsetOfLocation()))), 3);
+    join.add(CellPointer(m_out.load64(m_out.address(m_heaps.root, m_out.add(storage.value(), offset), 0))));
+
+    m_out.appendTo(isEmpty);
+    join.add(askRunTime());
+    CellPointer accessor = join.finish();
+    if (generator().validates()) {
+        LBasicBlock differs = newBlock();
+        LBasicBlock isSame = newBlock();
+        CellPointer found = callOperation<CellPointer>(value, RuntimeOperation::FindAccessorOfMemberAndFillSiteCache, { object, word32(static_cast<int32_t>(*identifier)), pointerConstant(0) });
+        m_out.branch(m_out.equal(accessor.value(), found.value()), normalEdge(isSame), rareEdge(differs));
+        m_out.appendTo(differs);
+        callVoidOperation(value, RuntimeOperation::ReportValidationFailure, { boxCell(object), word32(static_cast<int32_t>(ValidationFailureKind::FastPathResultDiffers)), word32(m_id.index()), word32(value.id().index()) }, { .isOnRarePath = true });
+        m_out.unreachable();
+        m_out.appendTo(isSame);
+    }
+    define(value, functionOf(accessor));
 }
 
 // It stands ahead of a loop, where the code is not fast code.
@@ -841,6 +913,8 @@ void AccessEmitter::putNamedProperty(const ValueContext& value, Boxed object, Pu
         stub = putKnownFieldThatTakesAnyValue(mode);
     else if (storedFieldAcceptsAnyNumber(m_program, m_placement, m_function, value.value()))
         stub = putKnownFieldAcceptingAnyNumber(mode);
+    else if (storedFieldKeepsNumbersAsValues(m_program, m_placement, m_function, value.value()))
+        stub = putKnownFieldKeepingNumbersAsValues(mode);
     callStub(value, stub, { object.value(), in<Boxed>(value->valueOperand()).value() }, { .immediate = *record });
 }
 
@@ -881,6 +955,10 @@ void AccessEmitter::generatePropHas(const ValueContext& value)
 
 void AccessEmitter::generatePropDelete(const ValueContext& value)
 {
+    if (isSymbolOfRealm(value->key())) {
+        define(value, callOperation<Condition>(value, forMode(value->mode(), RuntimeOperation::DeleteByVal, RuntimeOperation::DeleteByValSloppy), { in<Boxed>(value->objectOperand()), cellOfKey(value, value->key()) }));
+        return;
+    }
     Word32 key = identifierNumber(value->key());
     if (value->isFreeName()) {
         define(value, callOperation<Condition>(value, RuntimeOperation::DeleteFreeName, { key }));
@@ -1019,7 +1097,7 @@ void AccessEmitter::generateElemGet(const ValueContext& value)
         stub = expected ? getByValExpecting(key->isInteger, *expected) : AOT::getByVal(key->isInteger);
     } else if (typeOf(value->objectOperand()).isObject() && typeOf(value->propertyOperand()).isString())
         stub = getByValCachedCells();
-    recordArrival(value, object);
+    recordArrival(value, object, 0, value->propertyOperand());
     ElementAccessEmitter& elements = emitter<ElementAccessEmitter>();
     const PlacedSlot* extraPropertiesWord = elements.extraPropertiesWordOfReadByPosition(value);
     if (!extraPropertiesWord) {
@@ -1055,7 +1133,7 @@ void AccessEmitter::generateElemSet(const ValueContext& value)
         std::optional<AOT::ExpectedElements> expected = stubFormOf(value->expectedElements());
         stub = expected ? putByValExpecting(key->isInteger, mode, *expected) : AOT::putByVal(key->isInteger, mode);
     }
-    recordArrival(value, object);
+    recordArrival(value, object, 0, value->propertyOperand());
     callStub(value, stub, { object.value(), key->value, stored.value() });
 }
 

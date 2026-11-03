@@ -55,15 +55,40 @@ enum class Counter : uint8_t {
     RangeChecksRemoved,
     LoopBoundsClamped,
     LoopPollsRemoved,
+    LocationsPromotedInLoops,
     SumsKeptAsIntegers,
     KnownInductionsUsed,
     TrapsFoldedIntoAccesses,
     ColdUsesKeptThroughSecondSplit,
     ColdUsesKeptThroughSecondSplitBetweenDefs,
+    MovesVisitedForWidths,
+    PredecessorsVisitedForRareBlocks,
+    DeadValueReleaseSteps,
+    RangesComparedWithStackCells,
+    ClobberPointsVisitedForCalls,
+    PhiPlacementSteps,
+    BlocksVisitedToPassTmpsOnStack,
+    MemoryPromotionAccessesVisited,
+    LoopsConsideredForMemoryPromotion,
+    LoopsWithoutPreheader,
+    LoopsWithFences,
+    LocationsLoadedAndStoredInLoops,
+    LocationsOnlyLoadedInLoops,
+    NotPromotedLoopVariantAddress,
+    NotPromotedAddressLoadedInLoop,
+    NotPromotedAddressNotHoisted,
+    NotPromotedClobberedOnRarePaths,
+    NotPromotedClobberedOnLikelyPaths,
+    NotPromotedMayAliasStores,
+    NotPromotedNotGuaranteedToExecute,
+    NotPromotedImmutable,
+    NotPromotedCallsOnLikelyPaths,
+    NotPromotedHandledByClient,
+    LikelyDominatorWalkSteps,
 };
 
-static constexpr unsigned numberOfCounters = 12;
-static_assert(static_cast<unsigned>(Counter::ColdUsesKeptThroughSecondSplitBetweenDefs) + 1 == numberOfCounters);
+static constexpr unsigned numberOfCounters = 37;
+static_assert(static_cast<unsigned>(Counter::LikelyDominatorWalkSteps) + 1 == numberOfCounters);
 
 struct LimitHit {
     uint32_t count { 0 };

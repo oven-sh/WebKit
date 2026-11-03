@@ -28,6 +28,8 @@ struct MemberAnswer {
     KnowledgeLevel level { KnowledgeLevel::Unknown };
     LayoutID holder;
     uint32_t field { 0 };
+    // The slot of the field holds a getter, a setter or both.
+    bool isAccessorInSlot { false };
     FunctionID method;
     FunctionID getter;
     FunctionID setter;
@@ -80,8 +82,22 @@ struct MemberPartition {
     void dump(PrintStream&) const;
 };
 
+// A partition as it is kept for whoever asks the same again. A thousand classes with a method each are a thousand arms, for each list of them that arrives somewhere.
+class PackedMemberPartition {
+public:
+    explicit PackedMemberPartition(const MemberPartition&);
+
+    MemberPartition unpack() const;
+    size_t sizeInBytes() const { return m_words.sizeInBytes(); }
+
+private:
+    Vector<uint32_t> m_words;
+};
+
 MemberPartition partitionMembers(const PropertyAccessContext&, std::span<const LayoutID> candidates, PropertyKeyID, Access);
 MemberPartition partitionOwnMembers(const PropertyAccessContext&, std::span<const LayoutID> candidates, PropertyKeyID);
+// Whether a read finds a method in each candidate and rests on nothing. What partitionMembers() says, without its arms: a thousand classes with a method each are a thousand arms.
+bool readsMethodOfEachWithoutTests(const PropertyAccessContext&, std::span<const LayoutID> candidates, PropertyKeyID);
 
 bool belongToOneArm(const MemberAnswer&, const MemberAnswer&);
 void mergeIntoArm(MemberArm&, LayoutID, const MemberAnswer&);

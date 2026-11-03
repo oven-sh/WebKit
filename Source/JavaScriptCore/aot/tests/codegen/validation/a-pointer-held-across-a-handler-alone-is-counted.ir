@@ -4,7 +4,7 @@
 # REQUIRES: x86_64 unsanitized-code
 # RUN: compile InnerPointersAcrossSafepoints
 # CHECK: image not empty
-# CHECK: statistic InnerPointersAcrossSafepoints 2
+# CHECK: statistic InnerPointersAcrossSafepoints 4
 
 module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0

@@ -51,7 +51,11 @@ struct ImageRegExp {
     uint8_t isLiteral : 1;
     uint8_t sourceIsPattern : 1;
     uint8_t hasNamedGroups : 1;
-    uint8_t reserved : 3;
+    // The pattern matches no subject that holds a character of more than one byte, so it has no code for 16-bit subjects.
+    uint8_t hasCodeFor8BitSubjectsAlone : 1;
+    // Its code gives a search up that goes back over the same places again and again, for a program that remembers the searches that have failed.
+    uint8_t handsLongSearchesOver : 1;
+    uint8_t reserved : 1;
     uint8_t rawSpecificPattern;
 };
 static_assert(sizeof(ImageRegExp) == 32);

@@ -284,10 +284,16 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTRegExpMatchFlatProgram16, int64_t,
 {
     const auto& flatProgram = *static_cast<const Yarr::FlatProgram*>(program);
     StringView subject(std::span { characters, length });
-    Yarr::JSRegExpResult result = Yarr::matchFlatProgram(flatProgram, subject, 0, output);
-    if (result == Yarr::JSRegExpResult::JITCodeFailure) [[unlikely]]
-        result = Yarr::matchFlatProgramBehindSurrogate(flatProgram, subject, 0, output);
-    return answerOfFlatProgram(result, output);
+    unsigned start = 0;
+    while (true) {
+        Yarr::JSRegExpResult result = Yarr::matchFlatProgram(flatProgram, subject, start, output);
+        if (result == Yarr::JSRegExpResult::JITCodeFailure) [[unlikely]]
+            result = Yarr::matchFlatProgramBehindSurrogate(flatProgram, subject, start, output);
+        // See FlatProgram::isInUnicodeMode.
+        if (result != Yarr::JSRegExpResult::Match || !flatProgram.isInUnicodeMode || !RegExp::splitsSurrogatePair(subject, output[0])) [[likely]]
+            return answerOfFlatProgram(result, output);
+        start = output[0] + 1;
+    }
 }
 
 static JSValue valueOfFailedMatch(RegExpMatchForm form)

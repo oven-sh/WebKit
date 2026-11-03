@@ -29,6 +29,7 @@ public:
     void generateGetGlobalBinding(const ValueContext&);
     void generateSetGlobalBinding(const ValueContext&);
     void generateGetCachedGetter(const ValueContext&);
+    void generateGetAccessorOfMember(const ValueContext&);
     void generateGetCachedValue(const ValueContext&);
     void generateMayBindAnswersOfGetAndSetTraps(const ValueContext& value) { defineTest(value, mayBindAnswersOfTraps(value->targetOperand(), Structure::s_hasNonConfigurableReadOnlyOrGetterSetterPropertiesBits)); }
     void generateMayBindAnswersOfHasTraps(const ValueContext& value) { defineTest(value, mayBindAnswersOfTraps(value->targetOperand(), Structure::s_didPreventExtensionsBits | Structure::s_hasNonConfigurablePropertiesBits)); }
@@ -71,9 +72,12 @@ public:
     void putById(const OperationContext&, Boxed receiver, PropertyKeyID, Boxed value, PutMode, SiteCacheID);
     Condition hasById(const OperationContext&, Boxed receiver, PropertyKeyID);
     Boxed getByVal(const OperationContext&, Boxed receiver, Boxed key);
+    // Where the program runs in several realms, each has its own symbol, and the tables that are asked by the number of a name are shared by all of them. Such a key goes as its cell.
+    bool isSymbolOfRealm(PropertyKeyID) const;
+    Boxed cellOfKey(const OperationContext&, PropertyKeyID);
     void putByVal(const OperationContext&, Boxed receiver, Boxed key, Boxed value, PutMode);
     Condition hasByVal(const OperationContext&, Boxed receiver, Boxed key);
-    void recordArrival(const OperationContext&, Boxed receiver, uint32_t part = 0);
+    void recordArrival(const OperationContext&, Boxed receiver, uint32_t part = 0, ValueID key = { });
     // What countSiteCacheMiss() does in a stub: whether the site has missed often enough to be filled again.
     Condition countMissAtSite(Pointer site);
     // The Structure that the same change of prototype led to before. Storing it is the whole change only for an object that is extensible and is no prototype itself.

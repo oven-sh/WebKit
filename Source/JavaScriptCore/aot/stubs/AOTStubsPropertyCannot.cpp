@@ -102,6 +102,11 @@ static void emitMakeClosureOfFieldAndReturn(StubAssembler& jit)
     callsOperation.append(jit.branchTest32(CCallHelpers::NonZero, BaseIndex(receiver, word, CCallHelpers::TimesOne)));
     // The function of the field is a number of the image of the object.
     branchIfObjectOfOtherImage(jit, receiver, callsOperation);
+    // And the closure is of the instance of the object.
+    if (!jit.options().hasOneInstance) {
+        loadStructure(jit, receiver, word);
+        callsOperation.append(branchIfNotOfThisRealm(jit, word));
+    }
 
     jit.emitFunctionPrologue();
     jit.preserving({ header, payload, object }, [&] {

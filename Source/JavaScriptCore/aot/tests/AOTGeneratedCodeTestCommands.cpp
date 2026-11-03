@@ -295,6 +295,9 @@ static String describeCalledStub(StubKey key)
 {
     if (isOperationCallHead(key))
         return makeString("operation "_s, nameOf(entryAtOffset(*key.immediate())));
+    // Whether the caller keeps registers goes by register allocation, which is no contract and differs between CPUs.
+    if (hasFrameAndKeepsFewerRegisters(key.callerFrame()))
+        key = key.withCallerFrame(CallerFrame::HasFrame);
     StringPrintStream name;
     dump(name, key);
     return makeString("stub "_s, name.toString());

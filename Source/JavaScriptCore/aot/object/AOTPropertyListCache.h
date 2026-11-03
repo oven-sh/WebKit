@@ -39,6 +39,7 @@ struct CachedPropertyList {
     Vector<PropertyListEntry> properties;
     JSPropertyNameEnumerator* enumerator { nullptr };
     StructureChain* prototypeChain { nullptr };
+    // Written when JSON.stringify first asks for the list, with holdsOnlyPlainData: most lists serve keys, copies and loops alone.
     Vector<Latin1Character> jsonKeys;
     Vector<uint32_t> endsOfJSONKeys;
     bool hasToJSON { false };
@@ -81,6 +82,7 @@ private:
 };
 
 CachedPropertyList* cachedPropertyList(VM&, const Object&);
+void writeJSONKeys(VM&, CachedPropertyList&);
 CachedPropertyList* findCachedPropertyList(VM&, const Object&, JSObject* extraProperties);
 // For an object with extra properties whose Structure names theirs. The list that is kept, or null.
 JSCellButterfly* findKeptOwnKeys(const Object&, bool listsSymbols);

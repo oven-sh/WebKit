@@ -26,6 +26,7 @@
 #include "AOTNaturalLoops.h"
 #include "AOTPredictedValues.h"
 #include "AOTProgramPasses.h"
+#include "AOTPropertyAccessElements.h"
 #include "AOTPropertyAccessReceivers.h"
 #include "AOTRegionCloner.h"
 #include "AOTResolveCallsDirectCall.h"
@@ -138,9 +139,7 @@ ExpectedKeyOrders expectedKeyOrdersOf(const Program& program, LayoutID id, KeyOr
     return { id, WTF::move(orders), coversEveryObject, static_cast<uint32_t>(saturateToUInt32(numberOfOrdersLeftOut)) };
 }
 
-static constexpr size_t conditionsPerAllocation = 3;
-
-// Bit i is set when nothing between the NewObject uses[i].allocation and uses[i].point can have changed its shape, its key order or its extra properties.
+// Bit i is set when nothing between the NewObject uses[i].allocation and uses[i].point can have changed its shape, its key order or its extra properties, nor, where it is assigned to, its prototype.
 static BitVector findUnchangedAllocations(FunctionPassContext& context, std::span<const AllocationAtPoint> uses)
 {
     BitVector unchanged(uses.size());
@@ -150,17 +149,23 @@ static BitVector findUnchangedAllocations(FunctionPassContext& context, std::spa
     TestConditions conditions(context.analyses);
     Vector<TestRequirement> requirements;
     Vector<ExistingProof> proofs;
-    Vector<size_t, 8> askedUses;
+    struct AskedUse {
+        size_t index;
+        size_t firstRequirement;
+    };
+    Vector<AskedUse, 8> askedUses;
     for (size_t index = 0; index < uses.size(); ++index) {
         const AllocationAtPoint& use = uses[index];
         if (!allocatesOwnLayout(context.program, context.function.at(use.allocation)))
             continue;
         LayoutID layout = context.function.at(use.allocation).layout();
-        std::array<Value, conditionsPerAllocation> wantedConditions {
+        Vector<Value, 4> wantedConditions {
             makeShapeTest(use.allocation, context.types.completeLayoutSet(singleElementSpan(layout))),
             Emission::make<&Value::setLayout, &Value::setFields>(Opcode::HasKeyOrder, { use.allocation }, layout, context.function.at(use.allocation).fields()),
             IRBuilder::make(Opcode::HasNoExtraProperties, { use.allocation }),
         };
+        if (use.isAssignedTo)
+            wantedConditions.append(IRBuilder::make(Opcode::HasLayoutPrototype, { use.allocation }));
         size_t numberOfNewConditions = std::ranges::count_if(wantedConditions, [&](const Value& condition) {
             return !conditions.find(condition);
         });
@@ -169,6 +174,7 @@ static BitVector findUnchangedAllocations(FunctionPassContext& context, std::spa
             continue;
         }
 
+        askedUses.append({ index, requirements.size() });
         for (const Value& condition : wantedConditions) {
             unsigned numberOfKnownConditions = conditions.size();
             TestConditionID id = conditions.add(condition);
@@ -176,7 +182,6 @@ static BitVector findUnchangedAllocations(FunctionPassContext& context, std::spa
                 proofs.append(ExistingProof { ProofSource::Allocation, id, use.allocation, { } });
             requirements.append(TestRequirement { 0, 0, id, use.point, RequirementKind::AsksOnly });
         }
-        askedUses.append(index);
     }
     if (askedUses.isEmpty())
         return unchanged;
@@ -184,11 +189,12 @@ static BitVector findUnchangedAllocations(FunctionPassContext& context, std::spa
     TestEvents events(TestEventInputs { context.analyses, conditions, { }, requirements.span(), proofs.span(), { }, false });
     TestCoverage coverage(TestCoverageInputs { events, GapBudget::unlimited(), nullptr });
     for (size_t asked = 0; asked < askedUses.size(); ++asked) {
+        size_t end = asked + 1 < askedUses.size() ? askedUses[asked + 1].firstRequirement : requirements.size();
         bool isUnchanged = true;
-        for (size_t condition = 0; condition < conditionsPerAllocation; ++condition)
-            isUnchanged &= coverage.of(static_cast<uint32_t>(asked * conditionsPerAllocation + condition)) == RequirementCoverage::Covered;
+        for (size_t requirement = askedUses[asked].firstRequirement; requirement < end; ++requirement)
+            isUnchanged &= coverage.of(static_cast<uint32_t>(requirement)) == RequirementCoverage::Covered;
         if (isUnchanged)
-            unchanged.set(askedUses[asked]);
+            unchanged.set(askedUses[asked].index);
     }
     return unchanged;
 }
@@ -219,7 +225,8 @@ static PassOutcome foldKeyOrderTests(FunctionPassContext& context)
 
     IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
     for (size_t index : decidableTests) {
-        auto [allocation, point] = tests[index];
+        ValueID allocation = tests[index].allocation;
+        ProgramPoint point = tests[index].point;
         ValueID test = function.at(point.block).values[point.index];
         bool result = function.at(test).opcode == Opcode::HasNoExtraProperties
             || (function.at(test).layout() == function.at(allocation).layout() && std::ranges::equal(function.at(test).fields(), function.at(allocation).fields()));
@@ -269,17 +276,17 @@ static bool isExpandedByPlan(OwnKeyWalk walk)
 UnchangedAllocations::UnchangedAllocations(FunctionPassContext& context, std::span<const OwnKeyWalkSite> sites)
     : m_context(context)
 {
-    auto addUse = [&](const OwnKeyWalkSite& site, ValueID object) {
+    auto addUse = [&](const OwnKeyWalkSite& site, ValueID object, bool isAssignedTo = false) {
         ValueID origin = context.analyses.sameObjectThroughCasts(object).valueInFrontOfFacts();
         if (context.function.at(origin).opcode == Opcode::NewObject)
-            m_uses.append(AllocationAtPoint { origin, { site.block, site.index } });
+            m_uses.append(AllocationAtPoint { origin, { site.block, site.index }, isAssignedTo });
     };
     for (const OwnKeyWalkSite& site : sites) {
         if (!isExpandedByPlan(site.walk))
             continue;
         addUse(site, site.source);
         if (site.walk == OwnKeyWalk::Assign || site.walk == OwnKeyWalk::Spread)
-            addUse(site, site.target);
+            addUse(site, site.target, site.walk == OwnKeyWalk::Assign);
     }
 
     const CFG& cfg = context.analyses.cfg();
@@ -294,12 +301,18 @@ bool UnchangedAllocations::contains(ValueID allocation, ProgramPoint point) cons
     auto usesAtPoint = std::ranges::equal_range(m_uses, std::pair { cfg.reversePostOrderIndex(point.block), point.index }, { }, [&](const AllocationAtPoint& use) {
         return std::pair { cfg.reversePostOrderIndex(use.point.block), use.point.index };
     });
-    auto use = std::ranges::find(usesAtPoint, allocation, &AllocationAtPoint::allocation);
-    if (use == usesAtPoint.end())
-        return false;
-    if (!m_unchanged)
-        m_unchanged = findUnchangedAllocations(m_context, m_uses.span());
-    return m_unchanged->get(use - m_uses.begin());
+    // An object that is assigned to itself is listed as the source and as the target.
+    bool isListed = false;
+    for (auto use = usesAtPoint.begin(); use != usesAtPoint.end(); ++use) {
+        if (use->allocation != allocation)
+            continue;
+        if (!m_unchanged)
+            m_unchanged = findUnchangedAllocations(m_context, m_uses.span());
+        if (!m_unchanged->get(use - m_uses.begin()))
+            return false;
+        isListed = true;
+    }
+    return isListed;
 }
 
 static BuiltinID calledBuiltinOf(const BuiltinTable& builtins, const Value& call)
@@ -984,7 +997,7 @@ static ValueID emitWalk(Emission& emission, const OwnKeyWalkSite& site, const Va
         RELEASE_ASSERT(!field.computedKey);
         if (std::ranges::contains(excludedKeys, field.key))
             continue;
-        if (isEnumerableStringField(program, field) || (visitsSymbolKeys(site.walk) && field.key && isSymbolKind(program.at(field.key).kind)))
+        if (isEnumerableStringField(program, field) || (visitsSymbolKeys(site.walk) && field.key && isSymbolKind(program.at(field.key).kind) && !field.form.contains(FieldForm::IsNotEnumerable)))
             walkedFields.append(index);
     }
 
@@ -1235,11 +1248,12 @@ static PassOutcome expandStringify(FunctionPassContext& context, Emission& emiss
     JSONSerializerBuilder serializer(builder, emission.inputs(), stringBuilder, calledBuiltinOf(context.program.builtins(), original));
 
     bool listsHolders = serializer.mayListHolders(source);
-    bool isCovered = listsHolders || (!serializer.writingRunsCode(source) && serializer.mayHoldItself(source));
+    bool startsOverAfterThrow = !serializer.writingRunsCode(source) && serializer.mayHoldItself(source);
+    bool isCovered = listsHolders || startsOverAfterThrow;
     std::optional<Target> outerHandler = builder.handler();
     BlockID threw;
     if (isCovered) {
-        threw = builder.addHandlerBlock(listsHolders ? BlockRole::CleanupHandler : BlockRole::CatchHandler, ValueID());
+        threw = builder.addHandlerBlock(startsOverAfterThrow ? BlockRole::CatchHandler : BlockRole::CleanupHandler, ValueID());
         builder.setHandler(Target { threw, { }, { } });
         BlockID covered = builder.addBlock(frequency);
         builder.emitJump(covered);
@@ -1256,14 +1270,14 @@ static PassOutcome expandStringify(FunctionPassContext& context, Emission& emiss
         builder.emitJump(finished);
 
         builder.moveToEndOf(threw);
-        if (listsHolders) {
-            ValueID exception = builder.append(Opcode::CatchException, { });
-            builder.append(Opcode::JSONResetHolders, { stringBuilder });
-            builder.emitRethrow(exception);
-        } else {
+        if (startsOverAfterThrow) {
             // No code of the program has run, so the call as written starts from the beginning. It finds the cycle, or that the text is too long.
             builder.append(Opcode::CatchValue, { });
             builder.emitJump(noText);
+        } else {
+            ValueID exception = builder.append(Opcode::CatchException, { });
+            builder.append(Opcode::JSONResetHolders, { stringBuilder });
+            builder.emitRethrow(exception);
         }
         builder.moveToEndOf(finished);
     }
@@ -1431,6 +1445,10 @@ static PassOutcome expandForInLoopOverList(FunctionPassContext& context, Emissio
         bytesOfRegion += estimatedCodeBytes(program, function, function.at(block));
     if (context.exceeds(LimitID::MaxVersionedIterationBytes, bytesOfRegion, loop.open))
         return PassOutcome::Unchanged;
+    // The position comes round as a parameter of the header. A cast may stand between that and the step.
+    size_t positionIndex = function.at(loop.header).parameters.find(definitionThroughUpcasts(function, function.at(loop.step).positionOperand()));
+    if (positionIndex == notFound)
+        return PassOutcome::Unchanged;
 
     builder.setOrigin(function.at(loop.open).origin());
     Vector<std::unique_ptr<RegionCloner>, 1> cloners;
@@ -1441,7 +1459,6 @@ static PassOutcome expandForInLoopOverList(FunctionPassContext& context, Emissio
     ValueID step = cloner.cloneOf(loop.step);
 
     // The region may contain a cycle with its own step, which moves to any position. The original loop handles them all.
-    size_t positionIndex = function.at(header).parameters.find(function.at(step).positionOperand());
     auto isPositionAfterStep = [&](ValueID position) {
         const Value& next = function.at(definitionThroughUpcasts(function, position));
         if (next.opcode != Opcode::Add)
@@ -1577,12 +1594,21 @@ static PassOutcome expandForInLoop(FunctionPassContext& context, Emission& emiss
         };
         return value.opcode == Opcode::StrictEq && (comparesInThisOrder(value.operand(0), value.operand(1)) || comparesInThisOrder(value.operand(1), value.operand(0)));
     };
+    // `target[name] = source[name]`: in a copy for one name these go by that name, and to a slot where the layouts of the object are known.
+    auto accessesSlotUnderName = [&](const Value& value) {
+        if (value.opcode != Opcode::ElemGet && value.opcode != Opcode::ElemSet)
+            return false;
+        const Value& name = function.at(sameObjectThroughCasts(function, value.propertyOperand()).valueInFrontOfFacts());
+        return name.opcode == Opcode::ResultAt && name.index() == 1 && name.operand(OperandIndex::ResultAt::results) == step && program.typeOf(function, value.objectOperand()).hasOnlyLayouts();
+    };
     uint64_t bytesOfRegion = 0;
     for (BlockID block : region) {
         bytesOfRegion += estimatedCodeBytes(program, function, function.at(block));
         for (ValueID id : function.at(block).values) {
             if (comparesNameWithText(function.at(id)))
                 bytesOfRegion -= estimatedCodeBytes(program, function, function.at(id));
+            else if (accessesSlotUnderName(function.at(id)))
+                bytesOfRegion -= estimatedCodeBytes(program, function, function.at(id)) - std::min(estimatedCodeBytes(program, function, function.at(id)), estimatedSlotAccessBytes());
         }
     }
     // The arms that fit are expanded, and the objects of the others take the loop as written.
@@ -1636,7 +1662,7 @@ static PassOutcome expandForInLoop(FunctionPassContext& context, Emission& emiss
             }
             builder.eraseValues(turn.header, loopHints);
 
-            size_t positionIndex = function.at(turn.header).parameters.find(function.at(turn.step).positionOperand());
+            size_t positionIndex = function.at(turn.header).parameters.find(definitionThroughUpcasts(function, function.at(turn.step).positionOperand()));
             for (BlockID block : cloner->clonedBlocks()) {
                 for (Target& target : function.edit(block, editsOfTargets).terminator.targets) {
                     if (target.block != turn.header)

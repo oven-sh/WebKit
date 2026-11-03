@@ -485,7 +485,7 @@ void TestSiteReporter::report(std::span<const Value> tests, const Effects& effec
 
     m_sites.sites.append(TestSite { m_rule, m_use, m_point, static_cast<uint32_t>(m_sites.tests.size()), static_cast<uint32_t>(tests.size()), effectsWhenPassed, outcome });
     m_sites.tests.append(tests);
-    m_isClaimed.set(m_use.index());
+    claimUse();
     m_didReport = true;
 }
 
@@ -555,29 +555,78 @@ static bool isDefinedOutsideLoop(TestSiteReporter& reporter, ValueID value, cons
     return location.placement != ValuePlacement::Detached && !reporter.analyses().naturalLoops().belongsTo(location.block, loop);
 }
 
-// What stands behind the passing edge of the test does not run in the copy, where the test has failed.
-static bool holdsTestedUseWhereTestFails(TestSiteReporter& reporter, const NaturalLoop& loop)
-{
-    const Function& function = reporter.function();
-    FunctionAnalyses& analyses = reporter.analyses();
-    const Terminator& terminator = function.at(reporter.point().block).terminator;
-    BlockID wherePassed;
-    if (terminator.isConditionalBranch() && terminator.conditionOperand() == reporter.use() && analyses.hasSingleIncomingEdge(terminator.taken().block))
-        wherePassed = terminator.taken().block;
+// The blocks of a loop that hold a use that is tested. A loop is walked once, however many tests ask about it, and a claim is looked at once, however many loops there are:
+// what is claimed behind the walk goes to the loops around it.
+class TestedUsesInLoops {
+public:
+    explicit TestedUsesInLoops(TestSiteReporter& reporter)
+        : m_reporter(reporter)
+    {
+    }
 
-    for (unsigned index = 0; index < loop.size(); ++index) {
-        if (wherePassed && analyses.dominators().dominates(wherePassed, loop.at(index)))
-            continue;
-        const Block& block = function.at(loop.at(index));
-        if (accessClassOf(block.terminator.kind) != AccessClass::None)
-            return true;
-        for (ValueID value : block.values) {
-            if (accessClassOf(function.at(value).opcode) != AccessClass::None || reporter.isClaimed(value))
-                return true;
+    // What stands behind the passing edge of the test does not run in the copy, where the test has failed.
+    bool holdsTestedUseWhereTestFails(const NaturalLoop& loop)
+    {
+        FunctionAnalyses& analyses = m_reporter.analyses();
+        const Terminator& terminator = m_reporter.function().at(m_reporter.point().block).terminator;
+        BlockID wherePassed;
+        if (terminator.isConditionalBranch() && terminator.conditionOperand() == m_reporter.use() && analyses.hasSingleIncomingEdge(terminator.taken().block))
+            wherePassed = terminator.taken().block;
+
+        const BlocksOfLoop& blocks = blocksOf(loop);
+        auto runsWhereTestFails = [&](BlockID block) {
+            return !wherePassed || !analyses.dominators().dominates(wherePassed, block);
+        };
+        return std::ranges::any_of(blocks.withAccess, runsWhereTestFails) || std::ranges::any_of(blocks.withClaimedUse, runsWhereTestFails);
+    }
+
+private:
+    struct BlocksOfLoop {
+        Vector<BlockID> withAccess;
+        Vector<BlockID> withClaimedUse;
+    };
+
+    void takeInNewClaims()
+    {
+        const NaturalLoops& loops = m_reporter.analyses().naturalLoops();
+        std::span<const ValueID> claimed = m_reporter.claimedUses();
+        for (; m_numberOfClaimsSeen < claimed.size(); ++m_numberOfClaimsSeen) {
+            ValueLocation location = m_reporter.analyses().useLists().locationOf(claimed[m_numberOfClaimsSeen]);
+            if (location.placement != ValuePlacement::InBlock || m_holdsClaimedUse.set(location.block.index()))
+                continue;
+            for (const NaturalLoop* loop = loops.innerMostLoopOf(location.block); loop; loop = loops.innerMostOuterLoop(*loop)) {
+                if (auto found = m_blocksOfLoops.find(loop); found != m_blocksOfLoops.end())
+                    found->value.withClaimedUse.append(location.block);
+            }
         }
     }
-    return false;
-}
+
+    const BlocksOfLoop& blocksOf(const NaturalLoop& loop)
+    {
+        takeInNewClaims();
+        const Function& function = m_reporter.function();
+        auto result = m_blocksOfLoops.add(&loop, BlocksOfLoop { });
+        BlocksOfLoop& blocks = result.iterator->value;
+        if (!result.isNewEntry)
+            return blocks;
+        for (unsigned index = 0; index < loop.size(); ++index) {
+            const Block& block = function.at(loop.at(index));
+            bool hasAccess = accessClassOf(block.terminator.kind) != AccessClass::None || std::ranges::any_of(block.values, [&](ValueID value) {
+                return accessClassOf(function.at(value).opcode) != AccessClass::None;
+            });
+            if (hasAccess)
+                blocks.withAccess.append(loop.at(index));
+            if (m_holdsClaimedUse.get(loop.at(index).index()))
+                blocks.withClaimedUse.append(loop.at(index));
+        }
+        return blocks;
+    }
+
+    TestSiteReporter& m_reporter;
+    HashMap<const NaturalLoop*, BlocksOfLoop> m_blocksOfLoops;
+    BitVector m_holdsClaimedUse;
+    size_t m_numberOfClaimsSeen { 0 };
+};
 
 enum class RarerSide : uint8_t { Neither, WherePassed, WhereFailed };
 
@@ -627,6 +676,7 @@ void reportRepeatedTests(TestSiteReporter& reporter)
     if (canBeDecided.isEmpty())
         return;
 
+    TestedUsesInLoops testedUses(reporter);
     reporter.forEachCandidate({ Opcode::TypeTest }, [&](const Value& test) {
         if (!canBeDecided.get(reporter.use().index()))
             return;
@@ -637,12 +687,11 @@ void reportRepeatedTests(TestSiteReporter& reporter)
             return;
         RarerSide rarerSide = rarerSideOf(reporter);
         std::optional<Value> testInFront = testInFrontOf(reporter, test, rarerSide);
-        bool losesNothingInCopy = isInvariantInLoop && !holdsTestedUseWhereTestFails(reporter, *loop);
         if (!testInFront)
             return;
         if (rarerSide != RarerSide::Neither || isSurpriseWhereItFails(reporter, *testInFront))
             reporter.report({ *testInFront }, Effects::none());
-        else if (losesNothingInCopy)
+        else if (isInvariantInLoop && !testedUses.holdsTestedUseWhereTestFails(*loop))
             reporter.report({ *testInFront }, Effects::none(), TestOutcome::IsUnpredictable);
     });
 }

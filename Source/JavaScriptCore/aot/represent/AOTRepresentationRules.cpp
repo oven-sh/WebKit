@@ -244,10 +244,22 @@ static bool isSumOfBoxedNumbers(const Value& value)
     return sumsOfNumbers.contains(value.opcode) && value.form() == OperatorForm::Numbers && value.representation == Representation::JSValue;
 }
 
+static bool comparesIntegersThatMayBeNullish(const RepresentationInputs& inputs, const Value& user)
+{
+    if (user.opcode != Opcode::StrictEq || isEqualityOfNumbers(inputs.program, inputs.function, user))
+        return false;
+    return std::ranges::all_of(std::array { user.leftOperand(), user.rightOperand() }, [&](ValueID operand) {
+        const Type& type = inputs.typeOf(operand);
+        return type.isInteger() || defaultRepresentationOf(type) == Representation::OptionalInt64;
+    });
+}
+
 static Representation wantedByNumbers(const RepresentationInputs& inputs, const Value& user, ValueID operand)
 {
     const Type& type = inputs.typeOf(operand);
     Representation chosen = inputs.function.at(operand).representation;
+    if (comparesIntegersThatMayBeNullish(inputs, user))
+        return Representation::OptionalInt64;
     if (representedBitwiseOperators.contains(user.opcode) && user.opcode != Opcode::BitNot) {
         if (type.isInteger())
             return integerRepresentationOf(type);
@@ -402,6 +414,10 @@ static Representation wantedByNewArrayElement(const RepresentationInputs& inputs
 static Representation wantedByNewArrayElement(const RepresentationInputs& inputs, const Value& user, ValueID element)
 {
     Representation wanted = wantedByNewArrayElement(inputs, element);
+    if (wanted == Representation::JSValue && user.opcode == Opcode::AppendElement && !user.lengthOperands().empty()) {
+        bool isPushedToDoubles = arrayStorageDeclaredBy(inputs.program, inputs.typeOf(user.arrayOperand())).predicted() == ArrayStorage::Double;
+        return isPushedToDoubles && inputs.typeOf(element).isNumber() ? Representation::Double : wanted;
+    }
     if (wanted != Representation::JSValue || user.opcode != Opcode::NewArray || user.storage() != AllocationStorage::Heap)
         return wanted;
     // Boxing a 64-bit integer tests its range. Double storage takes the converted number.
@@ -594,7 +610,7 @@ static Representation wantedByOperation(const RepresentationInputs& inputs, cons
         return Representation::Void;
     if (forwardsOperand(opcode))
         return isForwardedOperand(user, operandIndex) ? user.representation : Representation::Unchosen;
-    if (opcode == Opcode::TypeTest || opcode == Opcode::ReportMismatch || familyOf(opcode) == OperationFamily::RuntimeValidation || isRepresentationConversion(opcode))
+    if (opcode == Opcode::TypeTest || opcode == Opcode::ReportMismatch || opcode == Opcode::ReleaseHint || familyOf(opcode) == OperationFamily::RuntimeValidation || isRepresentationConversion(opcode))
         return Representation::Unchosen;
     if (hasOperatorForm(opcode))
         return wantedByOperator(inputs, user, operandIndex);
@@ -739,6 +755,16 @@ static bool storesAsElement(const Value& value, uint32_t operandIndex)
     return value.opcode == Opcode::PutArrayElement && OperandPosition::value(value.opcode) == operandIndex;
 }
 
+static bool pushesAsElement(const Value& value, uint32_t operandIndex)
+{
+    return value.opcode == Opcode::AppendElement && !value.lengthOperands().empty() && operandIndex == OperandIndex::AppendElement::value;
+}
+
+static bool pushesAsElement(const Terminator&, uint32_t)
+{
+    return false;
+}
+
 static bool storesAsElement(const Terminator&, uint32_t)
 {
     return false;
@@ -771,6 +797,8 @@ static bool takesAnyNaN(const User& user, uint32_t operandIndex)
     std::optional<InlineBuiltin> builtin = inlineBuiltinOf(user);
     if (builtin == InlineBuiltin::ArrayPush)
         return !!user.variadicOperandIndex(operandIndex);
+    if (pushesAsElement(user, operandIndex))
+        return true;
     return handsBitsOfNaNOnToResult(user) || storesAsElement(user, operandIndex) || keepsNoBitsOfNumber(user, operandIndex) || (builtin && (builtinsThatMoveBytes.contains(*builtin) || builtinsThatInspectNumbers.contains(*builtin)));
 }
 

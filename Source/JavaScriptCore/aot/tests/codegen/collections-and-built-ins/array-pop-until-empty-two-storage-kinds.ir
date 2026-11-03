@@ -133,21 +133,31 @@ function f1 name="drain" module=m0 flags=[IsChecked, HasExplicitName] length=1 t
     Return v14
 }
 
-# A pop is written out. The kind of storage is loaded and compared, first with integers: that arm loads the last element, stores the mark of a hole over it and stores the shorter length.
+# A pop is written out. A list of numbers is expected to have storage for doubles, and the other kinds stand behind a rare edge. So the loop is there twice. The first is for doubles alone: the kind is asked in front of it,
+# and a turn loads the last element, stores the mark of a hole over it and stores the shorter length.
+# LOOP-LABEL: loop #
+# LOOP-NOT: Reads:JSArray_indexingTypeAndMisc
+# LOOP: Double b@{{*}} = Load(b@{{*}}, offset = -8, ControlDependent|Reads:indexedDoubleProperties)
+# LOOP: Store({{*}}, b@{{*}}, offset = -8, ControlDependent|Writes:indexedDoubleProperties)
+# LOOP: Store(b@{{*}}, b@{{*}}, offset = -8, ControlDependent|Writes:Butterfly_publicLength)
+# LOOP-NOT: Reads:JSArray_indexingTypeAndMisc
+# LOOP-LABEL: end of loop
+# The second takes a list of any kind: it asks for doubles first, and the arms for integers and for any values follow, each behind one more comparison of the same byte.
 # LOOP-LABEL: loop #
 # LOOP: Int32 b@[[kind]] = Load8Z(b@{{*}}, offset = 4, ControlDependent|Reads:JSArray_indexingTypeAndMisc)
-# LOOP: Int32 b@[[isIntegers]] = Equal(b@[[kind]], $5(b@{{*}}))
-# LOOP: Branch(b@[[isIntegers]], Terminal)
-# LOOP: Int64 b@{{*}} = Load(b@{{*}}, offset = -8, ControlDependent|Reads:indexedInt32Properties)
-# LOOP: Store($0(b@{{*}}), b@{{*}}, offset = -8, ControlDependent|Writes:indexedInt32Properties)
-# LOOP: Store(b@{{*}}, b@{{*}}, offset = -8, ControlDependent|Writes:Butterfly_publicLength)
-# The arms for doubles and for any values follow, each behind one more comparison of the same byte.
 # LOOP: Int32 b@{{*}} = Equal(b@[[kind]], $7(b@{{*}}))
 # LOOP: Double b@{{*}} = Load(b@{{*}}, offset = -8, ControlDependent|Reads:indexedDoubleProperties)
+# LOOP: Int32 b@{{*}} = Equal(b@[[kind]], $5(b@{{*}}))
+# LOOP: Int64 b@{{*}} = Load(b@{{*}}, offset = -8, ControlDependent|Reads:indexedInt32Properties)
+# LOOP: Store($0(b@{{*}}), b@{{*}}, offset = -8, ControlDependent|Writes:indexedInt32Properties)
 # LOOP: Int32 b@{{*}} = Equal(b@[[kind]], $9(b@{{*}}))
 # LOOP: Int64 b@{{*}} = Load(b@{{*}}, offset = -8, ControlDependent|Reads:indexedContiguousProperties)
 # LOOP-LABEL: end of loop
-# Only a list in none of the three kinds of storage calls Array.prototype.pop itself: the one call in the loop beside the poll. The kind is loaded once a turn.
+# The first loop calls nothing but the poll. In the second only a list in none of the three kinds of storage calls Array.prototype.pop itself: the one call beside the poll. The kind is loaded once a turn.
+# CALLS-LABEL: loop #
+# CALLS: isLoopPoll, ExitsSideways
+# CALLS-NOT: ExitsSideways
+# CALLS-LABEL: end of loop
 # CALLS-LABEL: loop #
 # CALLS-COUNT-1: Reads:JSArray_indexingTypeAndMisc
 # CALLS-NOT: Reads:JSArray_indexingTypeAndMisc
@@ -157,5 +167,7 @@ function f1 name="drain" module=m0 flags=[IsChecked, HasExplicitName] length=1 t
 # CALLS-NOT: ExitsSideways
 # CALLS-LABEL: end of loop
 # The counts hold a call, whose moves follow the calling convention: not for Windows.
-# X64: loop #{{*}}, instructions: 32, patchpoints: 2, rare instructions: 21, polls: 1
-# ARM64: loop #{{*}}, instructions: 31, patchpoints: 3, rare instructions: 19, polls: 1
+# X64: loop #{{*}}, instructions: 8, patchpoints: 1, polls: 1
+# X64: loop #{{*}}, instructions: 12, patchpoints: 1, rare instructions: 43, polls: 1, entered rarely
+# ARM64: loop #{{*}}, instructions: 8, patchpoints: 1, polls: 1
+# ARM64: loop #{{*}}, instructions: 12, patchpoints: 1, rare instructions: 42, polls: 1, entered rarely

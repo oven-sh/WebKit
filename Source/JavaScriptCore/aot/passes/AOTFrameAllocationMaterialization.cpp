@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuildContext.h"
 #include "AOTIRBuilder.h"
 #include "AOTSSARepair.h"
 #include "AOTVector.h"
@@ -169,14 +170,27 @@ void materializeEnvironmentLate(IRBuilder& builder, FunctionAnalyses& analyses, 
 
     LayoutID layout = function.at(environment).layout();
     Vector<ValueID, 4> copies;
+    Vector<ValueID, 4> closures;
     copies.reserveInitialCapacity(points.size());
     for (const ProgramPoint& point : points) {
-        builder.setOrigin(function.at(function.at(point.block).values[point.index]).origin());
+        closures.append(function.at(point.block).values[point.index]);
+        builder.setOrigin(function.at(closures.last()).origin());
         Value copy = IRBuilder::make(Opcode::MaterializeEnvironment, { environment });
         copy.setLayout(layout);
         copies.append(builder.insertBefore(point, WTF::move(copy)));
     }
     builder.applyInsertions();
+
+    if (analyses.context().build.isSabotaged(Sabotage::MakersKeepEnvironmentsThatWereCopied)) {
+        for (size_t index = 0; index < copies.size(); ++index) {
+            Value& closure = builder.function().edit(closures[index], ValueEdit::Definition);
+            for (uint32_t operandIndex = 0; operandIndex < closure.numberOfOperands(); ++operandIndex) {
+                if (ValueID captured = closure.operand(operandIndex); captured && sameObjectThroughCasts(function, captured) == environment)
+                    closure.setOperand(operandIndex, copies[index]);
+            }
+        }
+        return;
+    }
 
     SSARepair repair(builder, analyses);
     auto variable = repair.addVariable(environment);

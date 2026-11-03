@@ -69,7 +69,7 @@ const decimalPattern = /^(0|[1-9][0-9]*)$/;
 function createPools(): Pools {
   return {
     names: new Pool("BuiltinName", "builtinTableNamesOfOverloads", true),
-    places: new Pool("BuiltinPlace", "places"),
+    places: new Pool("BuiltinPlace", "builtinTablePlaces", true),
     parameters: new Pool("BuiltinParameter", "builtinTableParameters", true),
     transfers: new Pool("BuiltinTransfer", "builtinTableTransfers", true),
     callbacks: new Pool("BuiltinCallback", "builtinTableCallbacks", true),
@@ -137,10 +137,6 @@ function formatWordSet<Word extends string>(
   return `${cppSet} ${formatOptionSet(cppEnum, ordered) ?? "{ }"}`;
 }
 
-function formatNames(names: readonly ModelName[], pools: Pools): string | null {
-  return pools.names.add(names.map(name => formatName(name)));
-}
-
 function formatNameStretch(names: readonly ModelName[], pools: Pools): string | null {
   return pools.names.addStretch(names.map(name => formatName(name)));
 }
@@ -192,7 +188,7 @@ function formatPlace(place: ModelPlace, pools: Pools): string | null {
       return formatAggregate([
         kind,
         ["operand", formatOperand(place.operand)],
-        ["memberPath", pools.names.add(place.path.map(step => (step === null ? "BuiltinName()" : formatName(step))))],
+        ["memberPath", pools.names.addStretch(place.path.map(step => (step === null ? "BuiltinName()" : formatName(step))))],
         ["firstMemberStep", formatUnlessZero(place.firstStep)],
       ]);
     case "NativeCell":
@@ -209,7 +205,7 @@ function formatKey(key: ModelKey, pools: Pools): string | null {
     case "Indexes":
       return formatAggregate([kind]);
     case "Names":
-      return formatAggregate([kind, ["names", formatNames(key.names, pools)]]);
+      return formatAggregate([kind, ["names", formatNameStretch(key.names, pools)]]);
     case "Operand":
     case "ElementsOf":
       return formatAggregate([kind, ["operand", formatOperand(key.operand)]]);
@@ -228,7 +224,7 @@ function formatHandlerCall(call: ModelHandlerCall, pools: Pools): string {
     ["callee", formatPlace(call.callee, pools)],
     ["times", formatUnlessDefault("BuiltinCallbackTimes", call.times, "PerEvent")],
     ["thisValue", formatPlace(call.thisValue, pools)],
-    ["arguments", pools.places.add(call.arguments.map(place => formatPlace(place, pools) ?? "{ }"))],
+    ["arguments", pools.places.addStretch(call.arguments.map(place => formatPlace(place, pools) ?? "{ }"))],
     ["resultUse", formatUnlessDefault("BuiltinCallbackResultUse", call.resultUse, "Escapes")],
   ]);
 }
@@ -240,7 +236,7 @@ function formatCallback(callback: ModelCallback, pools: Pools): string {
     ["constructs", callback.constructs ? "true" : null],
     ["newTarget", formatPlace(callback.newTarget, pools)],
     ["thisValue", formatPlace(callback.thisValue, pools)],
-    ["arguments", pools.places.add(callback.arguments.map(place => formatPlace(place, pools) ?? "{ }"))],
+    ["arguments", pools.places.addStretch(callback.arguments.map(place => formatPlace(place, pools) ?? "{ }"))],
     ["spreadArguments", formatPlace(callback.spreadArguments, pools)],
     ["resultUse", formatUnlessDefault("BuiltinCallbackResultUse", callback.resultUse, "Escapes")],
     ["resultTo", formatPlace(callback.resultTo, pools)],

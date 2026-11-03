@@ -14,5 +14,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 
 # CHECK: modulesByPath
+# CHECK-NEXT: modulesByHashOfPath 1 4
+# CHECK-NEXT: firstModulesByHashOfPath 2 4
 # CHECK-NEXT: directoriesOfModulesByPath
 # CHECK-NEXT: modulesOfUncompiledCode 2 16

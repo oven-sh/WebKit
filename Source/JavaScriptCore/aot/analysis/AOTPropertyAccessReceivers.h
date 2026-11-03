@@ -72,6 +72,8 @@ struct ReceiverCandidates {
     bool mayBeNullish { false };
     // Apart from undefined and null the receiver is an instance of a built-in class, a function or a built-in object: nothing that a constructor of the program allocates.
     bool isMadeByHostAlone { false };
+    // The type proves the layouts and not the instance: noteWhetherTypeProvesInstance().
+    bool mayBelongToOtherInstance { false };
 
     static ReceiverCandidates underGuard(std::span<const LayoutID> testedLayouts);
 

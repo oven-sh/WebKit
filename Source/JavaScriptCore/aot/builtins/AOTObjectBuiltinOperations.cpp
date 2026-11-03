@@ -470,7 +470,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTObjectAssignWithoutCode, size_t, (Instance*
         OPERATION_RETURN(scope, true);
     if (!source.isObject())
         OPERATION_RETURN(scope, false);
-    if (Object* compiled = compiledObjectOrNull(source); compiled && compiled->layout().kind() == LayoutKind::Record && !compiled->hasFlagsInOrderWord() && !countOf(compiled->orderWord()))
+    if (Object* compiled = compiledObjectOrNull(source); compiled && compiled->layout().kind() == LayoutKind::Record && !compiled->hasFlagsInOrderWord() && !compiled->hasOutOfLineKeyOrder() && !countOf(compiled->orderWord()))
         OPERATION_RETURN(scope, true);
     JSObject* object = cellArgument<JSObject>(target, Entry::operationAOTObjectAssignWithoutCode);
     JSObject* from = asObject(source);
@@ -499,7 +499,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTObjectAssignToUnseenObject, size_t, (Instan
         OPERATION_RETURN(scope, true);
     if (!source.isObject())
         OPERATION_RETURN(scope, false);
-    if (Object* compiled = compiledObjectOrNull(source); compiled && compiled->layout().kind() == LayoutKind::Record && !compiled->hasFlagsInOrderWord() && !countOf(compiled->orderWord()))
+    if (Object* compiled = compiledObjectOrNull(source); compiled && compiled->layout().kind() == LayoutKind::Record && !compiled->hasFlagsInOrderWord() && !compiled->hasOutOfLineKeyOrder() && !countOf(compiled->orderWord()))
         OPERATION_RETURN(scope, true);
     JSObject* object = cellArgument<JSObject>(target, Entry::operationAOTObjectAssignToUnseenObject);
     JSObject* from = asObject(source);
@@ -693,6 +693,27 @@ static bool tryReadBySlots(VM& vm, JSObject* cell, PropertiesInSlots& properties
     return true;
 }
 
+// A definition gives the target a GetterSetter of its own.
+static bool tryDefineFieldsWithAttributes(VM& vm, JSGlobalObject* globalObject, Object& target, const PropertiesInSlots& properties)
+{
+    MarkedArgumentBuffer defined;
+    Vector<unsigned, 24> attributes;
+    for (size_t index = 0; index < properties.names.size(); ++index) {
+        JSValue valueOrAccessor = properties.valuesOrAccessors.at(index);
+        unsigned attributesOfProperty = properties.attributes[index];
+        if (attributesOfProperty & PropertyAttribute::CustomAccessorOrValue)
+            return false;
+        if (attributesOfProperty & PropertyAttribute::Accessor) {
+            auto* held = uncheckedDowncast<GetterSetter>(valueOrAccessor.asCell());
+            valueOrAccessor = GetterSetter::create(vm, globalObject, held->isGetterNull() ? nullptr : held->getter(), held->isSetterNull() ? nullptr : held->setter());
+            attributesOfProperty &= ~PropertyAttribute::ReadOnly;
+        }
+        defined.appendWithCrashOnOverflow(valueOrAccessor);
+        attributes.append(attributesOfProperty);
+    }
+    return target.tryDefineFields(vm, properties.names.span(), { defined.data(), defined.size() }, attributes.span());
+}
+
 namespace {
 
 class PropertyDefiner {
@@ -819,6 +840,8 @@ extern "C" JS_EXPORT_PRIVATE JSC::EncodedJSValue SYSV_ABI AOT__definePropertiesF
     if (AOT::tryReadBySlots(vm, source, properties)) {
         AOT::Object* compiledTarget = definer.compiledTargetThatRefusesNothing();
         if (compiledTarget && properties.arePlain && !compiledTarget->hasFlagsInOrderWord() && compiledTarget->tryDefineFields(vm, properties.names.span(), { properties.valuesOrAccessors.data(), properties.valuesOrAccessors.size() }))
+            return JSValue::encode(target);
+        if (compiledTarget && !properties.arePlain && !compiledTarget->hasFlagsInOrderWord() && AOT::tryDefineFieldsWithAttributes(vm, globalObject, *compiledTarget, properties))
             return JSValue::encode(target);
         for (size_t index = 0; index < properties.names.size(); ++index) {
             PropertyDescriptor descriptor;

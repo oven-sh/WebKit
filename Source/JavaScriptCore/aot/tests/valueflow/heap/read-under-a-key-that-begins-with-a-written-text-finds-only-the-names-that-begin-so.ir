@@ -1,12 +1,11 @@
 # table = {}; table.first = one; table.second = two; table["fir" + name]()
-# Of the names that the program writes only `first` begins with "fir": the read finds what lies under it, and not what lies under `second`.
-# other = {}; other.first = one; other.second = two; other["fi" + name] = three; other["fir" + name](): what was stored under a key that nobody knows in full may lie under such a name too.
+# Of the names that the object holds only `first` begins with "fir": the read finds what lies under it, and not what lies under `second`.
+# other = {}; other.first = one; other.second = two; other["fi" + name] = three; other["fir" + name](): what was stored under a key that nobody knows in full may lie under such a name too, and the names of such an object are no longer listed: the read is not narrowed.
 # list = {}; list.first = one; list[12] = four; list["1" + name](): "1" + name may be an index, which is no name: the read is not narrowed.
 # RUN: valueflow-solve calls
 # CHECK: f0 v10 -> f1
 # CHECK-NOT: f0 v10 -> f1 f2
-# CHECK: f0 v20 -> f1 f3
-# CHECK-NOT: f0 v20 -> f1 f2
+# CHECK: f0 v20 -> f1 f2 f3
 # CHECK: f0 v29 -> {{*}}f4
 
 module m0 path="main.js" displayPath="main.js" body=f0

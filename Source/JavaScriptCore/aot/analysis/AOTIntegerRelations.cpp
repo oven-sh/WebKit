@@ -45,11 +45,9 @@ static bool isInScope(FunctionAnalyses& analyses, BlockID scope, BlockID at)
     return scope == at || analyses.dominators().terminatorDominates(scope, at);
 }
 
-static std::optional<ValueID> findValueOnEdge(const Function& function, const auto& assumptions, Edge edge, uint32_t parameterIndex)
+static std::optional<ValueID> findValueOnEdge(const Function& function, const BitVector& isScopeOfAssumption, Edge edge, uint32_t parameterIndex)
 {
-    bool mayLeaveBeforeAssumptionHolds = edge.isHandlerEdge() && std::ranges::any_of(assumptions, [&](const auto& assumption) {
-        return assumption.scope == edge.from;
-    });
+    bool mayLeaveBeforeAssumptionHolds = edge.isHandlerEdge() && isScopeOfAssumption.get(edge.from.index());
     if (mayLeaveBeforeAssumptionHolds)
         return std::nullopt;
 
@@ -94,6 +92,12 @@ IntegerRelations::IntegerRelations(FunctionAnalyses& analyses)
     , m_program(analyses.context().program)
     , m_function(analyses.function())
 {
+}
+
+IntegerRelations::~IntegerRelations()
+{
+    if (m_assumptionsRead)
+        m_analyses.context().build.statistics().count(StatisticID::AssumptionsReadForIntegerRelations, m_assumptionsRead);
 }
 
 IntegerRelations::Answer IntegerRelations::isAtMost(ValueID left, ValueID right, int64_t offset, BlockID at)
@@ -154,16 +158,26 @@ void IntegerRelations::assumeRange(ValueID id, Range range, BlockID scope)
     std::optional<int64_t> maximum = exactValueOf(CheckedInt64(range.maximum) - term.offset);
     if (!minimum || !maximum)
         return;
-    m_assumptions.append({ term.base, { *minimum, *maximum }, scope });
+    size_t numberOfEntries = m_lastAssumptionAbout.size();
+    if (numberOfEntries <= term.base.index()) {
+        m_lastAssumptionAbout.grow(std::max<size_t>(m_function.values.size(), term.base.index() + 1));
+        std::ranges::fill(m_lastAssumptionAbout.mutableSpan().subspan(numberOfEntries), 0);
+    }
+    uint32_t earlier = std::exchange(m_lastAssumptionAbout[term.base.index()], static_cast<uint32_t>(m_assumptions.size() + 1));
+    m_assumptions.append({ term.base, { *minimum, *maximum }, scope, earlier });
+    m_isScopeOfAssumption.set(scope.index());
 }
 
 std::optional<Range> IntegerRelations::assumedRangeOf(ValueID base, BlockID at) const
 {
     std::optional<Range> range;
-    for (const Assumption& assumption : m_assumptions) {
-        if (assumption.value != base || !isInScope(m_analyses, assumption.scope, at))
-            continue;
-        range = range ? range->intersectWith(assumption.range) : assumption.range;
+    if (!base || base.index() >= m_lastAssumptionAbout.size())
+        return range;
+    for (uint32_t number = m_lastAssumptionAbout[base.index()]; number; number = m_assumptions[number - 1].earlierAboutSameValue) {
+        const Assumption& assumption = m_assumptions[number - 1];
+        ++m_assumptionsRead;
+        if (isInScope(m_analyses, assumption.scope, at))
+            range = range ? range->intersectWith(assumption.range) : assumption.range;
     }
     return range;
 }
@@ -489,7 +503,7 @@ bool IntegerRelations::proveByInduction(ValueID left, ValueID right, int64_t off
 
     goals.append({ left, right, offset });
     bool holdsOnEveryEdge = std::ranges::all_of(cfg.incomingEdges(location.block), [&](Edge edge) {
-        std::optional<ValueID> incoming = findValueOnEdge(m_function, m_assumptions, edge, location.index);
+        std::optional<ValueID> incoming = findValueOnEdge(m_function, m_isScopeOfAssumption, edge, location.index);
         if (!incoming)
             return false;
         Term argument = normalize(*incoming);
@@ -593,7 +607,7 @@ bool IntegerRelations::proveParameterAtLeast(ValueID parameter, int64_t minimum,
 
     goals.append({ parameter, minimum });
     bool holdsOnEveryEdge = std::ranges::all_of(cfg.incomingEdges(location.block), [&](Edge edge) {
-        std::optional<ValueID> incoming = findValueOnEdge(m_function, m_assumptions, edge, location.index);
+        std::optional<ValueID> incoming = findValueOnEdge(m_function, m_isScopeOfAssumption, edge, location.index);
         return incoming && proveValueAtLeast(*incoming, minimum, edge.from, goals);
     });
     goals.removeLast();
@@ -632,7 +646,7 @@ bool IntegerRelations::proveWhole(ValueID id, BlockID at, AssumedWholeParameters
 
     assumed.append(id);
     bool receivesOnlyWholeNumbers = std::ranges::all_of(incomingEdges, [&](Edge edge) {
-        std::optional<ValueID> incoming = findValueOnEdge(m_function, m_assumptions, edge, location.index);
+        std::optional<ValueID> incoming = findValueOnEdge(m_function, m_isScopeOfAssumption, edge, location.index);
         return incoming && proveWhole(*incoming, edge.from, assumed);
     });
     assumed.removeLast();

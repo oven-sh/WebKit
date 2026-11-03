@@ -1,0 +1,38 @@
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f2
+# CHECK-NOT: unreached f3
+# RUN(ESCAPED): valueflow-why escaped-layout=L0
+# ESCAPED: escaped-layout=L0
+# ESCAPED: escaped
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Holder" fields=[{key="f" declared={type=anything} flags=[IsRequired]}, {key="held" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Handler" fields=[{key="apply" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = NewClosure function=f3
+    v4 = NewObject -, v3 layout=L1 fields=[0]
+    v5 = Builtin builtin=Proxy
+    v6 = Construct v5, -, v0, v4
+    PropSet v2, v6 key="f"
+    v8 = Builtin builtin=FunctionPrototypeBind
+    v9 = Call v8, v0
+    PropSet v2, v9 key="f"
+    v11 = PropGet v2 key="f"
+    v12 = Call v11, v2 calleeKey="f"
+    Return
+}
+function f1 name="two" kind=Arrow results=[{type=anything}] {
+    Return
+}
+function f2 name="held" kind=Arrow results=[{type=anything}] {
+    Return
+}
+function f3 name="apply" kind=Method parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = PropGet v1 key="held"
+    v4 = Call v3, v1 calleeKey="held"
+    Return
+}

@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTEffectsDeclared.h"
 #include "AOTIR.h"
 #include "AOTPass.h"
 
@@ -39,6 +40,29 @@ inline ValueID driverOf(const Function& body)
 {
     return body.at(BlockID(0u)).parameters[*coroutineOfBody(body).promiseParameter];
 }
+
+// The first value behind NewGenerator that names the generator or that somebody can see happen, where that value makes the heap frame of the generator and has the frame remember the function,
+// or is a direct call that takes the generator. MoveGeneratorFramesToHeap marks NewGenerator by it, looking into the callee too, and code generation believes the mark only where it still holds.
+inline ValueID findMakerOfHeapFrameBehind(const Program& program, const Function& function, const Block& block, ValueID generator)
+{
+    std::span<const ValueID> values = block.values.span();
+    size_t index = std::ranges::find(values, generator) - values.begin();
+    for (++index; index < values.size(); ++index) {
+        const Value& next = function.at(values[index]);
+        if (std::ranges::find(next.operands(), generator) == next.operands().end()) {
+            if (EffectTraits(declaredEffectsOf(program, next)).isRemovableWhenUnused())
+                continue;
+            return { };
+        }
+        if (next.opcode == Opcode::NewHeapFrame)
+            return next.generatorOperand() == generator && next.calleeOperand() == function.at(generator).calleeOperand() ? values[index] : ValueID();
+        return next.opcode == Opcode::CallDirect && !next.isTailCall ? values[index] : ValueID();
+    }
+    return { };
+}
+
+// A hint reads what it names, so the value is held up to the hint. Each hint goes to where the value was last read, on every way to it.
+PassOutcome moveReleaseHintsBehindLastReads(FunctionPassContext&);
 
 // Whether ResolveAwaitedCalls, as the function stands, makes this direct call of a ramp and the await of its result enter the callee without a promise.
 bool willEnterAwaitedCalleeWithoutPromise(FunctionPassContext&, ValueID call);

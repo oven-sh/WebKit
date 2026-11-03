@@ -535,7 +535,7 @@ struct SeenCode {
 static bool isModuleBodyFunction(const Function& function) { return function.module && function.isModuleBody(); }
 
 // A module is loaded by the entry, or by a module that names it. A closure is made by a body that runs. A call of a callee that nobody knows reaches what has been made and may stand there.
-static SeenCode findWhatSeenCodeReaches(const Program& program, const CallGraph& callGraph, const FlowResults& flow, const HeatGraph& graph, const ParallelArray<CallsOfNode>& calls, const FunctionsUnderNames& names, const Vector<Vector<FunctionID>>& functionsMadeBy, const BitVector& isCalledByHost, const BitVector& hasOnlySeenCallers, const Vector<Vector<uint32_t>>& namesReadBy, const Vector<Vector<FunctionID>>& accessorsReachedFrom, const Vector<Vector<uint32_t>>& holdersReadBy, const Vector<Vector<ModuleID>>& modulesLoadedBy, const Vector<uint8_t>& constructsUnknownValue, EstimateOf estimate, bool hasCallersInOtherImages)
+static SeenCode findWhatSeenCodeReaches(const Program& program, const CallGraph& callGraph, const FlowResults& flow, const HeatGraph& graph, const ParallelArray<CallsOfNode>& calls, const FunctionsUnderNames& names, const Vector<Vector<FunctionID>>& functionsMadeBy, const BitVector& isCalledByHost, const BitVector& hasOnlySeenCallers, const Vector<Vector<uint32_t>>& namesReadBy, const Vector<Vector<FunctionID>>& accessorsReachedFrom, const Vector<Vector<uint32_t>>& holdersReadBy, const Vector<Vector<ModuleID>>& modulesLoadedBy, const Vector<uint8_t>& constructsUnknownValue, EstimateOf estimate)
 {
     unsigned count = graph.numberOfFunctions();
     bool isForClasses = estimate == EstimateOf::Classes;
@@ -608,7 +608,7 @@ static SeenCode findWhatSeenCodeReaches(const Program& program, const CallGraph&
     BitVector isUnderNameThatIsCalled(count);
     BitVector isUnderNameReadAsValue(count);
     auto mayStandWhereValueIsCalled = [&](FunctionID function) {
-        return hasEscaped.quickGet(function.index()) && (hasCallersInOtherImages || !names.isUnderSomeName(function) || isUnderNameReadAsValue.quickGet(function.index()) || seen.isAccessorReachedUnderItsName.quickGet(function.index()) || (evaluatesText && !isLibraryCode(program, program.at(function))));
+        return hasEscaped.quickGet(function.index()) && (!names.isUnderSomeName(function) || isUnderNameReadAsValue.quickGet(function.index()) || seen.isAccessorReachedUnderItsName.quickGet(function.index()) || (evaluatesText && !isLibraryCode(program, program.at(function))));
     };
     bool constructsValue = false;
     Vector<Vector<FunctionID>> functionsWaitingFor(program.modules.size());
@@ -638,8 +638,6 @@ static SeenCode findWhatSeenCodeReaches(const Program& program, const CallGraph&
                 reachIfCalled(waiting);
         }
     };
-    if (hasCallersInOtherImages)
-        reach(graph.unknownCodeNode().index());
     for (const Entry& entry : program.entries)
         load(entry.module);
     if (program.entries.isEmpty()) {
@@ -1533,7 +1531,6 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
     });
     BitVector noFunction(count);
     Vector<double> entriesPerEvent;
-    const bool hasCallersInOtherImages = build.imagesBelow() && build.imagesBelow()->hasPrebuiltLibrary();
     auto addCallsOfNodes = [&](EstimateOf estimate) {
         bool isForClasses = estimate == EstimateOf::Classes;
         const BitVector& hasOnlySeenCallers = isForClasses ? hasOnlySeenCallersByFlow : noFunction;
@@ -1545,7 +1542,7 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
             if (flow.mayRunUnseenCode())
                 calls[graph.unknownCodeNode().index()] = shareAmong(program, flow, graph, isCalledPerEvent, seen, callGraph.functionsCalledByUnknownCode());
         } else
-            seen = findWhatSeenCodeReaches(program, callGraph, flow, graph, calls, names, functionsMadeBy, isCalledByHost, hasOnlySeenCallers, namesReadBy, accessorsReachedFrom, holdersReadBy, modulesLoadedBy, constructsUnknownValue, estimate, hasCallersInOtherImages);
+            seen = findWhatSeenCodeReaches(program, callGraph, flow, graph, calls, names, functionsMadeBy, isCalledByHost, hasOnlySeenCallers, namesReadBy, accessorsReachedFrom, holdersReadBy, modulesLoadedBy, constructsUnknownValue, estimate);
         Vector<double> eventsOfHandlers(FillWith { }, count, 0.0);
         if (!isForClasses) {
             forEachIndexInParallel(loops, graph.m_numberOfNames, [&](unsigned position) {

@@ -344,6 +344,9 @@ export interface HostObjectDeclaration {
   internalFields: readonly HostObjectInternalFieldSpec[];
   keepsStringsOfStoredValues: boolean;
   nativeAccessors: readonly string[];
+  lockedNames: readonly string[];
+  /** The member that hands out the object. null: no name of it is locked. */
+  holder: BuiltinPath | null;
   /** The systems on which native code makes it. */
   platforms: readonly TargetPlatform[];
 }

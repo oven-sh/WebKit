@@ -482,7 +482,8 @@ EffectSummaries createSummariesFromFlow(const Program&, const FlowResults&, cons
 EffectSummaries computeEffectSummaries(const Program&, const FlowResults&, BuildContext&);
 // A typed body that restarts in the generic version of its function passes its own parameters. Here that call is summarized by what the generic version does to values of those types, and so is a call
 // to code outlined from the generic version. Each such callee is read again for each such call, which is too expensive for a build, so only the verifier asks, when a guard is unavailable.
-EffectSummaries computeEffectSummariesByOperandTypes(const Program&, const FlowResults&, BuildContext&);
+// With roots: for them and for what they can reach by the functions that each body names. Every other function is taken for unknown code.
+EffectSummaries computeEffectSummariesByOperandTypes(const Program&, const FlowResults&, BuildContext&, std::span<const FunctionID> roots = { });
 void updateEffectSummaries(const Program&, const FlowResults&, BuildContext&, BodySummaries& kept, EffectSummaries&, BodyReferences* = nullptr);
 // A callee listed here is read as the summary beside it says.
 FunctionSummary summarizeBody(const EffectContext&, FunctionID, FunctionAnalyses&, std::span<const std::pair<FunctionID, FunctionSummary>> versionsOfCallees = { });

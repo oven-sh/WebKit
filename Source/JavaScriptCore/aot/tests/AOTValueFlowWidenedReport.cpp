@@ -33,6 +33,8 @@ ASCIILiteral wordFor(ValueFlowStatementKind kind)
         return "CallGroup"_s;
     case ValueFlowStatementKind::Behavior:
         return "Behavior"_s;
+    case ValueFlowStatementKind::WalkOfBehavior:
+        return "WalkOfBehavior"_s;
     case ValueFlowStatementKind::Escape:
         return "Escape"_s;
     case ValueFlowStatementKind::ModuleEvaluation:

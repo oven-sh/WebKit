@@ -303,6 +303,7 @@ public:
     // Of a pattern in unicode mode with a step that can consume a surrogate. There a lead surrogate and the trail surrogate behind it are one character, and that trail surrogate alone is none.
     // A match that meets a surrogate, in a step that tests for a class or goes back, where an attempt begins or where one might, is made again by the full machine.
     bool decodesSurrogatePairs { false };
+    bool isInUnicodeMode { false };
     // Whether the JIT takes turns off matchLimit for this pattern, and so can give a match up.
     bool jitCountsTurns { false };
     bool countsTurns { false };

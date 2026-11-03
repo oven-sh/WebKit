@@ -15,6 +15,7 @@
 #include "AOTCompiledFrame.h"
 #include "AOTCompiledStructure.h"
 #include "AOTEmptyPages.h"
+#include "AOTGenerator.h"
 #include "AOTHeapCacheRegistry.h"
 #include "AOTImage.h"
 #include "AOTInstance.h"
@@ -38,6 +39,8 @@
 #include "AOTVMState.h"
 #include "AbstractSlotVisitorInlines.h"
 #include "DeferGCInlines.h"
+#include "DeferTermination.h"
+#include "ErrorInstance.h"
 #include "GetterSetter.h"
 #include "JSCConfig.h"
 #include "JSCInlines.h"
@@ -728,8 +731,28 @@ auto HashedSlotTable::findChainDependentEntry(StructureID structureID, UniquedSt
     return entry && entry->get().slot.has(Slot::dependsOnChain) ? entry : nullptr;
 }
 
+// A stub copies what a slot says about an addition or a field into a place, which is found by the cell of the key: nothing leads from the name to the places. Whoever is told about a change asks this table whether it still has the slot,
+// so a place may not outlive it, whether it is removed, replaced or pushed out.
+NEVER_INLINE void HashedSlotTable::forgetPlacesCopiedFromSlotForStores(const Slot& slot)
+{
+    if (slot.kind != Slot::Kind::Transition && slot.kind != Slot::Kind::Field && slot.kind != Slot::Kind::FieldCreation)
+        return;
+    for (Instance* instance : m_vm.aotState().instances) {
+        PropertyCacheWords& words = instance->propertyCaches;
+        if (words.hashedSlots == entries() && std::exchange(words.placesFiledFromSlotsAndCleared, words.placesFiledFromSlots) != words.placesFiledFromSlots)
+            zeroSpan(instance->keyedValuePlaces().last<KeyedValuePlace::numberOfPlacesPerAccess>());
+    }
+}
+
+ALWAYS_INLINE void HashedSlotTable::forgetPlacesCopiedFrom(const HashedSlot& filed)
+{
+    if (filed.access() == SlotAccess::Store) [[unlikely]]
+        forgetPlacesCopiedFromSlotForStores(filed.slot);
+}
+
 void HashedSlotTable::erase(Entry& entry)
 {
+    forgetPlacesCopiedFrom(entry.get());
     UniquedStringImpl* uid = entry.get().uid();
     entry.clear();
     --m_numberOfFilledEntries;
@@ -762,7 +785,8 @@ HashedSlotTable::SetResult HashedSlotTable::set(UniquedStringImpl* uid, SlotAcce
         }
         uid->ref();
         ++m_numberOfFilledEntries;
-    }
+    } else
+        forgetPlacesCopiedFrom(entry->get());
     entry->set(m_writtenRegions, HashedSlot { slot, key });
     if (m_numberOfEntries >= m_maxNumberOfEntries || (m_evictionsWhileHalfFull <= m_numberOfEntries / 64 && m_evictionsSinceCollection <= m_numberOfEntries / 4))
         return SetResult::Stored;
@@ -964,7 +988,7 @@ void VMPropertyCaches::didCreateInstance(Instance& instance)
 void VMPropertyCaches::didChangeObjectPrototype(JSObject* prototype, UniquedStringImpl* uidOrNull)
 {
     Structure* structure = prototype->structure();
-    const ProgramIdentifiers* identifiers = m_vm.aotState().identifiers.get();
+    const ProgramIdentifiers* identifiers = identifiersOfRealm(m_vm, structure->realm());
     if (!identifiers || !listsEveryNameInItsTable(structure) || !structure->storedPrototype().isNull()) {
         m_namesOfObjectPrototypes.fill(UINT64_MAX);
         return;
@@ -1067,7 +1091,7 @@ void VMPropertyCaches::fileAbsenceFilterForStores(JSGlobalObject* globalObject, 
         return;
     for (JSObject* holder = structure->storedPrototypeObject(); holder; holder = holder->getPrototypeDirect().getObject())
         Object::ensureStructureForExtraPropertiesIfNeeded(m_vm, holder);
-    const ProgramIdentifiers* identifiers = m_vm.aotState().identifiers.get();
+    const ProgramIdentifiers* identifiers = identifiersOfRealm(m_vm, globalObject);
     if (!identifiers || structure->realm() != globalObject)
         return;
     AbsenceFilter filled { structure->id().bits(), m_absenceFilterGenerationForStores, { }, m_changesUnderNamesOnChains, 0 };
@@ -1084,7 +1108,7 @@ void VMPropertyCaches::fileAbsenceFilterForStores(JSGlobalObject* globalObject, 
         for (const FieldData& field : receiver->layout().fields()) {
             if (ofAllNames.letsStoresPass(field.name) || !FieldTableEntry::hasColumn(field.name))
                 continue;
-            ChainWalk walk = walkChain({ globalObject, structure, object, ChainWalkMode::AllocatesNothing, ChainWalkUse::UsedAtOnce }, m_vm.aotState().identifiers->identifier(field.name).impl());
+            ChainWalk walk = walkChain({ globalObject, structure, object, ChainWalkMode::AllocatesNothing, ChainWalkUse::UsedAtOnce }, identifiersOfRealm(m_vm, structure->realm())->identifier(field.name).impl());
             if (storeThroughChain(walk) != StoreThroughChain::CreatesOwnProperty)
                 filled.addNameThatStopsStores(field.name);
         }
@@ -1139,7 +1163,7 @@ static bool mayStopStores(JSObject* changed, UniquedStringImpl* uid)
 
 void VMPropertyCaches::didChangeFilteredObject(JSObject* changed, UniquedStringImpl* uidOrNull)
 {
-    const ProgramIdentifiers* identifiers = m_vm.aotState().identifiers.get();
+    const ProgramIdentifiers* identifiers = identifiersOfRealm(m_vm, changed ? changed->structure()->realm() : nullptr);
     if (uidOrNull && identifiers) {
         std::optional<uint32_t> number = identifiers->numberOf(uidOrNull);
         if (!number || !FieldTableEntry::hasColumn(*number) || !mayStopStores(changed, uidOrNull))
@@ -1423,6 +1447,7 @@ PropertyCaches::PropertyCaches(State& state)
     state.caches->add(CacheKind::StrongRoots, "Structures of additions in an Eden collection"_s, *this);
     state.caches->addObserver("PropertyCaches"_s, *this);
     state.caches->addClearedEachCollection("exits of fields"_s, asMutableByteSpan(std::span { m_fieldExits }));
+    state.caches->addClearedEachCollection("extra properties added"_s, asMutableByteSpan(std::span { m_addedExtraProperties }));
     state.instance.propertyCaches.fieldExits = m_fieldExits.data();
     if (Options::aotCountsPath())
         m_countedFilings = makeUnique<UncheckedKeyHashSet<uint64_t>>();
@@ -1502,12 +1527,12 @@ void PropertyCaches::ensureChangesAreReported(std::span<JSObject* const> objects
 
 CachedName PropertyCaches::nameOf(uint32_t identifierNumber) const
 {
-    return { m_vm.aotState().identifiers->identifier(identifierNumber).impl(), identifierNumber };
+    return { identifiersOf(m_state.instance).uid(identifierNumber), identifierNumber };
 }
 
 CachedName PropertyCaches::nameOf(UniquedStringImpl* uid) const
 {
-    return { uid, m_vm.aotState().identifiers->numberOf(uid) };
+    return { uid, identifiersOf(m_state.instance).numberOf(uid) };
 }
 
 bool PropertyCaches::canCache(Structure* structure, const PropertyAnswer& answer) const
@@ -1562,10 +1587,16 @@ void PropertyCaches::cache(const CachedAccess& access, const PropertyAnswer& ans
         didAddProperty(structure, answer.newStructure);
 }
 
+// By what the name says, not by where it lies. The list of the keys of a structure is asked for under no name.
+static unsigned hashOfName(UniquedStringImpl* uidOrNull)
+{
+    return uidOrNull ? uidOrNull->existingSymbolAwareHash() : 0;
+}
+
 void PropertyCaches::countFiling(const CachedAccess& access)
 {
     StructureID id = access.structure->id();
-    uint64_t pair = (static_cast<uint64_t>(id.bits()) << 32 | WTF::PtrHash<UniquedStringImpl*>::hash(access.name.uid)) + static_cast<uint64_t>(access.access) + 1;
+    uint64_t pair = (static_cast<uint64_t>(id.bits()) << 32 | hashOfName(access.name.uid)) + static_cast<uint64_t>(access.access) + 1;
     if (m_countedFilings->add(pair).isNewEntry)
         return;
     count(m_state.instance, RuntimeCounterID::PairsFiledAgain);
@@ -1790,7 +1821,8 @@ bool PropertyCaches::shouldFile(StructureID structureID, UniquedStringImpl* uid,
     constexpr uint32_t countersOfPair = 4;
     static_assert(hasOneBitSet(numberOfMissCounters) && numberOfMissCounters <= 1u << 24 && missesBeforeFiling < wasFiled && storeMissesBeforeFiling < wasFiled);
     static_assert(hasOneBitSet(countersOfPair) && countersOfPair <= numberOfMissCounters);
-    uint32_t hash = WTF::pairIntHash(structureID.bits(), WTF::PtrHash<UniquedStringImpl*>::hash(uid) + static_cast<uint32_t>(access));
+    // Two pairs that fall together count as one. Which do is the same in every run.
+    uint32_t hash = WTF::pairIntHash(structureID.bits(), hashOfName(uid) + static_cast<uint32_t>(access));
     uint32_t first = hash % numberOfMissCounters;
     uint8_t bitsOfPair = static_cast<uint8_t>(hash >> 24) & ~maskOfCount;
     uint8_t* ofPair = nullptr;
@@ -2026,6 +2058,58 @@ JSValue PropertyCaches::findGetterAndFillSiteCache(SiteCache site, JSCell* base,
     return jsUndefined();
 }
 
+GetterSetter* PropertyCaches::findAccessorOfMemberAndFillSiteCache(SiteCache site, JSCell* base, uint32_t identifierNumber)
+{
+    VM& vm = *m_state.instance.vm;
+    DeferGCForAWhile deferGC(vm);
+    Structure* structure = base->structure();
+    CachedName name = nameOf(identifierNumber);
+    JSGlobalObject* globalObject = m_state.instance.globalObject;
+    Object* object = compiledObjectOrNull(base);
+    if (object && Object::structureGuaranteesAbsence(structure, name.uid) && !hasPendingStars(*object)) {
+        ChainWalk walk = walkChain({ globalObject, structure, object, ChainWalkMode::AllocatesNothing }, name.uid);
+        if (walk.result == ChainWalkResult::Found && isValidOffset(walk.offset) && (walk.attributes & PropertyAttribute::Accessor)) {
+            auto* accessor = uncheckedDowncast<GetterSetter>(valueAtOffset(walk.holder, walk.offset).asCell());
+            if (site) {
+                PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
+                slot.setCacheableGetterSlot(walk.holder, walk.attributes, accessor, walk.offset);
+                PropertyAnswer answer = classifyRead({ globalObject, object, structure, name.uid, slot, ChainWalkMode::AllocatesNothing });
+                if (answer.kind == PropertyAnswerKind::Accessor && canCache(structure, answer)) {
+                    m_siteCaches.didMissRepeatedly(site);
+                    cache({ structure, name, SlotAccess::Read, site }, answer);
+                }
+            }
+            return accessor;
+        }
+    }
+    if (!base->isObject())
+        return nullptr;
+    DeferTerminationForAWhile deferTermination(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    PropertySlot slot(base, PropertySlot::InternalMethodType::VMInquiry, &vm);
+    bool isFound = asObject(base)->getPropertySlot(globalObject, name.uid, slot);
+    scope.assertNoException();
+    return isFound && slot.isAccessor() ? slot.getterSetter() : nullptr;
+}
+
+static bool findsOwnPropertyInStructureAlone(VM& vm, JSCell* base, Structure* structure, UniquedStringImpl* uid)
+{
+    if (!base->isObject() || structure->isDictionary())
+        return false;
+    TypeInfo info = structure->typeInfo();
+    if (!info.overridesGetOwnPropertySlot())
+        return !info.hasStaticPropertyTable();
+    if (info.type() == ErrorInstanceType)
+        return !ErrorInstance::isLazilyMaterialized(vm, PropertyName(uid));
+    // A function answers by itself for its length, its name and its prototype, and a class for the static fields that lie in variables. A plain value that its table lists is what a look finds.
+    if (isJSFunctionType(info.type()) || info.type() == SlimClosureWithPropertiesType) {
+        unsigned attributes = 0;
+        return uid != vm.propertyNames->length.impl() && uid != vm.propertyNames->name.impl() && uid != vm.propertyNames->prototype.impl()
+            && isValidOffset(structure->getConcurrently(uid, attributes)) && !(attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue);
+    }
+    return (info.type() == ArrayType || info.type() == DerivedArrayType) && uid != vm.propertyNames->length.impl() && !parseIndex(*uid);
+}
+
 // A read for whoever may not run code or change the object: nothing is made, and what needs that is left for a read by name.
 void PropertyCaches::fileValueWithoutChangingObject(JSCell* base, uint32_t identifierNumber)
 {
@@ -2034,7 +2118,10 @@ void PropertyCaches::fileValueWithoutChangingObject(JSCell* base, uint32_t ident
     CachedName name = nameOf(identifierNumber);
     JSGlobalObject* globalObject = m_state.instance.globalObject;
     PropertySlot slot(base, PropertySlot::InternalMethodType::VMInquiry, &vm);
-    if (Object* object = compiledObjectOrNull(base); object ? !Object::structureGuaranteesAbsence(structure, name.uid) || hasPendingStars(*object) : base->type() != FinalObjectType || structure->isDictionary())
+    // An object that was given its first names a moment ago is still being filled. Nothing of a cacheable dictionary moves when it is made flat, and no cell is allocated.
+    if (structure->isDictionary() && !structure->isUncacheableDictionary() && base->isObject())
+        flattenOnce(vm, asObject(base));
+    if (Object* object = compiledObjectOrNull(base); object ? !Object::structureGuaranteesAbsence(structure, name.uid) || hasPendingStars(*object) : !findsOwnPropertyInStructureAlone(vm, base, structure, name.uid))
         return;
     unsigned attributes = 0;
     PropertyOffset ownOffset = isCompiledObject(base) ? invalidOffset : structure->getConcurrently(name.uid, attributes);
@@ -2095,7 +2182,7 @@ static StructureLookupResult lookUpByStructure(Structure* structure, UniquedStri
 {
     for (JSObject* holder = nullptr;; structure = holder->structure()) {
         TypeInfo info = structure->typeInfo();
-        if (!info.isObject() || !structure->hasMonoProto() || info.overridesGetOwnPropertySlot() || info.overridesGetPrototype()
+        if (!info.isObject() || !structure->hasMonoProto() || info.overridesGetOwnPropertySlot() || hidesObjectsAbove(structure)
             || TypeInfo::hasStaticPropertyTable(info.inlineTypeFlags()) || structure->isCompiledStructure() || structure->isUncacheableDictionary())
             return { };
         unsigned attributes = 0;

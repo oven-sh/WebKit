@@ -169,6 +169,9 @@ function isLockedObject(builtin: ModelBuiltin): boolean {
 
 function formatBuiltin(builtin: ModelBuiltin): string {
   const { prototype, members, overloads } = builtin;
+  const reads = overloads.filter(overload => overload.mode === "Get");
+  const isReadWithoutType =
+    builtin.kind === "DataProperty" && reads.length > 0 && reads.every(read => read.result.type.isAnything);
   return formatAggregate([
     ["kind", formatUnlessDefault("BuiltinKind", builtin.kind, "Namespace")],
     ["origin", formatUnlessDefault("BuiltinOrigin", builtin.origin, "Engine")],
@@ -195,6 +198,7 @@ function formatBuiltin(builtin: ModelBuiltin): string {
     ["isNamedByText", builtin.hostNumber === noHostNumber ? null : "true"],
     ["isAddedAtFirstRead", builtin.isAddedAtFirstRead ? "true" : null],
     ["isAddedAsEnumerable", builtin.isAddedAsEnumerable ? "true" : null],
+    ["isReadWithoutType", isReadWithoutType ? "true" : null],
   ]);
 }
 
@@ -256,6 +260,7 @@ function formatClass(builtinClass: ModelClass, pools: ClassPools): string {
       "constructorOnlyReadsPrototypeOfNewTarget",
       formatUnlessFalse(builtinClass.constructorOnlyReadsPrototypeOfNewTarget),
     ],
+    ["constructorAdder", formatName(builtinClass.constructorAdder)],
     ["slots", classSlots.add(builtinClass.slots.map(slot => formatId("BuiltinSlotID", slot)))],
     ["stateHeap", formatHeap(builtinClass.stateHeap)],
   ]);

@@ -10,6 +10,7 @@
 
 #include "AOTClassPrototype.h"
 #include "AOTCompactTable.h"
+#include "AOTGenerator.h"
 #include "AOTObject.h"
 #include "AOTObjectInternal.h"
 #include "AOTPendingStars.h"
@@ -278,7 +279,9 @@ OperandSnapshot capture(JSObject* object)
     Structure* structure = object->structure();
     state.type = object->type();
     state.isPristine = TypeInfo::isPristine(object->inlineTypeFlags());
-    state.prototype = JSValue::encode(structure->storedPrototype(object));
+    // A generator that stands on the object that stands for its prototype is given its own when somebody asks. No program can tell the two apart.
+    bool takesPrototypeWhenAsked = object->classInfo() == Generator::info() && uncheckedDowncast<Generator>(object)->takesPrototypeFromFunction();
+    state.prototype = JSValue::encode(takesPrototypeWhenAsked ? JSValue() : structure->storedPrototype(object));
 
     if (Object* compiled = compiledObjectOrNull(object)) {
         state.isExtensible = !compiled->isNotExtensible();
@@ -401,10 +404,27 @@ static void compareKeyOrder(const OperandSnapshot& before, const OperandSnapshot
     differences.append({ onlyRemoves ? OperandChange::PropertyRemoved : OperandChange::PropertyAdded, makeString("key order "_s, before.orderWord & orderAndCountMask, " -> "_s, after.orderWord & orderAndCountMask) });
 }
 
+// Native code that gives the bytes to a job of another thread pins the buffer, or roots a view that has no buffer yet, until the job has ended. What arrives there during the call says nothing about the call.
+static bool holdsBytesThatNativeCodeKeeps(VM& vm, JSObject* object)
+{
+    ArrayBuffer* buffer = nullptr;
+    if (auto* view = dynamicDowncast<JSArrayBufferView>(object))
+        buffer = view->hasArrayBuffer() ? view->possiblySharedBuffer() : nullptr;
+    else if (auto* wrapper = dynamicDowncast<JSArrayBuffer>(object))
+        buffer = wrapper->impl();
+    if (buffer)
+        return !buffer->isDetachable();
+    bool isRooted = false;
+    vm.heap.forEachProtectedCell([&](JSCell* cell) {
+        isRooted |= cell == object;
+    });
+    return isRooted;
+}
+
 Vector<OperandDifference> differencesBetween(VM& vm, JSObject* object, const OperandSnapshot& before, const OperandSnapshot& after)
 {
     Vector<OperandDifference> differences;
-    if (before.prototype != after.prototype)
+    if (before.prototype != after.prototype && before.prototype != JSValue::encode(JSValue()))
         differences.append({ OperandChange::PrototypeChanged, { } });
     if (before.isExtensible != after.isExtensible)
         differences.append({ OperandChange::IntegrityChanged, "extensibility"_s });
@@ -446,7 +466,7 @@ Vector<OperandDifference> differencesBetween(VM& vm, JSObject* object, const Ope
         differences.append({ OperandChange::InternalStateChanged, makeString("byte length "_s, before.byteLength, " -> "_s, after.byteLength) });
     else if (before.bytes != after.bytes)
         differences.append({ OperandChange::ByteStorageChanged, { } });
-    else if (before.hashOfBytes != after.hashOfBytes)
+    else if (before.hashOfBytes != after.hashOfBytes && !holdsBytesThatNativeCodeKeeps(vm, object))
         differences.append({ OperandChange::BytesChanged, { } });
     return differences;
 }

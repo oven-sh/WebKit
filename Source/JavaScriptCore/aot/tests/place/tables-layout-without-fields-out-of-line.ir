@@ -1,6 +1,7 @@
 # In front of the record of a layout whose fields all lie in the object there is the slot of its extra properties and nothing else
 # RUN: tables layouts
-# STATISTIC: ProgramTableBytesLayouts <= 672
+# The bytes of the tables themselves: what is skipped to align them depends on the tables in front and counts as ProgramTableBytesOther.
+# STATISTIC: ProgramTableBytesLayouts <= 682
 # CHECK: layout shape=1 index=L0 kind=Record name="Point"
 # CHECK: rare extension=- extraProperties=Cell@24 extensionSize=0
 

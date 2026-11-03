@@ -1,4 +1,4 @@
-# Fields of one name that an access reaches through one set of layouts get one representation where their own are of one kind: the one that holds what all of them hold. A field that holds nothing but markers goes with the others
+# Fields of one name that an access reaches through one set of layouts get one representation where their own are of one kind: the one that holds what all of them hold. A field that holds nothing but markers goes with the others. "filler" takes the last bytes of either cell, so no small integer has room for 32 bits
 # FORM: AsRead
 # OPTIONS: only-passes=ResolveAccesses references=narrow testing=NoLayoutIsMadeSeldom
 # RUN: plan-slots layouts accesses
@@ -7,8 +7,8 @@
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
-layout L0 name="Literal" fields=[{key="pos" declared={type=int[0, 255]} flags=[IsRequired]}, {key="end" declared={type=int[0, 65535]} flags=[IsRequired]}, {key="label" declared={type=undefined|string} flags=[IsRequired]}, {key="owner" declared={type=null|L2} flags=[IsRequired]}]
-layout L1 name="Span" fields=[{key="owner" declared={type=null|L2} flags=[IsRequired]}, {key="end" declared={type=number} flags=[IsRequired]}, {key="pos" declared={type=int[0, 65535]} flags=[IsRequired]}, {key="label" declared={type=undefined|string} flags=[IsRequired]}]
+layout L0 name="Literal" fields=[{key="pos" declared={type=int[0, 255]} flags=[IsRequired]}, {key="end" declared={type=int[0, 65535]} flags=[IsRequired]}, {key="label" declared={type=undefined|string} flags=[IsRequired]}, {key="owner" declared={type=null|L2} flags=[IsRequired]}, {key="filler" declared={type=int[0, 65535]} flags=[IsRequired]}]
+layout L1 name="Span" fields=[{key="owner" declared={type=null|L2} flags=[IsRequired]}, {key="end" declared={type=number} flags=[IsRequired]}, {key="pos" declared={type=int[0, 65535]} flags=[IsRequired]}, {key="label" declared={type=undefined|string} flags=[IsRequired]}, {key="filler" declared={type=int[0, 65535]} flags=[IsRequired]}]
 layout L2 name="Leaf" fields=[{key="value" declared={type=number} flags=[IsRequired]}]
 variable g0 name="range" module=m0 declared={type=anything} initialization=Undefined
 
@@ -27,13 +27,13 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v11 = Null
     v12 = NewObject -, v2 layout=L2 fields=[0]
     v13 = FinishObject v12
-    v14 = NewObject -, v7, v8, v3, v13 layout=L0 fields=[0, 1, 2, 3]
+    v14 = NewObject -, v7, v8, v3, v13, v8 layout=L0 fields=[0, 1, 2, 3, 4]
     v15 = FinishObject v14
     PutModuleVariable v15 variable=g0
-    v17 = NewObject -, v11, v9, v8, v10 layout=L1 fields=[0, 1, 2, 3]
+    v17 = NewObject -, v11, v9, v8, v10, v8 layout=L1 fields=[0, 1, 2, 3, 4]
     v18 = FinishObject v17
     PutModuleVariable v18 variable=g0
-    v20 = NewObject -, v13, v9, v8, v10 layout=L1 fields=[0, 1, 2, 3]
+    v20 = NewObject -, v13, v9, v8, v10, v8 layout=L1 fields=[0, 1, 2, 3, 4]
     v21 = FinishObject v20
     PutModuleVariable v21 variable=g0
     v23 = GetModuleVariable variable=g0
@@ -41,6 +41,8 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v25 = PropGet v23 key="end"
     v26 = PropGet v23 key="label"
     v27 = PropGet v23 key="owner"
+    v28 = PropGet v15 key="filler"
+    v29 = PropGet v18 key="filler"
     Return
 }
 # CHECK: "pos" {L0 L1} read

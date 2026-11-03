@@ -605,6 +605,7 @@ static void testRunnerOnlyDiagnostic()
 
     expectFailuresFor("IRTextError"_s, { "check=VerifyEachPass"_s }, withDirectives("# RUN: print\n"_s), { });
     expectFailuresFor("IRTextError"_s, { "no-such-word"_s }, withDirectives("# RUN: print\n"_s), { 1 });
+    expectFailuresFor("IRTextError"_s, { "check=VerifyEachPass"_s }, withDirectives("# RUN: print\n# OPTIONS: sabotage=FusedConversionsRunCode\n"_s, unparsableProgram), { });
 }
 
 static void testRunnerDiagnosticsOfBothLists()

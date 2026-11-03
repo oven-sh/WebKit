@@ -4,6 +4,7 @@
 # RUN: pass SinkAllocations
 # STATISTIC: AllocationsRemoved = 16
 # STATISTIC: AllocationsSunk = 0
+# STATISTIC: ListsOfBuiltinsNeverBuilt = 15
 # LOSS: MaxVirtualArrayLength x1 f17 v2
 
 module m0 path="main.js" displayPath="main.js"

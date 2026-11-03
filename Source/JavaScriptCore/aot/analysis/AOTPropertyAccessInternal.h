@@ -34,6 +34,8 @@ struct NextHolder {
 };
 
 NextHolder nextHolderOf(const Program&, LayoutID classLayout, ClassSide, MemberConditions&);
+// A walk under the name from the prototype object of the class comes to Object.prototype and has noted nothing by then. It answers what a walk from there answers, whichever class it is.
+bool walkComesToObjectPrototypeWithoutNote(const Program&, LayoutID declaredClass, PropertyKeyID, Access);
 
 void setDeclaredMember(MemberAnswer&, const DeclaredMember&, LayoutID holder);
 void setLevel(MemberAnswer&);
@@ -67,6 +69,8 @@ struct FieldArmState {
     bool holdsRawNumberOrBoolean { true };
     bool holdsRawValuesWhileCellIsUnmarked { true };
     bool holdsRawValueFromBirthInSomeMember { false };
+    // The image holds its slots to types of its own, which may be narrower than what this program knows of them, and whoever stores keeps the marks of its cells: a store goes by name.
+    bool isOfImageBelowInSomeMember { false };
     bool holdsOnlyListedFunctions { true };
     bool slotsHoldUndefinedAndNull { true };
     bool createdOnlyAtConstruction { true };

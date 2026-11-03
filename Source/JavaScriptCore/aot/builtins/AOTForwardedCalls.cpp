@@ -198,6 +198,20 @@ bool isAlwaysArray(const Type& type)
     return part && part->builtinClass == BuiltinClasses::Array && !type.mayBeUndefinedOrNull();
 }
 
+static bool isAlwaysConstructor(const Program& program, const Type& type)
+{
+    if (!type.isObject() || !type.hasOnlyKnownCallees() || type.layouts || !type.builtins.isEmpty() || type.functions.isEmpty())
+        return false;
+    return std::ranges::all_of(type.functions, [&](FunctionID id) {
+        return program.at(id).constructorForm() != ConstructorForm::NotConstructor;
+    });
+}
+
+bool constructsInPlaceWithoutRefusal(const Program& program, const Function& function, const Value& builtinCall, const ForwardedCallPlan& plan)
+{
+    return builtinCall.isDoneInPlace() && isAlwaysConstructor(program, program.typeOf(function, plan.callee)) && (!plan.newTarget || isAlwaysConstructor(program, program.typeOf(function, plan.newTarget)));
+}
+
 bool forwardsInPlace(const Value& builtinCall)
 {
     return builtinCall.calleeName() || builtinCall.isDoneInPlace();

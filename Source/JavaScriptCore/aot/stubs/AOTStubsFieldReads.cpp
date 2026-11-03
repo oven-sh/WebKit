@@ -39,27 +39,7 @@ static bool markersAreEncodedValues(const SlotTraits& traits)
         && (!traits.hasNull || traits.nullBits == boxedMarkers.null);
 }
 
-template<typename AddressOfSlot>
-static void loadSlotBits(StubAssembler& jit, unsigned width, AddressOfSlot slot, GPRReg bits)
-{
-    switch (width) {
-    case 1:
-        jit.load8(slot, bits);
-        return;
-    case 2:
-        jit.load16(slot, bits);
-        return;
-    case 4:
-        jit.load32(slot, bits);
-        return;
-    case 8:
-        jit.load64(slot, bits);
-        return;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static Jump branchIfBitsEqual(StubAssembler& jit, unsigned width, GPRReg bits, uint64_t expected)
+Jump branchIfBitsEqual(StubAssembler& jit, unsigned width, GPRReg bits, uint64_t expected)
 {
     if (width == sizeof(uint64_t)) {
         if (!expected)
@@ -528,6 +508,11 @@ void generatePrivateGet(StubAssembler& jit)
         const GPRReg layout = T12;
         const GPRReg record = T11;
         loadStructure(jit, object, layout);
+        // Another realm that runs the image has evaluated the class for itself.
+        if (!jit.options().hasOneInstance) {
+            jit.move(layout, T10);
+            goesToRunTime.append(branchIfNotOfThisRealm(jit, T10));
+        }
         jit.loadPtr(Address(layout, CompiledStructure::offsetOfLayout()), layout);
         // The number is an int32 in a JSValue: its lower half is the number.
         jit.load32(slotOfButterfly(token, ClassToken::classIndexSlot), T10);

@@ -1,0 +1,32 @@
+# f(a, ...rest) behind a test of the rest array that still holds: the append that goes into the rare block keeps the guard of that test.
+# Whether the array fits on the stack is asked in between, so the length is read by the array's own getter: a read by name may run anything until it is resolved, and no guard holds behind it.
+# FORM: Prepared optimizing
+# OPTIONS: check=VerifyEachPass
+# RUN: pass ResolveCalls
+# STATISTIC: RestArraysHandedOver = 1
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="target" flags=[HasThis, HasRestParameter] thisType={type=anything} parameters=[{type=anything}, {type=Array}] results=[{type=anything}] {
+    Return v1
+}
+
+function f1 name="handsOverBehindATest" flags=[HasThis, HasRestParameter] thisType={type=anything} parameters=[{type=anything}, {type=Array}] results=[{type=anything}] {
+    v3 = IsPristine v2 builtinClass=Array aspects=[Storage, Names]
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4: guard):
+    v5 = NewArray v1 contents=anything
+    AppendElements v5, v2, v4
+    v7 = NewClosure function=f0
+    v8 = CallList v7, v0, v5
+    ReturnCall v8
+  b2() frequency=Rare:
+    Return v1
+# CHECK-NOT: PropGet
+# CHECK-NOT: ToLength
+# CHECK: [[length]]: {{*}} = CallBuiltin v2 overload=ArrayPrototypeLength/0
+# CHECK: [[fits]]: boolean = LessEq [[length]], {{*}}
+# CHECK: Branch [[fits]] -> taken [[direct]](), notTaken [[asBefore]]()
+# CHECK: AppendElements {{*}}, v2, v4
+# CHECK: = CallDirect v0, v1, v2 function=f0
+}

@@ -233,7 +233,8 @@ void EffectSummarizer::bringSeedUpToDate(EffectSummaries& summaries)
     summaries.forgetAnswersForCalleeLists();
     m_kept.countLoweredBodiesWithNewStorageAsChanged();
     findRecordsThatLookDifferent();
-    BorrowedParameters borrowed = m_kept.computeBorrowedParametersFromLatestTable(m_program, m_build, m_kept.m_stampsOfRecords.span(), m_recordLooksDifferent.span());
+    findBodiesToRead();
+    BorrowedParameters borrowed = m_borrowedParametersOfProgram ? *m_borrowedParametersOfProgram : m_kept.computeBorrowedParametersFromLatestTable(m_program, m_build, m_kept.m_stampsOfRecords.span(), m_recordLooksDifferent.span(), m_bodiesToRead);
     m_kept.m_wasTouchedSinceLatestTable.clear();
     m_kept.m_stampsOfRecordsAtLatestTable.clear();
     times.didFinish("computeBorrowedParameters"_s);
@@ -365,11 +366,12 @@ BorrowedParameters BodySummaries::computeBorrowedParametersOfChangedBodies(const
     return table;
 }
 
-BorrowedParameters BodySummaries::computeBorrowedParametersFromLatestTable(const Program& program, BuildContext& build, std::span<const uint64_t> stampsOfRecords, std::span<const uint8_t> recordLooksDifferent)
+BorrowedParameters BodySummaries::computeBorrowedParametersFromLatestTable(const Program& program, BuildContext& build, std::span<const uint64_t> stampsOfRecords, std::span<const uint8_t> recordLooksDifferent, const BitVector* bodiesToScan)
 {
     if (m_stampsOfRecordsAtLatestTable.isEmpty())
-        return computeBorrowedParameters(program, build, m_borrowingBodies, m_isChangedForTable.span(), recordLooksDifferent);
+        return computeBorrowedParameters(program, build, m_borrowingBodies, m_isChangedForTable.span(), recordLooksDifferent, bodiesToScan);
 
+    RELEASE_ASSERT(!bodiesToScan);
     unsigned numberOfKeptBodies = m_stampsOfRecordsAtLatestTable.size();
     unsigned numberOfSummarizedFunctions = m_isChangedForTable.size();
     RELEASE_ASSERT(numberOfSummarizedFunctions <= numberOfKeptBodies && numberOfKeptBodies <= stampsOfRecords.size() && m_wasTouchedSinceLatestTable.size() == numberOfKeptBodies);
@@ -382,6 +384,32 @@ BorrowedParameters BodySummaries::computeBorrowedParametersFromLatestTable(const
         }
     });
     return computeBorrowedParameters(program, build, m_borrowingBodies, hasChangedSince.span(), recordLooksDifferentSince.span());
+}
+
+void EffectSummarizer::findBodiesToRead()
+{
+    if (!m_bodiesToRead || !m_bodiesToRead->isEmpty())
+        return;
+    RELEASE_ASSERT(!m_numberOfFunctionsBefore);
+    m_bodiesToRead->ensureSize(m_program.functions.size());
+    Vector<uint32_t> frontier;
+    auto add = [&](FunctionID function) {
+        if (!m_bodiesToRead->quickSet(function.index()))
+            frontier.append(function.index());
+    };
+    for (FunctionID root : m_rootsOfBodiesToRead)
+        add(root);
+    while (!frontier.isEmpty()) {
+        Vector<Vector<FunctionID>> named(frontier.size());
+        forEachIndexInParallel(m_build.parallelLoops(), frontier.size(), [&](unsigned position) {
+            named[position] = functionsNamedIn(m_program, m_program.functions[frontier[position]]);
+        });
+        frontier.shrink(0);
+        for (const Vector<FunctionID>& functions : named) {
+            for (FunctionID function : functions)
+                add(function);
+        }
+    }
 }
 
 void EffectSummarizer::findRecordsThatLookDifferent()
@@ -532,6 +560,8 @@ void EffectSummarizer::summarizeBodies()
 
     auto summarize = [&](const EffectSummaries& seed, unsigned index, BodyReferenceCollector* references = nullptr) {
         FunctionID id(index);
+        if (m_bodiesToRead && !m_bodiesToRead->quickGet(index))
+            return summarizeAsUnknownCode(id, m_program.functions[index]);
         EffectContext context { m_program, seed };
         std::unique_ptr<FunctionAnalyses> analyses = createAnalysesForSummary(m_build, context, m_flow, id, m_program.functions[index]);
         return summarizeBodyLocally(context, id, *analyses, references, m_calleesAreRead);

@@ -29,6 +29,7 @@ struct MemberFacts {
     void meetWith(const MemberFacts& other)
     {
         mayReachUnknownJavaScript |= other.mayReachUnknownJavaScript;
+        mayEscape |= other.mayEscape;
         isFilledByNativeCode |= other.isFilledByNativeCode;
         isParsedByType |= other.isParsedByType;
         needsWideReference |= other.needsWideReference;
@@ -38,6 +39,7 @@ struct MemberFacts {
     }
 
     bool mayReachUnknownJavaScript { false };
+    bool mayEscape { false };
     bool isFilledByNativeCode { false };
     bool isParsedByType { false };
     bool needsWideReference { false };
@@ -53,7 +55,6 @@ struct FieldInputs {
     const FieldFlow& flow;
     const Type& type;
     const SlotRowUse& use;
-    bool someCodeReadsByKey;
     bool isCreatedByStore;
     bool isInObjectBornWithoutValues;
     Expected<bool> isNamedSomewhere;
@@ -155,6 +156,8 @@ static bool needsAbsentState(const SlotPlanContext& context, const FieldInputs& 
     case LayoutKind::Instance:
     case LayoutKind::Container:
     case LayoutKind::BuiltinResult:
+        if (context.build.isSabotaged(Sabotage::SlotsNeedNoAbsentState))
+            return false;
         return !isAlwaysFilled
             || field.isCreatedByStore
             || !field.flow.stability.containsAll(everyStability)
@@ -260,10 +263,10 @@ static SlotClaim claimFor(const SlotPlanContext& context, const FieldInputs& fie
         .prefersInt32 = typeFitsInt32Slot(field.type),
         .holdsWideReferences = claim.needsWideReference,
     });
-    // The object is in hands that nobody knows and no code reads this number by name: it goes to whoever asks for it by key or lists it, as a value. From a double it would be made into one each time.
+    // The object is in hands that nobody knows and no code that knows its layout names this number: it goes as a value to whoever asks for it by name or by key, or lists it. From a double it would be made into one each time.
     bool isDouble = claim.representation == SlotRepresentation::Double || claim.representation == SlotRepresentation::OptionalDouble;
-    bool isReadByKeyAlone = field.someCodeReadsByKey && isObjectLayout(field.layout.kind) && !field.use.accessSites && field.layout.flow.cause == UnprovenCause::ReachesUnknownJavaScript;
-    if (isDouble && isReadByKeyAlone)
+    bool isReadOnlyAsValue = isObjectLayout(field.layout.kind) && !field.use.accessSites && field.members.mayEscape;
+    if (isDouble && isReadOnlyAsValue)
         claim.representation = SlotRepresentation::JSValue;
     claim.mayBeOutOfLine = mayBeOutOfLine(field, claim);
     if (claim.mayBeOutOfLine)
@@ -325,6 +328,7 @@ static MemberFacts memberFactsOf(const SlotPlanContext& context, FieldReference 
     LayoutID id = reference.layout;
     return {
         .mayReachUnknownJavaScript = !everyAllocationClassCannot(context.program, context.inputs.flow, id, ObjectMutation::ReachUnknownJavaScript),
+        .mayEscape = !context.program.at(id).flow.allocationClasses.isEmpty() && !context.program.at(id).flow.neverEscapes,
         .isFilledByNativeCode = isFilledByNativeCode(context.program.at(id)),
         .isParsedByType = context.program.at(id).flow.observedUses.contains(ObservedUse::IsParsedByType),
         .needsWideReference = needsWideReference(context, reference),
@@ -369,7 +373,6 @@ static SlotClaim claimFor(const SlotPlanContext& context, const SlotUses& uses, 
         .flow = flowOf(program, reference),
         .type = typeHeldBy(program, declaration),
         .use = use,
-        .someCodeReadsByKey = uses.readsByKeyFoundAtRunTime.at(0),
         .isCreatedByStore = fieldsCreatedByStores.quickGet(declaringRowOf(context, reference)),
         .isInObjectBornWithoutValues = use.initializingSites && !use.sitesInitializingWithValue && isBornWithoutValues(context, uses, reference.layout),
         .isNamedSomewhere = isNamedSomewhere(program, uses, declaration, use),

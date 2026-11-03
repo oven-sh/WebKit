@@ -12,6 +12,8 @@
 #include "AOTCellAllocationEmitter.h"
 #include "AOTCompiledStructure.h"
 #include "AOTElementEmitterAllocation.h"
+#include "AOTFlowResults.h"
+#include "AOTGuardEmitter.h"
 #include "AOTObjectWords.h"
 #include "AOTPlacement.h"
 #include "AOTRuntimeCallEmitter.h"
@@ -43,6 +45,9 @@ public:
         static_assert(sizeof(KeyListCacheEntry) == 16);
         static_assert(hasOneBitSet(numberOfKeyLists));
         static_assert(indexOfKeyList(3, numberOfKeyLists + 4) == 7);
+        // The symbols in a list are those of the realm that keeps it.
+        if (key == KeyListKey::Shape && kind != KeyListKind::Strings && inputs().flow.programInstances() != ProgramInstances::AtMostOne)
+            leaveUnless(emitter<GuardEmitter>().belongsToInstance(object), otherwise);
         ShapeTestEmitter& shapeTests = emitter<ShapeTestEmitter>();
         const B3::AbstractHeap& heap = key == KeyListKey::Shape ? m_heaps.entire(AbstractHeap::RuntimeState) : m_heaps.collectorState;
         Word32 shapeWord = key == KeyListKey::Shape ? shapeTests.shapeWordOf(object) : shiftRightUnsigned(loadStructureID(object), 1);

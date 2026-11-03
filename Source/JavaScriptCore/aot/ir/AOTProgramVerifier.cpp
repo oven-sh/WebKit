@@ -620,6 +620,7 @@ void ProgramVerifier::verifyVariables()
             isStaticField.quickSet(field.variable.index());
     }
 
+    BitVector hasVariableThatHoldsMock(m_program.modules.size());
     auto isValid = [&](unsigned index) {
         const Variable& variable = m_program.variables[index];
         bool startsAsFunction = variable.initialization == VariableInitialization::Function;
@@ -628,6 +629,14 @@ void ProgramVerifier::verifyVariables()
         if (startsAsFunction && !hoistsFunctionsIntoVariables(m_program.at(variable.module).kind))
             return false;
         if (variable.flags.contains(VariableFlags::IsReplaceable) && (variable.flags.contains(VariableFlags::IsImmutable) || variable.owner))
+            return false;
+        // It holds what stands in place of its module while a mock that came ahead of the load does, and is empty at all other times. No code of the program names it.
+        if (variable.flags.contains(VariableFlags::HoldsMock)) {
+            if (!variable.flags.contains(VariableFlags::IsReplaceable) || variable.initialization != VariableInitialization::Uninitialized || variable.name
+                || !m_program.at(variable.module).flags.contains(ModuleFlags::MayBeMocked) || hasVariableThatHoldsMock.quickSet(variable.module.index()))
+                return false;
+        }
+        if (variable.flags.contains(VariableFlags::OriginalMayRun) && !variable.flags.contains(VariableFlags::HoldsMock))
             return false;
         return !variable.owner || (m_program.at(variable.owner).kind == LayoutKind::Instance && isStaticField.quickGet(index));
     };

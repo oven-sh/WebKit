@@ -115,8 +115,10 @@ private:
     macro(ValueSetID, objectsThatLetInUnseenCode) \
     macro(ValueSetID, objectsThatLetInUnseenCodeWhenCalled) \
     macro(ValueSetID, functionsThatCallOrBindOperand) \
+    macro(ValueSetID, functionsThatChangeOperand) \
     macro(ValueSetID, objectsOfNativeModules) \
     macro(ValueSetID, objectsOfPublicModules) \
+    macro(ValueSetID, objectsOfPublicModulesWithoutLocks) \
     macro(ValueSetID, holdersWithMembers) \
     macro(ValueSetID, holdersWithMembersUnderNumericNames) \
     macro(ValueSetID, holdersOfMembersThatHostMakes) \
@@ -126,6 +128,7 @@ private:
     macro(ValueSetID, holdersOfUndeclaredPropertiesUnderAnyKey) \
     macro(ValueSetID, holdersOfUndeclaredPropertiesUnderIndexes) \
     macro(ValueSetID, lockedObjects) \
+    macro(ValueSetID, classes) \
     macro(ValueSetID, holdersWithLockedIndexes) \
     macro(ValueSetID, holdersWithLockedPrototypeLink) \
     macro(ValueSetID, holdersWithMembersOnHiddenPrototype) \
@@ -191,8 +194,6 @@ public:
     ValueSetID openTo(Actor actor) const { return m_openTo[indexOf(actor)]; }
 
     const ValueFlowMembersUnderKey& under(PropertyKeyID key) const LIFETIME_BOUND { return m_membersUnderKey[holdersUnder(key).record]; }
-    // The names in the program's text that begin with the text. They are sorted when somebody first asks.
-    std::span<const PropertyKeyID> namesThatBeginWith(StringID) const LIFETIME_BOUND;
     // Filled when the record of such a name is made.
     const BitVector& featuresGuardingHostClassesWithMethodsCallingStartupLoads() const LIFETIME_BOUND { return m_featuresGuardingHostClassesWithMethodsCallingStartupLoads; }
     ValueSetID objectsDeclaringField(PropertyKeyID key) const { return m_objectsDeclaringField[key.index()]; }
@@ -230,8 +231,8 @@ public:
     std::span<const ValueFlowPropertyKeptForLife> propertiesKeptForLife() const LIFETIME_BOUND { return m_propertiesKeptForLife.span(); }
     std::span<const ValueFlowMemberReplacedBySetter> membersReplacedBySetters() const LIFETIME_BOUND { return m_membersReplacedBySetters.span(); }
     bool isSymbolUsedOnlyAsKey(PropertyKeyID key) const { return m_symbolsUsedOnlyAsKeys.get(key.index()); }
-    // `globalThis.name = value` or `name = value` stands somewhere in the program.
-    bool isStoredUnderOnGlobalObject(PropertyKeyID key) const { return m_keysStoredUnderOnGlobalObject.get(key.index()); }
+    // `globalThis.name = value`, `name = value` or `typeof name` stands somewhere in the program.
+    bool isStoredUnderOrAskedAboutOnGlobalObject(PropertyKeyID key) const { return m_keysStoredUnderOrAskedAboutOnGlobalObject.get(key.index()); }
     bool isNamedAtOneOperation(FunctionID function) const { return m_functionsNamedAtOneOperation.get(function.index()); }
     const ConstantsHoldingModules& constantsHoldingModules() const LIFETIME_BOUND { return m_constantsHoldingModules; }
 
@@ -242,8 +243,6 @@ public:
     std::atomic<uint64_t>& prototypesAtCreationOf(ValueFlowObjectID object) const { return m_prototypesAtCreation[object.index()]; }
 
 private:
-    mutable std::once_flag m_didSortNames;
-    mutable Vector<PropertyKeyID> m_namesInOrderOfText;
     struct HoldersUnderKey {
         std::atomic<bool> isDescribed { false };
         uint32_t record { 0 };
@@ -369,7 +368,7 @@ private:
     Vector<StartOfPath> m_spellingsOfFiles;
     // With the slash at its end. Every file of the program lies under it.
     std::span<const uint8_t> m_folderOfProgram;
-    BitVector m_keysStoredUnderOnGlobalObject;
+    BitVector m_keysStoredUnderOrAskedAboutOnGlobalObject;
     BitVector m_functionsNamedAtOneOperation;
     ConstantsHoldingModules m_constantsHoldingModules;
     ZeroFilledPages<std::atomic<uint64_t>> m_prototypesAtCreation;

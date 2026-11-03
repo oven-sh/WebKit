@@ -552,13 +552,23 @@ void generateNewArrayOfElements(StubAssembler& jit)
     holdsDoubles.link(&jit);
     jit.move(count, position);
     Label box = jit.label();
+#if CPU(X86_64)
     jit.loadDouble(BaseIndex(elements, position, CCallHelpers::TimesEight, -static_cast<int32_t>(sizeof(double))), number);
+#else
+    jit.sub32(TrustedImm32(1), position);
+    jit.loadDouble(read, number);
+#endif
     Jump isHole;
     PureDouble pure = PureDouble::branchIfNaN(jit, number, isHole);
     boxDouble(jit, pure, element);
     Label store = jit.label();
+#if CPU(X86_64)
     jit.store64(element, BaseIndex(storage, position, CCallHelpers::TimesEight, -static_cast<int32_t>(sizeof(EncodedJSValue))));
     jit.branchSub32(CCallHelpers::NonZero, TrustedImm32(1), position).linkTo(box, &jit);
+#else
+    jit.store64(element, written);
+    jit.branchTest32(CCallHelpers::NonZero, position).linkTo(box, &jit);
+#endif
     jit.jump().linkTo(isFilled, &jit);
     isHole.link(&jit);
     jit.move(TrustedImm64(JSValue::ValueUndefined), element);

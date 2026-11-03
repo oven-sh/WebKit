@@ -154,6 +154,7 @@ constexpr std::optional<StubKey> tryCallOperationPreservingRegisters(const Opera
     return StubKey(StubFamily::CallOperationPreservingRegisters).withForm(*form);
 }
 
+
 constexpr StubKey callOperationPreservingRegisters(const OperationCall& call)
 {
     std::optional<StubKey> key = tryCallOperationPreservingRegisters(call);

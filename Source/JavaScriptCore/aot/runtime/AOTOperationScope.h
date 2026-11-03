@@ -41,37 +41,29 @@ public:
             m_assertNoGC.emplace();
 #endif
         if (validatesRuntime(vm)) [[unlikely]]
-            open(m_record, vm, entry);
+            open(vm, entry);
     }
 
     // Whether the run time validates is settled before the first operation runs.
     ALWAYS_INLINE ~OperationValidationScope()
     {
         if (validatesRuntime(m_vm)) [[unlikely]]
-            close(m_record);
+            close(m_vm);
     }
 
 private:
-    // Written and read only where the run time validates. Only its address is handed on, so an operation keeps nothing of the scope in memory otherwise.
-    struct Record {
-        VM& vm;
-        CollectionVersions collectionVersions;
-        Entry entry;
-        bool mayNotEnterVM;
-        bool mayNotCollect;
-        bool didEnterVMBefore;
-    };
-    static void open(Record&, VM&, Entry);
-    static void close(Record&);
+    static void open(VM&, Entry);
+    static void close(VM&);
 
     VM& m_vm;
-    union {
-        Record m_record;
-    };
 #if ASSERT_ENABLED
     std::optional<AssertNoGC> m_assertNoGC;
 #endif
 };
+#if !ASSERT_ENABLED
+// A collection scans the frame of the operation that asks for it. A word there that nobody writes names what an earlier call left in it.
+static_assert(sizeof(OperationValidationScope) == sizeof(void*));
+#endif
 
 #if OS(WINDOWS) && CPU(X86_64)
 // There __builtin_frame_address(0) is the low end of the frame. DECLARE_CALL_FRAME says why rbp is named.
@@ -178,7 +170,7 @@ struct CallWithoutCollection<operation, Result(Arguments...) noexcept(isNoexcept
     static_assert((entry) == JSC::AOT::Entry::operationAOTThrow || (entry) == JSC::AOT::Entry::operationAOTThrowAfterCleanup); \
     AOT_OPERATION_BEGIN_IN_OWN_FRAME(instance, entry)
 
-ALWAYS_INLINE Identifier identifierAt(Instance* instance, unsigned number) { return instance->vm->aotState().identifiers->identifier(number); }
+ALWAYS_INLINE Identifier identifierAt(Instance* instance, unsigned number) { return identifiersOf(*instance).identifier(number); }
 
 template<typename CellType>
 ALWAYS_INLINE void prepareInlineAllocation(Instance* instance, InlineAllocation kind, Structure* structure)

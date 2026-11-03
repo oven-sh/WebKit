@@ -246,6 +246,8 @@ void RegExp::finishCreationFromImage(VM& vm, const AOT::ImageRegExp& record)
     // A number says nothing without its image, and any image may run when the record is asked for.
     uint32_t index = vm.aotState().hasSeveralImages ? imageRecordIsFoundByPattern : AOT::RegExpRecords(*vm.aotState().image).idOf(record).index();
     m_imageRecordNumber = index + 1 < imageRecordIsFoundByPattern ? index + 1 : imageRecordIsFoundByPattern;
+    if (!record.isLiteral)
+        AOT::count(vm, AOT::RuntimeCounterID::RegExpPredictedTextsCreated);
     if (record.form() == AOT::RegExpRecordForm::NoMetadata)
         return;
 
@@ -447,12 +449,23 @@ static Yarr::PatternAnalysis patternAnalysisFor(VM& vm)
 
 static std::unique_ptr<Yarr::BytecodePattern> byteCodeCompilePattern(VM* vm, Yarr::YarrPattern& pattern, const String& source, Yarr::ErrorCode& errorCode)
 {
-#if ENABLE(AOT)
-    if (vm->hasCompiledCode()) [[unlikely]]
-        AOT::count(*vm, AOT::RuntimeCounterID::RegExpsCompiledToBytecode);
-#endif
     return Yarr::byteCompile(pattern, &vm->m_regExpAllocator, errorCode, &vm->m_regExpAllocatorLock, source);
 }
+
+#if ENABLE(AOT)
+void RegExp::countBytecodeCompilation(VM& vm, BytecodeIsFor purpose) const
+{
+    if (!vm.hasCompiledCode()) [[likely]]
+        return;
+    if (purpose == BytecodeIsFor::LongSearch) {
+        AOT::count(vm, AOT::RuntimeCounterID::RegExpsPreparedForLongSearches);
+        return;
+    }
+    AOT::count(vm, AOT::RuntimeCounterID::RegExpsCompiledToBytecode);
+    if (const AOT::ImageRegExp* record = imageRecord())
+        AOT::count(vm, record->isLiteral ? AOT::RuntimeCounterID::RegExpLiteralsCompiledToBytecode : AOT::RuntimeCounterID::RegExpPredictedTextsCompiledToBytecode);
+}
+#endif
 
 #if ENABLE(AOT)
 void RegExp::crashIfLiteralIsInterpreted() const
@@ -464,11 +477,12 @@ void RegExp::crashIfLiteralIsInterpreted() const
 }
 #endif
 
-void RegExp::byteCodeCompileIfNecessary(VM* vm)
+void RegExp::byteCodeCompileIfNecessary(VM* vm, BytecodeIsFor purpose)
 {
     JSC_REMOVABLE_DEFINITION(RegExp, &RegExp::byteCodeCompileIfNecessary);
 #if ENABLE(AOT)
-    crashIfLiteralIsInterpreted();
+    if (purpose == BytecodeIsFor::Interpreter)
+        crashIfLiteralIsInterpreted();
 #endif
     Locker locker { cellLock() };
 
@@ -484,6 +498,9 @@ void RegExp::byteCodeCompileIfNecessary(VM* vm)
     RELEASE_ASSERT(m_numSubpatterns == pattern.m_numSubpatterns); // came from the bytecode cache or Yarr::checkSyntax, not from a YarrPattern
     updateMetadataFromPattern(pattern);
 
+#if ENABLE(AOT)
+    countBytecodeCompilation(*vm, purpose);
+#endif
     m_regExpBytecode = byteCodeCompilePattern(vm, pattern, m_patternString, m_constructionErrorCode);
     if (!m_regExpBytecode) {
         m_state = ParseError;
@@ -503,6 +520,7 @@ bool RegExp::takeCodeFromImage(VM& vm)
         return false;
     if (!hasCode())
         vm.regExpCache()->addToStrongCache(this);
+    AOT::count(vm, record->isLiteral ? AOT::RuntimeCounterID::RegExpLiteralsGivenCode : AOT::RuntimeCounterID::RegExpPredictedTextsGivenCode);
     auto entrypoints = AOT::regExpEntrypointsOf(vm, *record);
     ensureRegExpJITCode().setCodeFromImage(entrypoints.for8Bit, entrypoints.for16Bit);
     m_state = ImageCode;
@@ -527,7 +545,25 @@ int RegExp::matchWithImageCode(JSGlobalObject* nullOrGlobalObject, VM& vm, Strin
     if (result != static_cast<int>(Yarr::JSRegExpResult::JITCodeFailure))
         return result;
 
-    byteCodeCompileIfNecessary(&vm);
+    const AOT::ImageRegExp* record = imageRecord();
+    if (record && !s.is8Bit() && record->hasCodeFor8BitSubjectsAlone) {
+        std::span<const char16_t> wide = s.span16();
+        if (!WTF::charactersAreAllLatin1(wide)) {
+            AOT::count(vm, AOT::RuntimeCounterID::RegExpWideSubjectsRefused);
+            return -1;
+        }
+        AOT::count(vm, AOT::RuntimeCounterID::RegExpSubjectsNarrowed);
+        Vector<Latin1Character, 256> narrow(wide.size(), [&](size_t index) {
+            return static_cast<Latin1Character>(wide[index]);
+        });
+        Yarr::MatchingContextHolder regExpContext(vm, this, Yarr::MatchFrom::VMThread);
+        result = m_regExpJITCode->execute(narrow.span(), startOffset, offsetVector, &regExpContext).start;
+        if (result != static_cast<int>(Yarr::JSRegExpResult::JITCodeFailure))
+            return result;
+    }
+
+    bool isLongSearch = record && record->handsLongSearchesOver;
+    byteCodeCompileIfNecessary(&vm, isLongSearch ? BytecodeIsFor::LongSearch : BytecodeIsFor::Interpreter);
     if (m_state == ParseError) {
         if (nullOrGlobalObject) {
             auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -537,7 +573,12 @@ int RegExp::matchWithImageCode(JSGlobalObject* nullOrGlobalObject, VM& vm, Strin
             reset();
         return -1;
     }
-    countInterpretedMatch(vm);
+    if (isLongSearch)
+        AOT::count(vm, AOT::RuntimeCounterID::RegExpLongSearchesHandedOver);
+    else {
+        AOT::count(vm, AOT::RuntimeCounterID::RegExpImageCodeGaveUp);
+        countInterpretedMatch(vm);
+    }
     Yarr::MatchingContextHolder regExpContext(vm, this, Yarr::MatchFrom::VMThread);
     return Yarr::interpret(m_regExpBytecode.get(), s, startOffset, reinterpret_cast<unsigned*>(offsetVector));
 }
@@ -632,6 +673,9 @@ void RegExp::compile(VM* vm, Yarr::CharSize charSize, std::optional<StringView> 
     dataLogLnIf(Options::dumpCompiledRegExpPatterns(), "Can't JIT this regular expression: \"/", m_patternString, "/\"");
 
     m_state = ByteCode;
+#if ENABLE(AOT)
+    countBytecodeCompilation(*vm, BytecodeIsFor::Interpreter);
+#endif
     m_regExpBytecode = byteCodeCompilePattern(vm, pattern, m_patternString, m_constructionErrorCode);
     if (!m_regExpBytecode) {
         m_state = ParseError;
@@ -734,6 +778,9 @@ void RegExp::compileMatchOnly(VM* vm, Yarr::CharSize charSize, std::optional<Str
     // than the match-only one above, whose capturing fixed-string alternations may have been
     // flattened (dropping their subpatterns) for the JIT.
     if (willUseInterpreter) {
+#if ENABLE(AOT)
+        countBytecodeCompilation(*vm, BytecodeIsFor::Interpreter);
+#endif
         m_regExpBytecode = byteCodeCompilePattern(vm, pattern, m_patternString, m_constructionErrorCode);
         if (!m_regExpBytecode) {
             m_state = ParseError;
@@ -748,6 +795,9 @@ void RegExp::compileMatchOnly(VM* vm, Yarr::CharSize charSize, std::optional<Str
         m_state = ParseError;
         return;
     }
+#if ENABLE(AOT)
+    countBytecodeCompilation(*vm, BytecodeIsFor::Interpreter);
+#endif
     m_regExpBytecode = byteCodeCompilePattern(vm, bytecodePattern, m_patternString, m_constructionErrorCode);
     if (!m_regExpBytecode) {
         m_state = ParseError;

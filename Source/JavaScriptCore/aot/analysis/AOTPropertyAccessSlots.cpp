@@ -77,6 +77,7 @@ static FieldArmState computeStateOfFieldArm(const Program& program, std::span<co
         bool holdsRawValue = holdsRawValueFromBirth(program, *reference);
         state.holdsRawValuesWhileCellIsUnmarked &= holdsRawValue || (memberIsAlwaysFilled && !slotHoldsUndefinedAndNull(program, *reference));
         state.holdsRawValueFromBirthInSomeMember |= holdsRawValue;
+        state.isOfImageBelowInSomeMember |= program.at(layout).has(LayoutFlags::IsOfImageBelow);
 
         const LocationFlow& location = flow.location;
         state.hasDeferredMember |= location.deferral != ClosureDeferral::Unknown;
@@ -522,7 +523,7 @@ static void planFieldStore(const PropertyAccessContext& context, const PropertyA
         requireFilledSlot(state, plan);
         return;
     }
-    if (state.hasImmutableMember || state.form.containsAny({ FieldForm::IsReadOnly, FieldForm::IsAccessor }))
+    if (state.hasImmutableMember || state.isOfImageBelowInSomeMember || state.form.containsAny({ FieldForm::IsReadOnly, FieldForm::IsAccessor }))
         return;
 
     plan.storedValueFits = storedValueFits(context.program, query, state);
@@ -557,7 +558,7 @@ static void planFieldStore(const PropertyAccessContext& context, const PropertyA
 
 static void planFieldDefinition(const PropertyAccessContext& context, const PropertyAccessQuery& query, const FieldArmState& state, PropertyAccessPlan& plan)
 {
-    if (!state.form.isEmpty())
+    if (!state.form.isEmpty() || state.isOfImageBelowInSomeMember)
         return;
     plan.storedValueFits = storedValueFits(context.program, query, state);
     requireStoresAllowed(query, state, plan);

@@ -401,15 +401,17 @@ const answersKeptBufferOfKind = {
   returns: memoryBuffer,
   capability: "heap",
   throws: true,
+  // As grow(): the buffer that was kept is detached.
+  writes: [typedArrayStorage],
   uses: { this: answersKeptBuffer },
   implementation: b.generic,
 } satisfies b.FunctionField;
 
 // The code of a module does with what it imports and is handed whatever native code may do, and nothing is known of what it exports.
-const instantiates = (implementation: b.ImplementationSpec) =>
+const instantiates = (implementation: b.ImplementationSpec, returns: b.TableType = b.any) =>
   ({
     args: { operands: b.any.rest },
-    returns: b.any,
+    returns,
     capability: "js",
     throws: true,
     uses: {
@@ -509,10 +511,12 @@ export default b.declarations(
   }),
   b.class("%MapIterator%", {
     ...lockedIteratorColumns,
+    jsType: "JSMapIteratorType",
     proto: { next: libraryStep("MapIteratorPrototype", "next", iteratorResult) },
   }),
   b.class("%SetIterator%", {
     ...lockedIteratorColumns,
+    jsType: "JSSetIteratorType",
     proto: { next: libraryStep("SetIteratorPrototype", "next", iteratorResult) },
   }),
   b.class("%StringIterator%", {
@@ -866,7 +870,17 @@ export default b.declarations(
         b.instance("Promise").holding({ value: b.instance("WebAssembly.Module").fresh, reason: b.any }).fresh,
       ),
       compileStreaming: undeclared,
-      instantiate: instantiates(b.hostCall),
+      // For a module its instance, for bytes both.
+      instantiate: instantiates(
+        b.hostCall,
+        b.instance("Promise").holding({
+          value: b.union(
+            b.instance("WebAssembly.Instance").fresh,
+            b.ordinaryObjectOf("WebAssemblyInstantiatedSource").fresh,
+          ),
+          reason: b.any,
+        }).fresh,
+      ),
       instantiateStreaming: instantiates(b.generic),
       // The operand has to be a function that an instance exports. The new function holds it.
       promising: webAssemblyFunction({ exported: b.any }, { exported: [b.retained] }, b.callable),
@@ -988,7 +1002,7 @@ export default b.declarations(
   webAssemblyClass("Suspending", {
     nativeSymbols: ["callWebAssemblySuspending", "constructWebAssemblySuspending"],
     construct: {
-      args: { called: b.any },
+      args: { called: b.any.optional },
       returns: b.object.fresh,
       capability: "heap",
       throws: true,
@@ -1026,7 +1040,7 @@ export default b.declarations(
   webAssemblyClass("Tag", {
     construct: webAssemblyConstruction(
       "Tag",
-      { type: b.any },
+      { type: b.any.optional },
       { type: [b.runsTransitively("Iterate", "ToPrimitive", b.named("parameters")), b.readsContents()] },
     ),
   }),

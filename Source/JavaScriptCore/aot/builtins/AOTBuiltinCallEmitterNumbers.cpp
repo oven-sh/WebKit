@@ -106,7 +106,18 @@ void BuiltinCallEmitter::generateDivideIntegers(const ValueContext& value)
     }
     if (dividends.isSubsetOf(Range::int32()) && divisors.isSubsetOf(Range::int32())) {
         Word32 narrowDividend = low32(dividend);
-        defineAs(value, Word32(m_out.chillDiv(narrowDividend.value(), low32(divisor).value())), type);
+        Word32 narrowDivisor = low32(divisor);
+        if (!isX86()) {
+            defineAs(value, Word32(m_out.chillDiv(narrowDividend.value(), narrowDivisor.value())), type);
+            return;
+        }
+        bool mayOverflow = dividends.minimum == INT32_MIN && divisors.contains(-1);
+        Condition isOrdinary = mayOverflow ? above(add(narrowDivisor, word32(1)), word32(1)) : isNotZero(narrowDivisor);
+        defineAs(value, either<Word32>(isOrdinary, [&] {
+            return Word32(m_out.div(narrowDividend.value(), narrowDivisor.value()));
+        }, [&] {
+            return mayOverflow ? select(isNotZero(narrowDivisor), neg(narrowDividend), word32(0)) : word32(0);
+        }), type);
         return;
     }
     defineAs(value, low32(Integer(m_out.chillDiv(dividend.value(), divisor.value()))), type);

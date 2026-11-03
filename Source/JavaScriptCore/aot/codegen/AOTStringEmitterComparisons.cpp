@@ -9,7 +9,6 @@
 #if ENABLE(AOT)
 
 #include "AOTFunctionAnalyses.h"
-#include "AOTHeat.h"
 #include "AOTIdentifierNumbering.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTStubsStrings.h"
@@ -19,6 +18,10 @@
 #include "JSGlobalObjectFunctions.h"
 #include <cmath>
 #include <wtf/text/ASCIIFastPath.h>
+
+#if COMPILER(CLANG)
+#pragma clang attribute push(__attribute__((minsize)), apply_to = function)
+#endif
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -180,8 +183,10 @@ StringEmitter::AtomOfName StringEmitter::atomOfName(uint32_t name)
     return { offsetBy(loadImmutablePointer(AOT_INSTANCE_OFFSET(lazyStrings.headers)), zeroExtended(offset), 0), isNotZero(offset) };
 }
 
-void StringEmitter::branchOnEqualsLiteral(const OperationContext& context, ComparedOperand operand, LValue subject, StringID literal, BranchTargets targets, bool subjectIsFlat, bool everyCellIsString, bool subjectIsComparedAgain)
+void StringEmitter::branchOnEqualsLiteral(const OperationContext& context, ComparedOperand operand, LValue subject, StringID literal, BranchTargets targets, std::optional<FlatStringCell> flatSubject, bool everyCellIsString, bool subjectIsComparedAgain)
 {
+    RELEASE_ASSERT(!flatSubject || flatSubject->cell().value() == subject);
+    bool subjectIsFlat = !!flatSubject;
     String text = textOf(literal);
     if (text.isEmpty()) {
         branch(equal(Boxed(subject), boxCell(emptyString())), targets);
@@ -196,10 +201,7 @@ void StringEmitter::branchOnEqualsLiteral(const OperationContext& context, Compa
     // A short string out of JSON.parse, a key and a text of the program are atoms. A text that is a name of the image has one atom (ProgramIdentifiers::findAtom()),
     // so an atom is that text if and only if it is that pointer. A cell whose bit is clear may still hold an atom: the characters answer for it.
     // Three comparisons of one subject share what they read of its characters, and each one behind the first is a branch or two as it is.
-    // The arm is code at every comparison, and a loop of a cold function is Fast code too. Not isCold(): a loop of a function that runs once may be the hottest code there is.
-    const FunctionInputs& inputs = m_generator.inputs();
-    bool isInColdFunction = inputs.program.heat.of(inputs.program.program, inputs.id).predicted() == HeatClass::Cold;
-    std::optional<uint32_t> name = subjectIsFlat || subjectIsComparedAgain || isInColdFunction ? std::nullopt : build().identifierNumbering().numberOfText(literal);
+    std::optional<uint32_t> name = subjectIsFlat || subjectIsComparedAgain ? std::nullopt : build().identifierNumbering().numberOfText(literal);
     LBasicBlock isAtom = name ? newBlock() : nullptr;
     bool isAskedForAtom = false;
     // In a loop, where the atom lies is asked for here, where every subject comes by: from here it leaves the loop. Outside of loops whoever has an atom asks.
@@ -237,7 +239,10 @@ void StringEmitter::branchOnEqualsLiteral(const OperationContext& context, Compa
             atom = atomOfName(*name);
         if (atom->exists)
             continueIf(*atom->exists, normalEdge(byCharacters));
-        branch(equal(loadField<Pointer>(string, m_heaps.JSString_value), atom->address), targets);
+        // Where the subject is the same in every turn of a loop, the word is read in front of the loop and compared in each turn.
+        Condition isAtomOfText = equal(loadField<Pointer>(string, m_heaps.JSString_value), atom->address);
+        ensureStillAliveHere(string);
+        branch(isAtomOfText, targets);
         m_out.appendTo(byCharacters);
     }
 
@@ -263,7 +268,7 @@ void StringEmitter::branchOnEqualsLiteral(const OperationContext& context, Compa
     }
     auto openedString = subjectIsFlat ? m_openedStrings.find(string.value()) : m_openedStrings.end();
     const CharacterSource* source = openedString != m_openedStrings.end() ? &openedString->value.source : nullptr;
-    Pointer impl = source ? openedString->value.impl : subjectIsFlat ? implOfFlatString(string) : loadField<Pointer>(string, m_heaps.JSString_value);
+    Pointer impl = source ? openedString->value.impl : flatSubject ? implOfFlatString(*flatSubject) : loadField<Pointer>(string, m_heaps.JSString_value);
     if (!subjectIsFlat)
         continueIf(hasNoBits(impl, JSString::isRopeInPointer), unlikelyEdge(slow));
     continueIf(equal(source ? source->length : loadField<Word32>(impl, m_heaps.StringImpl_length), text.length()), targets.notTaken);
@@ -275,40 +280,42 @@ void StringEmitter::branchOnEqualsLiteral(const OperationContext& context, Compa
     branchOnEqualsLiteralByStub(context, ComparedOperand::String, string.value(), literal, targets);
 }
 
-Condition StringEmitter::equalsLiteral(const OperationContext& context, ComparedOperand operand, LValue subject, StringID literal, bool subjectIsFlat, bool everyCellIsString, bool subjectIsComparedAgain)
+Condition StringEmitter::equalsLiteral(const OperationContext& context, ComparedOperand operand, LValue subject, StringID literal, std::optional<FlatStringCell> flatSubject, bool everyCellIsString, bool subjectIsComparedAgain)
 {
     String text = textOf(literal);
     if (text.isEmpty())
         return equal(Boxed(subject), boxCell(emptyString()));
     if (fitsInRegister(text) || comparesLiteralInPlace(context, text)) {
         return asBoolean([&](BranchTargets targets) {
-            branchOnEqualsLiteral(context, operand, subject, literal, targets, subjectIsFlat, everyCellIsString, subjectIsComparedAgain);
+            branchOnEqualsLiteral(context, operand, subject, literal, targets, flatSubject, everyCellIsString, subjectIsComparedAgain);
         });
     }
     return Condition(m_out.castToInt32(callStub(context, AOT::equalsLiteral(operand), { subject }, { .immediate = literal.index() }).first));
 }
 
-void StringEmitter::generateEqualsLiteral(const ValueContext& value, ComparedOperand operand, LValue subject, bool subjectIsFlat, bool everyCellIsString)
+void StringEmitter::generateEqualsLiteral(const ValueContext& value, ComparedOperand operand, LValue subject, std::optional<FlatStringCell> flatSubject, bool everyCellIsString)
 {
+    bool subjectIsFlat = !!flatSubject;
     bool subjectIsComparedAgain = !subjectIsFlat && isSubjectComparedAgain(value);
     if (value.isBranchCondition()) {
-        branchOnEqualsLiteral(value, operand, subject, value->literal(), value.branchTargets(), subjectIsFlat, everyCellIsString, subjectIsComparedAgain);
+        branchOnEqualsLiteral(value, operand, subject, value->literal(), value.branchTargets(), flatSubject, everyCellIsString, subjectIsComparedAgain);
         return;
     }
-    define(value, equalsLiteral(value, operand, subject, value->literal(), subjectIsFlat, everyCellIsString, subjectIsComparedAgain));
+    define(value, equalsLiteral(value, operand, subject, value->literal(), flatSubject, everyCellIsString, subjectIsComparedAgain));
 }
 
 void StringEmitter::generateStringEqualsLiteral(const ValueContext& value)
 {
     ValueID string = value->stringOperand();
-    generateEqualsLiteral(value, ComparedOperand::String, in<CellPointer>(string).value(), typeOf(string).isOpaque(OpaqueKind::FlatString));
+    std::optional<FlatStringCell> flat = flatStringByType(string);
+    generateEqualsLiteral(value, ComparedOperand::String, (flat ? flat->cell() : in<CellPointer>(string)).value(), flat);
 }
 
 void StringEmitter::generateValueEqualsLiteral(const ValueContext& value)
 {
     const Type& type = typeOf(value->valueOperand());
     bool everyCellIsString = !type.hasObjects() && !(type.primitives & cellPrimitives & ~Primitive::AnyString);
-    generateEqualsLiteral(value, ComparedOperand::Value, in<Boxed>(value->valueOperand()).value(), false, everyCellIsString);
+    generateEqualsLiteral(value, ComparedOperand::Value, in<Boxed>(value->valueOperand()).value(), std::nullopt, everyCellIsString);
 }
 
 void StringEmitter::generateValueLooselyEqualsLiteral(const ValueContext& value)
@@ -525,5 +532,9 @@ void StringEmitter::generateStringIndexOfCharacter(const ValueContext& value)
 }
 
 } } } // namespace JSC::AOT::Typed
+
+#if COMPILER(CLANG)
+#pragma clang attribute pop
+#endif
 
 #endif // ENABLE(AOT)

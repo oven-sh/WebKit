@@ -21,6 +21,7 @@
 #include "AOTStubsPropertyInlineCode.h"
 #include "AOTStubsPropertyKeys.h"
 #include "AOTStubsRegExp.h"
+#include "AOTStubsStrings.h"
 #include "AOTStubsValues.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -165,7 +166,7 @@ static void checkDeclaredColumns(const StubCatalog& catalog, StubKey key)
     Typed::Effects effects = catalog.effectsOf(key);
 
     AOT_TEST_CHECK(descriptor.ownEffects.toEffects().isSubsetOf(effects));
-    if (descriptor.clobbers == StubClobbers::ClobbersOnlyScratch)
+    if (descriptor.clobbers == StubClobbers::ClobbersOnlyScratch && !hasFrameAndKeepsFewerRegisters(key.callerFrame()))
         AOT_TEST_CHECK(integerRegistersLostToCallees(summary.clobbered, summary.clobberedInline).isEmpty());
     if (descriptor.leafness == StubLeafness::Leaf) {
         AOT_TEST_CHECK(catalog.isLeaf(key));
@@ -182,6 +183,46 @@ static void checkDeclaredColumns(const StubCatalog& catalog, StubKey key)
 static void testDeclaredColumns()
 {
     checkEveryKeyOfEveryVariant(checkDeclaredColumns);
+}
+
+// A dead register may hold an object that the program has let go of. What a stub saves stays in the stack behind it, where the collector finds it.
+static void checkFormForCallerThatKeepsFewerRegisters(const StubCatalog& catalog, StubKey key)
+{
+    if (!hasFrameAndKeepsFewerRegisters(key.callerFrame()))
+        return;
+    StubKey plain = key.withCallerFrame(CallerFrame::HasFrame);
+    AOT_TEST_CHECK(exists(plain));
+    AOT_TEST_CHECK(areEqual(catalog.summaryOf(key).signature, catalog.summaryOf(plain).signature));
+    AOT_TEST_CHECK(catalog.summaryOf(key).clobbered.subsumes(catalog.summaryOf(plain).clobbered));
+    AOT_TEST_CHECK(catalog.effectsOf(key).isSubsetOf(catalog.effectsOf(plain)) && catalog.effectsOf(plain).isSubsetOf(catalog.effectsOf(key)));
+    const StubRecording& recording = catalog.recordingOf(bodyOf(key));
+    const StubRecording& recordingOfPlain = catalog.recordingOf(bodyOf(plain));
+    AOT_TEST_CHECK(recording.operationsCalled == recordingOfPlain.operationsCalled);
+    AOT_TEST_CHECK(recording.exits.size() == recordingOfPlain.exits.size());
+    if (key.callerFrame() == CallerFrame::KeepsNoFPRs) {
+        RegisterSet more = catalog.summaryOf(key).clobbered;
+        more.exclude(catalog.summaryOf(plain).clobbered);
+        AOT_TEST_CHECK(!more.numberOfSetGPRs());
+    }
+}
+
+static void testFormForCallersThatKeepNoRegisters()
+{
+    checkEveryKeyOfEveryVariant(checkFormForCallerThatKeepsFewerRegisters);
+    for (const StubOptions& options : stubOptionVariants()) {
+        StubCatalog catalog(options, StubPolicy { });
+        auto savesNothing = [&](StubKey plain) {
+            return catalog.summaryOf(plain.withCallerFrame(CallerFrame::KeepsNoRegisters)).clobbered != catalog.summaryOf(plain).clobbered;
+        };
+        AOT_TEST_CHECK(savesNothing(builtinCell()));
+        // It hands its operand back, and the register comes back by being saved.
+        AOT_TEST_CHECK(!savesNothing(flattenString()));
+        AOT_TEST_CHECK(catalog.summaryOf(integerToString().withCallerFrame(CallerFrame::KeepsNoFPRs)).clobbered.contains(FPRInfo::argumentFPR1, IgnoreVectors));
+        AOT_TEST_CHECK(!catalog.summaryOf(integerToString().withCallerFrame(CallerFrame::KeepsNoFPRs)).clobbered.contains(GPRInfo::argumentGPR3, IgnoreVectors));
+        AOT_TEST_CHECK(!catalog.summaryOf(integerToString()).clobbered.contains(FPRInfo::argumentFPR1, IgnoreVectors));
+        // Its slow path ends once the cell is made.
+        AOT_TEST_CHECK(!exists(builtinCell().withCallerFrame(CallerFrame::KeepsNoFPRs)));
+    }
 }
 
 static void checkEffectsCover(const StubCatalog& catalog, const StubRecording& recording, const Typed::Effects& effects)
@@ -332,7 +373,7 @@ static void checkBarrierEffects(const StubCatalog& catalog)
 
 static void checkLeaves(const StubCatalog& catalog)
 {
-    for (StubKey leaf : { weakMapGet(), weakMapHas(), weakSetHas() })
+    for (StubKey leaf : { weakMapGet(), weakMapFind(), weakMapHas(), weakSetHas() })
         AOT_TEST_CHECK(catalog.isLeaf(leaf));
     for (KeyComparison comparison : { KeyComparison::AnyValue, KeyComparison::String })
         AOT_TEST_CHECK(!catalog.isLeaf(mapGet(comparison)));
@@ -399,7 +440,7 @@ static void checkBindingOfEveryKey(const StubCatalog& catalog)
     for (StubKey key : allStubKeys()) {
         ImmediateBinding binding = descriptorOf(key.family()).binding;
         StubBoundImmediates boundImmediates = signatureFor(key).boundImmediates;
-        bool isPlainVariant = !key.operandRegister() && key.callerFrame() == CallerFrame::HasFrame;
+        bool isPlainVariant = !key.operandRegister() && (key.callerFrame() == CallerFrame::HasFrame || hasFrameAndKeepsFewerRegisters(key.callerFrame()));
         AOT_TEST_CHECK(boundImmediates == StubBoundImmediates::None || binding == ImmediateBinding::ByPolicy);
         for (uint32_t immediate : immediates) {
             bool binds = catalog.bindsImmediate(key, immediate);
@@ -1005,6 +1046,7 @@ std::span<const NativeTest> stubCatalogTests()
     static constexpr NativeTest tests[] = {
         { "stubs/summaries"_s, testStubSummaries },
         { "stubs/declared-columns-hold-in-summaries"_s, testDeclaredColumns },
+        { "stubs/a-caller-that-keeps-no-registers-has-none-saved"_s, testFormForCallersThatKeepNoRegisters },
         { "stubs/summaries-are-closed-over-references"_s, testClosureOverReferences },
         { "stubs/summaries-of-known-stubs"_s, testKnownStubSummaries },
         { "stubs/catalogs-are-equal"_s, testEqualStubCatalogs },

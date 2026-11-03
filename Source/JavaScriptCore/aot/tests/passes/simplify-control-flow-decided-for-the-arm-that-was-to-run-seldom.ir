@@ -87,3 +87,22 @@ function f4 name="armThatAlwaysGoesOnToWhatIsRarerStill" parameters=[{type=strin
 # CHECK: b6() frequency=Rare:
 # CHECK: b7() frequency=Rare:
 }
+
+# The head of a function that was copied in: each of its tests leads to the call of the whole function, which is marked by what is expected of them.
+# The first is decided, and the others are reached through it alone: they are no other way in.
+function f5 name="callBehindAHeadWhoseFirstTestIsDecided" parameters=[{type=string}, {type=boolean}] results=[{type=anything}] {
+    v2 = TypeTest v0 testedType=number
+    Branch v2 -> taken b1(), notTaken b4()
+  b1():
+    Branch v1 -> taken b2(), notTaken b4()
+  b2():
+    v3 = TypeTest v0 testedType=number
+    Branch v3 -> taken b3(), notTaken b4()
+  b3():
+    Return v0
+  b4() frequency=Unlikely:
+    v4 = CallDirect v0 function=f0 [isAfterInlinedHead]
+    Return v4
+# CHECK: b0(v0: string, v1: boolean):
+# CHECK: = CallDirect v0 function=f0 [isAfterInlinedHead]
+}

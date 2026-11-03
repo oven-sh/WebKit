@@ -220,7 +220,9 @@ void returnFieldPresence(StubAssembler&, const CachedSlot&, const FieldAddressRe
 // Falls through when accepted. Reads bits 0 to 31 of type. Keeps type and value on every path.
 void branchUnlessTypeAccepts(StubAssembler&, const TypeTestRegisters&, JumpList& isRejected, JumpList& cannot);
 // At wasAbsent the slot admits the value: the type accepts it, or it is undefined or null and the representation has a marker for it.
-void storeField(StubAssembler&, const FieldStoreRegisters&, FieldStoreEnd, FieldTypeTest, JumpList* stored, FieldStoreExits&);
+// rememberStore emits what comes between a store to a slot of one of AcceptedKindOfValue::ClassOfSlot and the barrier. It is given secondScratch, with that class, finds the type in its register, or zero where the type has not accepted the value,
+// and may write every register but the object and the value.
+void storeField(StubAssembler&, const FieldStoreRegisters&, FieldStoreEnd, FieldTypeTest, JumpList* stored, FieldStoreExits&, const ScopedLambda<void(GPRReg classOfSlot)>* rememberStore = nullptr);
 // Falls through with the new order word stored. Keeps object and slotKey, and writes nothing to memory before it jumps to hasNoTransition. Of a known field fieldIndex is kept and layout is written.
 void appendFieldToKeyOrder(StubAssembler&, const KeyOrderRegisters&, JumpList& hasNoTransition, std::optional<FieldOfLayout> known = std::nullopt);
 // Behind the store that creates a field: lists its key, in the stub or by the run time, and returns behind the barrier.
@@ -231,6 +233,28 @@ PreludeExit emitPrivateDefinePrelude(StubAssembler&);
 PreludeExit emitPrivateSetPrelude(StubAssembler&);
 
 inline constexpr uint32_t offsetBitsWithoutSlotKey = SlotData::maxOffset & ~(outOfLineSlotKey - 1);
+
+template<typename AddressOfSlot>
+void loadSlotBits(StubAssembler& jit, unsigned width, AddressOfSlot slot, GPRReg bits)
+{
+    switch (width) {
+    case 1:
+        jit.load8(slot, bits);
+        return;
+    case 2:
+        jit.load16(slot, bits);
+        return;
+    case 4:
+        jit.load32(slot, bits);
+        return;
+    case 8:
+        jit.load64(slot, bits);
+        return;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+Jump branchIfBitsEqual(StubAssembler&, unsigned width, GPRReg bits, uint64_t expected);
 
 } } // namespace JSC::AOT
 

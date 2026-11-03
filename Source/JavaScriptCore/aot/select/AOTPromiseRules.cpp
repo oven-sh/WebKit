@@ -18,6 +18,10 @@
 #include <algorithm>
 #include <wtf/BitVector.h>
 
+#if COMPILER(CLANG)
+#pragma clang attribute push(__attribute__((minsize)), apply_to = function)
+#endif
+
 namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
@@ -343,5 +347,9 @@ void selectAwaitInPlace(SelectionContext& context)
 }
 
 } } } // namespace JSC::AOT::Typed
+
+#if COMPILER(CLANG)
+#pragma clang attribute pop
+#endif
 
 #endif // ENABLE(AOT)

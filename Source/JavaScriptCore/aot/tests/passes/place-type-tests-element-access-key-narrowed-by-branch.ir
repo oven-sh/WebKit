@@ -14,7 +14,7 @@ function f0 name="keyThatIsNotMinusOne" parameters=[{type=Array<number>}, {type=
     v5 = ElemGet v0, v4
     Return v5
 # CHECK-NOT: Names
-# CHECK: [[index0]]: int[0, 4294967294] = AssumeType {{*}} provenType=int[0, 4294967294]
+# CHECK: [[index0]]: int[0, 4294967294] = AssumeType {{*}} provenType=undefined|int[0, 4294967294]
 # CHECK: = GetArrayElement v0, [[index0]],
 # CHECK-NOT: Names
 }

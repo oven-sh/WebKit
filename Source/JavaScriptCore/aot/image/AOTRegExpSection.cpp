@@ -557,8 +557,9 @@ static void encodeMetadata(ImageRegExp& record, const RegExpRequest& request, co
     }
 }
 
-static ImageRegExp createRecord(const RegExpRequest& request, RegExpRecordForm form, const RegExpSummary& summary, const std::array<uint32_t, 2>& entries, SectionWriter& details)
+static ImageRegExp createRecord(const RegExpRequest& request, const CompiledRegExp& compiled, const RegExpSummary& summary, const std::array<uint32_t, 2>& entries, SectionWriter& details)
 {
+    RegExpRecordForm form = compiled.form;
     ASSERT(request.flags == ImageRegExp::significantFlags(request.flags));
     RELEASE_ASSERT((form == RegExpRecordForm::NoMetadata) == (summary.metadata == RegExpMetadata::Unknown));
     ImageRegExp record { };
@@ -579,6 +580,8 @@ static ImageRegExp createRecord(const RegExpRequest& request, RegExpRecordForm f
     case RegExpRecordForm::Code:
         record.codeFor8Bit = entries[0];
         record.codeFor16Bit = entries[1];
+        record.hasCodeFor8BitSubjectsAlone = !compiled.code[1];
+        record.handsLongSearchesOver = std::ranges::any_of(compiled.code, [](auto& code) { return code && code->handsLongSearchesOver; });
         break;
     case RegExpRecordForm::Atom:
         RELEASE_ASSERT(request.atom);
@@ -626,7 +629,7 @@ RegExpSections encodeRegExpRecords(const RegExpRecordInputs& inputs, BuildContex
         const RegExpSummary* summary = context.regExpSummaries().summaryIfComputed(request.pattern, request.flags);
         RELEASE_ASSERT(summary);
 
-        records.append(createRecord(request, form, *summary, inputs.section.entries[index], details));
+        records.append(createRecord(request, inputs.compiled.results[index], *summary, inputs.section.entries[index], details));
         hashes.append(ImageRegExpHash { ImageRegExp::hashOf(summary->patternHash, request.flags), recordNumber });
         if (form == RegExpRecordForm::Code)
             maxOutputSize = std::max(maxOutputSize, (summary->numSubpatterns + 1) * 2 + summary->numDuplicateNamedCaptureGroups);
@@ -682,7 +685,6 @@ static Yarr::JITFailureReason failureReasonFor(RegExpDeclineReason reason)
         return Yarr::JITFailureReason::ParenthesisNestedTooDeep;
     case RegExpDeclineReason::CodeTooLarge:
     case RegExpDeclineReason::PatternTooLong:
-    case RegExpDeclineReason::CandidateBudgetExhausted:
     case RegExpDeclineReason::SectionFull:
         return Yarr::JITFailureReason::GeneratedCodeSizeTooLarge;
     case RegExpDeclineReason::NotSupportedByCodeGenerator:

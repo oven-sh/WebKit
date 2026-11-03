@@ -1,0 +1,28 @@
+# class Schema { constructor() { this.turn = 1 } }    const schema = new Schema(); Object.defineProperty(schema, "internals", { value: 2, enumerable: false }); schema.internals
+# RUN: valueflow-apply
+# CHECK: layout L0 kind=Instance name="Schema" constructor=f1 fields=[{key="turn" {{*}}{key="internals" {{*}}flags=[IsAddedLate{{*}}form=[IsReadOnly, IsNotEnumerable, IsNotConfigurable]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Schema" constructor=f1 fields=[{key="turn" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="PropertyDescriptor" fields=[{key="value" declared={type=anything} flags=[IsRequired]}, {key="enumerable" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Construct v0, -
+    v2 = Builtin builtin=Object
+    v3 = Builtin builtin=ObjectDefineProperty
+    v4 = String string="internals"
+    v5 = Integer integer=2
+    v6 = Boolean
+    v7 = NewObject -, v5, v6 layout=L1 fields=[0, 1]
+    v8 = FinishObject v7
+    v9 = Call v3, v2, v1, v4, v8
+    v10 = PropGet v1 key="internals"
+    Return
+}
+function f1 name="Schema" module=m0 flags=[HasThis] thisType={type=anything} results=[{type=anything}] constructedClass=L0 {
+    v1 = Integer integer=1
+    PropSet v0, v1 key="turn" mode=Strict
+    v3 = Undefined
+    Return v3
+}

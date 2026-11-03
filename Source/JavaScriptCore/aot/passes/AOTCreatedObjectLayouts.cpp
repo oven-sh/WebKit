@@ -65,6 +65,13 @@ static void becomeLiterals(const AnalysisContext& context, Function& function, T
     builder.applyInsertions();
 }
 
+static bool isLiteralOfFunction(const Function& function, ValueID value)
+{
+    while (function.at(value).opcode == Opcode::Convert || function.at(value).opcode == Opcode::FinishObject)
+        value = function.at(value).operand(0);
+    return function.at(value).opcode == Opcode::NewObject;
+}
+
 void giveLayoutsToCreatedObjects(Program& program, const BitVector& copiesOfMakers, BuildContext& build)
 {
     RELEASE_ASSERT(program.form() == IRForm::AsRead);
@@ -104,15 +111,29 @@ void giveLayoutsToCreatedObjects(Program& program, const BitVector& copiesOfMake
     Vector<FunctionID> functions;
     // The copies of a function make the same objects.
     UncheckedKeyHashMap<uint64_t, LayoutID> layoutsByPlace;
+    // Flow gives an object that stands above others one class. So what a function makes below a literal of its own is of one layout, at however many places.
+    UncheckedKeyHashMap<uint32_t, LayoutID> layoutsByObjectAbove;
     for (LayoutCreation& creation : creations) {
         const Function& function = program.at(creation.function);
-        if (functions.isEmpty() || functions.last() != creation.function)
+        if (functions.isEmpty() || functions.last() != creation.function) {
             functions.append(creation.function);
+            layoutsByObjectAbove.clear();
+        }
         uint64_t place = (static_cast<uint64_t>(function.module.index()) + 1) << 32 | function.at(creation.call).position;
         // What each copy of a maker makes has a prototype object of its own.
         bool hasPlace = function.at(creation.call).hasPosition() && !copiesOfMakers.get(creation.function.index());
+        ValueID above = function.at(creation.call).variadicOperands()[0];
+        uint32_t objectAbove = isLiteralOfFunction(function, above) ? above.index() + 1 : 0;
         if (LayoutID known = hasPlace ? layoutsByPlace.get(place) : LayoutID()) {
             creation.layout = known;
+            if (objectAbove)
+                layoutsByObjectAbove.add(objectAbove, known);
+            continue;
+        }
+        if (LayoutID known = objectAbove ? layoutsByObjectAbove.get(objectAbove) : LayoutID()) {
+            creation.layout = known;
+            if (hasPlace)
+                layoutsByPlace.add(place, known);
             continue;
         }
         Layout layout;
@@ -123,6 +144,8 @@ void giveLayoutsToCreatedObjects(Program& program, const BitVector& copiesOfMake
         creation.layout = editor.addLayout(WTF::move(layout));
         if (hasPlace)
             layoutsByPlace.add(place, creation.layout);
+        if (objectAbove)
+            layoutsByObjectAbove.add(objectAbove, creation.layout);
     }
     editFunctionsInParallel(editor, build, functions.span(), [&](unsigned, FunctionID id, Function& function, TaskArenas& arenas) {
         auto ofFunction = std::ranges::equal_range(creations, id, { }, &LayoutCreation::function);

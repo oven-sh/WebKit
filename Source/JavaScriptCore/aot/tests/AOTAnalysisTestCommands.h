@@ -254,11 +254,11 @@ struct FlowPreparation {
 FlowPreparation prepareFlow(TestCommandContext&, CommandWords&);
 
 struct Session {
-    Session(TestCommandContext& context, FunctionID id, const FlowResults* flow = nullptr, const EffectSummaries* effects = nullptr)
+    Session(TestCommandContext& context, FunctionID id, const FlowResults* flow = nullptr, const EffectSummaries* effects = nullptr, SavedFrames savedFrames = SavedFrames::AreUnknownMemory)
         : id(id)
         , function(context.program->at(id))
         , types(context.program->types)
-        , analysisContext { context.build, *context.program, flow, effects, id }
+        , analysisContext { context.build, *context.program, flow, effects, id, CallResults::MayAliasOperands, WorkLimits::OfBuild, savedFrames }
         , analyses(analysisContext, function)
         , builder(analysisContext, function, types, &analyses)
     {

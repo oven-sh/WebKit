@@ -1,0 +1,61 @@
+# The class of a constructor function begins with its first object, and the guard of the function's `prototype` holds from then on. Where the object has been taken away on both sides of the test
+# of that guard nobody begins the class: behind the rounds the failing side does. In the rounds nothing is added: with it the two ways of a test that decides nothing would not meet.
+# FORM: Prepared
+# RUN: function-passes behind-rounds RestartInGenericVersion
+# RUN(ROUNDS): function-passes RestartInGenericVersion
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+layout L0 kind=Instance name="A" constructor=f0 fields=[{key="x" declared={type=anything}}] flags=[IsConstructorFunction] flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed}
+layout L1 kind=Instance name="B" constructor=f1 fields=[{key="x" declared={type=anything}}] flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed}
+function f0 name="A" flags=[HasThis] thisType={type=L0} results=[{type=undefined}] {
+    Return
+}
+function f1 name="B" flags=[HasThis] thisType={type=L1} results=[{type=undefined}] {
+    Return
+}
+function f2 name="nobody-makes-an-object" parameters=[{type=i32}] results=[{type=i32}] {
+    v1 = AreMembersUnchanged conditions=[{layout=L0 side=Static key="prototype"}]
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2() frequency=Unlikely:
+    v2 = Integer integer=1
+    Return v2
+# CHECK: Branch v1 -> taken b1(), notTaken [[begins]]()
+# CHECK: [[begins]]() frequency=Unlikely:
+# CHECK-NEXT: BeginMemberGuards layout=L0
+# CHECK-NEXT: Jump -> next b2()
+# ROUNDS-NOT: BeginMemberGuards
+}
+function f3 name="the-failing-side-makes-the-object" parameters=[{type=i32}, {type=object}] results=[{type=i32}] {
+    v2 = AreMembersUnchanged conditions=[{layout=L0 side=Static key="prototype"}]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2() frequency=Unlikely:
+    v3 = NewObject v1 layout=L0
+    PutModuleVariable v3 variable=g0
+    Return v0
+# CHECK-NOT: BeginMemberGuards
+}
+function f4 name="a-test-that-asks-for-more-only-waits" parameters=[{type=i32}] results=[{type=i32}] {
+    v1 = AreMembersUnchanged conditions=[{layout=L0 key="twice"}, {layout=L0 side=Static key="prototype"}]
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2() frequency=Unlikely:
+    v2 = Integer integer=1
+    Return v2
+# CHECK-NOT: BeginMemberGuards
+}
+function f5 name="a-class-is-there-from-its-evaluation-on" parameters=[{type=i32}] results=[{type=i32}] {
+    v1 = AreMembersUnchanged conditions=[{layout=L1 side=Static key="prototype"}]
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2() frequency=Unlikely:
+    v2 = Integer integer=1
+    Return v2
+# CHECK-NOT: BeginMemberGuards
+}

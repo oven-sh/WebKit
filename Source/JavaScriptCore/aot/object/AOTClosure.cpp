@@ -8,7 +8,9 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCoroutineTable.h"
 #include "AOTImageOfCellScope.h"
+#include "AOTChainDependents.h"
 #include "AOTCheckedFrameCells.h"
 #include "AOTClassTable.h"
 #include "AOTClosureTable.h"
@@ -387,9 +389,15 @@ bool Closure::ensurePrototypeProperty(VM& vm)
         return false;
     JSGlobalObject* globalObject = state().instance.globalObject;
     JSObject* prototype;
-    if (kind().isGenerator)
+    if (kind().isGenerator) {
+        if (!kind().isAsync) {
+            state().coroutines->willMakePrototypeOfGeneratorFunction(vm, this);
+            // A generator of this function was there, and has been given it.
+            if (getDirect(vm, vm.propertyNames->prototype))
+                return true;
+        }
         prototype = constructEmptyObject(globalObject, kind().isAsync ? static_cast<JSObject*>(globalObject->asyncGeneratorPrototype()) : globalObject->generatorPrototype());
-    else
+    } else
         prototype = createPrototypeObjectOfFunction(vm, globalObject, this);
     putDirect(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
     state().objects->classes.didCreatePrototypePropertyOf(this);
@@ -405,6 +413,9 @@ void Closure::setPrototypeProperty(VM& vm, JSObject* prototype, unsigned attribu
     prepareForGenericAccess(vm);
     if (FunctionRareData* rareData = this->rareData())
         rareData->clear("Store to prototype property of a function");
+    // The generators that the function has made go on inheriting from the object that it would have had first.
+    if (kind().isGenerator && !kind().isAsync)
+        ensurePrototypeProperty(vm);
     putDirect(vm, vm.propertyNames->prototype, prototype, attributes);
 }
 
@@ -671,6 +682,25 @@ bool Closure::isBuiltinFunction() const
     });
 }
 
+// Below another closure JSObject::putInlineSlow() hands the store to the put of that closure, which ends by defining the property on the receiver with a descriptor.
+// Where the store replaces a plain property of the closure, or nothing above has a say, it is an ordinary put.
+static bool storesPropertyOfClosureBelowClosure(VM& vm, Closure& closure, PropertyName name, const PutPropertySlot& slot)
+{
+    JSObject* above = closure.getPrototypeDirect().getObject();
+    if (!above || above->type() != CompiledClosureType || slot.thisValue() != JSValue(&closure))
+        return false;
+    const CommonIdentifiers& names = *vm.propertyNames;
+    if (name == names.prototype || name == names.name || name == names.length)
+        return false;
+    Structure* structure = closure.structure();
+    if (structure->isImmutableProperty(name.uid()) || structure->hasFrozenElementsInPlace() || structure->hasNonReifiedStaticProperties())
+        return false;
+    unsigned attributes = 0;
+    if (isValidOffset(structure->get(vm, name, attributes)))
+        return !(attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue);
+    return storeThroughChain(walkChain({ structure->realm(), structure, &closure, ChainWalkMode::MayAllocate, ChainWalkUse::UsedAtOnce }, name.uid())) == StoreThroughChain::CreatesOwnProperty;
+}
+
 bool Closure::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, JSValue value, PutPropertySlot& slot)
 {
     ImageOfCellScope imageOfCell(globalObject->vm(), cell);
@@ -698,7 +728,7 @@ bool Closure::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name,
         StaticFields::ensureProperties(vm, *closure);
     if (name == vm.propertyNames->prototype)
         closure->ensurePrototypeProperty(vm);
-    bool result = Base::put(cell, globalObject, name, value, slot);
+    bool result = storesPropertyOfClosureBelowClosure(vm, *closure, name, slot) ? closure->putInlineFast(globalObject, name, value, slot) : Base::put(cell, globalObject, name, value, slot);
     if (isStoreToClassObject) {
         // No guard speaks of the value of a property that the class does not declare, so the next store to it may go past this function.
         bool replacesUndeclaredProperty = slot.type() == PutPropertySlot::ExistingProperty && !field && !classes.hasStaticMethodNamed(*classLayout, name.uid());

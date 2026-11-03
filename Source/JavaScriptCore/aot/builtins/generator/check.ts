@@ -394,6 +394,9 @@ function checkTypesOfNamesDefinedOnNewInstances(model: TableModel, problems: Pro
     if (builtinClass.constructorOnlyReadsPrototypeOfNewTarget && builtinClass.constructor === null) {
       problems.add(null, `the class ${token} says what its constructor reads, and it has none`);
     }
+    if (builtinClass.constructorAdder !== null && (builtinClass.constructor === null || builtinClass.constructorOnlyReadsPrototypeOfNewTarget)) {
+      problems.add(null, `the class ${token} names a constructorAdder, and its constructor calls no member of the new object`);
+    }
   }
 }
 

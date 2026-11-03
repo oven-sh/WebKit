@@ -7,8 +7,9 @@ runtime GetByIdAndCache : EncodedJSValue (EncodedJSValue base, uint32_t key, Sit
 runtime PutByIdAndCache : void (EncodedJSValue base, EncodedJSValue value, uint32_t key, SiteCache cache, uint32_t putMode) ; unknownCode
 runtime FillSiteCache : void (JSCell* base, uint32_t key, SiteCache cache, uint32_t access) ; reads(all) writes(RuntimeState)
 runtime FindGetterAndFillSiteCache : EncodedJSValue (JSCell* base, uint32_t key, SiteCache cache) ; reads(all) writes(RuntimeState)
+runtime FindAccessorOfMemberAndFillSiteCache : JSCell* (JSCell* base, uint32_t key, SiteCache cache) ; reads(all) writes(RuntimeState)
 runtime ReadValueAndFillSiteCache : EncodedJSValue (JSCell* base, uint32_t key, SiteCache cache) ; reads(all) writes(RuntimeState)
-runtime RecordArrival : void (EncodedJSValue receiver, uint32_t site) ; reads(all) writes(RuntimeState)
+runtime RecordArrival : void (EncodedJSValue receiver, EncodedJSValue keyOrEmpty, uint32_t site) ; reads(all) writes(RuntimeState)
 
 runtime GetFreeName, GetFreeNameForTypeOf : EncodedJSValue (uint32_t key, SiteCache cache) ; unknownCode
 runtime SetFreeName, SetFreeNameSloppy : void (uint32_t key, SiteCache cache, EncodedJSValue value) ; unknownCode
@@ -35,18 +36,18 @@ runtime SetWithProxyTrap, FinishSetThroughProxy : void (EncodedJSValue* wordsOfA
 runtime GetGeneric : EncodedJSValue (JSCell* base, UniquedStringImpl* uid) ; reads(all) writes(RuntimeState)
 runtime GetByValGeneric : EncodedJSValue (JSCell* base, JSCell* property) ; reads(all) writes(StringStorage, RuntimeState)
 runtime InByValGeneric : size_t (JSCell* base, JSCell* property) ; reads(all) writes(StringStorage, RuntimeState)
-runtime PutByValGeneric : size_t (JSCell* base, JSCell* property, EncodedJSValue value) ; reads(all) writes(ObjectFields, OrderWords, NamedProperties, StringStorage, RuntimeState)
+runtime PutByValGeneric : size_t (JSCell* base, JSCell* property, EncodedJSValue value) ; reads(all) writes(ObjectFields, OrderWords, NamedProperties, ShapeWords, MemberGuards, Elements, ArrayStorage, StringStorage, AllocatorState, RuntimeState)
 
-runtime ReadField : EncodedJSValue (JSCell* object, uint64_t header, uint64_t payload, uint32_t reason) ; reads(all) writes(AllocatorState, RuntimeState) collects
-runtime StoreField : void (JSCell* object, uint64_t header, uint64_t payload, EncodedJSValue value, uint32_t reason) ; reads(all) writes(ObjectFields, NamedProperties, AllocatorState, RuntimeState) throws collects
-runtime CreateField : void (JSCell* object, uint64_t header, uint64_t payload, EncodedJSValue value, uint32_t reason) ; reads(all) writes(ObjectFields, OrderWords, AllocatorState, RuntimeState) throws collects
+runtime ReadField : EncodedJSValue (JSCell* object, uint64_t header, uint64_t payload, uint32_t reason) ; reads(all) writes(ObjectFields, AllocatorState, RuntimeState) collects
+runtime StoreField : void (JSCell* object, uint64_t header, uint64_t payload, EncodedJSValue value, uint32_t reason) ; reads(all) writes(ShapeWords, MemberGuards, OrderWords, NamedProperties, ObjectFields, AllocatorState, RuntimeState) throws collects
+runtime CreateField : void (JSCell* object, uint64_t header, uint64_t payload, EncodedJSValue value, uint32_t reason) ; reads(all) writes(ShapeWords, MemberGuards, OrderWords, NamedProperties, ObjectFields, AllocatorState, RuntimeState) throws collects
 runtime CallGetterOfSlot : EncodedJSValue (EncodedJSValue base, JSCell* getterSetter, uint32_t reason) ; unknownCode
 runtime CallSetterOfSlot : void (EncodedJSValue base, JSCell* getterSetter, EncodedJSValue value, uint32_t putMode, uint32_t reason) ; unknownCode
-runtime AddPropertyBySlot : void (JSCell* object, uint64_t header, uint64_t payload, EncodedJSValue value, uint32_t reason) ; reads(all) writes(NamedProperties, AllocatorState, RuntimeState) collects
+runtime AddPropertyBySlot : void (JSCell* object, uint64_t header, uint64_t payload, EncodedJSValue value, uint32_t reason) ; reads(all) writes(ShapeWords, OrderWords, NamedProperties, ObjectFields, Elements, ArrayStorage, AllocatorState, RuntimeState) collects
 
-runtime DidCreateField : void (JSCell* object, uint32_t key) ; RuntimeCreatesField
-runtime DidCreateFieldAt, DidCreateFieldOutOfLineAt : void (JSCell* object, uint32_t offset) ; RuntimeCreatesField
-runtime DidCreateFieldsAt : void (JSCell* object, uint64_t offsets) ; RuntimeCreatesField
+runtime DidCreateField : void (JSCell* object, uint32_t key) ; RuntimeCreatesField writes(ShapeWords, MemberGuards)
+runtime DidCreateFieldAt, DidCreateFieldOutOfLineAt : void (JSCell* object, uint32_t offset) ; RuntimeCreatesField writes(ShapeWords, MemberGuards)
+runtime DidCreateFieldsAt : void (JSCell* object, uint64_t offsets) ; RuntimeCreatesField writes(ShapeWords, MemberGuards)
 runtime EnsureExtensionGranules : void (JSCell* object, uint64_t granuleBits) ; RuntimeCreatesField
 runtime EnsureExtensionGranulesWithoutCollecting : void (JSCell* object, uint64_t granuleBits) ; reads(all) writes(ObjectFields, AllocatorState, RuntimeState)
 runtime NewGetterSetter : JSCell* (JSCell* getter, JSCell* setter) ; RuntimeAllocates
@@ -56,7 +57,7 @@ runtime MaterializeDeferredClosure : JSCell* (JSCell* object, uint32_t key) ; re
 runtime GetFieldOutsideSlot : EncodedJSValue (JSCell* object, uint32_t key) ; reads(all)
 
 runtime NewMap, NewSet : JSCell* () ; RuntimeAllocates
-runtime MapGet, MapHas, SetHas : EncodedJSValue (JSCell*, EncodedJSValue lookupKey) ; RuntimeCreatesString writes(CollectionStorage)
+runtime MapGet, MapFind, MapHas, SetHas : EncodedJSValue (JSCell*, EncodedJSValue lookupKey) ; RuntimeCreatesString writes(CollectionStorage)
 runtime MapSet : EncodedJSValue (JSCell* map, EncodedJSValue lookupKey, EncodedJSValue value) ; reads(all) writes(CollectionStorage, CollectionEntries, StringStorage, AllocatorState, RuntimeState) throws collects
 runtime SetAdd : EncodedJSValue (JSCell* set, EncodedJSValue lookupKey) ; reads(all) writes(CollectionStorage, CollectionEntries, StringStorage, AllocatorState, RuntimeState) throws collects
 runtime WeakMapSet : EncodedJSValue (JSCell* map, JSCell* lookupKey, EncodedJSValue value) ; reads(all) writes(CollectionStorage, CollectionEntries, AllocatorState, RuntimeState) throws collects

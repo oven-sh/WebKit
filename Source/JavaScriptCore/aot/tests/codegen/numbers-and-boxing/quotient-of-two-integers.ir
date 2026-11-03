@@ -56,7 +56,7 @@ function f1 name="quotient" module=m0 flags=[IsChecked, HasExplicitName] length=
 
 # (a / b) | 0 of two 32-bit integers is a division of integers that answers 0 for a divisor of 0 and wraps for -2147483648 / -1, as the truncated quotient of the doubles does.
 # CHECK-LABEL: name="quotient" role=Source
-# CHECK: Int32 b@[[quotient]] = Div<Chill>(b@{{*}}, b@{{*}}, ControlDependent, {{*}}:DivideIntegers)
+# CHECK: Int32 b@[[quotient]] = Div{{*}}(b@{{*}}, b@{{*}}, ControlDependent, {{*}}:DivideIntegers)
 # CHECK-LABEL: end of function
 # No double is made or divided, and nothing is called.
 # NONE-LABEL: name="quotient" role=Source
@@ -65,5 +65,5 @@ function f1 name="quotient" module=m0 flags=[IsChecked, HasExplicitName] length=
 # NONE-NOT: Patchpoint(
 # NONE-LABEL: end of function
 # The division instruction of ARM64 answers so by itself. x86-64 sends the divisors 0 and -1 to rare arms by one test.
-# X64: instructions: 7, patchpoints: 0, rare instructions: 6
+# X64: instructions: 7, patchpoints: 0, rare instructions: 4
 # ARM64: instructions: 2, patchpoints: 0

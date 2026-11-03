@@ -2,6 +2,7 @@
 # No type names a base for Below: its prototype object is linked to the prototype object of a parameter. The program links it to Above's, and to Below's own where the factory is handed its own result,
 # which says nothing about the first link. So Above is the expected base of Below: members of Above are looked up there, and the runtime checks the first Below against it when it defines the class.
 # A function that the program links below two others has no base
+# OPTIONS: disable=pass:CopyClosureFactories
 # RUN: valueflow-apply
 # CHECK: layout L0 kind=Instance name="Above"
 # CHECK-NOT: prototypeBase

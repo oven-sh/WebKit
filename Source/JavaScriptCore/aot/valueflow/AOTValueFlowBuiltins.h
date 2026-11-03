@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinIDTypes.h"
 #include "AOTBuiltinIDs.h"
 #include "AOTFlowPrototypes.h"
 #include "AOTValueFlowBuiltinTables.h"
@@ -128,6 +129,7 @@ void describeObjectsRefusedAsFunctions(ValueFlowRuleContext&, ClimbingSet functi
 void letNativeCodeTestAgainst(ValueFlowRuleContext&, const ValueFlowOperand& constructors);
 
 void runBehavior(const ValueFlowStatement&, ValueFlowRuleContext&);
+void runWalkOfBehavior(const ValueFlowStatement&, ValueFlowRuleContext&);
 
 inline BuiltinClassID classAbovePrototypeProperty(const Function& function)
 {

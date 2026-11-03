@@ -44,6 +44,8 @@ static SlotInReceivers findSlotInReceivers(const Program& program, const LayoutS
             firstOfForm = member;
 
         const FieldFlow& flow = flowOf(program, *field);
+        if (flow.prototypeName == PrototypeNameState::AccessorOnPrototypes && !slot.memberBelowAccessor)
+            slot.memberBelowAccessor = member;
         slot.isAlwaysFilled &= flow.occupancy == Occupancy::AlwaysFilled && (flow.location.deferral == ClosureDeferral::Unknown || staysInSlot(program, *field));
         slot.mayHoldDeferredClosure |= flow.location.deferral != ClosureDeferral::Unknown;
     }
@@ -85,7 +87,7 @@ void FunctionVerifier::verifySlotOperation(BlockID block, ValueID id, const Valu
     }
 
     bool readsHalfOfPair = value.opcode == Opcode::GetSlotGetter || value.opcode == Opcode::GetSlotSetter;
-    auto verifySlot = [&](PropertyKeyID key) {
+    auto verifySlot = [&](PropertyKeyID key, bool mayAdd) {
         SlotInReceivers slot = slotInReceivers(value.receivers(), key);
         if (slot.memberWithoutField) {
             fail(InternalErrorKind::InvalidGuard, block, id);
@@ -96,6 +98,11 @@ void FunctionVerifier::verifySlotOperation(BlockID block, ValueID id, const Valu
         if (memberOfOtherForm && value.opcode != Opcode::IsSlotFilled) {
             fail(InternalErrorKind::SlotOfOtherForm, block, id);
             m_errors.last().layout = memberOfOtherForm;
+            return slot;
+        }
+        if (mayAdd && slot.memberBelowAccessor) {
+            fail(InternalErrorKind::FieldCreatedBelowAccessor, block, id);
+            m_errors.last().layout = slot.memberBelowAccessor;
             return slot;
         }
         if (slot.memberWithRemovedField && !isOptimizing()) {
@@ -112,14 +119,14 @@ void FunctionVerifier::verifySlotOperation(BlockID block, ValueID id, const Valu
             if (m_form == IRForm::Placed && !placedKey.fieldAccess)
                 fail(InternalErrorKind::PlacedPayloadMissing, block, id, index);
             else
-                verifySlot(placedKey.key);
+                verifySlot(placedKey.key, placedKey.mayAdd);
             if (hasFailed())
                 return;
         }
         return;
     }
 
-    SlotInReceivers slot = verifySlot(value.key());
+    SlotInReceivers slot = verifySlot(value.key(), value.opcode == Opcode::PutSlotOrAdd);
     if (hasFailed())
         return;
 

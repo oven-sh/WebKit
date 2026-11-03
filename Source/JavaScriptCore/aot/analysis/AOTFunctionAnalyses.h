@@ -282,6 +282,7 @@ private:
     std::optional<EffectSummaries> m_unknownSummaries;
     const EffectContext m_effectContext;
     EffectsCache m_effects;
+    uint64_t m_numberOfBlocksReadToBuildControlFlowGraphs { 0 };
     ControlFlowResults m_controlFlow;
     ValueResults m_values;
     const bool m_countsBuilds;

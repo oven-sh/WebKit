@@ -725,6 +725,12 @@ static void testBackEndReportStatistics()
     raw.counters[static_cast<size_t>(B3::Counter::SumsKeptAsIntegers)] = 12;
     raw.counters[static_cast<size_t>(B3::Counter::ColdUsesKeptThroughSecondSplit)] = 13;
     raw.counters[static_cast<size_t>(B3::Counter::ColdUsesKeptThroughSecondSplitBetweenDefs)] = 14;
+    raw.counters[static_cast<size_t>(B3::Counter::MovesVisitedForWidths)] = 15;
+    raw.counters[static_cast<size_t>(B3::Counter::PredecessorsVisitedForRareBlocks)] = 16;
+    raw.counters[static_cast<size_t>(B3::Counter::DeadValueReleaseSteps)] = 17;
+    raw.counters[static_cast<size_t>(B3::Counter::RangesComparedWithStackCells)] = 18;
+    raw.counters[static_cast<size_t>(B3::Counter::ClobberPointsVisitedForCalls)] = 19;
+    raw.counters[static_cast<size_t>(B3::Counter::LikelyDominatorWalkSteps)] = 20;
     AOT_TEST_CHECK(!program.report(build, program.functionAsRead(), raw));
 
     expected.count(StatisticID::LoopsVersioned, 4);
@@ -740,6 +746,12 @@ static void testBackEndReportStatistics()
     expected.count(StatisticID::FunctionsWithColdUsesKeptThroughSecondSplit, 1);
     expected.count(StatisticID::ColdUsesKeptThroughSecondSplitBetweenDefs, 14);
     expected.count(StatisticID::FunctionsWithColdUsesKeptThroughSecondSplitBetweenDefs, 1);
+    expected.count(StatisticID::MovesVisitedForWidths, 15);
+    expected.count(StatisticID::PredecessorsVisitedForRareBlocks, 16);
+    expected.count(StatisticID::DeadValueReleaseSteps, 17);
+    expected.count(StatisticID::RangesComparedWithStackCells, 18);
+    expected.count(StatisticID::ClobberPointsVisitedForCalls, 19);
+    expected.count(StatisticID::LikelyDominatorWalkSteps, 20);
     AOT_TEST_CHECK(build.statistics().values() == expected.values());
     AOT_TEST_CHECK(build.takeLosses(&program.program()).isEmpty());
 }

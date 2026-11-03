@@ -258,6 +258,10 @@ void Structure::validateFlags()
     bool overridesGetPrototype =
         methodTable.getPrototype != static_cast<MethodTable::GetPrototypeFunctionPtr>(JSObject::getPrototype)
         && methodTable.getPrototype != JSCell::getPrototype;
+#if ENABLE(AOT)
+    if (AOT::RuntimeHooks::setsOverridesGetPrototypeItself(m_classInfo))
+        overridesGetPrototype = typeInfo().overridesGetPrototype();
+#endif
     RELEASE_ASSERT(overridesGetPrototype == typeInfo().overridesGetPrototype());
 
     bool overridesPut = methodTable.put != JSObject::put && ((typeInfo().type() == StringType || typeInfo().type() == SymbolType || typeInfo().type() == HeapBigIntType) || methodTable.put != JSCell::put);

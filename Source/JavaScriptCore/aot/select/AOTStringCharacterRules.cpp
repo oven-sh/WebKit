@@ -11,6 +11,7 @@
 #include "AOTBlockFrequencies.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTLoopEntry.h"
+#include "AOTMemoryLocation.h"
 #include "AOTSelectionContext.h"
 #include "AOTSort.h"
 #include "AOTSpecifiedValues.h"
@@ -140,6 +141,34 @@ static bool suspendsBetween(SelectionContext& context, ProgramPoint first, Progr
     });
 }
 
+// A loop that puts its stores off covers what may run out of memory with a handler that makes the stores and throws the error again (EliminateRedundantReads).
+// Where that loop is entered no store waits, so what throws there goes where that handler sends the error.
+// The loop whose stores wait holds no store to the variable. So where the loop around this one holds one, the stores wait in this one or inside it.
+static const OutOfLineOptional<Target>& handlerOfReaderOnEntryOf(SelectionContext& context, const NaturalLoop& loop, BlockID reader)
+{
+    const Function& function = context.function();
+    const OutOfLineOptional<Target>& handler = function.at(reader).handler;
+    if (!handler)
+        return handler;
+    if (!onlyMakesStoresAndRethrows(function, handler->block))
+        return handler;
+    const Block& cleanup = function.at(handler->block);
+    std::span<const ValueID> stores = cleanup.values.span().subspan(1);
+    if (const NaturalLoop* around = context.analyses().naturalLoops().innerMostOuterLoop(loop)) {
+        MemoryAccess delayed = memoryAccessOf(function, function.at(stores.front()));
+        auto storesToSamePlace = [&](ValueID id) {
+            MemoryAccess access = memoryAccessOf(function, function.at(id));
+            return access.kind == MemoryAccess::Kind::Write && access.location == delayed.location && (!access.base == !delayed.base) && (!access.base || context.analyses().identityOf(access.base) == context.analyses().identityOf(delayed.base));
+        };
+        bool isStoredAround = false;
+        for (unsigned index = 0; index < around->size() && !isStoredAround; ++index)
+            isStoredAround = std::ranges::any_of(function.at(around->at(index)).values, storesToSamePlace);
+        if (!isStoredAround)
+            return handler;
+    }
+    return cleanup.handler;
+}
+
 // A reader that resolves ropes may throw, and so may the flattening that replaces it, so the flattening is hoisted no further than the reader's handler covers.
 static std::optional<BlockID> findLoopWithoutSuspension(SelectionContext& context, PairTable& table, BlockID user, BlockID outermostHeader, bool userResolvesRopes)
 {
@@ -159,7 +188,7 @@ static std::optional<BlockID> findLoopWithoutSuspension(SelectionContext& contex
         if (loopSuspends)
             break;
         header = loop->header();
-        if (function.at(loop->header()).handler == function.at(user).handler)
+        if (function.at(loop->header()).handler == handlerOfReaderOnEntryOf(context, *loop, user))
             headerSharingUserHandler = header;
         if (loop->header() == outermostHeader)
             break;
@@ -223,7 +252,7 @@ static Vector<StringCharacterMatch> collectReaders(SelectionContext& context, Pa
                 Pair& pair = table.pairs[*reader->pair];
                 pair.hasLikelyReader |= function.at(block).frequency.predicted() != BlockFrequency::Rare;
                 pair.hasResolvingReader |= reader->resolvesRopes;
-                pair.resolvesUnderOtherHandler |= reader->resolvesRopes && function.at(block).handler != function.at(pair.header).handler;
+                pair.resolvesUnderOtherHandler |= reader->resolvesRopes && handlerOfReaderOnEntryOf(context, *context.analyses().naturalLoops().headerOf(pair.header), block) != function.at(pair.header).handler;
             }
             readers.append(WTF::move(*reader));
         }

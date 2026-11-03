@@ -98,22 +98,19 @@ function f1 name="range" module=m0 flags=[IsChecked, HasExplicitName] length=1 t
     Return v2
 }
 
-# A push onto a list made in the function is written out: the length is compared with the capacity, the element is stored and the length grows by one.
-# LOOP-LABEL: loop #
-# LOOP: Int32 b@[[fits]] = Below(b@[[length]], b@{{*}}, {{*}}:HasSpareArrayCapacity)
-# LOOP-NEXT: Branch(b@[[fits]], Terminal, {{*}}:HasSpareArrayCapacity)
-# LOOP-NEXT: Successors: Then:#{{*}}, Else:Rare:#
-# LOOP: Store(b@{{*}}, b@{{*}}, ControlDependent|Writes:indexedDoubleProperties, {{*}}:CallInline)
-# LOOP: Int32 b@[[longer]] = Add(b@[[length]], $1(b@{{*}}), {{*}}:CallInline)
+# A push onto a list made in the function, in a loop that counts from zero: the element is stored at the counter. Nothing compares a length with a capacity in the loop.
+# LOOP-LABEL: steps by 1
+# LOOP-NOT: Below(
+# LOOP: Store(b@{{*}}, b@{{*}}, ControlDependent|Writes:indexedDoubleProperties, {{*}}:AppendElement)
 # LOOP-LABEL: end of loop
-# The storage, its capacity and the length stay in registers: only the path that grows the list, which leaves the loop, changes them. The kind of storage is not tested. Nothing is called; the one patchpoint is the poll.
+# The storage stays in a register. The kind of storage is not tested. Nothing is called.
 # NONE-LABEL: loop #
 # NONE-NOT: Reads:JSObject_butterfly
-# NONE-NOT: Reads:Butterfly_vectorLength
+# NONE-NOT: Butterfly_vectorLength
 # NONE-NOT: Butterfly_publicLength
 # NONE-NOT: Reads:JSCell_indexingTypeAndMisc
 # NONE-NOT: :CallBuiltin
 # NONE-NOT: Register(
 # NONE-LABEL: end of loop
-# X64: loop #{{*}}, instructions: 7, patchpoints: 0
-# ARM64: loop #{{*}}, instructions: 6, patchpoints: 0
+# X64: loop #{{*}}, instructions: 5, patchpoints: 0
+# ARM64: loop #{{*}}, instructions: 4, patchpoints: 0

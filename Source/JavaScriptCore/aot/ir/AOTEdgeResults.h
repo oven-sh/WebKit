@@ -54,6 +54,8 @@ Type narrowOperandByTest(const TypingContext&, const Value& test, uint32_t opera
 Type narrowSubjectByCase(const TypingContext&, const Terminator&, uint32_t caseIndex);
 
 Type narrowTypeByTest(const TypingContext&, const Type& source, const Value& test, uint32_t operandIndex, EdgeSide);
+// No test finds a built-in that each module has one of. Among other objects the test refuses it. Where the value may be no other object, the test asks for an object.
+bool mayRefuseUntestableBuiltins(const Program&, const Type& source, const Type& tested);
 Type narrowTypeByCase(const TypingContext&, const Type& source, const Terminator&, uint32_t caseIndex);
 Type narrowTypeByOtherwise(const Type& source, const Terminator&);
 

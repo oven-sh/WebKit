@@ -24,6 +24,7 @@
         RUN(testValuesLiveAcross32And33Calls()); \
         RUN(testValueReadByRareClobberStaysInRegisterInLoop()); \
         RUN(testCursorsOfRareLoopTakeRegistersOfWordsThatPassThrough()); \
+        RUN(testPassingTmpsOnStackThroughLongLoopVisitsFewBlocks()); \
         RUN(testBoundThatLoopComparesWithLeavesItsRegisterToValuesOfRarePath()); \
         RUN(testBlocksWithoutSuccessorsMoveToEnd()); \
         RUN(testDeadDefSurvivesAllocation()); \
@@ -1123,6 +1124,81 @@ void testCursorsOfRareLoopTakeRegistersOfWordsThatPassThrough()
                 CHECK(memory[numberOfWords + 1 + index] == walked[index]);
         }
     }
+}
+
+static uint32_t blocksVisitedToPassTmpsOnStackInLoopOf(unsigned numberOfSums)
+{
+    B3::Policy policy;
+    policy.air.splitting.keepsUnusedTmpsOnStackThroughLoops = true;
+    B3::Procedure proc(policy);
+    proc.setOptLevel(2);
+    Code& code = proc.code();
+    unsigned numberOfPassingTmps = code.regsInPriorityOrder(GP).size() - 3;
+
+    BasicBlock* root = code.addBlock();
+    BasicBlock* preheader = code.addBlock();
+    Vector<BasicBlock*> body;
+    for (unsigned index = 0; index < numberOfSums; ++index)
+        body.append(code.addBlock(1000));
+    BasicBlock* exit = code.addBlock(100);
+    BasicBlock* done = code.addBlock();
+    BasicBlock* hot = code.addBlock(1000000);
+    Tmp pointer = code.newTmp(GP);
+    Tmp leaves = code.newTmp(GP);
+    Tmp counter = code.newTmp(GP);
+    Tmp total = code.newTmp(GP);
+    Vector<Tmp> passing;
+    Vector<Tmp> sums;
+    root->append(Move, nullptr, argumentTmp(0), pointer);
+    root->append(Move, nullptr, argumentTmp(1), leaves);
+    root->append(Move, nullptr, Arg::imm(3), counter);
+    root->append(Move, nullptr, Arg::imm(0), total);
+    for (unsigned index = 0; index < numberOfPassingTmps; ++index) {
+        passing.append(code.newTmp(GP));
+        root->append(Move, nullptr, Arg::addr(pointer, static_cast<int32_t>(index * sizeof(int64_t))), passing.last());
+    }
+    appendJump(root, preheader);
+    for (unsigned index = 0; index < numberOfSums; ++index) {
+        sums.append(code.newTmp(GP));
+        preheader->append(Move, nullptr, Arg::imm(0), sums.last());
+    }
+    appendJump(preheader, body[0]);
+    for (unsigned index = 0; index < numberOfSums; ++index) {
+        if (isX86())
+            body[index]->append(Add64, nullptr, Arg::addr(pointer), sums[index]);
+        else {
+            Tmp loaded = code.newTmp(GP);
+            body[index]->append(Move, nullptr, Arg::addr(pointer), loaded);
+            body[index]->append(Add64, nullptr, loaded, sums[index]);
+        }
+        if (index + 1 < numberOfSums)
+            appendBranchTest(body[index], leaves, exit, body[index + 1]);
+        else {
+            body[index]->append(Add64, nullptr, Arg::imm(1), counter);
+            appendBranchTest(body[index], counter, body[0], done);
+        }
+    }
+    appendJump(exit, hot);
+    for (Tmp sum : sums)
+        done->append(Add64, nullptr, sum, total);
+    appendJump(done, hot);
+    for (unsigned round = 0; round < 3; ++round) {
+        for (Tmp tmp : passing)
+            hot->append(Add64, nullptr, tmp, total);
+    }
+    hot->append(Move, nullptr, total, returnTmp());
+    appendReturn(hot);
+    code.resetReachability();
+    allocateRegistersByGreedy(code);
+    return proc.report().countOf(B3::Counter::BlocksVisitedToPassTmpsOnStack);
+}
+
+void testPassingTmpsOnStackThroughLongLoopVisitsFewBlocks()
+{
+    uint32_t visited = blocksVisitedToPassTmpsOnStackInLoopOf(1000);
+    uint32_t visitedAtDoubleSize = blocksVisitedToPassTmpsOnStackInLoopOf(2000);
+    CHECK(visited);
+    CHECK(visitedAtDoubleSize <= 2.5 * visited);
 }
 
 struct LoopWithRarePath {

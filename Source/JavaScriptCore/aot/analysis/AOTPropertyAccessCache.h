@@ -28,7 +28,7 @@ public:
     AOT_CLASS_THRESHOLD(size_t, fewestLayouts, 8);
     AOT_CLASS_THRESHOLD(size_t, fewestClassesAbove, 4);
     AOT_CLASS_THRESHOLD(size_t, fewestFields, 8);
-    AOT_CLASS_THRESHOLD(size_t, classesBetweenFieldsKept, 4);
+    AOT_CLASS_THRESHOLD(unsigned, bitsOfClassesBetweenFieldsKept, 2);
     static constexpr ListID noList = ~0ull;
 
     template<typename Key, typename Value>
@@ -47,7 +47,7 @@ public:
         friend bool operator==(const PartitionKey&, const PartitionKey&) = default;
     };
 
-    using Partition = Answer<PartitionKey, MemberPartition>;
+    using Partition = Answer<PartitionKey, PackedMemberPartition>;
 
     struct FieldArmKey {
         ListID layouts { noList };
@@ -117,7 +117,6 @@ public:
     };
 
     using InheritedMember = Answer<InheritedMemberKey, MemberAnswer>;
-    using BuiltinBase = Answer<LayoutID, BuiltinClassID>;
     using ClassAbove = Answer<LayoutID, LayoutID>;
     using FilledAtBirth = Answer<LayoutID, bool>;
     using TakesAllocatedThis = Answer<FunctionID, bool>;
@@ -148,6 +147,13 @@ public:
         PropertyKeyID key;
         uint32_t numberOfArguments { 0 };
         Vector<TypeID, 4> types;
+    };
+
+    struct BytesOfAccessByName {
+        ListID receivers { noList };
+        PropertyKeyID key;
+        Access access { Access::Read };
+        unsigned bytes { 0 };
     };
 
     struct LookupOfTableCall {
@@ -193,7 +199,15 @@ public:
         bool allComeBack { false };
     };
 
-    PropertyAccessCache() = default;
+    explicit PropertyAccessCache(size_t numberOfLayouts)
+        : builtinBases(numberOfLayouts)
+    {
+        for (auto& base : builtinBases)
+            base.store(0, std::memory_order_relaxed);
+    }
+
+    // One class in four, whichever way the classes of a row are numbered. Every walk that passes a class agrees on whether it is one.
+    static bool keepsFieldsAbove(LayoutID layout) { return !((layout.index() * 0x9E3779B1u) >> (32 - bitsOfClassesBetweenFieldsKept)); }
 
     SharedLayoutLists lists;
     SharedMemo<Partition> partitions;
@@ -206,13 +220,15 @@ public:
     SharedMemo<MethodsOfName> methodsByName;
     SharedMemo<CodeOfOperand> codeOfOperands;
     SharedMemo<InheritedMember> inheritedMembers;
-    SharedMemo<BuiltinBase> builtinBases;
+    // By the number of the layout. Nothing: not known. One: no built-in class. Else the number of the class and two.
+    Vector<std::atomic<uint32_t>> builtinBases;
     SharedMemo<ClassAbove> classesAboveEmptyPrototypes;
     SharedMemo<FilledAtBirth> layoutsFilledAtBirth;
     SharedMemo<TakesAllocatedThis> constructorsTakingAllocatedThis;
     SharedMemo<FieldAbove> fieldsAbove;
     SharedMemo<ParameterTypesOfSelector> parameterTypesOfSelectors;
     SharedMemo<LookupOfTableCall> lookupsOfTableCalls;
+    SharedMemo<BytesOfAccessByName> bytesOfAccessesByName;
     SharedMemo<TableCall> tableCalls;
     SharedMemo<NamesOfCallees> namesOfCallees;
     RefusedContents refusedContents;

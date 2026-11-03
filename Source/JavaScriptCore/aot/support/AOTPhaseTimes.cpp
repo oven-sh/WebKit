@@ -10,6 +10,7 @@
 
 #include "AOTBuildContext.h"
 #include "AOTCompile.h"
+#include "AOTStageLog.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <mutex>
@@ -338,7 +339,7 @@ void PhaseTimes::didFinish(ASCIILiteral phase)
     }
     m_busyThreadsTimesAtPhaseStart = busyThreadsTimes;
     PeakResidentMegabytes peak = takePeakResidentMegabytes();
-    dataLogLn("AOT phase times: ", m_namePrefix, m_name, " | ", phase, " | wall ", wallTime.milliseconds(), " ms | cpu ", cpuTime.milliseconds(), " ms | resident ", residentMegabytes(), " MB | peak ", peak.ofProcess, " MB | peak since the last line ", peak.sinceLastTaken, " MB | in the kernel so far ", processSystemTime().milliseconds(), " ms", instructions.toString(), " | outside parallel loops ", serialCPUTime.milliseconds(), " ms | ms by busy threads ", busyThreads.toString());
+    logStageLine("AOT phase times: ", m_namePrefix, m_name, " | ", phase, " | wall ", wallTime.milliseconds(), " ms | cpu ", cpuTime.milliseconds(), " ms | resident ", residentMegabytes(), " MB | peak ", peak.ofProcess, " MB | peak since the last line ", peak.sinceLastTaken, " MB | in the kernel so far ", processSystemTime().milliseconds(), " ms", instructions.toString(), " | outside parallel loops ", serialCPUTime.milliseconds(), " ms | ms by busy threads ", busyThreads.toString());
     m_serialCPUTimeAtPhaseStart = serialCPUTimeOfCurrentThread();
     m_phaseStart = MonotonicTime::now();
     m_processCPUTimeAtPhaseStart = processCPUTime();

@@ -3,7 +3,7 @@
 # that of child.cjs, and through it that of grandchild.cjs. The list is followed like any other value, so the call has what the two files export among its callees. A list may also hold the module object
 # of a file outside the image, whose exports nobody knows: the call hands that callee its receiver, and with the receiver what the two files export.
 # Nobody has got hold of the module object of other.cjs, so what apart.cjs exports stays in the program.
-# RUN: valueflow-solve calls
+# RUN: valueflow-solve calls seen
 # CHECK: f0 v7 -> unknown f2 f4
 # RUN(WHY): valueflow-why escaped=f2 escaped=f4 escaped=f7
 # WHY: escaped=f2

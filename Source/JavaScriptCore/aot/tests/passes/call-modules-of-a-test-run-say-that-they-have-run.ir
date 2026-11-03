@@ -2,7 +2,7 @@
 # whoever evaluates such a module stores the status behind it. A module with a start stores its own.
 # FORM: Prepared
 # RUN: pass CallModules
-# STATISTIC: ModulesWithState = 1
+# STATISTIC: ModulesWithState = 2
 # CHECK: outcome: Changed
 
 variable g0 name="later" module=m0 declared={type=anything} initialization=Undefined
@@ -54,10 +54,17 @@ function f2 name="empty" module=m2 kind=Module results=[{type=anything}] {
 function f3 name="emptyLater" module=m3 kind=Module results=[{type=anything}] {
     Return
 }
+# What counts-later.ts imports has nothing to run, and nobody but counts-later.ts can say that it has run.
 function f4 name="countsLater" module=m4 kind=Module results=[{type=anything}] {
     v0 = Integer integer=2
     PutModuleVariable v0 variable=g2
     Return
+# CHECK: b0():
+# CHECK-NEXT: = BeginModuleEvaluation module=m4
+# CHECK: = BeginModuleEvaluation module=m8
+# CHECK-NEXT: FinishModuleEvaluation module=m8
+# CHECK-NEXT: = CallDirect function=f11
+# CHECK-NEXT: FinishModuleEvaluation module=m4
 }
 function f5 name="later" module=m0 results=[{type=anything}] {
     EvaluateModule module=m3 referrer=m0

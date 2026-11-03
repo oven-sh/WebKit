@@ -590,7 +590,7 @@ void ElementAccessEmitter::readWithAnyStorage(const ValueContext& value)
             everyForm.append(&form);
         forEachFormByShape(shape, &ElementAccessEmitter::hasShape, everyForm, outOfLine, [&](const ArrayStorageForm& form) {
             readWithForm(&form);
-        });
+        }, FirstForm::IsLikeTheOthers);
     }
 
     m_out.appendTo(isAbsent);

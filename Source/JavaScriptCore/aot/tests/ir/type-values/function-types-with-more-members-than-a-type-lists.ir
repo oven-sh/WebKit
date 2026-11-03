@@ -1,0 +1,56 @@
+# A function type with more members than a type lists reads as any function and lists nothing beside it, however its members come to it: up a row of function types or round a ring of them.
+# A function that comes to a function type by two ways is one member of it
+# FORM: AsRead
+# OPTIONS: limit=MaxFunctionsInType:3
+# RUN: pass TypeValues VerifyProgram
+# STATISTIC: FunctionTypesWithoutMembers = 0
+# STATISTIC: FunctionTypesWithOneMember = 4
+# STATISTIC: FunctionTypesWithFewMembers = 3
+# STATISTIC: FunctionTypesWithManyMembers = 4
+
+module m0 path="main.ts" displayPath="main.ts"
+entry module=m0
+function f0 name="takesTheRow" parameters=[{type=f1}, {type=f2}, {type=f3}, {type=f4}, {type=f5}, {type=f6}] results=[{type=anything}] {
+    Return v0
+}
+# CHECK-LABEL: function f0 name="takesTheRow" {{*}}parameters=[{type=function}, {type=function}, {type=function}, {type=function|f10|f11|f12}, {type=function|f11|f12}, {type=function|f12}]
+function f1 name="first" role=Signature results=[{type=anything}] functionTypes=[f13]
+function f2 name="second" role=Signature results=[{type=anything}] functionTypes=[f1]
+function f3 name="third" role=Signature results=[{type=anything}] functionTypes=[f2]
+function f4 name="fourth" role=Signature results=[{type=anything}] functionTypes=[f3]
+function f5 name="fifth" role=Signature results=[{type=anything}] functionTypes=[f4]
+function f6 name="sixth" role=Signature results=[{type=anything}] functionTypes=[f5]
+function f7 name="ofFirst" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f1] {
+    Return v0
+}
+function f8 name="ofSecond" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f2] {
+    Return v0
+}
+function f9 name="ofThird" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f3] {
+    Return v0
+}
+function f10 name="ofFourth" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f4] {
+    Return v0
+}
+function f11 name="ofFifth" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f5] {
+    Return v0
+}
+function f12 name="ofSixth" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f6] {
+    Return v0
+}
+function f13 name="ringOne" role=Signature results=[{type=anything}] functionTypes=[f14]
+function f14 name="ringTwo" role=Signature results=[{type=anything}] functionTypes=[f13]
+function f15 name="takesTheRing" parameters=[{type=f13}, {type=f14}] results=[{type=anything}] {
+    Return v0
+}
+# CHECK-LABEL: function f15 name="takesTheRing" {{*}}parameters=[{type=function}, {type=function}]
+function f16 name="left" role=Signature results=[{type=anything}] functionTypes=[f18]
+function f17 name="right" role=Signature results=[{type=anything}] functionTypes=[f18]
+function f18 name="aboveBoth" role=Signature results=[{type=anything}]
+function f19 name="ofLeftAndRight" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f16, f17] {
+    Return v0
+}
+function f20 name="takesBothWays" parameters=[{type=f16}, {type=f17}, {type=f18}] results=[{type=anything}] {
+    Return v0
+}
+# CHECK-LABEL: function f20 name="takesBothWays" {{*}}parameters=[{type=function|f19}, {type=function|f19}, {type=function|f19}]

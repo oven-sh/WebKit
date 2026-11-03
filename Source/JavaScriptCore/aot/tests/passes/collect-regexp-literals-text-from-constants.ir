@@ -1,13 +1,13 @@
 # The text of a pattern that the program puts together from constants counts like a literal: what the only store to a variable stores, concatenations of such texts, and the result of a function called with them.
 # So does a parameter of the function that creates the expression, with the arguments of its direct callers, where nothing but direct calls names the function: the walk has seen every text.
 # A text and a warning too, because the walk left something out: a variable that is stored twice, once with a text nobody knows; such a parameter of a function that is handed out as a value
-# too, which whoever holds it may call with anything. Several texts are candidates. No text, and a warning: a parameter whose only caller passes what nobody knows; two parameters with two callers each, put together:
-# alternatives of one operand are an enumeration, alternatives of two, multiplied, are mostly texts that nobody makes. An arm of a condition that the known value never takes gives no text.
+# too, which whoever holds it may call with anything. Several texts are candidates. No text, and a warning: a parameter whose only caller passes what nobody knows. Two parameters with two callers each, put together:
+# the walk is made for each caller, so what one caller passes stays together: two texts, not the four that the alternatives of both give when they are multiplied. An arm of a condition that the known value never takes gives no text.
 # FORM: AsRead
 # RUN: pipeline CollectRegExpLiterals
 # OPTIONS: only-passes=AnalyzeFlow
-# DIAGNOSTIC: RegExpWithoutCode 4
-# CHECK: regexp requests: 15
+# DIAGNOSTIC: RegExpWithoutCode 3
+# CHECK: regexp requests: 17
 # CHECK-NEXT: literal "[0-9]+" flags=- sites=f11:v0
 # CHECK-NEXT: literal "_" flags=- sites=f10:v1
 # CHECK-NEXT: evaluated "a+" flags=- sites=f6:v2
@@ -21,6 +21,8 @@
 # CHECK-NEXT: evaluated "c+[a-z]+" flags=- sites=f9:v4
 # CHECK-NEXT: evaluated "[a-z]+-[0-9]+" flags=- sites=f10:v8
 # CHECK-NEXT: evaluated "[0-9]+|d" flags=- sites=f11:v7
+# CHECK-NEXT: evaluated "[0-9]+[a-z]+" flags=- sites=f12:v4
+# CHECK-NEXT: evaluated "[a-z]+[0-9]+" flags=- sites=f12:v4
 # CHECK-NEXT: candidate "h+[0-9]+" flags=- sites=f15:v4
 # CHECK-NEXT: candidate "h+[a-z]+" flags=- sites=f15:v4
 # CHECK-NEXT: variable g0

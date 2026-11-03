@@ -1,6 +1,7 @@
 # Nothing tests a tally, so no edge narrows it. It goes up by at most a constant in each turn, and an integer counter takes each value of its range at most once: the tally is an integer within the bounds that follow.
 # FORM: Prepared
 # RUN: pass ConvertCountersToIntegers
+# STATISTIC: TalliesBounded = 2
 # CHECK: outcome: Changed
 
 module m0 path="main.js" displayPath="main.js"

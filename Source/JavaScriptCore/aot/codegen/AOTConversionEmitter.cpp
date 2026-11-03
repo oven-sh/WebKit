@@ -18,6 +18,7 @@
 #include "AOTRepresentation.h"
 #include "AOTRepresentationRules.h"
 #include "AOTRuntimeCallEmitter.h"
+#include "AOTSort.h"
 #include "AOTStubsStringLiterals.h"
 #include "B3BasicBlockInlines.h"
 #include "B3BasicBlockUtils.h"
@@ -959,7 +960,7 @@ void ConversionEmitter::placeExactIntegers()
         if (places[code] && (places[code]->block != emitted.block || places[code]->index != emitted.index))
             moved.append(code);
     }
-    std::ranges::sort(moved, [&](unsigned a, unsigned b) {
+    AOT::sort(moved, [&](unsigned a, unsigned b) {
         return std::tuple(places[a]->block->index(), places[a]->index, a) < std::tuple(places[b]->block->index(), places[b]->index, b);
     });
     for (unsigned code : moved) {

@@ -1,8 +1,10 @@
-# class Cache extends Map { set() {} }; new Cache(map): the constructor calls the `set` of the subclass for each entry of the operand.
+# class Cache extends Map { set() {} }; new Cache(map)
 # LIBRARY: own
-# RUN: valueflow-why escaped=f2
+# RUN: valueflow-why reached=f2 escaped=f2
+# CHECK: reached=f2
+# CHECK-NEXT: f2 <- CallGroup
 # CHECK: escaped=f2
-# CHECK-NEXT: n0 escaped
+# CHECK-NEXT: not held
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

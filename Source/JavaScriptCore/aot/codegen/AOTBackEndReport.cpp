@@ -126,6 +126,8 @@ static StatisticID statisticOf(B3::Counter counter)
         return StatisticID::LoopBoundsClamped;
     case B3::Counter::LoopPollsRemoved:
         return StatisticID::LoopPollsRemoved;
+    case B3::Counter::LocationsPromotedInLoops:
+        return StatisticID::LocationsPromotedInLoops;
     case B3::Counter::SumsKeptAsIntegers:
         return StatisticID::SumsKeptAsIntegers;
     case B3::Counter::KnownInductionsUsed:
@@ -136,6 +138,54 @@ static StatisticID statisticOf(B3::Counter counter)
         return StatisticID::ColdUsesKeptThroughSecondSplit;
     case B3::Counter::ColdUsesKeptThroughSecondSplitBetweenDefs:
         return StatisticID::ColdUsesKeptThroughSecondSplitBetweenDefs;
+    case B3::Counter::MovesVisitedForWidths:
+        return StatisticID::MovesVisitedForWidths;
+    case B3::Counter::PredecessorsVisitedForRareBlocks:
+        return StatisticID::PredecessorsVisitedForRareBlocks;
+    case B3::Counter::DeadValueReleaseSteps:
+        return StatisticID::DeadValueReleaseSteps;
+    case B3::Counter::RangesComparedWithStackCells:
+        return StatisticID::RangesComparedWithStackCells;
+    case B3::Counter::LikelyDominatorWalkSteps:
+        return StatisticID::LikelyDominatorWalkSteps;
+    case B3::Counter::ClobberPointsVisitedForCalls:
+        return StatisticID::ClobberPointsVisitedForCalls;
+    case B3::Counter::PhiPlacementSteps:
+        return StatisticID::PhiPlacementSteps;
+    case B3::Counter::BlocksVisitedToPassTmpsOnStack:
+        return StatisticID::BlocksVisitedToPassTmpsOnStack;
+    case B3::Counter::MemoryPromotionAccessesVisited:
+        return StatisticID::MemoryPromotionAccessesVisited;
+    case B3::Counter::LoopsConsideredForMemoryPromotion:
+        return StatisticID::LoopsConsideredForMemoryPromotion;
+    case B3::Counter::LoopsWithoutPreheader:
+        return StatisticID::LoopsWithoutPreheader;
+    case B3::Counter::LoopsWithFences:
+        return StatisticID::LoopsWithFences;
+    case B3::Counter::LocationsLoadedAndStoredInLoops:
+        return StatisticID::LocationsLoadedAndStoredInLoops;
+    case B3::Counter::LocationsOnlyLoadedInLoops:
+        return StatisticID::LocationsOnlyLoadedInLoops;
+    case B3::Counter::NotPromotedLoopVariantAddress:
+        return StatisticID::NotPromotedLoopVariantAddress;
+    case B3::Counter::NotPromotedAddressLoadedInLoop:
+        return StatisticID::NotPromotedAddressLoadedInLoop;
+    case B3::Counter::NotPromotedAddressNotHoisted:
+        return StatisticID::NotPromotedAddressNotHoisted;
+    case B3::Counter::NotPromotedClobberedOnRarePaths:
+        return StatisticID::NotPromotedClobberedOnRarePaths;
+    case B3::Counter::NotPromotedClobberedOnLikelyPaths:
+        return StatisticID::NotPromotedClobberedOnLikelyPaths;
+    case B3::Counter::NotPromotedMayAliasStores:
+        return StatisticID::NotPromotedMayAliasStores;
+    case B3::Counter::NotPromotedNotGuaranteedToExecute:
+        return StatisticID::NotPromotedNotGuaranteedToExecute;
+    case B3::Counter::NotPromotedImmutable:
+        return StatisticID::NotPromotedImmutable;
+    case B3::Counter::NotPromotedCallsOnLikelyPaths:
+        return StatisticID::NotPromotedCallsOnLikelyPaths;
+    case B3::Counter::NotPromotedHandledByClient:
+        return StatisticID::NotPromotedHandledByClient;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

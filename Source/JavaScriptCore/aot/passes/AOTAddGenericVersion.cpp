@@ -264,13 +264,17 @@ struct GenericVersionBuilder {
             return false;
         Vector<ValueID, 8> dropped;
         const CompactList<ValueID>& entryParameters = function.at(entryBlock).parameters;
+        ParametersLeftToBody leftToBody(program, function);
         for (const CheckSite& site : sites) {
             const Value& check = function.at(site.check);
-            auto isHandedOnParameter = [&] {
-                return entryParameters.contains(sameObjectThroughCasts(function, check.valueOperand()).valueInFrontOfFacts()) && !isReliedOn(site.check);
+            auto isParameterThatNeedNotPass = [&] {
+                size_t parameter = entryParameters.find(sameObjectThroughCasts(function, check.valueOperand()).valueInFrontOfFacts());
+                if (parameter == notFound)
+                    return false;
+                return !isReliedOn(site.check) || (check.cause() != CheckCause::MayFail && leftToBody.contains(parameter, types.at(check.expectedType().predicted())));
             };
             bool leavesCodeAsItIs = check.cause() != CheckCause::MayFail && !changesCodeWhereProven(types.at(check.expectedType().predicted()));
-            if (leavesCodeAsItIs || isComparedByBitsAtEachUse(site.check) || isListedTextThatIsOnlyCompared(site.check) || isHandedOnParameter())
+            if (leavesCodeAsItIs || isComparedByBitsAtEachUse(site.check) || isListedTextThatIsOnlyCompared(site.check) || isParameterThatNeedNotPass())
                 dropped.append(site.check);
         }
         if (dropped.isEmpty())
@@ -750,6 +754,68 @@ bool mayTurnValueAway(const Program& program, const Function& function, const Va
 bool changesCodeWhereProven(const Type& checked)
 {
     return !checked.anyObject;
+}
+
+bool isMetByOtherObjects(const Program& program, const Type& checked)
+{
+    std::span<const LayoutID> layouts = membersOf(program, checked);
+    return !layouts.empty() && std::ranges::all_of(layouts, [&](LayoutID layout) { return program.at(layout).kind == LayoutKind::Record; });
+}
+
+bool ParametersLeftToBody::contains(size_t entryParameter, const Type& checked)
+{
+    if (m_function.thisParameterIndex() == entryParameter || !isMetByOtherObjects(m_program, checked))
+        return false;
+    if (!m_isFirstValueOfLoopVariable)
+        findFirstValuesOfLoopVariables();
+    return m_isFirstValueOfLoopVariable->get(entryParameter);
+}
+
+void ParametersLeftToBody::findFirstValuesOfLoopVariables()
+{
+    const CompactList<ValueID>& entryParameters = m_function.at(entryBlock).parameters;
+    m_isFirstValueOfLoopVariable.emplace(entryParameters.size());
+    CFG cfg(m_function);
+    if (!cfg.hasCycle())
+        return;
+    auto inFrontOfChecks = [&](ValueID value) {
+        for (;;) {
+            value = sameObjectThroughCasts(m_function, value).valueInFrontOfFacts();
+            if (m_function.at(value).opcode != Opcode::Check)
+                return value;
+            value = m_function.at(value).valueOperand();
+        }
+    };
+    for (BlockID head : cfg.reversePostOrder()) {
+        std::span<const Edge> incomingEdges = cfg.incomingEdges(head);
+        auto comesAround = [&](Edge edge) { return cfg.reversePostOrderIndex(edge.from) >= cfg.reversePostOrderIndex(head); };
+        if (std::ranges::none_of(incomingEdges, comesAround) || std::ranges::any_of(incomingEdges, &Edge::isHandlerEdge))
+            continue;
+        for (uint32_t index = 0; index < m_function.at(head).parameters.size(); ++index) {
+            auto argumentOn = [&](Edge edge) {
+                IncomingValue incoming = incomingValueOf(m_function, edge, index);
+                return incoming.kind == IncomingValue::Kind::Argument ? inFrontOfChecks(incoming.argument) : ValueID();
+            };
+            // Two of the values that come around tell of any value whether another one does.
+            ValueID comingAround;
+            ValueID anotherComingAround;
+            for (Edge edge : incomingEdges) {
+                ValueID argument = comesAround(edge) ? argumentOn(edge) : ValueID();
+                if (!argument || argument == m_function.at(head).parameters[index] || argument == comingAround)
+                    continue;
+                (comingAround ? anotherComingAround : comingAround) = argument;
+                if (anotherComingAround)
+                    break;
+            }
+            if (!comingAround)
+                continue;
+            for (Edge edge : incomingEdges) {
+                size_t entryParameter = comesAround(edge) ? notFound : entryParameters.find(argumentOn(edge));
+                if (entryParameter != notFound && (anotherComingAround || comingAround != entryParameters[entryParameter]))
+                    m_isFirstValueOfLoopVariable->set(entryParameter);
+            }
+        }
+    }
 }
 
 namespace {
@@ -2139,7 +2205,7 @@ BlockID ensureCallOfGenericVersion(FunctionPassContext& pass, IRBuilder& builder
 }
 
 // A test of the state of an object that fails leads into generic code for what follows it, which the function holds for itself.
-PassOutcome restartInGenericVersion(FunctionPassContext& pass)
+static PassOutcome restartWhereTestsFail(FunctionPassContext& pass)
 {
     Function& function = pass.function;
     FunctionID genericVersion = findGenericVersionToRestartIn(pass);
@@ -2169,6 +2235,69 @@ PassOutcome restartInGenericVersion(FunctionPassContext& pass)
     // The graph is that of the last search, which has edited nothing.
     pass.keptAnalyses = controlFlowAnalyses;
     return PassOutcome::Changed;
+}
+
+// The class of a constructor function begins with its first object, and the guard of the function's `prototype` holds from then on. Whoever asks for that guard alone is about to make an object.
+// Where the object has been taken away on both sides of the test nobody begins the class, and the test fails for ever. So its failing side begins the class.
+// This comes behind the rounds: a test whose two ways meet has gone by then, and with this on one of them they would not meet.
+static PassOutcome beginClassesThatNobodyBegins(FunctionPassContext& pass)
+{
+    if (!pass.analyses.opcodesOfValues().contains(Opcode::AreMembersUnchanged))
+        return PassOutcome::Unchanged;
+    Function& function = pass.function;
+    const Program& program = pass.program;
+    PropertyKeyID prototype = program.keyOf(BuiltinNames::prototype);
+    auto beginsClass = [&](BlockID block, LayoutID classLayout) {
+        constexpr unsigned mostBlocksFollowed = 4;
+        for (unsigned followed = 0; followed < mostBlocksFollowed; ++followed) {
+            for (ValueID id : function.at(block).values) {
+                const Value& value = function.at(id);
+                if ((value.opcode == Opcode::NewObject && declaredLayoutOf(program, value.layout()) == classLayout) || (value.opcode == Opcode::BeginMemberGuards && value.layout() == classLayout))
+                    return true;
+            }
+            if (function.at(block).terminator.kind != TerminatorKind::Jump)
+                return false;
+            block = function.at(block).terminator.next().block;
+        }
+        return false;
+    };
+
+    Vector<std::pair<Edge, LayoutID>, 4> failingEdges;
+    for (BlockID block : pass.analyses.cfg().reversePostOrder()) {
+        const Terminator& terminator = function.at(block).terminator;
+        if (terminator.kind != TerminatorKind::Branch)
+            continue;
+        const Value& test = function.at(terminator.conditionOperand());
+        if (test.opcode != Opcode::AreMembersUnchanged || test.conditions().size() != 1)
+            continue;
+        MemberConditionRecord condition = *test.conditions().begin();
+        if (condition.kind != MemberConditionKind::MemberUnchanged || condition.side != ClassSide::Static || condition.key != prototype || !program.at(condition.layout).has(LayoutFlags::IsConstructorFunction))
+            continue;
+        if (!beginsClass(terminator.notTaken().block, condition.layout))
+            failingEdges.append({ Edge { block, 1 }, condition.layout });
+    }
+    if (failingEdges.isEmpty())
+        return PassOutcome::Unchanged;
+
+    IRBuilder builder(pass.analyses.context(), function, pass.types, &pass.analyses);
+    for (auto [edge, classLayout] : failingEdges) {
+        builder.setOrigin(function.at(edge.from).terminator.origin());
+        BlockID added = builder.splitEdge(edge, function.at(edge.from).handler);
+        Value begin = IRBuilder::make(Opcode::BeginMemberGuards);
+        begin.setLayout(classLayout);
+        builder.insertBefore(pointBeforeTerminatorOf(function, added), WTF::move(begin));
+        builder.applyInsertions();
+    }
+    pass.keptAnalyses = { };
+    return PassOutcome::Changed;
+}
+
+PassOutcome restartInGenericVersion(FunctionPassContext& pass)
+{
+    PassOutcome outcome = restartWhereTestsFail(pass);
+    if (pass.isBehindRounds)
+        outcome |= beginClassesThatNobodyBegins(pass);
+    return outcome;
 }
 
 } } } // namespace JSC::AOT::Typed

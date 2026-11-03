@@ -14,6 +14,7 @@
 #include <span>
 #include <tuple>
 #include <wtf/BitVector.h>
+#include <wtf/OptionSet.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -38,11 +39,17 @@ bool holdsOnlyKnownFunctions(const Type&);
 // Nothing is left out of the type of a value that may be any function where a test for one function refuses it. Such a test may refuse a closure that is no longer as it was created.
 bool mayRefuseChangedClosures(const Type& typeOfTestedValue);
 
+// What a test may refuse although it is what the test is for. That hangs on the type of the tested value, so two tests of one value for one type may differ in it.
+enum class FalseRefusal : uint8_t {
+    ChangedClosure = 1 << 0,
+    UntestableBuiltin = 1 << 1,
+};
+
 struct BranchOnTypeTest {
     ValueID subject;
     TypeID testedType;
     BlockID block;
-    bool mayRefuseChangedClosures { false };
+    OptionSet<FalseRefusal> falseRefusals;
 
     auto test() const { return std::tuple { subject.index(), testedType.index() }; }
 };
@@ -158,6 +165,7 @@ KnownBoolean evaluateConditionByDefinitions(FunctionAnalyses&, BlockID branching
 KnownBoolean evaluateCondition(FunctionAnalyses&, const TypeTestBranches&, SlotValueTests&, TestsOfSameValues&, BlockID branchingBlock);
 std::optional<uint32_t> decidedTargetOf(const Terminator&, KnownValue tested);
 
+bool canDecideTerminator(const Program&, const Function&, TypeArena&, Edge chosen);
 void decideTerminator(IRBuilder&, BlockID, uint32_t targetIndex);
 // A test is decided against what was expected of it: the arm that was to run seldom runs whenever the test does, and so does what only that arm leads to.
 void raiseFrequenciesBehind(FunctionAnalyses&, Function&, Edge decided);

@@ -128,7 +128,7 @@ bool carriesBrandOfClass(const Program&, LayoutID);
 bool isCreatedWithProperties(const Program&, LayoutID, BuiltinClassID builtinBase);
 // HasNoExtraProperties can distinguish such an object that has only those properties from one that has gained others.
 bool hasTestForOtherNames(const Program&, LayoutID);
-bool hasOnlyCompiledBases(const Program&, LayoutID);
+BitVector findLayoutsWithOnlyCompiledBases(const Program&);
 bool isEvaluatedOnce(const Program&, const Layout&);
 bool guardsAreNeverSet(const Program&, const Layout&);
 bool hasOnePrototypeObject(const Program&, LayoutID allocatedClass);

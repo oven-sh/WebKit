@@ -15,6 +15,10 @@
 #include "AOTStringArena.h"
 #include "AOTTypeArena.h"
 
+#if COMPILER(CLANG)
+#pragma clang attribute push(__attribute__((minsize)), apply_to = function)
+#endif
+
 namespace JSC { namespace AOT { namespace Typed {
 
 static BitVector findLayoutSetsNaming(const Program& program, const BitVector& layouts, const ParallelLoops& loops)
@@ -245,5 +249,9 @@ BitVector computeLayoutsOfDictionaries(const ValueFlowResultInputs& inputs, Type
 }
 
 } } } // namespace JSC::AOT::Typed
+
+#if COMPILER(CLANG)
+#pragma clang attribute pop
+#endif
 
 #endif // ENABLE(AOT)

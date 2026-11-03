@@ -84,6 +84,17 @@ static bool findsNamesAtRunTime(const Module& module)
     });
 }
 
+// A mock that stands in place of such a module answers for every name, also for one that the module lacks.
+static BitVector findModulesWithVariableThatHoldsMock(const Program& program)
+{
+    BitVector modules(program.modules.size());
+    for (const Variable& variable : program.variables) {
+        if (variable.flags.contains(VariableFlags::HoldsMock))
+            modules.quickSet(variable.module.index());
+    }
+    return modules;
+}
+
 static bool hasRequiredIDs(const Module& module)
 {
     auto isSet = [](auto id) { return !!id; };
@@ -133,7 +144,7 @@ static bool hasValidInterop(const Program& program, const Module& module)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static bool hasOneBinding(const Program& program, const ModuleExport& entry)
+static bool hasOneBinding(const Program& program, const ModuleExport& entry, const BitVector& modulesWithVariableThatHoldsMock)
 {
     switch (entry.kind) {
     case ModuleExportKind::Variable:
@@ -141,7 +152,7 @@ static bool hasOneBinding(const Program& program, const ModuleExport& entry)
     case ModuleExportKind::Namespace:
         return entry.module && !entry.variable && !entry.importName;
     case ModuleExportKind::Indirect:
-        return entry.module && entry.importName && !entry.variable && entry.phase == ImportPhase::Evaluation && findsNamesAtRunTime(program.at(entry.module));
+        return entry.module && entry.importName && !entry.variable && entry.phase == ImportPhase::Evaluation && (findsNamesAtRunTime(program.at(entry.module)) || modulesWithVariableThatHoldsMock.quickGet(entry.module.index()));
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -213,7 +224,7 @@ static bool hasValidBundlerHelperFlag(const Program& program, const Module& modu
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static std::optional<InternalErrorKind> findModuleError(const Program& program, const Module& module, bool hasValidBody)
+static std::optional<InternalErrorKind> findModuleError(const Program& program, const Module& module, bool hasValidBody, const BitVector& modulesWithVariableThatHoldsMock)
 {
     ModuleKindRules rules = rulesOf(module.kind);
     bool isLibrary = module.flags.contains(ModuleFlags::IsLibrary);
@@ -233,7 +244,7 @@ static std::optional<InternalErrorKind> findModuleError(const Program& program, 
         && (!module.typeAttribute || isUncompiledCode(module))
         && !!module.namespaceLayout == (module.kind == ModuleKind::SourceText);
     auto isBound = [&](const ModuleExport& entry) {
-        return hasOneBinding(program, entry);
+        return hasOneBinding(program, entry, modulesWithVariableThatHoldsMock);
     };
     if (!hasValidBody || !hasRequiredIDs(module) || !hasValidLists || !hasValidLibraryFlag || !hasValidImportOnlyFlag || !hasValidFlagsOfFiles || !hasValidExportsVariable(program, module) || !hasValidRuntimeModule || !hasValidLinks
         || !hasValidBundlerHelperFlag(program, module) || !hasValidInterop(program, module) || !std::ranges::all_of(module.exports, isBound))
@@ -250,8 +261,9 @@ void ProgramVerifier::verifyModules()
     if (!isAsRead())
         return;
     auto& modules = m_program.modules;
+    BitVector modulesWithVariableThatHoldsMock = findModulesWithVariableThatHoldsMock(m_program);
     Vector<uint32_t> invalidModules = findIndicesInParallel(m_build.parallelLoops(), modules.size(), [&](unsigned index) {
-        return findModuleError(m_program, modules[index], hasValidBody(modules[index])).has_value();
+        return findModuleError(m_program, modules[index], hasValidBody(modules[index]), modulesWithVariableThatHoldsMock).has_value();
     });
     for (uint32_t index : invalidModules)
         verifyModule(ModuleID(index), modules[index]);
@@ -274,7 +286,7 @@ void ProgramVerifier::verifyModules()
 
 void ProgramVerifier::verifyModule(ModuleID id, const Module& module)
 {
-    if (auto kind = findModuleError(m_program, module, hasValidBody(module)))
+    if (auto kind = findModuleError(m_program, module, hasValidBody(module), findModulesWithVariableThatHoldsMock(m_program)))
         fail({ .kind = *kind, .count = id.index() });
 }
 

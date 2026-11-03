@@ -401,6 +401,15 @@ struct ImageAddressPlaces {
 JS_EXPORT_PRIVATE ImageAddressPlaces addressPlacesOf(std::span<const uint8_t> image);
 JS_EXPORT_PRIVATE void relocateImage(std::span<uint8_t> image, uint64_t address);
 
+// What copyStringHeadersBehind() reads and where it writes. Whoever writes the files of images that every process loads above one another may lay the headers there:
+// then nothing is written when they are loaded, and the pages stay those of the file.
+struct StringHeadersBehind {
+    size_t offsetInFirstImage;
+    size_t offsetInImage;
+    size_t size;
+};
+JS_EXPORT_PRIVATE std::optional<StringHeadersBehind> placeOfStringHeadersBehind(std::span<const uint8_t> firstImage, std::span<const uint8_t> image);
+
 #if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
 [[nodiscard]] inline bool relocateLoadedImage(std::span<const uint8_t>) { return true; }
 [[nodiscard]] inline bool copyStringHeadersBehind(std::span<const uint8_t>, std::span<const uint8_t>) { return false; }

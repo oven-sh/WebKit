@@ -47,6 +47,7 @@ public:
         IsOfOneObject = 1 << 0,
         IsBesideExtraProperties = 1 << 1,
     };
+    using KeyOrderEntries = Vector<uint16_t, 16>;
 
     template<typename CellType, SubspaceAccess mode>
     static GCClient::IsoSubspace* subspaceFor(VM& vm)
@@ -64,6 +65,7 @@ public:
         Structure* extraPropertiesStructure { nullptr };
         JSObject* heldExtraProperties { nullptr };
         std::optional<std::span<const uint16_t>> outOfLineKeyOrder;
+        bool isFoundByKeyOrder { true };
         // With a value, the order is that of one object. An entry from the number of fields on then stands for one of these extra keys, in this order: the extra keys up to that one come before what follows the entry.
         std::optional<std::span<const RefPtr<UniquedStringImpl>>> keysNamedByOrder;
     };
@@ -143,7 +145,7 @@ public:
     {
         ASSERT(hasOutOfLineKeyOrder() && !hasKeyOrderOfOneObject());
         RareData* rareData = const_cast<RareData*>(this->rareData());
-        Vector<uint16_t>& entries = rareData->outOfLineKeyOrder;
+        KeyOrderEntries& entries = rareData->outOfLineKeyOrder;
         if (rareData->keyOrderHasEnded || entries.size() == entries.capacity())
             return false;
         entries.append(entry);
@@ -155,6 +157,16 @@ public:
         if (hasOutOfLineKeyOrder())
             const_cast<RareData*>(rareData())->keyOrderHasEnded = true;
     }
+    bool keyOrderWasFoundAgain() const
+    {
+        ASSERT(hasOutOfLineKeyOrder());
+        return rareData()->keyOrderWasFoundAgain;
+    }
+    void didFindKeyOrderAgain() const
+    {
+        ASSERT(hasOutOfLineKeyOrder());
+        const_cast<RareData*>(rareData())->keyOrderWasFoundAgain = true;
+    }
     // Such a Structure belongs to one object, which changes the order in place.
     bool hasKeyOrderOfOneObject() const { return m_heldKeyOrder.contains(HeldKeyOrder::IsOfOneObject); }
     std::span<const RefPtr<UniquedStringImpl>> keysNamedByOrder() const
@@ -162,7 +174,7 @@ public:
         ASSERT(hasKeyOrderOfOneObject());
         return rareData()->keysNamedByOrder.span();
     }
-    void setKeyOrderOfOneObject(Vector<uint16_t>&& entries, Vector<RefPtr<UniquedStringImpl>>&& keysNamedByOrder) const
+    void setKeyOrderOfOneObject(KeyOrderEntries&& entries, Vector<RefPtr<UniquedStringImpl>>&& keysNamedByOrder) const
     {
         ASSERT(hasKeyOrderOfOneObject());
         RareData* rareData = const_cast<RareData*>(this->rareData());
@@ -240,10 +252,11 @@ private:
     struct RareData {
         WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(RareData);
 
-        Vector<uint16_t> outOfLineKeyOrder;
+        KeyOrderEntries outOfLineKeyOrder;
         Vector<RefPtr<UniquedStringImpl>> keysNamedByOrder;
         WriteBarrier<JSObject> heldExtraProperties;
         bool keyOrderHasEnded { false };
+        bool keyOrderWasFoundAgain { false };
     };
 
     struct NamedStructureAndRareData {

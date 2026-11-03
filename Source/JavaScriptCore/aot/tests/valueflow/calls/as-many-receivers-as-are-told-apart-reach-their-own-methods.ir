@@ -1,6 +1,6 @@
 # class A { m() { this.x } }  class B { m() { this.x } }  class C { m() { this.x } }  function run(o) { o.m() }  run(new A()); run(new B()); run(new C())
-# As many receivers at the call as the analysis tells apart: each method sees the instances of its own class alone. The pair with one receiver more than the limit is
-# receivers-past-those-told-apart-reach-every-method.ir.
+# As many receivers at the call as the analysis tells apart one by one: each method sees the instances of its own class alone. The pair with one receiver more than the limit is
+# receivers-past-those-told-apart-one-by-one-reach-their-own-methods.ir.
 # OPTIONS: limit=MaxValueFlowMembersToldApart:3
 # RUN: valueflow-why values=f7:v2 values=f2:v1 values=f4:v1 values=f6:v1
 # CHECK: values=f7:v2
@@ -11,4 +11,4 @@
 # CHECK: operand 0 {{*}} 1 members: [[b]]
 # CHECK: values=f6:v1
 # CHECK: operand 0 {{*}} 1 members: [[c]]
-# PROGRAM-OF: receivers-past-those-told-apart-reach-every-method.ir
+# PROGRAM-OF: receivers-past-those-told-apart-one-by-one-reach-their-own-methods.ir

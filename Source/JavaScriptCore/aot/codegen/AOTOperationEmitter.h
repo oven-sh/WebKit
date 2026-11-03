@@ -43,6 +43,8 @@ struct CallOptions {
     uint32_t keptCalleePlusOne { 0 };
     bool constructs { false };
     bool isTailCall { false };
+    // As the program sees it the caller waits or has returned, so a stack trace lists what the callee runs without it.
+    bool callerHasLeft { false };
     bool callsOwnFunctionObject { false };
     bool isOnRarePath { false };
     bool accessesCollectorState { false };

@@ -43,6 +43,7 @@ bool hasOnlyOrdinaryLookupsOnChain(JSObject* base);
 
 // A leaf operation cannot collect: a store by key makes a Structure only out of the block that the allocator holds.
 bool hasStructureAtHand(VM&);
+bool canCreateFieldInSlot(VM&, const Object&, const FieldData&);
 
 struct NamedAccess {
     CachedName name() const { return { ident.impl(), number }; }

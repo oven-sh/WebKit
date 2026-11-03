@@ -11,6 +11,8 @@
 #include "AOTVarint.h"
 #include "CodeType.h"
 #include "LineColumn.h"
+#include <compare>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <span>
@@ -80,7 +82,12 @@ struct FunctionTraceData {
     uint16_t recordsCalleeOnceRenamed : 1;
 
     TraceVisibility visibility() const { return static_cast<TraceVisibility>(visibilityBits); }
-    StackTraceBuiltinKind builtinKind() const { return static_cast<StackTraceBuiltinKind>(builtinKindBits); }
+    // A function that is written inside a helper of the compiler implements no built-in. No other function that implements none has the kind of a constructor.
+    static constexpr uint16_t kindBitsInsideHelperOfCompiler = 2;
+    bool isInsideHelperOfCompiler() const { return !implementsBuiltin && builtinKindBits == kindBitsInsideHelperOfCompiler; }
+    // Plain Bun keeps it in a module of its own, and a stack trace lists it like any other function.
+    bool isHelperOfCompiler() const { return implementsBuiltin ? !builtinKindBits : isInsideHelperOfCompiler(); }
+    StackTraceBuiltinKind builtinKind() const { return static_cast<StackTraceBuiltinKind>(isInsideHelperOfCompiler() ? 0 : builtinKindBits); }
     CodeType codeType() const { return static_cast<CodeType>(codeTypeBits); }
 };
 static_assert(sizeof(FunctionTraceData) == 2 && isImageRecord<FunctionTraceData>);
@@ -363,6 +370,64 @@ struct TextPrintedInPlaceOfModule {
 };
 static_assert(sizeof(TextPrintedInPlaceOfModule) == 8 && isImageRecord<TextPrintedInPlaceOfModule>);
 
+// Module::typesCutFromFunctionText: what the text that is kept of a file lacks of the file, in the order of the file. Every number is a varint.
+//   How far the cut starts behind the end of the cut before it; its size; and behind a size of nothing, how much the text has there that the file lacks.
+class CutsFromFunctionText {
+public:
+    explicit CutsFromFunctionText(std::span<const uint8_t> packed)
+    {
+        constexpr uint64_t largest = std::numeric_limits<uint32_t>::max();
+        auto takeNumber = [&] {
+            uint64_t number = 0;
+            for (unsigned shift = 0; !packed.empty() && shift < 64; shift += 7) {
+                uint8_t byte = packed.front();
+                packed = packed.subspan(1);
+                number |= static_cast<uint64_t>(byte & 0x7f) << shift;
+                if (!(byte & 0x80))
+                    return number;
+            }
+            m_isValid = false;
+            return number;
+        };
+        for (uint64_t end = 0, sizeOfCutsInFront = 0; !packed.empty();) {
+            uint64_t distance = takeNumber();
+            uint64_t size = takeNumber();
+            uint64_t added = size ? 0 : takeNumber();
+            if (distance > largest - end || size > largest - end - distance || added > largest)
+                m_isValid = false;
+            if (!m_isValid)
+                break;
+            uint64_t start = end + distance;
+            m_cuts.append({ start, size, added, sizeOfCutsInFront });
+            end = start + size;
+            sizeOfCutsInFront += size - added;
+        }
+    }
+
+    // No number is cut short, and every cut lies in a file. Then what stands in front of something in the file does so in the text.
+    bool isValid() const { return m_isValid; }
+    bool isEmpty() const { return m_cuts.isEmpty(); }
+
+    uint32_t inText(uint32_t offsetInFile) const
+    {
+        auto next = std::ranges::lower_bound(m_cuts, static_cast<uint64_t>(offsetInFile), { }, &Cut::start);
+        if (next == m_cuts.begin())
+            return offsetInFile;
+        const Cut& last = *std::prev(next);
+        return static_cast<uint32_t>(std::min<uint64_t>(offsetInFile - last.sizeOfCutsInFront - std::min<uint64_t>(last.size, offsetInFile - last.start) + last.added, std::numeric_limits<uint32_t>::max()));
+    }
+
+private:
+    struct Cut {
+        uint64_t start;
+        uint64_t size;
+        uint64_t added;
+        uint64_t sizeOfCutsInFront;
+    };
+    Vector<Cut> m_cuts;
+    bool m_isValid { true };
+};
+
 // The pieces of a module ascend by their starts, and one that holds others stands in front of them. Every number is a varint.
 //   How far the piece starts behind the start of the piece before it; its size; then either
 //   the size of what is printed, doubled, and those bytes, or
@@ -378,52 +443,116 @@ struct TextPrintedInPlace {
         return pieces;
     }
 
-    static void appendThoseThatStartIn(Vector<TextPrintedInPlace>& pieces, std::span<const uint8_t> bytes, uint64_t from, uint64_t to)
+    // The first piece that breaks the format, if one does, as far as it could be read, and which it is. Such a piece is left out. Those behind it are read, unless its bytes do not say where it ends.
+    struct Broken {
+        size_t index;
+        // Or it reaches out of every file.
+        bool isCutShort;
+        uint32_t start { 0 };
+        uint32_t end { 0 };
+        uint32_t startOfCopied { 0 };
+        uint32_t endOfCopied { 0 };
+    };
+    static std::optional<Broken> appendThoseThatStartIn(Vector<TextPrintedInPlace>& pieces, std::span<const uint8_t> bytes, uint64_t from, uint64_t to)
     {
+        constexpr uint64_t largest = std::numeric_limits<uint32_t>::max();
         const uint8_t* cursor = bytes.data();
         const uint8_t* end = std::to_address(bytes.end());
-        // A number takes ten bytes at the most, and the last piece may be cut short in a file that somebody has written by hand.
+        // A number takes ten bytes at the most.
+        bool isCutShort = false;
         auto readNumber = [&] {
             uint64_t number = 0;
             for (unsigned shift = 0; cursor < end && shift < 64; shift += 7) {
                 uint8_t byte = *cursor++;
                 number |= static_cast<uint64_t>(byte & 0x7f) << shift;
                 if (!(byte & 0x80))
-                    break;
+                    return number;
             }
+            isCutShort = true;
             return number;
         };
+        std::optional<Broken> firstBroken;
+        auto note = [&](Broken broken) {
+            if (!firstBroken)
+                firstBroken = broken;
+        };
         uint64_t start = 0;
-        while (cursor < end) {
-            start += readNumber();
+        for (size_t index = 0; cursor < end; ++index) {
+            uint64_t distance = readNumber();
             uint64_t size = readNumber();
             uint64_t printed = readNumber();
-            if (start + size > std::numeric_limits<uint32_t>::max() || start >= to)
+            if (isCutShort || distance > largest - start) {
+                note({ index, true });
                 break;
-            TextPrintedInPlace piece { static_cast<uint32_t>(start), static_cast<uint32_t>(start + size) };
+            }
+            start += distance;
+            if (start >= to)
+                break;
+            bool reachesOut = size > largest - start;
+            TextPrintedInPlace piece { static_cast<uint32_t>(start), static_cast<uint32_t>(reachesOut ? start : start + size) };
             if (printed & 1) {
-                int64_t startOfCopied = static_cast<int64_t>(start) - zigZagDecode(readNumber());
-                if (startOfCopied < 0 || static_cast<uint64_t>(startOfCopied) + (printed >> 2) > std::numeric_limits<uint32_t>::max())
+                int64_t inFront = zigZagDecode(readNumber());
+                uint64_t sizeOfCopied = printed >> 2;
+                if (isCutShort) {
+                    note({ index, true, piece.start, piece.end });
                     break;
-                // An initializer ends in front of the name that it replaces, and an operand is smaller than its operator. So to follow the copies comes to an end.
-                uint64_t endOfCopied = static_cast<uint64_t>(startOfCopied) + (printed >> 2);
-                bool isInFront = endOfCopied <= start;
-                bool isBeneath = static_cast<uint64_t>(startOfCopied) >= start && endOfCopied <= start + size && (printed >> 2) < size;
-                if (!isInFront && !isBeneath)
+                }
+                reachesOut = reachesOut || inFront > static_cast<int64_t>(start) || inFront < -static_cast<int64_t>(largest) || sizeOfCopied > largest
+                    || static_cast<uint64_t>(static_cast<int64_t>(start) - inFront) + sizeOfCopied > largest;
+                if (reachesOut) {
+                    note({ index, true, piece.start, piece.end });
                     continue;
+                }
                 piece.isCopy = true;
                 piece.isInBrackets = printed & 2;
-                piece.startOfCopied = static_cast<uint32_t>(startOfCopied);
-                piece.endOfCopied = static_cast<uint32_t>(startOfCopied + (printed >> 2));
+                piece.startOfCopied = static_cast<uint32_t>(static_cast<int64_t>(start) - inFront);
+                piece.endOfCopied = static_cast<uint32_t>(piece.startOfCopied + sizeOfCopied);
+                if (!piece.copiesWhatLiesInFrontOrBeneath()) {
+                    if (!piece.copiesAllOfItself())
+                        note({ index, false, piece.start, piece.end, piece.startOfCopied, piece.endOfCopied });
+                    continue;
+                }
             } else {
-                if (printed >> 1 > static_cast<uint64_t>(end - cursor))
+                if (printed >> 1 > static_cast<uint64_t>(end - cursor)) {
+                    note({ index, true, piece.start, piece.end });
                     break;
+                }
                 piece.bytes = { cursor, static_cast<size_t>(printed >> 1) };
                 cursor += printed >> 1;
+                if (reachesOut) {
+                    note({ index, true, piece.start, piece.end });
+                    continue;
+                }
             }
             if (start >= from)
                 pieces.append(piece);
         }
+        return firstBroken;
+    }
+
+    // An initializer ends in front of the name that it replaces, and an operand is smaller than its operator. So to follow the copies comes to an end:
+    // the end of what is followed never grows, and where it stays, the size shrinks.
+    bool copiesWhatLiesInFrontOrBeneath() const
+    {
+        if (start > end || startOfCopied > endOfCopied)
+            return false;
+        bool isInFront = endOfCopied <= start;
+        bool isBeneath = startOfCopied >= start && endOfCopied <= end && endOfCopied - startOfCopied < end - start;
+        return isInFront || isBeneath;
+    }
+
+    // Of `a ? b : c` with a constant `a`, `b` is printed, and `b` may be all that the text keeps of it. Then the text reads as `bun run` has it, and the piece says nothing.
+    // The cuts keep what stands in front of something in front of it, so this is all that they can do to a piece that keeps the rule above.
+    bool copiesAllOfItself() const { return isCopy && startOfCopied == start && endOfCopied == end; }
+
+    TextPrintedInPlace inText(const CutsFromFunctionText& cuts) const
+    {
+        TextPrintedInPlace moved = *this;
+        moved.start = cuts.inText(start);
+        moved.end = cuts.inText(end);
+        moved.startOfCopied = cuts.inText(startOfCopied);
+        moved.endOfCopied = cuts.inText(endOfCopied);
+        return moved;
     }
 
     void appendTo(Vector<uint8_t>& bytes, uint32_t startOfPieceInFront) const
@@ -476,15 +605,10 @@ static constexpr uint8_t lineBreakWithIndentation = 6;
 static constexpr uint8_t textWithPieceOfItsOwn = 7;
 static constexpr uint8_t writtenTextAsEscapes = 8;
 
+// The piece that is to be printed next, where there is one; then this goes on with what is left of `written` and `differences`.
 template<typename Character>
-void appendTextFromPrinterWithoutMarks(Vector<Character>& printed, std::span<const Character> text, const TextPrintedInPlace& piece, std::span<const TextPrintedInPlace> pieces)
+const TextPrintedInPlace* appendTextFromPrinterUpToInnerPiece(Vector<Character>& printed, std::span<const Character> text, const TextPrintedInPlace& piece, std::span<const Character>& written, std::span<const uint8_t>& differences, std::span<const TextPrintedInPlace> pieces)
 {
-    if (piece.bytes.size() < 2 || piece.bytes[1] != markOfDifferences) {
-        printed.append(byteCast<Character>(piece.bytes.subspan(1, piece.bytes.size() - std::min<size_t>(piece.bytes.size(), 2))));
-        return;
-    }
-    std::span<const Character> written = text.subspan(piece.start, piece.end - piece.start);
-    std::span<const uint8_t> differences = piece.bytes.subspan(2);
     auto takeNumber = [&] {
         uint64_t number = 0;
         for (unsigned shift = 0; !differences.empty() && shift < 64; shift += 7) {
@@ -505,14 +629,17 @@ void appendTextFromPrinterWithoutMarks(Vector<Character>& printed, std::span<con
             if (passedOver > written.size() || size > written.size() - passedOver)
                 break;
             size_t start = written.data() - text.data() + passedOver;
-            auto inner = std::ranges::lower_bound(pieces, start, { }, &TextPrintedInPlace::start);
-            while (byte == textWithPieceOfItsOwn && inner != pieces.end() && inner->start == start && (inner->end != start + size || !isFromPrinter(*inner) || &*inner == &piece))
-                ++inner;
-            if (byte == textWithPieceOfItsOwn && inner != pieces.end() && inner->start == start)
-                appendTextFromPrinterWithoutMarks(printed, text, *inner, pieces);
-            else
-                printed.append(written.subspan(passedOver, size));
+            std::span<const Character> copied = written.subspan(passedOver, size);
             written = written.subspan(passedOver + size);
+            if (byte == textWithPieceOfItsOwn && size) {
+                // What a piece holds stands behind it. So to follow the pieces comes to an end.
+                auto inner = std::ranges::lower_bound(pieces, start, { }, &TextPrintedInPlace::start);
+                while (inner != pieces.end() && inner->start == start && (inner->end != start + size || !isFromPrinter(*inner) || !std::less<const TextPrintedInPlace*>()(&piece, &*inner)))
+                    ++inner;
+                if (inner != pieces.end() && inner->start == start)
+                    return &*inner;
+            }
+            printed.append(copied);
         } else if (byte == writtenTextAsEscapes) {
             uint64_t passedOver = takeNumber();
             uint64_t size = takeNumber();
@@ -551,6 +678,40 @@ void appendTextFromPrinterWithoutMarks(Vector<Character>& printed, std::span<con
         } else
             printed.append(static_cast<Character>(byte));
     }
+    differences = { };
+    return nullptr;
+}
+
+// `outermost` is one of `pieces`.
+template<typename Character>
+void appendTextFromPrinterWithoutMarks(Vector<Character>& printed, std::span<const Character> text, const TextPrintedInPlace& outermost, std::span<const TextPrintedInPlace> pieces)
+{
+    // How deep functions stand in functions is up to the program, so the pieces that are begun are listed here, and the stack does not grow with them.
+    struct Begun {
+        const TextPrintedInPlace* piece;
+        std::span<const Character> written;
+        std::span<const uint8_t> differences;
+    };
+    Vector<Begun, 4> begun;
+    auto begin = [&](const TextPrintedInPlace& piece) {
+        if (piece.bytes.empty())
+            return;
+        if (piece.bytes.size() < 2 || piece.bytes[1] != markOfDifferences) {
+            printed.append(byteCast<Character>(piece.bytes.subspan(1, piece.bytes.size() - std::min<size_t>(piece.bytes.size(), 2))));
+            return;
+        }
+        if (piece.start > piece.end || piece.end > text.size())
+            return;
+        begun.append({ &piece, text.subspan(piece.start, piece.end - piece.start), piece.bytes.subspan(2) });
+    };
+    begin(outermost);
+    while (!begun.isEmpty()) {
+        Begun current = begun.takeLast();
+        if (const TextPrintedInPlace* inner = appendTextFromPrinterUpToInnerPiece(printed, text, *current.piece, current.written, current.differences, pieces)) {
+            begun.append(current);
+            begin(*inner);
+        }
+    }
 }
 
 template<typename Character>
@@ -565,45 +726,77 @@ void appendTextFromPrinter(Vector<Character>& printed, std::span<const Character
 template<typename Character>
 void appendWithTextPrintedInPlace(Vector<Character>& printed, std::span<const Character> text, size_t from, size_t to, std::span<const TextPrintedInPlace> pieces)
 {
-    size_t at = from;
-    auto first = std::ranges::lower_bound(pieces, from, { }, &TextPrintedInPlace::start);
-    for (const TextPrintedInPlace& piece : pieces.subspan(first - pieces.begin())) {
-        if (piece.start >= to)
-            break;
-        // It stands in a piece that is done, or reaches out of the text that is asked for.
-        if (piece.start < at || piece.end > to || (piece.isCopy && piece.endOfCopied > text.size()))
-            continue;
-        printed.append(text.subspan(at, piece.start - at));
-        if (!printed.isEmpty() && printed.last() == '[')
-            printed.append(static_cast<Character>(markOfPrintedKey));
-        size_t startOfPrinted = printed.size();
-        if (piece.isCopy) {
-            if (piece.isInBrackets)
-                printed.append('(');
-            appendWithTextPrintedInPlace(printed, text, piece.startOfCopied, piece.endOfCopied, pieces);
-            if (piece.isInBrackets)
-                printed.append(')');
-        } else if (isFromPrinter(piece))
-            appendTextFromPrinter(printed, text, piece, pieces);
-        else {
-            size_t endOfOpening = 0;
-            if (piece.bytes.size() > 4 && piece.bytes[piece.bytes.size() - 2] == '*' && piece.bytes.back() == '/') {
-                for (endOfOpening = piece.bytes.size() - 2; endOfOpening > 1 && (piece.bytes[endOfOpening - 2] != '/' || piece.bytes[endOfOpening - 1] != '*'); --endOfOpening) { }
-            }
-            printed.append(byteCast<Character>(piece.bytes.first(endOfOpening)));
-            if (endOfOpening > 1)
-                printed.append(static_cast<Character>(markOfPrintedKey));
-            printed.append(byteCast<Character>(piece.bytes.subspan(endOfOpening)));
-        }
-        at = piece.end;
+    if (from > to || to > text.size())
+        return;
+    // An initializer may hold the only use of another variable, whose initializer holds the next. How long that goes on is up to the program,
+    // so the ranges that are begun are listed here, and the stack does not grow with them.
+    struct Begun {
+        size_t at;
+        size_t to;
+        size_t nextPiece;
+        // Its copied text is the range that was begun next.
+        const TextPrintedInPlace* copy { nullptr };
+        size_t startOfPrinted { 0 };
+    };
+    Vector<Begun, 4> begun;
+    auto begin = [&](size_t start, size_t end) {
+        begun.append({ start, end, static_cast<size_t>(std::ranges::lower_bound(pieces, start, { }, &TextPrintedInPlace::start) - pieces.begin()) });
+    };
+    auto finish = [&](Begun& range, const TextPrintedInPlace& piece) {
+        range.at = piece.end;
         // `1.toString` is no program, so `1 .toString` is printed.
-        bool isNumber = printed.size() > startOfPrinted && isASCIIDigit(printed[startOfPrinted]) && std::ranges::all_of(printed.subspan(startOfPrinted), [](Character character) {
+        bool isNumber = printed.size() > range.startOfPrinted && isASCIIDigit(printed[range.startOfPrinted]) && std::ranges::all_of(printed.subspan(range.startOfPrinted), [](Character character) {
             return isASCIIDigit(character) || character == '.' || character == 'e';
         });
-        if (isNumber && at < text.size() && text[at] == '.')
+        if (isNumber && range.at < text.size() && text[range.at] == '.')
             printed.append(' ');
+    };
+    begin(from, to);
+    while (!begun.isEmpty()) {
+        Begun range = begun.takeLast();
+        if (const TextPrintedInPlace* copy = std::exchange(range.copy, nullptr)) {
+            if (copy->isInBrackets)
+                printed.append(')');
+            finish(range, *copy);
+        }
+        while (!range.copy && range.nextPiece < pieces.size() && pieces[range.nextPiece].start < range.to) {
+            const TextPrintedInPlace& piece = pieces[range.nextPiece++];
+            // It stands in a piece that is done, or reaches out of the text that is asked for. Or the text lacks it: what was written there never runs.
+            if (piece.start < range.at || piece.end > range.to || piece.end <= piece.start)
+                continue;
+            if (piece.isCopy && (piece.endOfCopied > text.size() || !piece.copiesWhatLiesInFrontOrBeneath()))
+                continue;
+            printed.append(text.subspan(range.at, piece.start - range.at));
+            if (!printed.isEmpty() && printed.last() == '[')
+                printed.append(static_cast<Character>(markOfPrintedKey));
+            range.startOfPrinted = printed.size();
+            if (piece.isCopy) {
+                if (piece.isInBrackets)
+                    printed.append('(');
+                range.copy = &piece;
+                continue;
+            }
+            if (isFromPrinter(piece))
+                appendTextFromPrinter(printed, text, piece, pieces);
+            else {
+                size_t endOfOpening = 0;
+                if (piece.bytes.size() > 4 && piece.bytes[piece.bytes.size() - 2] == '*' && piece.bytes.back() == '/') {
+                    for (endOfOpening = piece.bytes.size() - 2; endOfOpening > 1 && (piece.bytes[endOfOpening - 2] != '/' || piece.bytes[endOfOpening - 1] != '*'); --endOfOpening) { }
+                }
+                printed.append(byteCast<Character>(piece.bytes.first(endOfOpening)));
+                if (endOfOpening > 1)
+                    printed.append(static_cast<Character>(markOfPrintedKey));
+                printed.append(byteCast<Character>(piece.bytes.subspan(endOfOpening)));
+            }
+            finish(range, piece);
+        }
+        if (range.copy) {
+            begun.append(range);
+            begin(range.copy->startOfCopied, range.copy->endOfCopied);
+            continue;
+        }
+        printed.append(text.subspan(range.at, range.to - range.at));
     }
-    printed.append(text.subspan(at, to - at));
 }
 
 // In the order of the sources of the functions, so that both a function and its source lead to the text.
@@ -621,6 +814,20 @@ struct ConstructorLineData {
     uint32_t linesOfTextAbove;
 };
 static_assert(sizeof(ConstructorLineData) == 8 && isImageRecord<ConstructorLineData>);
+
+// What failed is looked for in the line of the place, and a minifier leaves a whole function in one line. No expression of a function holds the start of a statement of that function,
+// so in a long line the compiler lists some of them, and only what stands between two of them is looked through. See SourcePositions::startsOfStatementsInLongLines.
+// Both count from the start of the text that is kept. Ascending by the function, then by the start.
+struct StartOfStatementData {
+    // The statement is one of the body of a file, which has no text of its own.
+    static constexpr uint32_t isOfBody = UINT32_MAX;
+
+    uint32_t startOfFunction;
+    uint32_t start;
+
+    friend auto operator<=>(const StartOfStatementData&, const StartOfStatementData&) = default;
+};
+static_assert(sizeof(StartOfStatementData) == 8 && isImageRecord<StartOfStatementData>);
 
 // In functionLengths and in closureCaptureCounts: the function stands in functionsWithLargeCounts.
 static constexpr uint8_t countsAreListed = UINT8_MAX;
@@ -661,6 +868,7 @@ static_assert(sizeof(FunctionWithLargeCountsData) == 7 && isImageRecord<Function
     v(closureCellNumbers, Number24) \
     v(functionTexts, FunctionTexts) \
     v(constructorLines, ConstructorLineData) \
+    v(startsOfStatementsInLongLines, StartOfStatementData) \
     v(modulesWithTextPrintedInPlace, TextPrintedInPlaceOfModule) \
     v(textPrintedInPlace, uint8_t) \
     v(constructors, ConstructorData) \

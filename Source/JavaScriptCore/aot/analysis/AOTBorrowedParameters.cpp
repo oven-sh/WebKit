@@ -848,7 +848,7 @@ void BorrowingBodies::didLower(std::span<const FunctionID> functions)
     }
 }
 
-BorrowedParameters computeBorrowedParameters(const Program& program, BuildContext& build, BorrowingBodies& kept, std::span<const uint8_t> hasChanged, std::span<const uint8_t> recordLooksDifferent)
+BorrowedParameters computeBorrowedParameters(const Program& program, BuildContext& build, BorrowingBodies& kept, std::span<const uint8_t> hasChanged, std::span<const uint8_t> recordLooksDifferent, const BitVector* bodiesToScan)
 {
     const ParallelLoops& loops = build.parallelLoops();
     unsigned numberOfFunctions = program.functions.size();
@@ -860,7 +860,7 @@ BorrowedParameters computeBorrowedParameters(const Program& program, BuildContex
 
     auto scan = [&](unsigned index) {
         const Function& function = program.functions[index];
-        if (!build.isEnabled(FlowResultKind::OperandSummaries, index) || !mayBorrow(program, function, opcodesThatBorrowNothing))
+        if ((bodiesToScan && !bodiesToScan->quickGet(index)) || !build.isEnabled(FlowResultKind::OperandSummaries, index) || !mayBorrow(program, function, opcodesThatBorrowNothing))
             return BorrowingBody { };
         return scanBorrowingBody(program, function, &kept.m_targetLists);
     };

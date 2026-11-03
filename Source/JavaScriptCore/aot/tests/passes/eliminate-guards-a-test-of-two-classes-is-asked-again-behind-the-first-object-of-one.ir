@@ -1,0 +1,48 @@
+# A set of guards takes what it says of a constructor function without objects to speak of no object. The first object of the function may end it, so the second test stays.
+# FORM: Prepared
+# RUN: pass EliminateGuards
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+layout L0 kind=Instance name="A" constructor=f0 fields=[{key="x" declared={type=anything}}] flags=[IsConstructorFunction] flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L1 kind=Instance name="B" constructor=f1 fields=[{key="x" declared={type=anything}}] flags=[IsConstructorFunction] flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+function f0 name="A" flags=[HasThis] thisType={type=L0} results=[{type=undefined}] {
+    Return
+}
+function f1 name="B" flags=[HasThis] thisType={type=L1} results=[{type=undefined}] {
+    Return
+}
+function f2 name="the-second-test-stays" parameters=[{type=i32}] results=[{type=i32}] {
+    v1 = AreMembersUnchanged conditions=[{layout=L0 key="twice"}, {layout=L1 key="twice"}]
+    Branch v1 -> taken b1(), notTaken b3()
+  b1():
+    v2 = NewObject layout=L0
+    PutModuleVariable v2 variable=g0
+    v4 = AreMembersUnchanged conditions=[{layout=L0 key="twice"}, {layout=L1 key="twice"}]
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    Return v0
+  b3():
+    v5 = Integer integer=0
+    Return v5
+# CHECK: Branch v1
+# CHECK: NewObject layout=L0
+# CHECK: Branch v4
+}
+function f3 name="a-test-of-one-class-is-believed" parameters=[{type=i32}] results=[{type=i32}] {
+    v1 = AreMembersUnchanged conditions=[{layout=L0 key="twice"}]
+    Branch v1 -> taken b1(), notTaken b3()
+  b1():
+    v2 = NewObject layout=L0
+    PutModuleVariable v2 variable=g0
+    v4 = AreMembersUnchanged conditions=[{layout=L0 key="twice"}]
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    Return v0
+  b3():
+    v5 = Integer integer=0
+    Return v5
+# CHECK: Branch v1
+# CHECK: NewObject layout=L0
+# CHECK-NOT: Branch v4
+}

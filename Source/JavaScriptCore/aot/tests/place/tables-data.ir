@@ -1,4 +1,6 @@
 # Constant data is a tree of read-only nodes, children first, from word 1 on: an array is a header, the header of its storage and its elements, an object whose members all lie in its cell a header and the bytes of the cell
+# Flow is kept from saying where the objects go: a number of an object that is known to be in hands that nobody knows, and that no code that knows the object names, is kept as a value.
+# OPTIONS: disable=flow:HolderMutations
 # RUN: tables data requests constants
 # RUN(SIZES): tables
 

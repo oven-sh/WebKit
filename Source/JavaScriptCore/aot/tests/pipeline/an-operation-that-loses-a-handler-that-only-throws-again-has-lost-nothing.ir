@@ -1,0 +1,41 @@
+# A build that verifies each pass asks who answers for an operation that may throw and has lost the handler of its block. Where the handler only threw the error again, nobody need:
+# the error goes on as it would without it. A handler that does something first stays.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass Select
+# CHECK-LABEL: name="theHandlerOnlyThrowsAgain"
+# CHECK-NOT: handler=
+# CHECK: = CallResolved v0
+# CHECK-LABEL: name="theHandlerStoresFirst"
+# CHECK: handler=
+# CHECK: = CallResolved v0
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="seen" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="theHandlerOnlyThrowsAgain" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1() handler=b3():
+    LoopHint
+    v3 = Call v0, -
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return v3
+  b3() role=CleanupHandler:
+    v4 = CatchException
+    Rethrow v4
+}
+
+function f1 name="theHandlerStoresFirst" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1() handler=b3():
+    LoopHint
+    v3 = Call v0, -
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return v3
+  b3() role=CleanupHandler:
+    v4 = CatchException
+    PutModuleVariable v1 variable=g0
+    Rethrow v4
+}

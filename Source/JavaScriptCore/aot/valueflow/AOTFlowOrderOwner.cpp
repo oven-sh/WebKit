@@ -213,6 +213,7 @@ public:
     }
 
     Vector<FlowReadOfLocation> takeReadsAfterInitialization() { return std::exchange(m_readsAfterInitialization, { }); }
+    uint64_t numberOfBlocksVisitedForCycles() const { return m_numberOfBlocksVisitedForCycles; }
 
 private:
     struct StoredFunction {
@@ -994,7 +995,7 @@ private:
             if (store.function != m_owner.function)
                 return true;
             auto point = pointOf(ownerFrame(), store.value);
-            return !point || ownerFrame().analyses.cfg().isInCycleAvoiding(point->block, *allocationBlock);
+            return !point || ownerFrame().analyses.blockCycles().isInCycleAvoiding(point->block, *allocationBlock, m_numberOfBlocksVisitedForCycles);
         };
         const auto& fields = m_index.program().at(layout).fields;
         uint32_t numberOfFields = fields.size();
@@ -1045,6 +1046,7 @@ private:
     Vector<StoredFunction> m_functionsTakenOut;
     Vector<FlowScopeLocationAccess> m_definitions;
     Vector<FlowReadOfLocation> m_readsAfterInitialization;
+    uint64_t m_numberOfBlocksVisitedForCycles { 0 };
     BitVector m_classesEvaluatedOnce;
     Vector<ValueID> m_perIterationAllocations;
     FlowScopeEntry m_hostEntry { unknownScopeEntry };
@@ -1135,6 +1137,7 @@ FlowScopeOrders computeScopeOrders(const FlowOrderInputs& inputs, const FlowModu
         analysis.computeEntries();
         analysis.computeOrders(orders.mutableSpan());
         readsAfterInitializationOfOwners[owner] = analysis.takeReadsAfterInitialization();
+        inputs.build.statistics().count(StatisticID::BlocksVisitedForCyclesAvoidingBlocks, analysis.numberOfBlocksVisitedForCycles());
     });
     Vector<FlowReadOfLocation> readsAfterInitialization;
     for (Vector<FlowReadOfLocation>& reads : readsAfterInitializationOfOwners)

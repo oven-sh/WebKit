@@ -13,6 +13,7 @@
 #include "AOTFormatPatternPlanner.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRBuilder.h"
+#include "AOTSort.h"
 #include "AOTValueIdentity.h"
 #include "AOTWholeLiterals.h"
 #include <algorithm>
@@ -93,7 +94,7 @@ static bool addOptions(const Program& program, std::span<const ConstantMember> m
         request.options.append(WTF::move(option));
     }
     // Reading a constant runs nothing, so the order in which the literal lists them is not seen.
-    std::ranges::sort(request.options, [](const FormatterOption& a, const FormatterOption& b) {
+    AOT::sort(request.options, [](const FormatterOption& a, const FormatterOption& b) {
         return codePointCompareLessThan(a.name, b.name);
     });
     // `{ month: "long", month: "short" }`: the planner would see one of the two.

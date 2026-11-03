@@ -14,10 +14,12 @@
 #include "AOTShellProgramTestSupport.h"
 #include "AOTVector.h"
 #include "CustomGetterSetter.h"
+#include "JSArrayBufferView.h"
 #include "JSCInlines.h"
 #include "JSFunction.h"
 #include "JSMapInlines.h"
 #include "ObjectConstructor.h"
+#include "Protect.h"
 #include "TopExceptionScope.h"
 #include <initializer_list>
 #include <stdlib.h>
@@ -802,6 +804,51 @@ static void testOperationMayWriteWhatItLists()
     compareOperandWithPhotograph(realms.vm(), array, PhotographedCall::encode(1, 0), FunctionID(0u), Typed::ValueID(0u));
 }
 
+static void writeFirstByte(JSObject* view)
+{
+    ++*static_cast<uint8_t*>(uncheckedDowncast<JSArrayBufferView>(view)->vector());
+}
+
+// As a job of another thread does that reads a file into the bytes while the program goes on.
+static void testBytesThatNativeCodeKeepsMayChangeDuringAnyOperation()
+{
+    Realms realms(RuntimeValidation::On);
+    JSObject* viewOfPinnedBuffer = realms.object(realms.plain(), "new Uint8Array(new ArrayBuffer(16))"_s);
+    ArrayBuffer* buffer = uncheckedDowncast<JSArrayBufferView>(viewOfPinnedBuffer)->possiblySharedBuffer();
+    buffer->pin();
+    runPhotographed(realms, viewOfPinnedBuffer, { AbstractHeap::AllocatorState }, [&] {
+        writeFirstByte(viewOfPinnedBuffer);
+    });
+    buffer->unpin();
+
+    JSObject* rootedViewWithoutBuffer = realms.object(realms.plain(), "new Uint8Array(65536)"_s);
+    RELEASE_ASSERT(!uncheckedDowncast<JSArrayBufferView>(rootedViewWithoutBuffer)->hasArrayBuffer());
+    gcProtect(rootedViewWithoutBuffer);
+    runPhotographed(realms, rootedViewWithoutBuffer, { AbstractHeap::AllocatorState }, [&] {
+        writeFirstByte(rootedViewWithoutBuffer);
+    });
+    gcUnprotect(rootedViewWithoutBuffer);
+}
+
+static void changeBytesThatNobodyKeepsInOperationThatOnlyAllocates(Realms& realms)
+{
+    JSObject* view = realms.object(realms.plain(), "new Uint8Array(65536)"_s);
+    runPhotographed(realms, view, { AbstractHeap::AllocatorState }, [&] {
+        writeFirstByte(view);
+    });
+}
+
+static void changeBytesBehindTheLastPinInOperationThatOnlyAllocates(Realms& realms)
+{
+    JSObject* view = realms.object(realms.plain(), "new Uint8Array(new ArrayBuffer(16))"_s);
+    ArrayBuffer* buffer = uncheckedDowncast<JSArrayBufferView>(view)->possiblySharedBuffer();
+    buffer->pin();
+    buffer->unpin();
+    runPhotographed(realms, view, { AbstractHeap::AllocatorState }, [&] {
+        writeFirstByte(view);
+    });
+}
+
 static void changeOperandThatTheOperationOnlyReads(Realms& realms)
 {
     JSArray* target = realms.array(realms.plain(), "[1]"_s);
@@ -835,6 +882,8 @@ static constexpr ASCIILiteral deleteAnotherPropertyOfOrdinaryObjectTest = "nativ
 static constexpr ASCIILiteral growArrayInOperationThatWritesNoArrayStorageTest = "native-call-validation/operation-changes-array-storage-that-it-does-not-list"_s;
 static constexpr ASCIILiteral changeOperandThatTheOperationOnlyReadsTest = "native-call-validation/operation-changes-an-operand-that-it-only-reads"_s;
 static constexpr ASCIILiteral changeTableInOperationThatOnlyReadsTest = "native-call-validation/operation-that-only-reads-changes-a-table"_s;
+static constexpr ASCIILiteral changeBytesThatNobodyKeepsTest = "native-call-validation/operation-that-only-allocates-changes-bytes-that-nobody-keeps"_s;
+static constexpr ASCIILiteral changeBytesBehindTheLastPinTest = "native-call-validation/operation-that-only-allocates-changes-bytes-behind-the-last-pin"_s;
 static constexpr ASCIILiteral writeHeapThatTheCallDoesNotWriteTest = "native-call-validation/call-writes-a-heap-outside-its-effects"_s;
 static constexpr ASCIILiteral throwFromCallThatDoesNotThrowTest = "native-call-validation/call-that-does-not-throw-throws"_s;
 static constexpr ASCIILiteral throwFromEntryThatDoesNotThrowTest = "native-call-validation/entry-that-does-not-throw-throws"_s;
@@ -890,6 +939,9 @@ std::span<const NativeTest> nativeCallValidationTests()
         { growArrayInOperationThatWritesNoArrayStorageTest, testMismatchCrashes<growArrayInOperationThatWritesNoArrayStorageTest, OperationWroteHeap, growArrayInOperationThatWritesNoArrayStorage> },
         { changeOperandThatTheOperationOnlyReadsTest, testMismatchCrashes<changeOperandThatTheOperationOnlyReadsTest, OperationWroteHeap, changeOperandThatTheOperationOnlyReads> },
         { changeTableInOperationThatOnlyReadsTest, testMismatchCrashes<changeTableInOperationThatOnlyReadsTest, OperationWroteHeap, changeTableInOperationThatOnlyReads> },
+        { "native-call-validation/bytes-that-native-code-keeps-may-change-during-any-operation"_s, testBytesThatNativeCodeKeepsMayChangeDuringAnyOperation },
+        { changeBytesThatNobodyKeepsTest, testMismatchCrashes<changeBytesThatNobodyKeepsTest, OperationWroteHeap, changeBytesThatNobodyKeepsInOperationThatOnlyAllocates> },
+        { changeBytesBehindTheLastPinTest, testMismatchCrashes<changeBytesBehindTheLastPinTest, OperationWroteHeap, changeBytesBehindTheLastPinInOperationThatOnlyAllocates> },
         { "native-call-validation/compiled-call-of-a-function-outside-the-table"_s, testCompiledCallOfFunctionOutsideTable },
         { "native-call-validation/read-of-a-setter-without-getter-is-no-call"_s, testReadOfSetterWithoutGetterIsNoCall },
     };

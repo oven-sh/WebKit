@@ -1,0 +1,39 @@
+# function history(cur, n) { let prev = cur, prev2 = cur; while (--n >= 0) { prev2 = prev; prev = cur; cur = cur + 3; } return prev2 + prev + cur; }
+# The edge that comes around hands one variable of the loop on as another. Where its test fails, the variables are defined again for the generic turn: each from what it was handed, not from what stands in front of it.
+# FORM: Prepared
+# OPTIONS: heat=ReadOffStructure
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="history" parameters=[{type=number flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ number, v1: anything ~ i32):
+    Jump -> next b1(v0, v1, v0, v0)
+  b1(v2: anything ~ number, v3: anything ~ i32, v4: anything ~ number, v5: anything ~ number):
+    LoopHint
+    v7 = Decrement v3
+    v8 = Integer
+    v9 = GreaterEq v7, v8
+    Branch v9 -> taken b2(), notTaken b3()
+  b2():
+    v10 = Integer integer=3
+    v11 = Add v2, v10
+    Jump -> next b1(v11, v7, v2, v4)
+  b3():
+    v12 = Add v5, v4
+    v13 = Add v12, v2
+    Return v13
+}
+# The generic turn has added, and its sum is tested on the edge that comes around.
+# CHECK-LABEL: function f0 name="history"
+# CHECK: [[sum]]: number|string|bigint = Add [[cur]],
+# CHECK: = TypeTest [[sum]] testedType=number
+# Where that fails: prev, which is handed on as prev2, is read before prev is defined again.
+# CHECK: [[old]]: anything ~ number = Upcast [[prev]] castType=anything
+# CHECK-NEXT: = Upcast [[sum]] castType=anything
+# CHECK-NEXT: = Upcast
+# CHECK-NEXT: = Upcast [[cur]] castType=anything
+# CHECK-NEXT: = Upcast [[old]] castType=anything
+# CHECK-NEXT: LoopHint
+# Where it holds, the same four.
+# CHECK: Jump -> next b1({{*}}, [[cur]], [[prev]])

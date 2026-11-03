@@ -1,0 +1,36 @@
+# What a handler catches may be what the run time threw: a value that nobody knows. console.log() shows the keys of what it prints. No built-in object went out of sight here, so what is printed is none,
+# and nobody sees when Object got its member.
+# FORM: AsRead
+# RUN: pipeline ResolveAccesses
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=Object
+    v2 = PropGet v1 key="entries"
+    Jump -> next b1()
+  b1() handler=b3():
+    v3 = Call v0, -
+    Jump -> next b2()
+  b2():
+    Return v2
+  b3() role=CatchHandler:
+    v4 = CatchValue
+    v5 = Builtin builtin=Console
+    v6 = PropGet v5 key="log"
+    v7 = PropGet v4 key="message"
+    v8 = Call v6, v5, v4, v7
+    Return v2
+}
+function f1 name="fail" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=RangeError
+    v1 = String string="no"
+    v2 = Construct v0, -, v1
+    Throw v2
+}
+# CHECK-LABEL: function f0 name="main"
+# CHECK-NOT: InitializeBuiltin

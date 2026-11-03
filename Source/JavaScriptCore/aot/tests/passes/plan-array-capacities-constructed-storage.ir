@@ -17,12 +17,12 @@ function f0 name="int32Stores" parameters=[{type=int[0, 100]}, {type=Array<anyth
 }
 # CHECK-LABEL: function f0
 # CHECK: v3: {{*}} = NewArrayLike v0, v1 arrayStorage=Int32
-# CHECK: v5: {{*}} = TryPutByValDirect v3, v4, v2 arrayStorage=Int32
-# CHECK: v7: {{*}} = TryPutByValDirect v3, v6, v2 arrayStorage=Int32
+# CHECK: v5: {{*}} = TryPutByValDirect v3, v4, v2 length=v0 arrayStorage=Int32
+# CHECK: v7: {{*}} = TryPutByValDirect v3, v6, v2 length=v0 arrayStorage=Int32
 # TWICE-LABEL: function f0
 # TWICE: v3: {{*}} = NewArrayLike v0, v1 arrayStorage=Int32
-# TWICE: v5: {{*}} = TryPutByValDirect v3, v4, v2 arrayStorage=Int32
-# TWICE: v7: {{*}} = TryPutByValDirect v3, v6, v2 arrayStorage=Int32
+# TWICE: v5: {{*}} = TryPutByValDirect v3, v4, v2 length=v0 arrayStorage=Int32
+# TWICE: v7: {{*}} = TryPutByValDirect v3, v6, v2 length=v0 arrayStorage=Int32
 
 function f1 name="numberStores" parameters=[{type=int[0, 100]}, {type=i32}, {type=number}] results=[{type=Array<anything>}] {
     v3 = NewArrayWithCapacity v0
@@ -65,7 +65,7 @@ function f4 name="storeThroughCasts" parameters=[{type=int[0, 100]}, {type=Array
 }
 # CHECK-LABEL: function f4
 # CHECK: v3: {{*}} = NewArrayLike v0, v1 arrayStorage=Double
-# CHECK: v7: {{*}} = TryPutByValDirect v5, v6, v2 arrayStorage=Double
+# CHECK: v7: {{*}} = TryPutByValDirect v5, v6, v2 length=v0 arrayStorage=Double
 
 function f5 name="storeThroughBlockParameter" parameters=[{type=boolean}, {type=int[0, 100]}, {type=i32}, {type=string}] results=[{type=Array<anything>}] {
     v4 = NewArrayWithCapacity v1

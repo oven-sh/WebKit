@@ -52,15 +52,16 @@ bool BuiltinTable::canBeReplacedInTestRuns(BuiltinID id) const
     case BuiltinKind::Function:
     case BuiltinKind::Method:
     case BuiltinKind::Accessor:
+    // `process.versions`, `process.release`, `process.isBun`: the front end folds no read of them in a test run. The others have names that are read without a lookup.
+    case BuiltinKind::DataProperty:
         break;
     case BuiltinKind::Constructor:
-        // `globalThis.Set = Fake`. Under any other holder it is the `constructor` of a prototype object.
+    case BuiltinKind::Namespace:
+        // `globalThis.Set = Fake`, `globalThis.Math = Object.create(Math)`. Under any other holder a constructor is the `constructor` of a prototype object.
         if (!at(member.holder).flags.contains(BuiltinFlag::IsGlobalObject))
             return false;
         break;
-    case BuiltinKind::Namespace:
     case BuiltinKind::Prototype:
-    case BuiltinKind::DataProperty:
     case BuiltinKind::Constant:
     case BuiltinKind::NativeBinding:
         return false;
@@ -77,10 +78,22 @@ bool BuiltinTable::canBeReplacedInTestRuns(BuiltinID id) const
 bool BuiltinTable::canTakeNameInTestRuns(BuiltinID holder, BuiltinName name) const
 {
     const Builtin& object = at(holder);
-    if (!object.flags.containsAny({ BuiltinFlag::IsLockedObject, BuiltinFlag::IsClosedToOtherNames }) || object.flags.contains(BuiltinFlag::IsGlobalObject) || object.scope != BuiltinScope::Realm)
+    if (object.flags.contains(BuiltinFlag::IsGlobalObject) || object.scope != BuiltinScope::Realm)
         return false;
+    bool takesNoOtherName = object.flags.containsAny({ BuiltinFlag::IsLockedObject, BuiltinFlag::IsClosedToOtherNames });
     if (!name)
-        return true;
+        return takesNoOtherName;
+    // `spyOn(Uint8Array.prototype, "set")`: an object above has the member. What a test puts here stands in front of it for whatever lies below,
+    // and whoever looks the member up from there passes this object on the way. So it goes by the member: where a test can replace that, it can hide it.
+    if (BuiltinMemberLookup above = findMember(holder, name); above.outcome == BuiltinMemberLookup::Outcome::Found && !findOwnMember(holder, name)) {
+        if (!takesNoOtherName && !std::ranges::binary_search(closedKeysOf(holder), name))
+            return false;
+        if (isClosedOnHostFunctions(name) || isReadWithoutLookup(*this, name, NameIs::OfMember))
+            return false;
+        return canBeReplacedInTestRuns(above.member) || at(above.member).mutability == BuiltinMutability::ConstantUnlessWritten;
+    }
+    if (!takesNoOtherName)
+        return false;
     // A key that is `undefined`, `null`, `true` or `false` is looked up under its text.
     for (ASCIILiteral text : { "undefined"_s, "null"_s, "true"_s, "false"_s }) {
         if (equalSpans(textOf(name), byteCast<uint8_t>(text.span())))
@@ -122,34 +135,7 @@ void BuiltinTableOfBuild::lockByNames(BuiltinID wholeObject)
     m_closedKeys.insert(position, BuiltinClosedKeys { wholeObject, m_closedSymbols.last().span(), { } });
 }
 
-// The names that no test run adds stay closed, each by itself.
-void BuiltinTableOfBuild::openToNames(BuiltinID holder)
-{
-    lockByNames(holder);
-    Vector<BuiltinName> closed(m_table.closedKeysOf(holder));
-    size_t position = std::ranges::lower_bound(m_closedKeys, holder, { }, &BuiltinClosedKeys::holder) - m_closedKeys.begin();
-    bool hasRecord = position < m_closedKeys.size() && m_closedKeys[position].holder == holder;
-    if (hasRecord)
-        closed = Vector<BuiltinName>(m_closedKeys[position].names);
-    for (uint32_t index = 0; index < m_table.nameCount(); ++index) {
-        BuiltinName name(index);
-        if (name && !m_table.isSymbolName(name) && !m_table.findOwnMember(holder, name) && !m_table.canTakeNameInTestRuns(holder, name) && !std::ranges::binary_search(m_table.openNamesOf(holder), name))
-            closed.append(name);
-    }
-    AOT::sort(closed);
-    closed.shrink(closed.size() - std::ranges::unique(closed).size());
-    m_closedSymbols.append(WTF::move(closed));
-    if (hasRecord)
-        m_closedKeys[position] = BuiltinClosedKeys { holder, m_closedSymbols.last().span(), { } };
-    else
-        m_closedKeys.insert(position, BuiltinClosedKeys { holder, m_closedSymbols.last().span(), { } });
-    for (uint32_t index = 0; index < m_builtins.size(); ++index) {
-        if (BuiltinID(index) == holder || m_builtins[index].sameObjectAs == holder)
-            m_builtins[index].flags.remove(BuiltinFlag::IsClosedToOtherNames);
-    }
-}
-
-void BuiltinTableOfBuild::unlock(std::span<const BuiltinID> members, std::span<const BuiltinID> holdersOfNewNames, bool opensEveryHolder)
+void BuiltinTableOfBuild::unlock(std::span<const BuiltinID> members, std::span<const BuiltinID> holdersOfNewNames)
 {
     RELEASE_ASSERT(m_builtins.isEmpty());
     for (BuiltinID member : members) {
@@ -157,7 +143,7 @@ void BuiltinTableOfBuild::unlock(std::span<const BuiltinID> members, std::span<c
         if (m_table.contains(member) && (m_table.canBeReplacedInTestRuns(member) || m_table.at(member).mutability == BuiltinMutability::ConstantUnlessWritten))
             m_unlockedMembers.append(member);
     }
-    if (m_unlockedMembers.isEmpty() && holdersOfNewNames.empty() && !opensEveryHolder)
+    if (m_unlockedMembers.isEmpty() && holdersOfNewNames.empty())
         return;
     m_builtins = Vector<Builtin>(m_data.builtins);
     m_lockedObjects = Vector<BuiltinID>(m_data.runtime.lockedObjects);
@@ -172,10 +158,6 @@ void BuiltinTableOfBuild::unlock(std::span<const BuiltinID> members, std::span<c
     }
     for (BuiltinID holder : holdersOfNewNames)
         lockByNames(holder);
-    for (uint32_t index = 0; opensEveryHolder && index < m_builtins.size(); ++index) {
-        if (m_table.canonicalID(BuiltinID(index)) == BuiltinID(index) && m_table.canTakeNameInTestRuns(BuiltinID(index), { }))
-            openToNames(BuiltinID(index));
-    }
     m_data.builtins = m_builtins.span();
     m_data.runtime.lockedMembers = m_lockedMembers.span();
     m_data.runtime.lockedObjects = m_lockedObjects.span();
@@ -204,8 +186,8 @@ void Program::unlockReplaceableBuiltins()
         holdersOfNewNames.append(opened.holder);
         m_namesOpenedSomewhere.set(opened.name.index());
     }
-    m_tableOfBuild.unlock(members.span(), holdersOfNewNames.span(), takesAnyNameFromTests);
-    m_testsReplaceBuiltins = takesAnyNameFromTests || !openedNames.isEmpty() || !losesLockOfTable.isEmpty();
+    m_tableOfBuild.unlock(members.span(), holdersOfNewNames.span());
+    m_testsReplaceBuiltins = !openedNames.isEmpty() || !losesLockOfTable.isEmpty();
     if (unlockedBuiltins().empty() && openedNames.isEmpty())
         return;
 

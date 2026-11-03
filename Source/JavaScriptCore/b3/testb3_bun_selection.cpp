@@ -1281,7 +1281,7 @@ static void testChecksShareLatePath()
         Procedure proc;
         Graph graph { proc };
         BasicBlock* root = proc.addBlock();
-        auto arguments = cCallArgumentValues<int64_t, int64_t>(proc, root);
+        auto arguments = cCallArgumentValues<int64_t, int64_t>(proc, root).eager();
         unsigned numberOfLatePaths = 0;
         auto createGenerator = [&] {
             return createSharedTask<StackmapGeneratorFunction>([&](CCallHelpers& jit, const StackmapGenerationParams&) {

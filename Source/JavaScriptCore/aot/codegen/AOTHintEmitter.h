@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTChooseCallingConventions.h"
 #include "AOTOperationEmitter.h"
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -21,6 +22,8 @@ public:
 
 private:
     void emitPoll(const ValueContext&);
+
+    EntryParameterFinder m_entryParameters;
 };
 
 } } } // namespace JSC::AOT::Typed

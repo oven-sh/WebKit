@@ -163,8 +163,18 @@ void generatePollAtLoop(StubAssembler& jit)
     jit.emitFunctionEpilogue();
     jit.jumpToStub(handleException(true));
 #else
-    UNUSED_PARAM(jit);
-    RELEASE_ASSERT_NOT_REACHED();
+    // A poll clobbers the scratch registers of the macro assembler and nothing else.
+    constexpr GPRReg scratch = ARM64Registers::x17;
+    jit.emitFunctionPrologue();
+    callPollSlow(jit);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), scratch);
+    jit.loadPtr(Address(scratch, VM::exceptionOffset()), scratch);
+    jit.emitFunctionEpilogue();
+    jit.linkToStub(jit.branchTestPtr(CCallHelpers::NonZero, scratch), handleException(true));
+    if (jit.key().callerFrame() == CallerFrame::Frameless)
+        jit.emitFramelessCallerEpilogueAndReturn(scratch);
+    else
+        jit.returnToCaller();
 #endif
 }
 

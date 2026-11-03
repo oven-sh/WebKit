@@ -578,10 +578,9 @@ static KnownBoolean evaluateTestOfConstant(const ShapeContext& context, VirtualC
     case Opcode::TypeTest:
         return evaluateTypeTest(program, known, program.at(test.testedType()));
     case Opcode::StrictEq: {
-        // The sinker asks again while it rewrites the function, after it has given the casts it keeps new operands.
         const Function& function = context.objects.function;
         ValueID other = operandIndex == OperandIndex::StrictEq::left ? test.rightOperand() : test.leftOperand();
-        if (std::optional<VirtualConstant> otherConstant = virtualConstantOf(program, function, other))
+        if (std::optional<VirtualConstant> otherConstant = virtualConstantOf(context.objects, other))
             return knownBoolean(constant == *otherConstant);
         return program.typeOf(function, other).overlaps(program.at(typeOf(constant)), program) ? KnownBoolean::Unknown : KnownBoolean::False;
     }
@@ -679,8 +678,8 @@ static KnownBoolean evaluateArrayStorageTest(const ShapeContext& context, const 
 
 static KnownBoolean evaluateBoundsTest(const ShapeContext& context, const VirtualShape& shape, const Value& test)
 {
-    // How many arguments a frame holds is known when it runs.
-    if (!isArray(context.family.descriptionOf(shape)) || context.family.descriptionOf(shape).kind == VirtualObjectKind::ArgumentList)
+    // How many arguments a frame holds, and how long the list of a built-in is, is known when it runs: the shape of such a list counts the elements that are kept apart.
+    if (context.family.descriptionOf(shape).kind != VirtualObjectKind::Array)
         return KnownBoolean::Unknown;
     KnownValue position = knownValueOf(context.objects.program, context.objects.function, test.positionOperand());
     if (position.kind() == KnownValue::Kind::Integer)

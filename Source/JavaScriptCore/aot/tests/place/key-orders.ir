@@ -46,7 +46,8 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 
 # CHECK: L0 orders=1: [0 1 2]
 # CHECK-NEXT: L1 orders=2: [0 1] [1 0]
-# CHECK-NEXT: L2 orders=2: [0 1] [1]
+# The store of "a" goes by name here. What it creates is expected behind the keys of either allocation, as for a store to a slot.
+# CHECK-NEXT: L2 orders=2: [0 1] [1 0]
 # CHECK-NEXT: L3 orders=1: [1 0]
 # CHECK: allocation {{*}} L0 fields=[0] order=0 count=1
 # CHECK-NEXT: allocation {{*}} L0 fields=[0 1] order=0 count=2

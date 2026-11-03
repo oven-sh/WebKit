@@ -51,3 +51,19 @@ function f3 name="byTwoToTheThirtyTwo" parameters=[{type=number}] results=[{type
 }
 # CHECK-LABEL: f3: size=
 # CHECK: operation operationAOTFmod x1
+
+function f4 name="remainderHandedOnByBranchOfNextBlock" parameters=[{type=number}] results=[{type=number}] {
+    v1 = Integer integer=2
+    v2 = Mod v0, v1 form=Numbers
+    v3 = Integer integer=0
+    v4 = StrictEq v2, v3 form=Numbers
+    Jump -> next b1()
+  b1():
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5: number):
+    Return v5
+  b3():
+    Return v0
+}
+# CHECK-LABEL: f4: size=
+# CHECK: operation operationAOTFmod x1

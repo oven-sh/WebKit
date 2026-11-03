@@ -2,12 +2,12 @@
 # FORM: Prepared
 # RUN: pass ResolveBuiltins
 # CHECK: outcome: Changed
-# STATISTIC: BuiltinCallsResolved = 14
+# STATISTIC: BuiltinCallsResolved = 15
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="applyWithAnyList" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
     v3 = Builtin builtin=FunctionPrototypeApply
-    v4 = Call v3, v0, v1, v2
+    v4 = Call v3, v0, v1, v2 calleeKey="apply" calleeName="f.apply"
     ReturnCall v4
 # CHECK-NOT: CallBuiltin
 # An array is handed on as it is. Of anything else a list is made.
@@ -154,4 +154,19 @@ function f11 name="reflectApplyOfNumber" parameters=[{type=number}, {type=anythi
 # CHECK-NOT: TypeTest
 # CHECK: v4: anything = Call v3, -, v0, v1, v2
 # CHECK-NEXT: ReturnCall v4
+}
+
+# Under any other key apply runs in a frame of its own. An array is handed on from there. Anything else is read there, so the call of apply stays.
+function f12 name="applyUnderAnotherKeyWithAnyList" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = Builtin builtin=FunctionPrototypeApply
+    v4 = Call v3, v0, v1, v2 calleeKey="run" calleeName="o.run"
+    ReturnCall v4
+# CHECK: [[isArray12]]: boolean = TypeTest v2 testedType=Array
+# CHECK-NEXT: Branch [[isArray12]] -> taken [[array12]](| 0), notTaken [[other12]](| 0)
+# CHECK: [[array12]]([[asItIs12]]: Array):
+# CHECK-NEXT: [[passedArray12]]: anything = CallList v0, v1, [[asItIs12]] calledBuiltin=FunctionPrototypeApply
+# CHECK-NEXT: ReturnCall [[passedArray12]]
+# CHECK: [[other12]]([[arrayLike12]]:{{*}}) frequency=Unlikely:
+# CHECK-NEXT: [[own12]]: anything = Call v3, v0, v1, [[arrayLike12]] calleeKey="run" calleeName="o.run"
+# CHECK-NEXT: ReturnCall [[own12]]
 }

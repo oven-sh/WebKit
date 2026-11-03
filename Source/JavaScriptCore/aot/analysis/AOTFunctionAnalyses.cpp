@@ -132,9 +132,6 @@ const OpcodeEffectFacts& effectFactsOf(Opcode opcode)
 
 const OpcodeEffectFacts& effectFactsOf(const Value& value)
 {
-    static const OpcodeEffectFacts factsOfObjectWithPrototypeOfLayout = computeEffectFactsOf(Opcode::NewObject, OptionalOperands::AreOmitted);
-    if (value.opcode == Opcode::NewObject && !value.prototypeOperand())
-        return factsOfObjectWithPrototypeOfLayout;
     return effectFactsOf(value.opcode);
 }
 
@@ -466,7 +463,7 @@ static AnalysisSet addDependentAnalyses(AnalysisSet set)
 FunctionAnalyses::FunctionAnalyses(const AnalysisContext& context, const Function& function)
     : m_context(context)
     , m_function(function)
-    , m_effectContext { context.program, context.effects ? *context.effects : m_unknownSummaries.emplace() }
+    , m_effectContext { context.program, context.effects ? *context.effects : m_unknownSummaries.emplace(), context.savedFrames == SavedFrames::AreOutOfReach ? UntestedStorage::LeavesReadKnown : UntestedStorage::MakesReadUnknown }
     , m_effects(m_effectContext, function, context.build.options().verifiesAfterEveryPass ? &context.build.diagnostics() : nullptr)
     , m_countsBuilds(context.build.options().logging.logsPhaseTimes)
     , m_verifiesUpdates(context.build.options().verifiesAfterEveryPass)
@@ -498,6 +495,8 @@ FunctionAnalyses::~FunctionAnalyses()
         statistics.count(StatisticID::EffectsComputed, numberOfComputedAnswers);
     if (uint64_t numberOfKeptAnswers = m_effects.numberOfKeptAnswers())
         statistics.count(StatisticID::EffectsKept, numberOfKeptAnswers);
+    if (m_numberOfBlocksReadToBuildControlFlowGraphs)
+        statistics.count(StatisticID::BlocksReadToBuildControlFlowGraphs, m_numberOfBlocksReadToBuildControlFlowGraphs);
 }
 
 void FunctionAnalyses::reportQuestionBeforeRepair() const
@@ -722,6 +721,7 @@ CFG& FunctionAnalyses::cfg()
     dropResultsOfFormerGraph();
     if (!m_controlFlow.cfg) {
         m_controlFlow.cfg.emplace(m_function);
+        m_numberOfBlocksReadToBuildControlFlowGraphs += m_function.blocks.size();
         m_controlFlow.isReadByUseLists = false;
         m_controlFlow.numberOfBlocks = m_function.blocks.size();
         didBuild(FunctionAnalysis::ControlFlow);
@@ -917,7 +917,7 @@ const EscapeAnalysis& FunctionAnalyses::escapeWithLiveInstances()
     if (!m_values.escape->hasLiveInstances()) {
         m_values.escape->computeLiveInstances(cfg(), useLists(), [&]() -> const BlockCycles& {
             return blockCycles();
-        });
+        }, m_context.onlyJudges() ? EscapeAnalysis::OutOfSight::Asked : EscapeAnalysis::OutOfSight::NotAsked);
     }
     return *m_values.escape;
 }

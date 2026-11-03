@@ -132,3 +132,38 @@ function f5 name="testForAString" parameters=[{type=anything}, {type=number}] re
 # CHECK: Jump -> next b3(v4)
 # CHECK: Jump -> next b3(v1)
 }
+
+# A row of three. Each copy goes on the one way that its test can go: a copy that led both ways would bring the two ways together again in front of b4 and b5, with a parameter there for v7, which is alive behind them.
+function f6 name="threeTestsInARow" parameters=[{type=function|f4}, {type=number}] results=[{type=anything}] {
+    v2 = TypeTest v0 testedType=f4
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v3):
+    v4 = CallDirect v1 function=f4
+    Jump -> next b3(v4)
+  b2(v5):
+    v6 = Call v5, -, v1
+    Jump -> next b3(v6)
+  b3(v7):
+    v8 = TypeTest v0 testedType=f4
+    Branch v8 -> taken b4(| 0), notTaken b5(| 0)
+  b4(v9):
+    v10 = CallDirect v1 function=f4
+    Jump -> next b6(v10)
+  b5(v11):
+    v12 = Call v11, -, v1
+    Jump -> next b6(v12)
+  b6(v13):
+    v14 = TypeTest v0 testedType=f4
+    Branch v14 -> taken b7(| 0), notTaken b8(| 0)
+  b7(v15):
+    v16 = CallDirect v7 function=f4
+    Return v16
+  b8(v17):
+    v18 = Call v17, -, v7, v13
+    Return v18
+# CHECK: b4(v9: f4):
+# CHECK: b5(v11: function):
+# CHECK: b7(v15: f4):
+# CHECK: b8(v17: function):
+# CHECK-NOT: Branch
+}

@@ -36,6 +36,7 @@
 #include "TopExceptionScope.h"
 #include <algorithm>
 #include <array>
+#include <wtf/FastBitVector.h>
 #include <mutex>
 #include <wtf/BitVector.h>
 #include <wtf/NeverDestroyed.h>
@@ -376,40 +377,61 @@ static JSObject* findConstructorOfLazyClass(JSGlobalObject* realm, const Identif
     return constructor;
 }
 
+// The second argument of the visitor answers the Structure, or null while the realm has not made it.
+template<typename Visitor>
+static ALWAYS_INLINE void visitInstanceStructuresOfEngine(JSGlobalObject* realm, const Visitor& visit)
+{
+#define AOT_VISIT_INSTANCE_STRUCTURE(name, structure) visit(BuiltinClasses::name, [&]() ALWAYS_INLINE_LAMBDA { return structure; });
+    for (IndexingType indexingType : { ArrayWithUndecided, ArrayWithInt32, ArrayWithDouble, ArrayWithContiguous, ArrayWithArrayStorage, CopyOnWriteArrayWithInt32, CopyOnWriteArrayWithDouble, CopyOnWriteArrayWithContiguous })
+        AOT_VISIT_INSTANCE_STRUCTURE(Array, realm->originalArrayStructureForIndexingType(indexingType))
+    AOT_VISIT_INSTANCE_STRUCTURE(Map, realm->mapStructureConcurrently())
+    AOT_VISIT_INSTANCE_STRUCTURE(Set, realm->setStructureConcurrently())
+    AOT_VISIT_INSTANCE_STRUCTURE(WeakMap, realm->weakMapStructureConcurrently())
+    AOT_VISIT_INSTANCE_STRUCTURE(WeakSet, realm->weakSetStructureConcurrently())
+    AOT_VISIT_INSTANCE_STRUCTURE(ArrayBuffer, realm->arrayBufferStructureConcurrently(ArrayBufferSharingMode::Default))
+    AOT_VISIT_INSTANCE_STRUCTURE(SharedArrayBuffer, realm->arrayBufferStructureConcurrently(ArrayBufferSharingMode::Shared))
+    AOT_VISIT_INSTANCE_STRUCTURE(DataView, realm->typedArrayStructureConcurrently(TypeDataView, false))
+    AOT_VISIT_INSTANCE_STRUCTURE(RegExp, realm->regExpStructure())
+    AOT_VISIT_INSTANCE_STRUCTURE(Promise, realm->promiseStructure())
+    AOT_VISIT_INSTANCE_STRUCTURE(String, realm->stringObjectStructure())
+    AOT_VISIT_INSTANCE_STRUCTURE(Error, realm->errorStructureConcurrently())
+    AOT_VISIT_INSTANCE_STRUCTURE(Date, realm->dateStructureConcurrently())
+    AOT_VISIT_INSTANCE_STRUCTURE(IntlDateTimeFormat, realm->m_dateTimeFormatStructure.getConcurrently())
+    AOT_VISIT_INSTANCE_STRUCTURE(IntlNumberFormat, realm->m_numberFormatStructure.getConcurrently())
+#define AOT_VISIT_TYPED_ARRAY_STRUCTURE(name) AOT_VISIT_INSTANCE_STRUCTURE(name##Array, realm->typedArrayStructureConcurrently(Type##name, false))
+    FOR_EACH_TYPED_ARRAY_TYPE_EXCLUDING_DATA_VIEW(AOT_VISIT_TYPED_ARRAY_STRUCTURE)
+#undef AOT_VISIT_TYPED_ARRAY_STRUCTURE
+    AOT_VISIT_INSTANCE_STRUCTURE(ArrayIterator, realm->arrayIteratorStructure())
+    AOT_VISIT_INSTANCE_STRUCTURE(MapIterator, realm->mapIteratorStructure())
+    AOT_VISIT_INSTANCE_STRUCTURE(SetIterator, realm->setIteratorStructure())
+    AOT_VISIT_INSTANCE_STRUCTURE(StringIterator, realm->stringIteratorStructure())
+    AOT_VISIT_INSTANCE_STRUCTURE(RegExpStringIterator, realm->regExpStringIteratorStructure())
+    AOT_VISIT_INSTANCE_STRUCTURE(IteratorHelper, realm->iteratorHelperStructure())
+    AOT_VISIT_INSTANCE_STRUCTURE(WrapForValidIterator, realm->wrapForValidIteratorStructure())
+    AOT_VISIT_INSTANCE_STRUCTURE(AsyncFromSyncIterator, realm->asyncFromSyncIteratorStructure())
+#undef AOT_VISIT_INSTANCE_STRUCTURE
+}
+
 template<typename Function>
 static ALWAYS_INLINE void forEachInstanceStructureOfEngine(JSGlobalObject* realm, const Function& function)
 {
-    auto visitIfCreated = [&](BuiltinClassID builtinClass, Structure* structure) ALWAYS_INLINE_LAMBDA {
-        if (structure)
+    visitInstanceStructuresOfEngine(realm, [&](BuiltinClassID builtinClass, const auto& findStructure) ALWAYS_INLINE_LAMBDA {
+        if (Structure* structure = findStructure())
             function(builtinClass, structure);
-    };
-    for (IndexingType indexingType : { ArrayWithUndecided, ArrayWithInt32, ArrayWithDouble, ArrayWithContiguous, ArrayWithArrayStorage, CopyOnWriteArrayWithInt32, CopyOnWriteArrayWithDouble, CopyOnWriteArrayWithContiguous })
-        visitIfCreated(BuiltinClasses::Array, realm->originalArrayStructureForIndexingType(indexingType));
-    visitIfCreated(BuiltinClasses::Map, realm->mapStructureConcurrently());
-    visitIfCreated(BuiltinClasses::Set, realm->setStructureConcurrently());
-    visitIfCreated(BuiltinClasses::WeakMap, realm->weakMapStructureConcurrently());
-    visitIfCreated(BuiltinClasses::WeakSet, realm->weakSetStructureConcurrently());
-    visitIfCreated(BuiltinClasses::ArrayBuffer, realm->arrayBufferStructureConcurrently(ArrayBufferSharingMode::Default));
-    visitIfCreated(BuiltinClasses::SharedArrayBuffer, realm->arrayBufferStructureConcurrently(ArrayBufferSharingMode::Shared));
-    visitIfCreated(BuiltinClasses::DataView, realm->typedArrayStructureConcurrently(TypeDataView, false));
-    visitIfCreated(BuiltinClasses::RegExp, realm->regExpStructure());
-    visitIfCreated(BuiltinClasses::Promise, realm->promiseStructure());
-    visitIfCreated(BuiltinClasses::String, realm->stringObjectStructure());
-    visitIfCreated(BuiltinClasses::Error, realm->errorStructureConcurrently());
-    visitIfCreated(BuiltinClasses::Date, realm->dateStructureConcurrently());
-    visitIfCreated(BuiltinClasses::IntlDateTimeFormat, realm->m_dateTimeFormatStructure.getConcurrently());
-    visitIfCreated(BuiltinClasses::IntlNumberFormat, realm->m_numberFormatStructure.getConcurrently());
-#define AOT_VISIT_TYPED_ARRAY_STRUCTURE(name) visitIfCreated(BuiltinClasses::name##Array, realm->typedArrayStructureConcurrently(Type##name, false));
-    FOR_EACH_TYPED_ARRAY_TYPE_EXCLUDING_DATA_VIEW(AOT_VISIT_TYPED_ARRAY_STRUCTURE)
-#undef AOT_VISIT_TYPED_ARRAY_STRUCTURE
-    visitIfCreated(BuiltinClasses::ArrayIterator, realm->arrayIteratorStructure());
-    visitIfCreated(BuiltinClasses::MapIterator, realm->mapIteratorStructure());
-    visitIfCreated(BuiltinClasses::SetIterator, realm->setIteratorStructure());
-    visitIfCreated(BuiltinClasses::StringIterator, realm->stringIteratorStructure());
-    visitIfCreated(BuiltinClasses::RegExpStringIterator, realm->regExpStringIteratorStructure());
-    visitIfCreated(BuiltinClasses::IteratorHelper, realm->iteratorHelperStructure());
-    visitIfCreated(BuiltinClasses::WrapForValidIterator, realm->wrapForValidIteratorStructure());
-    visitIfCreated(BuiltinClasses::AsyncFromSyncIterator, realm->asyncFromSyncIteratorStructure());
+    });
+}
+
+bool engineNamesInstanceStructureOf(BuiltinClassID builtinClass)
+{
+    // Not a BitVector: that keeps the address of its words shifted, and a leak checker takes words that nothing points to for lost.
+    static NeverDestroyed<FastBitVector> namedClasses = [] {
+        FastBitVector classes(BuiltinTable::singleton().classCount());
+        visitInstanceStructuresOfEngine(nullptr, [&](BuiltinClassID named, const auto&) ALWAYS_INLINE_LAMBDA {
+            classes[named.index()] = true;
+        });
+        return classes;
+    }();
+    return namedClasses->at(builtinClass.index());
 }
 
 void forEachInstanceStructure(JSGlobalObject* realm, const ScopedLambda<void(BuiltinClassID, Structure*)>& function)
@@ -912,7 +934,7 @@ namespace {
 
 class FixedNamesOfBuiltin final : public ImmutablePropertyNames::OutsideNames {
 public:
-    FixedNamesOfBuiltin(VM& vm, BuiltinID holder, std::span<const uint32_t> constantMembers, WritesToBuiltinMembers* writes, std::span<const uint32_t> unlockedMembers, bool reflectThrows)
+    FixedNamesOfBuiltin(VM& vm, BuiltinID holder, std::span<const uint32_t> constantMembers, WritesToBuiltinMembers* writes, std::span<const uint32_t> unlockedMembers, bool reflectThrows, std::span<const Identifier> openedNames)
         : m_vm(vm)
         , m_holder(holder)
         , m_closedKeys(BuiltinTable::singleton().closedKeysOf(holder))
@@ -921,6 +943,10 @@ public:
         , m_reflectThrows(reflectThrows)
         , m_writes(writes)
     {
+        for (const Identifier& opened : openedNames) {
+            if (BuiltinName name = BuiltinTable::singleton().nameOf(vm, opened.impl()))
+                m_openedNames.append(name);
+        }
     }
 
     void willWrite(UniquedStringImpl* uid) const final
@@ -950,7 +976,7 @@ public:
     String storeErrorMessage(UniquedStringImpl* uid) const final { return assignmentToLockedBuiltinMessage(m_vm, m_holder, uid, lockedIn()); }
     String deleteErrorMessage(UniquedStringImpl* uid) const final { return deletionFromLockedBuiltinMessage(m_vm, m_holder, uid, lockedIn()); }
     bool throwsInSloppyMode() const final { return true; }
-    bool throwsFromReflect() const final { return m_reflectThrows; }
+    bool throwsFromReflect() const final { return lockedIn() == LockedIn::TestRun; }
 
     String setPrototypeErrorMessage() const final
     {
@@ -959,12 +985,12 @@ public:
 
 private:
     // Reflect is told of a refusal in a test run, and nowhere else.
-    LockedIn lockedIn() const { return m_reflectThrows ? LockedIn::TestRun : LockedIn::Executable; }
+    LockedIn lockedIn() const { return m_reflectThrows && !isWrittenByFileOfProduct(m_vm) ? LockedIn::TestRun : LockedIn::Executable; }
 
     bool isFixed(BuiltinName name) const
     {
         if (std::ranges::binary_search(m_closedKeys, name))
-            return true;
+            return !m_openedNames.contains(name);
         const BuiltinTable& table = BuiltinTable::singleton();
         BuiltinID member = table.findOwnMember(m_holder, name);
         if (!member)
@@ -982,6 +1008,7 @@ private:
     VM& m_vm;
     BuiltinID m_holder;
     std::span<const BuiltinName> m_closedKeys;
+    Vector<BuiltinName, 2> m_openedNames;
     std::span<const uint32_t> m_constantMembers;
     std::span<const uint32_t> m_unlockedMembers;
     bool m_reflectThrows;
@@ -1000,10 +1027,10 @@ Ref<ImmutablePropertyNames> immutablePropertyNamesOf(VM& vm, BuiltinID holder, s
         parts.add(ImmutablePropertyNames::Part::Prototype);
 
     IdentifierSet openStrings;
-    for (const Identifier& name : openedNames)
-        openStrings.add(name.impl());
     if (table.at(holder).flags.containsAny({ BuiltinFlag::IsClosedToOtherNames, BuiltinFlag::IsLockedObject })) {
         parts.add(ImmutablePropertyNames::Part::OtherStrings);
+        for (const Identifier& name : openedNames)
+            openStrings.add(name.impl());
         for (BuiltinName name : table.openNamesOf(holder))
             openStrings.add(table.identifierOf(vm, name).impl());
         for (BuiltinID member : table.membersOf(holder)) {
@@ -1012,7 +1039,7 @@ Ref<ImmutablePropertyNames> immutablePropertyNamesOf(VM& vm, BuiltinID holder, s
                 openStrings.add(table.identifierOf(vm, table.at(member).name).impl());
         }
     }
-    return ImmutablePropertyNames::create({ }, parts, WTF::move(openStrings), adoptRef(*new FixedNamesOfBuiltin(vm, holder, constantMembers, writes, unlockedMembers, reflectThrows)));
+    return ImmutablePropertyNames::create({ }, parts, WTF::move(openStrings), adoptRef(*new FixedNamesOfBuiltin(vm, holder, constantMembers, writes, unlockedMembers, reflectThrows, openedNames)));
 }
 
 } // namespace JSC::AOT

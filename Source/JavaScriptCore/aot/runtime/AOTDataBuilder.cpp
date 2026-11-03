@@ -396,7 +396,7 @@ static NEVER_INLINE JSObject* buildOrdinaryObject(Builder& builder, uint32_t fir
     OtherMembersNode members = membersOfNodeAt(builder.data, first, DataNodeHeader::Kind::OrdinaryObject);
     int count = static_cast<int>(members.values.size());
 
-    ProgramIdentifiers& identifiers = *vm.aotState().identifiers;
+    ProgramIdentifiers& identifiers = identifiersOf(builder.state.instance);
     Vector<UniquedStringImpl*, 16> names(count, [&](size_t index) {
         return identifiers.uid(members.identifierNumbers[index]);
     });

@@ -35,7 +35,7 @@ struct SunkAllocation {
 
 Vector<SunkAllocation> predictSinking(FunctionAnalyses&);
 
-Expected<unsigned> sinkableAllocationsAfterInlining(FunctionPassContext&, BlockID blockOfCall, ValueID call, NOESCAPE const ScopedLambda<bool()>& calleeReturnsFreshAggregate);
+Expected<unsigned> sinkableAllocationsAfterInlining(FunctionPassContext&, BlockID blockOfCall, ValueID call, NOESCAPE const ScopedLambda<unsigned()>& freshAllocationsReturnedByCallee);
 
 void convertListCall(Value& call, std::span<const ValueID> elements);
 

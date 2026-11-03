@@ -44,6 +44,8 @@ struct InlineRequest {
     const InliningSummary& callee;
     IRBuilder::DeferredResultReads* deferredResultReads { nullptr };
     const BitVector* longHeadBlocks { nullptr };
+    // The arguments that nothing in the caller names but the call.
+    std::span<const ValueID> argumentsLetGoBehindBody { };
 };
 
 // Keeps every id of the caller valid. narrowValueTypes() may renumber them, so typing the copy again is left to the caller's last step.

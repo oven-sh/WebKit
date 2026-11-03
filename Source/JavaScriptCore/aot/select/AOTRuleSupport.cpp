@@ -119,6 +119,12 @@ bool hasEffectsOfUnknownCode(SelectionContext& context, ValueID id)
     return effectsOfUnknownCode(analyses.effectContext()).isSubsetOf(analyses.effectsOf(id));
 }
 
+bool hasOnlyEffectsOfUnknownCode(SelectionContext& context, ValueID id)
+{
+    FunctionAnalyses& analyses = context.analyses();
+    return analyses.effectsOf(id).isSubsetOf(effectsOfUnknownCode(analyses.effectContext()));
+}
+
 const BuiltinOverload& overloadOf(const Program& program, const Value& builtinCall)
 {
     RELEASE_ASSERT(Value::opcodesWithOverload.contains(builtinCall.opcode));

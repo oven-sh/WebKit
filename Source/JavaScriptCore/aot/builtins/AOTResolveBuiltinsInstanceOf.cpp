@@ -90,11 +90,21 @@ static InstanceOfAnswer findInPrototypeChain(const BuiltinLookupContext& context
     return InstanceOfAnswer::Unknown;
 }
 
-static InstanceOfAnswer answerForClassPart(const BuiltinLookupContext& context, const ClassPart& part, BuiltinID soughtPrototype)
+// What is as its class made it inherits from the prototypes of the realm that made it: in another realm that runs the image it is an instance of no class.
+// Every such realm marks what it makes, so a mark that a test has found says nothing of the realm. A mark that a value has from its definition is flow's, which has seen this program make the value.
+static bool mayBeOfOtherRealm(const BuiltinLookupContext& context)
+{
+    return context.flow.programInstances() != ProgramInstances::AtMostOne;
+}
+
+enum class PristineMarks : uint8_t { AreOfThisRealm, MayBeOfOtherRealm };
+
+static InstanceOfAnswer answerForClassPart(const BuiltinLookupContext& context, const ClassPart& part, BuiltinID soughtPrototype, PristineMarks marks)
 {
     if (!part.provenPristine.containsAny({ PristineAspects::Names, PristineAspects::Prototype }))
         return InstanceOfAnswer::Unknown;
-    return findInPrototypeChain(context, part.builtinClass, soughtPrototype);
+    InstanceOfAnswer answer = findInPrototypeChain(context, part.builtinClass, soughtPrototype);
+    return answer == InstanceOfAnswer::Yes && marks == PristineMarks::MayBeOfOtherRealm ? InstanceOfAnswer::Unknown : answer;
 }
 
 static InstanceOfAnswer answerForLayouts(const BuiltinLookupContext& context, LayoutSetID layouts, BuiltinID soughtPrototype)
@@ -114,7 +124,7 @@ static InstanceOfAnswer joinAnswers(InstanceOfAnswer a, InstanceOfAnswer b)
     return a == b ? a : InstanceOfAnswer::Unknown;
 }
 
-InstanceOfAnswer instanceOfAnswerFor(const BuiltinLookupContext& context, const Type& subject, BuiltinClassID builtinClass)
+static InstanceOfAnswer instanceOfAnswerFor(const BuiltinLookupContext& context, const Type& subject, BuiltinClassID builtinClass, PristineMarks marks)
 {
     const BuiltinTable& table = context.program.builtins();
     if (!subject.hasObjects())
@@ -132,10 +142,33 @@ InstanceOfAnswer instanceOfAnswerFor(const BuiltinLookupContext& context, const 
     if (subject.layouts)
         add(answerForLayouts(context, subject.layouts, soughtPrototype));
     for (const ClassPart& part : subject.classes)
-        add(answerForClassPart(context, part, soughtPrototype));
+        add(answerForClassPart(context, part, soughtPrototype, marks));
     if (subject.primitives && *answer == InstanceOfAnswer::Yes)
         return InstanceOfAnswer::YesIfObject;
     return *answer;
+}
+
+InstanceOfAnswer instanceOfAnswerFor(const BuiltinLookupContext& context, const Type& subject, BuiltinClassID builtinClass)
+{
+    return instanceOfAnswerFor(context, subject, builtinClass, mayBeOfOtherRealm(context) ? PristineMarks::MayBeOfOtherRealm : PristineMarks::AreOfThisRealm);
+}
+
+// The value as it was before a test narrowed its type. None where it may join values that tests have narrowed. foldInstanceTestsOfTypedObjects() asks the same about a layout.
+static ValueID valueAsDefined(FunctionPassContext& context, ValueID subject)
+{
+    ValueID defined = context.analyses.identities().identityOf(subject);
+    ValueLocation definition = context.analyses.useLists().locationOf(defined);
+    bool mayJoinTestedValues = definition.placement != ValuePlacement::InBlock && definition.block != entryBlock;
+    return mayJoinTestedValues ? ValueID() : defined;
+}
+
+static InstanceOfAnswer instanceOfAnswerAt(FunctionPassContext& context, const BuiltinLookupContext& lookup, ValueID subject, BuiltinClassID builtinClass)
+{
+    InstanceOfAnswer answer = instanceOfAnswerFor(lookup, context.program.typeOf(context.function, subject), builtinClass);
+    if (answer != InstanceOfAnswer::Unknown || !mayBeOfOtherRealm(lookup))
+        return answer;
+    ValueID defined = valueAsDefined(context, subject);
+    return defined ? instanceOfAnswerFor(lookup, context.program.typeOf(context.function, defined), builtinClass, PristineMarks::AreOfThisRealm) : answer;
 }
 
 static bool isWorthTesting(FunctionPassContext& context, const ValueSite& site, BuiltinClassID builtinClass)
@@ -201,7 +234,7 @@ Vector<BuiltinInstanceOfSite> planBuiltinInstanceOfSites(FunctionPassContext& co
             return;
         }
 
-        BuiltinInstanceOfSite plan { site, builtinClass, instanceOfAnswerFor(lookup, program.typeOf(function, value.valueOperand()), builtinClass), { }, false, false };
+        BuiltinInstanceOfSite plan { site, builtinClass, instanceOfAnswerAt(context, lookup, value.valueOperand(), builtinClass), { }, false, false };
         if (!isProvenConstructor)
             plan.constructorToTest = constructor;
         plan.testsClass = plan.answer == InstanceOfAnswer::Unknown && isWorthTesting(context, site, builtinClass);
@@ -264,7 +297,16 @@ static void finishArmsWithClassTests(SiteExpansion& expansion, const BuiltinInst
 
     ValueID pristine = builder.append(makePristineTest(subject, site.builtinClass, PristineAspects::Names));
     IRBuilder::BranchBlocks arms = builder.emitBranch(pristine, frequency, BlockFrequency::Unlikely);
+    BlockID isOfOtherRealm;
+    if (mayBeOfOtherRealm({ context.program, context.inputs.flow })) {
+        ValueID belongs = builder.append(IRBuilder::make(Opcode::BelongsToInstance, { subject }));
+        isOfOtherRealm = builder.emitBranch(belongs, frequency, BlockFrequency::Unlikely).notTaken;
+    }
     expansion.finishArm(builder.appendBoolean(true));
+    if (isOfOtherRealm) {
+        builder.moveToEndOf(isOfOtherRealm);
+        finishArmWithWalk(expansion, site.builtinClass, subject);
+    }
     builder.moveToEndOf(arms.notTaken);
     finishArmWithWalk(expansion, site.builtinClass, subject);
 }

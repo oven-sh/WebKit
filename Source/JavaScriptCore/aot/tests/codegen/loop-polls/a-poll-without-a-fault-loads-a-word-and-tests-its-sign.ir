@@ -3,7 +3,7 @@
 # FORM: AsRead
 # OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
 # RUN(ARM64): generate-code calls
-# REQUIRES(ARM64): arm64 unsanitized-code not-windows
+# REQUIRES(ARM64): arm64 unsanitized-code not-windows calling-loop-polls
 # ARM64: f1: size=32 
 # ARM64-NEXT: operation operationAOTPollSlow x1
 

@@ -293,6 +293,10 @@ struct MemoryAccess {
 
 MemoryAccess memoryAccessOf(const Function&, const Value&);
 
+// A handler that only makes stores and throws the error again. EliminateRedundantReads covers with it what may run out of memory in a loop whose stores wait.
+// Where no such store waits, an error goes the same way with the handler and without it.
+bool onlyMakesStoresAndRethrows(const Function&, BlockID handler);
+
 enum class LocationStability : uint8_t { Unknown, ChangedByOwnStores, UnchangedDuringActivation };
 
 LocationStability stabilityOf(const Program&, const Value& access, const MemoryAccess&);

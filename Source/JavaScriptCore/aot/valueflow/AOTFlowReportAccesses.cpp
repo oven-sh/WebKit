@@ -49,6 +49,7 @@ struct FlowSiteObservation {
     Expected<BlockFrequency> frequency { BlockFrequency::Normal };
     CopyPlace place { CopyPlace::OwnBody };
     bool isInGenericVersion { false };
+    bool receiverIsClassObject { false };
     LayoutID layout;
     PropertyKeyID key;
     uint32_t candidatesOfLeftOperation { 0 };
@@ -271,6 +272,10 @@ static void collectObservations(const Program& program, const FlowResults& flow,
             observation.layout = access.receivers.empty() ? LayoutID() : access.receivers.front();
             observation.candidatesOfLeftOperation = access.numberOfCandidates;
             observation.cost = AccessCost::ByName;
+            if constexpr (std::is_same_v<InstructionType, Value>) {
+                if (auto receiver = receiverOf(instruction.opcode); receiver && PayloadWord::accessSite(instruction.opcode) && site == instruction.accessSite())
+                    observation.receiverIsClassObject = program.typeOf(function, instruction.operand(*receiver)).isClassObjectOrNullish();
+            }
             break;
         case AccessClass::DirectCall:
             observation.level = levelFromSiteLoss(flow, site);
@@ -497,6 +502,7 @@ static Vector<FlowSiteLevel> foldSiteLevels(const FlowResults& flow, std::span<c
             folded.layout = observation.layout;
             folded.key = observation.key;
             folded.candidatesOfLeftOperation = observation.candidatesOfLeftOperation;
+            folded.receiverOfLeftOperationIsClassObject = observation.receiverIsClassObject;
         }
     }
 
@@ -627,7 +633,8 @@ static FlowSiteLoss lossOfKnownReceiver(const PropertyAccessContext& context, Ac
 
 static FlowSiteLoss lossBelowProven(const Program& program, const FlowResults& flow, const BuildContext& build, AccessSiteID site, const FlowSiteLevel& level)
 {
-    FlowSiteLoss loss = flow.lossOf(site);
+    // What flow lost, it lost before the tests were placed. Behind them the receiver of the operation that is left may have its class.
+    FlowSiteLoss loss = level.receiverOfLeftOperationIsClassObject ? FlowSiteLoss { UnprovenCause::LeftByPasses, LimitID::None, noWitness } : flow.lossOf(site);
     if (loss.cause == UnprovenCause::Unknown)
         loss = lossOfKnownReceiver({ program, &flow }, flow.at(site).kind, level);
     if (loss.cause == UnprovenCause::Unknown)
@@ -713,8 +720,12 @@ static void fillLoss(Wire::AccessRecord& record, const FlowSiteLoss& loss)
 static FlowSiteLoss lossOfGeneralOperation(const Program& program, const FlowResults& flow, const BuildContext& build, std::span<const FlowSiteLevel> levels, const GeneralOperation& operation)
 {
     FlowSiteLoss loss;
-    if (operation.madeBy && operation.madeBy.index() < levels.size())
-        loss = lossBelowProven(program, flow, build, operation.madeBy, levels[operation.madeBy.index()]);
+    if (operation.madeBy && operation.madeBy.index() < levels.size()) {
+        // Of the value that the access made, what flow lost is still what is not known.
+        FlowSiteLevel level = levels[operation.madeBy.index()];
+        level.receiverOfLeftOperationIsClassObject = false;
+        loss = lossBelowProven(program, flow, build, operation.madeBy, level);
+    }
     else if (operation.isParameter)
         loss = flow.lossOfParameters(operation.function);
     if (loss.cause == UnprovenCause::Unknown || loss.cause == UnprovenCause::LeftByPasses)

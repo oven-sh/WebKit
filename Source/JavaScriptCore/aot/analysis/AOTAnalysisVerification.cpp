@@ -610,6 +610,8 @@ static bool checkEscapeAnalysis(Comparison& comparison, const Function& function
             && (!comparison.isSame(cached.liveInstancesOf(object), fresh.liveInstancesOf(object), "the number of live instances of {}, {}"_s, object, definition)
                 || !comparison.isSame(cached.objectsRenewedAtMakersOf(object), fresh.objectsRenewedAtMakersOf(object), "the objects renewed where {}, {}, is made"_s, object, definition)))
             return false;
+        if (cached.hasLiveInstances() && !comparison.isSame(cached.allocationsThatMayGoOutOfSight().get(object.index()), fresh.allocationsThatMayGoOutOfSight().get(object.index()), "whether {}, {}, may go out of sight"_s, object, definition))
+            return false;
         auto listOf = [](ObjectUses uses) {
             return Vector<ObjectUse>(uses.size(), [&](size_t index) {
                 return uses[index];
@@ -627,6 +629,18 @@ static bool checkEscapeAnalysis(Comparison& comparison, const Function& function
         PointsToSet freshSet = fresh.pointsTo(value);
         if (!comparison.isSame(cachedSet.objects, freshSet.objects, "the objects that {} may be"_s, value)
             || !comparison.isSame(cachedSet.mayBeUntracked, freshSet.mayBeUntracked, "whether {} may be an object that is not tracked"_s, value))
+            return false;
+    }
+    return true;
+}
+
+static bool checkAllocationsInSight(Comparison& comparison, const Function& function, const EscapeAnalysis& cached, const EscapeAnalysis& fresh)
+{
+    for (unsigned block = 0; cached.hasLiveInstances() && block < function.blocks.size(); ++block) {
+        auto held = cached.allocationsInSightAtEndOf(BlockID(block));
+        auto found = fresh.allocationsInSightAtEndOf(BlockID(block));
+        if (!comparison.isSame(!!held, !!found, "whether {} is a block of a cycle round an allocation that may go out of sight"_s, BlockID(block))
+            || (held && !comparison.isSameList(*held, *found, "the allocations in sight at the end of {}"_s, BlockID(block))))
             return false;
     }
     return true;
@@ -832,7 +846,7 @@ bool FunctionAnalyses::verifyCached()
     }
     if (cached.contains(FunctionAnalysis::Liveness) && !checkLiveness(comparison, m_function, graph, fresh.useLists(), *m_values.liveness))
         return false;
-    if (cached.contains(FunctionAnalysis::Escape) && !checkEscapeAnalysis(comparison, m_function, *m_values.escape, fresh.escapeWithLiveInstances()))
+    if (cached.contains(FunctionAnalysis::Escape) && (!checkEscapeAnalysis(comparison, m_function, *m_values.escape, fresh.escapeWithLiveInstances()) || !checkAllocationsInSight(comparison, m_function, *m_values.escape, fresh.escapeWithLiveInstances())))
         return false;
     if (cached.contains(FunctionAnalysis::EscapeHistory) && !checkUseEffectHistory(comparison, m_function, graph, fresh.escape().numberOfObjects(), *m_values.escapeHistory, fresh.escapeHistory()))
         return false;

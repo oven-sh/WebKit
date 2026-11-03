@@ -175,9 +175,15 @@ void generateMakeClosureOfField(StubAssembler& jit)
     const GPRReg word = allocator;
     const GPRReg offset = allocator;
     const unsigned kind = jit.key().form();
-    const unsigned count = jit.key().count();
+    const bool capturesEnvironment = jit.key() == makeClosureOfFieldOverEnvironment(kind);
+    const unsigned count = jit.key().count() ? 1 : 0;
     const unsigned allocatorIndex = (count + 1) / 2;
     RELEASE_ASSERT(object == captureGPR(0) && noOverlap(cell, request, allocator, header, object));
+    auto loadEnvironment = [&](GPRReg environment) {
+        jit.urshift64(request, TrustedImm32(48), environment);
+        jit.load32(BaseIndex(object, environment, CCallHelpers::TimesOne), environment);
+        decodeCell32(jit, environment, environment);
+    };
 
     JumpList slow;
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(closures.slimClosureAllocators) + allocatorIndex * sizeof(void*)), allocator);
@@ -187,12 +193,17 @@ void generateMakeClosureOfField(StubAssembler& jit)
     jit.load64(BaseIndex(word, header, CCallHelpers::TimesEight), word);
     jit.load64(Address(instanceGPR, AOT_INSTANCE_OFFSET(slimClosureHeaders) + kind * sizeof(uint64_t)), header);
     jit.storePair64(header, word, Address(cell));
-    if (count)
+    if (capturesEnvironment) {
+        loadEnvironment(header);
+        jit.store64(header, Address(cell, offsetOfSlimClosureCaptures));
+    } else if (count)
         jit.store64(object, Address(cell, offsetOfSlimClosureCaptures));
     fenceAfterAllocation(jit);
 
     Label isMade = jit.label();
     jit.urshift64(request, TrustedImm32(32), offset);
+    if (capturesEnvironment)
+        jit.and32(TrustedImm32(0xffff), offset);
     jit.urshift64(cell, TrustedImm32(cell32Shift), header);
     jit.store32(header, BaseIndex(object, offset, CCallHelpers::TimesOne));
     Jump needsBarrier = branchIfBarrierIsNeeded(jit, object, header);
@@ -203,9 +214,17 @@ void generateMakeClosureOfField(StubAssembler& jit)
     slow.link(&jit);
     const GPRReg wholeRequest = allocator;
     uint64_t restOfRequest = static_cast<uint64_t>(kind) << ClosureRequest::executableShift | 1ULL << ClosureRequest::isSlimBit | static_cast<uint64_t>(count) << ClosureRequest::countShift;
+    // The operation takes the capture out of the register that holds the object.
+    if (capturesEnvironment) {
+        loadEnvironment(allocator);
+        jit.move(object, header);
+        jit.move(allocator, object);
+    }
     jit.zeroExtend32ToWord(request, wholeRequest);
     jit.or64(TrustedImm64(static_cast<int64_t>(restOfRequest)), wholeRequest);
     jit.callOperationAndReturn(Entry::operationAOTNewClosureSlow, { .saves = Saves::CallerSavedRegisters, .checksException = false, .secondArgumentIn = wholeRequest }, [&] {
+        if (capturesEnvironment)
+            jit.move(header, object);
         jit.jump().linkTo(isMade, &jit);
     });
 
@@ -470,18 +489,18 @@ void generateValueEndsItsTailCalls(StubAssembler& jit)
 
 StubSignature signatureOfRecordCallee(StubKey)
 {
-    return StubSignature::withoutResult({ calleeGPR });
+    // Neither register holds anything where a function is entered by value, so an entrypoint that only records moves nothing out of the way.
+    return StubSignature::withoutResult({ calleeGPR, gprOf(StubRegister::T11) });
 }
 
 void generateRecordCallee(StubAssembler& jit)
 {
     const GPRReg closure = jit.operand(0);
-    const GPRReg stackPointerOfCaller = jit.allocateScratch(StubRegister::T11);
+    const GPRReg stackPointerOfCaller = jit.operand(1);
     const GPRReg entries = jit.allocateScratch(StubRegister::T13);
     const GPRReg scratch = jit.scratchRegister();
 
     constexpr ptrdiff_t offsetOfMask = OBJECT_OFFSETOF(RecordedCallee, stackPointerOfCaller) - static_cast<ptrdiff_t>(sizeof(RecordedCallee));
-    jit.addPtr(TrustedImm32(sizeof(CallerFrameAndPC)), GPRInfo::callFrameRegister, stackPointerOfCaller);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(heap.recordedCallees)), entries);
     // The call that was made from further out may not have returned.
 #if CPU(X86_64)
@@ -502,6 +521,13 @@ void generateRecordCallee(StubAssembler& jit)
     jit.returnToCaller();
 
     isTaken.link(&jit);
+#if CPU(X86_64)
+    // A caller without a frame leaves the stack eight bytes off where a function of the run time wants it. Called once more from here, the stub finds it as ever.
+    Jump callerHasFrame = jit.branchTestPtr(CCallHelpers::NonZero, CCallHelpers::stackPointerRegister, TrustedImm32(sizeof(void*)));
+    jit.callStub(recordCallee());
+    jit.returnToCaller();
+    callerHasFrame.link(&jit);
+#endif
     jit.callOperationAndReturn(Entry::operationAOTRecordCallee, { .returns = OperationCall::Returns::Void, .saves = Saves::CallerSavedRegisters, .checksException = false, .secondArgumentIn = closure, .thirdArgumentIn = stackPointerOfCaller });
 }
 

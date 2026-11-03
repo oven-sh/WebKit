@@ -1,0 +1,31 @@
+# Reflect.deleteProperty answers false where the key is there and may not go, as in a frozen object, and true where there is no such key.
+# So flow does not publish a field that it may name as never read, though no read reaches it, and the field stays. The field of a frozen object that nothing is deleted from is removed
+# FORM: AsRead
+# RUN: pipeline RemoveUnreadFields
+# OPTIONS: only-passes=ComputeEffectSummaries,ResolveCalls,ResolveAccesses,EliminateDeadCode,RemoveUnreadFields
+# STATISTIC: UnreadFieldsRemoved = 1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="DeletedFrom" fields=[{key="tag" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Frozen" fields=[{key="tag" declared={type=anything} flags=[IsRequired]}]
+# CHECK-NOT: layout L0 name="DeletedFrom" {{*}}reads=NeverRead
+# CHECK: layout L1 name="Frozen" {{*}}initialization=SetAtCreation reads=NeverRead
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = Integer integer=1
+    v2 = PropGet v0 key="Object" [isFreeName]
+    v3 = PropGet v2 key="freeze"
+    v4 = PropGet v0 key="Reflect" [isFreeName]
+    v5 = PropGet v4 key="deleteProperty"
+    v6 = String string="tag"
+    v7 = NewObject -, v1 layout=L0 fields=[0]
+    v8 = Call v3, v2, v7
+    v9 = Call v5, v4, v7, v6
+    v10 = NewObject -, v1 layout=L1 fields=[0]
+    v11 = Call v3, v2, v10
+    Return v9
+# CHECK: layout=L0 fields=[0]
+# CHECK: = NewObject layout=L1 allocationSite=
+}

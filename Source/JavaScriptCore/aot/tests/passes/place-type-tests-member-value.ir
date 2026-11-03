@@ -1,0 +1,50 @@
+# `f.apply(t, list)`: a test of the receiver stands for the read of `apply`: it asks for a closure as it was created, which a bound function never is. In the arm behind the failed test only the value
+# that was read tells what it is, and the arm may ask it. Behind a test of something else that has failed, and behind the failed test of an instance of another class, which somebody has meddled with,
+# the arm stays generic code.
+# FORM: Prepared
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="behind-the-failed-test-of-the-receiver" parameters=[{type=function}, {type=anything}, {type=Array}] results=[{type=anything}] {
+    v3 = IsPristine v0 builtinClass=Function aspects=[Names]
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = CallBuiltin v0, v1, v2 overload=FunctionPrototypeApply/0
+    Return v4
+  b2() frequency=Unlikely:
+    v5 = PropGet v0 key="apply"
+    v6: anything ~ builtin(FunctionPrototypeApply) = Upcast v5 castType=anything
+    v7 = Call v6, v0, v1, v2 calleeKey="apply"
+    v8 = Upcast v7 castType=anything
+    Return v8
+# CHECK: b2() frequency=Unlikely:
+# CHECK: = TypeTest v6 testedType=builtin(FunctionPrototypeApply)
+}
+function f1 name="behind-a-failed-test-of-something-else" parameters=[{type=function}, {type=anything}, {type=Array}] results=[{type=anything}] {
+    v3 = TypeTest v1 testedType=i32
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4: i32):
+    v5 = CallBuiltin v0, v4, v2 overload=FunctionPrototypeApply/0
+    Return v5
+  b2() frequency=Unlikely:
+    v6 = PropGet v0 key="apply"
+    v7: anything ~ builtin(FunctionPrototypeApply) = Upcast v6 castType=anything
+    v8 = Call v7, v0, v1, v2 calleeKey="apply"
+    v9 = Upcast v8 castType=anything
+    Return v9
+# CHECK-NOT: = TypeTest v7
+}
+function f2 name="behind-the-failed-test-of-a-map" parameters=[{type=Map}, {type=anything}] results=[{type=anything}] {
+    v2 = IsPristine v0 builtinClass=Map aspects=[Names]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = CallBuiltin v0, v1 overload=MapPrototypeGet/0
+    Return v3
+  b2() frequency=Unlikely:
+    v4 = PropGet v0 key="get"
+    v5: anything ~ builtin(MapPrototypeGet) = Upcast v4 castType=anything
+    v6 = Call v5, v0, v1 calleeKey="get"
+    v7 = Upcast v6 castType=anything
+    Return v7
+# CHECK-NOT: = TypeTest v5
+}

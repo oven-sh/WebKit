@@ -101,5 +101,5 @@ function f1 name="squaredLength" module=m0 flags=[IsChecked, HasExplicitName] le
 # CHECK: Double b@[[y]] = Load(b@[[storage]], offset = 8, ControlDependent|Reads:indexedDoubleProperties_1, {{*}}:GetArrayElement)
 # CHECK-LABEL: end of function
 # The function has calls, and Windows passes arguments in other registers: its count is not checked.
-# X64: instructions: 15, patchpoints: 0, rare instructions: 52
-# ARM64: instructions: 16, patchpoints: 0, rare instructions: 59
+# X64: instructions: 14, patchpoints: 0, rare instructions: 40
+# ARM64: instructions: 15, patchpoints: 0, rare instructions: 45

@@ -1135,18 +1135,59 @@ Vector<VariableID> collectExportsThatSpiesReplace(const ValueFlowResultInputs& i
 
     // Text that nobody has seen finds a spy by itself, and every namespace object that has escaped is within its reach: in an object that it is handed, on the global
     // object, in a variable of the scope that it is evaluated in. The copy of a file that runs again has the text of the compiled file, whose spies are seen.
-    bool runsTextNobodyHasSeen = std::ranges::any_of(unseenCode, [](const UnseenCodeRecord& record) {
+    // Not the text that a file evaluates which an executable holds too: there it finds no spy, and none here.
+    auto isOfProduct = [&](ModuleID module) {
+        return module && program.at(module).flags.contains(ModuleFlags::LoadsCompiledFilesAlone);
+    };
+    // An evaluator that is applied at no place which flow can name has been named somewhere: `{ "%eval%": eval }`.
+    auto isNamedByProductAlone = [&](BuiltinID evaluator) {
+        bool isNamed = false;
+        BuiltinID holder = builtins.at(evaluator).holder;
+        auto names = [&](const Value& value) {
+            if (value.opcode == Opcode::Builtin)
+                return builtins.canonicalID(value.builtin()) == evaluator;
+            if (value.opcode != Opcode::PropGet || !holder)
+                return false;
+            BuiltinName name = program.builtinNameOf(value.key());
+            BuiltinID member = name ? builtins.findOwnMember(holder, name) : BuiltinID();
+            return member && builtins.canonicalID(member) == evaluator;
+        };
+        for (uint32_t index = 0; index < program.functions.size(); ++index) {
+            const Function& function = program.functions[index];
+            if (!inputs.isReached(FunctionID(index)))
+                continue;
+            for (const Value& value : function.values) {
+                if (!names(value))
+                    continue;
+                if (!isOfProduct(function.module))
+                    return false;
+                isNamed = true;
+            }
+        }
+        return isNamed;
+    };
+    bool runsTextNobodyHasSeen = std::ranges::any_of(unseenCode, [&](const UnseenCodeRecord& record) {
+        uint32_t module = record.witness.location.module;
+        if (module != Wire::none ? isOfProduct(ModuleID(module)) : record.builtin != Wire::none && isNamedByProductAlone(BuiltinID(record.builtin)))
+            return false;
         return record.cause == UnseenCodeCause::EvaluatesText || (record.cause == UnseenCodeCause::RunsUnseenCode && record.builtin != Wire::none);
     });
-    if (isSpyOutOfSight && runsTextNobodyHasSeen)
-        keysOutOfSight.add(maker, ValueSets::nothing, true);
-
-    if (keysOutOfSight.isSpiedOn) {
+    if (isSpyOutOfSight && runsTextNobodyHasSeen) {
         for (ValueFlowNodeID node : { ValueFlowProgramNodes::escaped(), ValueFlowProgramNodes::lost() }) {
             forEachNamespaceIn(inputs.solver().possibleValuesOf(node), [&](ModuleID id) {
-                keysOfModule[id.index()].add(maker, keysOutOfSight);
+                keysOfModule[id.index()].add(maker, ValueSets::nothing, true);
             });
         }
+    }
+
+    // An object that flow does not know, which most spies of a large suite are handed, is a namespace object only where flow itself has lost one. One that seen code carries to the spy
+    // is listed there beside the unknown object, and of one that goes into a call the front end opens the names that such spies spell. That a namespace object has escaped says little: the
+    // loader hands every file of a test run to code from disk, the run time reads names off the objects, require.cache shows them. Nor that a call of a value nobody knows lists it: it is the
+    // `this` of every call of an export that may be replaced. With either, one such spy would open an export in every file of the program.
+    if (keysOutOfSight.isSpiedOn) {
+        forEachNamespaceIn(inputs.solver().possibleValuesOf(ValueFlowProgramNodes::lost()), [&](ModuleID id) {
+            keysOfModule[id.index()].add(maker, keysOutOfSight);
+        });
     }
 
     ExportedVariables exported(program);

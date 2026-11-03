@@ -414,6 +414,12 @@ static Symbol* privateNameOf(VM& vm, State& state, JSCellButterfly* token, uint3
     return name;
 }
 
+// Each realm that runs the image evaluates the class for itself. An object of another realm has the layouts of the image and was made by that realm's evaluation.
+static bool isOfRealmOf(const State& state, const Object& object)
+{
+    return object.structure()->realm() == state.instance.globalObject;
+}
+
 struct PrivateProperty {
     const FieldData* field { nullptr };
     JSValue value;
@@ -474,7 +480,7 @@ static PrivateLocation locatePrivateName(VM& vm, State& state, JSObject* object,
     location.underDeclaredName = find(location.declaredName, &declared);
     if (brand)
         location.brand = brandName ? find(brandName, brand) : location.underDeclaredName;
-    location.belongsToEvaluation = !brand || location.brand.value == JSValue(token);
+    location.belongsToEvaluation = (!location.compiledObject || isOfRealmOf(state, *location.compiledObject)) && (!brand || location.brand.value == JSValue(token));
     if (location.belongsToEvaluation && location.underDeclaredName.value) {
         location.name = location.declaredName;
         location.property = location.underDeclaredName;
@@ -524,6 +530,8 @@ static const FieldData* fieldUnderDeclaredName(VM& vm, State& state, const Objec
 // The declared name is shared by all evaluations of the class, and the brand tells them apart. A class that is evaluated once has nothing to tell apart.
 static bool wasMadeByEvaluation(VM& vm, State& state, const Object& object, const LayoutData& declaringLayout, JSCellButterfly* token)
 {
+    if (!isOfRealmOf(state, object)) [[unlikely]]
+        return false;
     if (declaringLayout.evaluation() == EvaluationState::ProvenOnce)
         return true;
     const FieldData* brand = brandOf(state, declaringLayout, token);

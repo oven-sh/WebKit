@@ -9,7 +9,9 @@
 #if ENABLE(AOT)
 
 #include "AOTAnalysisContext.h"
+#include "AOTBodyIndex.h"
 #include "AOTBuildContext.h"
+#include "AOTBuiltinIDs.h"
 #include "AOTCFG.h"
 #include "AOTEdgeResults.h"
 #include "AOTFunctionAnalyses.h"
@@ -629,8 +631,178 @@ InitializerCall analyzeCall(const Program& program, BuildContext& build, Functio
 
 } // anonymous namespace
 
+static bool runsNoCodeAtHeadOfBody(const Value& value)
+{
+    switch (value.opcode) {
+    case Opcode::NewClosure:
+    case Opcode::NewObject:
+    case Opcode::FinishObject:
+    case Opcode::PutEnvironmentField:
+        return true;
+    default:
+        return handsOperandOnUntested(value.opcode) || isRematerializable(value);
+    }
+}
+
+// The files that a `require` finds run to their end wherever it stands: each request for them says so, none is an import, which is linked before the file has begun, and no way leads from the file back to it.
+// A file between two cycles counts as on one.
+static BitVector findFilesThatAreSeenWhole(const Program& program)
+{
+    size_t numberOfModules = program.modules.size();
+    BitVector isSeenWhole(numberOfModules);
+    Vector<uint32_t> numberOfTargets(FillWith { }, numberOfModules, 0u);
+    Vector<uint32_t> numberOfReferrers(FillWith { }, numberOfModules, 0u);
+    for (size_t index = 0; index < numberOfModules; ++index) {
+        isSeenWhole.quickSet(index);
+        numberOfTargets[index] = program.modules[index].requests.size();
+        for (const ModuleRequest& request : program.modules[index].requests)
+            ++numberOfReferrers[request.target.index()];
+    }
+    Vector<uint32_t> firstReferrer(numberOfModules + 1);
+    uint32_t numberOfRequests = 0;
+    for (size_t index = 0; index < numberOfModules; ++index)
+        firstReferrer[index] = std::exchange(numberOfRequests, numberOfRequests + numberOfReferrers[index]);
+    firstReferrer[numberOfModules] = numberOfRequests;
+    Vector<uint32_t> referrers(numberOfRequests);
+    Vector<uint32_t> nextReferrer(firstReferrer.span().first(numberOfModules));
+    for (size_t index = 0; index < numberOfModules; ++index) {
+        for (const ModuleRequest& request : program.modules[index].requests)
+            referrers[nextReferrer[request.target.index()]++] = index;
+    }
+    BitVector liesOnNoCycle(numberOfModules);
+    Vector<uint32_t> found;
+    auto find = [&](uint32_t index) {
+        if (!liesOnNoCycle.quickSet(index))
+            found.append(index);
+    };
+    for (uint32_t index = 0; index < numberOfModules; ++index) {
+        if (!numberOfTargets[index] || !numberOfReferrers[index])
+            find(index);
+    }
+    while (!found.isEmpty()) {
+        uint32_t index = found.takeLast();
+        for (const ModuleRequest& request : program.modules[index].requests) {
+            if (!--numberOfReferrers[request.target.index()])
+                find(request.target.index());
+        }
+        for (uint32_t referrer : referrers.span().subspan(firstReferrer[index], firstReferrer[index + 1] - firstReferrer[index])) {
+            if (!--numberOfTargets[referrer])
+                find(referrer);
+        }
+    }
+    isSeenWhole.filter(liesOnNoCycle);
+    for (const Module& module : program.modules) {
+        for (const ModuleRequest& request : module.requests) {
+            if (request.kind != ModuleRequestKind::Require || request.isHoisted || !request.completes)
+                isSeenWhole.quickClear(request.target.index());
+        }
+    }
+    return isSeenWhole;
+}
+
+static BitVector findVariablesStoredAheadOfEveryRead(const Program& program, BuildContext& build)
+{
+    // Ahead of the store at the head of a body nothing has run, so nobody has a function of the file in hand. A store further down the one way that the body begins with is seen by whoever comes behind the end of the body.
+    BitVector storedAtHead(program.variables.size());
+    BitVector stored(program.variables.size());
+    BitVector readAheadOfStore(program.variables.size());
+    std::optional<BitVector> filesSeenWhole;
+    constexpr OpcodeSet reads { Opcode::GetModuleVariable, Opcode::GetEncodedModuleVariable };
+    for (uint32_t index = 0; index < program.modules.size(); ++index) {
+        const Module& module = program.modules[index];
+        if (module.kind != ModuleKind::CommonJs || !module.body || !program.at(module.body).hasBody() || program.at(module.body).module != ModuleID(index))
+            continue;
+        const Function& body = program.at(module.body);
+        BlockID block = entryBlock;
+        bool isAtHead = true;
+        for (size_t steps = 0; steps < body.blocks.size() && !body.at(block).handler; ++steps) {
+            for (ValueID id : body.at(block).values) {
+                const Value& value = body.at(id);
+                if (reads.contains(value.opcode) && program.at(value.variable()).module == ModuleID(index) && !stored.quickGet(value.variable().index()))
+                    readAheadOfStore.quickSet(value.variable().index());
+                if (value.opcode != Opcode::PutModuleVariable) {
+                    isAtHead = isAtHead && runsNoCodeAtHeadOfBody(value);
+                    continue;
+                }
+                const Variable& variable = program.at(value.variable());
+                if (variable.module != ModuleID(index) || variable.initialization != VariableInitialization::Undefined)
+                    continue;
+                if (isAtHead)
+                    storedAtHead.quickSet(value.variable().index());
+                else if (!filesSeenWhole)
+                    filesSeenWhole = findFilesThatAreSeenWhole(program);
+                if (isAtHead || filesSeenWhole->quickGet(index))
+                    stored.quickSet(value.variable().index());
+            }
+            if (body.at(block).terminator.kind != TerminatorKind::Jump)
+                break;
+            block = body.at(block).terminator.next().block;
+        }
+    }
+    stored.exclude(readAheadOfStore);
+    if (stored.isEmpty())
+        return stored;
+
+    // An import is linked, and what it names may be read, before the file that it names has begun.
+    BitVector modulesImported(program.modules.size());
+    for (const Module& module : program.modules) {
+        for (const ModuleRequest& request : module.requests) {
+            if (request.kind != ModuleRequestKind::Require || request.isHoisted)
+                modulesImported.quickSet(request.target.index());
+        }
+    }
+    auto isAskedAbout = [&](FunctionID id, const Function& function, const Value& value) {
+        if (!reads.contains(value.opcode) || !stored.quickGet(value.variable().index()))
+            return false;
+        ModuleID owner = program.at(value.variable()).module;
+        return owner != function.module || (program.at(owner).body != id && !storedAtHead.quickGet(value.variable().index()));
+    };
+    // Whoever holds the module object of a file reads `exports` off it at any time.
+    constexpr uint32_t isModuleWithObjectInHand = 1u << 31;
+    Vector<uint32_t> readElsewhere = collectInParallel<uint32_t>(build.parallelLoops(), program.functions.size(), [&](unsigned index, Vector<uint32_t>& found) {
+        const Function& function = program.functions[index];
+        forEachListedValue(program, FunctionID(index), { Opcode::ModuleBuiltin }, [&](BlockID, uint32_t, ValueID, const Value& value) {
+            if (program.builtins().canonicalID(value.builtin()) == Builtins::ModuleObject)
+                found.append(value.module().index() | isModuleWithObjectInHand);
+        });
+        bool isAsked = false;
+        forEachListedValue(program, FunctionID(index), reads, [&](BlockID, uint32_t, ValueID, const Value& value) {
+            isAsked = isAsked || isAskedAbout(FunctionID(index), function, value);
+        });
+        if (!isAsked)
+            return;
+        for (const Block& block : function.blocks) {
+            ModuleID begun;
+            for (ValueID id : block.values) {
+                const Value& value = function.at(id);
+                if (value.opcode == Opcode::EvaluateModule)
+                    begun = value.module();
+                else if (isAskedAbout(FunctionID(index), function, value)) {
+                    if (program.at(value.variable()).module != begun)
+                        found.append(value.variable().index());
+                } else if (!reads.contains(value.opcode) && !handsOperandOnUntested(value.opcode))
+                    begun = { };
+            }
+        }
+    });
+    BitVector modulesWithObjectInHand(program.modules.size());
+    for (uint32_t entry : readElsewhere) {
+        if (entry & isModuleWithObjectInHand)
+            modulesWithObjectInHand.quickSet(entry & ~isModuleWithObjectInHand);
+        else
+            stored.quickClear(entry);
+    }
+    for (size_t variable : BitVector(stored)) {
+        uint32_t module = program.variables[variable].module.index();
+        if (modulesImported.quickGet(module) || (modulesWithObjectInHand.quickGet(module) && !storedAtHead.quickGet(variable)))
+            stored.quickClear(variable);
+    }
+    return stored;
+}
+
 UnobservedFieldDefinitions::UnobservedFieldDefinitions(const Program& program, BuildContext& build, NOESCAPE const ScopedLambda<bool(FunctionID)>& mayHoldDirectCall)
 {
+    m_variablesStoredAheadOfEveryRead = findVariablesStoredAheadOfEveryRead(program, build);
     Vector<InitializerCall> calls = collectInParallel<InitializerCall>(build.parallelLoops(), program.functions.size(), [&](unsigned functionIndex, Vector<InitializerCall>& found) {
         if (!mayHoldDirectCall(FunctionID(functionIndex)))
             return;
@@ -749,6 +921,10 @@ KeysOfLiterals keysStoredRightAfterAllocations(const Program& program, const Fun
     BitVector isFresh;
     Vector<ValueID, 8> objectsOfBlock;
     unsigned numberOfFreshObjects = 0;
+    // `module.exports = f, module.exports.default = f`: the one object that lies in a variable of the module, and what has read it back. Whoever else reads the variable runs later: nothing in between runs code.
+    ValueID objectInVariable;
+    VariableID variableOfObject;
+    Vector<ValueID, 4> readsOfObject;
     for (const Block& block : function.blocks) {
         if (block.handler)
             continue;
@@ -756,28 +932,55 @@ KeysOfLiterals keysStoredRightAfterAllocations(const Program& program, const Fun
             isFresh.quickClear(object.index());
         objectsOfBlock.shrink(0);
         numberOfFreshObjects = 0;
+        objectInVariable = { };
+        auto forget = [&](ValueID object) {
+            isFresh.quickClear(object.index());
+            --numberOfFreshObjects;
+            if (object == objectInVariable)
+                objectInVariable = { };
+        };
         for (ValueID id : block.values) {
             const Value& value = function.at(id);
             if (handsOperandOnUntested(value.opcode) || value.opcode == Opcode::TypeTest)
                 continue;
+            if (objectInVariable && value.opcode == Opcode::GetModuleVariable && value.variable() == variableOfObject) {
+                readsOfObject.append(id);
+                continue;
+            }
+            auto objectBehind = [&](ValueID operand) {
+                ValueID object = operand ? sameObjectThroughCasts(function, operand).valueInFrontOfFacts() : ValueID();
+                return object && objectInVariable && readsOfObject.contains(object) ? objectInVariable : object;
+            };
+            if (value.opcode == Opcode::PutModuleVariable && numberOfFreshObjects) {
+                ValueID stored = objectBehind(value.valueOperand());
+                if (objectInVariable && (stored != objectInVariable || value.variable() == variableOfObject))
+                    forget(objectInVariable);
+                if (stored && isFresh.get(stored.index()) && !objectInVariable && function.at(stored).opcode == Opcode::NewClosure) {
+                    objectInVariable = stored;
+                    variableOfObject = value.variable();
+                    readsOfObject.shrink(0);
+                    continue;
+                }
+            }
 
-            bool isStrictStore = value.opcode == Opcode::PropSet && value.mode() == ECMAMode::Strict && program.nameClassOf(value.key()) != NameClass::Proto;
+            bool isStoreByName = value.opcode == Opcode::PropSet && program.nameClassOf(value.key()) != NameClass::Proto;
+            bool isStrictStore = isStoreByName && (value.mode() == ECMAMode::Strict || (objectInVariable && objectBehind(value.operand(*receiverOf(value.opcode))) == objectInVariable));
+            if (objectInVariable && !isStrictStore && !isRematerializable(value) && value.opcode != Opcode::NewClosure)
+                forget(objectInVariable);
             ValueID receiver;
             for (uint32_t index = 0; index < value.numberOfOperands() && numberOfFreshObjects; ++index) {
-                ValueID object = value.operand(index) ? sameObjectThroughCasts(function, value.operand(index)).valueInFrontOfFacts() : ValueID();
+                ValueID object = objectBehind(value.operand(index));
                 if (!object || !isFresh.get(object.index()))
                     continue;
                 if ((isStrictStore || value.opcode == Opcode::PropDefine) && index == *receiverOf(value.opcode))
                     receiver = object;
-                else {
-                    isFresh.quickClear(object.index());
-                    --numberOfFreshObjects;
-                }
+                else if (object != objectInVariable)
+                    forget(object);
             }
             if (isStrictStore && receiver && isFresh.get(receiver.index()) && program.at(value.key()).kind == PropertyKeyKind::Text && program.nameClassOf(value.key()) == NameClass::Ordinary)
                 keys.add(receiver.index(), Vector<PropertyKeyID, 8>()).iterator->value.append(value.key());
 
-            if (value.opcode == Opcode::NewObject ? !program.at(value.layout()).isEnvironment() : value.opcode == Opcode::Data && program.at(value.data()).root.is<DataNode::Object>()) {
+            if (value.opcode == Opcode::NewObject ? !program.at(value.layout()).isEnvironment() : value.opcode == Opcode::NewClosure || (value.opcode == Opcode::Data && program.at(value.data()).root.is<DataNode::Object>())) {
                 // A bit vector grows to the bit that is set and no further: thousands of objects would copy it thousands of times.
                 isFresh.ensureSize(function.values.size());
                 isFresh.quickSet(id.index());

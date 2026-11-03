@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTAccessEmitter.h"
 #include "AOTConstantEmitter.h"
 #include "AOTIdentifierNumbering.h"
 #include "AOTNameClass.h"
@@ -31,6 +32,9 @@ void OwnAccessEmitter::generatePropHasOwn(const ValueContext& value)
         return;
     }
     auto askStub = [&] {
+        AccessEmitter& accesses = emitter<AccessEmitter>();
+        if (accesses.isSymbolOfRealm(value->key()))
+            return Condition(m_out.castToInt32(callStub(value, inByValCached(PresenceQuestion::HasOwn), { object.value(), accesses.cellOfKey(value, value->key()).value() }).first));
         return Condition(m_out.castToInt32(callStub(value, inById(PresenceQuestion::HasOwn), { object.value() }, { .immediate = *identifier }).first));
     };
 

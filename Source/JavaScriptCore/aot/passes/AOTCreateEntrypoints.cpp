@@ -205,13 +205,19 @@ static void markFunctionsThatRecordTheirCallee(ProgramEditor& editor, const Flow
         recordsFromTheStart.quickSet(written.index());
     }
     // What runs above a call of such a function is what was called, so a caller may keep the function object in its own frame in place of the record.
+    BitVector isNamedByFunctionObject = recordsFromTheStart;
+    for (FunctionID written : writtenWithClosuresOutOfSight)
+        isNamedByFunctionObject.quickSet(written.index());
     BitVector makesTailCall(program.functions.size());
-    for (unsigned index = 0; index < program.functions.size() && !marked.isEmpty(); ++index) {
+    for (unsigned index = 0; index < program.functions.size() && !isNamedByFunctionObject.isEmpty(); ++index) {
+        // The tests at the entrance hand over to the body that they stand in front of: the same function object goes on running.
+        if (program.functions[index].role == FunctionRole::EntryChecks)
+            continue;
         uint32_t written = writtenFunctionOf(FunctionID(index)).index();
-        if (recordsFromTheStart.quickGet(written) && std::ranges::any_of(program.functions[index].blocks, [](const Block& block) { return block.terminator.kind == TerminatorKind::ReturnCall; }))
+        if (isNamedByFunctionObject.quickGet(written) && std::ranges::any_of(program.functions[index].blocks, [](const Block& block) { return block.terminator.kind == TerminatorKind::ReturnCall; }))
             makesTailCall.quickSet(written);
     }
-    for (size_t written : recordsFromTheStart) {
+    for (size_t written : isNamedByFunctionObject) {
         if (!makesTailCall.quickGet(written))
             editor.at(FunctionID(static_cast<uint32_t>(written))).capabilities.add(FunctionCapabilities::MakesNoTailCall);
     }
@@ -583,6 +589,22 @@ LayoutList receiversOfTableEntrypoint(const Program& program, PropertyKeyID key,
     return receivers;
 }
 
+Vector<std::pair<LayoutID, FunctionID>> receiversOfTableEntrypoints(const Program& program, PropertyKeyID key)
+{
+    Vector<std::pair<LayoutID, FunctionID>> receivers;
+    std::span<const LayoutID> layouts = program.layoutsWithName(key);
+    std::span<const LayoutID> declarers = program.declarersOfName(key);
+    for (size_t index = 0; index < layouts.size(); ++index) {
+        visitPrototypeMembersNamed(program, declarers[index], key, [&](const ClassMember& first) {
+            if (first.kind == MethodKind::Method && first.function)
+                receivers.append({ layouts[index], first.function });
+            return true;
+        });
+    }
+    AOT::sort(receivers);
+    return receivers;
+}
+
 static Vector<TypeID, 4> joinParameterTypesOfMethods(const Program& program, TypeArena& types, MethodSelector selector)
 {
     Vector<TypeID, 4> result(FillWith { }, selector.numberOfArguments, TypeTable::anything);
@@ -921,6 +943,15 @@ CalleesOfSites collectCalleesOfSites(const Program& program, BuildContext& build
     return result;
 }
 
+static bool callsAccessorInSlot(const Function& function, const Value& call)
+{
+    ValueID callee = calledOperandOf(call);
+    if (!callee)
+        return false;
+    Opcode opcode = function.at(callee).opcode;
+    return opcode == Opcode::GetSlotGetter || opcode == Opcode::GetSlotSetter;
+}
+
 void closeEntrypointsThatNothingEnters(ProgramEditor& editor, const FlowResults& flow, const CalleesOfSites& sites, BuildContext& build)
 {
     if (!sites.wasTaken || !flow.hasResults())
@@ -931,7 +962,7 @@ void closeEntrypointsThatNothingEnters(ProgramEditor& editor, const FlowResults&
     unsigned count = program.functions.size();
     // The type of the callee lists functions that the call may find.
     Vector<FoundCallees> foundByWorker(loops.width());
-    std::atomic<bool> mayFindAnything { false };
+    std::atomic<uint32_t> callsThatMayFindAnything { 0 };
     forEachIndexInParallel(loops, count, [&](unsigned index, unsigned worker) {
         const Function& function = program.functions[index];
         FoundCallees& found = foundByWorker[worker];
@@ -952,11 +983,13 @@ void closeEntrypointsThatNothingEnters(ProgramEditor& editor, const FlowResults&
                 // A pass makes a call of its own for a protocol, which flow lists among the indirect calls, and in the lookup of a method table, whose callers stand at the sites of the calls that they replace.
                 bool namesItsCallee = (PayloadWord::calleeKey(call.opcode) && call.calleeKey()) || (PayloadWord::calleeName(call.opcode) && call.calleeName());
                 if (function.role != FunctionRole::TableLookup && namesItsCallee)
-                    mayFindAnything.store(true, std::memory_order_relaxed);
+                    callsThatMayFindAnything.fetch_add(1, std::memory_order_relaxed);
                 return;
             }
             if (!sites.hadCallByValue.get(site.index())) {
-                mayFindAnything.store(true, std::memory_order_relaxed);
+                // A read or a store that finds an accessor in a slot has become a call of what the slot holds, at the site of the access. Flow lists whom an access enters among the indirect calls.
+                if (!callsAccessorInSlot(function, call))
+                    callsThatMayFindAnything.fetch_add(1, std::memory_order_relaxed);
                 return;
             }
             for (const CalleeSetOfSite& entry : std::ranges::equal_range(sites.calleeSets, site, { }, &CalleeSetOfSite::site))
@@ -967,8 +1000,10 @@ void closeEntrypointsThatNothingEnters(ProgramEditor& editor, const FlowResults&
                 found.typedCalleeLists.set(entry.list);
         });
     });
-    if (mayFindAnything.load(std::memory_order_relaxed))
+    if (uint32_t calls = callsThatMayFindAnything.load(std::memory_order_relaxed)) {
+        build.statistics().count(StatisticID::CallsThatMayEnterAnyEntrypoint, calls);
         return;
+    }
 
     // THE CONTRACT OF FLOW THAT THIS FILE RESTS ON, as computeFunctionResults (AOTValueFlowResultsFunctions.cpp) and stampCall (AOTValueFlowResultsCalls.cpp) state it.
     BitVector mayBeEntered = functionsCalledByHost(program, loops);

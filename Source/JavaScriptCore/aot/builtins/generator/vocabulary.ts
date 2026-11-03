@@ -609,6 +609,8 @@ export const builtinMarks = [
   "IsRequireThatLoaderCalls",
   // A prototype object. The host prints the instances below it with code of their own, which asks none of the getters on it.
   "InstancesArePrintedWithoutTheirGetters",
+  // Calling it may terminate the process, so code after the call may never run.
+  "MayTerminateProcess",
 ] as const;
 export type BuiltinMark = (typeof builtinMarks)[number];
 
@@ -706,6 +708,8 @@ export interface ClassColumns {
   namesReadToDescribeInstances?: readonly string[];
   /** The constructor reads `prototype` from new.target and nothing else, and it calls nothing that it finds on the new object, whatever code of its operands it runs. */
   constructorOnlyReadsPrototypeOfNewTarget?: boolean;
+  /** The only member of the new object that the constructor reads. It calls it once for each value of its iterable operand. */
+  constructorAdder?: string;
   instanceCppClass?: CppClassRef;
   prototypeCppExpression?: string;
   /** The Structure of a new instance, or null until the realm has created it: the expression creates nothing. */

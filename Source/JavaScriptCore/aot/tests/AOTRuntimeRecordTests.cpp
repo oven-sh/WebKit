@@ -612,22 +612,33 @@ static void testInstanceLayoutOffsets()
         ptrdiff_t pollPage = InstanceLayout::offsetOfLoopPollPage();
         ptrdiff_t prefix = -static_cast<ptrdiff_t>(sizeof(InstancePrefix));
         AOT_TEST_CHECK(-static_cast<ptrdiff_t>(InstanceLayout::bytesReservedBelowInstance(sizes)) <= cards);
-        AOT_TEST_CHECK(cards < statics && statics < pollPage && pollPage < prefix && prefix < 0);
+        AOT_TEST_CHECK(cards < statics && statics < pollPage && prefix < 0);
         AOT_TEST_CHECK(statics + static_cast<ptrdiff_t>(sizes.sizeOfStatics) <= pollPage);
-        AOT_TEST_CHECK(pollPage + static_cast<ptrdiff_t>(InstanceLayout::bytesReservedForLoopPollPage) <= prefix);
+        // Below the prefix, or between the instance and the key order steps, where one load of ARM64 reaches it.
+        ptrdiff_t endOfPollPage = pollPage + static_cast<ptrdiff_t>(InstanceLayout::bytesReservedForLoopPollPage);
+        if (pollPage < 0)
+            AOT_TEST_CHECK(endOfPollPage <= prefix);
+        else
+            AOT_TEST_CHECK(static_cast<ptrdiff_t>(sizeof(Instance)) <= pollPage && endOfPollPage <= static_cast<ptrdiff_t>(InstanceLayout::offsetOfKeyOrderSteps) && pollPage + static_cast<ptrdiff_t>(4 * KB) <= 32 * static_cast<ptrdiff_t>(KB));
+        AOT_TEST_CHECK(!isARM64() || !hasFaultingLoopPolls || pollPage > 0);
         AOT_TEST_CHECK(cards + static_cast<ptrdiff_t>((static_cast<size_t>(sizes.sizeOfStatics) + (1 << InstanceLayout::cardShift) - 1) >> InstanceLayout::cardShift) <= statics);
 
         size_t stringCells = InstanceLayout::offsetOfStringCell(0);
         size_t siteCaches = InstanceLayout::offsetOfSiteCaches(sizes);
         size_t end = InstanceLayout::bytesReservedFromInstance(sizes);
-        AOT_TEST_CHECK(sizeof(Instance) <= stringCells && stringCells == 384 * KB);
+        AOT_TEST_CHECK(sizeof(Instance) <= stringCells && stringCells == 384 * KB + InstanceLayout::shiftAboveLoopPollPage);
+        // Whatever is protected or mapped by itself begins at a page of the largest size that the system may have, and so does the whole.
+        AOT_TEST_CHECK(InstanceLayout::beginsAtPage(pollPage) && InstanceLayout::beginsAtPage(statics) && InstanceLayout::beginsAtPage(InstanceLayout::offsetOfMethodTable(sizes)));
+        AOT_TEST_CHECK(InstanceLayout::beginsAtPage(-static_cast<ptrdiff_t>(InstanceLayout::bytesReservedBelowInstance(sizes))) && InstanceLayout::beginsAtPage(end));
+        AOT_TEST_CHECK(!(InstanceLayout::bytesReservedForLoopPollPage % InstanceLayout::largestPageSize) && !(InstanceLayout::bytesReservedForMethodTable(sizes) % InstanceLayout::largestPageSize));
+        AOT_TEST_CHECK(CeilingOnPageSize <= InstanceLayout::largestPageSize || !hasFaultingLoopPolls);
         AOT_TEST_CHECK(InstanceLayout::offsetOfStringCell(sizes.numberOfStringCells) <= siteCaches);
         AOT_TEST_CHECK(InstanceLayout::offsetOfSiteCache(sizes, 0) == siteCaches && !(siteCaches % sizeof(Slot)));
         AOT_TEST_CHECK(InstanceLayout::offsetOfSiteCache(sizes, sizes.numberOfSiteCaches) <= end);
     }
 
     InstanceSizes sizes = allSizes[2];
-    AOT_TEST_CHECK(InstanceLayout::offsetOfStringCell(7) == 384 * KB + 7 * sizeof(uint32_t));
+    AOT_TEST_CHECK(InstanceLayout::offsetOfStringCell(7) == InstanceLayout::offsetOfStringCells + 7 * sizeof(uint32_t));
     AOT_TEST_CHECK(InstanceLayout::offsetOfSiteCache(sizes, 9) == InstanceLayout::offsetOfSiteCaches(sizes) + 9 * sizeof(Slot));
     AOT_TEST_CHECK(InstanceLayout::offsetOfSiteCaches({ 0, 5000, 0 }) > InstanceLayout::offsetOfSiteCaches({ 0, 1, 0 }));
     AOT_TEST_CHECK(InstanceLayout::offsetOfStatics({ 64 * KB + 1, 0, 0 }) < InstanceLayout::offsetOfStatics({ 64 * KB, 0, 0 }));

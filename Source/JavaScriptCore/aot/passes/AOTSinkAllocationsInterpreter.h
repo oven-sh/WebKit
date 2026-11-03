@@ -137,7 +137,8 @@ private:
     void finishRead(ValueID read, VirtualObjectID, std::optional<uint32_t> field, FieldRead);
     FieldRead classifyRead(VirtualObjectID, const VirtualFieldAccess&, std::optional<uint32_t> field) const;
     bool canStore(VirtualObjectID, const VirtualFieldAccess&, uint32_t field, ValueID stored) const;
-    bool canStoreUnprovenValue(VirtualObjectID, const VirtualFieldAccess&, uint32_t namedField) const;
+    bool canStoreUnprovenValue(VirtualObjectID, const VirtualFieldAccess&, uint32_t namedField, ValueID stored) const;
+    bool isComputedFromField(VirtualObjectID, PropertyKeyID, ValueID, unsigned stepsLeft) const;
     bool canReadEitherField(ValueID read, VirtualObjectID, const VirtualFieldAccess&, uint32_t namedField) const;
     bool canHold(VirtualObjectID holder, uint32_t field, VirtualObjectID held) const;
     bool fitsRead(ValueID read, VirtualObjectID, std::optional<uint32_t> field, FieldRead) const;
@@ -151,7 +152,7 @@ private:
     ValueID emitUndefined();
 
     void executeTest(ValueID);
-    bool executePresenceTestOnDenseList(ValueID);
+    bool executeTestAgainstLengthOfBuiltinList(ValueID);
     std::optional<TestEntry> evaluateTestOn(ValueID test) const;
     std::optional<TestEntry> evaluateComparison(ValueID test) const;
     void noteListsThatMayNotFit(ValueID test);

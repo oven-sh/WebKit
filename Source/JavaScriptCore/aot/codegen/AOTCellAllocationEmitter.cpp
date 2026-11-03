@@ -6,6 +6,9 @@
 #include "config.h"
 #include "AOTCellAllocationEmitter.h"
 
+#include "AOTCheckedFrameCells.h"
+#include "AOTVMState.h"
+
 #if ENABLE(AOT)
 
 #include "AOTAllocationCounts.h"
@@ -13,6 +16,8 @@
 #include "AOTBarrierEmitter.h"
 #include "AOTCellFormat.h"
 #include "AOTConvention.h"
+#include "AOTFrameAllocationPlanner.h"
+#include "AOTFunctionAnalyses.h"
 #include "AOTInstance.h"
 #include "AOTObjectWords.h"
 #include "AOTPlacement.h"
@@ -272,6 +277,10 @@ CellPointer CellAllocationEmitter::allocateInFrame(const OperationContext& conte
     birth->effects = B3::Effects::none();
     m_heaps.decoratePatchpointWrite(&m_heaps.frameSlots, birth);
     generator().records().hasBirthsOfFrameCells = true;
+    if (const Value* allocation = context.valueID() ? &m_function.at(context.valueID()) : nullptr; allocation && allocationsThatMayBeMadeForOneUse.contains(allocation->opcode) && allocation->isMadeForOneUse()) {
+        size_t begin = allocation->opcode == Opcode::NewArray ? sizeof(JSArray) + sizeof(IndexingHeader) : layout && layout->storage == LayoutStorage::CompiledObject ? 2 * sizeof(EncodedJSValue) : sizeof(JSCell);
+        m_cellsMadeForOneUse.set(context.valueID(), CellMadeForOneUse { slot->slot(), static_cast<unsigned>(begin), static_cast<unsigned>(size) });
+    }
     if constexpr (MutatorFenceRecords::isUsed)
         m_records.mutatorFences.allocations.set(birth->index());
     if (!generator().validatesOrChecksProofs())
@@ -284,7 +293,57 @@ CellPointer CellAllocationEmitter::allocateInFrame(const OperationContext& conte
     Wire::SourceLocation location = context.valueID() ? m_function.locationOf(context.valueID()) : noSourceLocation;
     ModuleID module(location.module);
     LineColumn lineColumn = module ? m_program.lineColumnFor(module, location.position) : LineColumn { };
-    return CellPointer(callWithoutSite<Pointer>(RuntimeOperation::MakeCheckedFrameCell, { Pointer(birth), wordOfFrame(), pair(static_cast<uint32_t>(size), m_id.index()), pair(context.valueID().index(), module.index()), pair(lineColumn.line, lineColumn.column) }).value());
+    auto make = [&] {
+        return callWithoutSite<Pointer>(RuntimeOperation::MakeCheckedFrameCell, { Pointer(birth), wordOfFrame(), pair(static_cast<uint32_t>(size), m_id.index()), pair(context.valueID().index(), module.index()), pair(lineColumn.line, lineColumn.column) }).value();
+    };
+    if (generator().inputs().frameMaps.numberOfSuspensions() || m_function.role == FunctionRole::CoroutineBody)
+        return CellPointer(make());
+
+    LBasicBlock hasCounters = newBlock();
+    LBasicBlock staysInFrame = newBlock();
+    LBasicBlock mayBeChecked = newBlock();
+    LBasicBlock continuation = newBlock();
+    const B3::AbstractHeap& heap = m_heaps.entire(AbstractHeap::AllocatorState);
+    LValue checkedCells = m_out.loadPtr(m_out.address(heap, loadImmutablePointer(AOT_INSTANCE_OFFSET(vm)).value(), VM::offsetOfAOTState() + OBJECT_OFFSETOF(VMState, checkedFrameCells)));
+    m_out.branch(m_out.notZero64(checkedCells), normalEdge(hasCounters), rareEdge(mayBeChecked));
+
+    m_out.appendTo(hasCounters);
+    TypedPointer counter = m_out.address(heap, checkedCells, CheckedFrameCells::offsetOfBirthsAt(m_id.index(), context.valueID().index()));
+    LValue births = m_out.load32(counter);
+    LValue isLeftOut = m_out.bitAnd(m_out.aboveOrEqual(births, CheckedFrameCells::numberOfBirthsThatAreAllChecked(m_options.recorded.validates)), m_out.above(m_out.bitAnd(births, CheckedFrameCells::intervalOfCheckedBirths - 1), m_out.constInt32(1)));
+    m_out.branch(isLeftOut, normalEdge(staysInFrame), rareEdge(mayBeChecked));
+
+    m_out.appendTo(staysInFrame);
+    m_out.store32(m_out.add(births, 1), counter);
+    ValueFromBlock inFrame = m_out.anchor(birth);
+    m_out.jump(continuation);
+
+    m_out.appendTo(mayBeChecked);
+    ValueFromBlock made = m_out.anchor(make());
+    m_out.jump(continuation);
+
+    m_out.appendTo(continuation);
+    return CellPointer(m_out.phi(B3::pointerType(), inFrame, made));
+}
+
+void CellAllocationEmitter::clearCellsMadeFor(const Value& call)
+{
+    if (m_cellsMadeForOneUse.isEmpty())
+        return;
+    call.forEachOperand([&](ValueID operand, uint32_t) {
+        auto found = m_cellsMadeForOneUse.find(analyses().sameObjectThroughCasts(operand).valueInFrontOfFacts());
+        if (found == m_cellsMadeForOneUse.end())
+            return;
+        const CellMadeForOneUse& cell = found->value;
+        // As in allocateInFrame(). The birth of the cell need not dominate the call: later passes copy code.
+        LValue slot = m_out.m_block->appendNew<B3::SlotBaseValue>(m_proc, m_out.origin(), cell.slot);
+        B3::PatchpointValue* address = m_out.patchpoint(B3::pointerType());
+        address->append(slot, B3::ValueRep::SomeRegister);
+        address->effects = B3::Effects::none();
+        m_heaps.decoratePatchpointWrite(&m_heaps.frameSlots, address);
+        for (unsigned offset = cell.begin; offset < cell.end; offset += sizeof(EncodedJSValue))
+            m_out.store64(m_out.constInt64(JSValue::encode(jsUndefined())), m_out.address(m_heaps.frameSlots, address, offset));
+    });
 }
 
 bool CellAllocationEmitter::keepsCellsInFrame()
@@ -318,8 +377,15 @@ void CellAllocationEmitter::leaveFrameOfCheckedCells()
     clobber->effects.writes = B3::HeapRange::top();
     clobber->setRunsWithoutFrame(true);
     clobber->setGenerator([](CCallHelpers&, const B3::StackmapGenerationParams&) { });
+    LBasicBlock hasLiveCells = newBlock();
+    LBasicBlock continuation = newBlock();
+    LValue lowestFrame = m_out.loadPtr(m_out.address(m_heaps.entire(AbstractHeap::AllocatorState), loadImmutablePointer(AOT_INSTANCE_OFFSET(vm)).value(), VM::offsetOfAOTState() + OBJECT_OFFSETOF(VMState, lowestFrameOfCheckedCells)));
+    m_out.branch(m_out.below(m_out.sub(lowestFrame, 1), wordOfFrame().value()), rareEdge(hasLiveCells), normalEdge(continuation));
+    m_out.appendTo(hasLiveCells);
     Operand arguments[] { wordOfFrame() };
-    callWithoutSite(RuntimeOperation::LeaveFrameOfCheckedCells, arguments, Representation::Void, { });
+    callWithoutSite(RuntimeOperation::LeaveFrameOfCheckedCells, arguments, Representation::Void, { .isOnRarePath = true });
+    m_out.jump(continuation);
+    m_out.appendTo(continuation);
 }
 
 std::pair<CellPointer, Pointer> CellAllocationEmitter::allocateArray(const OperationContext& context, Word32 length, Word32 vectorLength, IndexingType indexingType, LBasicBlock slowPath)

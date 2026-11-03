@@ -10,6 +10,7 @@
 #include "AOTIR.h"
 #include "AOTVector.h"
 #include <span>
+#include <wtf/BitVector.h>
 #include <wtf/HashMap.h>
 #include <wtf/ScopedLambda.h>
 
@@ -35,9 +36,13 @@ public:
 
     const UnobservedFieldDefinition* find(FunctionID initializer, ValueID definition) const LIFETIME_BOUND;
     std::span<const UnobservedFieldDefinition> all() const LIFETIME_BOUND { return m_definitions.span(); }
+    // `module.exports = f` on the one way that the body of a CommonJS file begins with: nobody finds the `undefined` that the variable starts with.
+    // Another file reads the variable right behind the `require` that has begun the body. That is late enough where nothing runs ahead of the store, or where the `require` comes back behind the end of the body.
+    bool isStoredAheadOfEveryRead(VariableID variable) const { return m_variablesStoredAheadOfEveryRead.get(variable.index()); }
 
 private:
     Vector<UnobservedFieldDefinition> m_definitions;
+    BitVector m_variablesStoredAheadOfEveryRead;
 };
 
 Vector<PropertyKeyID> keysDefinedRightAfterAllocation(const Program&, FunctionID constructor, ValueID allocation);

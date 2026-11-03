@@ -43,7 +43,8 @@ function f2 name="first" parameters=[{type=function}, {type=number}] results=[{t
     Return v4
 }
 # CHECK: function f0 name="counts" {{*}}creator=Coroutine{ramp=f0 body=f3}
-# CHECK: [[frame]]: anything = NewHeapFrame v2 function=f3 numberOfWords=2
+# CHECK: NewGenerator v0 function=f0 [getsHeapFrame]
+# CHECK-NEXT: [[frame]]: anything = NewHeapFrame v2, v0 function=f3 numberOfWords=2
 # CHECK-NEXT: PutHeapFrameWord [[frame]], v2
 # CHECK-NEXT: PutHeapFrameWord [[frame]], v1 index=1
 # CHECK-NEXT: SuspendInHeapFrame v2, [[frame]] [isFirstRun]
@@ -51,6 +52,7 @@ function f2 name="first" parameters=[{type=function}, {type=number}] results=[{t
 # CHECK: function f1 name="counts"
 # CHECK-NOT: YieldBySavingFrame
 # CHECK: function f2 name="first"
+# CHECK-NOT: getsHeapFrame
 # CHECK: MarkGeneratorRunning v2
 # CHECK-NEXT: [[started]]: anything = NewHeapFrame v2 function=f3 numberOfWords=2
 # CHECK-NEXT: PutHeapFrameWord [[started]], v2

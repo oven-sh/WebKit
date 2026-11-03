@@ -183,8 +183,10 @@ void BuiltinCallEmitter::generateCallBuiltin(const ValueContext& value)
         if (receiver)
             boxedReceiver = boxedOperand(value, receiver);
         Vector<Boxed, 8> boxedArguments;
-        for (ValueID argument : arguments)
-            boxedArguments.append(boxedOperand(value, argument));
+        for (ValueID argument : arguments) {
+            bool isStoredAsItIs = builtin == Builtins::ArrayPrototypePush && representationOf(argument) == Representation::JSValue;
+            boxedArguments.append(isStoredAsItIs ? emitter<ConversionEmitter>().inFormOfType(get(argument), typeOf(argument)).as<Boxed>() : boxedOperand(value, argument));
+        }
         auto argumentOrUndefined = [&](size_t index) {
             return index < boxedArguments.size() ? boxedArguments[index] : undefined();
         };

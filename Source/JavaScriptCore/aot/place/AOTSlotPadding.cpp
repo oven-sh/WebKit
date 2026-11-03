@@ -49,20 +49,28 @@ private:
     static_assert(widthOf(SlotRepresentation::Cell32) == narrow && widthOf(SlotRepresentation::OptionalCell32) == narrow);
     static_assert(widthOf(SlotRepresentation::Cell) == wide && widthOf(SlotRepresentation::JSValue) == wide);
     static_assert(!(offsetOfFirstField % wide) && !(offsetOfFirstEnvironmentVariable % wide));
+    static_assert(widthOf(SlotRepresentation::Int32) == narrow);
 
-    bool hasSlots(LayoutID id) const { return m_context.isCompiledObject(id) || m_context.isEnvironment(id); }
+    // Nobody reads the variable of an environment by name.
+    bool hasSlots(LayoutID id) const { return m_context.isCompiledObject(id) || (m_context.isEnvironment(id) && m_kind != WidenedRepresentations::SmallIntegers); }
+    bool hasWidthToWiden(const PlacedSlot& slot) const { return m_kind == WidenedRepresentations::SmallIntegers ? slot.width() < narrow : slot.width() == narrow; }
+    // A small integer takes only bytes that the cell has as it is.
+    uint32_t limitOf(LayoutID id) const { return m_kind == WidenedRepresentations::SmallIntegers ? m_packed.sizes[id.index()] : m_packed.inlineLimits[id.index()]; }
     uint32_t firstSlotOffsetOf(LayoutID id) const { return m_context.isEnvironment(id) ? offsetOfFirstEnvironmentVariable : offsetOfFirstField; }
     LayoutID layoutOf(SlotRow row) const { return m_layoutOfRow[row]; }
     uint32_t offsetOf(const PaddingUnit& unit) const { return m_packed.slots[unit.rows[0]].offset; }
+    uint32_t currentWidthOf(const PaddingUnit& unit) const { return m_packed.slots[unit.rows[0]].width(); }
 
     const Type& contentsOf(SlotRow) const;
     bool holdsEnvironmentOfDeferredClosures(SlotRow) const;
     bool isNarrow(SlotRepresentation) const;
     bool holdsUndefinedOrNull(const PaddingUnit&) const;
+    SiteWeight weightOfAccessesByName(SlotRow) const;
     std::optional<SlotRepresentation> widenedRepresentationOf(const PaddingUnit&) const;
     void createUnits();
     bool isCandidate(const PaddingUnit&) const;
     void findCandidates();
+    void weighCandidatesByName();
     void findUnitGroups();
     void recordOccupiedBytes();
     void orderCandidates();
@@ -88,6 +96,7 @@ private:
     const JoinedRows& m_joinedRows;
     std::span<const SlotClaim> m_claims;
     WidenedRepresentations m_kind;
+    uint32_t m_widenedWidth;
     PackedLayouts& m_packed;
 
     Vector<LayoutID> m_layoutOfRow;
@@ -107,6 +116,7 @@ PaddingWidener::PaddingWidener(const SlotPlanContext& context, const SlotUses& u
     , m_joinedRows(joinedRows)
     , m_claims(claims)
     , m_kind(kind)
+    , m_widenedWidth(kind == WidenedRepresentations::SmallIntegers ? narrow : wide)
     , m_packed(packed)
 {
 }
@@ -135,6 +145,8 @@ bool PaddingWidener::isNarrow(SlotRepresentation representation) const
         return representation == SlotRepresentation::OptionalInt32;
     case WidenedRepresentations::References:
         return representation == SlotRepresentation::Cell32 || representation == SlotRepresentation::OptionalCell32;
+    case WidenedRepresentations::SmallIntegers:
+        return representation == SlotRepresentation::Uint8 || representation == SlotRepresentation::Int8 || representation == SlotRepresentation::Uint16 || representation == SlotRepresentation::Int16;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -146,8 +158,17 @@ bool PaddingWidener::holdsUndefinedOrNull(const PaddingUnit& unit) const
     });
 }
 
+SiteWeight PaddingWidener::weightOfAccessesByName(SlotRow row) const
+{
+    const Program& program = m_context.program;
+    PropertyKeyID key = fieldAt(program, declarationOf(program, { layoutOf(row), m_context.rows.fieldOf(row) })).key;
+    return key ? m_uses.keyWeights[key.index()] : SiteWeight { 0 };
+}
+
 std::optional<SlotRepresentation> PaddingWidener::widenedRepresentationOf(const PaddingUnit& unit) const
 {
+    if (m_kind == WidenedRepresentations::SmallIntegers)
+        return SlotRepresentation::Int32;
     RepresentationChoice choice { .prefersInt32 = false, .holdsWideReferences = m_kind == WidenedRepresentations::References };
     uint16_t absent = 0;
     for (SlotRow row : unit.rows) {
@@ -181,7 +202,7 @@ void PaddingWidener::createUnits()
         for (FieldIndex field = 0; field < rows.numberOfFieldsOf(layout); ++field) {
             SlotRow row = rows.rowOf(layout, field);
             const PlacedSlot& slot = m_packed.slots[row];
-            if (slot.storage != SlotStorage::Inline || slot.width() != narrow)
+            if (slot.storage != SlotStorage::Inline || !hasWidthToWiden(slot))
                 continue;
             m_layoutOfRow[row] = layout;
             if (m_packed.sharedLocationOfRow[row] == noSharedLocation)
@@ -194,6 +215,17 @@ void PaddingWidener::createUnits()
     for (size_t i = 0; i < m_unsharedRows.size(); ++i) {
         const SlotRowUse& use = m_uses.rows[m_unsharedRows[i]];
         m_units.append(PaddingUnit { m_unsharedRows.subspan(i, 1), saturatedSum(use.accessWeight, use.environmentUses) });
+    }
+}
+
+// A typed access is as fast at either width.
+void PaddingWidener::weighCandidatesByName()
+{
+    for (uint32_t index : m_candidates) {
+        PaddingUnit& unit = m_units[index];
+        unit.weight = 0;
+        for (SlotRow row : unit.rows)
+            unit.weight = greaterOf(unit.weight, weightOfAccessesByName(row));
     }
 }
 
@@ -213,7 +245,7 @@ bool PaddingWidener::isCandidate(const PaddingUnit& unit) const
     if (m_kind == WidenedRepresentations::Numbers && !holdsUndefinedOrNull(unit))
         return false;
     auto widened = widenedRepresentationOf(unit);
-    return widened && widthOf(*widened) == wide;
+    return widened && widthOf(*widened) == m_widenedWidth;
 }
 
 void PaddingWidener::findCandidates()
@@ -248,7 +280,7 @@ void PaddingWidener::findUnitGroups()
         if (group.units.isEmpty() || (group.units.size() == 1 && !group.staysNarrow))
             continue;
         auto widened = widenedRepresentationOf({ rows.span(), 0 });
-        if (widened && widthOf(*widened) == wide)
+        if (widened && widthOf(*widened) == m_widenedWidth)
             group.widened = *widened;
         else
             group.staysNarrow = true;
@@ -285,14 +317,14 @@ void PaddingWidener::move(const PaddingUnit& unit, uint32_t offset)
         PlacedSlot& slot = m_packed.slots[row];
         LayoutID layout = layoutOf(row);
         OccupiedBytes& occupied = m_occupied[layout.index()];
-        RELEASE_ASSERT((occupied[slot.offset / 64] & bytesAt(slot.offset, narrow)) == bytesAt(slot.offset, narrow));
-        occupied[slot.offset / 64] &= ~bytesAt(slot.offset, narrow);
-        RELEASE_ASSERT(!(occupied[offset / 64] & bytesAt(offset, wide)));
-        occupied[offset / 64] |= bytesAt(offset, wide);
+        RELEASE_ASSERT((occupied[slot.offset / 64] & bytesAt(slot.offset, slot.width())) == bytesAt(slot.offset, slot.width()));
+        occupied[slot.offset / 64] &= ~bytesAt(slot.offset, slot.width());
+        RELEASE_ASSERT(!(occupied[offset / 64] & bytesAt(offset, m_widenedWidth)));
+        occupied[offset / 64] |= bytesAt(offset, m_widenedWidth);
         uint32_t& firstPossiblyFree = m_firstPossiblyFreeOffset[layout.index()];
-        firstPossiblyFree = std::min(firstPossiblyFree, slot.offset / wide * wide);
+        firstPossiblyFree = std::min(firstPossiblyFree, slot.offset / m_widenedWidth * m_widenedWidth);
         slot.offset = offset;
-        ensureSizeReaches(m_packed, layout, offset + wide);
+        ensureSizeReaches(m_packed, layout, offset + m_widenedWidth);
     }
 }
 
@@ -303,10 +335,10 @@ std::optional<uint32_t> PaddingWidener::roomFor(const PaddingUnit& unit)
     uint32_t end = UINT32_MAX;
     for (SlotRow row : unit.rows) {
         uint32_t layout = layoutOf(row).index();
-        uint32_t limit = m_packed.inlineLimits[layout];
+        uint32_t limit = limitOf(layoutOf(row));
         uint32_t& first = m_firstPossiblyFreeOffset[layout];
-        while (first + wide <= limit && m_occupied[layout][first / 64] & bytesAt(first, wide))
-            first += wide;
+        while (first + m_widenedWidth <= limit && m_occupied[layout][first / 64] & bytesAt(first, m_widenedWidth))
+            first += m_widenedWidth;
         start = std::max(start, first);
         end = std::min(end, limit);
     }
@@ -314,13 +346,13 @@ std::optional<uint32_t> PaddingWidener::roomFor(const PaddingUnit& unit)
         return std::ranges::all_of(unit.rows, [&](SlotRow row) {
             uint64_t word = m_occupied[layoutOf(row).index()][offset / 64];
             if (current / 64 == offset / 64)
-                word &= ~bytesAt(current, narrow);
-            return !(word & bytesAt(offset, wide));
+                word &= ~bytesAt(current, currentWidthOf(unit));
+            return !(word & bytesAt(offset, m_widenedWidth));
         });
     };
-    if (uint32_t own = current / wide * wide; own < start && own + wide <= end && isFree(own))
+    if (uint32_t own = current / m_widenedWidth * m_widenedWidth; own < start && own + m_widenedWidth <= end && isFree(own))
         return own;
-    for (uint32_t offset = start; offset + wide <= end; offset += wide) {
+    for (uint32_t offset = start; offset + m_widenedWidth <= end; offset += m_widenedWidth) {
         if (isFree(offset))
             return offset;
     }
@@ -392,7 +424,7 @@ std::optional<uint32_t> PaddingWidener::makeRoomInOwnWord(const PaddingUnit& uni
 std::optional<uint32_t> PaddingWidener::findRoomFor(const PaddingUnit& unit, bool mayMoveOtherSlots)
 {
     auto offset = roomFor(unit);
-    if (!offset && mayMoveOtherSlots)
+    if (!offset && mayMoveOtherSlots && m_widenedWidth == wide)
         offset = makeRoomInOwnWord(unit);
     return offset;
 }
@@ -404,7 +436,7 @@ void PaddingWidener::widenAt(uint32_t index, uint32_t offset, SlotRepresentation
     for (SlotRow row : unit.rows) {
         PlacedSlot& slot = m_packed.slots[row];
         slot.representation = widened;
-        RELEASE_ASSERT(slot.width() == wide);
+        RELEASE_ASSERT(slot.width() == m_widenedWidth);
     }
     m_isWidened.set(index);
 }
@@ -441,6 +473,8 @@ void PaddingWidener::run()
     findCandidates();
     if (m_candidates.isEmpty())
         return;
+    if (m_kind == WidenedRepresentations::SmallIntegers)
+        weighCandidatesByName();
     findUnitGroups();
     recordOccupiedBytes();
     orderCandidates();

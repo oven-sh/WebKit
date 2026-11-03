@@ -11,6 +11,7 @@
 #include "AOTClassPrototype.h"
 #include "AOTClassTable.h"
 #include "AOTClosure.h"
+#include "AOTGenerator.h"
 #include "AOTGlobalBindings.h"
 #include "AOTHeapCacheRegistry.h"
 #include "AOTInstance.h"
@@ -232,7 +233,7 @@ static void failIfPrototypeNameIsNotListed(VM& vm, State& state, const LayoutDat
         return;
     if (name == vm.propertyNames->constructor.impl() || parseIndex(*name) || PropertyName(name).isPrivateName())
         return;
-    std::optional<uint32_t> number = vm.aotState().identifiers->numberOf(name);
+    std::optional<uint32_t> number = identifiersOf(state.instance).numberOf(name);
     if (number && std::ranges::binary_search(listed, AddedNameData { classLayout.index, *number }))
         return;
     dataLogLn("AOT: the prototype object of the class with layout ", classLayout.index, " gets the property ", String(name), ", which is not among the names that it ever has");
@@ -430,7 +431,7 @@ static bool findsNothingAbove(JSGlobalObject* globalObject, Structure* receiverS
     bool mayBeDeclared = name == StoredName::MayBeSpelledByProgram;
     if (mayBeDeclared && parseIndex(PropertyName(uid)))
         return false;
-    for (Structure* below = receiverStructure; !below->typeInfo().overridesGetPrototype() && !(below->isObject() && below->hasPolyProto());) {
+    for (Structure* below = receiverStructure; !hidesObjectsAbove(below) && !(below->isObject() && below->hasPolyProto());) {
         JSObject* object = below->prototypeForLookup(globalObject).getObject();
         if (!object)
             return true;
@@ -454,7 +455,7 @@ static bool findsNothingAbove(JSGlobalObject* globalObject, Structure* receiverS
 
 bool storeCreatesOwnProperty(JSGlobalObject* globalObject, Structure* receiverStructure, JSObject* receiverOrNull, UniquedStringImpl* uid, StoredName name)
 {
-    ASSERT(name == StoredName::MayBeSpelledByProgram || (!parseIndex(PropertyName(uid)) && !globalObject->vm().aotState().identifiers->numberOf(uid)));
+    ASSERT(name == StoredName::MayBeSpelledByProgram || (!parseIndex(PropertyName(uid)) && !identifiersOfRealm(globalObject->vm(), globalObject)->numberOf(uid)));
     if (findsNothingAbove(globalObject, receiverStructure, uid, name)) [[likely]]
         return true;
     return storeThroughChain(walkChain({ globalObject, receiverStructure, receiverOrNull, ChainWalkMode::AllocatesNothing, ChainWalkUse::UsedAtOnce }, uid)) == StoreThroughChain::CreatesOwnProperty;
@@ -666,7 +667,7 @@ ChainWalk walkChain(const ChainWalkStart& start, UniquedStringImpl* uid)
 
     Structure* below = start.structure;
     JSObject* objectBelow = start.receiverOrNull;
-    while (!below->typeInfo().overridesGetPrototype() && !(below->isObject() && below->hasPolyProto())) {
+    while (!hidesObjectsAbove(below) && !(below->isObject() && below->hasPolyProto())) {
         JSObject* object = below->prototypeForLookup(start.globalObject).getObject();
         if (passLazyClassPrototypes(start, uid, objectBelow, object, walk) == StepResult::Stop)
             break;

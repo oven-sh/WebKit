@@ -1,0 +1,25 @@
+# An executable keeps of `a ? 1 : 2` with a constant `a` what its bundle has, `1`, and the front end says of the file that `1` is printed in place of all three:
+#   const a = true, b = a ? 1 : 2, c = (0x1 ? f : g);
+#   publish(function one() { return b.x + c() });
+# In the text that is kept, that piece copies all of itself: the text reads as `bun run` has it, and whoever followed the copy would find the piece again, without end.
+# `0x1` is printed `1` wherever it stands, and the text lacks it: nothing is printed for it, and `c` is `(f)`, not `(1f)`.
+# RUN: tables function-texts
+# CHECK: printed in place, from the start of the text
+# CHECK-NEXT: printed m0 24..25 "1"
+# CHECK-NEXT: printed m0 30..31 "(f)"
+# CHECK-NOT: printed
+# CHECK: 0..35 "function one() { return b.x + c() }"
+
+module m0 path="/a.ts" displayPath="a.ts" body=f0 positions={lineStarts=[0, 50] textPrintedInPlace="\x14\x09\x05\x07\x10\x0b\x05\x0b\x00\x03\x02\x31\x2e\x01\x25\x7c\x06\x01\x2f\x68"} functionText="const a = true, b = 1, c = (f);\x0apublish(function one() { return b.x + c() });" typesCutFromFunctionText="\x14\x04\x01\x04\x07\x06\x01\x04"
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return
+}
+function f1 name="one" module=m0 text={start=40 end=75} results=[{type=anything}] {
+    Return
+}

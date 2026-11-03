@@ -1,0 +1,34 @@
+# The empty string and a string of one character are cells that the VM holds from its start to its end, so a store of one runs no barrier, like a store of a number: it covers no earlier store and needs no cover.
+# FORM: Selected
+# RUN: pass NumberAndEncode ChooseRepresentations RemoveRedundantBarriers
+# STATISTIC: BarriersCoveredLater = 1
+# STATISTIC: BarriersOnUnmarkableOwners = 0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
+function f0 name="empty-behind" captures=[{type=env L0}] parameters=[{type=anything}] results=[{type=undefined}] {
+    PutEnvironmentField v0, v1 layout=L0 field=0
+    v3 = String string=""
+    PutEnvironmentField v0, v3 layout=L0 field=1
+    Return
+# CHECK: PutEnvironmentField v0, v1 layout=L0
+# CHECK-NOT: laterBarrierCovers
+# CHECK: Return
+}
+function f1 name="one-character-in-front" captures=[{type=env L0}] parameters=[{type=anything}] results=[{type=undefined}] {
+    v2 = String string="a"
+    PutEnvironmentField v0, v2 layout=L0 field=0
+    PutEnvironmentField v0, v1 layout=L0 field=1
+    Return
+# CHECK: PutEnvironmentField v0,{{*}}layout=L0
+# CHECK-NOT: laterBarrierCovers
+# CHECK: Return
+}
+function f2 name="longer-behind" captures=[{type=env L0}] parameters=[{type=anything}] results=[{type=undefined}] {
+    PutEnvironmentField v0, v1 layout=L0 field=0
+    v3 = String string="ab"
+    PutEnvironmentField v0, v3 layout=L0 field=1
+    Return
+# CHECK: PutEnvironmentField v0, v1 layout=L0 [laterBarrierCovers]
+# CHECK: Return
+}

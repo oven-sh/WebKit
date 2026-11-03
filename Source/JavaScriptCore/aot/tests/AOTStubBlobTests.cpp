@@ -61,7 +61,7 @@ static constexpr std::array stepChecks { GeneratorStepCheck::IsUnmodifiedGenerat
 static_assert(stepChecks.size() == descriptorOf(StubFamily::StepGenerator).numberOfForms);
 static constexpr std::array stepConsumers { StepConsumer::AsyncFunction, StepConsumer::AsyncGenerator, StepConsumer::AsyncFunctionAwaitingCall, StepConsumer::AsyncGeneratorAwaitingCall };
 static_assert(stepConsumers.size() == descriptorOf(StubFamily::StepAsyncGenerator).numberOfForms);
-static constexpr std::array generatorKinds { NewGeneratorKind::Sync, NewGeneratorKind::Async };
+static constexpr std::array generatorKinds { NewGeneratorKind::Sync, NewGeneratorKind::Async, NewGeneratorKind::SyncWithHeapFrame };
 static_assert(generatorKinds.size() == descriptorOf(StubFamily::NewGenerator).numberOfForms);
 
 static StubBlob buildBlob(const StubCatalog& catalog, std::span<const StubKey> calledKeys, const EntrySet& entriesUsedByFunctions)
@@ -405,7 +405,7 @@ static void checkHostCallReferences(const StubCatalog& catalog)
     constexpr std::pair<BoxedCallForm, StubFamily> boxedCallTargets[] = {
         { BoxedCallForm::ArrayPush, StubFamily::ArrayPushOfKnownKind }, { BoxedCallForm::ArraySlice, StubFamily::ArraySlice },
         { BoxedCallForm::MapDelete, StubFamily::MapDelete }, { BoxedCallForm::MapGet, StubFamily::MapGet }, { BoxedCallForm::MapHas, StubFamily::MapHas }, { BoxedCallForm::MapSet, StubFamily::MapSet },
-        { BoxedCallForm::SetAdd, StubFamily::SetAdd }, { BoxedCallForm::SetDelete, StubFamily::SetDelete }, { BoxedCallForm::SetHas, StubFamily::SetHas },
+        { BoxedCallForm::SetAdd, StubFamily::SetAdd }, { BoxedCallForm::SetDelete, StubFamily::SetDelete }, { BoxedCallForm::SetHas, StubFamily::MapHas },
         { BoxedCallForm::StringIndexOf, StubFamily::StringIndexOf }, { BoxedCallForm::StringStartsWith, StubFamily::StringStartsWith },
         { BoxedCallForm::StringSlice, StubFamily::Substring }, { BoxedCallForm::StringSubstring, StubFamily::Substring }, { BoxedCallForm::StringCharAt, StubFamily::Substring },
         { BoxedCallForm::StringEndsWith, StubFamily::CallOperation }, { BoxedCallForm::StringIncludes, StubFamily::CallOperation }, { BoxedCallForm::StringSplit, StubFamily::CallOperation },
@@ -481,14 +481,14 @@ static void testMissingKeys()
     for (StubKey key : { newPromise(), toNumberAsDouble(), substring(), arraySlice(), arrayPush(), stringsAreEqual() })
         AOT_TEST_CHECK(exists(key) && !exists(key.withCallerFrame(CallerFrame::Frameless)));
     for (CallerFrame callerFrame : { CallerFrame::HasFrame, CallerFrame::Frameless }) {
-        AOT_TEST_CHECK(exists(pollAtLoop(callerFrame)) == isX86_64());
+        AOT_TEST_CHECK(exists(pollAtLoop(callerFrame)));
         AOT_TEST_CHECK(exists(throwAtSite(ThrowSiteSource::FaultSite, callerFrame)));
     }
 
     AOT_TEST_CHECK(!exists(StubKey(StubFamily::StepGenerator).withForm(4)));
     AOT_TEST_CHECK(!exists(StubKey(StubFamily::AwaitBySavingFrame).withForm(4)));
     AOT_TEST_CHECK(!exists(StubKey(StubFamily::StepAsyncGenerator).withForm(4)));
-    AOT_TEST_CHECK(!exists(StubKey(StubFamily::NewGenerator).withForm(2)));
+    AOT_TEST_CHECK(!exists(StubKey(StubFamily::NewGenerator).withForm(3)));
     AOT_TEST_CHECK(!exists(callHostFunctionWithoutBoxedCall(BoxedCallEntry::maxArgumentCount).withCount(BoxedCallEntry::maxArgumentCount + 1)));
 }
 
@@ -570,7 +570,7 @@ static void checkArraySummaries(const StubCatalog& catalog)
     const StubSignature& largestLiteral = catalog.summaryOf(arrayLiteral(maxCount)).signature;
     AOT_TEST_CHECK(largestLiteral.numberOfOperands == maxCount);
     for (StubKey key : allStubKeys()) {
-        if (std::ranges::find(creationFamilies, key.family()) != creationFamilies.end())
+        if (std::ranges::find(creationFamilies, key.family()) != creationFamilies.end() && !hasFrameAndKeepsFewerRegisters(key.callerFrame()))
             checkArrayCreationSummary(catalog, key, largestLiteral);
     }
     checkArrayCreationSummary(catalog, newEmptyArrayAtSite(ArrayElementKind::Contiguous), largestLiteral);
@@ -664,7 +664,7 @@ static void checkCollectionOperations(const StubCatalog& catalog)
     AOT_TEST_CHECK(refersToBody(catalog, mapSet(KeyComparison::Bits), newCompactTable(CompactTableOwner::Map)) && refersToBody(catalog, setAdd(KeyComparison::String), newCompactTable(CompactTableOwner::Set)));
     AOT_TEST_CHECK(operationsCalledBy(catalog, newCompactTable(CompactTableOwner::Map)) == entrySetOf({ Entry::operationAOTMapSet }));
     AOT_TEST_CHECK(operationsCalledBy(catalog, newCompactTable(CompactTableOwner::Set)) == entrySetOf({ Entry::operationAOTSetAdd }));
-    AOT_TEST_CHECK(operationsCalledBy(catalog, mapDelete(KeyComparison::Bits)).isEmpty());
+    AOT_TEST_CHECK(operationsCalledBy(catalog, mapDelete(KeyComparison::Bits)) == entrySetOf({ Entry::operationAOTMapDelete }));
     AOT_TEST_CHECK(operationsCalledBy(catalog, setDelete(KeyComparison::String)) == entrySetOf({ Entry::operationAOTSetDelete, Entry::operationAOTStringImplsAreEqual, Entry::operationAOTHashStringImpl }));
     AOT_TEST_CHECK(operationsCalledBy(catalog, writeBarrier()).get(indexOf(Entry::operationAOTBarrierSlow)));
     AOT_TEST_CHECK(operationsCalledBy(catalog, weakMapGet()).isEmpty());

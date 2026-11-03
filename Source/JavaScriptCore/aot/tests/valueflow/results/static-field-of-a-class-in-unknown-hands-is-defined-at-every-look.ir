@@ -9,7 +9,8 @@
 # READ-LABEL: function f5 name="readEarly"
 # READ: [[unchanged]]: boolean = AreMembersUnchanged conditions=[{layout=L0 side=Static key="early"}]
 # READ-NEXT: Branch [[unchanged]] -> taken
-# READ: = GetModuleVariable variable=g0
+# READ: [[behind]]: fact = Specified
+# READ-NEXT: = GetModuleVariable fact=[[behind]] variable=g0
 # READ: frequency=Unlikely:
 # READ-NEXT: = PropGet {{*}} key="early"
 # READ-LABEL: function f6 name="readBehind"

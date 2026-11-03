@@ -12,6 +12,7 @@
 #include "AOTCompiledCode.h"
 #include "AOTFrameMaps.h"
 #include "AOTID.h"
+#include "AOTIRFunction.h"
 #include "AOTMutatorFenceMerging.h"
 #include "AOTOperationData.h"
 #include "AOTRelocation.h"

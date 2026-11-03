@@ -78,6 +78,8 @@ void ValueFlowHeapIndex::collectNodesWritten(const ValueFlowResultInputs& inputs
     const ParallelLoops& loops = inputs.loops();
     uint32_t firstMadeNode = solver.input().numberOfNodes;
     uint32_t numberOfMadeNodes = solver.graph().numberOfNodes() - firstMadeNode;
+    ValueSetID copiesOfObjectsNobodyKnows = solver.possibleValuesOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::CopiesOfObjectsNobodyKnows));
+    ValueSetID coveredByUnknownObject = solver.possibleValuesOf(ValueFlowProgramNodes::escaped());
     Vector<FoundInChunk> chunks((numberOfMadeNodes + nodesPerChunk - 1) / nodesPerChunk);
     forEachIndexInParallel(loops, chunks.size(), [&](unsigned chunk) {
         FoundInChunk& found = chunks[chunk];
@@ -86,8 +88,11 @@ void ValueFlowHeapIndex::collectNodesWritten(const ValueFlowResultInputs& inputs
             const ValueFlowNodeKey& key = *solver.keyOfMadeNode(node);
             switch (key.kind) {
             case ValueFlowMadeNodeKind::Written:
-                if (ValueSetID value = solver.possibleValuesOf(node); value != ValueSets::nothing)
+                if (ValueSetID value = solver.possibleValuesOf(node); value != ValueSets::nothing) {
+                    if (key.name().kind == ValueFlowNameKind::CopiedFrom && inputs.sets().meet(key.set, copiesOfObjectsNobodyKnows) && inputs.sets().isSubset(value, coveredByUnknownObject))
+                        break;
                     found.written.append({ numberOf(key.name()), node.index(), { key.set, value, solver.seenValuesOf(node) } });
+                }
                 break;
             case ValueFlowMadeNodeKind::CallGroup:
                 if (solver.firstOfMadeNodesAt(solver.indexOfMadeNodes(key)) == node)
@@ -687,6 +692,10 @@ ValueSetID valuesHandedToCalleesNobodyKnows(const ValueFlowResultInputs& inputs,
         for (uint32_t function = first; function < std::min(first + functionsPerTask, numberOfFunctions); ++function) {
             if (!inputs.isReached(FunctionID(function)))
                 continue;
+            // `util.captureStackTrace(error)`: the namespace object is the `this` of the call because of how the call is written. A file that an executable holds too, where
+            // there is no spy that the build has not seen, hands on what it lists among the arguments.
+            ModuleID module = inputs.program.functions[function].module;
+            bool isOfProduct = module && inputs.program.at(module).flags.contains(ModuleFlags::LoadsCompiledFilesAlone);
             for (uint32_t index = ranges[function].statement; index < ranges[function + 1].statement; ++index) {
                 if (!statementCallsValue(statements[index]))
                     continue;
@@ -698,7 +707,8 @@ ValueSetID valuesHandedToCalleesNobodyKnows(const ValueFlowResultInputs& inputs,
                 ValueFlowBuiltinApplication application;
                 application.kind = kindOfCallBy(statements[index]);
                 findOperandsOf(inputs, heap, maker, statements[index], application);
-                take(application.thisValue);
+                if (!isOfProduct)
+                    take(application.thisValue);
                 take(application.otherArguments);
                 for (ValueSetID argument : application.arguments)
                     take(argument);

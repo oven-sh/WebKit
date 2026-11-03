@@ -2,6 +2,7 @@
 # FORM: Prepared
 # RUN: pass SinkAllocations
 # STATISTIC: AllocationsRemoved = 4
+# STATISTIC: ListsOfBuiltinsNeverBuilt = 4
 
 module m0 path="main.js" displayPath="main.js"
 

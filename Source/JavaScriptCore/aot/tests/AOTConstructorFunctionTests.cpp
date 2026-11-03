@@ -1997,6 +1997,11 @@ static void checkSitePredictsTheFirstPrototype(LoadedProgram& program)
     }
 }
 
+static void testSitePredictsTheFirstPrototype()
+{
+    runWithLoadedProgram("constructor-functions/site-predicts-the-first-prototype"_s, factoryWithoutCaptures, checkSitePredictsTheFirstPrototype, { "disable=pass:CopyClosureFactories"_s });
+}
+
 static void checkSiteOfFunctionEvaluatedOnceKeepsItsPrototype(LoadedProgram& program)
 {
     VM& vm = program.vm();
@@ -2074,7 +2079,7 @@ std::span<const NativeTest> constructorFunctionTests()
         { "constructor-functions/chain-of-functions-and-a-class"_s, testChainOfFunctionsAndAClass },
         { "constructor-functions/name-set-at-run-time"_s, testNameSetAtRunTime },
         { "constructor-functions/commonjs-module"_s, testCommonJSModule },
-        { "constructor-functions/site-predicts-the-first-prototype"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, factoryWithoutCaptures, checkSitePredictsTheFirstPrototype> },
+        { "constructor-functions/site-predicts-the-first-prototype"_s, testSitePredictsTheFirstPrototype },
         { "constructor-functions/site-of-a-function-evaluated-once-keeps-its-prototype"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, functionExpression, checkSiteOfFunctionEvaluatedOnceKeepsItsPrototype> },
         { "constructor-functions/first-construction-defines-the-class"_s, runNativeTestWithLoadedProgram<constructorFunctionTests, functionExpression, checkFirstConstructionDefinesTheClass> },
     };

@@ -218,16 +218,53 @@ static bool isBirth(const B3::Value* value)
     return patchpoint && !patchpoint->generator();
 }
 
+// CSE gives two births of one slot the same SlotBase, and tail duplication of its block then puts phis between the copies and the second birth.
 static void checkThatOnlyBirthsTakeSlotsOfCells(B3::Procedure& proc)
 {
+    IndexMap<B3::Value*, Vector<B3::Value*, 2>> incomingValues(proc.values().size());
+    for (B3::Value* value : proc.values()) {
+        if (auto* upsilon = value->as<B3::UpsilonValue>())
+            incomingValues[upsilon->phi()].append(upsilon->child(0));
+    }
+
     UncheckedKeyHashSet<B3::Air::StackSlot*> slotsOfCells;
+    IndexSet<B3::Value*> seen;
+    Vector<B3::Value*, 8> worklist;
     for (B3::Value* value : proc.values()) {
         if (isBirth(value))
-            slotsOfCells.add(value->child(0)->as<B3::SlotBaseValue>()->slot());
+            worklist.append(value->child(0));
+    }
+    while (!worklist.isEmpty()) {
+        B3::Value* address = worklist.takeLast();
+        if (!seen.add(address))
+            continue;
+        if (auto* slotBase = address->as<B3::SlotBaseValue>()) {
+            slotsOfCells.add(slotBase->slot());
+            continue;
+        }
+        RELEASE_ASSERT(address->opcode() == B3::Phi);
+        worklist.appendVector(incomingValues[address]);
+    }
+
+    IndexSet<B3::Value*> addresses;
+    for (B3::Value* value : proc.values()) {
+        auto* slotBase = value->as<B3::SlotBaseValue>();
+        if (slotBase && slotsOfCells.contains(slotBase->slot()))
+            addresses.add(value);
+    }
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (B3::Value* value : proc.values()) {
+            auto* upsilon = value->as<B3::UpsilonValue>();
+            if (upsilon && addresses.contains(upsilon->child(0)))
+                changed |= addresses.add(upsilon->phi());
+        }
     }
     for (B3::Value* value : proc.values()) {
+        if (isBirth(value) || value->opcode() == B3::Upsilon)
+            continue;
         for (B3::Value* child : value->children())
-            RELEASE_ASSERT(isBirth(value) || child->opcode() != B3::SlotBase || !slotsOfCells.contains(child->as<B3::SlotBaseValue>()->slot()));
+            RELEASE_ASSERT(!addresses.contains(child));
     }
 }
 

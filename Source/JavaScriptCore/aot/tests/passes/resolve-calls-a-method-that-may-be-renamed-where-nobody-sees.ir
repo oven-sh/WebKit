@@ -1,0 +1,76 @@
+# A method whose function objects may get another name where nobody sees is not entered without its function object: the read of the member stays, and what it finds is called.
+# So whoever lists the frames finds the object that was called. A method that keeps its name is entered directly, and nothing is left of the read.
+# FORM: Prepared
+# RUN: pass ResolveCalls
+# RUN(TWICE): pass ResolveCalls ResolveCalls
+# CHECK: outcome: Changed
+# TWICE: outcome: Changed
+# TWICE-NEXT: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Holder" constructor=f0 flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="renamed" function=f1 mutability=Fixed}, {key="kept" function=f2 mutability=Fixed}, {key="renamed" side=Static function=f3 mutability=Fixed}, {key="kept" side=Static function=f4 mutability=Fixed}]}
+layout L1 kind=Instance name="Below" base=L0 constructor=f5 flags=[HasHeritage] flow={baseState=Layout base=L0} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+function f0 name="Holder" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f1 name="renamed" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, RecordsCalleeOnceRenamed] {
+    Return
+}
+function f2 name="kept" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+function f3 name="renamed" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, RecordsCalleeOnceRenamed] {
+    Return
+}
+function f4 name="kept" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+function f5 name="Below" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+
+function f6 name="staticMethodThatMayBeRenamed" parameters=[{type=f0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="renamed"
+    v2 = Call v1, v0 calleeKey="renamed"
+    Return v2
+# CHECK: v1: anything = PropGet v0 key="renamed"
+# CHECK-NEXT: = Call v1, v0 calleeKey="renamed"
+# CHECK-NOT: CallDirect
+}
+function f7 name="staticMethodThatKeepsItsName" parameters=[{type=f0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="kept"
+    v2 = Call v1, v0 calleeKey="kept"
+    Return v2
+# CHECK: v1: undefined = Undefined
+# CHECK-NEXT: = CallDirect v0 function=f4
+# CHECK-NOT: = Call v
+}
+function f8 name="methodThatMayBeRenamed" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="renamed"
+    v2 = Call v1, v0 calleeKey="renamed"
+    Return v2
+# CHECK: v1: anything = PropGet v0 key="renamed"
+# CHECK-NEXT: = Call v1, v0 calleeKey="renamed"
+# CHECK-NOT: CallDirect
+}
+function f9 name="methodThatKeepsItsName" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="kept"
+    v2 = Call v1, v0 calleeKey="kept"
+    Return v2
+# CHECK: v1: undefined = Undefined
+# CHECK: = CallDirect v0 function=f2
+}
+function f10 name="superMethodThatMayBeRenamed" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=f5}] results=[{type=anything}] {
+    v2 = GetSuperBase v1 homeKind=ClassPrototype
+    v3 = SuperGet v2, v0 key="renamed"
+    v4 = Call v3, v0 calleeKey="renamed"
+    Return v4
+# CHECK: v3: anything = SuperGet v2, v0 key="renamed"
+# CHECK-NEXT: = Call v3, v0 calleeKey="renamed"
+# CHECK-NOT: CallDirect
+}
+function f11 name="superMethodThatKeepsItsName" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=f5}] results=[{type=anything}] {
+    v2 = GetSuperBase v1 homeKind=ClassPrototype
+    v3 = SuperGet v2, v0 key="kept"
+    v4 = Call v3, v0 calleeKey="kept"
+    Return v4
+# CHECK: v3: undefined = Undefined
+# CHECK-NEXT: = CallDirect v0 function=f2
+# CHECK-NOT: SuperGet
+}

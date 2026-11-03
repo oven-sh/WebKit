@@ -274,6 +274,11 @@ void ErrorInstance::finishCreation(VM& vm, const String& message, JSValue cause,
     }
     vm.writeBarrier(this);
 
+#if ENABLE(AOT)
+    if (Options::aotCountsPath() && vm.hasCompiledCode() && AOT::isRefusal(message)) [[unlikely]]
+        AOT::countRefusal(vm, message, getStackTrace(vm, this, useCurrentFrame, nullptr, nullptr, subclassCaller).get());
+#endif
+
     String messageWithSource = message;
 
     if (((m_stackTrace && !m_stackTrace->isEmpty()) || m_returnAddresses) && hasSourceAppender()) {

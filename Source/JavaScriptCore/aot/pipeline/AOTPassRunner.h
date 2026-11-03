@@ -70,6 +70,8 @@ public:
     bool mayRunAnalysesTogether() const;
 
     bool isStopped() const { return m_isStopped; }
+    // What a verification of the whole program found, where the build goes on behind it.
+    void keepFailedVerifications(PassID, const Program&, Vector<InternalError>&&) const;
     // For what a stage checks between two passes.
     void stopAfterErrors() { m_isStopped |= m_build.diagnostics().hasErrors(); }
     PassOutcome lastProgramPassOutcome() const { return m_lastProgramPassOutcome; }
@@ -338,6 +340,9 @@ private:
     void verifyAfterFunctionPass(const PassDescriptor&, FunctionPassContext&, ScheduleRun&) const;
     void verifySkippedFunctionPass(const PassDescriptor&, const FunctionPassContext&, ScheduleRun&) const;
     void stopBehind(PassID, ScheduleRun&) const;
+    // True where the build goes on: the failure is kept if it is the first of its function.
+    bool keepFailedVerification(const InternalError& failure, InternalErrorKind found) const;
+    bool hasFailedVerificationBefore(FunctionID functionAsRead) const { return m_build.options().keepsGoingBehindFailedVerifications && m_build.diagnostics().hasKeptFailureOf(functionAsRead); }
 
     void prepare(ScheduleRun&) const;
     void addTotals(const ScheduleRun&, size_t numberOfValuesAtStart) const;

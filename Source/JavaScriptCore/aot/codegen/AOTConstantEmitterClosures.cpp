@@ -15,8 +15,10 @@
 #include "AOTClosureTestEmitter.h"
 #include "AOTConvention.h"
 #include "AOTDerivedFunctions.h"
+#include "AOTFlowResults.h"
 #include "AOTFunctionKinds.h"
 #include "AOTFunctionTables.h"
+#include "AOTGuardEmitter.h"
 #include "AOTInstance.h"
 #include "AOTPlacement.h"
 #include "AOTRuntimeCallEmitter.h"
@@ -26,6 +28,10 @@
 #include "AOTVector.h"
 #include "MarkedSpace.h"
 #include <algorithm>
+
+#if COMPILER(CLANG)
+#pragma clang attribute push(__attribute__((minsize)), apply_to = function)
+#endif
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -91,7 +97,7 @@ CellPointer ConstantEmitter::singletonClosure(const OperationContext& context, F
     });
 }
 
-CellPointer ConstantEmitter::makeClosureOfField(const OperationContext& context, std::span<const DeferredFunction> functions, CellPointer object, uint32_t offsetOfSlot, bool capturesObject, NOESCAPE const ScopedLambda<CellPointer()>& makeInRunTime)
+CellPointer ConstantEmitter::makeClosureOfField(const OperationContext& context, std::span<const DeferredFunction> functions, CellPointer object, uint32_t offsetOfSlot, bool capturesObject, std::optional<uint32_t> offsetOfEnvironment, NOESCAPE const ScopedLambda<CellPointer()>& makeInRunTime)
 {
     // One stub makes the closures of one kind. Which function a closure is of is a number in the request.
     struct Made {
@@ -100,16 +106,20 @@ CellPointer ConstantEmitter::makeClosureOfField(const OperationContext& context,
     };
     Vector<Made, 4> made;
     std::optional<unsigned> slimClosureKind;
+    ASSERT(!capturesObject || !offsetOfEnvironment);
+    bool hasCapture = capturesObject || offsetOfEnvironment;
+    if (offsetOfEnvironment && std::max(offsetOfSlot, *offsetOfEnvironment) > std::numeric_limits<uint16_t>::max())
+        return makeInRunTime();
     for (const DeferredFunction& deferred : functions) {
         const Function& callee = m_program.at(deferred.function);
         FunctionID entrypoint = inputs().derivedFunctions.find(derivedFunctionKey(FunctionRole::GenericEntrypoint, deferred.function));
         // A class with one class object has one closure, which the run time keeps.
-        if (!entrypoint || callee.captures.size() != capturesObject || m_placement.classConstructedBy(entrypoint) || m_placement.classConstructedBy(deferred.function))
+        if (!entrypoint || callee.captures.size() != hasCapture || m_placement.classConstructedBy(entrypoint) || m_placement.classConstructedBy(deferred.function))
             continue;
         FunctionKindData kind = m_placement.functionKind(entrypoint);
         if (!kind.isSlim || kind.isConstructor || (slimClosureKind && *slimClosureKind != kind.slimClosureKind()))
             continue;
-        if (capturesObject) {
+        if (hasCapture) {
             Representation representation = declaredRepresentationOf(m_program, callee.captures[0]);
             if (representation != Representation::Cell && representation != Representation::JSValue)
                 continue;
@@ -134,15 +144,23 @@ CellPointer ConstantEmitter::makeClosureOfField(const OperationContext& context,
         Word32 closureNumber = word32(made.last().closureNumber);
         for (size_t index = 0; index + 1 < made.size(); ++index)
             closureNumber = select(isOf(*made[index].function), word32(made[index].closureNumber), closureNumber);
-        Integer request = bitOr(zeroExtended(closureNumber), integer(static_cast<int64_t>(static_cast<uint64_t>(offsetOfSlot) << 32)));
-        return CellPointer(callStub(context, AOT::makeClosureOfField(*slimClosureKind, capturesObject), { request.value(), object.value() }, { .isOnRarePath = true, .accessesCollectorState = true }).first);
+        uint64_t offsets = static_cast<uint64_t>(offsetOfSlot) << 32 | static_cast<uint64_t>(offsetOfEnvironment.value_or(0)) << 48;
+        Integer request = bitOr(zeroExtended(closureNumber), integer(static_cast<int64_t>(offsets)));
+        StubKey stub = offsetOfEnvironment ? makeClosureOfFieldOverEnvironment(*slimClosureKind) : AOT::makeClosureOfField(*slimClosureKind, capturesObject);
+        return CellPointer(callStub(context, stub, { request.value(), object.value() }, { .isOnRarePath = true, .accessesCollectorState = true }).first);
     };
-    if (made.size() == functions.size())
-        return makeInStub();
-
     Condition isMadeInStub;
-    for (const Made& one : made)
-        isMadeInStub = logicalOr(isMadeInStub, isOf(*one.function));
+    if (made.size() != functions.size()) {
+        for (const Made& one : made)
+            isMadeInStub = logicalOr(isMadeInStub, isOf(*one.function));
+    }
+    // The stub makes a closure of this instance. The closure of a field is of the instance of its object.
+    if (inputs().flow.programInstances() != ProgramInstances::AtMostOne) {
+        Condition belongs = emitter<GuardEmitter>().belongsToInstance(object);
+        isMadeInStub = isMadeInStub ? logicalAnd(isMadeInStub, belongs) : belongs;
+    }
+    if (!isMadeInStub)
+        return makeInStub();
     return either<CellPointer>(isMadeInStub, makeInStub, makeInRunTime);
 }
 
@@ -281,5 +299,9 @@ Integer ConstantEmitter::closureWordOf(FunctionID entrypoint)
 }
 
 } } } // namespace JSC::AOT::Typed
+
+#if COMPILER(CLANG)
+#pragma clang attribute pop
+#endif
 
 #endif // ENABLE(AOT)

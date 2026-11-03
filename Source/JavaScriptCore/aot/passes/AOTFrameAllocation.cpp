@@ -204,6 +204,8 @@ static void setStorage(Function& function, const FramePlan& plan)
         allocation.setStorage(decision.storage);
         if (decision.isLent)
             allocation.setIsLent(true);
+        if (decision.isMadeForOneUse)
+            allocation.setIsMadeForOneUse(true);
     }
 }
 

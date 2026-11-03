@@ -13,6 +13,7 @@
 #include "B3Generate.h"
 #include "B3LoopUtilities.h"
 #include "B3VectorizeLoops.h"
+#include "Disassembler.h"
 #include "LinkBuffer.h"
 
 namespace {
@@ -54,9 +55,12 @@ Vector<CPUFeatureSet> featureSets()
 
 #if CPU(X86_64) && ENABLE(DISASSEMBLER)
 // Each line of the disassembly is an address, a colon and an instruction. Every instruction in a VEX form has a name that begins with v, and no other that a compiler emits does.
-void checkUsesOnlyWhatTargetHas(Compilation& code, CPUFeatureSet features)
+void checkUsesOnlyWhatTargetHas(Compilation& code, size_t size, CPUFeatureSet features)
 {
-    auto disassembly = code.disassembly();
+    // Compilation::disassembly() covers the whole allocation, which is rounded up. The bytes after the code can be left over from an earlier compilation for another target.
+    StringPrintStream out;
+    CHECK(tryToDisassemble(code.codeRef().retaggedCode<DisassemblyPtrTag>(), size, "", out));
+    auto disassembly = out.toUTF8CString();
     CHECK(disassembly.length());
     auto uses = [&](const char* text) {
         return contains(disassembly.span(), byteCast<char8_t>(unsafeSpan(text)));
@@ -86,7 +90,7 @@ void checkUsesOnlyWhatTargetHas(Compilation& code, CPUFeatureSet features)
     }
 }
 #else
-void checkUsesOnlyWhatTargetHas(Compilation&, CPUFeatureSet) { }
+void checkUsesOnlyWhatTargetHas(Compilation&, size_t, CPUFeatureSet) { }
 #endif
 
 std::unique_ptr<Compilation> compileForTarget(Procedure& proc)
@@ -98,8 +102,9 @@ std::unique_ptr<Compilation> compileForTarget(Procedure& proc)
     jit.setPolicy(policy);
     generate(proc, jit);
     LinkBuffer linkBuffer(jit, nullptr);
+    size_t size = linkBuffer.size();
     auto code = makeUnique<Compilation>(FINALIZE_CODE(linkBuffer, JITCompilationPtrTag, nullptr, "Compilation"), proc.releaseByproducts());
-    checkUsesOnlyWhatTargetHas(*code, proc.policy().targetFeatures);
+    checkUsesOnlyWhatTargetHas(*code, size, proc.policy().targetFeatures);
     return code;
 }
 
@@ -493,7 +498,7 @@ static void testVectorizeLoopsReportsAccessesThatAreTakenToLieApartAndDoNot()
             for (bool logsMovedLoads : { false, true }) {
                 Policy policy = vectorPolicy(CPUFeatureSet::buildTarget());
                 policy.validation.logsMovedLoads = logsMovedLoads;
-                policy.validation.takesAccessesOfVectorTurnsToLieApart = isBroken;
+                policy.validation.assumesVectorIterationAccessesAreDisjoint = isBroken;
                 policy.reportsMovedLoad = createSharedTask<void(CCallHelpers&, const MovedLoad&, GPRReg, GPRReg)>([](CCallHelpers& jit, const MovedLoad&, GPRReg, GPRReg) {
                     jit.move(CCallHelpers::TrustedImm64(reported), GPRInfo::returnValueGPR);
                     jit.emitFunctionEpilogue();
@@ -1365,6 +1370,23 @@ static void testVectorizeLoopsSkipsSumThatTurnLooksAt()
     CHECK(!vectorizeLoopsAndValidate(numbers.proc));
 }
 
+static void testVectorizeLoopsSkipsLeastAndGreatestOfWhatIsNotRead()
+{
+    // Nothing is read or stored, so there is no element, and no number of lanes.
+    for (B3::Opcode relation : { GreaterThan, GreaterEqual, LessThan, LessEqual, Above, Below }) {
+        for (bool comparesCounter : { false, true }) {
+            LoopThatAddsUp loop { vectorPolicy(), Int32 };
+            Graph& graph = loop.graph;
+            BasicBlock* body = loop.loop.body;
+            Value* candidate = comparesCounter ? graph.make(body, Trunc, graph.get(body, loop.loop.index)) : graph.int32(body, 0);
+            Value* found = graph.get(body, loop.total);
+            graph.set(body, loop.total, graph.select(body, graph.make(body, relation, candidate, found), candidate, found));
+            loop.loop.endBody(body);
+            CHECK(!vectorizeLoopsAndValidate(loop.proc));
+        }
+    }
+}
+
 static void testVectorizeLoopsSkipsLoopsWhoseTurnsAreNotAlike()
 {
     const ElementKind& bytes = elementKinds[0];
@@ -1973,6 +1995,7 @@ void addBunLoopVectorizingTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testVectorizeLoopsTakesBranchWhoseWaysOnlyChoose());
     RUN(testVectorizeLoopsSkipsBranchWhoseWayStores());
     RUN(testVectorizeLoopsSkipsSumThatTurnLooksAt());
+    RUN(testVectorizeLoopsSkipsLeastAndGreatestOfWhatIsNotRead());
     RUN(testVectorizeLoopsSkipsLoopsWhoseTurnsAreNotAlike());
     RUN(testVectorizeLoopsSkipsLoopWithSecondWayOut());
     RUN(testVectorizeLoopsTakesBranchOnConstantForJump());

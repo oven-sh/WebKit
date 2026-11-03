@@ -477,14 +477,18 @@ static PropertyAccessPlan planExpectedMembers(const PropertyAccessContext& conte
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+bool isBoundToInstance(const Program& program, const PropertyAccessQuery& query, const PropertyAccessPlan& plan)
+{
+    return query.start != MemberStart::ClassObject && (query.isPrivate || program.at(query.key).kind == PropertyKeyKind::CreatedSymbol || !plan.conditions.isEmpty() || traitsOfAccessForm(plan.form).contains(AccessFormTrait::IsBoundToInstance));
+}
+
 static void addInstanceProof(const PropertyAccessContext& context, const PropertyAccessQuery& query, PropertyAccessPlan& plan)
 {
     if (query.start == MemberStart::ClassObject)
         return;
-    bool receiverIsTested = plan.receiverTest != ReceiverTest::None || query.receivers.proof == ReceiverProof::Guard;
+    bool receiverIsTested = plan.receiverTest != ReceiverTest::None || query.receivers.proof == ReceiverProof::Guard || query.receivers.mayBelongToOtherInstance;
     bool narrowsReceiverType = plan.receiverTest == ReceiverTest::Type;
-    bool isBoundToInstance = query.isPrivate || !plan.conditions.isEmpty() || traitsOfAccessForm(plan.form).contains(AccessFormTrait::IsBoundToInstance);
-    if (!plan.isResolved() || !receiverIsTested || !(narrowsReceiverType || isBoundToInstance))
+    if (!plan.isResolved() || !receiverIsTested || !(narrowsReceiverType || isBoundToInstance(context.program, query, plan)))
         return;
     if (instanceCountOf(context) == InstanceCount::AtMostOne)
         return;

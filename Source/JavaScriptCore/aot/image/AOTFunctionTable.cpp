@@ -162,7 +162,7 @@ static uint32_t bodyPositionOf(const EntryAlias& alias, const CodeIndex& index)
     return *position;
 }
 
-static void appendInnerEntries(Vector<ImageInnerEntry>& entries, const EntryAlias& alias, const CompiledCode& body, uint32_t bodyStart)
+static void appendInnerEntries(Vector<ImageInnerEntry>& entries, const EntryAlias& alias, const CompiledCode& body, uint32_t bodyStart, const ProgramTables& programTables)
 {
     switch (alias.placement) {
     case AliasPlacement::AtPrimaryEntry:
@@ -171,6 +171,9 @@ static void appendInnerEntries(Vector<ImageInnerEntry>& entries, const EntryAlia
         uint32_t primaryEntryOffset = body.body.primaryEntryOffset();
         RELEASE_ASSERT(*alias.innerEntryOffset() <= primaryEntryOffset);
         if (*alias.innerEntryOffset() == primaryEntryOffset)
+            return;
+        // An entrypoint in front of its own function: whoever asks finds the body, which is the same function as it is written.
+        if (programTables.sourceFunctionOf(alias.function.index()) == programTables.sourceFunctionOf(body.function.index()))
             return;
         entries.append({ bodyStart + primaryEntryOffset, body.function.index() });
         break;
@@ -186,7 +189,7 @@ static Vector<ImageInnerEntry> encodeInnerEntries(const FunctionTableInputs& inp
     Vector<ImageInnerEntry> entries;
     for (const EntryAlias& alias : inputs.aliases) {
         uint32_t body = bodyPositionOf(alias, inputs.index);
-        appendInnerEntries(entries, alias, inputs.functions[body], inputs.layout.bodyStarts[body]);
+        appendInnerEntries(entries, alias, inputs.functions[body], inputs.layout.bodyStarts[body], inputs.programTables);
     }
     sortAndRemoveDuplicates(loops, entries, [](const ImageInnerEntry& a, const ImageInnerEntry& b) {
         return a.codeOffset != b.codeOffset ? a.codeOffset < b.codeOffset : a.function < b.function;

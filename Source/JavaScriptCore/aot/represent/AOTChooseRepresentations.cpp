@@ -700,6 +700,7 @@ private:
     void choose()
     {
         AOT_THRESHOLD(unsigned, maxRounds, 8);
+        AOT_THRESHOLD(size_t, maxLinksScanned, 16);
         Vector<uint32_t> firstLinkOf;
         Vector<Link> linksByVoter;
         groupByIndex(m_webs.size(), firstLinkOf, linksByVoter, [&](const auto& add) {
@@ -708,6 +709,11 @@ private:
         });
         auto linksOf = [&](uint32_t voter) {
             return entriesOfGroup(firstLinkOf, linksByVoter, voter);
+        };
+        Vector<uint32_t> firstUseOf;
+        Vector<Link> usesByWeb;
+        auto usesOf = [&](uint32_t web) {
+            return entriesOfGroup(firstUseOf, usesByWeb, web);
         };
         auto move = [&](uint32_t index, Representation chosen) {
             Representation before = std::exchange(m_webs[index].chosen, chosen);
@@ -719,13 +725,45 @@ private:
                     votes[std::to_underlying(chosen)] += link.votes;
             }
         };
+        uint64_t numberOfLinksRead = 0;
         auto votesBetween = [&](uint32_t voter, uint32_t web, bool isProducer) {
             uint64_t votes = 0;
+            numberOfLinksRead += linksOf(voter).size();
             for (const Link& link : linksOf(voter)) {
                 if (link.web == web && link.isProducer == isProducer)
                     votes += link.votes;
             }
             return votes;
+        };
+        std::optional<uint32_t> countedWeb;
+        Vector<uint64_t> votesAsProducerFor;
+        Vector<uint64_t> votesAsUseBy;
+        auto countVotesAround = [&](uint32_t web) {
+            if (countedWeb == web)
+                return;
+            if (countedWeb) {
+                for (const Link& link : linksOf(*countedWeb))
+                    votesAsProducerFor[link.web] = 0;
+                for (const Link& link : usesOf(*countedWeb))
+                    votesAsUseBy[link.voter] = 0;
+            } else {
+                groupByIndex(m_webs.size(), firstUseOf, usesByWeb, [&](const auto& add) {
+                    for (const Link& link : m_links) {
+                        if (!link.isProducer)
+                            add(link.web, link);
+                    }
+                });
+                votesAsProducerFor.fill(0, m_webs.size());
+                votesAsUseBy.fill(0, m_webs.size());
+            }
+            countedWeb = web;
+            numberOfLinksRead += linksOf(web).size() + usesOf(web).size();
+            for (const Link& link : linksOf(web)) {
+                if (link.isProducer)
+                    votesAsProducerFor[link.web] += link.votes;
+            }
+            for (const Link& link : usesOf(web))
+                votesAsUseBy[link.voter] += link.votes;
         };
         auto moveTogether = [&](uint32_t source, uint32_t destination) {
             Web& from = m_webs[source];
@@ -739,8 +777,11 @@ private:
             });
             if (!hasCandidate)
                 return false;
-            uint64_t votesAsProducer = votesBetween(source, destination, true);
-            uint64_t votesAsUse = votesBetween(destination, source, false);
+            bool haveFewLinks = linksOf(source).size() + linksOf(destination).size() <= maxLinksScanned;
+            if (!haveFewLinks)
+                countVotesAround(source);
+            uint64_t votesAsProducer = haveFewLinks ? votesBetween(source, destination, true) : votesAsProducerFor[destination];
+            uint64_t votesAsUse = haveFewLinks ? votesBetween(destination, source, false) : votesAsUseBy[destination];
             uint64_t totalVotes = from.totalVotes() + to.totalVotes();
             uint64_t fewest = totalVotes - from.votesFor(from.chosen) - to.votesFor(to.chosen);
             if (from.chosen != to.chosen && hasRegister(to.chosen))
@@ -799,6 +840,8 @@ private:
             if (!changed)
                 break;
         }
+        if (numberOfLinksRead)
+            m_analyses.context().build.statistics().count(StatisticID::LinksReadBetweenWebs, numberOfLinksRead);
     }
 
     void chooseForConstants()

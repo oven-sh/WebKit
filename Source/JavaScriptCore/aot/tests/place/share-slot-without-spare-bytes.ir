@@ -46,8 +46,8 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 # CHECK: "small" Uint8 @
 # CHECK: L1 CompiledObject size=32
 # CHECK-NEXT: "small" Uint16 @
-# CHECK-NEXT: "narrow" Uint16 @
+# CHECK-NEXT: "narrow" Int32 @
 # CHECK: "small" {L0 L1} read
 # CHECK-NEXT: 2 groups: {L0} Uint8 @{{*}}, {L1} Uint16 @
 # CHECK: "narrow" {L1 L2} read
-# CHECK-NEXT: one location Uint16 @
+# CHECK-NEXT: one location Int32 @

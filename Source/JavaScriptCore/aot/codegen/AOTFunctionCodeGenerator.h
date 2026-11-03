@@ -31,6 +31,8 @@ struct ColdAirBlocks {
     BitVector rarelyRun;
 };
 ColdAirBlocks findColdAirBlocks(const CodeGenerationInputs&, FunctionID, const B3::Air::Code&);
+// How many times findColdAirBlocks() goes on from a block behind a rare edge to see how often the loops there are entered.
+uint64_t countBlocksFollowedBehindRareEdges(const B3::Air::Code&);
 
 struct BlockColdness {
     bool isCold;

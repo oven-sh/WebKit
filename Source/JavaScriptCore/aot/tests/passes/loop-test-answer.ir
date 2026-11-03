@@ -1,0 +1,73 @@
+# A test in front of a loop sends what fails there to the arm where the header's own question fails, past the header. The arm may read the ANSWER to that question: then the loop is tested inside.
+# FORM: Prepared
+# OPTIONS: heat=NothingIsHottest
+# RUN: pass PlaceTypeTests
+# STATISTIC: LoopParametersTestedInFrontOfLoops = 1
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="answerIsReturned" parameters=[{type=i32 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ i32):
+    Jump -> next b1(v0)
+  b1(v1: anything ~ i32):
+    LoopHint
+    v3 = TypeTest v1 testedType=i32
+    Branch v3 -> taken b2(| 0), notTaken b4()
+  b2(v4: i32):
+    v5 = Integer
+    v6 = Eq v4, v5
+    Branch v6 -> taken b5(), notTaken b3()
+  b3():
+    v7 = Integer integer=1
+    v8 = Sub v4, v7
+    v9 = BitAnd v4, v8
+    Jump -> next b1(v9)
+  b4() frequency=Unlikely:
+    Return v3
+  b5():
+    Return v1
+}
+function f1 name="answerIsBranchedOnAgain" parameters=[{type=i32 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ i32):
+    Jump -> next b1(v0)
+  b1(v1: anything ~ i32):
+    LoopHint
+    v3 = TypeTest v1 testedType=i32
+    Branch v3 -> taken b2(| 0), notTaken b4()
+  b2(v4: i32):
+    v5 = Integer
+    v6 = Eq v4, v5
+    Branch v6 -> taken b5(), notTaken b3()
+  b3():
+    v7 = Integer integer=1
+    v8 = Sub v4, v7
+    v9 = BitAnd v4, v8
+    Jump -> next b1(v9)
+  b4() frequency=Unlikely:
+    Branch v3 -> taken b6(| 0), notTaken b5()
+  b5():
+    Return v1
+  b6(v10: i32) frequency=Unlikely:
+    Return v10
+}
+function f2 name="answerIsReadByItsBranchAlone" parameters=[{type=i32 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ i32):
+    Jump -> next b1(v0)
+  b1(v1: anything ~ i32):
+    LoopHint
+    v3 = TypeTest v1 testedType=i32
+    Branch v3 -> taken b2(| 0), notTaken b4()
+  b2(v4: i32):
+    v5 = Integer
+    v6 = Eq v4, v5
+    Branch v6 -> taken b5(), notTaken b3()
+  b3():
+    v7 = Integer integer=1
+    v8 = Sub v4, v7
+    v9 = BitAnd v4, v8
+    Jump -> next b1(v9)
+  b4() frequency=Unlikely:
+    Return v1
+  b5():
+    Return v1
+}

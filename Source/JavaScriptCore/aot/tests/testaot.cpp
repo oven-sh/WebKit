@@ -7,6 +7,7 @@
 
 #include <wtf/DataLog.h>
 #include <wtf/MainThread.h>
+#include <wtf/StringPrintStream.h>
 
 #if OS(WINDOWS)
 #include <fcntl.h>
@@ -21,6 +22,7 @@
 #include "AOTCompileOptionWords.h"
 #include "AOTCrashExitCode.h"
 #include "AOTDiagnostics.h"
+#include "AOTIRPrinter.h"
 #include "AOTImageFormat.h"
 #include "AOTLimits.h"
 #include "AOTNativeTest.h"
@@ -34,6 +36,7 @@
 #include "AOTTestRunner.h"
 #include "AOTTestSubcommands.h"
 #include "AOTThreads.h"
+#include "AOTVerifier.h"
 #include "AOTValueFlowWidenedReport.h"
 #include "AOTValueFlowWidenedSolve.h"
 #include "AOTVector.h"
@@ -382,6 +385,19 @@ int main(int argc, char** argv)
     _setmode(_fileno(stderr), _O_BINARY);
 #endif
 
+    Typed::printerOfTypesForVerifier = [](const Typed::Program& program, const Typed::Type& type) {
+        StringPrintStream out;
+        Typed::printType(out, program, type);
+        return out.toString();
+    };
+    // With --single-process: the function as it stood in front of the run of the pass behind which a verification failed, and behind it.
+    if (getenv("TESTAOT_SHOWS_FAILING_BODIES")) {
+        Typed::printerOfFunctionsForVerifier = [](const Typed::Program& program, Typed::FunctionID id, const Typed::Function& function, ASCIILiteral heading) {
+            StringPrintStream out;
+            Typed::printFunction(out, program, id, function);
+            dataLogLn("=== ", heading, "\n", out.toString());
+        };
+    }
     JSC::Config::configureForTesting();
     // As Bun says where it runs compiled code: on macOS a process without the JIT that says nothing has no SharedArrayBuffer.
     JSC::Options::machExceptionHandlerSandboxPolicy = JSC::Options::SandboxPolicy::Allow;

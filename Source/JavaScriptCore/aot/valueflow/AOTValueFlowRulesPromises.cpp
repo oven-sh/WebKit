@@ -40,6 +40,10 @@ ValueFlowNodeID findNodeOfListedBun(ValueFlowRuleContext& context, const ValueFl
 void connectAwaitedValue(ValueFlowRuleContext& context, const ValueFlowOperand& operand, ValueFlowNodeID target)
 {
     context.connect(context.lookup(context.valueOf(operand), awaitedValueName), target);
+    if (operand.maskKind == ValueFlowMaskKind::Plain) {
+        ValueSetID instances = context.universe().instancesBelowLibraryClasses();
+        context.connect(ValueFlowOperand { operand.node, context.maker().intersect(operand.constant, instances), context.maker().intersect(operand.mask, instances) }, target);
+    }
     if (ValueFlowNodeID listedBun = findNodeOfListedBun(context, operand))
         context.connect(listedBun, target);
 }

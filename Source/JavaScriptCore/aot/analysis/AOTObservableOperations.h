@@ -72,6 +72,8 @@ public:
     ReasonsForOperationsThatWent* outer() const { return m_outer; }
 
     void add(ValueID, InPlaceOfOperation);
+    // For an operation that stays while its block loses its handler: when the handler went it did nothing but throw the error on. It says nothing of an operation that goes.
+    void addForHandlerThatOnlyThrewOn(ValueID covered);
     // For an operation that is gone, under the number that it had when this one began to listen. Whoever listened before hears it too.
     void addForOperationThatWent(ValueID idBeforeRun, InPlaceOfOperation);
     void didRenumber(std::span<const BlockID> newBlocks, std::span<const ValueID> newValues);
@@ -81,6 +83,7 @@ public:
     // The body was replaced by one that was made elsewhere: its numbers say nothing about those before the run.
     bool hasLostTrack() const { return m_hasLostTrack; }
     bool hasReasonFor(ValueID idBeforeRun) const { return m_explained.get(idBeforeRun.index()); }
+    bool wasCoveredByHandlerThatOnlyThrewOn(ValueID idBeforeRun) const { return m_coveredByHandlersThatOnlyThrewOn.get(idBeforeRun.index()); }
     // Where a value of the body before the run is now. Nothing where it has no number any more.
     ValueID currentIDOf(ValueID idBeforeRun) const { return currentIDIn(m_currentValues, idBeforeRun); }
     BlockID currentIDOf(BlockID idBeforeRun) const { return currentIDIn(m_currentBlocks, idBeforeRun); }
@@ -95,6 +98,7 @@ private:
     }
 
     BitVector m_explained;
+    BitVector m_coveredByHandlersThatOnlyThrewOn;
     Vector<ValueID> m_currentValues;
     Vector<BlockID> m_currentBlocks;
     Vector<ValueID> m_valuesOfOuterAtStart;
@@ -106,6 +110,14 @@ ALWAYS_INLINE void explainOperationThatGoes(const Function& function, ValueID id
 {
     if (ReasonsForOperationsThatWent* reasons = function.listenerForOperationsThatGo()) [[unlikely]]
         reasons->add(id, reason);
+}
+
+ALWAYS_INLINE void explainHandlerThatGoes(const Function& function, BlockID covered)
+{
+    if (ReasonsForOperationsThatWent* reasons = function.listenerForOperationsThatGo()) [[unlikely]] {
+        for (ValueID id : function.at(covered).values)
+            reasons->addForHandlerThatOnlyThrewOn(id);
+    }
 }
 
 struct OperationThatWent {

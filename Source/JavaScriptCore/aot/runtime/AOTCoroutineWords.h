@@ -19,10 +19,25 @@ namespace AOT {
 
 class AsyncGeneratorStepInProgress;
 
+// Of all closures of the functions that share a place in CoroutineWords::statesOfGeneratorFunctions.
+enum class GeneratorFunctionState : uint8_t {
+    HasMadeNoGeneratorWithoutPrototype,
+    MakesGeneratorsWithoutPrototype,
+    // One of them was asked for its `prototype` while such generators were there. They have theirs now, and those that follow are made with theirs.
+    MakesGeneratorsWithPrototype,
+};
+// A place is the low byte of the number in a closure's word. Two generator functions that meet in one go by one state, which costs the one its short form when the other is asked.
+static constexpr uint32_t numberOfStatesOfGeneratorFunctions = 256;
+constexpr uint32_t placeOfGeneratorFunctionState(uint32_t closureNumber) { return closureNumber & (numberOfStatesOfGeneratorFunctions - 1); }
+
 struct CoroutineWords {
     uint64_t savedFrameHeader;
     // Of a generator that inherits from %GeneratorPrototype% itself.
     uint64_t plainGeneratorHeader;
+    // Of a generator whose prototype object is not made as long as nobody asks for it. Zero until the first of them is made.
+    uint64_t headerOfGeneratorsWithoutPrototype;
+    // GeneratorFunctionState. Where one says MakesGeneratorsWithoutPrototype the header is there.
+    uint8_t statesOfGeneratorFunctions[numberOfStatesOfGeneratorFunctions];
     uint32_t emptyGeneratorPrototypeStructureID;
     uint32_t emptyAsyncGeneratorPrototypeStructureID;
     // The waiter of an async function that has just finished and returns next. It runs under waiterAsyncContext, which it captured when it was suspended.
@@ -45,6 +60,8 @@ struct CoroutineWords {
     // The same of a fulfilled PromiseAllResolveJob.
     uint64_t promiseAllResolveJobWord;
     void* asyncGeneratorAllocator;
+    // Null until the first generator is made.
+    void* generatorAllocator;
     // The second result of the operations behind the stub StepAsyncGenerator.
     uint32_t stepStatus;
     uint8_t savedFramesAreListed;

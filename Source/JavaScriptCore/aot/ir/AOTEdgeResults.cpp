@@ -192,19 +192,23 @@ static Type narrowByTruthiness(const TypingContext& context, const Type& source,
     return falsy;
 }
 
+bool mayRefuseUntestableBuiltins(const Program& program, const Type& source, const Type& tested)
+{
+    bool namesUntestableBuiltin = std::ranges::any_of(tested.builtins, [&](BuiltinID builtin) {
+        return !isTestableBuiltin(program.builtins(), builtin);
+    });
+    return namesUntestableBuiltin && !source.withOnlyObjects().isSubsetOf(tested, program);
+}
+
 static Type narrowByFailedTest(const TypingContext& context, const Type& source, const Type& tested)
 {
-    const BuiltinTable& builtins = context.program.builtins();
-    auto isUntestable = [&](BuiltinID builtin) {
-        return !isTestableBuiltin(builtins, builtin);
-    };
-    if (std::ranges::none_of(tested.builtins, isUntestable))
-        return source.without(tested, context.types);
-    if (source.withOnlyObjects().isSubsetOf(tested, context.program))
+    if (!mayRefuseUntestableBuiltins(context.program, source, tested))
         return source.without(tested, context.types);
 
     Type recognized = tested;
-    removeAllMatching(recognized.builtins, isUntestable);
+    removeAllMatching(recognized.builtins, [&](BuiltinID builtin) {
+        return !isTestableBuiltin(context.program.builtins(), builtin);
+    });
     return source.without(recognized, context.types);
 }
 
@@ -230,7 +234,18 @@ static Type narrowByStrictEquality(const TypingContext& context, const Type& sou
     if (side == EdgeSide::NotTaken)
         return other.isSingleValue() ? source.without(other, context.types) : source;
     Type common = zeroesJoined(other).intersectWith(source, context.types);
-    return common.isSubsetOf(source, context.program) ? common : source;
+    if (!common.isSubsetOf(source, context.program))
+        return source;
+    const BuiltinTable& builtins = context.program.builtins();
+    auto isToldByTest = [&](const ClassPart& part) {
+        return builtins.at(part.builtinClass).instanceTest != BuiltinInstanceTest::None;
+    };
+    if (std::ranges::all_of(common.classes, isToldByTest))
+        return common;
+    Type objectsOfOther = source.intersectWith(other, context.types).withOnlyObjects();
+    if (!std::ranges::all_of(objectsOfOther.classes, isToldByTest))
+        return common;
+    return common.withoutObjects().unionWith(objectsOfOther, context.types);
 }
 
 static Type narrowByLooseEquality(const TypingContext& context, const Type& source, const Type& other, EdgeSide side)

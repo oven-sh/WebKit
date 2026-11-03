@@ -27,7 +27,7 @@ runtime NewArrayWithIndexingType : JSCell* (uint32_t count, const EncodedJSValue
 runtime NewArrayFromDoubles : JSCell* (uint32_t countAndNumberMask, double, double, double, double) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
 runtime NewArrayIterator : JSCell* (JSCell* array, uint32_t kind) ; RuntimeAllocates
 runtime GrowNewArray : void (JSCell* array, uint64_t length) ; RuntimeGrowsArray
-runtime TruncateNewArray : JSCell* (JSCell* array, uint32_t length) ; RuntimeGrowsArray
+runtime TruncateNewArray : JSCell* (JSCell* array, uint32_t length) ; RuntimeGrowsArray writes(ShapeWords)
 runtime NewArrayWithHoles : JSCell* (JSCell* source, uint64_t length, uint32_t indexingType, uint32_t flags) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
 
 runtime OwnPropertyKeys : JSCell* (EncodedJSValue object, uint32_t kind) ; unknownCode
@@ -36,7 +36,7 @@ runtime PropertyIsEnumerable : size_t (EncodedJSValue object, EncodedJSValue pro
 runtime GetOwnPropertyDescriptor : EncodedJSValue (EncodedJSValue object, EncodedJSValue property) ; unknownCode
 runtime GetOwnPropertyFields : void (EncodedJSValue object, EncodedJSValue property, EncodedJSValue* results) ; unknownCode
 runtime ObjectAssignWithoutCode, ObjectAssignToUnseenObject : size_t (JSCell* target, EncodedJSValue source) ; unknownCode
-runtime ObjectCreate : JSCell* (JSCell* prototype) ; reads(all) writes(PrototypeLinks, AllocatorState, RuntimeState) collects
+runtime ObjectCreate : JSCell* (JSCell* prototype) ; reads(all) writes(PrototypeLinks, ShapeWords, AllocatorState, RuntimeState) collects
 
 runtime IsConstructor : size_t (EncodedJSValue value) ; reads(all)
 runtime ReadsIteratorOfListUnseen : size_t (EncodedJSValue value) ; reads(all)

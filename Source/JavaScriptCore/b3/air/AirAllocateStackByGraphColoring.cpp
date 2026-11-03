@@ -815,11 +815,7 @@ private:
                         if (!killedPreviousInst) {
                             previousInstIsCoalescableMove = true;
                             m_coalescableMoves.append(CoalescableMove(site.src, site.dst, block->frequency()));
-                            workset.forEachSetBit(
-                                [&](unsigned otherSlotIndex) {
-                                    if (otherSlotIndex != site.src)
-                                        addEdge(site.dst, otherSlotIndex);
-                                });
+                            m_interference.addAllBut(site.dst, site.src, workset);
                         }
                     }
 
@@ -1352,13 +1348,25 @@ private:
             auto next = m_rangesToCome.lower_bound({ cell, 0, 0 });
             return next != m_rangesToCome.end() && std::get<0>(*next) == cell ? std::get<1>(*next) : noPosition;
         }
-        bool meetsRangeToCome(uint32_t cell, uint32_t start, uint32_t end) const
+        bool meetsRangeToCome(uint32_t cell, std::span<const std::pair<uint32_t, uint32_t>> ranges, uint64_t& rangesRead) const
         {
-            auto behind = m_rangesToCome.upper_bound({ cell, end, noPosition });
-            if (behind == m_rangesToCome.begin())
-                return false;
-            auto [cellOfLast, startOfLast, endOfLast] = *std::prev(behind);
-            return cellOfLast == cell && endOfLast >= start;
+            while (!ranges.empty()) {
+                ++rangesRead;
+                auto [start, end] = ranges.front();
+                auto behind = m_rangesToCome.upper_bound({ cell, end, noPosition });
+                if (behind != m_rangesToCome.begin()) {
+                    auto [cellOfLast, startOfLast, endOfLast] = *std::prev(behind);
+                    if (cellOfLast == cell && endOfLast >= start)
+                        return true;
+                }
+                if (behind == m_rangesToCome.end() || std::get<0>(*behind) != cell)
+                    return false;
+                const uint32_t startOfNext = std::get<1>(*behind);
+                ranges = ranges.subspan(std::ranges::partition_point(ranges, [&](const auto& range) {
+                    return range.second < startOfNext;
+                }) - ranges.begin());
+            }
+            return false;
         }
 
         void didUse(uint32_t cell) { m_numberOfCells = std::max(m_numberOfCells, cell + 1); }
@@ -1583,12 +1591,14 @@ private:
         // a, b, a, b, so neither fits between two ranges of the other, and a place for each would make the frame grow with the function.
         // The lowest cell that is free for the first range nearly always fits the others too: two slots that are live together anywhere are live together
         // where the later one is written first, unless that block is laid out behind one that reads it. So the cells that are looked at are few, however many are in use.
+        uint64_t rangesHeldAgainstCells = 0;
+        Vector<std::pair<uint32_t, uint32_t>> laterRanges;
         auto chooseCell = [&](const CellPool& pool, const Range& first) {
+            laterRanges.shrink(0);
+            for (uint32_t next = first.nextRangeOfSlot; next != noRange; next = m_ranges[next].nextRangeOfSlot)
+                laterRanges.append({ m_ranges[next].start, m_ranges[next].end });
             for (uint32_t cell = pool.findLowestCellFreeBeyond(first.end);; cell = pool.findLowestCellFreeBeyond(first.end, cell + 1)) {
-                bool fits = true;
-                for (uint32_t next = first.nextRangeOfSlot; fits && next != noRange; next = m_ranges[next].nextRangeOfSlot)
-                    fits = !pool.meetsRangeToCome(cell, m_ranges[next].start, m_ranges[next].end);
-                if (fits)
+                if (!pool.meetsRangeToCome(cell, laterRanges.span(), rangesHeldAgainstCells))
                     return cell;
             }
         };
@@ -1611,6 +1621,7 @@ private:
                 const uint32_t cell = m_cellOfSlot[range.slotIndex];
                 pool.setFreeUntil(cell, pool.startOfNextRangeIn(cell));
             });
+        m_code.proc().count(Counter::RangesComparedWithStackCells, static_cast<uint32_t>(std::min<uint64_t>(rangesHeldAgainstCells, std::numeric_limits<uint32_t>::max())));
     }
 
     StackColoring::UnitRange unitsOf(StackSlot* slot) const

@@ -18,6 +18,10 @@
 #include <algorithm>
 #include <tuple>
 
+#if COMPILER(CLANG)
+#pragma clang attribute push(__attribute__((minsize)), apply_to = function)
+#endif
+
 namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
@@ -111,9 +115,15 @@ MethodTableFunctions collectMethodTableFunctions(const PlacementContext& context
 static Vector<MethodTableRow> createRows(const PlacementContext& context, const PlacedSites& sites, const ShapeTable& shapes, const GuardBitTable& guardBits, const MethodTableFunctions& functions)
 {
     Vector<MethodTableRow> rows;
+    PropertyKeyID keyOfReceivers;
+    Vector<std::pair<LayoutID, FunctionID>> receiversOfEntrypoints;
     for (const TableCallUse& use : sites.tableCalls) {
         if (rows.isEmpty() || rows.last().selector != use.selector)
             rows.append(MethodTableRow { use.selector, functions.lookupOf(use.selector), { } });
+        if (keyOfReceivers != use.selector.key) {
+            keyOfReceivers = use.selector.key;
+            receiversOfEntrypoints = receiversOfTableEntrypoints(context.program, keyOfReceivers);
+        }
         MethodTableRow& row = rows.last();
         RELEASE_ASSERT(row.lookup);
         auto append = [&](LayoutID layout, FunctionID target, GuardBitID guard) {
@@ -134,9 +144,8 @@ static Vector<MethodTableRow> createRows(const PlacementContext& context, const 
             // A single call may enter any of them, and reads the result from where the lookup returns it.
             const CallingConventions& conventions = context.inputs.callingConventions;
             RELEASE_ASSERT(!target || conventions.locationsOf(context.program, target).results == conventions.locationsOf(context.program, row.lookup).results);
-            LayoutList receivers = target ? receiversOfTableEntrypoint(context.program, use.selector.key, arm.answer.method) : LayoutList();
             for (LayoutID layout : arm.layouts) {
-                bool isExpectedByEntrypoint = target && receivers.contains(layout);
+                bool isExpectedByEntrypoint = target && std::ranges::binary_search(receiversOfEntrypoints, std::pair(layout, arm.answer.method));
                 append(layout, isExpectedByEntrypoint ? target : row.lookup, isExpectedByEntrypoint ? guard : GuardBitID());
             }
         }
@@ -198,5 +207,9 @@ MethodTable placeMethodTable(const PlacementContext& context, const PlacedSites&
 }
 
 } } } // namespace JSC::AOT::Typed
+
+#if COMPILER(CLANG)
+#pragma clang attribute pop
+#endif
 
 #endif // ENABLE(AOT)

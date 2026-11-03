@@ -9,7 +9,7 @@
 # TWICE-NEXT: outcome: Unchanged
 
 module m0 path="main.js" displayPath="main.js"
-function f0 name="renamedWhereNobodySees" kind=Arrow captures=[{type=number}] parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, RecordsCallee, RecordsCalleeOnceRenamed] {
+function f0 name="renamedWhereNobodySees" kind=Arrow captures=[{type=number}] parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, RecordsCallee, RecordsCalleeOnceRenamed, MakesNoTailCall] {
     Return v1
 }
 function f1 name="renamedInSight" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, RecordsCallee] {

@@ -33,13 +33,28 @@
 #include "MachineContext.h"
 #include "VM.h"
 #include <algorithm>
+#include <array>
+#include <atomic>
 #include <bit>
 #include <functional>
 #include <limits>
 #include <optional>
+#include <wtf/MainThread.h>
 #include <wtf/MathExtras.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/threads/Signals.h>
+
+#if OS(UNIX)
+#include <signal.h>
+#include <sys/mman.h>
+#endif
+
+#if OS(DARWIN)
+#include <dlfcn.h>
+#elif OS(UNIX)
+extern "C" char __executable_start;
+extern "C" char etext;
+#endif
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -368,16 +383,22 @@ std::optional<FaultSite> Image::faultSiteAt(const void* pc) const
 #if CPU(ARM64)
 static uintptr_t& registerOf(PlatformRegisters& registers, GPRReg reg)
 {
-    RELEASE_ASSERT(reg == faultCallerLinkGPR || reg == ARM64Registers::lr || reg == cellCageBaseGPR || reg == instanceGPR);
+    RELEASE_ASSERT(reg == faultCallerLinkGPR || reg == ARM64Registers::lr || reg == ARM64Registers::fp || reg == ARM64Registers::sp || reg == cellCageBaseGPR || reg == instanceGPR);
     unsigned number = static_cast<unsigned>(reg);
 #if OS(DARWIN)
+    if (reg == ARM64Registers::sp)
+        return reinterpret_cast<uintptr_t&>(registers.__sp);
+    if (reg == ARM64Registers::fp)
+        return reinterpret_cast<uintptr_t&>(registers.__fp);
     return reg == ARM64Registers::lr ? reinterpret_cast<uintptr_t&>(registers.__lr) : reinterpret_cast<uintptr_t&>(registers.__x[number]);
 #elif OS(WINDOWS)
-    return reinterpret_cast<uintptr_t&>(registers.X[number]);
+    return reinterpret_cast<uintptr_t&>(reg == ARM64Registers::sp ? registers.Sp : registers.X[number]);
 #elif OS(FREEBSD)
+    if (reg == ARM64Registers::sp)
+        return reinterpret_cast<uintptr_t&>(registers.machineContext.mc_gpregs.gp_sp);
     return reg == ARM64Registers::lr ? reinterpret_cast<uintptr_t&>(registers.machineContext.mc_gpregs.gp_lr) : reinterpret_cast<uintptr_t&>(registers.machineContext.mc_gpregs.gp_x[number]);
 #else
-    return reinterpret_cast<uintptr_t&>(registers.machineContext.regs[number]);
+    return reinterpret_cast<uintptr_t&>(reg == ARM64Registers::sp ? registers.machineContext.sp : registers.machineContext.regs[number]);
 #endif
 }
 #elif CPU(X86_64)
@@ -429,10 +450,9 @@ static bool handleNullCheck(const Fault& fault, PlatformRegisters& registers)
     return true;
 }
 
-#if CPU(X86_64) && (OS(LINUX) || OS(WINDOWS))
+#if AOT_LOOP_POLLS_FAULT
 static bool handleLoopPoll(const Fault& fault, PlatformRegisters& registers)
 {
-    static_assert(hasFaultingLoopPolls);
     bool isFrameless = fault.callerFrame == CallerFrame::Frameless;
     uintptr_t instance = registerOf(registers, instanceGPR);
     uintptr_t address = instance + InstanceLayout::offsetOfLoopPollPage() + (isFrameless ? offsetOfLeafPollInLoopPollPage : 0);
@@ -446,6 +466,20 @@ static bool handleLoopPoll(const Fault& fault, PlatformRegisters& registers)
     if (leavesOwedError)
         std::bit_cast<Instance*>(instance)->runtime.exceptions.pollLeavesOwedError = 1;
 
+    // The stub is entered as if the load had called it, from a function with a frame record.
+    uintptr_t returnAddress = fault.pc + sizeOfLoopPoll;
+#if CPU(ARM64)
+    uintptr_t& link = registerOf(registers, ARM64Registers::lr);
+    if (isFrameless) {
+        uintptr_t& stackPointer = registerOf(registers, ARM64Registers::sp);
+        uintptr_t& framePointer = registerOf(registers, ARM64Registers::fp);
+        auto* top = std::bit_cast<uintptr_t*>(stackPointer);
+        *--top = link;
+        *--top = framePointer;
+        framePointer = stackPointer = std::bit_cast<uintptr_t>(top);
+    }
+    link = returnAddress;
+#else
     void*& stackPointer = MachineContext::stackPointerImpl(registers);
     auto* top = static_cast<uintptr_t*>(stackPointer);
     if (isFrameless) {
@@ -453,8 +487,9 @@ static bool handleLoopPoll(const Fault& fault, PlatformRegisters& registers)
         *--top = std::bit_cast<uintptr_t>(framePointer);
         framePointer = top;
     }
-    *--top = fault.pc + sizeOfLoopPoll;
+    *--top = returnAddress;
     stackPointer = top;
+#endif
     MachineContext::setInstructionPointer(registers, target);
     return true;
 }
@@ -490,10 +525,9 @@ bool handleAccessFault(void* faultingAddress, PlatformRegisters& registers)
     case FaultSiteKind::NullCheck:
         return handleNullCheck(fault, registers);
     case FaultSiteKind::LoopPoll:
-#if CPU(X86_64) && (OS(LINUX) || OS(WINDOWS))
+#if AOT_LOOP_POLLS_FAULT
         return handleLoopPoll(fault, registers);
 #else
-        static_assert(!hasFaultingLoopPolls);
         return false;
 #endif
     }
@@ -506,6 +540,84 @@ void installFaultHandler()
         return !info.isSentByProcess && handleAccessFault(info.faultingAddress, registers) ? SignalAction::Handled : SignalAction::NotHandled;
     });
 }
+
+#if OS(UNIX)
+namespace {
+
+struct SignalStackOfThread {
+    static constexpr size_t size = 512 * KB;
+
+    ~SignalStackOfThread()
+    {
+        if (!memory)
+            return;
+        stack_t none { };
+        none.ss_flags = SS_DISABLE;
+        sigaltstack(&none, nullptr);
+        munmap(memory, size);
+    }
+
+    void map()
+    {
+        void* mapped = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+        if (mapped == MAP_FAILED)
+            return;
+        stack_t stack { };
+        stack.ss_sp = mapped;
+        stack.ss_size = size;
+        if (sigaltstack(&stack, nullptr)) {
+            munmap(mapped, size);
+            return;
+        }
+        memory = mapped;
+    }
+
+    void* memory { nullptr };
+};
+
+} // anonymous namespace
+
+// The handler of another component keeps the stack that it asked for.
+static bool isCodeOfThisProgram(const void* address)
+{
+#if OS(DARWIN)
+    Dl_info theirs { };
+    Dl_info ours { };
+    return dladdr(address, &theirs) && dladdr(reinterpret_cast<const void*>(&takeFaultsOfThisThreadOnAnotherStack), &ours) && theirs.dli_fbase == ours.dli_fbase;
+#else
+    return address >= &__executable_start && address < &etext;
+#endif
+}
+
+void takeFaultsOfThisThreadOnAnotherStack()
+{
+    // The host gives the main thread its stack.
+    stack_t current { };
+    if (!isMainThread() && !sigaltstack(nullptr, &current) && (current.ss_flags & SS_DISABLE)) {
+        WTF_THREAD_LOCAL_ALWAYS_DESTROY static thread_local SignalStackOfThread stack;
+        stack.map();
+    }
+    static std::atomic<bool> areActionsChanged { false };
+    if (areActionsChanged.exchange(true, std::memory_order_relaxed))
+        return;
+#if OS(DARWIN)
+    constexpr std::array signalsOfGuardPage { SIGSEGV, SIGBUS };
+#else
+    constexpr std::array signalsOfGuardPage { SIGSEGV };
+#endif
+    for (int signal : signalsOfGuardPage) {
+        struct sigaction action;
+        if (sigaction(signal, nullptr, &action) || !(action.sa_flags & SA_SIGINFO) || (action.sa_flags & SA_ONSTACK))
+            continue;
+        if (!isCodeOfThisProgram(reinterpret_cast<const void*>(action.sa_sigaction)))
+            continue;
+        action.sa_flags |= SA_ONSTACK;
+        sigaction(signal, &action, nullptr);
+    }
+}
+#else
+void takeFaultsOfThisThreadOnAnotherStack() { }
+#endif
 
 } // namespace JSC::AOT
 

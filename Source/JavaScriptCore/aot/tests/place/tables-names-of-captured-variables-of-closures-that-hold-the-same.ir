@@ -1,0 +1,52 @@
+# Closures that hold the same variables in the same slots share one list of names: the second and the third name the first one's. A closure that holds others has a list of its own.
+# RUN(SIZES): tables
+# RUN(ROWS): tables modules
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="publish" [isFreeName]
+    v3 = Call v2, -, v0
+    Return
+}
+function f1 name="makes" module=m0 parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = NewClosure v0, v1 function=f2
+    v4 = NewClosure v0, v1 function=f3
+    v5 = NewClosure v2 function=f4
+    v6 = NewClosure v0, v1 function=f5
+    v7 = NewArray v3, v4, v5, v6 contents=anything holes=[]
+    Return v7
+}
+function f2 name="first" module=m0 kind=Arrow captures=[{type=anything variableName="cache"}, {type=anything variableName="options"}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewArray v0, v1 contents=anything holes=[]
+    Return v2
+}
+function f3 name="second" module=m0 kind=Arrow captures=[{type=anything variableName="cache"}, {type=anything variableName="options"}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewArray v1, v0 contents=anything holes=[]
+    Return v2
+}
+function f4 name="other" module=m0 kind=Arrow captures=[{type=anything variableName="other"}] results=[{type=anything}] {
+    Return v0
+}
+function f5 name="third" module=m0 kind=Arrow captures=[{type=anything variableName="cache"}, {type=anything variableName="options"}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewArray v0, v0, v1 contents=anything holes=[]
+    Return v2
+}
+
+# Four functions: 4 bytes for the first (the function, the bits, two names), 2 for the second, 3 for the one that holds another, 2 for the third.
+# SIZES: namedCaptures 11 11
+
+# ROWS: namedCapture function={{*}} slot=0 name="cache"
+# ROWS-NEXT: namedCapture function={{*}} slot=1 name="options"
+# ROWS-NEXT: namedCapture function={{*}} slot=0 name="cache"
+# ROWS-NEXT: namedCapture function={{*}} slot=1 name="options"
+# ROWS-NEXT: namedCapture function={{*}} slot=0 name="other"
+# ROWS-NEXT: namedCapture function={{*}} slot=0 name="cache"
+# ROWS-NEXT: namedCapture function={{*}} slot=1 name="options"
+# ROWS-NOT: namedCapture

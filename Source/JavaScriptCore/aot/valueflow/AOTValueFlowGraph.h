@@ -83,6 +83,8 @@ public:
 
     ValueFlowNodeID addNodes(uint32_t count);
     void setMask(ValueFlowNodeID, ValueSetID, ValueFlowMaskKind = ValueFlowMaskKind::Plain, ValueSetID familyObjects = { });
+    // False if no node has had this mask yet: then setMask() gives it. Many threads may call it for different nodes, as long as nobody calls setMask().
+    bool setMaskThatSomeNodeHas(ValueFlowNodeID, ValueSetID, ValueFlowMaskKind, ValueSetID familyObjects);
     void setPlaceholders(const ValueFlowPlaceholders& placeholders) { m_placeholders = placeholders; }
     void retireNodesCoveredBy(ValueFlowObjectID placeholder, ValueFlowNodeID covered, ValueSetID whole, ValueSetID coverable);
     using IsMadeForPlaceholder = bool (*)(const void* context, ValueFlowNodeID);
@@ -321,6 +323,8 @@ private:
     void evaluate(NodeWithArrivals, Arrivals&, Worker&, NOESCAPE const Invocable<void(const Message&)> auto& leave);
     void evaluateAll(Arrivals&, Worker&, NOESCAPE const Invocable<void(const Message&)> auto& leave);
     void runWave(Team&);
+    bool evaluatesNodesAgainAndAgain() const;
+    void finishInOrderOfFlow();
     using ShardsInOrder = std::array<uint8_t, numberOfShards>;
     static ShardsInOrder longestFirst(const std::array<size_t, numberOfShards>& sizes);
     void giveBackLargeBuffers();
@@ -389,6 +393,8 @@ private:
 
     Vector<Mask> m_masks;
     HashedIndex m_numberOfMask;
+    static uint32_t hashOf(const Mask&);
+    std::optional<uint32_t> findNumberOf(const Mask&) const;
     ValueFlowPlaceholders m_placeholders;
     Vector<uint32_t> m_nodesWoken;
 

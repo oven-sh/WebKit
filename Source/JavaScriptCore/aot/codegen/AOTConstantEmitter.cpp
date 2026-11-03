@@ -431,6 +431,15 @@ Operand ConstantEmitter::zeroOf(Representation representation)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+Operand ConstantEmitter::markOfUnspecifiedValue(Representation representation)
+{
+    if (representation == Representation::Double)
+        return Operand(representation, m_out.constDouble(std::bit_cast<double>(bitsOfUnspecifiedDouble)));
+    if (representation == Representation::Int32)
+        return Operand(representation, m_out.constInt32(unspecifiedInt32));
+    return zeroOf(representation);
+}
+
 void ConstantEmitter::defineCell(const ValueContext& value, CellPointer cell)
 {
     switch (value.representation()) {

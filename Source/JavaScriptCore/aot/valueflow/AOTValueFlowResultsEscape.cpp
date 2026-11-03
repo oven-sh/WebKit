@@ -242,11 +242,6 @@ static void solveSinkEquations(SinkEquations& equations, std::span<const uint32_
     Vector<uint32_t> users;
     Vector<uint32_t> worklist;
     BitVector isQueued(numberOfNodes);
-    forEachIndexInParallel(loops, (numberOfNodes + nodesPerShare - 1) / nodesPerShare, [&](unsigned share) {
-        uint32_t first = share * nodesPerShare;
-        std::ranges::fill(visitIndices.mutableSpan().subspan(first, std::min(nodesPerShare, numberOfNodes - first)), unvisited);
-    });
-
     auto solveIfTrivial = [&](uint32_t node) {
         OperandUses uses = equations.base[node] | sinks[node];
         if (uses != OperandUses::all() && equations.offsets[node] != equations.offsets[node + 1])
@@ -255,6 +250,14 @@ static void solveSinkEquations(SinkEquations& equations, std::span<const uint32_
         visitIndices[node] = solved;
         return true;
     };
+    // Most nodes hang on nothing. The walk below goes from node to node on one thread and waits for memory at each: it finds these solved.
+    forEachIndexInParallel(loops, (numberOfNodes + nodesPerShare - 1) / nodesPerShare, [&](unsigned share) {
+        uint32_t first = share * nodesPerShare;
+        for (uint32_t node = first; node < std::min(numberOfNodes, first + nodesPerShare); ++node) {
+            if (!solveIfTrivial(node))
+                visitIndices[node] = unvisited;
+        }
+    });
     auto beginVisit = [&](uint32_t node) {
         uint32_t index = ++unsolvedCount;
         visitIndices[node] = index;

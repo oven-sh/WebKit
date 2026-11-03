@@ -270,6 +270,20 @@ void relocateImage(std::span<uint8_t> image, uint64_t address)
     reinterpret_cast<ImageHeader*>(image.data())->address = address;
 }
 
+std::optional<StringHeadersBehind> placeOfStringHeadersBehind(std::span<const uint8_t> firstImage, std::span<const uint8_t> image)
+{
+    if (headerOfImage(image).options.form() == ImageForm::PositionIndependent)
+        return std::nullopt;
+    const ImageNumberRanges& numbers = headerOfImage(image).numbers;
+    if (numbers.endOfStringHeaders > headerOfImage(firstImage).numbers.capacityOfStringHeaders)
+        return std::nullopt;
+    return StringHeadersBehind {
+        .offsetInFirstImage = rangeOfStringHeaders(firstImage).offset + static_cast<size_t>(numbers.firstStringHeader) * sizeof(ImageStringHeader),
+        .offsetInImage = rangeOfStringHeaders(image).offset,
+        .size = static_cast<size_t>(numbers.endOfStringHeaders - numbers.firstStringHeader) * sizeof(ImageStringHeader),
+    };
+}
+
 #if !ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
 static std::span<uint8_t> pagesHolding(std::span<const uint8_t> bytes)
 {
@@ -314,13 +328,12 @@ static void forbidWrites(std::span<uint8_t> pages)
 
 bool copyStringHeadersBehind(std::span<const uint8_t> firstImage, std::span<const uint8_t> image)
 {
-    const ImageNumberRanges& numbers = headerOfImage(image).numbers;
-    if (numbers.endOfStringHeaders > headerOfImage(firstImage).numbers.capacityOfStringHeaders)
+    std::optional<StringHeadersBehind> place = placeOfStringHeadersBehind(firstImage, image);
+    if (!place)
         return false;
-    size_t size = static_cast<size_t>(numbers.endOfStringHeaders - numbers.firstStringHeader) * sizeof(ImageStringHeader);
-    std::span<const uint8_t> source = image.subspan(rangeOfStringHeaders(image).offset, size);
-    std::span<const uint8_t> target = firstImage.subspan(rangeOfStringHeaders(firstImage).offset + static_cast<size_t>(numbers.firstStringHeader) * sizeof(ImageStringHeader), size);
-    if (source.empty())
+    std::span<const uint8_t> source = image.subspan(place->offsetInImage, place->size);
+    std::span<const uint8_t> target = firstImage.subspan(place->offsetInFirstImage, place->size);
+    if (source.empty() || !memcmp(target.data(), source.data(), source.size()))
         return true;
     std::span<uint8_t> pages = pagesHolding(target);
     if (!allowWrites(pages))

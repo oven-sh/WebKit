@@ -162,6 +162,9 @@ struct RunListing {
 };
 // Appends the frames that are shown of the run that the iterator stands at the start of. Unless that ends the walk, the iterator is at the end of the run afterwards.
 JS_EXPORT_PRIVATE IterationStatus appendShownFramesOfRun(VM&, CompiledFrameIterator&, ShownFrameFilter&, WTF::Vector<StackFrame>& results, RunListing&);
+// The frames that are shown of the compiled code on top of the stack, or below the one host function that it has called, innermost first, as far as that run of compiled
+// frames goes. It keeps no cell and allocates nothing.
+void forEachShownFrameOfRunAtTop(VM&, const ScopedLambda<IterationStatus(const TraceFrame&)>&);
 // The frames that Interpreter::getStackTrace lists, where compiled code is on top of the stack or one host function that it called.
 JS_EXPORT_PRIVATE bool tryGetStackTrace(VM&, JSCell* owner, WTF::Vector<StackFrame>& results, size_t framesToSkip, size_t maxStackSize, const ScopedLambda<bool(const StackFrame&)>* wanted = nullptr);
 // Ends the process unless a walk that visits each compiled frame by itself lists the same frames.

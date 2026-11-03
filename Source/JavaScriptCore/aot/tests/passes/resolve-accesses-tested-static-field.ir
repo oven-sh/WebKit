@@ -1,4 +1,5 @@
 # A static field that unknown code may touch is read and stored as its variable under the guard of the member, with the access by name in the generic copy
+# Ahead of the guard the variable may hold the mark of a field that has left it, so the read names a fact that stands behind the guard
 # FORM: Prepared
 # RUN: pass PlaceTypeTests
 # RUN(ORDER): pass PlaceTypeTests
@@ -27,7 +28,8 @@ function f5 name="read" parameters=[{type=f0}] results=[{type=anything}] {
 # CHECK-NEXT: b0(v0: f0):
 # CHECK-NEXT: [[unchanged5]]: boolean = AreMembersUnchanged conditions=[{layout=L0 side=Static key="count"}]
 # CHECK-NEXT: Branch [[unchanged5]] -> taken
-# CHECK: v1: number = GetModuleVariable variable=g0
+# CHECK: [[behind5]]: fact = Specified
+# CHECK-NEXT: v1: number = GetModuleVariable fact=[[behind5]] variable=g0
 # CHECK: frequency=Unlikely:
 # CHECK-NEXT: = PropGet v0 key="count"
 }
@@ -56,8 +58,10 @@ function f8 name="two-reads" parameters=[{type=f0}] results=[{type=anything}] {
     Return v3
 # CHECK: = AreMembersUnchanged conditions=[{layout=L0 side=Static key="count"}]
 # CHECK-NOT: AreMembersUnchanged
-# CHECK: v1: number = GetModuleVariable variable=g0
-# CHECK-NEXT: v2: number = GetModuleVariable variable=g0
+# CHECK: [[first8]]: fact = Specified
+# CHECK-NEXT: v1: number = GetModuleVariable fact=[[first8]] variable=g0
+# CHECK-NEXT: [[second8]]: fact = Specified
+# CHECK-NEXT: v2: number = GetModuleVariable fact=[[second8]] variable=g0
 # CHECK-NOT: AreMembersUnchanged
 # CHECK: frequency=Unlikely:
 # CHECK-NEXT: = PropGet v0 key="count"
@@ -70,14 +74,16 @@ function f9 name="class-may-be-evaluated-again" parameters=[{type=f1}] results=[
 # CHECK-NOT: AreMembersUnchanged
 # CHECK: [[once9]]: boolean = AreMembersUnchanged conditions=[{kind=ClassEvaluatedOnce layout=L1}]
 # CHECK-NEXT: Branch [[once9]] -> taken
-# CHECK: v1: number = GetModuleVariable variable=g1
+# CHECK: [[behind9]]: fact = Specified
+# CHECK-NEXT: v1: number = GetModuleVariable fact=[[behind9]] variable=g1
 # CHECK: frequency=Unlikely:
 # CHECK-NEXT: = PropGet v0 key="count"
 }
 function f10 name="through-subclass-whose-link-may-change" parameters=[{type=f2}] results=[{type=anything}] {
     v1 = PropGet v0 key="count"
     Return v1
-# CHECK: v1: number = GetModuleVariable variable=g0
+# CHECK: [[behind10]]: fact = Specified
+# CHECK-NEXT: v1: number = GetModuleVariable fact=[[behind10]] variable=g0
 # CHECK: frequency=Unlikely:
 # CHECK-NEXT: = PropGet v0 key="count"
 # ORDER-NEXT: b0(v0: f2):

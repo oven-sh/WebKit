@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCoroutineWords.h"
 #include "AOTVector.h"
 #include "CollectionScope.h"
 #include <wtf/FastMalloc.h>
@@ -33,6 +34,12 @@ public:
     explicit CoroutineTable(State&);
 
     Structure* generatorStructure() const { return m_generatorStructure; }
+    // Null for a function whose generators are made with their prototype. The Structure is made for the first generator that takes it: a program without one pays nothing at its start.
+    Structure* structureOfGeneratorsWithoutPrototypeOf(VM&, JSObject* function);
+    bool isBornWithoutPrototype(const Structure* structure) const { return structure == m_structureOfGeneratorsWithoutPrototype; }
+    // While a generator stands on the object that stands for its prototype, that prototype does not exist: nobody can hold it, change it or compare it.
+    void willMakePrototypeOfGeneratorFunction(VM&, JSObject* function);
+    JSValue prototypeOfGeneratorsOf(VM&, JSObject* function);
     Structure* savedFrameStructure() const { return m_savedFrameStructure; }
     void* savedFrameEntrypoint() const { return m_savedFrameEntrypoint; }
     void* handlerOfJobEntrypoint() const { return m_handlerOfJobEntrypoint; }
@@ -66,6 +73,8 @@ private:
     void* m_savedFrameEntrypoint;
     void* m_handlerOfJobEntrypoint;
     Structure* m_generatorStructure { nullptr };
+    Structure* m_structureOfGeneratorsWithoutPrototype { nullptr };
+    JSObject* m_standInForPrototypes { nullptr };
     Structure* m_savedFrameStructure { nullptr };
     Vector<SavedFrame*> m_savedFramesForValidation;
     std::array<ListOfVisitedFrames, 16> m_visitedFramesWithDeadWords;

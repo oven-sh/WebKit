@@ -202,7 +202,7 @@ public:
     std::optional<GuardUnderTest> takeGuardUnderTest(const ValueContext&);
     BranchTargets targetsOf(const ValueContext&, const GuardUnderTest&);
 
-    void fail(const OperationContext&, InternalErrorKind);
+    void fail(const OperationContext&, InternalErrorKind, const String& detail = { });
     void failAtLimit(const OperationContext&, LimitID, uint64_t needed);
     bool hasFailed() const { return m_hasFailed; }
     bool isValidatedWhereLookedAt(ValueID);
@@ -327,6 +327,7 @@ private:
     unsigned m_initializationDepth { 0 };
     bool m_validates { false };
     bool m_checksProofs { false };
+    bool m_runsOutOfMemoryWhenCounted { false };
     bool m_checksKeptRegisters { false };
     bool m_forcesGCSlowPaths { false };
     bool m_hasFailed { false };

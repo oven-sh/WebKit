@@ -85,6 +85,16 @@ static std::optional<uint32_t> findBaseOperand(const Value& value, std::optional
     return base;
 }
 
+bool onlyMakesStoresAndRethrows(const Function& function, BlockID handler)
+{
+    const Block& block = function.at(handler);
+    if (block.role != BlockRole::CleanupHandler || block.terminator.kind != TerminatorKind::Rethrow || block.values.size() < 2 || function.at(block.values.first()).opcode != Opcode::CatchException)
+        return false;
+    return std::ranges::all_of(block.values.span().subspan(1), [&](ValueID store) {
+        return memoryAccessOf(function, function.at(store)).kind == MemoryAccess::Kind::Write;
+    });
+}
+
 MemoryAccess memoryAccessOf(const Function&, const Value& value)
 {
     if (effectRuleOf(value.opcode) != EffectRule::Declared)

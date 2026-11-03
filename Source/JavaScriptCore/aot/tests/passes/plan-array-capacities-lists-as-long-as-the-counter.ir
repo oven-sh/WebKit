@@ -1,0 +1,277 @@
+# A list that a counted loop pushes to once in every turn is told its length, the counter and the bound
+# FORM: Prepared
+# RUN: pass PlanArrayCapacities
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="pushedOnceInEveryTurn" parameters=[{type=int[0, 1000000]}, {type=anything}] results=[{type=Array<anything>}] {
+    v2 = NewArray contents=anything
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = Less v4, v0
+    Branch v6 -> taken b2(| 0), notTaken b3()
+  b2(v7):
+    v8 = CallBuiltin v2, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v9 = Integer integer=1
+    v10 = Add v7, v9
+    Jump -> next b1(v10)
+  b3():
+    Return v2
+# CHECK: = NewArray {{*}}capacity={{*}} [isFilledToCapacity]
+# CHECK: AppendElement v2, v1, v4, v4, v0
+}
+
+function f1 name="eitherArmPushes" parameters=[{type=int[0, 1000000]}, {type=anything}, {type=boolean}] results=[{type=Array<anything>}] {
+    v3 = NewArray contents=anything
+    v4 = Integer integer=0
+    Jump -> next b1(v4)
+  b1(v5):
+    LoopHint
+    v7 = Less v5, v0
+    Branch v7 -> taken b2(| 0), notTaken b6()
+  b2(v8):
+    Branch v2 -> taken b3(), notTaken b4()
+  b3():
+    v9 = CallBuiltin v3, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    Jump -> next b5()
+  b4():
+    v10 = CallBuiltin v3, v2 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    Jump -> next b5()
+  b5():
+    v11 = Integer integer=1
+    v12 = Add v8, v11
+    Jump -> next b1(v12)
+  b6():
+    Return v3
+# CHECK-NOT: isFilledToCapacity
+# CHECK-NOT: AppendElement
+# CHECK-COUNT-2: = CallBuiltin v3,
+}
+
+function f2 name="someTurnsDoNotPush" parameters=[{type=int[0, 1000000]}, {type=anything}, {type=boolean}] results=[{type=Array<anything>}] {
+    v3 = NewArray contents=anything
+    v4 = Integer integer=0
+    Jump -> next b1(v4)
+  b1(v5):
+    LoopHint
+    v7 = Less v5, v0
+    Branch v7 -> taken b2(| 0), notTaken b5()
+  b2(v8):
+    Branch v2 -> taken b3(), notTaken b4()
+  b3():
+    v9 = CallBuiltin v3, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    Jump -> next b4()
+  b4():
+    v10 = Integer integer=1
+    v11 = Add v8, v10
+    Jump -> next b1(v11)
+  b5():
+    Return v3
+# CHECK-NOT: isFilledToCapacity
+# CHECK-NOT: AppendElement
+# CHECK: = CallBuiltin v3, v1 overload=ArrayPrototypePush/0
+}
+
+function f3 name="pushedTwiceInATurn" parameters=[{type=int[0, 1000000]}, {type=anything}] results=[{type=Array<anything>}] {
+    v2 = NewArray contents=anything
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = Less v4, v0
+    Branch v6 -> taken b2(| 0), notTaken b3()
+  b2(v7):
+    v8 = CallBuiltin v2, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v9 = CallBuiltin v2, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v10 = Integer integer=1
+    v11 = Add v7, v10
+    Jump -> next b1(v11)
+  b3():
+    Return v2
+# CHECK-NOT: isFilledToCapacity
+# CHECK-NOT: AppendElement
+}
+
+function f4 name="pushedToInFrontOfTheLoop" parameters=[{type=int[0, 1000000]}, {type=anything}, {type=boolean}] results=[{type=Array<anything>}] {
+    v3 = NewArray contents=anything
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v4 = CallBuiltin v3, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    Jump -> next b2()
+  b2():
+    v5 = Integer integer=0
+    Jump -> next b3(v5)
+  b3(v6):
+    LoopHint
+    v8 = Less v6, v0
+    Branch v8 -> taken b4(| 0), notTaken b5()
+  b4(v9):
+    v10 = CallBuiltin v3, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v11 = Integer integer=1
+    v12 = Add v9, v11
+    Jump -> next b3(v12)
+  b5():
+    Return v3
+# CHECK-NOT: isFilledToCapacity
+# CHECK-NOT: AppendElement
+}
+
+function f5 name="eitherOfTwoLists" parameters=[{type=int[0, 1000000]}, {type=anything}, {type=boolean}] results=[{type=Array<anything>}] {
+    v3 = NewArray contents=anything
+    v4 = NewArray contents=anything
+    v5 = Integer integer=0
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v5, v3)
+  b2():
+    Jump -> next b3(v5, v4)
+  b3(v6, v7):
+    LoopHint
+    v9 = Less v6, v0
+    Branch v9 -> taken b4(| 0), notTaken b5()
+  b4(v10):
+    v11 = CallBuiltin v7, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v12 = Integer integer=1
+    v13 = Add v10, v12
+    Jump -> next b3(v13, v7)
+  b5():
+    v14 = NewArray v3, v4 contents=anything
+    Return v14
+# CHECK-NOT: isFilledToCapacity
+# CHECK-NOT: AppendElement
+}
+
+function f6 name="aNewListInTheLoop" parameters=[{type=int[0, 1000000]}, {type=anything}, {type=boolean}] results=[{type=Array<anything>}] {
+    v3 = NewArray contents=anything
+    v4 = Integer integer=0
+    Jump -> next b1(v4, v3)
+  b1(v5, v6):
+    LoopHint
+    v8 = Less v5, v0
+    Branch v8 -> taken b2(| 0), notTaken b5()
+  b2(v9):
+    Branch v2 -> taken b3(), notTaken b4(v6)
+  b3():
+    v10 = NewArray contents=anything
+    Jump -> next b4(v10)
+  b4(v11):
+    v12 = CallBuiltin v11, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v13 = Integer integer=1
+    v14 = Add v9, v13
+    Jump -> next b1(v14, v11)
+  b5():
+    v15 = NewArray v3, v6 contents=anything
+    Return v15
+# CHECK-NOT: isFilledToCapacity
+# CHECK-NOT: AppendElement
+}
+
+function f7 name="madeOutsideTwoLoops" parameters=[{type=int[0, 1000]}, {type=anything}] results=[{type=Array<anything>}] {
+    v2 = NewArray contents=anything
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = Less v4, v0
+    Branch v6 -> taken b2(| 0), notTaken b6()
+  b2(v7):
+    v8 = Integer integer=0
+    Jump -> next b3(v8)
+  b3(v9):
+    LoopHint
+    v11 = Less v9, v0
+    Branch v11 -> taken b4(| 0), notTaken b5()
+  b4(v12):
+    v13 = CallBuiltin v2, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v14 = Integer integer=1
+    v15 = Add v12, v14
+    Jump -> next b3(v15)
+  b5():
+    v16 = Integer integer=1
+    v17 = Add v7, v16
+    Jump -> next b1(v17)
+  b6():
+    Return v2
+# CHECK-NOT: isFilledToCapacity
+# CHECK-NOT: AppendElement
+}
+
+function f8 name="leftElsewhereToo" parameters=[{type=int[0, 1000000]}, {type=anything}, {type=boolean}] results=[{type=Array<anything>}] {
+    v3 = NewArray contents=anything
+    v4 = Integer integer=0
+    Jump -> next b1(v4)
+  b1(v5):
+    LoopHint
+    v7 = Less v5, v0
+    Branch v7 -> taken b2(| 0), notTaken b4()
+  b2(v8):
+    v9 = CallBuiltin v3, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    Branch v2 -> taken b4(), notTaken b3()
+  b3():
+    v10 = Integer integer=1
+    v11 = Add v8, v10
+    Jump -> next b1(v11)
+  b4():
+    Return v3
+# CHECK-NOT: isFilledToCapacity
+# CHECK-NOT: AppendElement
+}
+
+function f9 name="pushesItself" parameters=[{type=int[0, 1000000]}] results=[{type=Array<anything>}] {
+    v1 = NewArray contents=anything
+    v2 = Integer integer=0
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v0
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6):
+    v7 = CallBuiltin v1, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v8 = Integer integer=1
+    v9 = Add v6, v8
+    Jump -> next b1(v9)
+  b3():
+    Return v1
+# CHECK-NOT: isFilledToCapacity
+# CHECK-NOT: AppendElement
+}
+
+function f10 name="countsByTwo" parameters=[{type=int[0, 1000000]}, {type=anything}] results=[{type=Array<anything>}] {
+    v2 = NewArray contents=anything
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = Less v4, v0
+    Branch v6 -> taken b2(| 0), notTaken b3()
+  b2(v7):
+    v8 = CallBuiltin v2, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v9 = Integer integer=2
+    v10 = Add v7, v9
+    Jump -> next b1(v10)
+  b3():
+    Return v2
+# CHECK-NOT: isFilledToCapacity
+# CHECK-NOT: AppendElement
+}
+
+function f11 name="cutShortInTheLoop" parameters=[{type=int[0, 1000000]}, {type=anything}] results=[{type=Array<anything>}] {
+    v2 = NewArray contents=anything
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = Less v4, v0
+    Branch v6 -> taken b2(| 0), notTaken b3()
+  b2(v7):
+    v8 = CallBuiltin v2, v3 overload=ArrayPrototypeLength/1 builtinCallForm=Whole
+    v9 = CallBuiltin v2, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v10 = Integer integer=1
+    v11 = Add v7, v10
+    Jump -> next b1(v11)
+  b3():
+    Return v2
+# CHECK-NOT: isFilledToCapacity
+# CHECK-NOT: AppendElement
+}

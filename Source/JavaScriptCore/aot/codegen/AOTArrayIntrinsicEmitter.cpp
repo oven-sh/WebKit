@@ -134,7 +134,8 @@ void ArrayIntrinsicEmitter::generatePutOwnContiguousIndex(const ValueContext& va
     CellPointer array = in<CellPointer>(value->arrayOperand());
     ValueID stored = value->valueOperand();
     Operand rawElement = get(stored);
-    elements().storeRawElement(contiguous, elements().elementsOf(array), integerOperand(value->positionOperand()), rawElement);
+    // The storage may be of int32: see loadBoxedElement().
+    m_out.store64(rawElement.as<Boxed>().value(), elements().elementOfUnknownForm(elements().elementsOf(array), integerOperand(value->positionOperand())));
     barrierAfterStore(value, array, rawElement, typeOf(stored));
 }
 
@@ -237,13 +238,21 @@ bool ArrayIntrinsicEmitter::isFilledByCopyBehind(const ValueContext& allocation)
 void ArrayIntrinsicEmitter::newArrayOfHoles(const ValueContext& value, Integer length, ValueID source, const ArrayStorageForm& form, uint32_t flags)
 {
     using ElementsBelowLength = ArrayAllocationEmitter::ElementsBelowLength;
+    using LengthIsSetBy = ArrayAllocationEmitter::LengthIsSetBy;
     LBasicBlock slowPath = newBlock();
     Join<CellPointer> join(m_out);
-    join.add(ArrayAllocationEmitter(generator()).allocateArrayOfHoles(value, length, form, slowPath, isFilledByCopyBehind(value) ? ElementsBelowLength::NotCleared : ElementsBelowLength::Cleared));
+    ArrayAllocationEmitter allocation(generator());
+    bool isFilledByCopy = isFilledByCopyBehind(value);
+    // The operation gives the array this length too, unless the number is its capacity.
+    bool setsLengthBehindJoin = !isFilledByCopy && !(flags & NewArrayWithHolesFlag::lengthIsCapacity);
+    join.add(allocation.allocateArrayOfHoles(value, length, form, slowPath, isFilledByCopy ? ElementsBelowLength::NotCleared : ElementsBelowLength::Cleared, setsLengthBehindJoin ? LengthIsSetBy::Caller : LengthIsSetBy::Allocation));
 
     m_out.appendTo(slowPath);
     join.add(callOperation<CellPointer>(value, RuntimeOperation::NewArrayWithHoles, { sourceOrNull(source), length, word32(form.indexingType), word32(flags) }, { .isOnRarePath = true }));
-    define(value, join.finish());
+    CellPointer array = join.finish();
+    if (setsLengthBehindJoin)
+        allocation.setLengthOfNewArray(array, length);
+    define(value, array);
 }
 
 void ArrayIntrinsicEmitter::newArrayOfForm(const ValueContext& value, const ArrayStorageForm& form)
@@ -266,6 +275,25 @@ void ArrayIntrinsicEmitter::generateNewArrayWithCapacity(const ValueContext& val
     newArrayOfHoles(value, length, value->sourceOperand(), formToConstruct(value), NewArrayWithHolesFlag::lengthIsCapacity);
 }
 
+Integer ArrayIntrinsicEmitter::lengthOfArrayStoredInto(const ValueContext& value, const ArrayElements& storage)
+{
+    if (!value->lengthOperand())
+        return elements().publicLength(storage);
+    Integer length = integerOperand(value->lengthOperand());
+    if (!generator().validatesOrChecksProofs())
+        return length;
+    LBasicBlock isInvalid = newBlock();
+    LBasicBlock isValid = newBlock();
+    branch(equal(length, elements().publicLength(storage)), { normalEdge(isValid), rareEdge(isInvalid) });
+
+    m_out.appendTo(isInvalid);
+    callVoidOperation(value, RuntimeOperation::ReportValidationFailure, { boxCell(storage.array), word32(static_cast<int32_t>(ValidationFailureKind::ValueType)), word32(m_id.index()), word32(value.id().index()) }, { .isOnRarePath = true });
+    m_out.unreachable();
+
+    m_out.appendTo(isValid);
+    return length;
+}
+
 void ArrayIntrinsicEmitter::generateTryPutByValDirect(const ValueContext& value)
 {
     const ArrayStorageForm& form = formToConstruct(value);
@@ -284,7 +312,7 @@ void ArrayIntrinsicEmitter::generateTryPutByValDirect(const ValueContext& value)
     Join<Condition> join(m_out);
     branchUnless(elements().hasWritableShape(elements().indexingMode(array, IndexingShapeAndWritabilityMask), form), otherwise);
     ArrayElements storage = elements().elementsOf(array);
-    branchUnless(below(index, elements().publicLength(storage)), otherwise);
+    branchUnless(below(index, lengthOfArrayStoredInto(value, storage)), otherwise);
     elements().storeRawElement(form, storage, index, *rawElement);
     if (form.holdsCells)
         barrierAfterStore(value, array, *rawElement, typeOf(stored));
@@ -414,8 +442,9 @@ void ArrayIntrinsicEmitter::generateTryCopyFilledElements(const ValueContext& va
     define(value, join.finish());
 }
 
-// Out of an array of boxed values that the library made and filled, into one that the program holds. False, with nothing stored, where that one is shorter or has no writable storage
-// of the three kinds. Storage for integers or doubles takes them as they are: whoever asks knows that they are such numbers then.
+// Out of an array of boxed values that the library made and filled, into one that the program holds. False where that one is shorter or has no writable storage of the three kinds.
+// Storage for integers takes them as they are: it is never younger than the values. Storage for doubles may be: convertStorageOfNumbers() makes it of storage for any value while the program's
+// code runs. So it asks each value, and answers false at the first that is no number: whoever asks then stores all of them the ordinary way.
 void ArrayIntrinsicEmitter::generateTryPutElements(const ValueContext& value)
 {
     CellPointer array = in<CellPointer>(value->arrayOperand());
@@ -449,6 +478,7 @@ void ArrayIntrinsicEmitter::generateTryPutElements(const ValueContext& value)
         branchUnless(belowOrEqual(count, elements().publicLength(to)), otherwise);
         forEachPositionBelow(count, [&](Integer position) {
             Boxed word(m_out.load64(elements().elementOfUnknownForm(from, position)));
+            branchUnless(isNumber(word), otherwise);
             Number number = select(isInt32(word), toNumber(unboxInt32(word)), unboxDouble(word));
             elements().storeRawElement(doubles, to, position, number);
         });

@@ -151,4 +151,4 @@ function f2 name="total" module=m0 position=16 flags=[IsChecked, HasExplicitName
 # CHECK-LABEL: end of loop
 # The function has calls, and Windows passes arguments in other registers: its count is not checked.
 # X64: loop #{{*}}, instructions: 15, patchpoints: 3, rare instructions: 50
-# ARM64: loop #{{*}}, instructions: 14, patchpoints: 3, rare instructions: 50
+# ARM64: loop #{{*}}, instructions: 14, patchpoints: 3, rare instructions: 51

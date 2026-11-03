@@ -136,7 +136,7 @@ entry module=m0
 
 # A rope and a 16-bit text go to a stub, which is the only thing here that needs a frame. Whoever has gone there once goes from stub to stub: the frame is entered once, and left behind the last stub.
 # The stub writes the register that `text` came in. `text` steps aside once; `found` stays in the register that it has outside.
-# On the way of a flat 8-bit text that begins with `lit_`, a comparison is one branch on the two characters that are left.
+# On the way of a flat 8-bit text that begins with `lit_`, what the first comparison of the two characters that are left answers is `found`, and each of the other two is one branch.
 # CHECK-LABEL: name="flags" role=Source
 # CHECK-NOT: Frame
 # CHECK: EnterFrame
@@ -161,11 +161,8 @@ entry module=m0
 # CHECK-NEXT: Patch
 # CHECK-NOT: EnterFrame
 # CHECK: Load16 4(%
+# CHECK-NEXT: Compare32 Equal, %[[tail]], $24929, %
 # CHECK-NEXT: Patch
-# CHECK-NEXT: Branch32 Equal, %[[tail]], $24929
-# CHECK: Predecessors:
-# CHECK: Predecessors:
-# CHECK: Predecessors:
 # CHECK-NEXT: Patch
 # CHECK-NEXT: Branch32 NotEqual, %[[tail]], $25185
 # CHECK: Predecessors:

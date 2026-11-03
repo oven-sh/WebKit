@@ -72,6 +72,14 @@ struct FlowBoundFunctionAtSite {
     friend bool operator==(const FlowBoundFunctionAtSite&, const FlowBoundFunctionAtSite&) = default;
 };
 
+// `_extends = Object.assign.bind()`: whatever bound function the site calls binds undefined and no argument to this built-in. Other callables may reach the site too.
+struct FlowBuiltinBoundAtSite {
+    AccessSiteID site;
+    BuiltinID target;
+
+    friend bool operator==(const FlowBuiltinBoundAtSite&, const FlowBuiltinBoundAtSite&) = default;
+};
+
 // `on("close", listener)`: a function that stores under a key that is its parameter was followed for this key, and a closure of this function was stored under it.
 struct FlowClosureStoredUnderKey {
     PropertyKeyID key;
@@ -227,6 +235,8 @@ struct FlowSiteTables {
     Vector<FlowProxiesSeenAtSite> proxiesSeenAtSites;
     // Sorted by site, use, target and number of bound arguments.
     Vector<FlowBoundFunctionAtSite> boundFunctionsAtSites;
+    // Sorted by site.
+    Vector<FlowBuiltinBoundAtSite> builtinsBoundAtSites;
     // Sorted by key and function. A key under which more was stored than a call tests for has no entry.
     Vector<FlowClosureStoredUnderKey> closuresStoredUnderKeys;
     Vector<AllocationSite> allocationSites;
@@ -250,8 +260,13 @@ struct FlowBuiltinTables {
     Vector<BuiltinLocationFlow> locations;
     // One record for each place in the source that writes a location, by holder, key and place.
     Vector<BuiltinLocationFlow> writesOfLocations;
+    // A place that writes to a built-in object with locked members under a name that flow cannot list. No key. Constant: the key is a number, and the object takes nothing at an index.
+    Vector<BuiltinLocationFlow> writesUnderUnreadNames;
     BitVector constantMembers;
     BitVector intactHolders;
+    BitVector holdersReachedThroughUnknownObject;
+    BitVector keysWrittenThroughUnknownObject;
+    bool isEveryKeyWrittenThroughUnknownObject { false };
     // The image locks these when the program starts. What is said of them rests on that.
     BitVector membersLockedAtStartUp;
     // Of an image that shares its realm: a write of this program may reach them, so it locks none of them. An image built over this one sees no such write and reads them here.
@@ -415,6 +430,7 @@ public:
     const BitVector& builtinMembersLockedAtStartUp() const LIFETIME_BOUND { return m_tables.builtins.membersLockedAtStartUp; }
     const BitVector& builtinMembersWrittenInSharedRealm() const LIFETIME_BOUND { return m_tables.builtins.membersWrittenInSharedRealm; }
     std::span<const BuiltinLocationFlow> writesOfBuiltinLocations() const LIFETIME_BOUND { return m_tables.builtins.writesOfLocations.span(); }
+    std::span<const BuiltinLocationFlow> writesOfBuiltinsUnderUnreadNames() const LIFETIME_BOUND { return m_tables.builtins.writesUnderUnreadNames.span(); }
 
     std::span<const AccessSite> accessSites() const LIFETIME_BOUND { return m_tables.sites.accessSites.span(); }
     std::span<const AllocationSite> allocationSites() const LIFETIME_BOUND { return m_tables.sites.allocationSites.span(); }
@@ -464,6 +480,8 @@ public:
     // What was stamped on the access, for a pass that meets the access after the stamp is gone. No answer: flow says nothing. No set: no object that was seen to arrive has the name of the access.
     std::optional<LayoutSetID> receiversSeenAt(AccessSiteID) const;
     Expected<std::span<const FlowBoundFunctionAtSite>> boundFunctionsSeenAt(AccessSiteID, FlowBoundFunctionUseAtSite) const LIFETIME_BOUND;
+    // None where a bound function that binds something, or another target, may reach the call.
+    BuiltinID builtinBehindBoundFunctionsCalledAt(AccessSiteID) const;
     // For `table[key](..)` in a copy of a function whose caller spells the key: flow has looked at the function with every key at once.
     Expected<std::span<const FlowClosureStoredUnderKey>> closuresSeenStoredUnder(PropertyKeyID) const LIFETIME_BOUND;
     const SinkCandidates& sinkCandidates(AccessSiteID call, uint32_t operandIndex) const LIFETIME_BOUND;

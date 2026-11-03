@@ -492,6 +492,7 @@ public:
     JS_EXPORT_PRIVATE CCallHelpers& jit();
     JS_EXPORT_PRIVATE CodeAddressing& addressing();
     JS_EXPORT_PRIVATE bool hasElidedFrame() const;
+    JS_EXPORT_PRIVATE bool handsLongSearchesOver() const;
     JS_EXPORT_PRIVATE unsigned classTableLimitHits() const;
     CodeGenerationAttempt& attempt() { return *m_attempt; }
 

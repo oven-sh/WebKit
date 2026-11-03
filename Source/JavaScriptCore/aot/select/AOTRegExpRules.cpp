@@ -19,6 +19,10 @@
 #include "AOTVector.h"
 #include "YarrFlags.h"
 
+#if COMPILER(CLANG)
+#pragma clang attribute push(__attribute__((minsize)), apply_to = function)
+#endif
+
 namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
@@ -184,5 +188,9 @@ InlineForm chooseFormOfRegExpBuiltin(const InlineBuiltinSite& site)
 }
 
 } } } // namespace JSC::AOT::Typed
+
+#if COMPILER(CLANG)
+#pragma clang attribute pop
+#endif
 
 #endif // ENABLE(AOT)

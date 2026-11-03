@@ -37,6 +37,12 @@ void dump(PrintStream& out, StubKey key)
     case CallerFrame::StubFrame:
         out.print(".StubFrame"_s);
         break;
+    case CallerFrame::KeepsNoRegisters:
+        out.print(".KeepsNoRegisters"_s);
+        break;
+    case CallerFrame::KeepsNoFPRs:
+        out.print(".KeepsNoFPRs"_s);
+        break;
     }
 
     if (std::optional<GPRReg> reg = key.operandRegister())

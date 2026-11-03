@@ -66,6 +66,11 @@ static JSObject* captureNativeModuleExports(JSGlobalObject* realm, uint32_t regi
     return nullptr;
 }
 
+static bool givesOriginalToPackages(JSGlobalObject*, const String&, const String& importer, bool)
+{
+    return importer.contains("/node_modules/"_s);
+}
+
 static constexpr ModuleHost testModuleHost {
     .createModuleObject = failOnModuleHostCall,
     .createRequirer = failOnModuleHostCall,
@@ -79,6 +84,8 @@ static constexpr ModuleHost testModuleHost {
     .createAsyncModuleRequiredError = failOnModuleHostCall,
     .createEmptyJSONBodyError = nullptr,
     .createLoadError = nullptr,
+    .givesOriginalBesideMock = givesOriginalToPackages,
+    .mockOperations = mockOperations,
 };
 
 static JSGlobalObject* createPlainRealm(VM& vm)

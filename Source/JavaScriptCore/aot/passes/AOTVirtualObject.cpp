@@ -614,13 +614,16 @@ bool isEnumerable(const Program& program, const VirtualObjectDescription& descri
     return !record.key || !namesPrivateMember(program, record.key);
 }
 
-std::optional<VirtualConstant> virtualConstantOf(const Program& program, const Function& function, ValueID id)
+std::optional<VirtualConstant> virtualConstantOf(const VirtualObjectContext& context, ValueID id)
 {
-    std::optional<ValueID> constant = constantThroughCasts(program, function, id);
+    if (context.constantsBeforeRewriting && id.index() < context.constantsBeforeRewriting->size())
+        return context.constantsBeforeRewriting->at(id.index());
+
+    std::optional<ValueID> constant = constantThroughCasts(context.program, context.function, id);
     if (!constant)
         return std::nullopt;
 
-    const Value& value = function.at(*constant);
+    const Value& value = context.function.at(*constant);
     switch (value.opcode) {
     case Opcode::Undefined:
         return VirtualConstant::Undefined;
@@ -1307,6 +1310,16 @@ bool canHoldUnprovenValue(const Program& program, const VirtualObjectDescription
     return canBeStoredBehindAllocation(field) && tryCreateFiller(program, program.at(slotTypeOf(program, field)));
 }
 
+bool testTellsOnlyWhetherValueFitsSlot(const Program& program, const VirtualObjectDescription& description, const VirtualField& named, TypeID stored)
+{
+    std::optional<uint32_t> layoutField = layoutFieldOf(program, description, named);
+    if (!layoutField)
+        return false;
+    const Type& number = program.at(TypeTable::number);
+    const Field& field = program.at(description.layout).fields[*layoutField];
+    return program.at(stored).isSubsetOf(number, program) && program.at(slotTypeOf(program, field)).withoutNullish().isSubsetOf(number, program);
+}
+
 Value makeFiller(const Program& program, const VirtualObjectDescription& description, const VirtualField& unprovenNamed)
 {
     RELEASE_ASSERT(unprovenNamed.kind == VirtualFieldKind::UnprovenNamed);
@@ -1402,6 +1415,8 @@ LateStore canStoreLate(const VirtualObjectContext& context, const VirtualObjectD
         bool hasCountedStores = flowOf(program, { description.layout, *layoutField }).location.stores != StoreCount::Unknown;
         if (!hasCountedStores && program.at(TypeTable::undefined).isSubsetOf(fieldType, program))
             return LateStore::NeedsUndefinedPlaceholder;
+        if (!hasCountedStores && program.at(TypeTable::null).isSubsetOf(fieldType, program))
+            return LateStore::NeedsNullPlaceholder;
         // Flow proves a field filled from the start where every allocation lists it, and placement then gives its slot no absent state for a store to find.
         return isListedByAllocation(context, description, field) ? LateStore::Unknown : LateStore::CreatesProperty;
     }

@@ -70,8 +70,6 @@ struct Range {
 // Each is a mapping of its own, and a process may have so many mappings and no more.
 static constexpr uint32_t maxNumberOfLiveCells = 8192;
 
-static constexpr uint32_t numberOfBirthsThatAreAllChecked = 1024;
-static constexpr uint32_t intervalOfCheckedBirths = 64;
 
 static Range s_range;
 static Lock s_listLock;
@@ -169,16 +167,12 @@ CheckedFrameCells::~CheckedFrameCells()
 {
     while (!m_liveGranules.isEmpty())
         end(m_liveGranules.takeLast());
+    didChangeLiveGranules();
 }
 
 CheckedFrameCells* CheckedFrameCells::find(VM& vm)
 {
-    Locker locker { s_listLock };
-    for (CheckedFrameCells* cells = s_first; cells; cells = cells->m_next) {
-        if (&cells->m_vm == &vm)
-            return cells;
-    }
-    return nullptr;
+    return vm.aotState().checkedFrameCells;
 }
 
 CheckedFrameCells& CheckedFrameCells::ensure(VM& vm)
@@ -186,6 +180,7 @@ CheckedFrameCells& CheckedFrameCells::ensure(VM& vm)
     if (CheckedFrameCells* cells = find(vm)) [[likely]]
         return *cells;
     auto* cells = new CheckedFrameCells(vm);
+    vm.aotState().checkedFrameCells = cells;
     Locker locker { s_listLock };
     cells->m_next = std::exchange(s_first, cells);
     s_isInUse.store(true, std::memory_order_relaxed);
@@ -195,6 +190,7 @@ CheckedFrameCells& CheckedFrameCells::ensure(VM& vm)
 void CheckedFrameCells::willDestroy(VM& vm)
 {
     CheckedFrameCells* found = nullptr;
+    vm.aotState().checkedFrameCells = nullptr;
     {
         Locker locker { s_listLock };
         for (CheckedFrameCells** link = &s_first; *link; link = &(*link)->m_next) {
@@ -216,6 +212,13 @@ void CheckedFrameCells::end(uint32_t index)
     granule.state.store(GranuleState::Ended, std::memory_order_release);
 }
 
+void CheckedFrameCells::didChangeLiveGranules()
+{
+    m_vm.aotState().lowestFrameOfCheckedCells = m_liveGranules.isEmpty() ? nullptr : s_range.granules[m_liveGranules.last()].wordOfFrame;
+}
+
+static_assert(!(CheckedFrameCells::numberOfBirthsThatAreAllChecked(false) % CheckedFrameCells::intervalOfCheckedBirths) && !(CheckedFrameCells::numberOfBirthsThatAreAllChecked(true) % CheckedFrameCells::intervalOfCheckedBirths));
+
 void* CheckedFrameCells::make(void* slot, const void* wordOfFrame, size_t size, const Allocation& allocation)
 {
     const Range& range = AOT::range();
@@ -230,13 +233,14 @@ void* CheckedFrameCells::make(void* slot, const void* wordOfFrame, size_t size, 
             RELEASE_ASSERT(position != notFound);
             m_liveGranules.removeAt(position);
             end(static_cast<uint32_t>(last));
+            didChangeLiveGranules();
         }
     }
 
     if (size > range.roomForCell() || !range.numberOfGranules || range.numberOfLiveCells.load(std::memory_order_relaxed) >= maxNumberOfLiveCells)
         return slot;
     uint32_t birth = m_numberOfBirths[pairIntHash(allocation.function, allocation.value) % m_numberOfBirths.size()]++;
-    if (birth >= numberOfBirthsThatAreAllChecked && birth % intervalOfCheckedBirths)
+    if (birth >= numberOfBirthsThatAreAllChecked(m_image.header().options.validates) && birth % intervalOfCheckedBirths)
         return slot;
     for (uint32_t attempt = 0; attempt < range.numberOfGranules; ++attempt) {
         uint32_t index = s_range.next.fetch_add(1, std::memory_order_relaxed) % range.numberOfGranules;
@@ -257,6 +261,7 @@ void* CheckedFrameCells::make(void* slot, const void* wordOfFrame, size_t size, 
         granule.allocation = allocation;
         s_range.numberOfLiveCells.fetch_add(1, std::memory_order_relaxed);
         m_liveGranules.append(index);
+        didChangeLiveGranules();
         writeWordOfFrame(slot, index);
         return cell;
     }
@@ -267,12 +272,14 @@ void CheckedFrameCells::didLeaveFrameOf(const void* wordOfFrame)
 {
     while (!m_liveGranules.isEmpty() && s_range.granules[m_liveGranules.last()].wordOfFrame <= wordOfFrame)
         end(m_liveGranules.takeLast());
+    didChangeLiveGranules();
 }
 
 void CheckedFrameCells::didLeaveFramesBelow(const void* address)
 {
     while (!m_liveGranules.isEmpty() && s_range.granules[m_liveGranules.last()].wordOfFrame < address)
         end(m_liveGranules.takeLast());
+    didChangeLiveGranules();
 }
 
 template<typename Visitor>

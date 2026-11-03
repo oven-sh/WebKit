@@ -110,6 +110,16 @@ static void testRequiresSelectsRuns()
     else
         expectRunLines(codeWithFaultingPolls, Architecture::X86_64, { 1 });
 
+    static constexpr ASCIILiteral codeWithCallingPolls =
+        "# RUN: print\n"
+        "# RUN(CALLS): print\n"
+        "# REQUIRES(CALLS): calling-loop-polls\n"
+        "# CALLS: a\n"_s;
+    if (hasFaultingLoopPolls)
+        expectRunLines(codeWithCallingPolls, Architecture::ARM64, { 1 });
+    else
+        expectRunLines(codeWithCallingPolls, Architecture::ARM64, { 1, 2 });
+
     static constexpr ASCIILiteral loadsCodeOutsideImage =
         "# RUN: print\n"
         "# RUN(LOADS): print\n"
@@ -139,6 +149,7 @@ static void testRequiresMalformed()
     expectErrorLines("# RUN: print\n# REQUIRES: unsanitized-code unsanitized-code\n"_s, { 2 });
     expectErrorLines("# RUN: print\n# REQUIRES: not-windows not-windows\n"_s, { 2 });
     expectErrorLines("# RUN: print\n# REQUIRES: faulting-loop-polls faulting-loop-polls\n"_s, { 2 });
+    expectErrorLines("# RUN: print\n# REQUIRES: calling-loop-polls calling-loop-polls\n"_s, { 2 });
     expectErrorLines("# RUN: print\n# REQUIRES: code-outside-image code-outside-image\n"_s, { 2 });
     expectErrorLines("# RUN: print\n# REQUIRES: no-jscvt no-jscvt\n"_s, { 2 });
     expectErrorLines("# RUN: print\n# REQUIRES(OTHER): arm64\n"_s, { 2 });

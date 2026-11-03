@@ -197,7 +197,7 @@ FunctionAnalyses& FunctionVerifier::analyses()
 {
     RELEASE_ASSERT(m_hasValidStructure);
     if (!m_analyses)
-        m_analyses.emplace(AnalysisContext { m_build, m_program, m_inputs.flow, m_inputs.effects, m_id, CallResults::MayAliasOperands, WorkLimits::NeverLowered }, m_function);
+        m_analyses.emplace(AnalysisContext { m_build, m_program, m_inputs.flow, m_inputs.effects, m_id, CallResults::MayAliasOperands, WorkLimits::NeverLowered, SavedFrames::AreOutOfReach }, m_function);
     return *m_analyses;
 }
 

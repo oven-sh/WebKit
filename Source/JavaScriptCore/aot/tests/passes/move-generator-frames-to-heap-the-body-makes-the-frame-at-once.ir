@@ -1,0 +1,79 @@
+# A generator whose prototype object is still to be made finds its function in its heap frame, so whoever makes a generator is told whether it gets the frame at once. A body that keeps more
+# in the frame than its caller passes makes the frame itself: that counts where nothing can be seen to happen in front, and not where other code runs first.
+# FORM: Prepared
+# RUN: pass MoveGeneratorFramesToHeap
+# STATISTIC: GeneratorsWithHeapFrames = 2
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="atOnce" role=CoroutineRamp flags=[IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=Generator}] creator=Coroutine{ramp=f0 body=f1 promiseParameter=2} {
+    v2 = NewGenerator v0 function=f0
+    v3 = CallDirect v0, v1, v2 function=f1
+    Return v2
+}
+function f1 name="atOnce" role=CoroutineBody flags=[IsGenerator, TakesCallee] parameters=[{type=anything}, {type=Generator}] results=[{type=anything}] derivation={source=f0} creator=Coroutine{ramp=f0 body=f1 promiseParameter=2} {
+    v3 = AssumeType v1 provenType=number
+    v4 = IsGeneratorRunning v2
+    Branch v4 -> taken b4(), notTaken b1()
+  b1():
+    v5 = Undefined
+    v6 = YieldBySavingFrame v2, v5 @10
+    v7 = ResultAt v6 index=0
+    v8 = ResultAt v6 index=1
+    Switch v8 cases=[1, 2] -> case b2(), case b3(), otherwise b4()
+  b2() frequency=Rare:
+    Throw v7
+  b3() frequency=Rare:
+    Return v7
+  b4():
+    v9 = YieldBySavingFrame v2, v3 @11
+    v10 = ResultAt v9 index=0
+    v11 = ResultAt v9 index=1
+    Switch v11 cases=[1, 2] -> case b5(), case b6(), otherwise b7()
+  b5() frequency=Rare:
+    Throw v10
+  b6() frequency=Rare:
+    Return v10
+  b7():
+    Return v3
+}
+function f2 name="behindOtherCode" role=CoroutineRamp flags=[IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=Generator}] creator=Coroutine{ramp=f2 body=f3 promiseParameter=2} {
+    v2 = NewGenerator v0 function=f2
+    v3 = CallDirect v0, v1, v2 function=f3
+    Return v2
+}
+function f3 name="behindOtherCode" role=CoroutineBody flags=[IsGenerator, TakesCallee] parameters=[{type=anything}, {type=Generator}] results=[{type=anything}] derivation={source=f2} creator=Coroutine{ramp=f2 body=f3 promiseParameter=2} {
+    v3 = IsGeneratorRunning v2
+    Branch v3 -> taken b4(), notTaken b1()
+  b1():
+    v4 = Call v1
+    v5 = YieldBySavingFrame v2, v4 @20
+    v6 = ResultAt v5 index=0
+    v7 = ResultAt v5 index=1
+    Switch v7 cases=[1, 2] -> case b2(), case b3(), otherwise b4()
+  b2() frequency=Rare:
+    Throw v6
+  b3() frequency=Rare:
+    Return v6
+  b4():
+    v8 = YieldBySavingFrame v2, v1 @21
+    v9 = ResultAt v8 index=0
+    v10 = ResultAt v8 index=1
+    Switch v10 cases=[1, 2] -> case b5(), case b6(), otherwise b7()
+  b5() frequency=Rare:
+    Throw v9
+  b6() frequency=Rare:
+    Return v9
+  b7():
+    Return v1
+}
+# CHECK: function f0 name="atOnce"
+# CHECK: NewGenerator v0 function=f0 [getsHeapFrame]
+# CHECK-NEXT: CallDirect v0, v1, v2 function=f1
+# CHECK: function f1 name="atOnce"
+# CHECK: NewHeapFrame v2, v0 function=
+# CHECK: function f2 name="behindOtherCode"
+# CHECK-NOT: getsHeapFrame
+# CHECK: function f3 name="behindOtherCode"
+# CHECK: Call v1
+# CHECK: NewHeapFrame v2, v0 function=

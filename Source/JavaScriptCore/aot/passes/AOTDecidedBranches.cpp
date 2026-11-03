@@ -158,12 +158,17 @@ bool mayRefuseChangedClosures(const Type& typeOfTestedValue)
     return typeOfTestedValue.anyFunction || typeOfTestedValue.anyObject;
 }
 
-static bool mayRefuseChangedClosures(FunctionAnalyses& analyses, const Value& test)
+static OptionSet<FalseRefusal> falseRefusalsOf(FunctionAnalyses& analyses, const Value& test)
 {
     const Program& program = analyses.program();
-    if (analyses.context().build.isSabotaged(Sabotage::ChangedClosuresFailEveryTest))
-        return false;
-    return !program.at(test.testedType()).functions.isEmpty() && mayRefuseChangedClosures(program.typeOf(analyses.function(), test.valueOperand()));
+    const Type& tested = program.at(test.testedType());
+    const Type& typeOfTestedValue = program.typeOf(analyses.function(), test.valueOperand());
+    OptionSet<FalseRefusal> refusals;
+    if (!tested.functions.isEmpty() && mayRefuseChangedClosures(typeOfTestedValue) && !analyses.context().build.isSabotaged(Sabotage::ChangedClosuresFailEveryTest))
+        refusals.add(FalseRefusal::ChangedClosure);
+    if (mayRefuseUntestableBuiltins(program, typeOfTestedValue, tested))
+        refusals.add(FalseRefusal::UntestableBuiltin);
+    return refusals;
 }
 
 void keepRepeatedTests(FunctionAnalyses& analyses, Vector<BranchOnTypeTest>& branches)
@@ -190,7 +195,7 @@ TypeTestBranches::TypeTestBranches(FunctionAnalyses& analyses)
             m_branchesByOperand.append(BranchOnValue { operand, block });
         });
         if (const Value* test = typeTestBranchedOn(function, function.at(block))) {
-            m_branches.append({ test->valueOperand(), test->testedType(), block, mayRefuseChangedClosures(analyses, *test) });
+            m_branches.append({ test->valueOperand(), test->testedType(), block, falseRefusalsOf(analyses, *test) });
             m_blocksThatBranchOnTypeTest.append(block);
         }
     }
@@ -207,38 +212,42 @@ TypeTestBranches::TypeTestBranches(FunctionAnalyses& analyses)
 
 static Vector<KnownBoolean> outcomesOfFrequentTests(FunctionAnalyses& analyses, std::span<const BranchOnTypeTest> branches)
 {
-    // Two groups for a test: an even one for the branches that refuse only what is none of the functions, and the next for the others.
+    // A group of a test for each set of false refusals.
+    static constexpr uint32_t groupsOfTest = 4;
+    static_assert(OptionSet<FalseRefusal> { FalseRefusal::ChangedClosure, FalseRefusal::UntestableBuiltin }.toRaw() == groupsOfTest - 1);
     Vector<uint32_t> groupOfBlock(FillWith { }, analyses.cfg().numNodes(), noGroup);
     uint32_t numberOfGroups = 0;
     forEachRunOfEqualKeys(branches, &BranchOnTypeTest::test, [&](std::span<const BranchOnTypeTest> branchesOnTest) {
         if (branchesOnTest.size() <= maxComparedBranches)
             return;
         for (const BranchOnTypeTest& branch : branchesOnTest)
-            groupOfBlock[branch.block.index()] = numberOfGroups + branch.mayRefuseChangedClosures;
-        numberOfGroups += 2;
+            groupOfBlock[branch.block.index()] = numberOfGroups + branch.falseRefusals.toRaw();
+        numberOfGroups += groupsOfTest;
     });
     return outcomesBehindOutermostEdges(analyses, numberOfGroups, [&](BlockID block, KnownBoolean outcome, const ScopedLambda<void(uint32_t)>& functor) {
         uint32_t group = groupOfBlock[block.index()];
         if (group == noGroup)
             return;
-        functor(group | 1);
-        if (!(group & 1) || outcome == KnownBoolean::True)
-            functor(group & ~1u);
+        uint32_t refusals = group % groupsOfTest;
+        for (uint32_t refusalsOfAsked = 0; refusalsOfAsked < groupsOfTest; ++refusalsOfAsked) {
+            if (outcome == KnownBoolean::True || !(refusals & ~refusalsOfAsked))
+                functor(group - refusals + refusalsOfAsked);
+        }
     }, [&](BlockID block) {
         return groupOfBlock[block.index()];
     });
 }
 
-// What a value is tested for never changes, so behind an edge of one test every other test of the value for the same type has the same outcome. A test that may refuse a changed closure decides by its refusal only tests that may do so too.
+// What a value is tested for never changes, so behind an edge of one test every other test of the value for the same type has the same outcome. A test that may refuse what it is for decides by its refusal only tests that may refuse the same.
 KnownBoolean TypeTestBranches::outcomeFromDominatingTest(BlockID block) const
 {
     const Value* test = m_repeatsTest.get(block.index()) ? typeTestBranchedOn(m_analyses.function(), m_analyses.function().at(block)) : nullptr;
     if (!test)
         return KnownBoolean::Unknown;
     std::tuple tested { m_analyses.identityOf(test->valueOperand()).index(), test->testedType().index() };
-    bool everyRefusalDecides = m_branches[m_indexOfBranch[block.index()]].mayRefuseChangedClosures;
+    OptionSet<FalseRefusal> falseRefusals = m_branches[m_indexOfBranch[block.index()]].falseRefusals;
     auto refusalDecides = [&](const BranchOnTypeTest& branch) {
-        return everyRefusalDecides || !branch.mayRefuseChangedClosures;
+        return falseRefusals.containsAll(branch.falseRefusals);
     };
     return outcomeBehindEdges(m_analyses, std::ranges::equal_range(m_branches, tested, { }, &BranchOnTypeTest::test), block, m_outcomesOfFrequentTests, refusalDecides, [&] {
         return outcomesOfFrequentTests(m_analyses, m_branches.span());
@@ -264,7 +273,7 @@ KnownBoolean TypeTestBranches::outcomeOnEveryWay(BlockID block) const
         return KnownBoolean::Unknown;
 
     const size_t firstBranchOnTest = branchesOnTest.begin() - m_branches.begin();
-    bool everyRefusalDecides = m_branches[m_indexOfBranch[block.index()]].mayRefuseChangedClosures;
+    OptionSet<FalseRefusal> falseRefusals = m_branches[m_indexOfBranch[block.index()]].falseRefusals;
     auto branchesOnSameTest = [&](BlockID from) {
         return m_repeatsTest.get(from.index()) && m_indexOfBranch[from.index()] - firstBranchOnTest < branchesOnTest.size();
     };
@@ -281,7 +290,7 @@ KnownBoolean TypeTestBranches::outcomeOnEveryWay(BlockID block) const
                 KnownBoolean onEdge = outcomeOnEdge(edge);
                 if (onEdge == KnownBoolean::Unknown || (outcome != KnownBoolean::Unknown && outcome != onEdge))
                     return KnownBoolean::Unknown;
-                if (onEdge == KnownBoolean::False && !everyRefusalDecides && m_branches[m_indexOfBranch[edge.from.index()]].mayRefuseChangedClosures)
+                if (onEdge == KnownBoolean::False && !falseRefusals.containsAll(m_branches[m_indexOfBranch[edge.from.index()]].falseRefusals))
                     return KnownBoolean::Unknown;
                 outcome = onEdge;
                 continue;
@@ -693,7 +702,10 @@ void TestsOfSameValues::computeOutcomes()
             if (!left || left->isNever())
                 continue;
             if (operand.isExpectation) {
-                if (left->isSubsetOf(m_types.at(user.expectedType().predicted()), program))
+                // What a test leaves of a type need not lie inside the type: of `Arguments`, a class that no test tells from `Array`, a test for `Array` leaves `Array`.
+                // An assumption of that would have a type outside the type of its own operand, and whoever reads it a type that is out of date.
+                const Type& own = m_types.at(function.at(user.operand(operand.operandIndex)).type);
+                if (left->isSubsetOf(m_types.at(user.expectedType().predicted()), program) && own.castTo(*left, m_types).isSubsetOf(own, program))
                     m_provenExpectations.append({ operand.block, operand.user, m_types.intern(*left) });
                 continue;
             }
@@ -942,9 +954,17 @@ void raiseFrequenciesBehind(FunctionAnalyses& analyses, Function& function, Edge
     Expected<BlockFrequency> actual = function.at(decided.from).frequency;
     if (!isRarerThan(expected, actual).predicted() || !analyses.cfg().isReachable(decided.from))
         return;
+    // The call behind the head of a function that was copied in is marked by what is expected of the tests of the head. Those behind the one that is decided are reached no more.
+    auto isCallBehindHead = [&](BlockID block) {
+        return std::ranges::any_of(function.at(block).values, [&](ValueID value) {
+            return function.at(value).opcode == Opcode::CallDirect && function.at(value).isAfterInlinedHead();
+        });
+    };
     auto isEnteredAnotherWay = [&](Edge way) {
-        return std::ranges::any_of(analyses.cfg().incomingEdges(targetOf(function, way).block), [&](Edge edge) {
-            return edge != way && function.at(edge.from).frequency.predicted() != BlockFrequency::Rare;
+        BlockID entered = targetOf(function, way).block;
+        bool passesOverTestsBehind = isCallBehindHead(entered);
+        return std::ranges::any_of(analyses.cfg().incomingEdges(entered), [&](Edge edge) {
+            return edge != way && function.at(edge.from).frequency.predicted() != BlockFrequency::Rare && !(passesOverTestsBehind && analyses.dominators().dominates(way.from, edge.from));
         });
     };
     if (isEnteredAnotherWay(decided))
@@ -957,17 +977,19 @@ void raiseFrequenciesBehind(FunctionAnalyses& analyses, Function& function, Edge
             jumpsToRarerBlocks.append(Edge { block, 0 });
     };
     // Past a block as frequent as the test, rare blocks are the failing sides of other tests.
-    BitVector isReachedThroughRareBlocks(function.blocks.size());
-    isReachedThroughRareBlocks.quickSet(target.index());
-    Vector<BlockID, 16> worklist { target };
-    while (!worklist.isEmpty()) {
-        for (BlockID next : analyses.cfg().successors(worklist.takeLast())) {
-            if (isRarerThan(function.at(next).frequency, actual).predicted() && !isReachedThroughRareBlocks.quickSet(next.index()))
-                worklist.append(next);
+    UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> isReachedThroughRareBlocks;
+    isReachedThroughRareBlocks.add(target.index());
+    Vector<BlockID, 16> reachedThroughRareBlocks { target };
+    for (size_t index = 0; index < reachedThroughRareBlocks.size(); ++index) {
+        for (BlockID next : analyses.cfg().successors(reachedThroughRareBlocks[index])) {
+            if (isRarerThan(function.at(next).frequency, actual).predicted() && isReachedThroughRareBlocks.add(next.index()).isNewEntry)
+                reachedThroughRareBlocks.append(next);
         }
     }
-    for (BlockID block : analyses.cfg().reversePostOrder()) {
-        if (isReachedThroughRareBlocks.quickGet(block.index()) && function.at(block).frequency.isSamePredictionAs(expected) && analyses.dominators().dominates(target, block))
+    AOT::sortInLine(reachedThroughRareBlocks, { }, [&](BlockID block) { return analyses.cfg().reversePostOrderIndex(block); });
+    analyses.context().build.statistics().count(StatisticID::BlocksReadToRaiseFrequencies, reachedThroughRareBlocks.size());
+    for (BlockID block : reachedThroughRareBlocks) {
+        if (function.at(block).frequency.isSamePredictionAs(expected) && analyses.dominators().dominates(target, block))
             raise(block);
     }
     // What a block always goes on to runs as often as the block. The way behind a failed test often joins one that is rarer still. What lies behind the tests there stays as it is until they are decided too.
@@ -977,6 +999,12 @@ void raiseFrequenciesBehind(FunctionAnalyses& analyses, Function& function, Edge
         if (isRarerThan(function.at(next).frequency, actual).predicted() && !isEnteredAnotherWay(jump))
             raise(next);
     }
+}
+
+bool canDecideTerminator(const Program& program, const Function& function, TypeArena& types, Edge chosen)
+{
+    return canFollowWithoutTest(function, chosen) && (!hasEdgeResults(function, chosen)
+        || argumentsFitParametersAfterCasts(program, function, types, Target { targetOf(function, chosen).block, argumentsWithoutTest(function, chosen), { } }));
 }
 
 void decideTerminator(IRBuilder& builder, BlockID block, uint32_t targetIndex)

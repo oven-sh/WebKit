@@ -2,9 +2,9 @@
 # The store under a key that nobody knows arrives under every name that somebody asks for, so nobody can say what `ended` holds: the name is listed without a function.
 # What the program defines under the name is one getter and one setter. They are listed among the members as they were defined: a read of the name tests the bit of the class,
 # which the run time sets where the prototype object holds that accessor.
-# Where the list of keys is empty the key is `undefined`, and what the source holds under that name is nothing: no function is stored there.
+# Where the list of keys is empty the key is `undefined`. No operation of the program names that name, so the source is not asked for it alone: it is listed with what the read answers under any name.
 # RUN: valueflow-apply
-# CHECK: layout L0 kind=Instance name="Duplex" {{*}}members=[{key="ended" kind=Getter function=f2}, {key="ended" kind=Setter function=f3}, {key="size" kind=Getter function=f4}] namedMembers=[{key="ended"}, {key="size"}, {key="undefined"}]
+# CHECK: layout L0 kind=Instance name="Duplex" {{*}}members=[{key="ended" kind=Getter function=f2}, {key="ended" kind=Setter function=f3}, {key="size" kind=Getter function=f4}, {key="undefined" function=f5}] namedMembers=[{key="ended"}, {key="size"}, {key="undefined" function=f5}]
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

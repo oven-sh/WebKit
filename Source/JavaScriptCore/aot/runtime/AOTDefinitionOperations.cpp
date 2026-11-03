@@ -305,6 +305,12 @@ static bool tryDefineWithoutDescriptor(JSGlobalObject* globalObject, JSObject* o
         attributes |= PropertyAttribute::Accessor;
     else if (!bits.isWritable)
         attributes |= PropertyAttribute::ReadOnly;
+    // An object in the state of one that had no field of the name and lacked it has none and lacks it.
+    if (compiled && !isAccessor) {
+        const AddedExtraProperty* added = compiled->state().propertyCaches->findAddedExtraProperty(structure->id(), name.uid());
+        if (added && added->attributes == attributes && compiled->tryRepeat(vm, *added, bits.hasValue ? valueOrGetter : jsUndefined()))
+            return true;
+    }
     const FieldData* field = compiled ? compiled->fieldNamed(compiled->state(), name) : nullptr;
     // The layout has a field for a getter that the build saw defined, with the attributes it saw.
     if (field && field->isAccessor() && bits.hasGet && !bits.hasSet && valueOrGetter.isObject() && compiled->tryDefineAbsentGetterInSlot(vm, globalObject, *field, name.uid(), asObject(valueOrGetter), attributes))

@@ -1050,8 +1050,10 @@ public:
                 VALIDATE_RULE(ValidationRule::KnownRange, range->min() <= range->max() && range->isSubsetOf(IntRange::top(value->type())), ("At ", *value, ": ", *range));
                 VALIDATE_RULE(ValidationRule::KnownRange, isKnownRangePlausible(m_procedure, value), ("At ", *value, ": ", *range));
             }
-            if (m_procedure.knownDereferenceableBytes(value))
+            if (m_procedure.knownDereferenceableBytes(value)) {
+                VALIDATE_RULE(ValidationRule::KnownDereferenceableBytes, mayHaveKnownDereferenceableBytes(value), ("At ", *value));
                 VALIDATE_RULE(ValidationRule::KnownDereferenceableBytes, value->type() == pointerType(), ("At ", *value));
+            }
             // Conceptually, if you exit sideways, you will almost certainly read Top or (AbstractHeapRepository) root. 
             // Since we can't easily find out what root is here, we settle for checking that you at least read *something*.
             // This is technically overly strict, but in practice violating this is almost certainly a bug.

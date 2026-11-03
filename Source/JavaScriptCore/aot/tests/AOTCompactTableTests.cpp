@@ -15,7 +15,9 @@
 #include "AOTIRParser.h"
 #include "AOTImage.h"
 #include "AOTLoadedProgramTestSupport.h"
+#include "AOTOperationCallScope.h"
 #include "AOTProgramFile.h"
+#include "AOTSchemaRuntimeOperations.h"
 #include "AOTShellProcess.h"
 #include "AOTTemporaryFile.h"
 #include "AOTThreads.h"
@@ -31,6 +33,7 @@
 #include "TopExceptionScope.h"
 #include <stdlib.h>
 #include <wtf/DataLog.h>
+#include <wtf/SetForScope.h>
 #include <wtf/text/MakeString.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -799,6 +802,206 @@ static void testFindByCharacters(LoadedProgram& program)
     AOT_TEST_CHECK(!set.has(jsString(program.realm(), jsString(vm, String("al"_s)), jsString(vm, String("ph"_s)))));
 }
 
+static void testATableThatIsMostlyDeletedIsLetGo(LoadedProgram& program)
+{
+    for (Collection::Kind kind : { Collection::Kind::Set, Collection::Kind::Map }) {
+        for (unsigned count : { CompactTable::minUsedToShrink, 100u, 5000u }) {
+            Collection collection(program, kind);
+            for (unsigned number = 0; number < count; ++number)
+                collection.add(jsNumber(number), jsNumber(number));
+            CompactTable* full = collection.table();
+            unsigned removed = 0;
+            while ((count - removed) * 4 >= count) {
+                AOT_TEST_CHECK(collection.table() == full && full->isLive());
+                AOT_TEST_CHECK(collection.remove(jsNumber(removed++)));
+            }
+            AOT_TEST_CHECK(collection.table() != full && !full->isLive());
+            AOT_TEST_CHECK(collection.table()->size() == count - removed && collection.table()->capacity() < count && collection.table()->capacity() >= 2 * (count - removed));
+            Vector<JSValue> keys = collection.keysInOrder();
+            AOT_TEST_CHECK(keys.size() == count - removed);
+            for (unsigned number = 0; number < count; ++number)
+                AOT_TEST_CHECK(collection.has(jsNumber(number)) == (number >= removed) && (number < removed || keys[number - removed] == jsNumber(number)));
+            // Whoever stands in the table that was let go goes on at the same entry.
+            CompactStorage::Position position = CompactTable::next(program.vm(), full, removed + 1);
+            AOT_TEST_CHECK(position.storage == collection.table() && position.key == jsNumber(removed + 1));
+            while (removed < count)
+                AOT_TEST_CHECK(collection.remove(jsNumber(removed++)));
+            AOT_TEST_CHECK(!collection.table()->size() && collection.table()->capacity() < 2 * CompactTable::minUsedToShrink);
+        }
+    }
+}
+
+static void testACollectionThatSwingsAboutOneSizeKeepsItsTable(LoadedProgram& program)
+{
+    for (unsigned size : { 8u, 9u, 40u, 1000u }) {
+        Collection map(program, Collection::Kind::Map);
+        for (unsigned number = 0; number < 4 * size; ++number)
+            map.add(jsNumber(number), jsNumber(number));
+        unsigned first = 0;
+        while (first < 3 * size)
+            AOT_TEST_CHECK(map.remove(jsNumber(first++)));
+        unsigned numberOfTables = 0;
+        constexpr unsigned turnsForEachEntry = 50;
+        CompactTable* last = map.table();
+        for (unsigned number = 4 * size; number < (4 + turnsForEachEntry) * size; ++number) {
+            AOT_TEST_CHECK(map.remove(jsNumber(first++)));
+            map.add(jsNumber(number), jsNumber(number));
+            if (map.table() != std::exchange(last, map.table()))
+                ++numberOfTables;
+        }
+        AOT_TEST_CHECK(map.table()->size() == size && numberOfTables <= 3 * turnsForEachEntry);
+    }
+}
+
+static void testAKeyThatIsDeletedAndAddedAgainKeepsOneSlot(LoadedProgram& program)
+{
+    for (bool keysAreNumbers : { false, true }) {
+        auto keyAt = [&](unsigned number) { return keysAreNumbers ? jsNumber(number) : numberedString(program, "key"_s, number); };
+        Collection map(program, Collection::Kind::Map);
+        constexpr unsigned count = 1000;
+        for (unsigned number = 0; number < count; ++number)
+            map.add(keyAt(number), jsNumber(number));
+        CompactTable* table = map.table();
+        AOT_TEST_CHECK(table->numberOfTakenSlots() == count && table->capacity() > count + 100);
+        for (unsigned turn = 0; turn < 100; ++turn) {
+            AOT_TEST_CHECK(map.remove(keyAt(7)) && !map.has(keyAt(7)));
+            map.add(keyAt(7), jsNumber(turn));
+            // One slot may stay behind for good: the one that a key has left, or the last of its eight.
+            AOT_TEST_CHECK(map.table() == table && table->numberOfTakenSlots() <= count + 2 && map.get(keyAt(7)) == jsNumber(turn));
+        }
+        for (unsigned number = 0; number < count; ++number)
+            AOT_TEST_CHECK(map.has(keyAt(number)));
+        AOT_TEST_CHECK(map.keysInOrder().last() == keyAt(7) || textOf(map.keysInOrder().last()) == "key7"_s);
+
+        // Every third key goes and comes back, then every key is set again: all are found, and no slot is taken twice.
+        for (unsigned round = 0; round < 3; ++round) {
+            for (unsigned number = round; number < count; number += 3)
+                AOT_TEST_CHECK(map.remove(keyAt(number)));
+            for (unsigned number = 0; number < count; ++number)
+                map.add(keyAt(number), jsNumber(number + round));
+            AOT_TEST_CHECK(map.table()->size() == count && map.table()->numberOfTakenSlots() <= count + count / 3);
+            for (unsigned number = 0; number < count; ++number)
+                AOT_TEST_CHECK(map.get(keyAt(number)) == jsNumber(number + round));
+        }
+    }
+}
+
+static bool deletedPrefixIsDeleted(Collection& collection)
+{
+    CompactTable* table = collection.table();
+    uint32_t deletedPrefix = CompactTable::deletedPrefixOf(collection.owner());
+    if (deletedPrefix > table->used())
+        return false;
+    for (uint32_t entry = 0; entry < deletedPrefix; ++entry) {
+        if (table->keyAt(entry))
+            return false;
+    }
+    return true;
+}
+
+// What a walk from the front writes down, as compiled code and operationAOTMapNext do.
+static void noteDeletedPrefix(Collection& collection)
+{
+    CompactTable* table = collection.table();
+    uint32_t& deletedPrefix = CompactTable::deletedPrefixOf(collection.owner());
+    while (deletedPrefix < table->used() && !table->keyAt(deletedPrefix))
+        ++deletedPrefix;
+}
+
+static void testAnOrdinaryTableHasNoDeletedPrefix(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    for (Collection::Kind kind : { Collection::Kind::Set, Collection::Kind::Map }) {
+        Collection collection(program, kind);
+        {
+            SetForScope asBesideNoCompiledCode(vm.aotState().hasCompiledCode, false);
+            collection.add(jsNumber(0), jsNumber(0));
+        }
+        auto hasCompactStorage = [&] {
+            return kind == Collection::Kind::Set ? uncheckedDowncast<JSSet>(collection.owner())->hasCompactStorage() : uncheckedDowncast<JSMap>(collection.owner())->hasCompactStorage();
+        };
+        auto firstKey = [&] {
+            EncodedJSValue results[2];
+            UGPRPair answer = callOperationFromTest(vm, kind == Collection::Kind::Set ? operationAOTSetNext : operationAOTMapNext, &program.instance(), collection.owner(), JSValue::encode(jsNull()), 0, results);
+            size_t hasEntry;
+            size_t entry;
+            decodeResult(answer, hasEntry, entry);
+            return hasEntry ? JSValue::decode(results[0]) : JSValue();
+        };
+        AOT_TEST_CHECK(!hasCompactStorage());
+        unsigned next = 1;
+        while (next < 100)
+            collection.add(jsNumber(next++), jsNumber(0));
+        for (unsigned oldest = 0; oldest < 2000; ++oldest) {
+            AOT_TEST_CHECK(firstKey() == jsNumber(oldest) && !CompactTable::deletedPrefixOf(collection.owner()));
+            AOT_TEST_CHECK(collection.remove(jsNumber(oldest)));
+            collection.add(jsNumber(next++), jsNumber(0));
+        }
+        for (unsigned oldest = 2000; oldest + 1 < next; ++oldest) {
+            AOT_TEST_CHECK(firstKey() == jsNumber(oldest));
+            AOT_TEST_CHECK(collection.remove(jsNumber(oldest)));
+        }
+        AOT_TEST_CHECK(firstKey() == jsNumber(next - 1) && !hasCompactStorage() && !CompactTable::deletedPrefixOf(collection.owner()));
+    }
+}
+
+static void testTheDeletedPrefixEndsWithItsTable(LoadedProgram& program)
+{
+    for (Collection::Kind kind : { Collection::Kind::Set, Collection::Kind::Map }) {
+        for (bool keysAreNumbers : { false, true }) {
+            auto keyAt = [&](unsigned number) { return keysAreNumbers ? jsNumber(number) : numberedString(program, "key"_s, number); };
+            // A cache at a steady size: the oldest entry goes, a new one comes, through many tables.
+            Collection cache(program, kind);
+            constexpr unsigned size = 100;
+            unsigned next = 0;
+            while (next < size)
+                cache.add(keyAt(next++), jsNumber(0));
+            unsigned numberOfTables = 0;
+            unsigned longestPrefix = 0;
+            CompactTable* last = cache.table();
+            for (unsigned turn = 0; turn < 2000; ++turn) {
+                noteDeletedPrefix(cache);
+                longestPrefix = std::max(longestPrefix, CompactTable::deletedPrefixOf(cache.owner()));
+                AOT_TEST_CHECK(cache.table()->keyAt(CompactTable::deletedPrefixOf(cache.owner())) == keyAt(next - size) || !keysAreNumbers);
+                AOT_TEST_CHECK(cache.remove(keyAt(next - size)) && deletedPrefixIsDeleted(cache));
+                cache.add(keyAt(next++), jsNumber(turn));
+                AOT_TEST_CHECK(deletedPrefixIsDeleted(cache));
+                if (cache.table() != std::exchange(last, cache.table())) {
+                    ++numberOfTables;
+                    AOT_TEST_CHECK(!CompactTable::deletedPrefixOf(cache.owner()));
+                }
+            }
+            AOT_TEST_CHECK(numberOfTables > 5 && longestPrefix > size / 2 && cache.keysInOrder().size() == size);
+
+            // Let go because it is mostly deleted entries.
+            for (unsigned number = next - size; number + 1 < next; ++number) {
+                noteDeletedPrefix(cache);
+                AOT_TEST_CHECK(cache.remove(keyAt(number)) && deletedPrefixIsDeleted(cache));
+            }
+            AOT_TEST_CHECK(cache.keysInOrder().size() == 1);
+
+            // Cleared, with and without somebody who has walked it.
+            for (bool isWalked : { false, true }) {
+                for (unsigned count : { 4u, 60u }) {
+                    Collection cleared(program, kind);
+                    for (unsigned number = 0; number < count; ++number)
+                        cleared.add(keyAt(number), jsNumber(number));
+                    for (unsigned number = 0; number < count / 2; ++number)
+                        AOT_TEST_CHECK(cleared.remove(keyAt(number)));
+                    noteDeletedPrefix(cleared);
+                    AOT_TEST_CHECK(CompactTable::deletedPrefixOf(cleared.owner()) == count / 2);
+                    if (isWalked)
+                        CompactTable::next(program.vm(), cleared.table(), 0);
+                    CompactTable::clear(program.realm(), cleared.owner());
+                    AOT_TEST_CHECK(deletedPrefixIsDeleted(cleared));
+                    cleared.add(keyAt(1), jsNumber(1));
+                    AOT_TEST_CHECK(deletedPrefixIsDeleted(cleared) && cleared.keysInOrder().size() == 1);
+                }
+            }
+        }
+    }
+}
+
 static void testCopyIsIndependent(LoadedProgram& program)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(program.vm());
@@ -1032,6 +1235,14 @@ std::span<const NativeTest> compactTableTests()
         { "compact-table/clearing-a-table-that-nobody-has-walked-empties-it-wide"_s, wide<testClearingATableThatNobodyHasWalkedEmptiesIt> },
         { "compact-table/find-by-characters"_s, narrow<testFindByCharacters> },
         { "compact-table/copy-is-independent"_s, narrow<testCopyIsIndependent> },
+        { "compact-table/mostly-deleted-is-let-go"_s, narrow<testATableThatIsMostlyDeletedIsLetGo> },
+        { "compact-table/wide-references/mostly-deleted-is-let-go"_s, wide<testATableThatIsMostlyDeletedIsLetGo> },
+        { "compact-table/swing-keeps-its-table"_s, narrow<testACollectionThatSwingsAboutOneSizeKeepsItsTable> },
+        { "compact-table/deleted-prefix"_s, narrow<testTheDeletedPrefixEndsWithItsTable> },
+        { "compact-table/ordinary-table-has-no-prefix"_s, narrow<testAnOrdinaryTableHasNoDeletedPrefix> },
+        { "compact-table/wide-references/deleted-prefix"_s, wide<testTheDeletedPrefixEndsWithItsTable> },
+        { "compact-table/readded-key-keeps-one-slot"_s, narrow<testAKeyThatIsDeletedAndAddedAgainKeepsOneSlot> },
+        { "compact-table/wide-references/readded-key-keeps-one-slot"_s, wide<testAKeyThatIsDeletedAndAddedAgainKeepsOneSlot> },
         { "compact-table/out-of-memory-throws-and-leaves-the-table-usable"_s, narrow<testOutOfMemoryThrowsAndLeavesTheTableUsable> },
         { "compact-table/keys-survive-collections"_s, narrow<testKeysSurviveCollections> },
         { "compact-table/wide-references/start-wide"_s, wide<testWideReferencesStartWide> },

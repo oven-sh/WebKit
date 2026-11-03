@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTClosureWord.h"
 #include "AOTConvention.h"
 #include "AOTCoroutineWords.h"
 #include "AOTInstance.h"
@@ -541,7 +542,7 @@ void generateNewGenerator(StubAssembler& jit)
     // closureFormOf gives every generator function a full closure, which has the layout of a JSFunction.
     JumpList slowCases;
     jit.loadPtr(Address(closure, JSFunction::offsetOfExecutableOrRareData()), structure);
-    slowCases.append(jit.branchTestPtr(CCallHelpers::Zero, structure, TrustedImm32(rareDataTag)));
+    Jump remembersNothing = jit.branchTestPtr(CCallHelpers::Zero, structure, TrustedImm32(rareDataTag));
     jit.load32(Address(structure, offsetOfStructureID - rareDataTag), structure);
     slowCases.append(jit.branchTest32(CCallHelpers::Zero, structure));
     decodeStructureID(jit, structure);
@@ -552,10 +553,8 @@ void generateNewGenerator(StubAssembler& jit)
 
     if (isAsync)
         jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(coroutines.asyncGeneratorAllocator)), allocator);
-    else {
-        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.cellSpace)), allocator);
-        jit.loadPtr(Address(allocator, CompleteSubspace::offsetOfAllocatorForSizeStep() + MarkedSpace::sizeClassToIndex(sizeof(Generator)) * sizeof(Allocator)), allocator);
-    }
+    else
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(coroutines.generatorAllocator)), allocator);
     slowCases.append(jit.branchTestPtr(CCallHelpers::Zero, allocator));
     const AssemblyHelpers::FreeListRefill refill = allocateCellWithLateRefill(jit, generator, allocator, scratch, slowCases);
     jit.emitStoreStructureWithTypeInfo(structure, generator, scratch);
@@ -579,13 +578,37 @@ void generateNewGenerator(StubAssembler& jit)
     jit.returnToCaller();
 
     emitLateRefill(jit, refill, slowCases);
+
+    // A function that nobody has asked for its `prototype` has none, and keeps nothing outside its cell. Its generator finds the function in its heap frame: Generator::createWithoutPrototype.
+    remembersNothing.link(&jit);
+    if (kind != NewGeneratorKind::SyncWithHeapFrame)
+        slowCases.append(jit.jump());
+    else {
+        static_assert(Generator::offsetOfTakesPrototypeFromFunction() == Generator::offsetOfState() + 5);
+        slowCases.append(jit.branchTestPtr(CCallHelpers::NonZero, Address(closure, JSObject::butterflyOffset())));
+        static_assert(numberOfStatesOfGeneratorFunctions == 256);
+        jit.load8(Address(closure, offsetOfClosureEntry + ClosureWord::functionShift / 8), scratch);
+        slowCases.append(jit.branch8(CCallHelpers::NotEqual, BaseIndex(instanceGPR, scratch, CCallHelpers::TimesOne, AOT_INSTANCE_OFFSET(coroutines.statesOfGeneratorFunctions)), TrustedImm32(static_cast<int32_t>(GeneratorFunctionState::MakesGeneratorsWithoutPrototype))));
+        jit.load64(Address(instanceGPR, AOT_INSTANCE_OFFSET(coroutines.headerOfGeneratorsWithoutPrototype)), structure);
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(coroutines.generatorAllocator)), allocator);
+        slowCases.append(jit.branchTestPtr(CCallHelpers::Zero, allocator));
+        const AssemblyHelpers::FreeListRefill refillForFunction = allocateCellWithLateRefill(jit, generator, allocator, scratch, slowCases);
+        jit.store64(structure, Address(generator, JSCell::structureIDOffset()));
+        jit.store64(TrustedImm32(0), Address(generator, JSObject::butterflyOffset()));
+        jit.store64(TrustedImm32(0), Address(generator, Generator::offsetOfSavedFrame()));
+        jit.store64(TrustedImm64(1ULL << 40), Address(generator, Generator::offsetOfState()));
+        fenceAfterAllocation(jit);
+        jit.returnToCaller();
+        emitLateRefill(jit, refillForFunction, slowCases);
+    }
+
     slowCases.link(&jit);
     OperationCall call {
         .returns = OperationCall::Returns::Value,
         .saves = OperationCall::Saves::CallerSavedRegisters,
         .checksException = false,
     };
-    call.constantArguments[0] = OperationCall::ConstantArgument { operationArgumentGPR(2), static_cast<uint32_t>(isAsync) };
+    call.constantArguments[0] = OperationCall::ConstantArgument { operationArgumentGPR(2), static_cast<uint32_t>(kind) };
     jit.callOperationAndReturn(Entry::operationAOTNewGenerator, call);
 }
 

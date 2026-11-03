@@ -15,6 +15,7 @@ class InlineWatchpointSet;
 class JSFunction;
 class ObjectPropertyCondition;
 class PropertyName;
+struct ClassInfo;
 
 namespace AOT {
 
@@ -55,6 +56,8 @@ void installDeferredWatchpoints(JSGlobalObject*);
 [[noreturn]] void stopBecauseRealmHasABadTime();
 inline void didChangePrototypeChain(VM& vm, JSObject* changed, UniquedStringImpl* nameOrNull) { didChangeChainObject(vm, changed, nameOrNull); }
 void didFlattenStructure(VM&, Structure*);
+// Some Structures of the class say OverridesGetPrototype and some do not: Generator::createStructureWithoutPrototype.
+bool setsOverridesGetPrototypeItself(const ClassInfo*);
 // A native constructor entered by compiled code's `super(..)` creates an object for this new.target and would give it this Structure.
 Structure* addBrandForSuperCall(VM&, JSFunction* newTarget, Structure*);
 // No object with this Structure has got this name before. An object that is filled once keeps its names in a table of its own, without a Structure for each. The second object that gets the same name behind the same names gets Structures, which the third shares.

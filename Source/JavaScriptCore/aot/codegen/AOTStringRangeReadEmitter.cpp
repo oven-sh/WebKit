@@ -79,10 +79,6 @@ Number StringRangeReadEmitter::parseInt(const CharacterView& view, Word32 radix)
 void StringRangeReadEmitter::generateStringRangeCodeUnitOrNaN(const ValueContext& value)
 {
     IndexedRead read = openIndexedRead(value);
-    if (value.representation() == Representation::Int32) {
-        define(value, strings().codeUnitAt(read.view, read.index));
-        return;
-    }
     if (!requireRepresentation(generator(), value, Representation::Double))
         return;
     define(value, readIfInRange(m_out, read.isInRange, Representation::Double, [&] {
@@ -121,22 +117,13 @@ void StringRangeReadEmitter::generateStringRangeCodePointOrUndefined(const Value
     ConversionEmitter& conversions = emitter<ConversionEmitter>();
     uint64_t undefinedMarker = ConversionEmitter::markerBits(Primitive::Undefined, Representation::OptionalInt64);
     bool readsWholeString = !value->startOperand() && !value->endOperand();
-    bool hasCodeForResult = value.representation() == Representation::Int32 || value.representation() == Representation::OptionalInt64;
-    if (value.shape() != CodeShape::Fast && readsWholeString && hasCodeForResult) {
+    if (value.shape() != CodeShape::Fast && readsWholeString && value.representation() == Representation::OptionalInt64) {
         RELEASE_ASSERT(undefinedMarker == static_cast<uint64_t>(undefinedInteger));
-        Integer codePointOrMarker = readCodePointByStub(value);
-        if (value.representation() == Representation::Int32)
-            define(value, low32(codePointOrMarker));
-        else
-            define(value, conversions.fromBits(codePointOrMarker, Representation::OptionalInt64));
+        define(value, conversions.fromBits(readCodePointByStub(value), Representation::OptionalInt64));
         return;
     }
 
     IndexedRead read = openIndexedRead(value);
-    if (value.representation() == Representation::Int32) {
-        define(value, strings().codePointAt(read.view, read.index));
-        return;
-    }
     if (!requireRepresentation(generator(), value, Representation::OptionalInt64))
         return;
     define(value, readIfInRange(m_out, read.isInRange, Representation::OptionalInt64, [&] {
@@ -172,10 +159,6 @@ void StringRangeReadEmitter::generateStringRangeCharacterOrUndefined(const Value
     if (!typeOf(position).isInteger())
         read.isInRange = logicalAnd(read.isInRange, equal(PrimitiveEmitter::toNumber(read.index), in<Number>(position)));
     Boxed whenOutOfRange = undefined();
-    if (value.representation() == Representation::Cell) {
-        define(value, readCharacter(value, read));
-        return;
-    }
     if (!requireRepresentation(generator(), value, Representation::JSValue))
         return;
     define(value, readIfInRange(m_out, read.isInRange, Representation::JSValue, [&] {
@@ -241,10 +224,6 @@ void StringRangeReadEmitter::generateStringRangeSubstringOrUndefined(const Value
 {
     CellPointer string = in<CellPointer>(value->stringOperand());
     CodeUnitRange range { strings().word32Of(value->startOperand()), strings().word32Of(value->endOperand()) };
-    if (value.representation() == Representation::Cell) {
-        define(value, strings().substring(value, string, range));
-        return;
-    }
     if (!requireRepresentation(generator(), value, Representation::JSValue))
         return;
     define(value, readIfInRange(m_out, notEqual(range.start, range.end), Representation::JSValue, [&] {

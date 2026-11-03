@@ -223,6 +223,8 @@ void CodeGenerator::generateBlock(BlockID id)
     }
     if (m_validates)
         emitter<RuntimeValidationEmitter>().validateParameters(id, function().at(id));
+    else if (m_checksProofs)
+        emitter<RuntimeValidationEmitter>().forgetPassedTypeTests();
     generateContentsOf(id);
 }
 
@@ -318,6 +320,8 @@ void CodeGenerator::generateValue(BlockID blockID, const Block& block, ValueID i
     ValueContext context(blockID, block, id, function().at(id), analyses());
     context.m_isAwaitedAtOnce = isAwaitedAtOnce;
     generate(context);
+    if (effectRuleOf(function().at(id).opcode) == EffectRule::Call)
+        emitter<CellAllocationEmitter>().clearCellsMadeFor(function().at(id));
 }
 
 void CodeGenerator::generateValueLeftToUser(const OperationContext& user, ValueID id)
@@ -381,10 +385,14 @@ void CodeGenerator::generate(const ValueContext& context)
     convertOperandsOf(context, context.value());
     if (m_validates)
         emitter<RuntimeValidationEmitter>().validateOperands(context);
-    else if (m_checksProofs)
+    else if (m_checksProofs) {
         emitter<RuntimeValidationEmitter>().checkSlotAccessWithoutGuard(context);
+        emitter<RuntimeValidationEmitter>().forgetPassedTypeTestsBehind(context);
+    }
     if (validatesOrChecksProofs() && maySuspend(context.opcode()) && analyses().maySuspend(context.id()))
         emitter<CellAllocationEmitter>().leaveFrameOfCheckedCells();
+    if (m_runsOutOfMemoryWhenCounted) [[unlikely]]
+        emitter<RuntimeValidationEmitter>().runOutOfMemoryWhenCounted(context);
 
     auto begin = m_heaps.markDecorations();
     size_t numberOfEnclosingExemptions = m_exemptStores.size();
@@ -906,13 +914,13 @@ Subject CodeGenerator::subjectOf(const OperationContext& context) const
     return { .function = m_inputs.id, .block = context.block(), .value = context.valueID(), .location = function().locationOf(context.origin()) };
 }
 
-void CodeGenerator::fail(const OperationContext& context, InternalErrorKind kind)
+void CodeGenerator::fail(const OperationContext& context, InternalErrorKind kind, const String& detail)
 {
     if (m_hasFailed)
         return;
     m_hasFailed = true;
     Subject subject = subjectOf(context);
-    build().diagnostics().add(InternalError { .kind = kind, .function = subject.function, .block = subject.block, .value = subject.value, .location = subject.location });
+    build().diagnostics().add(InternalError { .kind = kind, .function = subject.function, .block = subject.block, .value = subject.value, .location = subject.location, .detail = detail });
 }
 
 void CodeGenerator::failAtLimit(const OperationContext& context, LimitID limit, uint64_t needed)

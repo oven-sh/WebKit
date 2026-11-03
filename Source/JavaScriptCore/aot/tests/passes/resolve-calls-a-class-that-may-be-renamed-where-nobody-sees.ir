@@ -1,0 +1,59 @@
+# A class whose class objects may get another name where nobody sees is constructed directly, and the caller keeps the class object in a word of its own frame: whoever lists the frames finds it there.
+# So does the constructor of a class below it for its call of super, in the version that takes the object from its caller. A class that keeps its name costs its callers nothing.
+# FORM: Prepared
+# RUN: pass ResolveCalls
+# RUN(TWICE): pass ResolveCalls ResolveCalls
+# CHECK: outcome: Changed
+# TWICE: outcome: Changed
+# TWICE-NEXT: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Renamed" constructor=f0 flow={baseState=None members=[L0, L1]} classFlow={prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L1 kind=Instance name="Below" base=L0 constructor=f1 flags=[HasHeritage] flow={baseState=Layout base=L0 members=[L1]} classFlow={prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L2 kind=Instance name="KeepsItsName" constructor=f2 flow={baseState=None} classFlow={prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+function f0 name="Renamed" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=L0|L1}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, RecordsCalleeOnceRenamed] {
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    v4 = AssumeType v3 provenType=L0|L1
+    Return v4
+}
+function f1 name="Below" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=anything}] results=[{type=L1}] {
+    v3 = GetSuperBase v0
+    v4 = SuperConstruct v3, v1, v2 layout=L1 callees=[f0]
+    v5 = AssumeType v4 provenType=L1
+    Return v5
+}
+function f2 name="KeepsItsName" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=L2}] {
+    v2 = GetConstructPrototype v0 layout=L2
+    v3 = NewObject v2 layout=L2
+    v4 = AssumeType v3 provenType=L2
+    Return v4
+}
+
+function f3 name="constructsTheRenamed" parameters=[{type=f0}, {type=anything}] results=[{type=anything}] {
+    v2 = Construct v0, -, v1
+    Return v2
+# CHECK: KeepCalleeInFrame v0
+# CHECK-NEXT: = CallDirect [[renamed]], v0, v1 function=[[renamedVersion]] [isConstruction, calleeIsKeptInFrame, calleeIsPredicted]
+# CHECK-NOT: = Construct
+}
+function f4 name="constructsTheOneBelow" parameters=[{type=f1}, {type=anything}] results=[{type=anything}] {
+    v2 = Construct v0, -, v1
+    Return v2
+# CHECK-NOT: KeepCalleeInFrame
+# CHECK: = CallDirect [[below]], v0, v0, v1 function=[[belowVersion]] [isConstruction, calleeIsPredicted]
+# CHECK-NOT: = Construct
+}
+function f5 name="constructsTheOneThatKeepsItsName" parameters=[{type=f2}, {type=anything}] results=[{type=anything}] {
+    v2 = Construct v0, -, v1
+    Return v2
+# CHECK-NOT: KeepCalleeInFrame
+# CHECK: = CallDirect [[keepsItsName]], v0, v1 function=[[versionThatKeepsItsName]] [isConstruction, calleeIsPredicted]
+# CHECK-NOT: = Construct
+# CHECK: function [[renamedVersion]] name="Renamed"{{*}}role=AllocatedThisVersion
+# CHECK: function [[belowVersion]] name="Below"{{*}}role=AllocatedThisVersion
+# CHECK: KeepCalleeInFrame [[classAbove]]
+# CHECK-NEXT: = CallDirect [[object]], v1, v2 function=[[renamedVersion]] [isConstruction, calleeIsKeptInFrame]
+# CHECK-NOT: SuperConstruct
+# CHECK: function [[versionThatKeepsItsName]] name="KeepsItsName"{{*}}role=AllocatedThisVersion
+}

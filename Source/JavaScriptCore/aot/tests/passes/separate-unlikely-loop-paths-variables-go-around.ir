@@ -447,7 +447,8 @@ function f9 name="textMayBeUndefined" parameters=[{type=env L0}, {type=anything}
 # CHECK: Jump -> next [[header9]]()
 }
 
-# Reading a character throws for lack of memory alone, while it resolves a rope: by the language it never throws. A store waits across it, also where a turn may store ahead of the first read
+# Reading a character throws for lack of memory alone, while it resolves a rope. A store waits across it, also where a turn may store ahead of the first read.
+# The error can be caught, and whoever catches it reads the variable: the read stands alone under a handler that makes the store with what the variable holds there and throws the error again
 function f10 name="storeAheadOfTheRead" parameters=[{type=env L0}, {type=string}] results=[{type=anything}] {
   b0(v0: env L0, v1: string):
     Jump -> next b1()
@@ -472,13 +473,20 @@ function f10 name="storeAheadOfTheRead" parameters=[{type=env L0}, {type=string}
   b5():
     v14 = Undefined
     Return v14
-# CHECK: LoopHint
-# CHECK: = Increment
+# CHECK: b1([[atHead10]]: anything):
+# CHECK-NEXT: LoopHint
+# CHECK: [[stored10]]: int[1, 101] = Increment
 # CHECK-NOT: PutEnvironmentField
-# CHECK: = GetStringCodeUnit v1,
+# CHECK: handler=[[failed10]]():
+# CHECK-NEXT: = GetStringCodeUnit v1,
+# CHECK-NEXT: Jump
 # CHECK-NOT: PutEnvironmentField
 # CHECK: Jump -> next b1(
 # CHECK: PutEnvironmentField v0, {{*}} layout=L0
+# CHECK: [[failed10]]() role=CleanupHandler frequency=Rare:
+# CHECK-NEXT: [[error10]]: exception = CatchException
+# CHECK-NEXT: PutEnvironmentField v0, [[stored10]] layout=L0
+# CHECK-NEXT: Rethrow [[error10]]
 }
 
 # The loop ends at its first test as a rule. What is read behind that test is not read ahead of the loop

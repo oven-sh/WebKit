@@ -1,6 +1,5 @@
 # converting-an-object-that-escapes-meanwhile-uses-no-built-in-by-name.ir under another schedule of the rules. Under this one the methods under Symbol.iterator were used and not run.
 # OPTIONS: limit=MaxValueFlowMembersToldApart:1 testing=DelayFlowRules:1
-# LOSS: MaxValueFlowMembersToldApart
 # RUN: valueflow-solve used
 # CHECK-NOT: used
 # CHECK: run FunctionPrototypeToString

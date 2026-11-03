@@ -12,6 +12,7 @@
 #include "AOTVector.h"
 #include <optional>
 #include <utility>
+#include <wtf/BitVector.h>
 #include <wtf/HashMap.h>
 #include <wtf/Noncopyable.h>
 
@@ -21,6 +22,7 @@ class IntegerRelations {
     WTF_MAKE_NONCOPYABLE(IntegerRelations);
 public:
     explicit IntegerRelations(FunctionAnalyses&);
+    ~IntegerRelations();
 
     enum class Answer : uint8_t { Unknown, Proven };
 
@@ -48,6 +50,8 @@ private:
         ValueID value;
         Range range;
         BlockID scope;
+        // The one made before it about the same value, counted from one. 0: there is none.
+        uint32_t earlierAboutSameValue { 0 };
     };
 
     struct LowerBoundGoal {
@@ -96,6 +100,11 @@ private:
     const Program& m_program;
     const Function& m_function;
     Vector<Assumption, 2> m_assumptions;
+    // One entry a value: the last assumption about it, counted from one. A function that reads a length in a thousand places has a thousand assumptions,
+    // and one question asks for those about a few values many times.
+    Vector<uint32_t> m_lastAssumptionAbout;
+    BitVector m_isScopeOfAssumption;
+    mutable uint64_t m_assumptionsRead { 0 };
     Vector<uint32_t> m_nextBlockBehindComparison;
     struct ComparedBases {
         ValueID left;

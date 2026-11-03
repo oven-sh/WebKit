@@ -286,7 +286,7 @@ static Value createNamedAccess(const Value& elementAccess, Opcode namedOperation
     return named;
 }
 
-const ProvenAccess& provenAccessOf(const Program& program, const Function& function, const Value& access, ProvenAccess& storage)
+const ProvenAccess& provenAccessOf(const Program& program, const Function& function, const Value& access, ProvenAccess& storage, UntestedStorage untestedStorage)
 {
     std::optional<Access> elementAccess = elementAccessOf(access.opcode);
     if (!elementAccess)
@@ -302,6 +302,9 @@ const ProvenAccess& provenAccessOf(const Program& program, const Function& funct
             return provenNamedAccessOf(program, function, createNamedAccess(access, plan->operation, key), storage);
         break;
     case ElementAccessForm::Array:
+        if (*elementAccess == Access::Read && untestedStorage == UntestedStorage::LeavesReadKnown)
+            plan->testsArrayStorage = false;
+        [[fallthrough]];
     case ElementAccessForm::TypedArray:
         if (!plan->needsNoTest())
             return storage = ProvenAccess::unknown();
@@ -524,11 +527,18 @@ ProvenAccess provenLookupUnderAnyKey(const Program& program, const Type& receive
     return { .isComplete = true, .isLookupByKey = true };
 }
 
+// Where an error is asked for a name of its own, or for all of them, its stack is made, and the program's Error.prepareStackTrace runs for that.
+static bool isError(const Program& program, LayoutID layout)
+{
+    BuiltinClassID base = builtinBaseClassOf(program, layout);
+    return base && program.builtins().isSameOrSubclassOf(base, BuiltinClasses::Error);
+}
+
 static bool addStepOnLayout(const Program& program, LayoutID layout, Protocol keylessProtocol, ProvenAccess& result)
 {
     switch (keylessProtocol) {
     case Protocol::OwnKeys:
-        return !hasFieldUnderSymbolCreatedByLibrary(program, program.at(layout));
+        return !isError(program, layout) && !hasFieldUnderSymbolCreatedByLibrary(program, program.at(layout));
     case Protocol::OwnValues:
         return !hasFieldUnderSymbolCreatedByLibrary(program, program.at(layout)) && addOwnValues(program, layout, result);
     case Protocol::PrototypeChain:

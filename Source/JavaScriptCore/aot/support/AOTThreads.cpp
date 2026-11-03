@@ -10,6 +10,7 @@
 
 #include "AOTCurrentWork.h"
 #include "AOTPhaseTimes.h"
+#include "AOTStageLog.h"
 #include "AOTSystemResources.h"
 #include "AOTThreshold.h"
 #include "AOTVector.h"
@@ -419,6 +420,57 @@ private:
     std::array<Deque<Task>, numberOfTaskPriorities> m_pendingTasks WTF_GUARDED_BY_LOCK(m_pendingTasksLock);
 };
 
+namespace {
+
+// How many parallel loops a build ran, by their number of indices and by how long they took. Counted while phase times are logged.
+class LoopCounts {
+public:
+    static void add(unsigned numberOfIndices, Seconds time, unsigned numberOfHelpers)
+    {
+        unsigned size = 0;
+        while (size + 1 < numberOfSizes && numberOfIndices >= leastIndicesOf[size + 1])
+            ++size;
+        unsigned length = 0;
+        while (length + 1 < numberOfLengths && time.microseconds() >= leastMicrosecondsOf[length + 1])
+            ++length;
+        Cell& cell = s_cells[size][length];
+        cell.loops.fetch_add(1, std::memory_order_relaxed);
+        cell.nanoseconds.fetch_add(static_cast<uint64_t>(time.nanoseconds()), std::memory_order_relaxed);
+        cell.helpers.fetch_add(numberOfHelpers, std::memory_order_relaxed);
+    }
+
+    static void logAndReset()
+    {
+        for (unsigned size = 0; size < numberOfSizes; ++size) {
+            for (unsigned length = 0; length < numberOfLengths; ++length) {
+                Cell& cell = s_cells[size][length];
+                uint64_t loops = cell.loops.exchange(0, std::memory_order_relaxed);
+                uint64_t nanoseconds = cell.nanoseconds.exchange(0, std::memory_order_relaxed);
+                uint64_t helpers = cell.helpers.exchange(0, std::memory_order_relaxed);
+                if (loops)
+                    logStageLine("AOT parallel loops: from ", leastIndicesOf[size], " indices | from ", leastMicrosecondsOf[length], " us | ", loops, " loops | ", static_cast<double>(nanoseconds) / 1e6, " ms | ", static_cast<double>(helpers) / loops, " helpers asked for a loop");
+            }
+        }
+    }
+
+private:
+    struct Cell {
+        std::atomic<uint64_t> loops;
+        std::atomic<uint64_t> nanoseconds;
+        std::atomic<uint64_t> helpers;
+    };
+
+    static constexpr unsigned numberOfSizes = 5;
+    static constexpr unsigned numberOfLengths = 6;
+    static constexpr unsigned leastIndicesOf[numberOfSizes] { 2, 16, 256, 4096, 65536 };
+    static constexpr unsigned leastMicrosecondsOf[numberOfLengths] { 0, 10, 30, 100, 1000, 10000 };
+    static constinit Cell s_cells[numberOfSizes][numberOfLengths];
+};
+
+constinit LoopCounts::Cell LoopCounts::s_cells[numberOfSizes][numberOfLengths] { };
+
+} // anonymous namespace
+
 ParallelLoops::ParallelLoops(unsigned width, const HostThreadPool* hostPool, Seconds restTime)
     : m_width(width)
     , m_hostPool(hostPool)
@@ -433,6 +485,8 @@ ParallelLoops::ParallelLoops(unsigned width, const HostThreadPool* hostPool, Sec
 ParallelLoops::~ParallelLoops()
 {
     m_restingThreads->close();
+    if (InstructionCounts::hasBegun()) [[unlikely]]
+        LoopCounts::logAndReset();
 }
 
 void ParallelLoops::sendRestingThreadsBack() const
@@ -498,9 +552,11 @@ class SharedWork final : public ThreadSafeRefCounted<SharedWork> {
 public:
     using Work = ScopedLambda<WorkResult(Participant)>;
 
-    static void run(const ParallelLoops& loops, unsigned maxHelpers, NOESCAPE const Work& work, NOESCAPE const ScopedLambda<bool()>& hasWorkToTake)
+    static unsigned run(const ParallelLoops& loops, unsigned maxHelpers, NOESCAPE const Work& work, NOESCAPE const ScopedLambda<bool()>& hasWorkToTake)
     {
-        adoptRef(*new SharedWork(loops, maxHelpers, work, hasWorkToTake))->runOnCaller();
+        Ref sharedWork = adoptRef(*new SharedWork(loops, maxHelpers, work, hasWorkToTake));
+        sharedWork->runOnCaller();
+        return sharedWork->m_numberOfHelpersAskedFor.load(std::memory_order_relaxed);
     }
 
 private:
@@ -635,7 +691,9 @@ NEVER_INLINE void forEachIndexInParallel(const ParallelLoops& loops, unsigned co
     std::optional<WorkerNumbers> workerNumbers;
     if (canYield)
         workerNumbers.emplace(maxWorkers);
-    SharedWork::run(loops, maxWorkers - 1, [&](Participant participant) {
+    const bool isCounted = InstructionCounts::hasBegun();
+    const MonotonicTime start = isCounted ? MonotonicTime::now() : MonotonicTime();
+    unsigned numberOfHelpers = SharedWork::run(loops, maxWorkers - 1, [&](Participant participant) {
         unsigned worker = canYield ? workerNumbers->take() : numberOfWorkers.fetch_add(1, std::memory_order_relaxed);
         RELEASE_ASSERT(worker < maxWorkers);
         SetForScope isInsideLoop(t_isInsideLoop, true);
@@ -658,6 +716,8 @@ NEVER_INLINE void forEachIndexInParallel(const ParallelLoops& loops, unsigned co
     }, [&] {
         return next.load(std::memory_order_relaxed) < count;
     });
+    if (isCounted) [[unlikely]]
+        LoopCounts::add(count, MonotonicTime::now() - start, numberOfHelpers);
 }
 
 NEVER_INLINE void forEachIndexInParallel(const ParallelLoops& loops, unsigned count, NOESCAPE const ScopedLambda<void(unsigned index)>& functor)

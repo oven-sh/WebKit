@@ -9,10 +9,12 @@
 #if ENABLE(AOT)
 
 #include "AOTArrayStorageForms.h"
+#include "AOTBuiltinCalls.h"
 #include "AOTBuiltinTable.h"
 #include "AOTEffectsOfAccesses.h"
 #include "AOTPrimitiveKeyTexts.h"
 #include "AOTTypeArena.h"
+#include "AOTValueIdentity.h"
 #include <algorithm>
 #include <array>
 #include <wtf/CommaPrinter.h>
@@ -329,6 +331,9 @@ static ArrayStorage expectedArrayStorageOf(const Program& program, const Element
     ArrayStorage storage = arrayStorageDeclaredBy(program, part).predicted();
     if (storage == ArrayStorage::Other && expected)
         storage = arrayStorageDeclaredBy(program, *expected).predicted();
+    // A list of numbers with NaN among them holds values, and so does each copy of it, whatever the types of the elements would have one expect.
+    if (storage != ArrayStorage::Other && query.storageOfCopiedList != ArrayStorage::Other)
+        return query.storageOfCopiedList;
     return storage;
 }
 
@@ -377,8 +382,10 @@ static KnowledgeLevel storedFitOf(const Program& program, const ElementAccessQue
         return KnowledgeLevel::Unknown;
     if (fitsContentType(*query.stored, contentType))
         return KnowledgeLevel::Proven;
-    if (!query.storedExpected)
-        return KnowledgeLevel::Unknown;
+    if (!query.storedExpected) {
+        Type present = query.stored->withoutNullish();
+        return !present.isNever() && fitsContentType(present, contentType) ? KnowledgeLevel::Expected : KnowledgeLevel::Unknown;
+    }
 
     Type expected = query.storedExpected->withoutNullish();
     if (!fitsContentType(expected, contentType) || !query.stored->overlaps(expected, program))
@@ -462,6 +469,28 @@ static const Type* findExpectedType(const Program& program, const Value& value)
     return value.expected().predicted() ? &program.at(value.expected().predicted()) : nullptr;
 }
 
+ValueID findCopiedList(const Program& program, const Function& function, ValueID copy)
+{
+    static constexpr std::array copyingBuiltins { Builtins::ArrayPrototypeSlice, Builtins::ArrayPrototypeConcat, Builtins::ArrayPrototypeToReversed, Builtins::ArrayPrototypeToSpliced, Builtins::ArrayPrototypeWith };
+    const Value& maker = function.at(sameObjectThroughCasts(function, copy));
+    if (maker.opcode != Opcode::CallBuiltin)
+        return { };
+    BuiltinCall call = builtinCallOf(program, maker);
+    BuiltinID builtin = program.builtins().canonicalID(program.builtins().at(call.overload).builtin);
+    bool copies = call.receiver && std::ranges::any_of(copyingBuiltins, [&](BuiltinID other) {
+        return builtin == program.builtins().canonicalID(other);
+    });
+    return copies ? call.receiver : ValueID();
+}
+
+static ArrayStorage storageOfListCopiedInto(const Program& program, const Function& function, ValueID receiver)
+{
+    ValueID copied = findCopiedList(program, function, receiver);
+    const ClassPart* part = copied ? program.typeOf(function, copied).singleBuiltinClass() : nullptr;
+    // What concat(), toSpliced() and with() add may widen narrower storage: `integers.concat(0.5)`. The types of the elements of the copy say that.
+    return part && part->arrayStorage == ArrayStorage::Contiguous ? ArrayStorage::Contiguous : ArrayStorage::Other;
+}
+
 std::optional<ElementAccessPlan> planElementAccessOf(const Program& program, const Function& function, const Value& access)
 {
     if (!findElementOperation(access.opcode))
@@ -484,6 +513,7 @@ std::optional<ElementAccessPlan> planElementAccessOf(const Program& program, con
         .writtenIn = writtenIn,
         .receiver = program.at(receiver.type),
         .receiverExpected = findExpectedType(program, receiver),
+        .storageOfCopiedList = storageOfListCopiedInto(program, function, access.objectOperand()),
         .key = program.at(key.type),
         .keyExpected = findExpectedType(program, key),
         .stored = hasStoredValue ? &program.typeOf(function, access.valueOperand()) : nullptr,

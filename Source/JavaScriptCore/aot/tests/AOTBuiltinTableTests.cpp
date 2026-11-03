@@ -1253,6 +1253,42 @@ static void testNoObjectIsProvenToBePlainData()
     AOT_TEST_CHECK(fitIn(Type::fromPrimitives(Primitive::String)) == TypeFit::Inside && fitIn(Type::fromPrimitives(Primitive::Symbol)) == TypeFit::Outside);
 }
 
+static void testTypeNarrowedToClassWrittenBelowParameterLiesInIt()
+{
+    using namespace Typed;
+    TestProgram test;
+    auto addLayout = [&](BuiltinClassID writtenAbove, bool mayBeOrdinaryObject) {
+        Layout layout;
+        layout.kind = LayoutKind::Instance;
+        layout.writtenBuiltinBase = writtenAbove;
+        layout.mayBeOrdinaryObject = mayBeOrdinaryObject;
+        test.program.layouts.append(WTF::move(layout));
+        return LayoutID(test.program.layouts.size() - 1);
+    };
+    LayoutID below = addLayout(BuiltinClasses::Error, false);
+    LayoutID belowConstructorFunction = addLayout(BuiltinClasses::Error, true);
+    LayoutID belowOtherClass = addLayout(BuiltinClasses::Map, false);
+    LayoutID belowNothing = addLayout({ }, false);
+    TypeArena arena(test.program.types);
+    Function function;
+    TypingContext typing { test.program, function, arena };
+
+    BuiltinTypeID receiver = table().parameterFor(table().overloadsOf(Builtins::ErrorPrototypeMessage)[0], BuiltinOperand::receiver())->accepted;
+    Type instances = Type::builtinClass(BuiltinClasses::Error);
+    auto narrowedTo = [&](LayoutID layout) {
+        return Type::forLayout(layout, arena).unionWith(instances, arena);
+    };
+    auto liesInParameter = [&](const Type& operand) {
+        return fitsIfPristine(typing, arena.intern(operand), receiver);
+    };
+    // Flow has said nothing of any base.
+    AOT_TEST_CHECK(test.program.at(below).flow.baseState == BaseState::Unknown);
+    AOT_TEST_CHECK(liesInParameter(instances));
+    AOT_TEST_CHECK(narrowedTo(below).isSubsetOf(instances, test.program) && liesInParameter(narrowedTo(below)) && liesInParameter(Type::forLayout(below, arena)));
+    for (LayoutID outside : { belowConstructorFunction, belowOtherClass, belowNothing })
+        AOT_TEST_CHECK(!narrowedTo(outside).isSubsetOf(instances, test.program) && !liesInParameter(narrowedTo(outside)));
+}
+
 std::span<const NativeTest> builtinTableTests()
 {
     static constexpr NativeTest tests[] = {
@@ -1298,6 +1334,7 @@ std::span<const NativeTest> builtinTableTests()
         { "builtin-table/host-uses-of-startup-loads"_s, testHostUsesOfStartupLoads },
         { "builtin-table/no-operand-is-tested-for-plain-data"_s, testNoOperandIsTestedForPlainData },
         { "builtin-table/no-object-is-proven-to-be-plain-data"_s, testNoObjectIsProvenToBePlainData },
+        { "builtin-table/type-narrowed-to-class-written-below-parameter-lies-in-it"_s, testTypeNarrowedToClassWrittenBelowParameterLiesInIt },
     };
     return tests;
 }

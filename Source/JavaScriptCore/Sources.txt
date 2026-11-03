@@ -215,6 +215,7 @@ b3/B3PhiChildren.cpp
 b3/B3PlaceConstantsByFrequency.cpp @no-unify
 b3/B3Policy.cpp @no-unify
 b3/B3Procedure.cpp
+b3/B3PromoteLoopMemory.cpp @no-unify
 b3/B3PureCSE.cpp
 b3/B3RangeReductions.cpp @no-unify
 b3/B3ReduceDoubleToFloat.cpp

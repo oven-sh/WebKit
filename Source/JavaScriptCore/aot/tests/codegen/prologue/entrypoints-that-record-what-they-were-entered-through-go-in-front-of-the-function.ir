@@ -1,0 +1,15 @@
+# On x86-64 an entrypoint that is not hot needs no frame to write down which function object it was entered through: the stub is told the stack pointer of the caller, and nobody walks the stack below it. An entrypoint that does nothing else is no function of the image: its few bytes lie in front of the function, as those of an entrypoint that only moves a register. No table says where they begin: whoever asks finds the function, which is the same one as it is written.
+# FORM: AsRead
+# RUN: generate-code calls FunctionsWithoutFrame
+# REQUIRES: x86_64 unsanitized-code
+# RUN(IMAGE): compile JumpOnlyFunctionsRemoved ImageFunctionsEmitted InnerEntryBytesEmitted
+# REQUIRES(IMAGE): x86_64 unsanitized-code
+# OPTIONS: heat=OnlyLoopsAreHot disable=pass:InlineCalls,pass:OutlineColdOperations
+# CHECK: f7: size={{*}} frame=none entries=1 sites=0
+# CHECK-NEXT: function f2 x1
+# CHECK-NEXT: stub RecordCallee x1
+# CHECK: statistic FunctionsWithoutFrame 5
+# IMAGE: statistic JumpOnlyFunctionsRemoved 4
+# IMAGE: statistic ImageFunctionsEmitted 5
+# IMAGE: statistic InnerEntryBytesEmitted 0
+# PROGRAM-OF: entrypoints-of-closures-that-leave-sight-record-what-they-were-entered-through.ir

@@ -125,6 +125,24 @@ struct alignas(64) FieldExit {
 };
 static_assert(sizeof(FieldExit) == 1u << FieldExit::sizeShift && std::is_trivially_copyable_v<FieldExit>);
 
+// What the addition of a value under a name that no field has made of an object that lacked the name. It makes the same of every object in the same state.
+struct AddedExtraProperty {
+    static constexpr unsigned numberOfPlaces = 64;
+
+    // Compared, never read through. The Structure of the extra properties behind the addition holds it.
+    UniquedStringImpl* name;
+    StructureID structureBefore;
+    StructureID structureAfter;
+    // None where the object had no extra properties.
+    StructureID extraPropertiesBefore;
+    StructureID extraPropertiesAfter;
+    uint32_t orderWordBefore;
+    PropertyOffset offset;
+    // Bits of PropertyAttribute.
+    unsigned attributes;
+};
+static_assert(std::is_trivially_copyable_v<AddedExtraProperty>);
+
 struct VariableData {
     static constexpr uint32_t noName = UINT32_MAX;
 

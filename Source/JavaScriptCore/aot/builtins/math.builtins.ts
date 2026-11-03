@@ -68,8 +68,8 @@ export default b.declarations(
       random: {
         returns: b.f64,
         capability: "none",
-        reads: ["RuntimeState"],
-        writes: ["RuntimeState"],
+        reads: ["RuntimeState", "ExternalState"],
+        writes: ["RuntimeState", "ExternalState"],
         implementation: b.inline("MathRandom"),
       },
       round: rounding("MathRound"),

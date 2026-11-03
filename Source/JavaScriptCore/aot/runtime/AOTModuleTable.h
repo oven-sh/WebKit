@@ -10,6 +10,8 @@
 #include "AOTModuleData.h"
 #include "AOTProgramTables.h"
 #include "AOTVector.h"
+#include <array>
+#include <atomic>
 #include <compare>
 #include <optional>
 #include <ranges>
@@ -58,7 +60,16 @@ public:
     };
     std::optional<LinkPlanOfRoot> linkPlanOfRoot(ModuleID) const;
     std::span<const ImportOfHeldFileData> importsOfHeldFile(ModuleID) const;
-    std::span<const ModuleExportData> exports(ModuleID module) const { return listOf(m_tables->moduleExports(), module, &ModuleData::firstExport); }
+    std::span<const ModuleExportData> exports(ModuleID module) const
+    {
+        std::span<const ModuleExportData> entries = listOf(m_tables->moduleExports(), module, &ModuleData::firstExport);
+        return !entries.empty() && entries.back().kindBits == ModuleExportData::kindBitsOfWordOfMock ? entries.first(entries.size() - 1) : entries;
+    }
+    std::optional<SlotData> wordOfMock(ModuleID module) const
+    {
+        std::span<const ModuleExportData> entries = listOf(m_tables->moduleExports(), module, &ModuleData::firstExport);
+        return !entries.empty() && entries.back().kindBits == ModuleExportData::kindBitsOfWordOfMock ? std::optional(entries.back().variable) : std::nullopt;
+    }
     const IndirectExportData& indirectExport(const ModuleExportData&) const;
     std::span<const SyntheticExportData> syntheticExports(ModuleID module) const { return listOf(m_tables->syntheticExports(), module, &ModuleData::firstSyntheticExport); }
     std::span<const RequiredNameData> requiredNames(ModuleID module) const { return listOf(m_tables->requiredNames(), module, &ModuleData::firstRequiredName); }
@@ -73,13 +84,14 @@ public:
     // Of a module that imports, itself or through what it imports, a name that the build did not find or a file that is no program.
     std::optional<ModuleFailureID> loadFailure(ModuleID) const;
 
-    std::optional<ModuleID> findByPath(StringView publicPath) const;
+    std::optional<ModuleID> findByPath(StringView publicPath) const { return findByPath(publicPath, publicPath.hash()); }
+    std::optional<ModuleID> findByPath(StringView publicPath, unsigned hashOfPath) const;
+    // Modules that were compared with a path and had another, by every lookup of the process.
+    static uint64_t modulesComparedWithPath() { return s_modulesComparedWithPath.load(std::memory_order_relaxed); }
     // A file that only an attribute asks for stands under its path, a question mark and what the host calls the form.
     bool holdsFormThatAttributeAsksFor(StringView publicPath) const;
     Vector<ModuleID, 2> formsThatAttributesAskFor(StringView publicPath) const;
     bool holdsPathStartingWith(StringView start) const;
-    // The next search for the path of the module finds it at once.
-    void willBeAskedForPath(ModuleID, unsigned hashOfPath) const;
     std::span<const UncompiledModuleData> modulesOfUncompiledCode() const { return m_tables->modulesOfUncompiledCode(); }
     // Of a module of uncompiled code. Null: the statements that name it say nothing of its type.
     String typeAttribute(ModuleID) const;
@@ -94,6 +106,24 @@ public:
 
     // The characters of a path that is whole in the image are not copied.
     String pathText(ModuleID) const;
+    // pathText() as the system takes it: UTF-8 with a zero behind it, which the span leaves out. Files of one folder come one behind the other, so the path of a folder is put together once.
+    class PathsForSystem {
+    public:
+        // Holds until the next call.
+        std::span<const char> pathOf(const ModuleTable&, ModuleID);
+
+    private:
+        struct Folder {
+            uint32_t start { 0 };
+            uint32_t length { 0 };
+        };
+        // Holds until the next call.
+        std::span<const char> folder(const ModuleTable&, uint32_t directory);
+
+        Vector<Folder> m_folders;
+        Vector<char> m_textOfFolders;
+        Vector<char, 512> m_path;
+    };
     String displayPathText(ModuleID) const;
     String pathTextForLineColumns(ModuleID) const;
     bool hasFilePath(ModuleID module) const { return data(module).hasExportTable() || data(module).kind == ModuleKind::CommonJs; }
@@ -111,6 +141,8 @@ private:
     PiecesOfPath piecesOfPath(ModuleID) const;
     PiecesOfPath piecesOfDisplayPath(ModuleID) const;
     std::strong_ordering comparePath(ModuleID, StringView) const;
+
+    static inline constinit std::atomic<uint64_t> s_modulesComparedWithPath { 0 };
     ModuleNumbers modulesByPath() const { return { m_tables->modulesByPath(), m_modules.size() }; }
     template<typename List> List listOf(List, ModuleID, Number24 ModuleData::* first) const;
 

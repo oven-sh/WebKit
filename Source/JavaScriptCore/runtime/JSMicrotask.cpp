@@ -1537,7 +1537,7 @@ static void runModuleLoadTopRejected(JSGlobalObject* globalObject, VM& vm, Inter
         resultPromise->reject(vm, argument1);
     }
 #if ENABLE(AOT)
-    if (!context->dynamic())
+    if (vm.hasCompiledCode() && !context->dynamic())
         AOT::didSettleLoad(resultPromise);
 #endif
 }
@@ -1916,7 +1916,8 @@ static void runImportModuleNamespace(JSGlobalObject* globalObject, VM& vm, Inter
     } else
         resultPromise->reject(vm, argument1);
 #if ENABLE(AOT)
-    AOT::didSettleLoad(resultPromise);
+    if (vm.hasCompiledCode())
+        AOT::didSettleLoad(resultPromise);
 #endif
     return;
 }

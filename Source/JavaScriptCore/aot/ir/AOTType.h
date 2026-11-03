@@ -145,6 +145,8 @@ struct Type {
     bool hasOnlyKnownCallees() const { return !anyFunction && !anyObject && classes.isEmpty(); }
     bool hasOnlyClassObjects() const { return !anyObject && !anyFunction && !layouts && functions.isEmpty() && builtins.isEmpty(); }
     bool hasOnlyLayouts() const;
+    // Where a member is asked for, undefined and null throw: what goes on is an object of one of the engine's classes.
+    bool isClassObjectOrNullish() const { return !classes.isEmpty() && hasOnlyClassObjects() && !(primitives & ~Primitive::UndefinedOrNull) && isJavaScriptValue(); }
     bool isSingleValue() const;
 
     LayoutID singleLayout(const Program&) const;

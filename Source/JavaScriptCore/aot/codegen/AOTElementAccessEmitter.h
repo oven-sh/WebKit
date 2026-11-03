@@ -103,7 +103,8 @@ public:
     // hasShape or hasWritableShape, whichever the mode was read for.
     using ShapeTest = Condition (ElementAccessEmitter::*)(Word32 mode, const ArrayStorageForm&);
     // The functor ends the block it is called in. An array of none of the forms goes to hasNoForm.
-    void forEachFormByShape(Word32 mode, ShapeTest, const ArrayStorageFormList&, LBasicBlock hasNoForm, const ScopedLambda<void(const ArrayStorageForm&)>&);
+    enum class FirstForm : bool { IsExpected, IsLikeTheOthers };
+    void forEachFormByShape(Word32 mode, ShapeTest, const ArrayStorageFormList&, LBasicBlock hasNoForm, const ScopedLambda<void(const ArrayStorageForm&)>&, FirstForm = FirstForm::IsExpected);
 
     // The result may be negative or huge: compare it unsigned with a length before any use.
     enum class NaNIndexMode : bool { TakeSlowPath, ProduceOutOfBoundsIndex };
@@ -112,6 +113,8 @@ public:
     // Of storage that has a form. The index of the result is the position only where the test has passed.
     LengthTest testLength(Integer index, const ArrayElements&);
     LengthTest testLength(const ValueContext&, Integer index, const ArrayElements&);
+    Integer lengthNamedOrRead(const ValueContext&, const ArrayElements&);
+    Condition hasRoomBehindLength(const ValueContext&, const ArrayElements&, Integer length);
     Boxed boxedPosition(ValueID position);
 
     Operand readElement(const ValueContext&, const ArrayStorageForm&, const ArrayElements&, Integer index, LBasicBlock isAbsent);

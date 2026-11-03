@@ -277,6 +277,16 @@ bool isInRuntimeModule(const Program& program, const Function& function)
     return function.module && program.at(function.module).kind == ModuleKind::RuntimeSource;
 }
 
+// The parser of the engine says the same of a function that it compiles: AsyncFunctionWithoutAwaitFeature. An `await` of a function that is written inside does not count.
+bool isAsyncFunctionWithoutAwait(const Program& program, const Function& source)
+{
+    if (!source.has(FunctionFlags::IsAsync) || source.has(FunctionFlags::IsGenerator))
+        return false;
+    // What the front end says of the syntax stays with the body.
+    auto& written = source.role == FunctionRole::CoroutineRamp ? program.at(source.creator.as<CreatorRecord::Coroutine>().body) : source;
+    return !written.syntax.contains(FunctionSyntax::HasWrittenAwait);
+}
+
 static FunctionKindData functionKindOf(const Program& program, const SlotPlan& slots, FunctionID id)
 {
     FunctionID targetID = closureTargetOf(program, id);
@@ -543,6 +553,9 @@ static bool isCalledByPrograms(const BuiltinTable& builtins, const Function& sou
 
 static StackTraceBuiltinKind builtinKindOf(const BuiltinTable& builtins, const Function& source, std::optional<BuiltinID> builtin)
 {
+    static_assert(FunctionTraceData::kindBitsInsideHelperOfCompiler == static_cast<uint16_t>(StackTraceBuiltinKind::JSBuiltinConstructor) && !static_cast<uint16_t>(StackTraceBuiltinKind::None));
+    if (!builtin && source.syntax.contains(FunctionSyntax::IsShownInModuleOfHelpers))
+        return StackTraceBuiltinKind::JSBuiltinConstructor;
     if (!builtin)
         return isInsideBuiltinFunction(builtins, source) ? StackTraceBuiltinKind::JSBuiltin : StackTraceBuiltinKind::None;
     // The host has what it does as a function of a module of its own, and a stack trace lists that like any other function: FunctionDescription::isHelperOfCompiler().

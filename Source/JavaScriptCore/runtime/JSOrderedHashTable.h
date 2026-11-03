@@ -53,6 +53,9 @@ public:
     }
 
     static ptrdiff_t offsetOfStorage() { return OBJECT_OFFSETOF(JSOrderedHashTable, m_storage); }
+#if ENABLE(AOT)
+    static ptrdiff_t offsetOfDeletedPrefix() { return OBJECT_OFFSETOF(JSOrderedHashTable, m_deletedPrefix); }
+#endif
 
     void finishCreation(VM& vm) { Base::finishCreation(vm); }
     void finishCreation(JSGlobalObject* globalObject, VM& vm, HashTable* base)
@@ -223,6 +226,9 @@ public:
     }
 
     WriteBarrier<JSCell> m_storage;
+#if ENABLE(AOT)
+    uint32_t m_deletedPrefix { 0 };
+#endif
 };
 
 class JSOrderedHashMap : public JSOrderedHashTable<MapTraits> {

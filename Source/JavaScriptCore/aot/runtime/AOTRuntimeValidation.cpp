@@ -40,6 +40,7 @@
 #include "Reg.h"
 #include "SubspaceInlines.h"
 #include <array>
+#include <bit>
 #include <wtf/DataLog.h>
 #include <wtf/HexNumber.h>
 #include <wtf/Lock.h>
@@ -78,33 +79,28 @@ static void dumpClassOf(PrintStream& out, JSValue found)
 }
 
 // Numbers and kinds only: what a program holds is not for a log.
-static bool holdsType(Instance& instance, const RuntimeType& type, JSValue held, unsigned position)
+static NEVER_INLINE void reportHeldOutsideType(const RuntimeType& type, JSValue held, unsigned position)
 {
-    if (instance.state->objects->layouts.valueHasType(type, held))
-        return true;
     dataLog("AOT: number ", position, " of what the container holds is outside a type of ", type.literalStrings().size(), " texts and ", type.cellTests().size(), " tests of cells: ");
     dumpClassOf(WTF::dataFile(), held);
     dataLogLn();
+}
+
+#if COMPILER(CLANG)
+#pragma clang attribute pop
+#endif
+
+static ALWAYS_INLINE bool holdsType(Instance& instance, const RuntimeType& type, JSValue held, unsigned position)
+{
+    if (instance.state->objects->layouts.valueHasType(type, held)) [[likely]]
+        return true;
+    reportHeldOutsideType(type, held, position);
     return false;
 }
 
-template<typename Collection>
-static bool entriesHaveType(Instance& instance, Collection* collection, Typed::ContentsSlot slot, const RuntimeType& type)
-{
-    JSCell* storage = collection->storage();
-    typename Collection::Helper::Entry entry = 0;
-    // Deleted entries stay in the table until it is rebuilt, and the walk passes them one by one.
-    for (unsigned numberOfTestedEntries = 0; storage && entry < maxNumberOfTestedElements; ++numberOfTestedEntries) {
-        auto next = Collection::Helper::transitAndNext(*instance.vm, *storage, entry);
-        if (!next.storage)
-            return true;
-        if (!holdsType(instance, type, slot == Typed::ContentsSlot::Value ? next.value : next.key, numberOfTestedEntries))
-            return false;
-        storage = next.storage;
-        entry = next.entry + 1;
-    }
-    return true;
-}
+#if COMPILER(CLANG)
+#pragma clang attribute push(__attribute__((minsize)), apply_to = function)
+#endif
 
 static bool anyProperty(VM& vm, Structure* structure, const auto& predicate)
 {
@@ -170,6 +166,10 @@ static bool hasPristineNames(VM& vm, JSValue value)
     return !shadowsLockedPrototypeChain(vm, structure);
 }
 
+#if COMPILER(CLANG)
+#pragma clang attribute pop
+#endif
+
 // The pointers are only compared.
 struct SampledArray {
     const JSCell* array;
@@ -178,8 +178,7 @@ struct SampledArray {
 };
 
 struct SampledArrays {
-    std::array<SampledArray, 4> arrays { };
-    unsigned numberOfReplacements { 0 };
+    std::array<SampledArray, 1024> arrays { };
 };
 
 static SampledArrays& sampledArraysOfThread();
@@ -187,12 +186,32 @@ static SampledArrays& sampledArraysOfThread();
 static uint64_t numberOfEarlierSamples(const JSCell* array, const RuntimeType& type)
 {
     SampledArrays& earlier = sampledArraysOfThread();
-    for (SampledArray& sampled : earlier.arrays) {
-        if (sampled.array == array && sampled.type == &type)
-            return ++sampled.numberOfSamples;
-    }
-    earlier.arrays[earlier.numberOfReplacements++ % earlier.arrays.size()] = { array, &type, 0 };
+    SampledArray& sampled = earlier.arrays[WTF::pairIntHash(WTF::PtrHash<const JSCell*>::hash(array), WTF::PtrHash<const RuntimeType*>::hash(&type)) % earlier.arrays.size()];
+    if (sampled.array == array && sampled.type == &type)
+        return ++sampled.numberOfSamples;
+    sampled = { array, &type, 0 };
     return 0;
+}
+
+template<typename Collection>
+static bool entriesHaveType(Instance& instance, Collection* collection, Typed::ContentsSlot slot, const RuntimeType& type)
+{
+    JSCell* storage = collection->storage();
+    uint64_t size = collection->size();
+    uint64_t numberOfEarlier = size > maxNumberOfElementsTestedAgain ? numberOfEarlierSamples(collection, type) : 0;
+    typename Collection::Helper::Entry entry = numberOfEarlier ? numberOfEarlier * maxNumberOfElementsTestedAgain % size : 0;
+    typename Collection::Helper::Entry end = entry + (numberOfEarlier ? maxNumberOfElementsTestedAgain : maxNumberOfTestedElements);
+    // Deleted entries stay in the table until it is rebuilt, and the walk passes them one by one.
+    for (unsigned numberOfTestedEntries = 0; storage && entry < end; ++numberOfTestedEntries) {
+        auto next = Collection::Helper::transitAndNext(*instance.vm, *storage, entry);
+        if (!next.storage)
+            return true;
+        if (!holdsType(instance, type, slot == Typed::ContentsSlot::Value ? next.value : next.key, numberOfTestedEntries))
+            return false;
+        storage = next.storage;
+        entry = next.entry + 1;
+    }
+    return true;
 }
 
 static bool contentsHaveType(Instance& instance, JSCell* container, Typed::ContentsSlot slot, const RuntimeType& type)
@@ -208,7 +227,7 @@ static bool contentsHaveType(Instance& instance, JSCell* container, Typed::Conte
 
     // A loop checks the same long array on every iteration. Samples after the first are small, and each starts one element later, so together they cover the array.
     uint64_t length = array->length();
-    uint64_t numberOfEarlier = length > maxNumberOfTestedElements ? numberOfEarlierSamples(array, type) : 0;
+    uint64_t numberOfEarlier = length > maxNumberOfElementsTestedAgain ? numberOfEarlierSamples(array, type) : 0;
     uint64_t stride = std::max<uint64_t>(1, length / (numberOfEarlier ? maxNumberOfElementsTestedAgain : maxNumberOfTestedElements));
     for (uint64_t position = numberOfEarlier % stride; position < length; position += stride) {
         unsigned index = static_cast<unsigned>(position);
@@ -218,6 +237,10 @@ static bool contentsHaveType(Instance& instance, JSCell* container, Typed::Conte
     }
     return true;
 }
+
+#if COMPILER(CLANG)
+#pragma clang attribute push(__attribute__((minsize)), apply_to = function)
+#endif
 
 static void dumpChangedRegister(PrintStream& out, JSValue found)
 {
@@ -475,15 +498,34 @@ CollectionVersions collectionVersionsOf(VM& vm)
     return { space.markingVersion(), space.edenVersion(), space.newlyAllocatedVersion() };
 }
 
-NEVER_INLINE void OperationValidationScope::open(Record& record, VM& vm, Entry entry)
+struct OperationsBeingValidated {
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(OperationsBeingValidated);
+
+    struct Record {
+        CollectionVersions collectionVersions;
+        Entry entry;
+        bool mayNotEnterVM;
+        bool mayNotCollect;
+        bool didEnterVMBefore;
+    };
+    Vector<Record, 16> innermostLast;
+};
+
+NEVER_INLINE void OperationValidationScope::open(VM& vm, Entry entry)
 {
+    auto& operations = vm.aotState().operationsBeingValidated;
+    if (!operations) {
+        operations = { new OperationsBeingValidated, [](OperationsBeingValidated* operations) {
+            delete operations;
+        } };
+    }
     OperationPermissions permissions = permissionsOf(entry);
-    new (NotNull, &record) Record { vm, collectionVersionsOf(vm), entry, !permissions.mayEnterVM, !permissions.mayCollect, std::exchange(vm.didEnterVM, false) };
+    operations->innermostLast.append({ collectionVersionsOf(vm), entry, !permissions.mayEnterVM, !permissions.mayCollect, std::exchange(vm.didEnterVM, false) });
 }
 
-NEVER_INLINE void OperationValidationScope::close(Record& record)
+NEVER_INLINE void OperationValidationScope::close(VM& vm)
 {
-    VM& vm = record.vm;
+    OperationsBeingValidated::Record record = vm.aotState().operationsBeingValidated->innermostLast.takeLast();
     bool didEnterVM = record.mayNotEnterVM && vm.didEnterVM;
     // An operation that throws allocates what it throws, and the head of every handler counts on a collection.
     bool didCollect = record.mayNotCollect && !vm.exceptionForInspection() && collectionVersionsOf(vm) != record.collectionVersions;
@@ -494,6 +536,11 @@ NEVER_INLINE void OperationValidationScope::close(Record& record)
     vm.didEnterVM |= record.didEnterVMBefore;
 }
 
+#if COMPILER(CLANG)
+#pragma clang attribute pop
+#endif
+
+// From here to the end of CollectionValidator::didFinishCollection(): what runs for every object that survives a collection. It is compiled as other code is, but for what reports.
 static bool stillPassesTest(State& state, const RuntimeCellTest& test, JSCell* cell)
 {
     // What was pristine when it was stored need not be so now.
@@ -560,9 +607,8 @@ static bool isCellOfHeap(VM& vm, const void* address)
 }
 
 // Of bits that are no marker of the representation and no word of a literal string.
-static bool isFormOfValue(VM& vm, SlotRepresentation representation, uint64_t bits, uintptr_t cageBase)
+static bool isFormOfValue(VM& vm, SlotRepresentation representation, const SlotTraits& traits, uint64_t bits, uintptr_t cageBase)
 {
-    SlotTraits traits = traitsOf(representation);
     switch (traits.valueKind) {
     case SlotValueKind::Boolean:
         return traits.hasAbsent ? bits == JSValue::ValueFalse || bits == JSValue::ValueTrue : bits <= 1;
@@ -590,38 +636,65 @@ static bool isFormOfValue(VM& vm, SlotRepresentation representation, uint64_t bi
     return JSValue::decode(bits).isCell() && isCellOfHeap(vm, JSValue::decode(bits).asCell());
 }
 
-std::optional<SlotOutsideType> findSlotOutsideType(VM& vm, const Object& object)
+static constexpr auto traitsOfEveryRepresentation = [] {
+    std::array<SlotTraits, numberOfEnumerators<SlotRepresentation>> traits { };
+    for (size_t index = 0; index < traits.size(); ++index)
+        traits[index] = traitsOf(static_cast<SlotRepresentation>(index));
+    return traits;
+}();
+
+#if COMPILER(CLANG)
+#pragma clang attribute push(__attribute__((minsize)), apply_to = function)
+#endif
+
+// Field by field, in the order of the layout. It names the slot once the plan has found one, so a report reads the same whatever the order of the plan is.
+static NEVER_INLINE std::optional<SlotOutsideType> findSlotOutsideTypeFieldByField(VM& vm, const Object& object)
 {
     State& state = object.state();
     const LayoutData& layout = object.layout();
+    std::optional<Extension*> extension;
     for (const FieldData& field : layout.fields()) {
         // A brand is a class token, and what the slot of an accessor holds is not the value of the property. No type describes either.
         if (field.isBrand() || field.isAccessor())
             continue;
-        const void* slot = object.slotOf(field);
+        const void* slot = &object.at<uint8_t>(field.slot.offset);
+        if (field.isOutOfLine()) {
+            if (!extension)
+                extension = object.extension();
+            slot = *extension ? (*extension)->slotOrNull(field.slot.offset) : nullptr;
+        }
         if (!slot)
             continue;
 
         SlotRepresentation representation = field.slot.representation();
-        SlotTraits traits = traitsOf(representation);
+        const SlotTraits& traits = traitsOfEveryRepresentation[static_cast<size_t>(representation)];
         uint64_t bits = readSlotBits(representation, slot);
         // A slot that cannot say "absent" holds zero until its first store.
         if (bits == (traits.hasAbsent ? traits.absentBits : 0))
             continue;
+        const RuntimeType& type = state.objects->layouts.typeOf(field);
         if ((traits.hasUndefined && bits == traits.undefinedBits) || (traits.hasNull && bits == traits.nullBits)) {
-            JSValue marker = bits == traits.undefinedBits ? jsUndefined() : jsNull();
-            if (!state.objects->layouts.slotAdmits(field, marker))
-                return SlotOutsideType { &field, bits, true, marker };
+            bool isUndefined = bits == traits.undefinedBits;
+            if (!field.slotHoldsUndefinedAndNull && !type.primitiveSet().contains(isUndefined ? PrimitiveSet::Undefined : PrimitiveSet::Null))
+                return SlotOutsideType { &field, bits, true, isUndefined ? jsUndefined() : jsNull() };
+            continue;
+        }
+        if (representation == SlotRepresentation::Int32 || representation == SlotRepresentation::OptionalInt32) {
+            int32_t integer = static_cast<int32_t>(bits);
+            if (representation == SlotRepresentation::OptionalInt32 && integer < minInlineInt32)
+                return SlotOutsideType { &field, bits, false, { } };
+            auto range = type.integerRange();
+            if (!type.primitiveSet().contains(PrimitiveSet::Integer) || (range && (integer < range->first || integer > range->second)))
+                return SlotOutsideType { &field, bits, true, jsNumber(integer) };
             continue;
         }
 
-        const RuntimeType& type = state.objects->layouts.typeOf(field);
         if (traits.valueKind == SlotValueKind::LiteralString && isLiteralStringWord(bits)) {
             if (!slotMayHoldLiteralString(*state.instance.program, type, bits))
                 return SlotOutsideType { &field, bits, true, { } };
             continue;
         }
-        if (!isFormOfValue(vm, representation, bits, cageBaseOf(&object)))
+        if (!isFormOfValue(vm, representation, traits, bits, cageBaseOf(&object)))
             return SlotOutsideType { &field, bits, false, { } };
 
         bool defersClosure = traits.valueKind == SlotValueKind::DeferredClosure;
@@ -637,12 +710,149 @@ std::optional<SlotOutsideType> findSlotOutsideType(VM& vm, const Object& object)
     return std::nullopt;
 }
 
-void validateSlotTypes(VM& vm, const Object& object)
+static NEVER_INLINE const SlotPlan& makePlan(RecheckedCells& rechecked, State& state, const LayoutData& layout)
 {
-    std::optional<SlotOutsideType> outside = findSlotOutsideType(vm, object);
-    if (!outside) [[likely]]
-        return;
+    auto plan = makeUnique<SlotPlan>();
+    auto checkOf = [&](const FieldData& field) {
+        SlotRepresentation representation = field.slot.representation();
+        const RuntimeType& type = state.objects->layouts.typeOf(field);
+        OptionSet<PrimitiveSet> primitives = type.primitiveSet();
+        int64_t least = representation == SlotRepresentation::OptionalInt32 ? minInlineInt32 : std::numeric_limits<int32_t>::min();
+        int64_t greatest = std::numeric_limits<int32_t>::max();
+        if (auto range = type.integerRange()) {
+            least = std::max(least, range->first);
+            greatest = std::min(greatest, range->second);
+        }
+        if (!primitives.contains(PrimitiveSet::Integer) || least > greatest) {
+            least = 1;
+            greatest = 0;
+        }
+        return SlotCheck {
+            .field = &field,
+            .type = &type,
+            .traits = &traitsOfEveryRepresentation[static_cast<size_t>(representation)],
+            .leastInteger = static_cast<int32_t>(least),
+            .greatestInteger = static_cast<int32_t>(greatest),
+            .offset = field.slot.offset,
+            .representation = representation,
+            .admitsUndefined = field.slotHoldsUndefinedAndNull || primitives.contains(PrimitiveSet::Undefined),
+            .admitsNull = field.slotHoldsUndefinedAndNull || primitives.contains(PrimitiveSet::Null),
+        };
+    };
+    // A brand is a class token, and what the slot of an accessor holds is not the value of the property. No type describes either.
+    auto isDescribed = [](const FieldData& field) {
+        return !field.isBrand() && !field.isAccessor();
+    };
+    Vector<const FieldData*, 16> fieldsOfExtension;
+    for (const FieldData& field : layout.fields()) {
+        if (!isDescribed(field))
+            continue;
+        if (field.isOutOfLine())
+            fieldsOfExtension.append(&field);
+        else
+            plan->checks.append(checkOf(field));
+    }
+    plan->numberInCell = plan->checks.size();
+    std::ranges::stable_sort(fieldsOfExtension, { }, [](const FieldData* field) {
+        return granuleOf(field->slot.offset);
+    });
+    for (const FieldData* field : fieldsOfExtension) {
+        unsigned granule = granuleOf(field->slot.offset);
+        SlotPlan::Range& range = plan->checksOfGranule[granule];
+        if (!(plan->granules & granuleBitOf(field->slot.offset))) {
+            plan->granules |= granuleBitOf(field->slot.offset);
+            range.begin = static_cast<uint16_t>(plan->checks.size());
+        }
+        plan->checks.append(checkOf(*field));
+        range.end = static_cast<uint16_t>(plan->checks.size());
+    }
+    RELEASE_ASSERT(plan->checks.size() <= std::numeric_limits<uint16_t>::max());
+    return *rechecked.plans.add(&layout, WTF::move(plan)).iterator->value;
+}
 
+#if COMPILER(CLANG)
+#pragma clang attribute pop
+#endif
+
+static ALWAYS_INLINE const SlotPlan& planOf(VM& vm, State& state, const LayoutData& layout)
+{
+    if (!vm.aotState().recheckedCells) [[unlikely]]
+        vm.aotState().recheckedCells = makeUnique<RecheckedCells>();
+    RecheckedCells& rechecked = *vm.aotState().recheckedCells;
+    if (rechecked.layoutAskedLast == &layout) [[likely]]
+        return *rechecked.planAskedLast;
+    auto found = rechecked.plans.find(&layout);
+    const SlotPlan& plan = found == rechecked.plans.end() ? makePlan(rechecked, state, layout) : *found->value;
+    rechecked.layoutAskedLast = &layout;
+    rechecked.planAskedLast = &plan;
+    return plan;
+}
+
+// What findSlotOutsideTypeFieldByField() asks of one field, in the same order.
+static ALWAYS_INLINE bool isOutsideType(VM& vm, State& state, const Object& object, const SlotCheck& check, const void* slot)
+{
+    const SlotTraits& traits = *check.traits;
+    uint64_t bits = readSlotBits(check.representation, slot);
+    if (bits == (traits.hasAbsent ? traits.absentBits : 0))
+        return false;
+    if ((traits.hasUndefined && bits == traits.undefinedBits) || (traits.hasNull && bits == traits.nullBits))
+        return !(bits == traits.undefinedBits ? check.admitsUndefined : check.admitsNull);
+    if (check.representation == SlotRepresentation::Int32 || check.representation == SlotRepresentation::OptionalInt32) {
+        int32_t integer = static_cast<int32_t>(bits);
+        return integer < check.leastInteger || integer > check.greatestInteger;
+    }
+    if (traits.valueKind == SlotValueKind::LiteralString && isLiteralStringWord(bits))
+        return !slotMayHoldLiteralString(*state.instance.program, *check.type, bits);
+    if (!isFormOfValue(vm, check.representation, traits, bits, cageBaseOf(&object)))
+        return true;
+    JSValue value = traits.valueKind == SlotValueKind::DeferredClosure ? JSValue(cellInSlot(check.representation, slot, cageBaseOf(&object))) : readSlot(check.representation, slot, *state.strings);
+    if (!value)
+        return false;
+    if (value.isCell() && value.asCell()->type() == CompiledEnvironmentType)
+        return false;
+    return !slotMayHold(state, *check.type, value);
+}
+
+static ALWAYS_INLINE bool hasSlotOutsideType(VM& vm, const Object& object)
+{
+    State& state = object.state();
+    const SlotPlan& plan = planOf(vm, state, object.layout());
+    std::span<const SlotCheck> checks = plan.checks.span();
+    for (const SlotCheck& check : checks.first(plan.numberInCell)) {
+        if (isOutsideType(vm, state, object, check, &object.at<uint8_t>(check.offset))) [[unlikely]]
+            return true;
+    }
+    if (!plan.granules)
+        return false;
+    Extension* extension = object.extension();
+    if (!extension)
+        return false;
+    // Only what the Extension of this object holds.
+    for (uint64_t held = extension->granuleBits() & plan.granules; held; held &= held - 1) {
+        SlotPlan::Range range = plan.checksOfGranule[std::countr_zero(held)];
+        for (const SlotCheck& check : checks.subspan(range.begin, range.end - range.begin)) {
+            if (isOutsideType(vm, state, object, check, extension->slot(check.offset))) [[unlikely]]
+                return true;
+        }
+    }
+    return false;
+}
+
+std::optional<SlotOutsideType> findSlotOutsideType(VM& vm, const Object& object)
+{
+    bool hasOne = hasSlotOutsideType(vm, object);
+    ASSERT(hasOne == !!findSlotOutsideTypeFieldByField(vm, object));
+    if (!hasOne) [[likely]]
+        return std::nullopt;
+    return findSlotOutsideTypeFieldByField(vm, object);
+}
+
+#if COMPILER(CLANG)
+#pragma clang attribute push(__attribute__((minsize)), apply_to = function)
+#endif
+
+static NEVER_INLINE void reportSlotOutsideType(VM& vm, const Object& object, const SlotOutsideType* outside)
+{
     const LayoutData& layout = object.layout();
     const FieldData& field = *outside->field;
     const ImageText& text = object.state().instance.program->text();
@@ -662,6 +872,16 @@ void validateSlotTypes(VM& vm, const Object& object)
     crashOnValidationFailure(vm, { ValidationFailureKind::HeapSlotType, { }, { }, outside->found });
 }
 
+#if COMPILER(CLANG)
+#pragma clang attribute pop
+#endif
+
+void validateSlotTypes(VM& vm, const Object& object)
+{
+    if (std::optional<SlotOutsideType> outside = findSlotOutsideType(vm, object)) [[unlikely]]
+        reportSlotOutsideType(vm, object, &*outside);
+}
+
 void CollectionValidator::didFinishCollection(VM& vm, CollectionScope scope)
 {
     for (Instance* instance : vm.aotState().instances) {
@@ -672,9 +892,42 @@ void CollectionValidator::didFinishCollection(VM& vm, CollectionScope scope)
     }
 
     // Every compiled object lies in the space of cells.
+    if (!vm.aotState().recheckedCells)
+        vm.aotState().recheckedCells = makeUnique<RecheckedCells>();
+    RecheckedCells& rechecked = *vm.aotState().recheckedCells;
+    uint64_t collection = ++rechecked.numberOfCollections;
+    bool isFull = scope == CollectionScope::Full;
+    vm.cellSpace().forEachDirectory([&](BlockDirectory& directory) {
+        directory.forEachNotEmptyBlock([&](MarkedBlock::Handle* handle) {
+            directory.assertIsMutatorOrMutatorIsStopped();
+            MarkedBlock& block = handle->block();
+            if ((!isFull && !directory.isEden(handle)) || block.areMarksStale())
+                return;
+            auto& ofBlock = rechecked.blocks.ensure(&block, [] {
+                return makeUnique<RecheckedCells::OfBlock>();
+            }).iterator->value;
+            ofBlock->lastCollection = collection;
+            if (!isFull) {
+                WTF::BitSet<MarkedBlock::atomsPerBlock> fresh = block.marks();
+                fresh.exclude(ofBlock->cells);
+                fresh.forEachSetBit([&](size_t atom) {
+                    if (Object* object = compiledObjectOrNull(static_cast<JSCell*>(handle->atomAt(atom))))
+                        validateSlotTypes(vm, *object);
+                });
+            }
+            ofBlock->cells = block.marks();
+        });
+    });
+    if (isFull) {
+        rechecked.blocks.removeIf([&](auto& entry) {
+            return entry.value->lastCollection != collection;
+        });
+    }
     if (scope != CollectionScope::Full) {
-        vm.cellSpace().forEachMarkedCell([&](HeapCell* heapCell, HeapCell::Kind) {
-            if (Object* object = compiledObjectOrNull(static_cast<JSCell*>(heapCell)))
+        vm.cellSpace().forEachPreciseAllocation([&](PreciseAllocation* allocation) {
+            if (!allocation->isMarked())
+                return;
+            if (Object* object = compiledObjectOrNull(static_cast<JSCell*>(allocation->cell())))
                 validateSlotTypes(vm, *object);
         });
         return;
@@ -696,6 +949,10 @@ void CollectionValidator::didFinishCollection(VM& vm, CollectionScope scope)
         return IterationStatus::Continue;
     });
 }
+
+#if COMPILER(CLANG)
+#pragma clang attribute push(__attribute__((minsize)), apply_to = function)
+#endif
 
 // An inquiry runs no code of the program.
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTValidateLookup, size_t, (Instance* instance, JSCell* receiver, uint32_t key, JSCell* expected))
@@ -747,6 +1004,10 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReportValidationFailure, void, (In
     crashOnValidationFailure(*instance->vm, { failureKind, Typed::FunctionID(function), Typed::ValueID(valueIndex), JSValue::decode(value), static_cast<Typed::Representation>(unboxedAs) });
 }
 
+#if COMPILER(CLANG)
+#pragma clang attribute pop
+#endif
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTContentsHaveType, size_t, (Instance* instance, JSCell* container, uint32_t contentsSlot, uint32_t type))
 {
     DeferGCForAWhile deferGC(*instance->vm);
@@ -754,6 +1015,10 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTContentsHaveType, size_t, (Instanc
     RELEASE_ASSERT(contents);
     return contentsHaveType(*instance, container, static_cast<Typed::ContentsSlot>(contentsSlot), *contents);
 }
+
+#if COMPILER(CLANG)
+#pragma clang attribute push(__attribute__((minsize)), apply_to = function)
+#endif
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTValueHasType, size_t, (Instance* instance, EncodedJSValue value, uint32_t type))
 {
@@ -768,11 +1033,19 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReportBrokenClaim, void, (uint32_t
 {
     static constexpr ASCIILiteral names[] { "StackSlotIsWrittenBeforeRead"_s, "WordNeverChanges"_s, "LoadMayMove"_s, "ValueIsInRange"_s, "ComparisonIsDecided"_s, "CounterStepsAsTold"_s };
     static_assert(std::size(names) == static_cast<size_t>(BrokenClaim::CounterStepsAsTold) + 1);
-    uint32_t number = claimAndOffset & 0xff;
+    uint32_t number = claimAndOffset & 0xff & ~reportOfBrokenClaimComesBack;
+    bool comesBack = claimAndOffset & reportOfBrokenClaimComesBack;
     RELEASE_ASSERT(number < std::size(names));
     auto claim = static_cast<BrokenClaim>(number);
     static Lock lock;
     lock.lock();
+    if (comesBack) {
+        static NeverDestroyed<HashSet<std::tuple<uint32_t, uint32_t, uint32_t>>> placesReported;
+        if (!placesReported->add({ claimAndOffset, function, valueIndex }).isNewEntry) {
+            lock.unlock();
+            return;
+        }
+    }
     dataLog("AOT claim check: ", names[number], " f", function, " v", static_cast<int32_t>(valueIndex));
     if (claim == BrokenClaim::ComparisonIsDecided)
         dataLog(" of 0x", hex(foundAndGiven[0], Lowercase), " and 0x", hex(foundAndGiven[1], Lowercase));
@@ -781,6 +1054,10 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReportBrokenClaim, void, (uint32_t
     if (claim == BrokenClaim::WordNeverChanges || claim == BrokenClaim::LoadMayMove)
         dataLog(" holds 0x", hex(foundAndGiven[0], Lowercase), ", not 0x", hex(foundAndGiven[1], Lowercase));
     dataLogLn();
+    if (comesBack) {
+        lock.unlock();
+        return;
+    }
     CRASH_WITH_INFO(number, function, valueIndex);
 }
 

@@ -23,7 +23,7 @@ function f4 name="awaitsCall" role=CoroutineBody flags=[IsAsync] parameters=[{ty
     Return v3
 }
 # CHECK: f3: size={{*}} sites=2
-# CHECK: f4: size={{*}} sites=2
+# CHECK: f4: size={{*}} sites=3
 # CHECK-NOT: function f0
 # CHECK: function f3 x1
 # CHECK: stub AwaitBySavingFrame.ResultOfCallWithoutPromise x1

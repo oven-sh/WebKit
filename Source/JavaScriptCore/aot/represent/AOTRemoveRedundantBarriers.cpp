@@ -16,6 +16,7 @@
 #include "AOTPlacement.h"
 #include "AOTRepresentationRules.h"
 #include "AOTSlotEmitter.h"
+#include "AOTStringTable.h"
 #include <algorithm>
 #include <functional>
 #include <wtf/BitVector.h>
@@ -232,7 +233,9 @@ private:
             std::optional<uint8_t> ownerIndex = retainingOperandOf(value.opcode, operandIndex);
             hasOneOwner &= !retainingOperand || retainingOperand == ownerIndex;
             retainingOperand = ownerIndex;
-            storesCells |= m_pass.program.typeOf(m_function, operand).hasCells();
+            const Value& stored = m_function.at(operand);
+            bool isStringOfVM = stored.opcode == Opcode::String && hasCellOfVM(m_pass.program.string(stored.string()));
+            storesCells |= !isStringOfVM && m_pass.program.typeOf(m_function, operand).hasCells();
             storesLiteralStringWord |= formTakenBy(value, operandIndex) == Representation::LiteralString;
         });
 

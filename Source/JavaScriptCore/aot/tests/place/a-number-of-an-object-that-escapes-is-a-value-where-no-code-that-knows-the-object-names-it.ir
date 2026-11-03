@@ -1,0 +1,38 @@
+# A number that nobody reads out of its slot goes as a value to whoever asks the object for it by name or by key. An object that may be in hands that nobody knows keeps it as one:
+# from a double it would be made into a value at every read.
+# Where code that knows the layout names the field, and where the object never leaves the sight of flow, the slot holds the double.
+# FORM: AsRead
+# OPTIONS: references=narrow only-passes=ResolveAccesses
+# RUN: plan-slots
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Escaped" fields=[{key="cost" declared={type=number} flags=[IsRequired]}, {key="share" declared={type=number}}]
+layout L1 name="EscapedAndNamed" fields=[{key="cost" declared={type=number} flags=[IsRequired]}, {key="unnamed" declared={type=number} flags=[IsRequired]}]
+layout L2 name="Kept" fields=[{key="cost" declared={type=number} flags=[IsRequired]}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToNumber v1
+    v3 = NewObject -, v2, v2 layout=L0 fields=[0, 1]
+    v4 = FinishObject v3
+    ElemSet v0, v1, v4 mode=Strict
+    v6 = NewObject -, v2, v2 layout=L1 fields=[0, 1]
+    v7 = FinishObject v6
+    ElemSet v0, v1, v7 mode=Strict
+    v9 = PropGet v7 key="cost"
+    v10 = NewObject -, v2 layout=L2 fields=[0]
+    v11 = FinishObject v10
+    Return v9
+}
+# The cell is as large as with doubles.
+# CHECK: L0 CompiledObject size=32 fields=2
+# CHECK-NEXT: "cost" JSValue @16
+# CHECK-NEXT: "share" JSValue @24
+# Field by field: the one that main() reads out of the object it has made stays a double.
+# CHECK: L1 CompiledObject size=32 fields=2
+# CHECK-NEXT: "cost" Double @16
+# CHECK-NEXT: "unnamed" JSValue @24
+# CHECK: L2 CompiledObject size=32 fields=1
+# CHECK-NEXT: "cost" Double @16

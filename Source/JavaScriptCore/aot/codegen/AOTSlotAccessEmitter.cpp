@@ -318,13 +318,14 @@ void SlotAccessEmitter::readDeferringSlot(const ValueContext& value, bool readsE
     define(value, testsForField ? readIfMemberHasField(value, cell, access, load) : load());
 }
 
-// If every receiver defers a closure that captures the object, or every one a closure that captures nothing, a stub creates it as the allocation would have.
+// If every receiver defers a closure that captures the object, every one a closure that captures nothing, or every one a closure over the environment in its hidden field, a stub creates it as the allocation would have.
 // `new Readable({ read() {} })`: the constructor reads `options.read` of every caller's literal, each with a function of its own.
 CellPointer SlotAccessEmitter::makeDeferredClosure(const ValueContext& value, CellPointer cell, const FieldAccess& access)
 {
     AOT_THRESHOLD(unsigned, maxFunctionsDeferredAtOneRead, 8);
     Vector<ConstantEmitter::DeferredFunction, 4> functions;
     ClosureDeferral deferral = ClosureDeferral::Unknown;
+    std::optional<uint32_t> offsetOfEnvironment;
     bool areAlike = !access.findsOffsetByShape && !access.slot.isOutOfLine() && std::ranges::all_of(m_program.at(access.receivers).completeMembers(), [&](LayoutID member) {
         std::optional<uint32_t> field = m_program.at(member).findField(access.key);
         if (!field)
@@ -334,6 +335,15 @@ CellPointer SlotAccessEmitter::makeDeferredClosure(const ValueContext& value, Ce
         if (!fieldAt(m_program, declaration).form.isEmpty() || !location.deferredFunction || (!functions.isEmpty() && deferral != location.deferral))
             return false;
         deferral = location.deferral;
+        if (deferral == ClosureDeferral::CapturesEnvironment) {
+            std::optional<uint32_t> environmentField = m_program.at(member).flow.closureEnvironmentField;
+            if (!environmentField)
+                return false;
+            const PlacedSlot& environment = m_placement.slot(member, *environmentField);
+            if (environment.storage != SlotStorage::Inline || environment.representation != SlotRepresentation::Cell32 || offsetOfEnvironment.value_or(environment.offset) != environment.offset)
+                return false;
+            offsetOfEnvironment = environment.offset;
+        }
         size_t known = functions.findIf([&](const ConstantEmitter::DeferredFunction& deferred) { return deferred.function == location.deferredFunction; });
         if (known == notFound) {
             known = functions.size();
@@ -345,8 +355,8 @@ CellPointer SlotAccessEmitter::makeDeferredClosure(const ValueContext& value, Ce
     auto makeInRunTime = [&] {
         return callOperation<CellPointer>(value, RuntimeOperation::MaterializeDeferredClosure, { cell, identifierNumber(access.key) }, { .isOnRarePath = true });
     };
-    if (areAlike && !functions.isEmpty() && (deferral == ClosureDeferral::CapturesNothing || deferral == ClosureDeferral::CapturesObject))
-        return emitter<ConstantEmitter>().makeClosureOfField(value, functions.span(), cell, access.slot.offset, deferral == ClosureDeferral::CapturesObject, makeInRunTime);
+    if (areAlike && !functions.isEmpty() && deferral != ClosureDeferral::Unknown)
+        return emitter<ConstantEmitter>().makeClosureOfField(value, functions.span(), cell, access.slot.offset, deferral == ClosureDeferral::CapturesObject, offsetOfEnvironment, makeInRunTime);
     return makeInRunTime();
 }
 
