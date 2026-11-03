@@ -168,6 +168,12 @@ static ALWAYS_INLINE bool canPutDirectFast(VM& vm, Structure* structure, Propert
     structure->get(vm, propertyName, currentAttributes);
     if (currentAttributes & PropertyAttribute::DontDelete)
         return false;
+#if USE(BUN_JSC_ADDITIONS)
+    // Bun: a definition hands its value to the setter of a custom value (validateAndApplyPropertyDescriptor()), and
+    // putDirect() puts the value in the custom value's place. A class field on a returned object is such a definition.
+    if (currentAttributes & PropertyAttribute::CustomValue)
+        return false;
+#endif
 
     if (!isJSFunction) {
         if (structure->hasNonReifiedStaticProperties())
