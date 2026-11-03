@@ -4,6 +4,7 @@
 %AsyncGenerator%.prototype : @@toStringTag/c constructor/c next/wc return/wc throw/wc
 %AsyncGeneratorFunction%.prototype : @@toStringTag/c constructor/c prototype/c
 %AsyncIterator%.prototype : @@asyncDispose/wc @@asyncIterator/wc
+%CommonJSModule%.prototype : children/ac filename/ac id/ac loaded/ac parent/ac path/ac paths/ac
 %Generator%.prototype : @@toStringTag/c constructor/c next/wc return/wc throw/wc
 %GeneratorFunction%.prototype : @@toStringTag/c constructor/c prototype/c
 %IteratorHelper%.prototype : @@toStringTag/c next/wc return/wc

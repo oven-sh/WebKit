@@ -148,6 +148,7 @@ private:
     macro(ValueSetID, accessors) \
     macro(ValueSetID, knownAccessors) \
     macro(ValueSetID, whatIsNewToNativeCode) \
+    macro(ValueSetID, whatIsNewToUnseenCode) \
     macro(ValueSetID, closuresWithPrototypeProperty) \
     macro(ValueSetID, templateObjects) \
     macro(ValueSetID, argumentsObjects) \
