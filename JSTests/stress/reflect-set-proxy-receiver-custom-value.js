@@ -28,7 +28,9 @@ for (var i = 0; i < testLoopCount; ++i) {
         if (warm)
             warmUp(reifiedProxy);
         shouldBe(set({ }, 'customValue2', i, reifiedProxy), true);
-        shouldBe(Object.hasOwn(reified, 'value2'), false);
+        // Bun: true. Upstream expects false: there the definition puts the value in the place of the custom value, and
+        // its setter does not run. Here the setter gets the value (JSObject.cpp, validateAndApplyPropertyDescriptor()).
+        shouldBe(Object.hasOwn(reified, 'value2'), true);
         shouldBe(Object.getOwnPropertyDescriptor(reified, 'customValue2').value, i);
     }
 

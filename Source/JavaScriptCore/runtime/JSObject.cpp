@@ -4674,6 +4674,21 @@ bool validateAndApplyPropertyDescriptor(JSGlobalObject* globalObject, JSObject* 
         object->putDirectAccessor(globalObject, propertyName, getterSetter, attributes & ~PropertyAttribute::ReadOnly);
     } else {
         ASSERT(descriptor.isGenericDescriptor() || descriptor.isDataDescriptor());
+#if USE(BUN_JSC_ADDITIONS)
+        // Bun: a definition that gives a value and changes no attribute is a store of that value. Where native code
+        // stands behind the property (a CustomValue with a setter), the setter gets the value and the property stays
+        // what it is, as V8 has it for its native data properties. Upstream puts the value in the property's place
+        // (JSTests/stress/reflect-set-proxy-receiver-custom-value.js), and since 324876@main a store through a proxy
+        // that only forwards ends here.
+        if (descriptor.value() && attributes == current.attributes() && object->structure()->hasAnyKindOfGetterSetterProperties()) {
+            unsigned storedAttributes;
+            PropertyOffset offset = object->getDirectOffset(vm, propertyName, storedAttributes);
+            if (isValidOffset(offset) && (storedAttributes & PropertyAttribute::CustomValue) && !(storedAttributes & PropertyAttribute::ReadOnly)) {
+                if (PutValueFunc setter = uncheckedDowncast<CustomGetterSetter>(object->getDirect(offset))->setter())
+                    RELEASE_AND_RETURN(scope, setter(object->realm(), JSValue::encode(object), JSValue::encode(descriptor.value()), propertyName));
+            }
+        }
+#endif
         JSValue value = descriptor.value() ? descriptor.value() : (current.value() ? current.value() : jsUndefined());
         object->putDirect(vm, propertyName, value, attributes & ~PropertyAttribute::Accessor);
     }
