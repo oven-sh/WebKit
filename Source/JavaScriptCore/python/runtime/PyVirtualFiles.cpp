@@ -7,6 +7,7 @@
 #include "PyVirtualFiles.h"
 
 #include "PyCodeCache.h"
+#include "PyStr.h"
 #include <wtf/FileSystem.h>
 #include <wtf/HexNumber.h>
 #include <wtf/NeverDestroyed.h>
@@ -190,8 +191,8 @@ bool isVirtualPath(std::span<const char> path)
 
 VirtualFileKind kindOfFile(const String& path)
 {
+    auto bytes = encodeFilesystem(path);
     if (s_virtualFileSystem) {
-        auto bytes = path.utf8();
         VirtualPath fromRoot;
         if (toVirtualPath(byteCast<char>(bytes.span()), fromRoot)) {
             auto virtualPath = fromRoot.span();
@@ -199,19 +200,27 @@ VirtualFileKind kindOfFile(const String& path)
             return lookUp(virtualPath, size);
         }
     }
+#if !OS(WINDOWS)
+    bytes.append(0);
+    struct stat status;
+    if (stat(byteCast<char>(bytes.span()).data(), &status) < 0)
+        return VirtualFileKind::None;
+    return S_ISDIR(status.st_mode) ? VirtualFileKind::Directory : VirtualFileKind::File;
+#else
     auto type = FileSystem::fileTypeFollowingSymlinks(path);
     if (!type)
         return VirtualFileKind::None;
     return *type == FileSystem::FileType::Directory ? VirtualFileKind::Directory : VirtualFileKind::File;
+#endif
 }
 
 std::optional<Vector<uint8_t>> readFile(const String& path)
 {
+    auto bytes = encodeFilesystem(path);
     if (s_virtualFileSystem) {
-        auto bytes = path.utf8();
         VirtualPath fromRoot;
         if (Vector<char, 256> realPath; toVirtualPath(byteCast<char>(bytes.span()), fromRoot) && toCachePath(fromRoot.span(), realPath))
-            return readFile(String::fromUTF8(realPath.span()));
+            return readFile(decodeFilesystem(byteCast<uint8_t>(realPath.span())));
         if (toVirtualPath(byteCast<char>(bytes.span()), fromRoot)) {
             auto virtualPath = fromRoot.span();
             uint64_t size;
@@ -224,6 +233,36 @@ std::optional<Vector<uint8_t>> readFile(const String& path)
             return std::nullopt;
         }
     }
+#if !OS(WINDOWS)
+    // Not FileSystem::readEntireFile(): the name of a file need not be UTF-8.
+    bytes.append(0);
+    int fd;
+    do {
+        fd = open(byteCast<char>(bytes.span()).data(), O_RDONLY | O_CLOEXEC);
+    } while (fd < 0 && errno == EINTR);
+    if (fd < 0)
+        return std::nullopt;
+    Vector<uint8_t> contents;
+    if (struct stat status; !fstat(fd, &status) && S_ISREG(status.st_mode) && status.st_size > 0)
+        contents.reserveInitialCapacity(static_cast<size_t>(status.st_size));
+    while (true) {
+        uint8_t buffer[64 * KB];
+        ssize_t count = read(fd, buffer, sizeof(buffer));
+        if (count < 0 && errno == EINTR)
+            continue;
+        if (count < 0) {
+            int errorNumber = errno;
+            close(fd);
+            errno = errorNumber;
+            return std::nullopt;
+        }
+        if (!count)
+            break;
+        contents.append(std::span<const uint8_t> { buffer, static_cast<size_t>(count) });
+    }
+    close(fd);
+    return contents;
+#else
     errno = 0;
     auto contents = FileSystem::readEntireFile(path);
     // That answers the same for a file with nothing in it as for one it cannot read.
@@ -234,6 +273,7 @@ std::optional<Vector<uint8_t>> readFile(const String& path)
         errno = errorNumber ? errorNumber : ENOENT;
     }
     return contents;
+#endif
 }
 
 #if !OS(WINDOWS)

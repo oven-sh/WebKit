@@ -627,6 +627,7 @@ static constexpr NativeDef sliceMethods[] = {
     PY_SLOT("__ge__", sliceCompare<CompareOperator::GtE>, "($self, value, /)"),
     PY_METHOD("indices", sliceIndices, "($self, len, /)"),
     PY_METHOD("__reduce__", sliceReduce, "($self, /)"),
+    PY_CLASSMETHOD("__class_getitem__", classGetItem, "($type, object, /)"),
 };
 
 static constexpr NativeGetSet sliceGetSets[] = {

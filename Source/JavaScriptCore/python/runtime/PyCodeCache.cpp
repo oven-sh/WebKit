@@ -20,6 +20,7 @@
 #include "PyRange.h"
 #include "PyRuntime.h"
 #include "PySet.h"
+#include "PyStr.h"
 #include "PyTuple.h"
 #include "PyVirtualFiles.h"
 #include "UnlinkedFunctionCodeBlock.h"
@@ -353,7 +354,9 @@ PyBytes* readPycFile(JSGlobalObject* globalObject, const String& path)
         return nullptr;
     contents = PyBytes::create(globalObject, read->span());
 #else
-    int fd = openFile(byteCast<char>(path.utf8().span()).data(), O_RDONLY | O_CLOEXEC, 0);
+    auto pathBytes = encodeFilesystem(path);
+    pathBytes.append(0);
+    int fd = openFile(byteCast<char>(pathBytes.span()).data(), O_RDONLY | O_CLOEXEC, 0);
     if (fd < 0)
         return nullptr;
     struct stat status;
@@ -415,10 +418,12 @@ static String cacheFromSource(const String& path)
 
 static bool statSourceFile(const String& path, uint32_t& modificationTime, uint32_t& size)
 {
-    auto bytes = path.utf8();
+    auto bytes = encodeFilesystem(path);
     struct stat status;
     VirtualPath fromRoot;
-    int result = toVirtualPath(byteCast<char>(bytes.span()), fromRoot) ? virtualStat(fromRoot.span(), status) : stat(byteCast<char>(bytes.span()).data(), &status);
+    bool isVirtual = toVirtualPath(byteCast<char>(bytes.span()), fromRoot);
+    bytes.append(0);
+    int result = isVirtual ? virtualStat(fromRoot.span(), status) : stat(byteCast<char>(bytes.span()).data(), &status);
     if (result < 0 || !S_ISREG(status.st_mode))
         return false;
     modificationTime = static_cast<uint32_t>(status.st_mtime);
@@ -429,7 +434,7 @@ static bool statSourceFile(const String& path, uint32_t& modificationTime, uint3
 // As importlib's _write_atomic(): whoever reads the file finds all of it or none. Nothing is said if it cannot be done.
 static void writePycFile(const String& path, std::span<const uint8_t> contents)
 {
-    auto bytes = path.utf8();
+    auto bytes = encodeFilesystem(path);
     Vector<char, 256> real;
     VirtualPath fromRoot;
     if (toVirtualPath(byteCast<char>(bytes.span()), fromRoot)) {

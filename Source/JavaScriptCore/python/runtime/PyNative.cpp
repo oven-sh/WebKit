@@ -474,7 +474,12 @@ JSValue PyNativeFunction::invokeNew(JSGlobalObject* globalObject, const CallArgs
             user = user->base();
         return raiseTypeError(globalObject, scope, type->nameInMessages(), ".__new__("_s, subtype->nameInMessages(), ") is not safe, use "_s, user->nameInMessages(), ".__new__()"_s);
     }
-    RELEASE_AND_RETURN(scope, invokeNativeImpl(globalObject, *m_def, this, subtype, args.withoutFirst()));
+    JSValue object = invokeNativeImpl(globalObject, *m_def, this, subtype, args.withoutFirst());
+    RETURN_IF_EXCEPTION(scope, { });
+    // typeCall() sees to this for what is made by calling the class. copy and pickle make objects this way.
+    if (subtype->isHeapType() && subtype->lookup(Special::Del) && object.isCell() && typeOf(globalObject, object) == subtype) [[unlikely]]
+        runtime(globalObject).registerFinalizable(object.asCell());
+    return object;
 }
 
 JSValue PyNativeFunction::invoke(JSGlobalObject* globalObject, const CallArgs& args)

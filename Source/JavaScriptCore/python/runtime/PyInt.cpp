@@ -780,6 +780,13 @@ static JSValue intRoundMethod(JSGlobalObject* globalObject, JSValue self, JSValu
 
 static JSValue intBitLengthMethod(JSGlobalObject* globalObject, JSValue self) { return makeInt(globalObject, intBitLength(intValue(self))); }
 
+// What it takes in CPython: __basicsize__, and __itemsize__ for each digit of sys.int_info.bits_per_digit bits.
+static JSValue intSizeOf(JSGlobalObject* globalObject, JSValue self)
+{
+    uint64_t digits = std::max<uint64_t>((intBitLength(intValue(self)) + 29) / 30, 1);
+    return makeInt(globalObject, 24 + 4 * digits);
+}
+
 static JSValue intBitCountMethod(JSGlobalObject* globalObject, JSValue self)
 {
     JSValue value = intValue(self);
@@ -1165,6 +1172,7 @@ static constexpr NativeDef intMethods[] = {
     PY_SLOT("__index__", intIdentity, "($self, /)"),
     PY_METHOD("conjugate", intIdentity, "($self, /)"),
     PY_METHOD("bit_length", intBitLengthMethod, "($self, /)"),
+    PY_METHOD("__sizeof__", intSizeOf, "($self, /)"),
     PY_METHOD("bit_count", intBitCountMethod, "($self, /)"),
     PY_METHOD("to_bytes", intToBytes, "($self, /, length=1, byteorder='big', *, signed=False)"),
     PY_CLASSMETHOD("from_bytes", intFromBytes, "($type, /, bytes, byteorder='big', *, signed=False)"),

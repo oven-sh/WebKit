@@ -836,8 +836,9 @@ static constexpr NativeDef gcFunctions[] = {
     PY_FUNCTION("get_debug", gcGetDebug, "()"),
     PY_FUNCTION("set_debug", gcSetDebug, "(flags, /)"),
     PY_FUNCTION("get_stats", gcGetStats, "()"),
-    PY_FUNCTION("get_objects", gcGetObjects, "(generation=None)"),
-    PY_FUNCTION("get_referrers", gcGetReferrers, "(*objs)"),
+    // What the program has dropped is not to be found.
+    NativeDef(NativeKind::Function, "get_objects"_s, gcGetObjects, "(generation=None)"_s, OnWipedStack),
+    NativeDef(NativeKind::Function, "get_referrers"_s, gcGetReferrers, "(*objs)"_s, OnWipedStack),
     PY_FUNCTION("get_referents", gcGetReferents, "(*objs)"),
     PY_FUNCTION("is_tracked", gcIsTracked, "(obj, /)"),
     PY_FUNCTION("is_finalized", gcIsFinalized, "(obj, /)"),

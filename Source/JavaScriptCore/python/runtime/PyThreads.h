@@ -213,7 +213,7 @@ private:
 
     void release(ThreadState&, JSLock::ParkedThread&, SavedStates&);
     void acquire(ThreadState&, JSLock::ParkedThread&, SavedStates&);
-    void collectWhileIdle(JSGlobalObject*);
+    void collectWhileIdle(JSGlobalObject*, bool isLastResort = false);
     void takeGIL(ThreadState&);
     void dropGIL(ThreadState&, bool isYielding);
     [[noreturn]] void sleepForEver();

@@ -449,10 +449,11 @@ int Threads::start(size_t stackSize, Function<void()>&& body, uint64_t& ident)
 // A program written for reference counts may wait for what only a finalizer brings about: it has dropped a response without closing
 // it, say, and waits for a server, in another thread, that waits for the end of the connection. A thread that has waited
 // for some time has nothing better to do than to find out.
-void Threads::collectWhileIdle(JSGlobalObject* globalObject)
+void Threads::collectWhileIdle(JSGlobalObject* globalObject, bool isLastResort)
 {
     Runtime& rt = runtime(globalObject);
-    if (rt.isRunningPendingCalls() || m_vm.heap.totalBytesAllocated() == m_bytesAllocatedAtIdleCollection)
+    // (The count moves in steps: it may stand still though a little has been allocated.)
+    if (rt.isRunningPendingCalls() || (!isLastResort && m_vm.heap.totalBytesAllocated() == m_bytesAllocatedAtIdleCollection))
         return;
     collectAndFinalize(globalObject);
     m_bytesAllocatedAtIdleCollection = m_vm.heap.totalBytesAllocated();
@@ -509,7 +510,7 @@ bool Threads::waitUntil(JSGlobalObject* globalObject, const void* address, int64
     while (true) {
         if (timeout < 0 && !m_runningCount && !signalMayBeHandled(globalObject)) {
             // Unless it is a finalizer that brings about what is waited for, which in CPython would have run by now.
-            collectWhileIdle(globalObject);
+            collectWhileIdle(globalObject, true);
             RETURN_IF_EXCEPTION(scope, false);
             if (isOver())
                 return true;

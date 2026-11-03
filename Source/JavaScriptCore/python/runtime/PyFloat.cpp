@@ -480,9 +480,12 @@ bool normalizeNumberText(StringView text, Vector<Latin1Character, 64>& result)
         }
         if (character >= 0x80) {
             int digit = decimalDigitValue(character);
-            if (digit < 0)
+            if (digit >= 0)
+                character = '0' + digit;
+            else if (isPythonWhitespace(character))
+                character = ' '; // complex("( 1+1j )")
+            else
                 return false;
-            character = '0' + digit;
         }
         previousIsDigit = isASCIIDigit(character);
         result.append(static_cast<Latin1Character>(character));

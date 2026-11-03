@@ -201,7 +201,20 @@ bool SourceText::initialize(std::span<const uint8_t> input, OptionSet<Flag> flag
         return false;
     };
 
-    if (memchr(input.data(), 0, input.size())) {
+    if (auto* null = static_cast<const uint8_t*>(memchr(input.data(), 0, input.size()))) {
+        if (!filename.isNull()) {
+            // A file is read line by line, so it is known where: what is shown of the line ends there.
+            auto before = input.first(null - input.data());
+            int lineno = 1;
+            size_t lineStart = 0;
+            for (size_t i = 0; i < before.size(); ++i) {
+                if (before[i] == '\n' || (before[i] == '\r' && (i + 1 == before.size() || before[i + 1] != '\n'))) {
+                    ++lineno;
+                    lineStart = i + 1;
+                }
+            }
+            return failAt(lineno, 0, 0, before.subspan(lineStart), "source code cannot contain null bytes"_s);
+        }
         error.type = SyntaxErrorInfo::Type::SyntaxError;
         error.message = "source code cannot contain null bytes"_s;
         return false;

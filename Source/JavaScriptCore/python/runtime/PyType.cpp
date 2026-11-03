@@ -268,10 +268,20 @@ uint32_t PyType::nextVersion()
     return version;
 }
 
+Structure* createStructureOfInstances(VM&, JSGlobalObject*, Runtime&, unsigned inlineCapacity); // PyObject.cpp
+
 Structure* PyType::createInstanceStructure(VM& vm)
 {
     JSGlobalObject* globalObject = realm();
-    Structure* structure = PyInstance::createStructure(vm, globalObject, Runtime::from(globalObject));
+    // What __slots__ names has its place in the object. Storage on the side costs an allocation, and an assignment that the
+    // interpreter cannot do by itself, for every instance.
+    unsigned slotCount = 0;
+    for (PyType* type = this; type; type = type->base()) {
+        if (PyTuple* slots = type->slots())
+            slotCount += slots->length();
+    }
+    unsigned capacity = has(TypeFlag::HasDict) ? PyInstance::inlineCapacity + slotCount : std::max(PyInstance::inlineCapacity, PyInstance::numberOfFields + slotCount);
+    Structure* structure = createStructureOfInstances(vm, globalObject, Runtime::from(globalObject), std::min(capacity, JSFinalObject::maxInlineCapacity));
     m_instanceStructure.set(vm, this, structure);
     return structure;
 }

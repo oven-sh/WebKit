@@ -2298,8 +2298,11 @@ bool parse(VM& vm, ParseTree& tree, ParserHost& host, std::span<const uint8_t> b
         sourceFlags.add(SourceText::Flag::EndWithNewline);
     if (sourceIsUTF8)
         sourceFlags.add(SourceText::Flag::IgnoreCookie);
-    if (!tree.source.initialize(bytes, sourceFlags, filename, host, error))
+    if (!tree.source.initialize(bytes, sourceFlags, filename, host, error)) {
+        // CPython finds these things out while it reads a file, which is while it parses; in a string, before.
+        error.hasMetadata = !filename.isNull() && error.isSyntaxError();
         return false;
+    }
     Parser parser(vm, tree, host, mode, flags, featureVersion);
     if (parser.parse())
         return true;

@@ -26,8 +26,9 @@ namespace Python {
 //  - their ranks: how many others must come before. Objects that reach one another, a cycle, have the same rank;
 //  - among those of the same rank, the order in which reference counts would have fallen to zero: an object lets go of what
 //    it refers to in a certain order (a list from its end), and what dies of that lets go of its own before the next is let go of;
-//  - what is in a cycle or hangs off one. That is what reference counts would not have freed, and CPython's collector treats it
-//    differently in one respect: see Runtime::keepUnreachableObjectsToFinalize().
+//  - what is in a cycle or hangs off one. That is what reference counts would not have freed. CPython's collector finalizes it
+//    in the order in which the objects were made, whatever refers to what, and does so after it has cleared some of the weak
+//    references: see Runtime::keepUnreachableObjectsToFinalize().
 
 namespace {
 
@@ -268,45 +269,48 @@ FinalizationOrder UnreachableGraph::order(bool wantsCyclicGarbage)
     constexpr unsigned deepestToTakeLevelByLevel = 3;
     bool takesAll = deepest > deepestToTakeLevelByLevel;
 
+    // What is in a cycle whose turn it is, and all that such a cycle reaches, is what CPython's collector would find. It calls the
+    // finalizers of all of it in one go, in the order in which the objects were made.
     FinalizationOrder result;
+    Vector<bool> isOfCycle;
+    isOfCycle.fill(false, m_componentCount);
+    for (unsigned c = m_componentCount; c--;) {
+        bool isCycle = firstMember[c + 1] - firstMember[c] > 1;
+        forEachSuccessorComponent(c, [&](unsigned other) {
+            isCycle |= other == c;
+        });
+        if (isCycle && hasCandidate[c] && (takesAll || !rank[c]))
+            isOfCycle[c] = true;
+        if (!isOfCycle[c])
+            continue;
+        forEachSuccessorComponent(c, [&](unsigned other) {
+            isOfCycle[other] = true;
+        });
+        if (!wantsCyclicGarbage)
+            continue;
+        for (unsigned m = firstMember[c]; m < firstMember[c + 1]; ++m)
+            result.cyclicGarbage.add(m_cells[members[m]]);
+    }
+
+    // The rest goes as with reference counts, and goes first: it would have been gone before any collector came.
     Vector<unsigned> place = orderOfRelease();
-    Vector<unsigned> inOrder(m_candidateCount, [](size_t i) {
-        return static_cast<unsigned>(i);
-    });
+    Vector<unsigned> inOrder;
+    for (unsigned i = 0; i < m_candidateCount; ++i) {
+        if (!isOfCycle[m_component[i]])
+            inOrder.append(i);
+    }
     std::ranges::sort(inOrder, [&](unsigned a, unsigned b) {
         return place[a] < place[b];
     });
-    // The order of release has an object before what it alone refers to. Not so in and below cycles, where the ranks say more.
-    if (takesAll) {
-        std::ranges::stable_sort(inOrder, [&](unsigned a, unsigned b) {
-            return rank[m_component[a]] < rank[m_component[b]];
-        });
-    }
     for (unsigned i : inOrder) {
         if (takesAll || !rank[m_component[i]])
             result.now.append(i);
         else
             result.later.append(i);
     }
-
-    if (wantsCyclicGarbage) {
-        Vector<bool> isOfCycle;
-        isOfCycle.fill(false, m_componentCount);
-        for (unsigned c = m_componentCount; c--;) {
-            bool isCycle = firstMember[c + 1] - firstMember[c] > 1;
-            forEachSuccessorComponent(c, [&](unsigned other) {
-                isCycle |= other == c;
-            });
-            if (isCycle && hasCandidate[c] && (takesAll || !rank[c]))
-                isOfCycle[c] = true;
-            if (!isOfCycle[c])
-                continue;
-            forEachSuccessorComponent(c, [&](unsigned other) {
-                isOfCycle[other] = true;
-            });
-            for (unsigned m = firstMember[c]; m < firstMember[c + 1]; ++m)
-                result.cyclicGarbage.add(m_cells[members[m]]);
-        }
+    for (unsigned i = 0; i < m_candidateCount; ++i) {
+        if (isOfCycle[m_component[i]])
+            result.now.append(i);
     }
     return result;
 }

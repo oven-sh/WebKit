@@ -226,7 +226,13 @@ static JSValue sysIntern(JSGlobalObject* globalObject, JSValue string)
             return raiseTypeError(globalObject, scope, "can't intern "_s, typeName(globalObject, string));
         return raiseTypeError(globalObject, scope, "intern() argument must be str, not "_s, typeNameOfArgument(globalObject, string));
     }
-    RELEASE_AND_RETURN(scope, internString(globalObject, asString(string)));
+    // The argument stays the object it is: if an equal str has been interned before, that one is the result.
+    String text = asString(string)->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    AtomString atom(text);
+    if (atom.impl() == text.impl())
+        return string;
+    return jsString(vm, atom.string());
 }
 
 static JSValue sysIsInterned(JSGlobalObject* globalObject, JSValue string)

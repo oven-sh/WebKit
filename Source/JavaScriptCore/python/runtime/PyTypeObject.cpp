@@ -1837,7 +1837,27 @@ static JSValue typeGetFlags(JSGlobalObject* globalObject, JSValue self)
     return makeInt(globalObject, flags);
 }
 
-static JSValue typeGetBasicSize(JSGlobalObject*, JSValue) { return jsNumber(16); }
+// The sizes are CPython's, for what is asked about most. They say nothing about the cells here.
+static JSValue typeGetBasicSize(JSGlobalObject*, JSValue self)
+{
+    static constexpr std::pair<ASCIILiteral, unsigned> sizes[] = {
+        { "int"_s, 24 }, { "float"_s, 24 }, { "complex"_s, 32 }, { "str"_s, 64 }, { "bytes"_s, 33 }, { "bytearray"_s, 64 }, { "tuple"_s, 32 },
+        { "list"_s, 40 }, { "dict"_s, 48 }, { "set"_s, 200 }, { "frozenset"_s, 200 }, { "type"_s, 944 }, { "BaseException"_s, 72 },
+    };
+    unsigned slotCount = 0;
+    for (PyType* type = PyType::from(self); type; type = type->base()) {
+        if (type->isHeapType()) {
+            if (PyTuple* slots = type->slots())
+                slotCount += slots->length();
+            continue;
+        }
+        for (auto [name, size] : sizes) {
+            if (type->nameInMessages() == name)
+                return jsNumber(size + 8 * slotCount);
+        }
+    }
+    return jsNumber(16 + 8 * slotCount);
+}
 static JSValue typeGetItemSize(JSGlobalObject*, JSValue self) { return jsNumber(itemSize(PyType::from(self))); }
 static JSValue typeGetDictOffset(JSGlobalObject*, JSValue self) { return jsNumber(PyType::from(self)->has(TypeFlag::HasDict) ? -1 : 0); }
 static JSValue typeGetWeakrefOffset(JSGlobalObject*, JSValue self) { return jsNumber(PyType::from(self)->has(TypeFlag::HasWeakref) ? -1 : 0); }

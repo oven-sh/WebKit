@@ -60,6 +60,25 @@ static void initializeSuggestionsModule(JSGlobalObject* globalObject, PyModule* 
     module->addFunctions(globalObject, suggestionsModuleFunctions);
 }
 
+// _missing_stdlib_info: in CPython a file that the build writes, about the modules that build does not have. Lib/traceback.py
+// words a ModuleNotFoundError after it.
+static void initializeMissingStdlibInfoModule(JSGlobalObject* globalObject, PyModule* module)
+{
+    VM& vm = getVM(globalObject);
+    PyDict* messages = PyDict::create(globalObject);
+    [[maybe_unused]] auto add = [&](ASCIILiteral name, ASCIILiteral what) {
+        messages->set(vm, internString(vm, name), makeStr(vm, makeString("Unsupported platform for "_s, what, "standard library module '"_s, name, '\'')));
+    };
+#if !OS(WINDOWS)
+    for (auto name : { "_overlapped"_s, "_testconsole"_s, "_winapi"_s, "_wmi"_s, "msvcrt"_s, "nt"_s, "winreg"_s, "winsound"_s })
+        add(name, "Windows-only "_s);
+#endif
+#if !OS(DARWIN)
+    add("_scproxy"_s, ""_s);
+#endif
+    module->add(globalObject, "_MISSING_STDLIB_MODULE_MESSAGES"_s, messages);
+}
+
 void initializeAsyncioModule(JSGlobalObject*, PyModule*); // PyAsyncio.cpp
 void initializeDateTimeModule(JSGlobalObject*, PyModule*); // PyDateTime.cpp
 
@@ -81,6 +100,7 @@ static constexpr NativeModuleDef nativeModuleTable[] = {
     { "_json"_s, initializeJsonModule },
     { "_lsprof"_s, initializeLsprofModule },
     { "_math_integer"_s, initializeMathIntegerModule },
+    { "_missing_stdlib_info"_s, initializeMissingStdlibInfoModule },
     { "_opcode"_s, initializeOpcodeModule },
     { "_operator"_s, initializeOperatorModule },
     { "_pickle"_s, initializePickleModule },

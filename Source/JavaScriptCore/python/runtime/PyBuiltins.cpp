@@ -834,7 +834,7 @@ static JSValue builtinCompile(JSGlobalObject* globalObject, JSValue source, JSVa
     RETURN_IF_EXCEPTION(scope, { });
 
     constexpr int knownFlags = CompileSourceIsUTF8 | CompileDontImplyDedent | CompileOnlyAST | CompileIgnoreCookie | CompileTypeComments | CompileAllowTopLevelAwait | CompileAllowIncompleteInput | CompileOptimizedAST
-        | static_cast<int>(CodeFlag::FutureAnnotations) | static_cast<int>(CodeFlag::FutureBarryAsBDFL) | 0x1fe000 /* features that are always on */;
+        | 0x1fe0000 /* __future__ features, most of which are always on */ | 0x10 /* nested_scopes, from before there were such flags */;
     if (flags & ~knownFlags)
         return raiseValueError(globalObject, scope, "compile(): unrecognised flags"_s);
     if (optimize < -1 || optimize > 2)

@@ -821,6 +821,26 @@ static JSValue getCharactersWritten(JSGlobalObject* globalObject, JSValue object
     return value;
 }
 
+static void setCharactersWritten(JSGlobalObject* globalObject, JSValue object, JSValue value)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PyException* exception = self(object);
+    if (!value) {
+        if (!exception->field(ExceptionField::osErrorCharactersWritten)) {
+            raise(globalObject, scope, rt.AttributeError(), "characters_written"_s);
+            return;
+        }
+        exception->setField(vm, ExceptionField::osErrorCharactersWritten, { });
+        return;
+    }
+    int64_t count = toSsize(globalObject, value, rt.ValueError());
+    RETURN_IF_EXCEPTION(scope, void());
+    // -1 is how CPython says that there is none.
+    exception->setField(vm, ExceptionField::osErrorCharactersWritten, count == -1 ? JSValue() : makeInt(globalObject, count));
+}
+
 static constexpr NativeDef osErrorMethods[] = {
     PY_NEW(osErrorNew, "($type, *args, **kwargs)"),
     PY_SLOT("__init__", osErrorInit, "($self, *args, **kwargs)"),
@@ -832,7 +852,7 @@ static constexpr NativeGetSet osErrorGetSets[] = {
     PY_EXCEPTION_FIELD("strerror", osErrorStrerror),
     PY_EXCEPTION_FIELD("filename", osErrorFilename),
     PY_EXCEPTION_FIELD("filename2", osErrorFilename2),
-    { "characters_written"_s, getCharactersWritten, setField<ExceptionField::osErrorCharactersWritten> },
+    { "characters_written"_s, getCharactersWritten, setCharactersWritten },
 };
 
 // ---- SyntaxError ----

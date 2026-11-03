@@ -477,7 +477,7 @@ void Runtime::finalizeAllAtExit()
     // The collector finds that, and puts it in order. (CPython also sets the globals to None, one after the other, to get at
     // what cycles keep alive. Here finalizers find them as they were.)
     for (auto name : { "path"_s, "argv"_s, "ps1"_s, "ps2"_s, "last_exc"_s, "last_type"_s, "last_value"_s, "last_traceback"_s, "__interactivehook__"_s, "path_hooks"_s, "path_importer_cache"_s, "meta_path"_s })
-        sysDict()->remove(m_vm, internString(m_vm, name));
+        sysDict()->set(m_vm, internString(m_vm, name), jsUndefined()); // None, not gone: importlib then says that the interpreter is shutting down.
     builtins()->remove(m_vm, internString(m_vm, "_"_s));
     modules()->clear(m_vm);
     collect();

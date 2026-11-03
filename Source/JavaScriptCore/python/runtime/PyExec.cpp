@@ -603,7 +603,9 @@ JSValue importModuleFromJS(JSGlobalObject* globalObject, const String& name)
 String realPath(const String& path)
 {
     char resolved[PATH_MAX];
-    return realpath(byteCast<char>(path.utf8().data()), resolved) ? String::fromUTF8(resolved) : String();
+    auto bytes = encodeFilesystem(path);
+    bytes.append(0);
+    return realpath(byteCast<char>(bytes.span()).data(), resolved) ? decodeFilesystem(byteCast<uint8_t>(unsafeSpan(resolved))) : String();
 }
 
 String absolutePath(const String& path)
@@ -613,7 +615,8 @@ String absolutePath(const String& path)
         char buffer[PATH_MAX];
         if (!getcwd(buffer, sizeof(buffer)))
             return path;
-        for (auto part : StringView(String::fromUTF8(buffer)).split('/'))
+        String directory = decodeFilesystem(byteCast<uint8_t>(unsafeSpan(buffer)));
+        for (auto part : StringView(directory).split('/'))
             parts.append(part.toString());
     }
     for (auto part : StringView(path).split('/')) {
@@ -708,7 +711,8 @@ void runSourceInMain(JSGlobalObject* globalObject, std::span<const uint8_t> sour
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue code = compileSource(globalObject, source, filename, "exec"_s, flags, -1);
+    // The filters of warnings may go by the name of the module.
+    JSValue code = compileSource(globalObject, source, filename, "exec"_s, flags, -1, ensureMainModule(globalObject)->dict()->get(runtime(globalObject).names.dName()));
     RETURN_IF_EXCEPTION(scope, void());
     if (flags & CompileSourceIsShown) {
         registerSourceWithLinecache(globalObject, code, source, filename);

@@ -278,12 +278,28 @@ static JSValue tokenMissing(JSGlobalObject* globalObject)
 
 // ---- ContextVar ----
 
-static JSValue contextVarNew(JSGlobalObject* globalObject, JSValue, JSValue name, JSValue defaultValue)
+// ContextVar(name, /, *, default=...)
+static JSValue contextVarNew(JSGlobalObject* globalObject, JSValue, const CallArgs& args)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (args.totalCount() > 2)
+        return raiseTypeError(globalObject, scope, "ContextVar() takes at most 2 "_s, args.size() ? ""_s : "keyword "_s, "arguments ("_s, args.totalCount(), " given)"_s);
+    if (args.size() != 1)
+        return raiseTypeError(globalObject, scope, "ContextVar() takes "_s, args.size() ? "at most"_s : "exactly"_s, " 1 positional argument ("_s, args.size(), " given)"_s);
+    JSValue name = args[0];
+    JSValue defaultValue;
+    if (args.keywordCount()) {
+        String keyword = stringOf(args.keywordName(0));
+        if (keyword != "default"_s)
+            return raiseTypeError(globalObject, scope, "ContextVar() got an unexpected keyword argument '"_s, keyword, '\'');
+        defaultValue = args.keywordValue(0);
+    }
     if (!isStr(name))
         return raiseTypeError(globalObject, scope, "context variable name must be a str"_s);
+    // The hash of the variable is made of that of the name, in CPython. An instance of a class derived from str may have none.
+    hash(globalObject, name);
+    RETURN_IF_EXCEPTION(scope, { });
     PyRecord* variable = PyRecord::create(globalObject, contextVarType(globalObject), ContextVarFieldCount);
     variable->set(vm, ContextVarName, name);
     variable->set(vm, ContextVarDefault, defaultValue);
@@ -371,7 +387,7 @@ static JSValue contextVarRepr(JSGlobalObject* globalObject, JSValue self)
 static JSValue contextVarGetName(JSGlobalObject*, JSValue self) { return PyRecord::from(self)->get(ContextVarName); }
 
 static constexpr NativeDef contextVarMethods[] = {
-    PY_NEW(contextVarNew, "($type, /, name, *, default=<unrepresentable>)"),
+    PY_NEW(contextVarNew, "($type, *args, **kwargs)"),
     PY_SLOT("__repr__", contextVarRepr, "($self, /)"),
     PY_METHOD("get", contextVarGet, "($self, default=<unrepresentable>, /)"),
     PY_METHOD("set", contextVarSet, "($self, value, /)"),

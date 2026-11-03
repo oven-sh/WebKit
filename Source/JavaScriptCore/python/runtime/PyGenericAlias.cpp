@@ -449,9 +449,12 @@ static JSValue aliasRepr(JSGlobalObject* globalObject, JSValue self)
         // The types that go with a ParamSpec.
         JSArray* list = asList(argument);
         out.append('[');
-        for (unsigned j = 0; j < listLength(list); ++j) {
+        for (unsigned j = 0, count = listLength(list); j < count; ++j) {
             if (j)
                 out.append(", "_s);
+            // The __repr__ of an item may have shortened the list.
+            if (j >= listLength(list))
+                return raiseIndexError(globalObject, scope, "list index out of range"_s);
             aliasAppendTypeRepr(globalObject, out, listGet(list, j));
             RETURN_IF_EXCEPTION(scope, { });
         }

@@ -48,17 +48,16 @@ Configuration& configuration()
 
 // ---- Reading: nothing here needs an interpreter ----
 
+// What is not UTF-8 comes out as surrogate escapes, and goes back to the system as the bytes it was.
 static String textFromSystem(const char* text)
 {
-    // FIXME: What is not UTF-8 is to come out as surrogate escapes.
-    String result = String::fromUTF8(text);
-    return result.isNull() ? String::fromLatin1(text) : result;
+    return decodeFilesystem(byteCast<uint8_t>(unsafeSpan(text)));
 }
 
 static void printToStderr(const String& text)
 {
-    auto utf8 = text.utf8();
-    fwrite(utf8.data(), 1, utf8.length(), stderr);
+    auto bytes = encodeFilesystem(text);
+    fwrite(bytes.span().data(), 1, bytes.size(), stderr);
 }
 
 // A variable that is set to nothing counts as not set.
@@ -1175,6 +1174,8 @@ std::optional<int> runBasicInteractiveLoop(JSGlobalObject* globalObject)
     JSValue mode = makeStr(vm, "single"_s);
     JSValue runner;
     Vector<uint8_t> pending;
+    // A `from __future__ import` holds for the rest of the session.
+    int compileFlags = CompileAllowTopLevelAwait | CompileSourceIsShown;
     while (true) {
         Vector<uint8_t> line = readLineFromStdin(promptText(globalObject, pending.isEmpty() ? "ps1"_s : "ps2"_s));
         bool isAtEnd = false;
@@ -1195,7 +1196,7 @@ std::optional<int> runBasicInteractiveLoop(JSGlobalObject* globalObject)
         JSValue code;
         if (!scope.exception()) {
             if (isAtEnd)
-                code = compileSource(globalObject, pending.span(), "<stdin>"_s, "single"_s, CompileAllowTopLevelAwait | CompileSourceIsShown, -1);
+                code = compileSource(globalObject, pending.span(), "<stdin>"_s, "single"_s, compileFlags, -1, globals->get(rt.names.dName()));
             else {
                 // It takes the lines without the end of the last: that a block is over shows in the empty line after it.
                 auto text = pending.span();
@@ -1206,14 +1207,16 @@ std::optional<int> runBasicInteractiveLoop(JSGlobalObject* globalObject)
                     continue;
                 // Once more, so that tracebacks can show the lines.
                 if (code)
-                    code = compileSource(globalObject, pending.span(), "<stdin>"_s, "single"_s, CompileAllowTopLevelAwait | CompileSourceIsShown, -1);
+                    code = compileSource(globalObject, pending.span(), "<stdin>"_s, "single"_s, compileFlags, -1, globals->get(rt.names.dName()));
             }
             // Where the compiler was called from is of no interest.
             if (auto* exception = PyException::tryFrom(pendingException(globalObject)))
                 exception->setTraceback(vm, JSValue());
         }
-        if (code)
+        if (code) {
             registerSourceWithLinecache(globalObject, code, pending.span(), "<stdin>"_s);
+            compileFlags |= static_cast<int>((PyCode::from(code)->flags() & OptionSet<CodeFlag> { CodeFlag::FutureAnnotations, CodeFlag::FutureBarryAsBDFL }).toRaw());
+        }
         pending.clear();
 
         if (code && !scope.exception()) {

@@ -521,8 +521,13 @@ static JSValue tryComplexMethod(JSGlobalObject* globalObject, JSValue value)
         return { };
     JSValue result = callSpecial(globalObject, method, value);
     RETURN_IF_EXCEPTION(scope, { });
+    Runtime& rt = runtime(globalObject);
+    String message = makeString(typeNameForMessage(globalObject, type), ".__complex__() must return a complex, not "_s, typeNameForMessage(globalObject, rt.typeOf(result)));
     if (!PyComplex::is(result))
-        return raiseTypeError(globalObject, scope, type->name(), ".__complex__() must return a complex, not "_s, typeName(globalObject, result));
+        return raiseTypeError(globalObject, scope, message);
+    if (PyComplex::from(result)->type() != rt.complexType()
+        && !warn(globalObject, rt.DeprecationWarning(), makeString(message, ".  The ability to return an instance of a strict subclass of complex is deprecated, and may be removed in a future version of Python."_s)))
+        return { };
     return result;
 }
 
@@ -607,15 +612,24 @@ static JSValue complexNew(JSGlobalObject* globalObject, JSValue cls, const CallA
     }
     if (!r)
         r = jsNumber(0);
+    JSValue originalReal = r;
 
     JSValue converted = tryComplexMethod(globalObject, r);
     RETURN_IF_EXCEPTION(scope, { });
     if (converted)
         r = converted;
+    auto mustBeReal = [&](ASCIILiteral name, JSValue value) {
+        return makeString("complex() argument '"_s, name, "' must be a real number, not "_s, typeNameForMessage(globalObject, rt.typeOf(value)));
+    };
     if (!PyComplex::is(r) && !isRealNumber(globalObject, r))
-        return raiseTypeError(globalObject, scope, "complex() argument 'real' must be a real number, not "_s, typeName(globalObject, r));
+        return raiseTypeError(globalObject, scope, mustBeReal("real"_s, r));
     if (i && !PyComplex::is(i) && !isRealNumber(globalObject, i))
-        return raiseTypeError(globalObject, scope, "complex() argument 'imag' must be a real number, not "_s, typeName(globalObject, i));
+        return raiseTypeError(globalObject, scope, mustBeReal("imag"_s, i));
+    // Parts that are themselves complex still work, for now.
+    if (PyComplex::is(r) && !isRealNumber(globalObject, originalReal) && !warn(globalObject, rt.DeprecationWarning(), mustBeReal("real"_s, originalReal)))
+        return { };
+    if (i && PyComplex::is(i) && !warn(globalObject, rt.DeprecationWarning(), mustBeReal("imag"_s, i)))
+        return { };
 
     // real + imag*1j, where either may itself be complex.
     Complex cr, ci;
