@@ -25,6 +25,32 @@ const moduleExtensions = b.builtin("%ModuleExtensions%");
 const moduleObject = b.builtin("%ModuleObject%");
 const changesOnItsOwn = { mutability: "ChangesOnItsOwn" } satisfies b.EntryColumns;
 const constantUnlessWritten = { mutability: "ConstantUnlessWritten" } satisfies b.EntryColumns;
+const alwaysLocked = { mutability: "AlwaysLocked" } satisfies b.EntryColumns;
+
+// What a host has on the object above its module objects: an accessor reads and writes the record of the module object that it is entered with, and the rows of
+// %ModuleObject% say under the same name what that record holds. So the row reads and stores that name on its receiver. For a receiver that is no module object
+// the getter answers undefined and the setter stores nothing.
+const accessorAboveModuleObjects = (name: string, columns: b.EntryColumns = {}) =>
+  ({
+    this: b.any,
+    getter: b.any,
+    capability: "js",
+    throws: true,
+    uses: { this: [b.readByKey(b.keysNamed(name))] },
+    implementation: b.generic,
+    setter: {
+      this: b.any,
+      value: b.any,
+      capability: "js",
+      throws: true,
+      uses: {
+        this: [b.storedByKey(b.keysNamed(name), b.operand("value"))],
+        value: [b.retained, b.runs("ToPrimitive")],
+      },
+      implementation: b.generic,
+    },
+    ...columns,
+  }) satisfies b.Field;
 
 export default b.declarations(
   b.namespace("%ModuleCache%", {}),
@@ -58,6 +84,21 @@ export default b.declarations(
     },
     { scope: "Module" },
   ),
+  // As Bun's table has it: an object of the host stands above every module object, and a program comes to it through `new Module()`.
+  b.class("%CommonJSModule%", {
+    hasConstructor: false,
+    proto: {
+      // Compiled code answers these five for a module object by itself, so nothing may stand in their place.
+      id: accessorAboveModuleObjects("id", alwaysLocked),
+      filename: accessorAboveModuleObjects("filename", alwaysLocked),
+      path: accessorAboveModuleObjects("path", alwaysLocked),
+      loaded: accessorAboveModuleObjects("loaded", alwaysLocked),
+      paths: accessorAboveModuleObjects("paths", alwaysLocked),
+      parent: accessorAboveModuleObjects("parent"),
+      children: accessorAboveModuleObjects("children"),
+    },
+  }),
+  b.inherits("%ModuleObject%", "%CommonJSModule%.prototype"),
   b.namespace("%ModuleObject%.exports", {}, { scope: "Module", listsAllMembers: true }),
   b.inherits("%ModuleObject%.exports", "Object.prototype"),
   b.namespace(
@@ -73,6 +114,8 @@ export default b.declarations(
     },
     { scope: "Module" },
   ),
+  // As in Bun's table: `resolve` inherits `paths` from an object of its own, and no row says which.
+  b.extend("%ModuleRequire%.resolve", { hasUndeclaredMembers: true }),
   b.same("%ImportMeta%.require", "%ModuleRequire%"),
   b.same("%ModuleObject%.require", "%ModuleRequire%"),
   b.namespace("process", {

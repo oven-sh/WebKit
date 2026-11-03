@@ -1,7 +1,10 @@
 # main.cjs: Object.getPrototypeOf(module) === Object; input()
-# The table does not say what stands above a module object, and lists on the object what lies up there. Whoever holds that one reads `require` off it: the call of a value nobody knows may call the loader.
-# RUN: valueflow-why escaped-builtin=ModuleObject
-# CHECK: held: those of 1 of 1 modules
+# The table names what stands above a module object: an object of the host, which has rows of its own for what lies on it. Whoever asks gets that object and no module object with it.
+# whoever-asks-what-stands-above-the-resolve-of-a-require-function-lets-it-go.ir asks about an object whose link the table leaves unstated.
+# RUN: valueflow-why escaped-builtin=ModuleObject values=f0:v4
+# CHECK: held: those of 0 of 1 modules
+# CHECK: values=f0:v4
+# CHECK: result {{*}} 1 members: CommonJSModulePrototype
 
 variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
 module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports body=f0 exportsVariable=g0

@@ -1,0 +1,31 @@
+# main.cjs: require("./inner.cjs"); Reflect.get(Object.getPrototypeOf(module), "children", module)
+# The accessors on the object above the module objects answer from the record of the module object that they are entered with, and the rows of %ModuleObject% say
+# what that record holds. So the row of the accessor reads the name off its receiver: entered with a module object, it counts as a read of `children` of that object,
+# which is what tells the host to keep the list. No module object is handed out for it.
+# RUN: valueflow-why used-builtin=ModuleObjectChildren escaped-builtin=ModuleObject
+# CHECK: used-builtin=ModuleObjectChildren
+# CHECK-NEXT: by Lookup {{*}} "children"
+# CHECK: held: those of 0 of 2 modules
+
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="exports" module=m1 declared={type=anything} initialization=Undefined
+module m0 path="/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0 requests=[{target=m1 kind=Require completes=true}]
+module m1 path="/inner.cjs" displayPath="inner.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g1
+entry module=m0
+function f0 module=m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] {
+    EvaluateModule module=m1 referrer=m0
+    v1 = ModuleBuiltin builtin=ModuleObject module=m0
+    v2 = Builtin builtin=Object
+    v3 = Builtin builtin=ObjectGetPrototypeOf
+    v4 = Call v3, v2, v1
+    v5 = Builtin builtin=Reflect
+    v6 = Builtin builtin=ReflectGet
+    v7 = String string="children"
+    v8 = Call v6, v5, v4, v7, v1
+    Return
+}
+function f1 module=m1 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] {
+    v0 = NewDictionary
+    PutModuleVariable v0 variable=g1
+    Return
+}
