@@ -106,8 +106,9 @@ public:
         bool firstLineIsInDoubt { false };
         unsigned firstLineStart { 0 };
         unsigned lineStartCount { 0 };
-        // op_jmp: the line that begins where it goes, if that is told of here: see findPoints().
+        // A jump, or a branch: the line that begins where it goes, if it has something to say about that: see findPoints().
         unsigned lineStartOfTarget { noLineStart };
+        bool targetLineIsNotNews { false }; // That is what it says. Otherwise it tells of the line.
         std::array<uint8_t, Event::instrumentedCount> disabledTools { }; // By event; not for Line.
     };
 
@@ -242,7 +243,7 @@ private:
     int callTool(JSGlobalObject*, CallFrame*, unsigned tool, unsigned event, Shown, std::span<const JSValue> arguments);
     // Tells the tools (bits) of an event at a place. False: an exception.
     bool fire(JSGlobalObject*, CallFrame*, CodeMonitor&, unsigned offset, unsigned event, uint8_t tools, JSValue third = { }, JSValue fourth = { });
-    bool fireLine(JSGlobalObject*, CallFrame*, CodeMonitor&, unsigned offset);
+    bool fireLine(JSGlobalObject*, CallFrame*, CodeMonitor&, unsigned offset, bool comesFromSameLine);
     bool fireLineStart(JSGlobalObject*, CallFrame*, CodeMonitor&, unsigned offset, unsigned lineStart);
     bool legacyEvent(JSGlobalObject*, CallFrame*, CodeMonitor&, unsigned tool, unsigned event, unsigned offset, JSValue third, JSValue fourth, bool& disable);
     enum class What : uint8_t { Call, Line, Return, Exception, Opcode, CCall, CReturn, CException };
@@ -260,6 +261,11 @@ private:
         CallFrame* callFrame { nullptr };
         unsigned offset { 0 };
     } m_jumpGoesOn;
+    // The frame is about to run the instruction at the offset, having jumped to it from the line that begins there.
+    struct {
+        CallFrame* callFrame { nullptr };
+        unsigned offset { 0 };
+    } m_comesFromSameLine;
     unsigned m_tracingThreads { 0 };
     unsigned m_profilingThreads { 0 };
 

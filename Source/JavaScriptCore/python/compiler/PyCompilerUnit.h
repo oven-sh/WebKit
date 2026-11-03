@@ -52,7 +52,7 @@ public:
     void compileModule(AST::Mod*);
     void compileFunctionBody(Seq<Stmt*>);
     void compileClassBody(AST::ClassDef*, int firstLineNumber);
-    void statements(Seq<Stmt*>);
+    void statements(Seq<Stmt*>, unsigned first = 0);
     void statement(Stmt*);
 
     // ---- Expressions ----

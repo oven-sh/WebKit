@@ -88,12 +88,14 @@ static_assert(sizeof(PyInstance) == JSObject::offsetOfInlineStorage() + PyInstan
 PyInstance::PyInstance(VM& vm, Structure* structure, PyType* type)
     : Base(vm, structure, type)
 {
-    memset(inlineStorageUnsafe() + numberOfFields, 0, (inlineCapacity - numberOfFields) * sizeof(EncodedJSValue));
+    memset(inlineStorageUnsafe() + numberOfFields, 0, (structure->inlineCapacity() - numberOfFields) * sizeof(EncodedJSValue));
 }
 
-Structure* PyInstance::createStructure(VM& vm, JSGlobalObject* globalObject, Runtime& rt)
+// With room in the object itself for so many properties, the fields included. For PyType::createInstanceStructure().
+Structure* createStructureOfInstances(VM& vm, JSGlobalObject* globalObject, Runtime& rt, unsigned inlineCapacity)
 {
-    Structure* structure = Structure::create(vm, globalObject, prototypeOfPythonObjects(globalObject), TypeInfo(PyInstanceType, StructureFlags), info(), NonArray, inlineCapacity);
+    constexpr unsigned numberOfFields = PyInstance::numberOfFields;
+    Structure* structure = Structure::create(vm, globalObject, prototypeOfPythonObjects(globalObject), TypeInfo(PyInstanceType, PyInstance::StructureFlags), PyInstance::info(), NonArray, inlineCapacity);
     for (unsigned i = 0; i < numberOfFields; ++i) {
         PropertyOffset offset;
         structure = Structure::addPropertyTransition(vm, structure, rt.instanceFieldKey(i), static_cast<unsigned>(PropertyAttribute::DontEnum), offset);
@@ -102,10 +104,16 @@ Structure* PyInstance::createStructure(VM& vm, JSGlobalObject* globalObject, Run
     return structure;
 }
 
+Structure* PyInstance::createStructure(VM& vm, JSGlobalObject* globalObject, Runtime& rt)
+{
+    return createStructureOfInstances(vm, globalObject, rt, inlineCapacity);
+}
+
 PyInstance* PyInstance::create(VM& vm, PyType* type)
 {
     Structure* structure = type->instanceStructure(vm); // It may have to be made: not between the allocation of the cell and its initialization.
-    auto* object = new (NotNull, allocateCell<PyInstance>(vm, allocationSize())) PyInstance(vm, structure, type);
+    size_t size = sizeof(JSObjectWithButterfly) + structure->inlineCapacity() * sizeof(WriteBarrierBase<Unknown>);
+    auto* object = new (NotNull, allocateCell<PyInstance>(vm, size)) PyInstance(vm, structure, type);
     // Not that of JSNonFinalObject, which takes it that no such object has storage of its own for properties.
     object->JSObjectWithButterfly::finishCreation(vm);
     return object;

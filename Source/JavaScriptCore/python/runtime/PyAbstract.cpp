@@ -182,6 +182,20 @@ void memberDescriptorSet(JSGlobalObject* globalObject, PyMemberDescriptor* descr
     JSObject::deleteProperty(holder, globalObject, key, slot);
 }
 
+// A class may have, as an attribute of its own, the method of a type it has nothing to do with: class C: __len__ = list.__len__
+static ALWAYS_INLINE bool nativeMethodAppliesTo(Runtime& rt, PyNativeFunction* method, JSValue object)
+{
+    PyType* owner = method->ownerType();
+    PyType* type = rt.typeOf(object);
+    return type == owner || type->isSubtypeOf(owner);
+}
+
+static NEVER_INLINE JSValue raiseDescriptorDoesNotApply(JSGlobalObject* globalObject, const String& name, PyType* owner, JSValue object)
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    return raiseTypeError(globalObject, scope, "descriptor '"_s, name, "' for '"_s, owner->nameInMessages(), "' objects doesn't apply to a '"_s, typeName(globalObject, object), "' object"_s);
+}
+
 JSValue bindDescriptor(JSGlobalObject* globalObject, JSValue descriptor, JSValue object, PyType* type)
 {
     if (!descriptor.isCell())
@@ -200,8 +214,14 @@ JSValue bindDescriptor(JSGlobalObject* globalObject, JSValue descriptor, JSValue
             case NativeKind::SlotWrapper:
                 if (!object)
                     return descriptor;
+                if (!nativeMethodAppliesTo(rt, native, object)) [[unlikely]]
+                    return raiseDescriptorDoesNotApply(globalObject, native->def().name, native->ownerType(), object);
                 return PyNativeFunction::createBound(globalObject, native, object);
             case NativeKind::ClassMethod:
+                if (type != native->ownerType() && !type->isSubtypeOf(native->ownerType())) [[unlikely]] {
+                    auto scope = DECLARE_THROW_SCOPE(rt.vm());
+                    return raiseTypeError(globalObject, scope, "descriptor '"_s, native->def().name, "' requires a subtype of '"_s, native->ownerType()->nameInMessages(), "' but received '"_s, type->nameInMessages(), '\'');
+                }
                 return PyNativeFunction::createBound(globalObject, native, type);
             default:
                 return descriptor;
@@ -252,10 +272,18 @@ JSValue genericGetAttr(JSGlobalObject* globalObject, JSValue object, JSString* n
             // The data descriptors written in C++.
             if (cell->type() == PyObjectType) {
                 const ClassInfo* info = cell->classInfo();
-                if (info == PyGetSetDescriptor::info())
-                    return uncheckedDowncast<PyGetSetDescriptor>(cell)->def().getter(globalObject, object);
-                if (info == PyMemberDescriptor::info())
-                    return memberDescriptorGet(globalObject, uncheckedDowncast<PyMemberDescriptor>(cell), object);
+                if (info == PyGetSetDescriptor::info()) {
+                    auto* getSet = uncheckedDowncast<PyGetSetDescriptor>(cell);
+                    if (type != getSet->owner() && !type->isSubtypeOf(getSet->owner())) [[unlikely]]
+                        return raiseDescriptorDoesNotApply(globalObject, getSet->def().name, getSet->owner(), object);
+                    return getSet->def().getter(globalObject, object);
+                }
+                if (info == PyMemberDescriptor::info()) {
+                    auto* member = uncheckedDowncast<PyMemberDescriptor>(cell);
+                    if (type != member->owner() && !type->isSubtypeOf(member->owner())) [[unlikely]]
+                        return raiseDescriptorDoesNotApply(globalObject, stringOf(member->name()), member->owner(), object);
+                    return memberDescriptorGet(globalObject, member, object);
+                }
             }
             PyType* descriptorType = uncheckedDowncast<PyObject>(cell)->type();
             getter = descriptorType->lookup(Special::Get);
@@ -292,6 +320,11 @@ void genericSetAttr(JSGlobalObject* globalObject, JSValue object, JSString* name
             const ClassInfo* info = cell->classInfo();
             if (info == PyGetSetDescriptor::info()) {
                 auto& def = uncheckedDowncast<PyGetSetDescriptor>(cell)->def();
+                if (PyType* owner = uncheckedDowncast<PyGetSetDescriptor>(cell)->owner(); type != owner && !type->isSubtypeOf(owner)) [[unlikely]] {
+                    scope.release();
+                    raiseDescriptorDoesNotApply(globalObject, def.name, owner, object);
+                    return;
+                }
                 if (!def.setter) {
                     if (def.isMember)
                         raise(globalObject, scope, rt.AttributeError(), "readonly attribute"_s);
@@ -301,8 +334,15 @@ void genericSetAttr(JSGlobalObject* globalObject, JSValue object, JSString* name
                 }
                 RELEASE_AND_RETURN(scope, def.setter(globalObject, object, value));
             }
-            if (info == PyMemberDescriptor::info())
-                RELEASE_AND_RETURN(scope, memberDescriptorSet(globalObject, uncheckedDowncast<PyMemberDescriptor>(cell), object, value));
+            if (info == PyMemberDescriptor::info()) {
+                auto* member = uncheckedDowncast<PyMemberDescriptor>(cell);
+                if (type != member->owner() && !type->isSubtypeOf(member->owner())) [[unlikely]] {
+                    scope.release();
+                    raiseDescriptorDoesNotApply(globalObject, stringOf(member->name()), member->owner(), object);
+                    return;
+                }
+                RELEASE_AND_RETURN(scope, memberDescriptorSet(globalObject, member, object, value));
+            }
         }
         PyType* descriptorType = uncheckedDowncast<PyObject>(cell)->type();
         JSValue setter = descriptorType->lookup(Special::Set);
@@ -384,9 +424,9 @@ static JSValue getAttrImpl(JSGlobalObject* globalObject, JSValue object, JSStrin
     JSValue result;
     if (isNative(getAttribute, objectGetAttribute)) [[likely]]
         result = genericGetAttr(globalObject, object, name, suppress || fallback);
-    else if (isNative(getAttribute, typeGetAttribute))
+    else if (isNative(getAttribute, typeGetAttribute) && PyType::is(object))
         result = typeGetAttr(globalObject, PyType::from(object), name, suppress || fallback);
-    else if (isNative(getAttribute, moduleGetAttribute))
+    else if (isNative(getAttribute, moduleGetAttribute) && PyModule::is(object))
         result = moduleGetAttr(globalObject, PyModule::from(object), name, suppress || fallback);
     else
         result = callSpecial(globalObject, getAttribute, object, name);
@@ -761,8 +801,14 @@ JSValue callSpecial(JSGlobalObject* globalObject, JSValue method, JSValue self, 
         if (cell->type() == InternalFunctionType) {
             if (auto* native = PyNativeFunction::tryFrom(method)) {
                 NativeKind kind = native->kind();
-                if (kind == NativeKind::SlotWrapper || kind == NativeKind::Method) [[likely]]
-                    return native->invokeWithSelf(globalObject, self, args);
+                if (kind == NativeKind::SlotWrapper || kind == NativeKind::Method) [[likely]] {
+                    if (nativeMethodAppliesTo(runtime(globalObject), native, self)) [[likely]]
+                        return native->invokeWithSelf(globalObject, self, args);
+                    // Which refuses.
+                    return withFirstArgument(self, args, [&](const CallArgs& all) {
+                        return native->invoke(globalObject, all);
+                    });
+                }
             }
         } else if (cell->type() == JSFunctionType && PyFunction::is(cell)) {
             return withFirstArgument(self, args, [&](const CallArgs& all) {

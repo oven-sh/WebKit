@@ -302,7 +302,10 @@ void CodeMonitor::findPoints(bool everyInstruction)
         // Not -1: the first of them, if whether it is news depends on where the frame comes from. The others always are.
         int entryLine { -1 };
         Vector<int, 2> linesBefore { }; // Those the frame may be on when it gets here.
-        bool isReachedFromOtherLineOnlyByJumps { true }; // By op_jmp.
+        // By op_jmp, or a branch that is taken: what can tell where it goes.
+        bool isReachedFromOtherLineOnlyByJumps { true };
+        bool isReachedFromSameLineOnlyByJumps { true };
+        bool isNewsUnlessToldOtherwise { false };
         bool isJumpedTo { false }; // By anything but a `for` loop that ends.
         bool isResumedAt { false };
         bool isHiddenJump { false };
@@ -311,6 +314,7 @@ void CodeMonitor::findPoints(bool everyInstruction)
 
         // -2: it depends.
         int lineAfter() const { return isMarked ? exitLine : linesBefore.isEmpty() ? -1 : linesBefore.size() == 1 ? linesBefore[0] : -2; }
+        bool mayBeOn(int line) const { return lineAfter() == -2 ? linesBefore.contains(line) : lineAfter() == line; }
     };
     struct Line {
         int line;
@@ -374,8 +378,12 @@ void CodeMonitor::findPoints(bool everyInstruction)
             for (int possible : from.linesBefore)
                 add(possible);
         }
-        if (line != item.entryLine && (!byJump || line == -2))
+        bool maybeFromSameLine = from.mayBeOn(item.entryLine);
+        bool maybeFromOtherLine = line != item.entryLine && (line != -2 || from.linesBefore.size() > 1 || !maybeFromSameLine);
+        if (maybeFromOtherLine && (!byJump || maybeFromSameLine))
             item.isReachedFromOtherLineOnlyByJumps = false;
+        if (maybeFromSameLine && (!byJump || maybeFromOtherLine))
+            item.isReachedFromSameLineOnlyByJumps = false;
     };
     for (unsigned i = 0; i < items.size(); ++i) {
         if (items[i].offset == start) {
@@ -383,8 +391,10 @@ void CodeMonitor::findPoints(bool everyInstruction)
             items[i].isReachedFromOtherLineOnlyByJumps = false;
         }
         // It goes on with the line it was on.
-        if (items[i].isResumedAt)
+        if (items[i].isResumedAt) {
             items[i].linesBefore.append(lineAt(items[i].offset));
+            items[i].isReachedFromSameLineOnlyByJumps = false;
+        }
         const Item& item = items[i];
         if (item.fallsThrough)
             reach(i + 1, item, false);
@@ -399,7 +409,7 @@ void CodeMonitor::findPoints(bool everyInstruction)
                 return;
             }
             items[it->value].isJumpedTo |= item.opcode != op_py_for_iter;
-            reach(it->value, item, item.opcode == op_jmp && !item.isHiddenJump);
+            reach(it->value, item, item.offset >= start && (item.opcode == op_jmp || isPythonBranch(item.opcode)));
         });
     }
     // In CPython a line begins where the instruction before, as they are laid out, is of another line, or where a jump goes. Where
@@ -413,15 +423,32 @@ void CodeMonitor::findPoints(bool everyInstruction)
     }
     // Being at an instruction is news of the first of its lines if the frame was on another. For some, it may or may not have been.
     // Such is the head of a `for` loop: it is on the line of what comes before it, and is jumped to from the end of the body. If
-    // all that comes from other lines is jumps, the jumps tell of the line.
+    // all that comes from other lines is jumps, the jumps tell of the line. If all that comes from the same line is jumps, they tell
+    // that it is not news (`return (a and` over `b)`). What is left is in doubt: the frame has to remember the line it was last on.
     auto isReachedFromSameLine = [](const Item& item) { return item.linesBefore.contains(item.entryLine); };
     auto isReachedFromOtherLine = [](const Item& item) { return item.linesBefore.isEmpty() || item.linesBefore.size() > 1 || item.linesBefore[0] != item.entryLine; };
     for (auto& item : items) {
-        if (item.offset < start || item.entryLine < 0 || !isReachedFromSameLine(item) || !isReachedFromOtherLine(item) || !item.isReachedFromOtherLineOnlyByJumps)
+        if (item.offset < start || item.entryLine < 0 || !isReachedFromSameLine(item) || !isReachedFromOtherLine(item))
             continue;
+        if (!item.isReachedFromOtherLineOnlyByJumps) {
+            item.isNewsUnlessToldOtherwise = item.isReachedFromSameLineOnlyByJumps;
+            continue;
+        }
         item.sharedLineStart = m_lineStarts.size();
         m_lineStarts.append({ item.entryLine, item.offset, 0, true });
     }
+    // What a jump has to say about the line that begins where it goes.
+    Vector<std::pair<unsigned, unsigned>> jumpsFromSameLine; // The offset of the jump, that of its target.
+    auto noteTarget = [&](Point& point, const Item& item, unsigned targetOffset) {
+        auto it = indexOfOffset.find(targetOffset);
+        if (it == indexOfOffset.end())
+            return;
+        const Item& target = items[it->value];
+        if (!item.mayBeOn(target.entryLine))
+            point.lineStartOfTarget = target.sharedLineStart;
+        else if (target.isNewsUnlessToldOtherwise)
+            jumpsFromSameLine.append({ item.offset, targetOffset });
+    };
 
     VirtualRegister generatorRegister = virtualRegisterForArgumentIncludingThis(static_cast<int>(JSGenerator::Argument::Generator));
     bool isAboutToYield = false;
@@ -475,15 +502,11 @@ void CodeMonitor::findPoints(bool everyInstruction)
             if (static_cast<RuntimeFunction>(instructions.at(item.offset)->as<OpPyRuntime>().m_function) == RuntimeFunction::TakeSendResult)
                 point.kinds |= bit(Event::StopIteration);
             break;
-        case op_jmp: {
-            if (item.isHiddenJump)
-                break;
-            point.kinds |= bit(Event::Jump);
-            auto it = indexOfOffset.find(item.offset + jumpTargetForInstruction<OpJmp>(code, instructions.at(item.offset)));
-            if (it != indexOfOffset.end() && items[it->value].entryLine != item.lineAfter())
-                point.lineStartOfTarget = items[it->value].sharedLineStart;
+        case op_jmp:
+            if (!item.isHiddenJump)
+                point.kinds |= bit(Event::Jump);
+            noteTarget(point, item, item.offset + jumpTargetForInstruction<OpJmp>(code, instructions.at(item.offset)));
             break;
-        }
         default:
             // Whether it was resumed to go on, or to raise something, is not a branch of the program's.
             if (isPythonBranch(item.opcode) && !isResumption) {
@@ -492,6 +515,9 @@ void CodeMonitor::findPoints(bool everyInstruction)
                     point.kinds |= Point::forLoop | Point::goesOnInItself;
                 else if (previousIsExceptionMatch)
                     point.kinds |= Point::goesOnInItself;
+                extractStoredJumpTargetsForInstruction(code, instructions.at(item.offset), [&](int32_t relative) {
+                    noteTarget(point, item, item.offset + relative);
+                });
             }
             break;
         }
@@ -500,8 +526,8 @@ void CodeMonitor::findPoints(bool everyInstruction)
         if (!isBeingResumed && !item.isResumedAt && item.opcode != op_catch) {
             point.firstLineStart = m_lineStarts.size();
             if (item.entryLine >= 0 && item.sharedLineStart == noLineStart && isReachedFromOtherLine(item)) {
-                m_lineStarts.append({ item.entryLine, lines[item.firstLine].offset });
-                if (isReachedFromSameLine(item)) {
+                m_lineStarts.append({ item.entryLine, lines[item.firstLine].offset, 0, item.isNewsUnlessToldOtherwise });
+                if (isReachedFromSameLine(item) && !item.isNewsUnlessToldOtherwise) {
                     point.firstLineIsInDoubt = true;
                     m_needsLastLine = true;
                 }
@@ -513,8 +539,16 @@ void CodeMonitor::findPoints(bool everyInstruction)
                 point.kinds |= bit(Event::Line);
         }
 
-        if (point.kinds)
+        if (point.kinds || point.lineStartOfTarget != noLineStart || (!jumpsFromSameLine.isEmpty() && jumpsFromSameLine.last().first == item.offset))
             m_points.append(point);
+    }
+    for (auto [jump, target] : jumpsFromSameLine) {
+        Point* targetPoint = pointAt(target);
+        if (!targetPoint || !targetPoint->lineStartCount)
+            continue;
+        Point* point = pointAt(jump);
+        point->lineStartOfTarget = targetPoint->firstLineStart;
+        point->targetLineIsNotNews = true;
     }
 }
 
@@ -1159,7 +1193,7 @@ bool Monitoring::fireLineStart(JSGlobalObject* globalObject, CallFrame* callFram
     return true;
 }
 
-bool Monitoring::fireLine(JSGlobalObject* globalObject, CallFrame* callFrame, CodeMonitor& monitor, unsigned offset)
+bool Monitoring::fireLine(JSGlobalObject* globalObject, CallFrame* callFrame, CodeMonitor& monitor, unsigned offset, bool comesFromSameLine)
 {
     auto* point = monitor.pointAt(offset);
     unsigned first = point->firstLineStart;
@@ -1176,7 +1210,7 @@ bool Monitoring::fireLine(JSGlobalObject* globalObject, CallFrame* callFrame, Co
     }
     for (unsigned i = 0; i < count; ++i) {
         int line = monitor.m_lineStarts[first + i].line;
-        bool isNews = i || !firstLineIsInDoubt || line != frame->lastLine;
+        bool isNews = i || (!comesFromSameLine && (!firstLineIsInDoubt || line != frame->lastLine));
         if (frame) {
             frame->lastLine = line;
             frame->lastLineOffset = monitor.m_lineStarts[first + i].offset;
@@ -1275,6 +1309,31 @@ Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject, CallFrame* 
         return true;
     };
     Outcome elsewhere;
+    bool comesFromSameLine = m_comesFromSameLine.callFrame == callFrame && m_comesFromSameLine.offset == offset;
+    m_comesFromSameLine = { };
+    // What a jump, or a branch that is taken, has to say about the line that begins at its target. False: an exception, or the frame
+    // has been sent elsewhere.
+    auto tellOfLineAt = [&](unsigned target, Outcome& outcome) {
+        auto* point = monitor.pointAt(offset);
+        if (!point || point->lineStartOfTarget == CodeMonitor::noLineStart)
+            return true;
+        if (point->targetLineIsNotNews) {
+            if (auto* other = monitor.pointAt(target); other && other->isPatched)
+                m_comesFromSameLine = { callFrame, target };
+            return true;
+        }
+        unsigned lineStart = point->lineStartOfTarget;
+        if (monitor.m_needsLastLine || monitor.tools(Event::Line) >> traceTool) {
+            PyFrame* frame = PyFrame::of(globalObject, callFrame);
+            frame->lastLine = monitor.m_lineStarts[lineStart].line;
+            frame->lastLineOffset = monitor.m_lineStarts[lineStart].offset;
+        }
+        if (!fireLineStart(globalObject, callFrame, monitor, offset, lineStart)) {
+            outcome = threw;
+            return false;
+        }
+        return !jumped(outcome);
+    };
 
     if (kinds & bit(Event::PyStart)) {
         PyFrame* frame = frameObjectIfAny(callFrame);
@@ -1305,7 +1364,7 @@ Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject, CallFrame* 
             return elsewhere;
     }
     if (kinds & bit(Event::Line)) {
-        if (!fireLine(globalObject, callFrame, monitor, offset))
+        if (!fireLine(globalObject, callFrame, monitor, offset, comesFromSameLine))
             return threw;
         if (jumped(elsewhere))
             return elsewhere;
@@ -1420,7 +1479,7 @@ Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject, CallFrame* 
         bool isToldOfAlready = m_jumpGoesOn.callFrame == callFrame && m_jumpGoesOn.offset == offset;
         m_jumpGoesOn = { };
         unsigned target = targetOf(offset);
-        if (!isToldOfAlready) {
+        if (!isToldOfAlready && kinds & bit(Event::Jump)) {
             unsigned last = target;
             for (unsigned count = 0; count < 8 && jumpAt(last); ++count)
                 last = targetOf(last);
@@ -1429,18 +1488,8 @@ Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject, CallFrame* 
             if (jumped(elsewhere))
                 return elsewhere;
         }
-        point = monitor.pointAt(offset);
-        if (point && point->lineStartOfTarget != CodeMonitor::noLineStart) {
-            if (monitor.m_needsLastLine || monitor.tools(Event::Line) >> traceTool) {
-                PyFrame* frame = PyFrame::of(globalObject, callFrame);
-                frame->lastLine = monitor.m_lineStarts[point->lineStartOfTarget].line;
-                frame->lastLineOffset = monitor.m_lineStarts[point->lineStartOfTarget].offset;
-            }
-            if (!fireLineStart(globalObject, callFrame, monitor, offset, point->lineStartOfTarget))
-                return threw;
-            if (jumped(elsewhere))
-                return elsewhere;
-        }
+        if (!tellOfLineAt(target, elsewhere))
+            return elsewhere;
         if (auto* other = jumpAt(target); other && other->isPatched)
             m_jumpGoesOn = { callFrame, target };
         return runIt;
@@ -1476,7 +1525,9 @@ Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject, CallFrame* 
     }
 
     // Which way a branch goes is known once it has gone.
-    if (kinds & bit(Event::BranchLeft) && (wanted(Event::BranchLeft) | wanted(Event::BranchRight) | (kinds & CodeMonitor::Point::forLoop ? monitor.tools(Event::Raise) : 0))) {
+    point = monitor.pointAt(offset);
+    bool saysSomethingOfTarget = point && point->lineStartOfTarget != CodeMonitor::noLineStart;
+    if (kinds & bit(Event::BranchLeft) && (saysSomethingOfTarget || wanted(Event::BranchLeft) | wanted(Event::BranchRight) | (kinds & CodeMonitor::Point::forLoop ? monitor.tools(Event::Raise) : 0))) {
         const JSInstruction* destination;
         if (kinds & CodeMonitor::Point::forLoop) {
             auto bytecode = pc->as<OpPyForIter>();
@@ -1506,6 +1557,8 @@ Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject, CallFrame* 
             shownDestination = whereItGoesOnInItself(shownDestination);
         if (!fire(globalObject, callFrame, monitor, offset, event, wanted(event), jsNumber(shownOffset(shownDestination))))
             return threw;
+        if (event == Event::BranchRight && !tellOfLineAt(codeBlock->bytecodeOffset(destination), elsewhere))
+            return elsewhere;
         return { destination, goOn };
     }
     return runIt;
@@ -1549,14 +1602,17 @@ static JSValue tellOfException(JSGlobalObject* globalObject, JSValue thrown, Cal
 
 JSValue exceptionIsRaised(JSGlobalObject* globalObject, JSValue exception, CallFrame* callFrame, BytecodeIndex index, bool isRaisedAgain)
 {
-    if (!runtime(globalObject).monitoring().wantsExceptions()) [[likely]]
-        return exception;
+    // What raises it again on behalf of the program, from no line, does so as if from here: see PyFrame::bytecodeOffset().
+    bool isWanted = runtime(globalObject).monitoring().wantsExceptions();
     auto marks = callFrame->codeBlock()->unlinkedCodeBlock()->pythonMarks();
     if (int line = lineOfMarks(marks, index.offset()); line >= 0) {
-        PyFrame* frame = PyFrame::of(globalObject, callFrame);
-        frame->raisedOnLine = line;
-        frame->raisedAtOffset = visibleOffset(marks, index.offset());
+        if (PyFrame* frame = isWanted ? PyFrame::of(globalObject, callFrame) : frameObjectIfAny(callFrame)) {
+            frame->raisedOnLine = line;
+            frame->raisedAtOffset = visibleOffset(marks, index.offset());
+        }
     }
+    if (!isWanted) [[likely]]
+        return exception;
     return tellOfException(globalObject, exception, callFrame, index.offset(), isRaisedAgain ? Event::Reraise : Event::Raise);
 }
 

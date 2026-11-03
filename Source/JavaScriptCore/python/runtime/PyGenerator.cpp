@@ -414,8 +414,14 @@ JSValue sendToDelegate(JSGlobalObject* globalObject, JSValue iterator, JSValue v
     }
     if (scope.exception()) {
         result = takeStopIterationValue(globalObject);
-        if (!result)
-            return { };
+        if (!result) {
+            // What throw() brings out of the delegate is raised anew here: its context is what this generator is handling, whatever
+            // it was further in.
+            if (mode == ResumeMode::NormalMode || !rt.handledExceptionInTopSlot())
+                return { };
+            JSValue exception = takePendingException(globalObject);
+            return exception ? raiseException(globalObject, scope, exception) : JSValue();
+        }
     }
     rt.setSendResult(result ? result : jsUndefined());
     return { };

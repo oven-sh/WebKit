@@ -1138,9 +1138,9 @@ bool Unit::neverGetsPast(Stmt* node)
     }
 }
 
-void Unit::statements(Seq<Stmt*> body)
+void Unit::statements(Seq<Stmt*> body, unsigned first)
 {
-    for (unsigned i = 0; i < body.size(); ++i) {
+    for (unsigned i = first; i < body.size(); ++i) {
         statement(body[i]);
         // CPython's compiler drops what cannot be reached, so that the code has no such lines: nobody can jump to them or find that
         // they were never run. Here it stays, and is of no line.
@@ -2184,8 +2184,7 @@ void Unit::compileModule(Mod* module)
             storeName(c.name("__doc__"_s), stringConstant(docstring), body[0]->range);
         }
     }
-    for (unsigned i = first; i < body.size(); ++i)
-        statement(body[i]);
+    statements(body, first);
     // All of a module with nothing in it is of line 0, which whoever traces it is told of: a debugger stops there.
     if (body.isEmpty())
         g.addPythonMark(PythonMark::Line, lineMarkValue(0, true));
@@ -2194,9 +2193,7 @@ void Unit::compileModule(Mod* module)
 
 void Unit::compileFunctionBody(Seq<Stmt*> body)
 {
-    unsigned first = m_scope->hasDocstring ? 1 : 0;
-    for (unsigned i = first; i < body.size(); ++i)
-        statement(body[i]);
+    statements(body, m_scope->hasDocstring ? 1 : 0);
     emitReturnNone();
 }
 

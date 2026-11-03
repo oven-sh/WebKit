@@ -621,6 +621,16 @@ unsigned PyFrame::bytecodeOffset()
         m_bytecodeOffset = visibleOffset(marks, index.offset());
         m_lineNumber = lineNumberForBytecodeIndex(callFrame->codeBlock(), index);
         m_isOnNoLine = lineOfMarks(marks, index.offset()) < 0 && isPastStart(marks, index.offset());
+        // The end of a cleanup the compiler added: it raises the exception again as if from where the program raised it. (In CPython
+        // RERAISE puts f_lasti back.) That is where a frame is found to be that was left that way.
+        if (m_isOnNoLine && raisedOnLine >= 0) {
+            auto instruction = callFrame->codeBlock()->instructionAt(index);
+            if (instruction->opcodeID() == op_py_runtime && static_cast<RuntimeFunction>(instruction->as<OpPyRuntime>().m_function) == RuntimeFunction::Reraise) {
+                m_bytecodeOffset = raisedAtOffset;
+                m_lineNumber = raisedOnLine + function()->codeInfo().lineDelta;
+                m_isOnNoLine = false;
+            }
+        }
     } else if (PyGenerator* generator = this->generator()) {
         if (bytecodeOffsetOfState(generator->body(), generator->state(), m_bytecodeOffset))
             m_lineNumber = lineNumberForBytecodeIndex(generator->body()->functionExecutable()->codeBlockForCall(), BytecodeIndex(m_bytecodeOffset));

@@ -666,7 +666,14 @@ JSValue typeCall(JSGlobalObject* globalObject, PyType* type, const CallArgs& arg
         return raiseTypeError(globalObject, scope, "cannot create '"_s, type->nameInMessages(), "' instances"_s);
 
     JSValue object;
-    if (auto* native = PyNativeFunction::tryFrom(newMethod); native && native->kind() == NativeKind::New)
+    auto* native = PyNativeFunction::tryFrom(newMethod);
+    // class C: __new__ = dict.__new__. In CPython the __new__ of a built-in type in a class stands for "what the class inherits",
+    // whichever type it is of.
+    for (PyType* base = type->base(); native && native->kind() == NativeKind::New && !type->isSubtypeOf(native->ownerType()) && base; base = base->base()) {
+        newMethod = base->lookup(Special::New);
+        native = PyNativeFunction::tryFrom(newMethod);
+    }
+    if (native && native->kind() == NativeKind::New)
         object = native->invokeWithSelf(globalObject, type, args);
     else {
         JSValue function;
