@@ -202,6 +202,25 @@ JSArray* newList(JSGlobalObject* globalObject, std::span<const JSValue> items)
     return list;
 }
 
+JSValue listGetSlow(JSArray* list, unsigned index)
+{
+    if (!hasAnyArrayStorage(list->indexingType()))
+        return jsUndefined();
+    SparseArrayValueMap* map = list->butterfly()->arrayStorage()->m_sparseMap.get();
+    if (!map)
+        return jsUndefined();
+    auto entry = map->find(index);
+    if (entry == map->notFound() || (entry->attributes() & PropertyAttribute::Accessor))
+        return jsUndefined();
+    return entry->get();
+}
+
+// list[index] = value in strict code.
+static void listSetSlow(JSGlobalObject* globalObject, JSArray* list, unsigned index, JSValue value)
+{
+    list->methodTable()->putByIndex(list, globalObject, index, value, true);
+}
+
 void listSet(JSGlobalObject* globalObject, JSArray* list, unsigned index, JSValue value)
 {
     VM& vm = getVM(globalObject);
@@ -210,7 +229,7 @@ void listSet(JSGlobalObject* globalObject, JSArray* list, unsigned index, JSValu
         storage.set(index, value);
         return;
     }
-    list->putDirectIndex(globalObject, index, value);
+    listSetSlow(globalObject, list, index, value);
 }
 
 void listAppend(JSGlobalObject* globalObject, JSArray* list, JSValue value)
@@ -239,11 +258,11 @@ void listInsertGap(JSGlobalObject* globalObject, JSArray* list, unsigned index, 
         return;
     }
     for (unsigned i = length; i-- > index;) {
-        list->putDirectIndex(globalObject, i + count, listGet(list, i));
+        listSetSlow(globalObject, list, i + count, listGet(list, i));
         RETURN_IF_EXCEPTION(scope, void());
     }
     for (unsigned i = 0; i < count; ++i) {
-        list->putDirectIndex(globalObject, index + i, jsUndefined());
+        listSetSlow(globalObject, list, index + i, jsUndefined());
         RETURN_IF_EXCEPTION(scope, void());
     }
 }
@@ -273,7 +292,7 @@ void listRemove(JSGlobalObject* globalObject, JSArray* list, unsigned index, uns
         return;
     }
     for (unsigned i = index + count; i < length; ++i) {
-        list->putDirectIndex(globalObject, i - count, listGet(list, i));
+        listSetSlow(globalObject, list, i - count, listGet(list, i));
         RETURN_IF_EXCEPTION(scope, void());
     }
     scope.release();
@@ -1040,15 +1059,19 @@ void listSort(JSGlobalObject* globalObject, JSArray* list, JSValue key, bool rev
     values.ensureCapacity(count);
     for (unsigned i = 0; i < count; ++i)
         values.append(listGet(list, i));
-    listTruncate(globalObject, list, 0);
-    RETURN_IF_EXCEPTION(scope, void());
+    // Not one that JS has forbidden to grow, which could not be filled again.
+    bool staysFilled = !list->structure()->isStructureExtensible();
+    if (!staysFilled) {
+        listTruncate(globalObject, list, 0);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
     JSValue* valueData = reinterpret_cast<JSValue*>(const_cast<EncodedJSValue*>(ArgList(values).data()));
 
     // Even if it is empty again afterwards. Whatever puts an item in the list writes to the first slot of its storage, and whatever
     // takes it out again empties the slot: a mark left there, beyond the end of the list, does not survive that.
     Butterfly* markedButterfly = list->butterfly();
     IndexingType markedShape = list->indexingType() & IndexingShapeMask;
-    bool isMarked = markedButterfly && markedButterfly->vectorLength() && (markedShape == Int32Shape || markedShape == ContiguousShape);
+    bool isMarked = !staysFilled && markedButterfly && markedButterfly->vectorLength() && (markedShape == Int32Shape || markedShape == ContiguousShape);
     if (isMarked)
         markedButterfly->contiguous().atUnsafe(0).setWithoutWriteBarrier(jsNumber(0));
 
@@ -1091,7 +1114,7 @@ void listSort(JSGlobalObject* globalObject, JSArray* list, JSValue key, bool rev
             reverseAll(valueData);
     }
 
-    bool wasModified = list->length();
+    bool wasModified = staysFilled ? list->length() != count : list->length();
     if (isMarked && !wasModified) {
         wasModified = list->butterfly() != markedButterfly || (list->indexingType() & IndexingShapeMask) != markedShape || markedButterfly->contiguous().atUnsafe(0).get() != jsNumber(0);
         if (!wasModified)
@@ -1100,10 +1123,17 @@ void listSort(JSGlobalObject* globalObject, JSArray* list, JSValue key, bool rev
     JSValue pending;
     if (failed)
         pending = takePendingException(globalObject);
-    listTruncate(globalObject, list, 0);
-    RETURN_IF_EXCEPTION(scope, void());
-    listAppendSpan(globalObject, list, { valueData, count });
-    RETURN_IF_EXCEPTION(scope, void());
+    if (staysFilled) {
+        for (unsigned i = 0; i < count && i < list->length(); ++i) {
+            listSet(globalObject, list, i, valueData[i]);
+            RETURN_IF_EXCEPTION(scope, void());
+        }
+    } else {
+        listTruncate(globalObject, list, 0);
+        RETURN_IF_EXCEPTION(scope, void());
+        listAppendSpan(globalObject, list, { valueData, count });
+        RETURN_IF_EXCEPTION(scope, void());
+    }
     if (pending) {
         raiseException(globalObject, scope, pending);
         return;

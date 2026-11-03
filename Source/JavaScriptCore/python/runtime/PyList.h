@@ -11,7 +11,8 @@
 namespace JSC {
 namespace Python {
 
-// A list is a JSArray, the same one JS sees. A hole, which only JS can make, reads as None.
+// A list is a JSArray, the same one JS sees. A hole, which only JS can make, reads as None, and so does an item that JS has made an
+// accessor of. What JS has forbidden (Object.freeze()) is refused as JS refuses it in strict code.
 
 // An instance of a class derived from list.
 class PyListObject final : public JSArray {
@@ -61,10 +62,13 @@ JSArray* newList(JSGlobalObject*, unsigned capacity = 0);
 JSArray* newList(JSGlobalObject*, std::span<const JSValue>);
 
 ALWAYS_INLINE unsigned listLength(JSArray* list) { return list->length(); }
+// For an array whose items are not in a row: JS made it sparse, or froze it.
+JSValue listGetSlow(JSArray*, unsigned index);
 ALWAYS_INLINE JSValue listGet(JSArray* list, unsigned index)
 {
-    JSValue value = list->tryGetIndexQuickly(index);
-    return value ? value : jsUndefined();
+    if (JSValue value = list->tryGetIndexQuickly(index)) [[likely]]
+        return value;
+    return listGetSlow(list, index);
 }
 void listSet(JSGlobalObject*, JSArray*, unsigned index, JSValue);
 void listAppend(JSGlobalObject*, JSArray*, JSValue);
