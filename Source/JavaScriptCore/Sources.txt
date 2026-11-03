@@ -805,6 +805,14 @@ profiler/ProfilerOriginStack.cpp
 profiler/ProfilerProfiledBytecodes.cpp
 profiler/ProfilerTZoneImpls.cpp
 
+python/parser/PyASTDump.cpp
+python/parser/PyLexer.cpp
+python/parser/PyParser.cpp
+python/parser/PyParserExpressions.cpp
+python/parser/PyParserPatterns.cpp
+python/parser/PyParserStrings.cpp
+python/parser/PyUnicode.cpp
+
 runtime/AbstractModuleRecord.cpp
 runtime/AggregateError.cpp
 runtime/AggregateErrorConstructor.cpp

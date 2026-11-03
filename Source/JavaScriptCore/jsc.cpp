@@ -77,6 +77,8 @@
 #include "ObjectConstructor.h"
 #include "ParserError.h"
 #include "ProfilerDatabase.h"
+#include "PyASTDump.h"
+#include "PyParser.h"
 #include "ReleaseHeapAccessScope.h"
 #include "SamplingProfiler.h"
 #include "SideDataRepository.h"
@@ -4457,6 +4459,44 @@ void GlobalObject::reportUncaughtExceptionAtEventLoop(JSGlobalObject* globalObje
         jscExit(EXIT_EXCEPTION);
 }
 
+// PYTHON_DUMP_AST=1 jsc a.py b.py: what python/tools/dump_ast_reference.py prints.
+static void dumpPythonAST(VM& vm, const String& fileName, const Vector<char>& buffer)
+{
+    class Host final : public Python::ParserHost {
+    public:
+        Host(std::span<const uint8_t> file)
+            : m_file(file)
+        {
+        }
+        bool lineOfFile(int lineno, Vector<uint8_t>& line) final
+        {
+            auto rest = m_file;
+            for (int current = 1; !rest.empty(); ++current) {
+                size_t length = 0;
+                while (length < rest.size() && rest[length] != '\n' && rest[length] != '\r')
+                    ++length;
+                bool hasEnding = length < rest.size();
+                size_t endingLength = hasEnding ? (rest[length] == '\r' && length + 1 < rest.size() && rest[length + 1] == '\n' ? 2 : 1) : 0;
+                if (current == lineno) {
+                    line.append(rest.first(length));
+                    if (hasEnding)
+                        line.append('\n');
+                    return true;
+                }
+                rest = rest.subspan(length + endingLength);
+            }
+            return false;
+        }
+    private:
+        std::span<const uint8_t> m_file;
+    };
+    Python::ParseTree tree;
+    Host host(byteCast<uint8_t>(buffer.span()));
+    Python::SyntaxErrorInfo error;
+    bool parsed = Python::parse(vm, tree, host, byteCast<uint8_t>(buffer.span()), { }, Python::ParseMode::File, { }, false, error);
+    printf("== %s\n%s\n", fileName.utf8().data(), (parsed ? Python::dumpAST(tree.root) : Python::dumpSyntaxError(error)).utf8().data());
+}
+
 static void runWithOptions(GlobalObject* globalObject, CommandLine& options, bool& success)
 {
     Vector<Script>& scripts = options.m_scripts;
@@ -4477,6 +4517,16 @@ static void runWithOptions(GlobalObject* globalObject, CommandLine& options, boo
         switch (scripts[i].codeSource) {
         case Script::CodeSource::File: {
             fileName = scripts[i].argument;
+            if (fileName.endsWith(".py"_s)) {
+                if (!fillBufferWithContentsOfFile(fileName, scriptBuffer)) {
+                    success = false;
+                    return;
+                }
+                if (getenv("PYTHON_DUMP_AST"))
+                    dumpPythonAST(vm, fileName, scriptBuffer);
+                scriptBuffer.clear();
+                continue;
+            }
             if (scripts[i].strictMode == Script::StrictMode::Strict)
                 scriptBuffer.append("\"use strict\";\n"_span);
 
