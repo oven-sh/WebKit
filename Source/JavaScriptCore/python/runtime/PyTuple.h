@@ -56,15 +56,17 @@ public:
     static constexpr ptrdiff_t offsetOfItems() { return sizeof(PyTuple); }
 
 protected:
-    PyTuple(VM&, Structure*, PyType*, unsigned length);
+    static PyTuple* create(JSGlobalObject*, const JSValue* first, ptrdiff_t step, unsigned length);
 
-    WriteBarrier<Unknown>* items() { return reinterpret_cast<WriteBarrier<Unknown>*>(this + 1); }
-    const WriteBarrier<Unknown>* items() const { return reinterpret_cast<const WriteBarrier<Unknown>*>(this + 1); }
+    PyTuple(VM&, Structure*, PyType*, unsigned length);
+    PyTuple(VM&, Structure*, PyType*, unsigned length, const JSValue* first, ptrdiff_t step);
+
+    WriteBarrier<Unknown>* items() { return storageBehind<WriteBarrier<Unknown>>(this); }
+    const WriteBarrier<Unknown>* items() const { return storageBehind<const WriteBarrier<Unknown>>(this); }
 
     unsigned m_length;
     int64_t m_hash { -1 };
 };
-static_assert(valuesMayFollow<PyTuple>);
 
 } // namespace Python
 } // namespace JSC

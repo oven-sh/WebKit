@@ -63,7 +63,7 @@ public:
     unsigned filledSlotCount() const { return m_filledSlotCount; }
     void setFilledSlotCount(unsigned count) { m_filledSlotCount = count; }
 
-    Entry* entries() { return reinterpret_cast<Entry*>(this + 1); }
+    Entry* entries() { return storageBehind<Entry>(this); }
     static constexpr ptrdiff_t offsetOfFirstValue() { return sizeof(PyDictStorage) + OBJECT_OFFSETOF(Entry, value); }
     bool hasWideHashes() const { return m_hasWideHashes; }
     int64_t hashAt(unsigned index) { return m_hasWideHashes ? wideHashes()[index] : static_cast<int64_t>(narrowHashes()[index]); }
@@ -108,7 +108,6 @@ private:
     unsigned m_entryCount { 0 }; // Including the deleted ones.
     unsigned m_filledSlotCount { 0 };
 };
-static_assert(valuesMayFollow<PyDictStorage>);
 
 class PyDict : public PyObject {
 public:

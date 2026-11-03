@@ -56,6 +56,15 @@ count of a `StringImpl` is atomic, and two such operations cost more than most m
 than 48 units) remembers the number of pairs and the offset of every 64th code point, so that `s[i]` in a loop does not scan from
 the start each time.
 
+**list.** Any `JSArray` is a list, so a list is not always values in a row. JS makes arrays of int32s or doubles only, copy-on-write
+ones, ones with holes, sparse, frozen, with accessors for indices, with any length below 2^32; and once `Array.prototype` has an accessor
+for an index, *every* array of the realm, also the next one that Python makes, has `ArrayStorage`. So nothing outside `PyList.cpp`
+touches a butterfly. There, `ListStorage` says whether the items are in a row; if not, each item goes through what works for any array.
+A new list is made by `newListOf`, with what `constructArray` uses. (`PyListObject::create` lays out an empty butterfly, and `listSort`
+leaves a mark in one after looking at its shape.) The limit on the length of items in a row is `ListStorage::grow`'s; any other array
+may be as long as 32 bits allow, so whatever takes room for each item looks at the length first. The fast paths of the
+interpreter look at the indexing type first. `differential/crashers/evil_js_arrays.py` does everything to all of them.
+
 **tuple, dict.** A tuple remembers its hash once it has been asked for. A dict keeps its entries in an array in insertion order, with
 an index beside it; it knows where its first entry is, and can leave room before it, so that taking and adding entries is as cheap at
 the front as at the back. `collections.OrderedDict` (`PyOrderedDict.cpp`) is that and nothing more. Each entry keeps the hash of its
@@ -348,6 +357,25 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
     use that allocates, as raising an exception does in a loop.
   - It is about promptness only. What is not covered (anything that has been in a variable, a parameter, a container or a return
     value; objects made by a class written in Python) waits for the collector as before.
+- **The collector marks while the program runs.** Its threads call `visitChildren` on cells that the program is changing at that
+  moment. What every class of cell owes them:
+  - Whatever `visitChildren` reads that is not a value is set by the constructor and never changes: the length of a tuple, the
+    capacity of a table. All the slots are visited, used or not; the unused ones hold no cell. What has to grow is a cell of its own, of
+    a fixed size, which its owner replaces (`PyDictStorage`, `PySetStorage`). A list is a `JSArray`, which has JSC's own protocol.
+  - Values are at addresses that are multiples of their size. A store that crosses a cache line is not atomic, and the half of an int
+    that has arrived looks like the address of a cell. A member is aligned by the compiler. What is behind the cell is reached through
+    `storageBehind<T>(this)`, which does not compile unless the size of the class is a multiple of what `T` needs: a class with
+    nothing but small members has to say `alignas`.
+  - Values are stored one at a time (`WriteBarrier::set`), or moved with `gcSafeMemmove`, never with `memcpy`, `memmove` or
+    `std::copy`. Values that have changed places inside a cell may have passed the collector by: `vm.writeBarrier(cell)` afterwards.
+  - `setWithoutWriteBarrier` is for a value that is not a cell, for stores that `vm.writeBarrier(cell)` follows, and for a cell that
+    has just been made: nothing refers to it and nothing has been allocated since. After the last store of a cell to a new cell comes
+    `vm.mutatorFence()`, or a processor that reorders stores may show the new cell before what is in it. (`finishCreation` does that
+    for what the constructor has stored, `ObjectInitializationScope` for a new array: `newListOf`.)
+  - Anything else (a `Vector` or a table of the `Runtime`) is read under a lock that the program takes to change it
+    (`m_finalizationLock`, `m_moduleTypesLock`).
+
+  `differential/crashers/gc_values_stored_while_marking.py` stores to every kind of cell with values behind it while collections run.
 - **Files that are dropped** without being closed are closed by a finalizer, some time later, where CPython closes them at once.
   Two things make up for most of that. Streams as `open()` makes them that hold output are in a list
   (`ioNotePendingOutput`), and `writeOutPendingOutput()`, one load and a branch when the list is empty, writes them out before

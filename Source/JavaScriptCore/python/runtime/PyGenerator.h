@@ -129,7 +129,7 @@ public:
 private:
     PyGenerator(VM&, Structure*, PyType*, Kind, unsigned slotCount);
     void leaveBody(Runtime&);
-    WriteBarrier<Unknown>* slots() const { return std::bit_cast<WriteBarrier<Unknown>*>(std::bit_cast<char*>(this) + offsetOfSlots()); }
+    WriteBarrier<Unknown>* slots() const { return storageBehind<WriteBarrier<Unknown>>(const_cast<PyGenerator*>(this)); }
 
     WriteBarrier<Unknown> m_state; // An int32.
     WriteBarrier<PyFunction> m_body;
@@ -147,7 +147,7 @@ private:
     Finalization m_finalization { Finalization::None };
 };
 
-constexpr ptrdiff_t PyGenerator::offsetOfSlots() { return WTF::roundUpToMultipleOf<sizeof(WriteBarrier<Unknown>)>(sizeof(PyGenerator)); }
+constexpr ptrdiff_t PyGenerator::offsetOfSlots() { return sizeof(PyGenerator); }
 
 // What asend(), athrow() and aclose() return.
 class PyAsyncGenAwaitable final : public PyObject {

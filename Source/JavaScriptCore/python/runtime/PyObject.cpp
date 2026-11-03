@@ -327,6 +327,14 @@ PyTuple::PyTuple(VM& vm, Structure* structure, PyType* type, unsigned length)
         items()[i].setStartingValue(jsUndefined());
 }
 
+PyTuple::PyTuple(VM& vm, Structure* structure, PyType* type, unsigned length, const JSValue* first, ptrdiff_t step)
+    : Base(vm, structure, type)
+    , m_length(length)
+{
+    for (unsigned i = 0; i < length; ++i, first += step)
+        items()[i].setStartingValue(*first);
+}
+
 PyTuple* PyTuple::createUninitialized(VM& vm, Structure* structure, PyType* type, unsigned length)
 {
     auto* tuple = new (NotNull, allocateCell<PyTuple>(vm, allocationSize(length))) PyTuple(vm, structure, type, length);
@@ -342,23 +350,25 @@ PyTuple* PyTuple::create(JSGlobalObject* globalObject, unsigned length)
     return createUninitialized(rt.vm(), rt.structure<PyTuple>(), rt.tupleType(), length);
 }
 
+PyTuple* PyTuple::create(JSGlobalObject* globalObject, const JSValue* first, ptrdiff_t step, unsigned length)
+{
+    Runtime& rt = runtime(globalObject);
+    if (!length)
+        return rt.emptyTuple();
+    VM& vm = rt.vm();
+    auto* tuple = new (NotNull, allocateCell<PyTuple>(vm, allocationSize(length))) PyTuple(vm, rt.structure<PyTuple>(), rt.tupleType(), length, first, step);
+    tuple->finishCreation(vm);
+    return tuple;
+}
+
 PyTuple* PyTuple::create(JSGlobalObject* globalObject, std::span<const JSValue> values)
 {
-    PyTuple* tuple = create(globalObject, static_cast<unsigned>(values.size()));
-    // The tuple is new, so no barrier is needed.
-    for (unsigned i = 0; i < values.size(); ++i)
-        tuple->items()[i].setWithoutWriteBarrier(values[i]);
-    getVM(globalObject).mutatorFence();
-    return tuple;
+    return create(globalObject, values.data(), 1, static_cast<unsigned>(values.size()));
 }
 
 PyTuple* PyTuple::createFromNegativeIndexed(JSGlobalObject* globalObject, const JSValue* first, unsigned length)
 {
-    PyTuple* tuple = create(globalObject, length);
-    for (unsigned i = 0; i < length; ++i)
-        tuple->items()[i].setWithoutWriteBarrier(first[-static_cast<int>(i)]);
-    getVM(globalObject).mutatorFence();
-    return tuple;
+    return create(globalObject, first, -1, length);
 }
 
 PyTuple* PyTuple::empty(JSGlobalObject* globalObject)

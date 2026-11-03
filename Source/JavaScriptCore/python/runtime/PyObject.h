@@ -49,9 +49,14 @@ static constexpr unsigned jsViewStructureFlags = OverridesGetOwnPropertySlot | I
 // The prototype of every PyObject but the exceptions.
 JSObject* prototypeOfPythonObjects(JSGlobalObject*);
 
-// Whether values may be kept right behind a cell of this class. The collector reads them while the program stores to them, and
-// only a store to an aligned address is sure to be seen whole: half of an int looks like the address of a cell.
-template<typename Cell> inline constexpr bool valuesMayFollow = !(sizeof(Cell) % sizeof(WriteBarrier<Unknown>));
+// What is kept right behind a cell. It has to be aligned, and values above all: the collector reads them while the program stores to
+// them, and only a store to an aligned address is sure to be seen whole. Half of an int looks like the address of a cell.
+template<typename T, typename Cell>
+ALWAYS_INLINE T* storageBehind(Cell* cell)
+{
+    static_assert(!(sizeof(Cell) % alignof(T)), "alignas(T) for the class of the cell");
+    return reinterpret_cast<T*>(cell + 1);
+}
 
 // An object that knows its Python type. No PyObject has a destructor: what one owns is in cells of its own.
 class PyObject : public JSNonFinalObject {
@@ -197,12 +202,11 @@ public:
 private:
     PyRecord(VM&, Structure*, PyType*, unsigned fieldCount);
 
-    WriteBarrier<Unknown>* fields() { return reinterpret_cast<WriteBarrier<Unknown>*>(this + 1); }
-    const WriteBarrier<Unknown>* fields() const { return reinterpret_cast<const WriteBarrier<Unknown>*>(this + 1); }
+    WriteBarrier<Unknown>* fields() { return storageBehind<WriteBarrier<Unknown>>(this); }
+    const WriteBarrier<Unknown>* fields() const { return storageBehind<const WriteBarrier<Unknown>>(this); }
 
     unsigned m_fieldCount;
 };
-static_assert(valuesMayFollow<PyRecord>);
 
 inline bool isPyObject(JSCell* cell) { return isPyObjectType(cell->type()); }
 inline bool isPyObject(JSValue value) { return value && value.isCell() && isPyObject(value.asCell()); }

@@ -271,9 +271,9 @@ public:
     uint8_t* data(JSGlobalObject*) const;
 
     unsigned dimensions() const { return m_dimensions; }
-    int64_t* shape() { return reinterpret_cast<int64_t*>(this + 1); }
+    int64_t* shape() { return storageBehind<int64_t>(this); }
     int64_t* strides() { return shape() + m_dimensions; }
-    const int64_t* shape() const { return reinterpret_cast<const int64_t*>(this + 1); }
+    const int64_t* shape() const { return storageBehind<const int64_t>(this); }
     const int64_t* strides() const { return shape() + m_dimensions; }
 
     JSString* format() const { return m_format.get(); } // Null: "B".

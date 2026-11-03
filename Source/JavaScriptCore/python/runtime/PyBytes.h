@@ -31,8 +31,8 @@ public:
 
     size_t length() const { return m_length; }
     std::span<const uint8_t> span() const { return { data(), m_length }; }
-    const uint8_t* data() const { return reinterpret_cast<const uint8_t*>(this + 1); }
-    uint8_t* mutableData() { return reinterpret_cast<uint8_t*>(this + 1); }
+    const uint8_t* data() const { return storageBehind<const uint8_t>(this); }
+    uint8_t* mutableData() { return storageBehind<uint8_t>(this); }
 
 private:
     PyBytes(VM&, Structure*, PyType*, size_t length);
@@ -60,7 +60,7 @@ public:
     static PyByteStorage* tryCreate(VM&, Structure*, size_t capacity); // Null: there is no room for it.
 
     size_t capacity() const { return m_capacity; }
-    uint8_t* data() { return reinterpret_cast<uint8_t*>(this + 1); }
+    uint8_t* data() { return storageBehind<uint8_t>(this); }
 
 private:
     PyByteStorage(VM&, Structure*, size_t capacity);

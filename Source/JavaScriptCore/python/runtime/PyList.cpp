@@ -51,6 +51,9 @@ PyListObject* PyListObject::create(VM& vm, Structure* structure, PyType* type)
     Butterfly::clearRange(structure->indexingType(), butterfly, 0, vectorLength);
     auto* list = new (NotNull, allocateCell<PyListObject>(vm)) PyListObject(vm, structure, type, butterfly);
     list->finishCreation(vm);
+    // As every array of such a realm.
+    if (structure->realm()->isHavingABadTime()) [[unlikely]]
+        list->switchToSlowPutArrayStorage(vm);
     return list;
 }
 
@@ -137,11 +140,11 @@ public:
     WriteBarrier<Unknown>* items() const { return m_list->butterfly()->contiguous().data(); }
 
     // The new items are holes until they are set. False: out of memory.
-    bool grow(unsigned newLength)
+    bool grow(uint64_t newLength)
     {
         if (newLength > MAX_STORAGE_VECTOR_LENGTH)
             return false;
-        return m_list->ensureLength(m_vm, newLength);
+        return m_list->ensureLength(m_vm, static_cast<unsigned>(newLength));
     }
 
     void shrink(unsigned newLength)
@@ -187,19 +190,36 @@ JSArray* newList(JSGlobalObject* globalObject, unsigned capacity)
     return list;
 }
 
-JSArray* newList(JSGlobalObject* globalObject, std::span<const JSValue> items)
+// A new list of so many items. nextItem() is asked for them in turn, and allocates nothing. Null: it is too long, which has been raised.
+template<typename Functor>
+static ALWAYS_INLINE JSArray* newListOf(JSGlobalObject* globalObject, uint64_t length, const Functor& nextItem)
 {
     VM& vm = getVM(globalObject);
-    JSArray* list = JSArray::tryCreate(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), items.size());
-    if (!list) [[unlikely]] {
-        raiseListTooLong(globalObject);
-        return nullptr;
+    JSArray* list = nullptr;
+    if (length <= MAX_STORAGE_VECTOR_LENGTH) [[likely]] {
+        // Not the structure that was asked for, if code in JS has given Array.prototype an accessor for an index.
+        Structure* structure = globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous);
+        IndexingType indexingType = structure->indexingType();
+        ObjectInitializationScope initialization(vm);
+        list = JSArray::tryCreateUninitializedRestricted(initialization, structure, static_cast<unsigned>(length));
+        if (list && hasContiguous(indexingType)) [[likely]] {
+            WriteBarrier<Unknown>* data = list->butterfly()->contiguous().data();
+            for (unsigned i = 0; i < length; ++i)
+                data[i].setWithoutWriteBarrier(nextItem());
+        } else if (list) {
+            for (unsigned i = 0; i < length; ++i)
+                list->initializeIndexWithoutBarrier(initialization, i, nextItem(), indexingType);
+        }
     }
-    WriteBarrier<Unknown>* data = list->butterfly()->contiguous().data();
-    for (size_t i = 0; i < items.size(); ++i)
-        data[i].setWithoutWriteBarrier(items[i]);
-    vm.mutatorFence();
+    if (!list) [[unlikely]]
+        raiseListTooLong(globalObject);
     return list;
+}
+
+JSArray* newList(JSGlobalObject* globalObject, std::span<const JSValue> items)
+{
+    const JSValue* item = items.data();
+    return newListOf(globalObject, items.size(), [&] ALWAYS_INLINE_LAMBDA { return *item++; });
 }
 
 JSValue listGetSlow(JSArray* list, unsigned index)
@@ -245,10 +265,9 @@ void listInsertGap(JSGlobalObject* globalObject, JSArray* list, unsigned index, 
     auto scope = DECLARE_THROW_SCOPE(vm);
     unsigned length = list->length();
     ASSERT(index <= length);
-    if (count > MAX_STORAGE_VECTOR_LENGTH - length)
-        RELEASE_AND_RETURN(scope, raiseListTooLong(globalObject));
+    uint64_t newLength = static_cast<uint64_t>(length) + count;
     if (ListStorage storage { vm, list }) [[likely]] {
-        if (!storage.grow(length + count))
+        if (!storage.grow(newLength))
             RELEASE_AND_RETURN(scope, raiseListTooLong(globalObject));
         storage.move(index + count, index, length - index);
         for (unsigned i = 0; i < count && index + i < length; ++i)
@@ -257,6 +276,9 @@ void listInsertGap(JSGlobalObject* globalObject, JSArray* list, unsigned index, 
             storage.items()[i].setWithoutWriteBarrier(jsUndefined());
         return;
     }
+    // JS can give an array any length that fits 32 bits.
+    if (newLength > MAX_ARRAY_INDEX + 1ull)
+        RELEASE_AND_RETURN(scope, raiseListTooLong(globalObject));
     for (unsigned i = length; i-- > index;) {
         listSetSlow(globalObject, list, i + count, listGet(list, i));
         RETURN_IF_EXCEPTION(scope, void());
@@ -317,10 +339,8 @@ static void listAppendSpan(JSGlobalObject* globalObject, JSArray* list, std::spa
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     unsigned length = list->length();
-    if (items.size() > MAX_STORAGE_VECTOR_LENGTH - length)
-        RELEASE_AND_RETURN(scope, raiseListTooLong(globalObject));
     if (ListStorage storage { vm, list }) [[likely]] {
-        if (!storage.grow(length + items.size()))
+        if (!storage.grow(length + static_cast<uint64_t>(items.size())))
             RELEASE_AND_RETURN(scope, raiseListTooLong(globalObject));
         for (size_t i = 0; i < items.size(); ++i)
             storage.items()[length + i].setWithoutWriteBarrier(items[i]);
@@ -385,6 +405,10 @@ PyTuple* tupleFromList(JSGlobalObject* globalObject, JSArray* list)
 {
     VM& vm = getVM(globalObject);
     unsigned length = list->length();
+    if (length > MAX_STORAGE_VECTOR_LENGTH) [[unlikely]] {
+        raiseListTooLong(globalObject);
+        return nullptr;
+    }
     PyTuple* tuple = PyTuple::create(globalObject, length);
     for (unsigned i = 0; i < length; ++i)
         tuple->initializeAt(vm, i, listGet(list, i));
@@ -1053,10 +1077,25 @@ void listSort(JSGlobalObject* globalObject, JSArray* list, JSValue key, bool rev
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     unsigned count = list->length();
+    if (count > MAX_STORAGE_VECTOR_LENGTH) [[unlikely]]
+        RELEASE_AND_RETURN(scope, raiseListTooLong(globalObject));
+
+    // All the room that it takes, while the list is still as it was.
+    bool hasKey = key && !isNone(key);
+    MarkedArgumentBuffer values;
+    MarkedArgumentBuffer keys;
+    MarkedArgumentBuffer scratch;
+    MarkedArgumentBuffer secondScratch;
+    values.ensureCapacity(count);
+    scratch.fill(vm, count, [](JSValue* slots) { UNUSED_PARAM(slots); });
+    if (hasKey) {
+        keys.ensureCapacity(count);
+        secondScratch.fill(vm, count, [](JSValue* slots) { UNUSED_PARAM(slots); });
+    }
+    if (values.hasOverflowed() || keys.hasOverflowed() || scratch.hasOverflowed() || secondScratch.hasOverflowed()) [[unlikely]]
+        RELEASE_AND_RETURN(scope, raiseListTooLong(globalObject));
 
     // The list is empty for as long as it is being sorted, so that what the comparisons do to it shows.
-    MarkedArgumentBuffer values;
-    values.ensureCapacity(count);
     for (unsigned i = 0; i < count; ++i)
         values.append(listGet(list, i));
     // Not one that JS has forbidden to grow, which could not be filled again.
@@ -1080,11 +1119,9 @@ void listSort(JSGlobalObject* globalObject, JSArray* list, JSValue key, bool rev
             std::reverse(data, data + count);
     };
 
-    MarkedArgumentBuffer keys;
     JSValue* keyData = nullptr;
     bool failed = false;
-    if (key && !isNone(key)) {
-        keys.ensureCapacity(count);
+    if (hasKey) {
         for (unsigned i = 0; i < count; ++i) {
             JSValue computed = call(globalObject, key, valueData[i]);
             if (scope.exception()) [[unlikely]] {
@@ -1102,11 +1139,6 @@ void listSort(JSGlobalObject* globalObject, JSArray* list, JSValue key, bool rev
             reverseAll(valueData);
             reverseAll(keyData);
         }
-        MarkedArgumentBuffer scratch;
-        MarkedArgumentBuffer secondScratch;
-        scratch.fill(vm, count, [](JSValue* slots) { UNUSED_PARAM(slots); });
-        if (keyData)
-            secondScratch.fill(vm, count, [](JSValue* slots) { UNUSED_PARAM(slots); });
         auto dataOf = [](MarkedArgumentBuffer& buffer) { return reinterpret_cast<JSValue*>(const_cast<EncodedJSValue*>(ArgList(buffer).data())); };
         Sorter sorter(globalObject, keyData ? keyData : valueData, keyData ? valueData : nullptr, dataOf(scratch), keyData ? dataOf(secondScratch) : nullptr, count);
         failed = !sorter.sort();
@@ -1289,17 +1321,13 @@ static JSArray* listSlice(JSGlobalObject* globalObject, JSArray* list, const PyS
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSArray* result = JSArray::tryCreate(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), indices.length);
-    if (!result) {
-        raiseMemoryError(globalObject, scope, String());
-        return nullptr;
-    }
-    WriteBarrier<Unknown>* data = result->butterfly()->contiguous().data();
-    int64_t position = indices.start;
-    for (int64_t i = 0; i < indices.length; ++i, position += indices.step)
-        data[i].setWithoutWriteBarrier(listGet(list, position));
-    vm.mutatorFence();
-    return result;
+    // Unsigned: one step beyond the last item may be beyond what an int64_t holds.
+    uint64_t position = indices.start;
+    RELEASE_AND_RETURN(scope, newListOf(globalObject, indices.length, [&] ALWAYS_INLINE_LAMBDA {
+        JSValue item = listGet(list, static_cast<unsigned>(position));
+        position += static_cast<uint64_t>(indices.step);
+        return item;
+    }));
 }
 
 // An __index__ method may change the list: its length is looked at after all of them have been called.
@@ -1500,20 +1528,13 @@ static JSValue listAdd(JSGlobalObject* globalObject, JSValue self, JSValue other
         return raiseTypeError(globalObject, scope, "can only concatenate list (not \""_s, typeName(globalObject, other), "\") to list"_s);
     JSArray* a = asList(self);
     JSArray* b = asList(other);
-    uint64_t total = static_cast<uint64_t>(a->length()) + b->length();
-    if (total > MAX_STORAGE_VECTOR_LENGTH)
-        return raiseMemoryError(globalObject, scope, String());
-    JSArray* result = JSArray::tryCreate(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), total);
-    if (!result)
-        return raiseMemoryError(globalObject, scope, String());
-    WriteBarrier<Unknown>* data = result->butterfly()->contiguous().data();
     unsigned lengthA = a->length();
-    for (unsigned i = 0; i < lengthA; ++i)
-        data[i].setWithoutWriteBarrier(listGet(a, i));
-    for (unsigned i = 0; i < b->length(); ++i)
-        data[lengthA + i].setWithoutWriteBarrier(listGet(b, i));
-    vm.mutatorFence();
-    return result;
+    unsigned i = 0;
+    RELEASE_AND_RETURN(scope, newListOf(globalObject, static_cast<uint64_t>(lengthA) + b->length(), [&] ALWAYS_INLINE_LAMBDA {
+        JSValue item = i < lengthA ? listGet(a, i) : listGet(b, i - lengthA);
+        ++i;
+        return item;
+    }));
 }
 
 static JSValue listIAdd(JSGlobalObject* globalObject, JSValue self, JSValue other)
@@ -1534,16 +1555,13 @@ static JSValue listMul(JSGlobalObject* globalObject, JSValue self, JSValue count
     uint64_t count;
     if (failed(scope, repeatCount(globalObject, countValue, [&] { return list->length(); }, length, count)))
         return { };
-    JSArray* result = JSArray::tryCreate(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), length * count);
-    if (!result)
-        return raiseMemoryError(globalObject, scope, String());
-    WriteBarrier<Unknown>* data = result->butterfly()->contiguous().data();
-    for (uint64_t i = 0; i < count; ++i) {
-        for (unsigned j = 0; j < length; ++j)
-            data[i * length + j].setWithoutWriteBarrier(listGet(list, j));
-    }
-    vm.mutatorFence();
-    return result;
+    unsigned i = 0;
+    RELEASE_AND_RETURN(scope, newListOf(globalObject, length * count, [&] ALWAYS_INLINE_LAMBDA {
+        JSValue item = listGet(list, i);
+        if (++i == length)
+            i = 0;
+        return item;
+    }));
 }
 
 static JSValue listIMul(JSGlobalObject* globalObject, JSValue self, JSValue countValue)

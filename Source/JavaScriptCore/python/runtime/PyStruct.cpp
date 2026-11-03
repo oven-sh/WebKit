@@ -90,7 +90,7 @@ struct StructLayout {
     uint32_t codeCount;
     bool isBigEndian;
 
-    StructCode* codes() { return reinterpret_cast<StructCode*>(this + 1); }
+    StructCode* codes() { return storageBehind<StructCode>(this); }
 };
 
 // ---- The object ----

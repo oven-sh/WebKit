@@ -39,14 +39,13 @@ public:
     static PySetStorage* create(VM&, Structure*, size_t size);
 
     size_t mask() const { return m_mask; }
-    Entry* entries() { return reinterpret_cast<Entry*>(this + 1); }
+    Entry* entries() { return storageBehind<Entry>(this); }
 
 private:
     PySetStorage(VM&, Structure*, size_t size);
 
     size_t m_mask;
 };
-static_assert(valuesMayFollow<PySetStorage>);
 
 // set and frozenset. The table is probed, and so iterated, exactly as CPython's: programs should not depend on the order
 // of a set, and do.
