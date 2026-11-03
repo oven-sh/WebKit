@@ -30,6 +30,9 @@ enum class TypeFlag : uint32_t {
     MatchSelf = 1 << 9, // In `case int(x)`, x is the subject itself.
     OwnLayout = 1 << 10, // The instances are laid out differently from those of the base, so no class can derive from this and from another such.
     Mutable = 1 << 11, // A built-in type whose attributes can be set all the same.
+    // The instances are the runtime's own: each is a part of the one object that refers to it (it may refer back), and no program
+    // gets to see it, or the type. See isObjectOfPython() in PyGC.cpp and refersToNothingOfItsOwn().
+    Internal = 1 << 12,
 
     // Derives from:
     IntSubclass = 1 << 16,
@@ -166,6 +169,8 @@ public:
     JSValue subclasses() const { return m_subclasses.get(); } // The list they are kept in, which is for nobody else. Empty: there is none.
     void addSubclass(JSGlobalObject*, PyType*);
     void removeSubclass(JSGlobalObject*, PyType*);
+    // A type that has this one in its MRO without deriving from it, by an mro() of its metaclass: it is told of changes.
+    void addDependent(JSGlobalObject*, PyType*);
 
     // ---- For type.__new__ and the setters of __bases__ and the like ----
 
@@ -207,7 +212,7 @@ private:
     WriteBarrier<PyTuple> m_bases;
     WriteBarrier<PyTuple> m_mro;
     WriteBarrier<PyDict> m_dict;
-    WriteBarrier<Unknown> m_subclasses; // A list, or empty: of built-in types, and of weak references to classes.
+    WriteBarrier<Unknown> m_subclasses; // A list, or empty: of built-in types, of weak references to classes, and of tuples of one such for dependents.
     WriteBarrier<Structure> m_instanceStructure;
     OptionSet<TypeFlag> m_flags;
     uint32_t m_version;

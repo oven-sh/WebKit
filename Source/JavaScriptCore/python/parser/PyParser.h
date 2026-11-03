@@ -8,6 +8,7 @@
 #include "ParserArena.h"
 #include "PyAST.h"
 #include "PyLexer.h"
+#include <wtf/HashSet.h>
 #include <wtf/SetForScope.h>
 #include <wtf/TZoneMalloc.h>
 
@@ -182,7 +183,7 @@ private:
     Stmt* parseFunctionDef(bool isAsync, Position start, Seq<Expr*> decorators);
     Stmt* parseClassDef(Seq<Expr*> decorators);
     Stmt* parseDecorated();
-    Stmt* parseMatch(std::optional<Token>& newlineInsteadOfColon);
+    Stmt* parseMatch(std::optional<Token>& newlineInsteadOfColon, bool& isMatchStatement);
     bool parseElse(Seq<Stmt*>&);
     StringImpl* acceptTypeComment();
 
@@ -196,6 +197,7 @@ private:
     Expr* parseStarExpression(); // star_expression
     Expr* parseExpressions(); // expressions
     Expr* parseExpression(); // expression
+    Expr* parseExpressionOnce();
     Expr* parseNamedExpression(); // named_expression
     Expr* parseStarNamedExpression(); // star_named_expression
     Expr* parseSequenceElement(); // star_named_expression_sequence
@@ -297,8 +299,24 @@ private:
     bool m_errorIsGeneric { false };
     bool m_errorIsFinal { false }; // No error of the lexer further on replaces it.
     bool m_quiet { false }; // Nothing is diagnosed: what does not parse just fails.
+    // CPython's parser remembers what came of a rule at a token. What it has once tried there without diagnosing anything, it does
+    // not try again, so nothing is ever diagnosed there.
+    enum class MemoizedRule : uint8_t { Expression, Disjunction, Binary, Primary };
+    HashSet<uint64_t> m_parsedQuietly;
+    bool wasParsedQuietly(MemoizedRule rule)
+    {
+        if (!m_quiet && m_parsedQuietly.isEmpty()) [[likely]]
+            return false;
+        uint64_t key = m_index * 4 + static_cast<unsigned>(rule) + 1;
+        if (m_quiet) {
+            m_parsedQuietly.add(key);
+            return false;
+        }
+        return m_parsedQuietly.contains(key);
+    }
     // `a +` is `a`, with the '+' left to read, as it is to a parser that backtracks: some messages are about that '+'.
     bool m_acceptsPrefix { false };
+    bool m_failedExpressionHasPrefix { false }; // After parseExpression() has failed: it would have parsed with m_acceptsPrefix.
     Vector<uint32_t> m_warnedEscapes;
     Vector<AST::TypeIgnore*> m_typeIgnores;
     Position m_lastCompoundStatement { 0, 0 }; // See SyntaxErrorInfo::metadataLineno.

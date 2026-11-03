@@ -192,7 +192,7 @@ template void Runtime::visitPendingCalls(SlotVisitor&);
 // ---- Exceptions nobody can catch ----
 
 static constexpr ASCIILiteral unraisableFields[] = { "exc_type"_s, "exc_value"_s, "exc_traceback"_s, "err_msg"_s, "object"_s };
-static constexpr StructSeqDef unraisableDef { "sys.UnraisableHookArgs"_s, unraisableFields, 5 };
+static constexpr StructSeqDef unraisableDef { "UnraisableHookArgs"_s, unraisableFields, 5, true, true };
 
 void reportUnraisable(JSGlobalObject* globalObject, const String& message, JSValue object)
 {

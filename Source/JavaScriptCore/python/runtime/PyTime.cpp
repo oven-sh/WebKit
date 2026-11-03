@@ -416,7 +416,7 @@ static constexpr StructSeqDef timeStructDef { "time.struct_time"_s, timeStructFi
 
 // Never seen from Python: the runtime keeps a type for each definition, and the dict of this one is where struct_time is kept,
 // out of reach of what is done to the module.
-static constexpr TypeDef timeStateTypeDef { "time._state"_s, { TypeFlag::DisallowInstantiation }, { }, { }, { } };
+static constexpr TypeDef timeStateTypeDef { "time._state"_s, { TypeFlag::DisallowInstantiation, TypeFlag::Internal }, { }, { }, { } };
 
 static PyType* timeStructType(JSGlobalObject* globalObject)
 {

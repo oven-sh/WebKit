@@ -157,6 +157,7 @@ static JSString* resolveRelativeName(JSGlobalObject* globalObject, JSString* nam
 
 // ---- Finding and loading ----
 
+
 // There is one of each, however often it is taken out of sys.modules and imported again: its types are made once.
 JSValue nativeModuleInstance(JSGlobalObject* globalObject, JSString* name, const NativeModuleDef& def)
 {
@@ -178,6 +179,8 @@ JSValue nativeModuleInstance(JSGlobalObject* globalObject, JSString* name, const
         PyDict::from(instances)->remove(vm, name);
         return { };
     }
+    if (JSValue doc = docstringFor(globalObject, makeString("module "_s, def.name)); !isNone(doc))
+        module->dict()->set(vm, rt.names.dDoc(), doc);
     return module;
 }
 
@@ -288,6 +291,8 @@ static JSValue importModuleOrNone(JSGlobalObject*, JSString* name, bool missingI
 // ("frozen"), under other names; here what is above loads them from the standard library when the interpreter starts, and
 // from then on only serves to find them. Without a standard library it remains the import system.
 
+String standardLibraryDirectory(); // PySys.cpp
+
 // Empty without an exception: there is no such file.
 static JSValue loadFrozenModule(JSGlobalObject* globalObject, ASCIILiteral nameText, ASCIILiteral fileName, ASCIILiteral originalName)
 {
@@ -295,35 +300,25 @@ static JSValue loadFrozenModule(JSGlobalObject* globalObject, ASCIILiteral nameT
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSString* name = internString(vm, nameText);
-    JSValue searchPath = rt.sysDict()->get(rt.names.path());
-    if (!searchPath)
+    String library = standardLibraryDirectory();
+    if (library.isNull())
         return { };
-    JSArray* directories = listFromIterable(globalObject, searchPath);
+    // Tracebacks and warnings know the frames of the import system by the name that is shown.
+    JSValue code = codeOfSourceFile(globalObject, makeString(library, "/importlib/"_s, fileName), makeString("<frozen "_s, originalName, '>'));
     RETURN_IF_EXCEPTION(scope, { });
-    for (unsigned i = 0; i < listLength(directories); ++i) {
-        JSValue entry = listGet(directories, i);
-        if (!isStr(entry))
-            continue;
-        String directory = strValue(entry)->value(globalObject);
-        RETURN_IF_EXCEPTION(scope, { });
-        // Tracebacks and warnings know the frames of the import system by the name that is shown.
-        JSValue code = codeOfSourceFile(globalObject, FileSystem::pathByAppendingComponent(FileSystem::pathByAppendingComponent(directory, "importlib"_s), fileName), makeString("<frozen "_s, originalName, '>'));
-        RETURN_IF_EXCEPTION(scope, { });
-        if (!code)
-            continue;
-        PyModule* module = PyModule::create(globalObject, name);
-        module->dict()->set(vm, rt.names.dPackage(), rt.names.empty());
-        // For FrozenImporter._fix_up_module(), which makes the __spec__ of a frozen module that was loaded without it.
-        module->dict()->set(vm, internString(vm, "__origname__"_s), makeStr(vm, originalName));
-        rt.modules()->set(vm, name, module);
-        runCode(globalObject, code, module->dict(), module->dict());
-        if (scope.exception()) {
-            rt.modules()->remove(vm, name);
-            return { };
-        }
-        return module;
+    if (!code)
+        return { };
+    PyModule* module = PyModule::create(globalObject, name);
+    module->dict()->set(vm, rt.names.dPackage(), rt.names.empty());
+    // For FrozenImporter._fix_up_module(), which makes the __spec__ of a frozen module that was loaded without it.
+    module->dict()->set(vm, internString(vm, "__origname__"_s), makeStr(vm, originalName));
+    rt.modules()->set(vm, name, module);
+    runCode(globalObject, code, module->dict(), module->dict());
+    if (scope.exception()) {
+        rt.modules()->remove(vm, name);
+        return { };
     }
-    return { };
+    return module;
 }
 
 static JSValue loadImportlibBootstrap(JSGlobalObject* globalObject, JSString* name)

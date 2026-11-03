@@ -23,7 +23,7 @@ enum CsvQuoting : int { CsvQuoteMinimal, CsvQuoteAll, CsvQuoteNonNumeric, CsvQuo
 static constexpr char32_t csvNotSet = 0xffffffff;
 static constexpr char32_t csvEndOfLine = 0xfffffffe;
 
-static constexpr TypeDef csvErrorTypeDef { "_csv.Error"_s, { TypeFlag::Base }, { }, { }, { } };
+static constexpr TypeDef csvErrorTypeDef { "_csv.Error"_s, { TypeFlag::Base, TypeFlag::Mutable }, { }, { }, { } };
 
 static PyType* csvError(JSGlobalObject* globalObject)
 {
@@ -40,7 +40,7 @@ static NEVER_INLINE JSValue csvRaise(JSGlobalObject* globalObject, Parts... part
 }
 
 // What the module keeps: in the dict of a type that programs never get to see.
-static constexpr TypeDef csvStateTypeDef { "_csv._state"_s, { }, { }, { }, { } };
+static constexpr TypeDef csvStateTypeDef { "_csv._state"_s, { TypeFlag::DisallowInstantiation, TypeFlag::Internal }, { }, { }, { } };
 
 static PyDict* csvState(JSGlobalObject* globalObject) { return runtime(globalObject).typeFor(csvStateTypeDef)->dict(); }
 

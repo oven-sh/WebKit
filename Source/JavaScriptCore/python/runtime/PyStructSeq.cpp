@@ -216,6 +216,8 @@ PyType* makeStructSeqType(JSGlobalObject* globalObject, const StructSeqDef& def)
     OptionSet<TypeFlag> flags;
     if (!def.canBeInstantiated)
         flags.add(TypeFlag::DisallowInstantiation);
+    if (!def.isImmutable)
+        flags.add(TypeFlag::Mutable);
     type->initializeBuiltin(globalObject, { def.name, flags, structSeqMethods, std::span<const NativeGetSet> { getsets, named }, { } }, rt.typeType(), rt.tupleType());
     if (def.canBeInstantiated)
         type->addMethods(globalObject, structSeqConstructor);

@@ -1138,7 +1138,7 @@ static constexpr NativeDef tupleGetterMethods[] = {
 };
 
 static constexpr NativeGetSet tupleGetterGetSets[] = {
-    { "__doc__"_s, tupleGetterDocOf, tupleGetterSetDoc },
+    PY_WRITABLE_MEMBER("__doc__", tupleGetterDocOf, tupleGetterSetDoc),
 };
 
 static constexpr TypeDef tupleGetterTypeDef { "collections._tuplegetter"_s, { }, tupleGetterMethods, tupleGetterGetSets, { } };

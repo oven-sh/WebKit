@@ -171,7 +171,7 @@ enum ExpatField : unsigned {
     ExpatFieldCount
 }; // number: the ExpatParser
 
-static constexpr TypeDef expatErrorTypeDef { "xml.parsers.expat.ExpatError"_s, { TypeFlag::Base, TypeFlag::HasDict }, { }, { }, { } };
+static constexpr TypeDef expatErrorTypeDef { "xml.parsers.expat.ExpatError"_s, { TypeFlag::Base, TypeFlag::HasDict, TypeFlag::Mutable, TypeFlag::HasWeakref }, { }, { }, { } };
 
 static PyType* expatErrorType(JSGlobalObject* globalObject)
 {

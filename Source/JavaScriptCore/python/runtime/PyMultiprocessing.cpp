@@ -67,7 +67,7 @@ static constexpr NativeDef semLockGuardMethods[] = {
     PY_SLOT("__del__", semLockGuardFinalize, "($self, /)"),
 };
 
-static constexpr TypeDef semLockGuardTypeDef { "_multiprocessing._handle_guard"_s, { TypeFlag::DisallowInstantiation }, semLockGuardMethods, { }, { } };
+static constexpr TypeDef semLockGuardTypeDef { "_multiprocessing._handle_guard"_s, { TypeFlag::DisallowInstantiation, TypeFlag::Internal }, semLockGuardMethods, { }, { } };
 
 static JSValue semLockCreate(JSGlobalObject* globalObject, JSValue type, sem_t* handle, int kind, int maxValue, JSValue name)
 {

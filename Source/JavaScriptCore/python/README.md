@@ -56,7 +56,22 @@ the start each time.
 
 **tuple, dict.** A tuple remembers its hash once it has been asked for. A dict keeps its entries in an array in insertion order, with
 an index beside it; it knows where its first entry is, and can leave room before it, so that taking and adding entries is as cheap at
-the front as at the back. `collections.OrderedDict` (`PyOrderedDict.cpp`) is that and nothing more.
+the front as at the back. `collections.OrderedDict` (`PyOrderedDict.cpp`) is that and nothing more. Each entry keeps the hash of its
+key, whole, so that `set(d)`, `dict.fromkeys(s)`, `s - d` and the like never ask a key for its hash again. The hash of a str fits 32
+bits, so a dict with none but str keys keeps 32 bits for each; the first key of another kind widens them to 64.
+
+**Built-in types.** A `TypeDef` in the source file of a type says what is particular to it. What follows from how CPython makes the
+type is added by `PyType::initializeBuiltin` and `addMethods`, so that `vars(T)`, `help(T)` and what goes by them
+(`functools.total_ordering`, `functools.wraps`, `copyreg`) see what they see there. A type with a method for one rich comparison has
+methods for all six. The rest goes by the table of CPython's docstrings (`PyDocstrings.inc`, made by `tools/make_docstrings.py`),
+which says what each type has in its namespace: the docstrings; a wrapper of the type's own for what it does as `object` does
+(`deque.__getattribute__`); and `__module__`, which the types that CPython makes at run time (most of those outside `builtins`)
+have there, where their instances find it as well. `TypeFlag::Mutable` is for the few of those whose attributes can be set: the exceptions of
+modules (`struct.error`), struct sequences outside `sys`, `ast.AST`.
+
+**Which `__new__` makes an instance.** As in CPython: if what the MRO finds is the `__new__` of a built-in type, it stands for "what
+the class inherits", which is that of `__base__`, the base that decides the layout. So `class C(tzinfo, dict)` is made by
+`dict.__new__`, and `tzinfo.__new__(C)` is refused as not safe (`typeCall`, `PyNativeFunction::invokeNew`).
 
 ## Code
 
@@ -129,6 +144,9 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
   `VMTraps::NeedPythonCalls`; Python's loops (`op_py_check_traps`) and function entries poll it. JS code and C++ do not service it:
   the optimizing JITs take a poll to change nothing. A host may serve it between turns of its event loop (`makeCallsOwed`).
 - **Each finalizer runs once.** An object that is still unreachable at the next collection is freed.
+- **An object registers when it is made**, if its class has a `__del__` then. A class that gets one later, by assignment to the
+  attribute or to `__bases__`, has the heap searched for its instances (`registerInstancesForFinalization`), once; an object
+  that is given such a class by assignment to `__class__` registers then.
 - **An object is finalized before what it refers to**, as with reference counts: a `__del__` that writes to `self.file` finds the
   file open. The collection ranks the unreachable objects that have finalizers by how they reach one another through what else is
   unreachable (`PyFinalizationOrder.cpp`), and queues those that no other reaches. The rest wait for the collection that finds

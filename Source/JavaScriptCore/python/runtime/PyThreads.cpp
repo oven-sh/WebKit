@@ -488,7 +488,12 @@ bool Threads::waitUntil(JSGlobalObject* globalObject, const void* address, int64
         return true;
     if (!timeout)
         return false;
-    if (CallFrame* call = std::exchange(current().callThatMayBeginAgain, nullptr); call && call == vm.topCallFrame) {
+    // What is noted may be left from a call that did not have to wait, and the frame of the next call is where that one's was.
+    auto isOfFunctionThatMayWait = [](CallFrame* call) {
+        JSCell* callee = call->jsCallee();
+        return PyNativeFunction::is(callee) && (uncheckedDowncast<PyNativeFunction>(callee)->def().flags & MayWait);
+    };
+    if (CallFrame* call = std::exchange(current().callThatMayBeginAgain, nullptr); call && call == vm.topCallFrame && isOfFunctionThatMayWait(call)) {
         current().wantsCallToBeginAgain = true;
         throwException(globalObject, scope, Exception::create(vm, jsNull(), Exception::StackCaptureAction::DoNotCaptureStack));
         return false;

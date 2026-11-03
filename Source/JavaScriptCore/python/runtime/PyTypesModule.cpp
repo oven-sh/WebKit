@@ -9,14 +9,36 @@
 #include "PyInternals.h"
 #include "PyModule.h"
 #include "PyNative.h"
+#include "PyStr.h"
+#include <wtf/text/MakeString.h>
 
 namespace JSC {
 namespace Python {
 
 // The module _types: names for the built-in types that have none in builtins. (Lib/types.py can find most of them by itself.)
 
-// There is no C API yet, so nothing makes one.
-static constexpr TypeDef capsuleTypeDef { "PyCapsule"_s, { TypeFlag::DisallowInstantiation }, { }, { }, { } };
+// ---- PyCapsule ---- (field 0: the name, a str)
+//
+// There is no C API yet, so there is nothing in one: they are there where programs can see that CPython has one.
+
+static JSValue capsuleRepr(JSGlobalObject* globalObject, JSValue self)
+{
+    return makeStr(globalObject, makeString("<capsule object \""_s, stringOf(asString(PyRecord::from(self)->get(0))), "\" at "_s, addressForRepr(globalObject, self), '>'));
+}
+
+static constexpr NativeDef capsuleMethods[] = {
+    PY_SLOT("__repr__", capsuleRepr, "($self, /)"),
+};
+
+static constexpr TypeDef capsuleTypeDef { "PyCapsule"_s, { TypeFlag::DisallowInstantiation }, capsuleMethods, { }, { } };
+
+JSValue makeCapsule(JSGlobalObject* globalObject, ASCIILiteral name)
+{
+    VM& vm = getVM(globalObject);
+    PyRecord* capsule = PyRecord::create(globalObject, runtime(globalObject).typeFor(capsuleTypeDef), 1);
+    capsule->set(vm, 0, makeStr(vm, name));
+    return capsule;
+}
 
 void initializeTypesModule(JSGlobalObject* globalObject, PyModule* module)
 {

@@ -17,13 +17,13 @@
 #include "PyRuntime.h"
 #include "PyStr.h"
 #include "PyWeakRef.h"
+#include <wtf/Scope.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 namespace Python {
 
-JSValue docstringFor(JSGlobalObject*, const String& key); // PyDocstrings.cpp
 
 const ClassInfo PyType::s_info = { "PyType"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(PyType) };
 
@@ -137,11 +137,29 @@ void PyType::initializeBuiltin(JSGlobalObject* globalObject, const TypeDef& def,
     }
 
     m_module.set(vm, this, dot == notFound ? rt.names.builtins() : internString(vm, fullName.left(dot)));
-    m_dict->set(vm, rt.names.dDoc(), def.doc.isNull() ? docstringFor(globalObject, makeString("type "_s, def.name)) : JSValue(makeStr(vm, def.doc)));
+    JSValue doc = docstringFor(globalObject, makeString("type "_s, def.name));
+    m_dict->set(vm, rt.names.dDoc(), isNone(doc) && !def.doc.isNull() ? JSValue(makeStr(vm, def.doc)) : doc);
     addMethods(globalObject, def.methods);
     addGetSets(globalObject, def.getsets);
     if (def.flags.contains(TypeFlag::HasDict) && !(base && base->has(TypeFlag::HasDict)) && !m_dict->get(rt.names.dDict()))
         addGetSets(globalObject, dictGetSet());
+    // What CPython makes at run time, much as a class statement does, has what such a class has. Most types outside builtins are
+    // made so, and the table of docstrings says which: deque().__module__ is "collections".
+    if (def.flags.contains(TypeFlag::Mutable) || !isNone(docstringFor(globalObject, makeString(def.name, ".__module__"_s))))
+        m_dict->set(vm, rt.names.dModule(), m_module.get());
+    if (def.flags.contains(TypeFlag::Mutable) && def.flags.contains(TypeFlag::HasWeakref) && !(base && base->has(TypeFlag::HasWeakref)))
+        addGetSets(globalObject, weakrefGetSet());
+
+    // A type of CPython's that names a function of object's as its own (PyObject_GenericGetAttr, say) has a wrapper of its own
+    // for it. Which types do is in the table of docstrings.
+    if (base) {
+        PyDict* ofObject = rt.objectType()->dict();
+        for (auto& slot : repeatableSlotsOfObject()) {
+            JSString* name = internString(vm, slot.name);
+            if (lookup(name) == ofObject->get(name) && !isNone(docstringFor(globalObject, makeString(def.name, '.', slot.name))))
+                addMethods(globalObject, { &slot, 1 });
+        }
+    }
 
     // Nothing makes an instance of a built-in type that has not said how.
     bool hasNew = false;
@@ -155,7 +173,7 @@ void PyType::addMethods(JSGlobalObject* globalObject, std::span<const NativeDef>
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
-    for (auto& def : methods) {
+    auto add = [&](const NativeDef& def) {
         JSValue value;
         switch (def.kind) {
         case NativeKind::Method:
@@ -175,6 +193,19 @@ void PyType::addMethods(JSGlobalObject* globalObject, std::span<const NativeDef>
         }
         }
         m_dict->set(vm, internString(vm, def.name), value);
+    };
+    bool hasComparison = false;
+    for (auto& def : methods) {
+        add(def);
+        for (auto& comparison : defaultComparisons())
+            hasComparison |= def.name == comparison.name;
+    }
+    // In CPython one function of a type does all six comparisons, so a type with a method for one has methods for all.
+    if (hasComparison) {
+        for (auto& comparison : defaultComparisons()) {
+            if (!m_dict->get(internString(vm, comparison.name)))
+                add(comparison);
+        }
     }
     didChange(vm);
 }
@@ -255,6 +286,8 @@ JSValue PyType::lookupSpecialSlow(Special special)
 static PyType* subclassInEntry(JSValue entry)
 {
     JSCell* cell = entry.asCell();
+    if (auto* tuple = PyTuple::tryFrom(cell))
+        cell = tuple->at(0).asCell();
     if (!PyType::is(cell))
         cell = uncheckedDowncast<PyWeakRef>(cell)->referent();
     return cell ? uncheckedDowncast<PyType>(cell) : nullptr;
@@ -288,7 +321,13 @@ Structure* PyType::createInstanceStructure(VM& vm)
 
 void PyType::didChange(VM& vm)
 {
-    m_version = nextVersion();
+    // No version: it is being told already. (Two types may each have the other in an MRO of their own making.)
+    if (!m_version)
+        return;
+    m_version = 0;
+    auto setVersion = makeScopeExit([&] {
+        m_version = nextVersion();
+    });
     // What the caches held must not be kept alive by them: it may be what was just taken out of the class.
     m_specialIsCached.fill(false);
     for (auto& special : m_specials)
@@ -315,7 +354,10 @@ void PyType::appendSubclassesTo(MarkedArgumentBuffer& result) const
         return;
     JSArray* list = asList(subclasses);
     for (unsigned i = 0; i < listLength(list); ++i) {
-        if (PyType* subclass = subclassInEntry(listGet(list, i)))
+        JSValue entry = listGet(list, i);
+        if (PyTuple::is(entry))
+            continue;
+        if (PyType* subclass = subclassInEntry(entry); subclass && !subclass->has(TypeFlag::Internal))
             result.append(subclass);
     }
 }
@@ -340,13 +382,28 @@ void PyType::addSubclass(JSGlobalObject* globalObject, PyType* subclass)
     listAppend(globalObject, list, entry);
 }
 
+void PyType::addDependent(JSGlobalObject* globalObject, PyType* dependent)
+{
+    if (JSValue subclasses = m_subclasses.get()) {
+        JSArray* list = asList(subclasses);
+        for (unsigned i = 0; i < listLength(list); ++i) {
+            if (subclassInEntry(listGet(list, i)) == dependent)
+                return;
+        }
+    }
+    addSubclass(globalObject, dependent);
+    JSArray* list = asList(m_subclasses.get());
+    unsigned last = listLength(list) - 1;
+    listSet(globalObject, list, last, PyTuple::create(globalObject, { listGet(list, last) }));
+}
+
 void PyType::removeSubclass(JSGlobalObject* globalObject, PyType* subclass)
 {
     if (!m_subclasses)
         return;
     JSArray* list = asList(m_subclasses.get());
     for (unsigned i = 0; i < listLength(list); ++i) {
-        if (subclassInEntry(listGet(list, i)) == subclass) {
+        if (JSValue entry = listGet(list, i); !PyTuple::is(entry) && subclassInEntry(entry) == subclass) {
             listRemove(globalObject, list, i);
             return;
         }

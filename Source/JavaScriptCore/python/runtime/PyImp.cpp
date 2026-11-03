@@ -67,13 +67,20 @@ static JSValue impCreateBuiltin(JSGlobalObject* globalObject, JSValue spec)
     String text = stringOf(name);
     if (text.isEmpty())
         return raiseValueError(globalObject, scope, "name must not be empty"_s);
+    if (!text.containsOnlyASCII()) {
+        strEncode(globalObject, name, makeStr(vm, "ascii"_s), makeStr(vm, "strict"_s));
+        RELEASE_ASSERT(scope.exception());
+        return { };
+    }
+    if (text.contains('\0'))
+        return raiseValueError(globalObject, scope, "embedded null character"_s);
     if (text == "sys"_s)
         return rt.sysModule();
     if (text == "builtins"_s)
         return rt.builtinsModule();
     auto* def = findNativeModule(text);
     if (!def) {
-        PyException* exception = newException(globalObject, rt.ModuleNotFoundError(), makeString("No module named "_s, strRepr(text)));
+        PyException* exception = newException(globalObject, rt.ModuleNotFoundError(), makeString(text, " module not found"_s));
         RETURN_IF_EXCEPTION(scope, { });
         exception->setField(vm, ExceptionField::importErrorName, name);
         return raiseException(globalObject, scope, exception);
@@ -112,6 +119,9 @@ static JSValue impEmptyList(JSGlobalObject* globalObject) { return newList(globa
 // __spec__.origin is "frozen", and the file name in their code, and so in tracebacks, is "<frozen os>". All that is the same here.
 // What differs is where the code comes from: it is compiled from the file in the standard library, and kept in the .pyc file
 // of that, as for any import, with much less to do on the way. A module whose file is not there is not frozen.
+//
+// The modules a host has written in Python for its own use (VirtualFileSystem::hostLibrary) are frozen modules too, as those of a
+// program that embeds CPython are. So they can be imported whatever sys.path is, on which their directory is not.
 
 enum class FrozenGroup : uint8_t {
     Bootstrap, // Always.
@@ -173,30 +183,44 @@ static bool usesFrozenModules()
     return s_frozenModulesOverride ? s_frozenModulesOverride > 0 : configuration().useFrozenModules;
 }
 
-static String fileOfFrozenModule(const FrozenModule& module)
-{
-    String library = standardLibraryDirectory();
-    return library.isNull() ? String() : makeString(library, '/', module.file);
-}
+struct FoundFrozenModule {
+    String file; // Null: `source`.
+    String shownFileName;
+    ASCIILiteral originalName;
+    ASCIILiteral source;
+    bool isPackage { false };
+};
 
-static const FrozenModule* findFrozenModule(JSValue name)
+static std::optional<FoundFrozenModule> findFrozenModule(JSValue name)
 {
     if (!isStr(name))
-        return nullptr;
+        return std::nullopt;
     auto* impl = strValue(name)->tryGetValueImpl();
     if (!impl)
-        return nullptr;
+        return std::nullopt;
     StringView text(*impl);
     for (auto& module : frozenModules) {
         if (text != module.name)
             continue;
         if (module.group != FrozenGroup::Bootstrap && !usesFrozenModules())
-            return nullptr;
-        if (!module.file.isNull() && kindOfFile(fileOfFrozenModule(module)) != VirtualFileKind::File)
-            return nullptr;
-        return &module;
+            return std::nullopt;
+        FoundFrozenModule found { { }, makeString("<frozen "_s, module.frozenAs, '>'), module.originalName, module.source, module.isPackage };
+        if (!module.file.isNull()) {
+            String library = standardLibraryDirectory();
+            if (library.isNull())
+                return std::nullopt;
+            found.file = makeString(library, '/', module.file);
+            if (kindOfFile(found.file) != VirtualFileKind::File)
+                return std::nullopt;
+        }
+        return found;
     }
-    return nullptr;
+    if (auto* fileSystem = virtualFileSystem(); fileSystem && !fileSystem->hostLibrary.isNull() && !text.contains('.') && !text.contains('/')) {
+        String file = makeString(fileSystem->hostLibrary, '/', text, ".py"_s);
+        if (kindOfFile(file) == VirtualFileKind::File)
+            return FoundFrozenModule { file, makeString("<frozen "_s, text, '>'), { }, { }, false };
+    }
+    return std::nullopt;
 }
 
 static JSValue raiseFrozenError(JSGlobalObject* globalObject, ASCIILiteral before, JSValue name, ASCIILiteral after = ""_s)
@@ -215,14 +239,13 @@ static JSValue raiseNoSuchFrozenObject(JSGlobalObject* globalObject, JSValue nam
     return raiseFrozenError(globalObject, "No such frozen object named "_s, name);
 }
 
-static JSValue codeOfFrozenModule(JSGlobalObject* globalObject, const FrozenModule& module, JSValue name)
+static JSValue codeOfFrozenModule(JSGlobalObject* globalObject, const FoundFrozenModule& module, JSValue name)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    String shownFileName = makeString("<frozen "_s, module.frozenAs, '>');
     if (module.file.isNull())
-        RELEASE_AND_RETURN(scope, compileSource(globalObject, byteCast<uint8_t>(module.source.span8()), shownFileName, "exec"_s, 0, -1));
-    JSValue code = codeOfSourceFile(globalObject, fileOfFrozenModule(module), shownFileName);
+        RELEASE_AND_RETURN(scope, compileSource(globalObject, byteCast<uint8_t>(module.source.span8()), module.shownFileName, "exec"_s, 0, -1));
+    JSValue code = codeOfSourceFile(globalObject, module.file, module.shownFileName);
     RETURN_IF_EXCEPTION(scope, { });
     if (!code)
         RELEASE_AND_RETURN(scope, raiseNoSuchFrozenObject(globalObject, name));
@@ -242,11 +265,11 @@ static JSValue impFindFrozen(JSGlobalObject* globalObject, JSValue name, JSValue
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!checkFrozenName(globalObject, name, "find_frozen"_s))
+    if (!checkFrozenName(globalObject, name, "find_frozen"_s, true))
         return { };
     bool wantsData = withData && isTrue(globalObject, withData);
     RETURN_IF_EXCEPTION(scope, { });
-    auto* module = findFrozenModule(name);
+    auto module = findFrozenModule(name);
     if (!module)
         return jsUndefined();
     JSValue data = jsUndefined();
@@ -270,7 +293,7 @@ static JSValue impGetFrozenObject(JSGlobalObject* globalObject, JSValue name, JS
     if (!checkFrozenName(globalObject, name, "get_frozen_object"_s, true))
         return { };
     if (!data || isNone(data)) {
-        auto* module = findFrozenModule(name);
+        auto module = findFrozenModule(name);
         if (!module)
             RELEASE_AND_RETURN(scope, raiseNoSuchFrozenObject(globalObject, name));
         RELEASE_AND_RETURN(scope, codeOfFrozenModule(globalObject, *module, name));
@@ -304,7 +327,7 @@ static JSValue impIsFrozenPackage(JSGlobalObject* globalObject, JSValue name)
 {
     if (!checkFrozenName(globalObject, name, "is_frozen_package"_s))
         return { };
-    auto* module = findFrozenModule(name);
+    auto module = findFrozenModule(name);
     if (!module)
         return raiseNoSuchFrozenObject(globalObject, name);
     return jsBoolean(module->isPackage);
@@ -317,6 +340,17 @@ static JSValue impFrozenModuleNames(JSGlobalObject* globalObject)
     for (auto& module : frozenModules) {
         if (module.group == FrozenGroup::Bootstrap || usesFrozenModules())
             listAppend(globalObject, names, makeStr(vm, module.name));
+    }
+    if (auto* fileSystem = virtualFileSystem(); fileSystem && !fileSystem->hostLibrary.isNull()) {
+        VirtualPath fromRoot;
+        Vector<VirtualDirectoryEntry> entries;
+        if (toVirtualPath(fileSystem->hostLibrary.span(), fromRoot))
+            fileSystem->list(fromRoot.span(), entries);
+        for (auto& entry : entries) {
+            String file = String::fromUTF8(entry.name.span());
+            if (entry.kind == VirtualFileKind::File && file.endsWith(".py"_s))
+                listAppend(globalObject, names, makeStr(vm, file.left(file.length() - 3)));
+        }
     }
     return names;
 }
@@ -364,6 +398,32 @@ static JSValue impNoDynamic(JSGlobalObject* globalObject, const CallArgs&)
     return raiseImportError(globalObject, scope, "extension modules cannot be loaded"_s);
 }
 
+static JSValue impCreateDynamic(JSGlobalObject* globalObject, JSValue spec, JSValue)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue values[2];
+    unsigned index = 0;
+    for (ASCIILiteral attribute : { "name"_s, "origin"_s }) {
+        JSValue value = getAttr(globalObject, spec, internString(vm, attribute));
+        RETURN_IF_EXCEPTION(scope, { });
+        values[index++] = value;
+    }
+    for (unsigned i = 0; i < 2; ++i) {
+        if (!isStr(values[i]))
+            return raiseTypeError(globalObject, scope, i ? "module filename must be a string"_s : "module name must be a string"_s);
+        String text = strValue(values[i])->value(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (text.contains('\0'))
+            return raiseValueError(globalObject, scope, "embedded null character"_s);
+    }
+    PyException* exception = newException(globalObject, runtime(globalObject).ImportError(), "extension modules cannot be loaded"_s);
+    RETURN_IF_EXCEPTION(scope, { });
+    exception->setField(vm, ExceptionField::importErrorName, values[0]);
+    exception->setField(vm, ExceptionField::importErrorPath, values[1]);
+    return raiseException(globalObject, scope, exception);
+}
+
 static JSValue impSourceHash(JSGlobalObject* globalObject, JSValue key, JSValue source)
 {
     VM& vm = getVM(globalObject);
@@ -392,7 +452,7 @@ static constexpr NativeDef impFunctions[] = {
     PY_FUNCTION("get_frozen_object", impGetFrozenObject, "(name, data=None, /)"),
     PY_FUNCTION("find_frozen", impFindFrozen, "(name, /, *, withdata=False)"),
     PY_FUNCTION("_frozen_module_names", impFrozenModuleNames, "()"),
-    PY_FUNCTION("create_dynamic", impNoDynamic, "(*args)"),
+    PY_FUNCTION("create_dynamic", impCreateDynamic, "(spec, file=<unrepresentable>, /)"),
     PY_FUNCTION("exec_dynamic", impNoDynamic, "!(mod, /)"),
     PY_FUNCTION("extension_suffixes", impEmptyList, "()"),
     PY_FUNCTION("source_hash", impSourceHash, "(key, source)"),

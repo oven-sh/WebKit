@@ -22,6 +22,19 @@ using namespace AST;
             return stackOverflow(); \
     } while (false)
 
+// What follows stands for one of the rules of the grammar that are only there to explain errors. Where nothing is to be diagnosed
+// they are not tried, so nothing is read on their account either.
+#define DIAGNOSE() \
+    if (m_quiet) \
+        return invalidSyntax(); \
+    SetForScope diagnosing(m_diagnosing, true)
+#define DIAGNOSE_OR_RETURN(result) \
+    if (m_quiet) { \
+        invalidSyntax(); \
+        return result; \
+    } \
+    SetForScope diagnosing(m_diagnosing, true)
+
 bool Parser::atStartOfExpression(unsigned ahead)
 {
     switch (peek(ahead).kind) {
@@ -141,10 +154,47 @@ Expr* Parser::parseYield()
     return yield;
 }
 
-// expression: disjunction 'if' disjunction 'else' expression | disjunction | lambdef
 Expr* Parser::parseExpression()
 {
     CHECK_RECURSION();
+    if (wasParsedQuietly(MemoizedRule::Expression)) [[unlikely]] {
+        SetForScope quiet(m_quiet, true);
+        SetForScope acceptsPrefix(m_acceptsPrefix, true);
+        Expr* expression = parseExpressionOnce();
+        m_failedExpressionHasPrefix = false;
+        return expression;
+    }
+    if (m_acceptsPrefix || m_quiet) {
+        Expr* expression = parseExpressionOnce();
+        m_failedExpressionHasPrefix = false;
+        return expression;
+    }
+    auto saved = checkpoint();
+    Expr* expression = parseExpressionOnce();
+    if (expression || !m_errorIsGeneric || m_errorIsFatal) [[likely]]
+        return expression;
+
+    // To a parser that backtracks, an expression ends where it can no longer go on, and what it makes of the rest may explain
+    // the error: in `f(a b.)`, `a` and `b` are two expressions that lack a comma.
+    SyntaxErrorInfo unexplained = m_error;
+    rewind(saved);
+    Expr* prefix;
+    {
+        SetForScope diagnosing(m_diagnosing, true);
+        SetForScope acceptsPrefix(m_acceptsPrefix, true);
+        prefix = parseExpressionOnce();
+    }
+    if (failed() && !m_errorIsGeneric)
+        return nullptr;
+    m_failedExpressionHasPrefix = !!prefix;
+    m_error = unexplained;
+    m_errorIsGeneric = true;
+    return nullptr;
+}
+
+// expression: disjunction 'if' disjunction 'else' expression | disjunction | lambdef
+Expr* Parser::parseExpressionOnce()
+{
     if (at(TokenKind::KwLambda))
         return parseLambda();
 
@@ -170,11 +220,14 @@ Expr* Parser::parseExpression()
             return syntaxErrorAt(peek(), "cannot unpack only part of a conditional expression"_s);
         if (at(TokenKind::DoubleStar))
             return syntaxErrorAt(peek(), "cannot use dict unpacking on only part of a conditional expression"_s);
-        if (!atStartOfExpression())
-            return syntaxErrorOnNextToken("expected expression after 'else', but statement is given"_s);
+        auto afterElse = checkpoint();
         Expr* orelse = parseExpression();
-        if (!orelse)
-            return nullptr;
+        if (!orelse) {
+            if (!m_errorIsGeneric || m_errorIsFatal || m_failedExpressionHasPrefix)
+                return nullptr;
+            rewind(afterElse);
+            return syntaxErrorOnNextToken("expected expression after 'else', but statement is given"_s);
+        }
         auto* conditional = make<IfExp>(rangeFrom(start));
         conditional->test = test;
         conditional->body = body;
@@ -182,8 +235,8 @@ Expr* Parser::parseExpression()
         return conditional;
     }
 
-    // Nothing valid has two expressions side by side.
-    if (atStartOfExpression() && !m_quiet) [[unlikely]] {
+    // Nothing valid has two expressions side by side. (Nor these statements here, which are looked at as the start of `pass if a else b`.)
+    if ((atStartOfExpression() || at(TokenKind::KwPass) || at(TokenKind::KwBreak) || at(TokenKind::KwContinue)) && !m_quiet) [[unlikely]] {
         auto afterBody = checkpoint();
         diagnoseJuxtaposition(body, startIndex);
         return endsBeforeOperator(afterBody) ? body : nullptr;
@@ -209,12 +262,15 @@ static bool isLegacyStatement(Expr* expression)
 std::nullptr_t Parser::diagnoseJuxtaposition(Expr* first, size_t startIndex)
 {
     SetForScope diagnosing(m_diagnosing, true);
+    SetForScope acceptsPrefix(m_acceptsPrefix, true);
     auto afterFirst = checkpoint();
     const Token firstToken = m_tokens[startIndex];
     TokenKind secondKind = m_tokens[startIndex + 1].kind;
 
-    // "a" b "c"
-    if (firstToken.kind == TokenKind::String && m_index == startIndex + 1) {
+    // "a" b "c". What is between the strings is looked at afresh: in `"a" + b "c"` it is `+ b`.
+    if (firstToken.kind == TokenKind::String) {
+        m_index = startIndex + 1;
+        m_lastEnd = firstToken.endPosition;
         Expr* firstBetween = nullptr;
         Expr* lastBetween = nullptr;
         while (!at(TokenKind::String) && atStartOfExpression()) {
@@ -264,9 +320,12 @@ std::nullptr_t Parser::diagnoseJuxtaposition(Expr* first, size_t startIndex)
 // An expression, or null without an error (unless a fatal one).
 Expr* Parser::parseExpressionQuietly()
 {
+    CHECK_RECURSION();
     SetForScope quiet(m_quiet, true);
+    SetForScope acceptsPrefix(m_acceptsPrefix, true);
     auto saved = checkpoint();
-    Expr* expression = parseExpression();
+    // This is a rule of its own (expression_without_invalid), so what comes of it is not remembered for `expression`.
+    Expr* expression = parseExpressionOnce();
     if (!expression)
         rewind(saved);
     return expression;
@@ -296,14 +355,14 @@ Expr* Parser::parseNamedExpression()
         return nullptr;
 
     if (at(TokenKind::ColonEqual)) {
-        SetForScope diagnosing(m_diagnosing, true);
+        DIAGNOSE();
         advance();
         if (!parseExpression())
             return nullptr;
         return syntaxErrorAt(expression->range, makeString("cannot use assignment expressions with "_s, describe(expression)));
     }
 
-    if (at(TokenKind::Equal) && isAtBitwiseOrLevel(expression)) {
+    if (at(TokenKind::Equal) && isAtBitwiseOrLevel(expression) && !m_quiet) {
         // `if x = 3:`
         SetForScope diagnosing(m_diagnosing, true);
         bool isName = expression->is<NameExpr>() && !expression->parenthesized;
@@ -322,7 +381,7 @@ Expr* Parser::parseNamedExpression()
             }
             rewind(saved);
         }
-        return invalidSyntax();
+        return m_acceptsPrefix ? expression : invalidSyntax();
     }
     return expression;
 }
@@ -339,7 +398,7 @@ Expr* Parser::parseStarNamedExpression()
 Expr* Parser::parseSequenceElement()
 {
     if (at(TokenKind::DoubleStar)) {
-        SetForScope diagnosing(m_diagnosing, true);
+        DIAGNOSE();
         const Token doubleStar = advance();
         if (!parseBitwiseOr())
             return nullptr;
@@ -350,8 +409,8 @@ Expr* Parser::parseSequenceElement()
 
     const Token star = peek();
     Expr* starred = parseStarExpression();
-    if (!starred)
-        return nullptr;
+    if (!starred || m_quiet)
+        return starred;
     if (at(TokenKind::KwIf)) {
         // *a if b else c
         SetForScope diagnosing(m_diagnosing, true);
@@ -396,6 +455,11 @@ Expr* Parser::parseLambda()
 
 Expr* Parser::parseDisjunction()
 {
+    if (wasParsedQuietly(MemoizedRule::Disjunction)) [[unlikely]] {
+        SetForScope quiet(m_quiet, true);
+        SetForScope acceptsPrefix(m_acceptsPrefix, true);
+        return parseDisjunction();
+    }
     Position start = startPosition();
     Expr* first = parseConjunction();
     if (!first || !at(TokenKind::KwOr))
@@ -566,6 +630,11 @@ static BinaryOperatorInfo binaryOperator(TokenKind kind)
 // bitwise_or down to term: the binary operators that associate to the left.
 Expr* Parser::parseBinary(int minimumPrecedence)
 {
+    if (wasParsedQuietly(MemoizedRule::Binary)) [[unlikely]] {
+        SetForScope quiet(m_quiet, true);
+        SetForScope acceptsPrefix(m_acceptsPrefix, true);
+        return parseBinary(minimumPrecedence);
+    }
     Position start = startPosition();
     Expr* left = parseFactor();
     if (!left)
@@ -576,7 +645,7 @@ Expr* Parser::parseBinary(int minimumPrecedence)
             return left;
         auto beforeOperator = checkpoint();
         advance();
-        if (at(TokenKind::KwNot) && precedence >= 5) {
+        if (at(TokenKind::KwNot) && precedence >= 5 && !m_quiet) {
             SetForScope diagnosing(m_diagnosing, true);
             Position notStart = startPosition();
             if (!parseInversion())
@@ -616,7 +685,7 @@ Expr* Parser::parseFactor()
     Position start = startPosition();
     advance();
     if (at(TokenKind::KwNot)) {
-        SetForScope diagnosing(m_diagnosing, true);
+        DIAGNOSE();
         Position notStart = startPosition();
         advance();
         if (!parseFactor())
@@ -670,6 +739,11 @@ Expr* Parser::parseAwaitPrimary()
 
 Expr* Parser::parsePrimary()
 {
+    if (wasParsedQuietly(MemoizedRule::Primary)) [[unlikely]] {
+        SetForScope quiet(m_quiet, true);
+        SetForScope acceptsPrefix(m_acceptsPrefix, true);
+        return parsePrimary();
+    }
     Position start = startPosition();
     Expr* atom = parseAtom();
     if (!atom)
@@ -723,6 +797,35 @@ Expr* Parser::parseTrailers(Expr* expression, Position start)
             expression = subscript;
             break;
         }
+        case TokenKind::LBrace: {
+            // Nothing valid. What follows a primary is tried as a generator expression, and among the mistakes looked for in
+            // those is a comprehension in braces whose target lacks parentheses: so the elements are looked at.
+            if (m_quiet)
+                return expression;
+            SetForScope diagnosing(m_diagnosing, true);
+            SetForScope acceptsPrefix(m_acceptsPrefix, true);
+            auto beforeBrace = checkpoint();
+            advance();
+            ExprVector elements;
+            Token lastComma;
+            bool endsWithComma = false;
+            while (atStartOfExpression() || at(TokenKind::Star)) {
+                Expr* element = parseStarNamedExpression();
+                if (!element)
+                    break;
+                elements.append(element);
+                endsWithComma = at(TokenKind::Comma);
+                if (!endsWithComma)
+                    break;
+                lastComma = advance();
+            }
+            if (!failed() && (elements.size() > 1 || endsWithComma) && atComprehension())
+                diagnoseComprehensionTarget(elements, lastComma, endsWithComma);
+            if (failed() && (m_errorIsFatal || !m_errorIsGeneric))
+                return nullptr;
+            rewind(beforeBrace);
+            return expression;
+        }
         default:
             return expression;
         }
@@ -740,7 +843,7 @@ Expr* Parser::parseSlices()
         advance();
         Expr* value = parseExpression();
         if (!value) {
-            if (m_errorIsGeneric && !m_errorIsFatal) {
+            if (m_errorIsGeneric && !m_errorIsFatal && !m_failedExpressionHasPrefix) {
                 m_error = { };
                 syntaxError("Invalid star expression"_s);
             }
@@ -834,8 +937,25 @@ bool Parser::parseArguments(Seq<Expr*>& resultArguments, Seq<Keyword*>& resultKe
         return starred;
     };
 
+    // `for`, or `async for`. Whether a `for` follows the `async` is of interest only after what can be the element of a generator expression.
+    auto atGenerator = [&](bool canBeElement) {
+        if (!at(TokenKind::KwAsync))
+            return at(TokenKind::KwFor);
+        if (!canBeElement && m_quiet)
+            return false;
+        SetForScope reading(m_diagnosing, m_diagnosing || !canBeElement);
+        return peek(1).kind == TokenKind::KwFor;
+    };
+
     // An argument followed by `for`.
     auto parseGenerator = [&](Expr* element) -> bool {
+        // Only the first argument can be the element of a generator expression. After another one, this is about what was meant.
+        bool isFirst = arguments.isEmpty() && keywords.isEmpty();
+        if (!isFirst && m_quiet) {
+            invalidSyntax();
+            return false;
+        }
+        SetForScope diagnosing(m_diagnosing, m_diagnosing || !isFirst);
         Seq<Comprehension*> generators;
         if (!parseComprehensionClauses(generators))
             return false;
@@ -873,21 +993,26 @@ bool Parser::parseArguments(Seq<Expr*>& resultArguments, Seq<Keyword*>& resultKe
                 return fail();
             }
             Expr* value = parseExpression();
-            if (!value)
+            if (!value) {
+                if (m_errorIsGeneric && !m_errorIsFatal && !m_failedExpressionHasPrefix) {
+                    m_error = { };
+                    syntaxError("Invalid star expression"_s);
+                }
                 return fail();
+            }
             if (at(TokenKind::Equal)) {
-                SetForScope diagnosing(m_diagnosing, true);
+                DIAGNOSE_OR_RETURN(fail());
                 advance();
                 if (parseExpression())
                     syntaxErrorAt(rangeFrom(start), "cannot assign to iterable argument unpacking"_s);
                 return fail();
             }
             Expr* starred = makeStarred(start, value);
-            if (atComprehension())
+            if (atGenerator(arguments.isEmpty() && keywords.isEmpty()))
                 return parseGenerator(starred) || fail();
             if (sawDoubleStar) {
                 // As many of them as follow are part of the mistake.
-                SetForScope diagnosing(m_diagnosing, true);
+                DIAGNOSE_OR_RETURN(fail());
                 while (at(TokenKind::Comma) && peek(1).kind == TokenKind::Star) {
                     advance();
                     advance();
@@ -907,14 +1032,14 @@ bool Parser::parseArguments(Seq<Expr*>& resultArguments, Seq<Keyword*>& resultKe
             if (!value)
                 return fail();
             if (at(TokenKind::Equal)) {
-                SetForScope diagnosing(m_diagnosing, true);
+                DIAGNOSE_OR_RETURN(fail());
                 advance();
                 if (parseExpression())
                     syntaxErrorAt(rangeFrom(start), "cannot assign to keyword argument unpacking"_s);
                 return fail();
             }
             if (atComprehension() && arguments.isEmpty() && keywords.isEmpty()) {
-                SetForScope diagnosing(m_diagnosing, true);
+                DIAGNOSE_OR_RETURN(fail());
                 Range range = rangeFrom(start);
                 Seq<Comprehension*> generators;
                 if (parseComprehensionClauses(generators))
@@ -949,8 +1074,8 @@ bool Parser::parseArguments(Seq<Expr*>& resultArguments, Seq<Keyword*>& resultKe
                 Expr* value = parseExpression();
                 if (!value)
                     return fail();
-                if (atComprehension()) {
-                    SetForScope diagnosing(m_diagnosing, true);
+                if (atGenerator(false)) {
+                    DIAGNOSE_OR_RETURN(fail());
                     Seq<Comprehension*> generators;
                     if (parseComprehensionClauses(generators))
                         syntaxErrorAt(nameAndEqual, "invalid syntax. Maybe you meant '==' or ':=' instead of '='?"_s);
@@ -966,15 +1091,17 @@ bool Parser::parseArguments(Seq<Expr*>& resultArguments, Seq<Keyword*>& resultKe
             }
 
             Expr* value;
+            if (sawKeyword && m_quiet) {
+                invalidSyntax();
+                return fail();
+            }
+            SetForScope diagnosing(m_diagnosing, m_diagnosing || sawKeyword);
             if (at(TokenKind::Name) && peek(1).kind == TokenKind::ColonEqual)
                 value = parseNamedExpression();
             else {
                 value = parseExpression();
                 if (value && at(TokenKind::ColonEqual)) {
-                    SetForScope diagnosing(m_diagnosing, true);
-                    advance();
-                    if (parseExpression())
-                        syntaxErrorAt(value->range, makeString("cannot use assignment expressions with "_s, describe(value)));
+                    invalidSyntax();
                     return fail();
                 }
             }
@@ -984,7 +1111,7 @@ bool Parser::parseArguments(Seq<Expr*>& resultArguments, Seq<Keyword*>& resultKe
                 syntaxErrorAt(rangeBetween(value->range, rangeOf(peek())), "expression cannot contain assignment, perhaps you meant \"==\"?"_s);
                 return fail();
             }
-            if (atComprehension())
+            if (atGenerator(arguments.isEmpty() && keywords.isEmpty()))
                 return parseGenerator(value) || fail();
             if (sawKeyword) {
                 if (!orderError.isNull())
@@ -1025,7 +1152,8 @@ Expr* Parser::parseForTargets(bool inComprehension)
         return nullptr;
 
     // Read as expressions, they tell what is wrong.
-    SetForScope diagnosing(m_diagnosing, true);
+    DIAGNOSE();
+    SetForScope acceptsPrefix(m_acceptsPrefix, true);
     rewind(saved);
     if (inComprehension) {
         // At least one variable, or it is not known to be a loop at all.
@@ -1162,12 +1290,14 @@ Expr* Parser::parseAtom()
     case TokenKind::KwPass:
     case TokenKind::KwBreak:
     case TokenKind::KwContinue: {
+        if (m_quiet)
+            return invalidSyntax();
         bool isBeforeIf;
         {
-            SetForScope diagnosing(m_diagnosing, true);
+            SetForScope reading(m_diagnosing, true);
             isBeforeIf = peek(1).kind == TokenKind::KwIf;
         }
-        if (isBeforeIf && !m_quiet)
+        if (isBeforeIf)
             return diagnoseStatementBeforeIf();
         return invalidSyntax();
     }
@@ -1197,7 +1327,7 @@ Expr* Parser::parseParenthesized()
     }
 
     if (at(TokenKind::DoubleStar)) {
-        SetForScope diagnosing(m_diagnosing, true);
+        DIAGNOSE();
         const Token doubleStar = advance();
         Expr* value = parseExpression();
         if (!value)
@@ -1274,7 +1404,7 @@ Expr* Parser::parseParenthesized()
 // After the elements of a list or a set: `[a, b for a, b in c]`
 std::nullptr_t Parser::diagnoseComprehensionTarget(const ExprVector& elements, const Token& lastComma, bool endsWithComma)
 {
-    SetForScope diagnosing(m_diagnosing, true);
+    DIAGNOSE();
     Seq<Comprehension*> generators;
     if (!parseComprehensionClauses(generators))
         return nullptr;
@@ -1290,7 +1420,7 @@ Expr* Parser::parseListDisplay()
     ExprVector elements;
     if (!at(TokenKind::RSqb)) {
         if (at(TokenKind::DoubleStar)) {
-            SetForScope diagnosing(m_diagnosing, true);
+            DIAGNOSE();
             auto saved = checkpoint();
             const Token doubleStar = advance();
             Expr* value = parseExpression();
@@ -1364,7 +1494,7 @@ Expr* Parser::parseBraceDisplay()
         if (at(TokenKind::RBrace) || at(TokenKind::Comma))
             return syntaxErrorAt(colon, "expression expected after dictionary key and ':'"_s);
         if (at(TokenKind::Star) || at(TokenKind::DoubleStar)) {
-            SetForScope diagnosing(m_diagnosing, true);
+            DIAGNOSE();
             bool isDouble = at(TokenKind::DoubleStar);
             Position starStart = startPosition();
             advance();
@@ -1385,14 +1515,14 @@ Expr* Parser::parseBraceDisplay()
         if (!value)
             return nullptr;
         if (at(TokenKind::KwIf)) {
-            SetForScope diagnosing(m_diagnosing, true);
+            DIAGNOSE();
             advance();
             if (parseDisjunction() && accept(TokenKind::KwElse) && parseExpression())
                 return syntaxErrorAt(rangeFrom(doubleStar.startPosition), "invalid double starred expression. Did you forget to wrap the conditional expression in parentheses?"_s);
             return failed() ? nullptr : invalidSyntax();
         }
         if (at(TokenKind::Colon)) {
-            SetForScope diagnosing(m_diagnosing, true);
+            DIAGNOSE();
             Range range = rangeFrom(doubleStar.startPosition);
             advance();
             if (!parseExpression())
@@ -1416,7 +1546,7 @@ Expr* Parser::parseBraceDisplay()
                 continue;
             }
             if (at(TokenKind::Star)) {
-                SetForScope diagnosing(m_diagnosing, true);
+                DIAGNOSE();
                 Position starStart = startPosition();
                 advance();
                 if (!parseBitwiseOr())
@@ -1449,26 +1579,45 @@ Expr* Parser::parseBraceDisplay()
         auto saved = checkpoint();
         const Token doubleStar = advance();
         Expr* value = parseExpression();
-        if (value && atComprehension()) {
+        bool isComprehension = value && atComprehension();
+        if (isComprehension) {
             Seq<Comprehension*> generators;
-            if (!parseComprehensionClauses(generators) || !expect(TokenKind::RBrace))
-                return nullptr;
-            auto* comprehension = make<DictComp>(rangeFrom(start));
-            comprehension->key = value;
-            comprehension->value = nullptr;
-            comprehension->generators = generators;
-            return comprehension;
+            if (parseComprehensionClauses(generators) && expect(TokenKind::RBrace)) {
+                auto* comprehension = make<DictComp>(rangeFrom(start));
+                comprehension->key = value;
+                comprehension->value = nullptr;
+                comprehension->generators = generators;
+                return comprehension;
+            }
         }
         if (m_errorIsFatal)
             return nullptr;
+        if (!isComprehension && (!failed() || m_errorIsGeneric)) {
+            rewind(saved);
+            advance();
+            value = parseUnpacked(doubleStar);
+            if (value) {
+                keys.append(nullptr);
+                values.append(value);
+                if (Expr* dict = parseRestOfDict())
+                    return dict;
+            }
+        }
+        if (!m_errorIsGeneric || m_errorIsFatal || m_quiet)
+            return nullptr;
+        // No dict. Next it is tried as a set, where this cannot be.
+        SyntaxErrorInfo unexplained = m_error;
+        SetForScope reading(m_diagnosing, true);
+        SetForScope acceptsPrefix(m_acceptsPrefix, true);
         rewind(saved);
         advance();
-        value = parseUnpacked(doubleStar);
-        if (!value)
-            return nullptr;
-        keys.append(nullptr);
-        values.append(value);
-        return parseRestOfDict();
+        if (parseBitwiseOr())
+            return syntaxErrorAt(doubleStar, "cannot use dict unpacking here"_s);
+        if (!m_errorIsFatal) {
+            m_error = unexplained;
+            m_errorIsGeneric = true;
+        }
+        return nullptr;
     }
 
     Expr* first = parseSequenceElement();
@@ -1477,7 +1626,7 @@ Expr* Parser::parseBraceDisplay()
 
     if (at(TokenKind::Colon)) {
         if (first->is<Starred>()) {
-            SetForScope diagnosing(m_diagnosing, true);
+            DIAGNOSE();
             advance();
             if (!parseExpression())
                 return nullptr;

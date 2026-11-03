@@ -554,6 +554,11 @@ void initializeExceptionGroupTypes(JSGlobalObject* globalObject)
     group->setBases(vm, PyTuple::create(globalObject, { JSValue(base), JSValue(rt.Exception()) }));
     group->setMRO(vm, PyTuple::create(globalObject, { JSValue(group), JSValue(base), JSValue(rt.Exception()), JSValue(rt.BaseException()), JSValue(rt.objectType()) }));
     group->setSolidBase(vm, base);
+    // CPython makes it by calling type().
+    group->add(TypeFlag::Mutable);
+    group->add(TypeFlag::HasWeakref);
+    group->dict()->set(vm, rt.names.dModule(), rt.names.builtins());
+    group->addGetSets(globalObject, weakrefGetSet());
     rt.Exception()->addSubclass(globalObject, group);
     group->didChange(vm);
 }

@@ -44,8 +44,8 @@ static int socketFamilyOf(PyRecord* socket) { return socket->get(SocketFamily).a
 
 // ---- Errors ----
 
-static constexpr TypeDef socketHostErrorTypeDef { "socket.herror"_s, { TypeFlag::Base }, { }, { }, { } };
-static constexpr TypeDef socketAddressInfoErrorTypeDef { "socket.gaierror"_s, { TypeFlag::Base }, { }, { }, { } };
+static constexpr TypeDef socketHostErrorTypeDef { "socket.herror"_s, { TypeFlag::Base, TypeFlag::Mutable, TypeFlag::HasWeakref }, { }, { }, { } };
+static constexpr TypeDef socketAddressInfoErrorTypeDef { "socket.gaierror"_s, { TypeFlag::Base, TypeFlag::Mutable, TypeFlag::HasWeakref }, { }, { }, { } };
 
 static PyType* socketHostErrorType(JSGlobalObject* globalObject)
 {

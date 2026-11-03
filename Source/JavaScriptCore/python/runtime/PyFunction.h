@@ -147,6 +147,7 @@ public:
 
     // For a generator function: the function that runs the body of its generators.
     PyFunction* generatorBody(JSGlobalObject*, CodeBlock* ownCodeBlock);
+    PyFunction* generatorBodyIfMade() const { return m_generatorBody.get(); }
     // For such a body, the generator function; for any other function, itself.
     PyFunction* codeOwner() { return m_generatorOwner ? m_generatorOwner.get() : this; }
 

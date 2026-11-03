@@ -46,7 +46,14 @@ JSValue objectReduce(JSGlobalObject*, JSValue self);
 JSValue objectReduceEx(JSGlobalObject*, JSValue self, JSValue protocol);
 JSValue objectGetState(JSGlobalObject*, JSValue self);
 // The __dict__ attribute of the instances of a built-in type that have one.
+// CPython's text for "module NAME", "type TYPE", "TYPE.NAME" or "MODULE.NAME"; None if it has none. (tools/make_docstrings.py)
+JSValue docstringFor(JSGlobalObject*, const String& key);
 std::span<const NativeGetSet> dictGetSet();
+std::span<const NativeGetSet> weakrefGetSet();
+// __eq__ and so on, as they are for a type that has nothing to say: NotImplemented, and for __ne__ the opposite of __eq__.
+std::span<const NativeDef> defaultComparisons();
+// What object does about attributes, equality and hashing.
+std::span<const NativeDef> repeatableSlotsOfObject();
 // "<method 'append' of 'list' objects>"; what belongs to object is "<method '__reduce__'>".
 String descriptorRepr(JSGlobalObject*, ASCIILiteral kind, StringView name, PyType* owner);
 
@@ -55,7 +62,8 @@ JSValue typeGetAttr(JSGlobalObject*, PyType*, JSString* name, bool suppress = fa
 // type.__call__: makes an instance.
 JSValue typeCall(JSGlobalObject*, PyType*, const CallArgs&);
 // An instance of the type with nothing set: what object.__new__ makes, given how the type's instances are laid out.
-JSValue allocateInstance(JSGlobalObject*, PyType*);
+// `layout`: the built-in type that decides the layout, if not object. (One whose instances differ from object's in CPython only.)
+JSValue allocateInstance(JSGlobalObject*, PyType*, PyType* layout = nullptr);
 // For PyGenerator::resume().
 JSValue callBodyOfGenerator(JSGlobalObject*, PyFunction* body, std::span<const JSValue> arguments);
 // What gc.collect() does: collects, runs the finalizers of what was found, and so on until there is nothing left to do. Not from
@@ -464,6 +472,12 @@ void importStar(JSGlobalObject*, JSValue module, JSValue locals);
 bool specIsInitializing(JSGlobalObject*, JSValue spec);
 // For a module written in C++ that has no __spec__ and __loader__ yet: has importlib make them. False: an exception.
 bool ensureNativeModuleSpec(JSGlobalObject*, PyModule*);
+// See TypeFlag::Internal.
+ALWAYS_INLINE bool isInternalObject(JSCell* cell) { return cell->type() == PyObjectType && uncheckedDowncast<PyObject>(cell)->type()->has(TypeFlag::Internal); }
+// For whoever works out what reference counts would have done with objects that are dead (PyFinalizationOrder.cpp, Census in PyGC.cpp).
+// Some objects are made of several cells here, which refer to one another. Those are no cycles: in CPython there is one object,
+// or the part does not hold on to the whole. This is the whole that the cell, a part, refers back to. Null: there is none.
+JSCell* wholeThatPartRefersTo(JSCell*);
 // For the collector, when all that is reachable is marked, about the candidates, which are not marked. (PyFinalizationOrder.cpp)
 struct FinalizationOrder {
     // Which of the candidates to finalize now, and which when those are gone. Each in the order in which to take them.

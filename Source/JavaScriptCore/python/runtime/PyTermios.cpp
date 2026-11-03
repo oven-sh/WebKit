@@ -35,7 +35,7 @@ namespace Python {
 
 // The module termios. (Modules/termios.c in CPython is the reference.)
 
-static constexpr TypeDef termiosErrorTypeDef { "termios.error"_s, { TypeFlag::Base }, { }, { }, { } };
+static constexpr TypeDef termiosErrorTypeDef { "termios.error"_s, { TypeFlag::Base, TypeFlag::Mutable, TypeFlag::HasWeakref }, { }, { }, { } };
 
 static PyType* termiosErrorType(JSGlobalObject* globalObject)
 {

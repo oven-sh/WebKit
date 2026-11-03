@@ -615,7 +615,7 @@ bool posixToTimespec(JSGlobalObject* globalObject, JSValue value, time_t& second
 
 // ---- Types ----
 
-static constexpr TypeDef posixStateTypeDef { "posix._state"_s, { }, { }, { }, { } };
+static constexpr TypeDef posixStateTypeDef { "posix._state"_s, { TypeFlag::DisallowInstantiation, TypeFlag::Internal }, { }, { }, { } };
 
 PyDict* posixState(JSGlobalObject* globalObject)
 {

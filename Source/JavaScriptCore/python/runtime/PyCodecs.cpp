@@ -18,6 +18,7 @@
 #include "PyModule.h"
 #include "PyNumbers.h"
 #include "PyStr.h"
+#include "PyUnicode.h"
 #include <bit>
 #include <unicode/uchar.h>
 #include <wtf/text/ASCIIFastPath.h>
@@ -955,6 +956,8 @@ static JSValue codecNameReplaceErrors(JSGlobalObject* globalObject, JSValue valu
         int32_t length = u_charName(static_cast<UChar32>(character), U_UNICODE_CHAR_NAME, name, sizeof(name), &status);
         if (U_SUCCESS(status) && length > 0 && static_cast<size_t>(length) < sizeof(name))
             replacement.append("\\N{"_s, std::span<const Latin1Character> { byteCast<Latin1Character>(&name[0]), static_cast<size_t>(length) }, '}');
+        else if (String newName = nameOfNewCodePoint(character); !newName.isNull())
+            replacement.append("\\N{"_s, newName, '}');
         else
             codecWriteBackslashEscape(character, [&](char c) { replacement.append(c); });
     }

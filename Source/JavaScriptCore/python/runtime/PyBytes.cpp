@@ -1270,6 +1270,8 @@ static JSValue bytesStartsOrEndsWith(JSGlobalObject* globalObject, JSValue self,
     int64_t to;
     if (!unpackSliceBounds(globalObject, start, end, from, to))
         return { };
+    // The bounds are good for as long as the size stays what it is, whatever a __buffer__() tries.
+    BytesExportScope exportScope(self);
     adjustSliceBounds(bytesSpanOf(self).size(), from, to);
     std::span<const uint8_t> affix;
     if (auto* tuple = PyTuple::tryFrom(affixValue)) {
@@ -1332,15 +1334,20 @@ static JSValue bytesListOfParts(JSGlobalObject* globalObject, JSValue self, cons
 }
 
 // The arguments of split() and rsplit(). An empty span with `onWhitespace` unset is never returned.
-static bool bytesSplitArguments(JSGlobalObject* globalObject, JSValue separatorValue, JSValue maxSplitValue, bool& onWhitespace, std::span<const uint8_t>& separator, int64_t& maxSplit)
+static bool bytesMaxSplitArgument(JSGlobalObject* globalObject, JSValue maxSplitValue, int64_t& maxSplit)
 {
-    VM& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
     maxSplit = -1;
     if (maxSplitValue && !bytesSsizeArgument(globalObject, maxSplitValue, maxSplit))
         return false;
     if (maxSplit < 0)
         maxSplit = bytesMaxSsize;
+    return true;
+}
+
+static bool bytesSeparatorArgument(JSGlobalObject* globalObject, JSValue separatorValue, bool& onWhitespace, std::span<const uint8_t>& separator)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     onWhitespace = !separatorValue || isNone(separatorValue);
     if (onWhitespace)
         return true;
@@ -1358,8 +1365,10 @@ static JSValue bytesSplit(JSGlobalObject* globalObject, JSValue self, JSValue se
     bool onWhitespace;
     std::span<const uint8_t> separator;
     int64_t maxSplit;
+    if (!bytesMaxSplitArgument(globalObject, maxSplitValue, maxSplit))
+        return { };
     BytesExportScope exportScope(self);
-    if (!bytesSplitArguments(globalObject, separatorValue, maxSplitValue, onWhitespace, separator, maxSplit))
+    if (!bytesSeparatorArgument(globalObject, separatorValue, onWhitespace, separator))
         return { };
     auto span = bytesSpanOf(self);
     size_t length = span.size();
@@ -1401,8 +1410,10 @@ static JSValue bytesRSplit(JSGlobalObject* globalObject, JSValue self, JSValue s
     bool onWhitespace;
     std::span<const uint8_t> separator;
     int64_t maxSplit;
+    if (!bytesMaxSplitArgument(globalObject, maxSplitValue, maxSplit))
+        return { };
     BytesExportScope exportScope(self);
-    if (!bytesSplitArguments(globalObject, separatorValue, maxSplitValue, onWhitespace, separator, maxSplit))
+    if (!bytesSeparatorArgument(globalObject, separatorValue, onWhitespace, separator))
         return { };
     auto span = bytesSpanOf(self);
     BytesRanges ranges;

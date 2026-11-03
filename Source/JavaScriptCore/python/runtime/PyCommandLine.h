@@ -70,6 +70,9 @@ struct Configuration {
     String baseExecutable; // sys._base_executable
     Vector<String> originalArguments; // sys.orig_argv
     String firstSearchPath; // What was put first on sys.path before the program ran. Null: nothing.
+    // Descriptors 0 to 2 that were closed when the process started: sys.stdin, stdout, stderr are None. For a host that has since
+    // opened something else under the number, so that no file of its own ends up there.
+    bool standardStreamWasClosed[3] { false, false, false };
     String interactiveModule { "_pyrepl.main"_s }; // Its interactive_console() is the interactive interpreter on a terminal.
 
     // ---- What to run: at most one of these is not null. None: standard input. ----

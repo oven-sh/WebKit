@@ -4012,9 +4012,9 @@ static constexpr NativeDef pickleFunctions[] = {
     PY_FUNCTION("loads", pickleLoads, "(data, /, *, fix_imports=True, encoding='ASCII', errors='strict', buffers=())"),
 };
 
-static constexpr TypeDef pickleErrorTypeDef { "_pickle.PickleError"_s, { TypeFlag::Base }, { }, { }, { } };
-static constexpr TypeDef picklingErrorTypeDef { "_pickle.PicklingError"_s, { TypeFlag::Base }, { }, { }, { } };
-static constexpr TypeDef unpicklingErrorTypeDef { "_pickle.UnpicklingError"_s, { TypeFlag::Base }, { }, { }, { } };
+static constexpr TypeDef pickleErrorTypeDef { "_pickle.PickleError"_s, { TypeFlag::Base, TypeFlag::Mutable, TypeFlag::HasWeakref }, { }, { }, { } };
+static constexpr TypeDef picklingErrorTypeDef { "_pickle.PicklingError"_s, { TypeFlag::Base, TypeFlag::Mutable, TypeFlag::HasWeakref }, { }, { }, { } };
+static constexpr TypeDef unpicklingErrorTypeDef { "_pickle.UnpicklingError"_s, { TypeFlag::Base, TypeFlag::Mutable, TypeFlag::HasWeakref }, { }, { }, { } };
 
 void initializePickleModule(JSGlobalObject* globalObject, PyModule* module)
 {

@@ -1130,7 +1130,7 @@ JSValue makeStandardStream(JSGlobalObject* globalObject, int fd, bool writable, 
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (fcntl(fd, F_GETFD) < 0)
+    if (fcntl(fd, F_GETFD) < 0 || (fd >= 0 && fd < 3 && configuration().standardStreamWasClosed[fd]))
         return jsUndefined();
 
     // -u: what is written goes straight to the descriptor.

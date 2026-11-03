@@ -19,6 +19,8 @@ struct StructSeqDef {
     // How many of the fields are items of the tuple. The rest are attributes only.
     unsigned sequenceFieldCount;
     bool canBeInstantiated { true };
+    // Those of sys are like int: nothing can be set on the type.
+    bool isImmutable { false };
 };
 
 static constexpr unsigned maxStructSeqFields = 32;

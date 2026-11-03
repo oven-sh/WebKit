@@ -37,7 +37,7 @@ struct VirtualFileSystem {
     ASCIILiteral root;
     // sys.prefix, under the root: "/$bunfs/python". The standard library is in <prefix>/lib/python3.15.
     ASCIILiteral prefix;
-    // A directory of modules of the host's own, which follows the standard library on sys.path, wherever that is. Null: none.
+    // A directory of modules of the host's own, written in Python. It is not on sys.path: they are frozen modules (PyImp.cpp). Null: none.
     ASCIILiteral hostLibrary;
     // When every file was last changed, in seconds since the epoch.
     int64_t modificationTime;

@@ -1895,7 +1895,6 @@ static PyNativeFunction* asNative(JSValue value) { return uncheckedDowncast<PyNa
 
 static JSValue nativeCall(JSGlobalObject* globalObject, JSValue self, const CallArgs& args) { return asNative(self)->invoke(globalObject, args); }
 static JSValue nativeGetName(JSGlobalObject* globalObject, JSValue self) { return internString(getVM(globalObject), asNative(self)->def().name); }
-JSValue docstringFor(JSGlobalObject*, const String& key); // PyDocstrings.cpp
 
 static JSValue nativeGetDoc(JSGlobalObject* globalObject, JSValue self)
 {
@@ -1935,7 +1934,7 @@ static JSValue nativeGetTextSignature(JSGlobalObject* globalObject, JSValue self
             return jsUndefined();
         }
     }
-    if (def.kind != NativeKind::Function || native->ownerType())
+    if (def.kind != NativeKind::Function || native->ownerType() || def.signature.hasSelf)
         return makeStr(globalObject, signatureText.toString());
     // A function of a module is bound to it, which the tables leave out: "(obj, /)" is "($module, obj, /)".
     StringView parameters = signatureText.substring(1, signatureText.length() - 2);

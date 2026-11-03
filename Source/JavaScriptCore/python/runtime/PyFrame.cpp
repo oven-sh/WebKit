@@ -349,8 +349,10 @@ public:
             return;
         m_generator = generator;
         m_holdsArguments = !generator->isStarted();
-        if (m_holdsArguments)
+        if (m_holdsArguments) {
+            m_closure = frame->function()->closure();
             return;
+        }
         // Which slot belongs to which register is in the instructions that save and restore them.
         auto note = [&](const auto& bytecode) {
             for (unsigned i = 0; i < bytecode.m_count; ++i)
@@ -371,6 +373,8 @@ public:
     // Empty: it has none.
     JSValue value(unsigned index) const
     {
+        if (PyCell* cell = cellInClosure(index))
+            return cell->value();
         JSValue held = registerOf(index);
         // The cells of a generator are made when it starts.
         if (!held || at(index).kind == CodeInfo::VariableKind::Local || m_holdsArguments)
@@ -384,6 +388,10 @@ public:
     bool setValue(unsigned index, JSValue value)
     {
         auto& variable = at(index);
+        if (PyCell* cell = cellInClosure(index)) {
+            cell->setValue(m_vm, value);
+            return true;
+        }
         if (variable.kind != CodeInfo::VariableKind::Local && !m_holdsArguments) {
             auto* cell = PyCell::tryFrom(registerOf(index));
             if (!cell)
@@ -454,6 +462,15 @@ public:
 
 private:
     // What the register of the variable holds: its value, or the cell that has it. Empty: nothing.
+    // A generator that has not started has not taken the variables of the enclosing functions from its closure yet.
+    PyCell* cellInClosure(unsigned index) const
+    {
+        if (!m_closure || at(index).kind != CodeInfo::VariableKind::Free)
+            return nullptr;
+        size_t position = m_info.freeVariables.find(at(index).name);
+        return position < m_closure->length() ? PyCell::tryFrom(m_closure->at(position)) : nullptr;
+    }
+
     JSValue registerOf(unsigned index) const
     {
         auto& variable = at(index);
@@ -497,6 +514,7 @@ private:
     PyGenerator* m_generator { nullptr }; // A suspended generator: in its slots.
     Vector<std::pair<VirtualRegister, unsigned>, 16> m_slots;
     bool m_holdsArguments { false }; // It has not started: all there is are the values of the parameters, in the first slots.
+    PyTuple* m_closure { nullptr }; // And the closure of the function.
     JSValue m_names;
 };
 

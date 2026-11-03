@@ -20,6 +20,7 @@
 #include "PySet.h"
 #include "PyStr.h"
 #include "PyThreads.h"
+#include "PyWeakRef.h"
 #include "TopExceptionScope.h"
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -100,7 +101,7 @@ enum StateField : unsigned {
     StateFieldCount
 };
 
-static constexpr TypeDef asyncioStateTypeDef { "_asyncio.state"_s, { TypeFlag::DisallowInstantiation }, { }, { }, { } };
+static constexpr TypeDef asyncioStateTypeDef { "_asyncio.state"_s, { TypeFlag::DisallowInstantiation, TypeFlag::Internal }, { }, { }, { } };
 
 enum FutureField : unsigned {
     FutureModuleState,
@@ -293,7 +294,7 @@ static JSValue guardDel(JSGlobalObject* globalObject, JSValue self)
 static constexpr NativeDef guardMethods[] = {
     PY_SLOT("__del__", guardDel, "($self, /)"),
 };
-static constexpr TypeDef guardTypeDef { "_asyncio.guard"_s, { TypeFlag::DisallowInstantiation }, guardMethods, { }, { } };
+static constexpr TypeDef guardTypeDef { "_asyncio.guard"_s, { TypeFlag::DisallowInstantiation, TypeFlag::Internal }, guardMethods, { }, { } };
 
 static void registerTask(JSGlobalObject* globalObject, PyRecord* state, PyRecord* task)
 {
@@ -1252,14 +1253,31 @@ static constexpr TypeDef stepWrapperTypeDef { "_asyncio.TaskStepMethWrapper"_s, 
 // loop.call_soon(task.__step[, exception], context=task's). False: an exception.
 static bool callStepSoon(JSGlobalObject* globalObject, PyRecord* state, PyRecord* task, JSValue exception)
 {
-    VM& vm = getVM(globalObject);
-    JSValue wrapper = exception ? JSValue() : task->get(TaskStep);
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    // The one made last time will do, if it is still there. The task does not hold on to it: the two would be a cycle, which a
+    // task is not in CPython, and what is in a cycle is finalized in another order and counted by gc.collect().
+    JSValue wrapper;
+    PyWeakRef* last = nullptr;
+    if (!exception) {
+        if (JSValue field = task->get(TaskStep)) {
+            last = PyWeakRef::from(field);
+            if (JSCell* cell = last->referent())
+                wrapper = cell;
+        }
+    }
     if (!wrapper) {
         PyRecord* record = PyRecord::create(globalObject, typeIn(state, StateStepWrapperType), StepWrapperFieldCount);
         record->set(vm, StepWrapperTask, task);
         record->set(vm, StepWrapperException, exception);
-        if (!exception)
-            task->set(vm, TaskStep, record);
+        if (!exception) {
+            if (!last) {
+                last = PyWeakRef::create(vm, rt.weakRefStructure(), rt.weakRefType(), nullptr, { });
+                last->setIsInternal();
+                task->set(vm, TaskStep, last);
+            }
+            last->setReferent(record);
+        }
         wrapper = record;
     }
     return callSoon(globalObject, state, task->get(FutureLoop), wrapper, { }, task->get(TaskContext));

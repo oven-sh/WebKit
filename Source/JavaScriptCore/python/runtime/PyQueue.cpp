@@ -20,7 +20,7 @@ namespace Python {
 
 // The module _queue. (Modules/_queuemodule.c in CPython is the reference.)
 
-static constexpr TypeDef queueEmptyTypeDef { "_queue.Empty"_s, { TypeFlag::Base }, { }, { }, "Exception raised by Queue.get(block=0)/get_nowait()."_s };
+static constexpr TypeDef queueEmptyTypeDef { "_queue.Empty"_s, { TypeFlag::Base, TypeFlag::Mutable, TypeFlag::HasWeakref }, { }, { }, "Exception raised by Queue.get(block=0)/get_nowait()."_s };
 
 static PyType* queueEmptyType(JSGlobalObject* globalObject)
 {

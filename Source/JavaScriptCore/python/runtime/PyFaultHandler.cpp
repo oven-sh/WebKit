@@ -238,7 +238,7 @@ void dumpTracebackForSignal(JSGlobalObject* globalObject, int number)
 // ---- Arguments ----
 
 // Never seen from Python: its dict holds the files that are written to, so that they stay open.
-static constexpr TypeDef faultStateTypeDef { "faulthandler._state"_s, { TypeFlag::DisallowInstantiation }, { }, { }, { } };
+static constexpr TypeDef faultStateTypeDef { "faulthandler._state"_s, { TypeFlag::DisallowInstantiation, TypeFlag::Internal }, { }, { }, { } };
 
 static void faultKeepFile(JSGlobalObject* globalObject, const String& purpose, JSValue file)
 {

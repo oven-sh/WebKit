@@ -8,6 +8,9 @@
 
 #include "AbstractSlotVisitorInlines.h"
 #include "JSCInlines.h"
+#include "PyException.h"
+#include "PyFunction.h"
+#include "PyGenerator.h"
 #include "PyTuple.h"
 #include "SlotVisitorInlines.h"
 #include <wtf/HashMap.h>
@@ -78,7 +81,7 @@ private:
 
     void reach(JSCell* cell)
     {
-        if (!cell || m_marker.isMarked(cell))
+        if (!cell || cell == m_wholeOfCurrentCell || m_marker.isMarked(cell))
             return;
         auto result = m_indices.add(cell, 0);
         if (result.isNewEntry)
@@ -94,6 +97,7 @@ private:
 
     SlotVisitor& m_marker;
     unsigned m_candidateCount;
+    JSCell* m_wholeOfCurrentCell { nullptr };
     ConcurrentPtrHashSet m_opaqueRootStorage;
     // The candidates come first.
     Vector<JSCell*> m_cells;
@@ -110,9 +114,10 @@ void UnreachableGraph::walk()
 {
     for (unsigned i = 0; i < m_cells.size(); ++i) {
         m_firstEdge.append(m_edges.size());
-        if (i >= maxCells)
-            continue;
         JSCell* cell = m_cells[i];
+        if (i >= maxCells || isInternalObject(cell))
+            continue;
+        m_wholeOfCurrentCell = wholeThatPartRefersTo(cell);
         cell->methodTable()->visitChildren(cell, *this);
         // Cells say what they refer to from first to last. CPython's lists and tuples let go of their items from last to first.
         JSType type = cell->type();
@@ -316,6 +321,22 @@ FinalizationOrder UnreachableGraph::order(bool wantsCyclicGarbage)
 }
 
 } // namespace
+
+JSCell* wholeThatPartRefersTo(JSCell* cell)
+{
+    // The function that runs the body of the generators of a generator function.
+    if (cell->type() == JSFunctionType) {
+        auto* function = PyFunction::tryFrom(cell);
+        PyFunction* owner = function ? function->codeOwner() : nullptr;
+        return owner != function ? owner : nullptr;
+    }
+    // gi_frame. In CPython it outlives the generator.
+    if (cell->type() == PyObjectType) {
+        if (auto* frame = PyFrame::tryFrom(cell))
+            return frame->generator();
+    }
+    return nullptr;
+}
 
 FinalizationOrder finalizationOrder(SlotVisitor& marker, std::span<JSCell* const> candidates, bool wantsCyclicGarbage)
 {

@@ -889,7 +889,6 @@ static JSValue getSetGetQualname(JSGlobalObject* globalObject, JSValue self)
     auto* descriptor = PyGetSetDescriptor::from(self);
     return makeStr(globalObject, makeString(stringOf(descriptor->owner()->qualname()), '.', descriptor->def().name));
 }
-JSValue docstringFor(JSGlobalObject*, const String& key); // PyDocstrings.cpp
 
 static JSValue descriptorGetDoc(JSGlobalObject* globalObject, JSValue self)
 {

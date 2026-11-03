@@ -104,7 +104,7 @@ enum StructField : unsigned {
 
 extern const TypeDef structTypeDef;
 extern const TypeDef structIteratorTypeDef;
-static constexpr TypeDef structErrorTypeDef { "struct.error"_s, { TypeFlag::Base }, { }, { }, { } };
+static constexpr TypeDef structErrorTypeDef { "struct.error"_s, { TypeFlag::Base, TypeFlag::Mutable, TypeFlag::HasWeakref }, { }, { }, { } };
 
 static PyType* structType(JSGlobalObject* globalObject) { return runtime(globalObject).typeFor(structTypeDef); }
 

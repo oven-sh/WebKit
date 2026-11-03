@@ -832,6 +832,7 @@ python/runtime/PyBufferedIO.cpp
 python/runtime/PyBuiltins.cpp
 python/runtime/PyBytes.cpp
 python/runtime/PyBytesIO.cpp
+python/runtime/PyCJKCodecs.cpp
 python/runtime/PyCMath.cpp
 python/runtime/PyCodeCache.cpp
 python/runtime/PyCodecs.cpp
@@ -886,6 +887,7 @@ python/runtime/PyMemoryView.cpp
 python/runtime/PyMmap.cpp
 python/runtime/PyModule.cpp
 python/runtime/PyMonitoring.cpp
+python/runtime/PyMultibyteCodec.cpp
 python/runtime/PyMultiprocessing.cpp
 python/runtime/PyNamespace.cpp
 python/runtime/PyNative.cpp

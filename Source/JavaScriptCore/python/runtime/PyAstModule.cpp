@@ -168,9 +168,11 @@ static String astSignature(const AstClassDef& def)
 
 // ---- AST ----
 
+extern const TypeDef astTypeDef;
+
 static JSValue astNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs&)
 {
-    return allocateInstance(globalObject, PyType::from(cls));
+    return allocateInstance(globalObject, PyType::from(cls), runtime(globalObject).typeFor(astTypeDef));
 }
 
 // 'a', 'b', and 'c'
@@ -525,7 +527,7 @@ static constexpr NativeDef astMethods[] = {
     PY_METHOD("__replace__", astReplace, "($self, /, **fields)"),
 };
 
-static constexpr TypeDef astTypeDef { "ast.AST"_s, { TypeFlag::Base, TypeFlag::HasDict, TypeFlag::Mutable }, astMethods, { }, { } };
+constexpr TypeDef astTypeDef { "ast.AST"_s, { TypeFlag::Base, TypeFlag::HasDict, TypeFlag::Mutable, TypeFlag::OwnLayout }, astMethods, { }, { } };
 
 // ---- The classes ----
 
@@ -603,7 +605,7 @@ static PyTuple* astMakeClasses(JSGlobalObject* globalObject, PyType* base)
             RETURN_IF_EXCEPTION(scope, nullptr);
         }
         if (def.kind == AstClassKind::Constructor && fields.isEmpty() && astClassDefs[static_cast<unsigned>(def.base)].attributes == AstAttributes::None)
-            table->initializeAt(vm, 2 * numberOfAstClasses + i, allocateInstance(globalObject, type));
+            table->initializeAt(vm, 2 * numberOfAstClasses + i, allocateInstance(globalObject, type, base));
     }
 
     // The types of the fields, now that all the classes are there.

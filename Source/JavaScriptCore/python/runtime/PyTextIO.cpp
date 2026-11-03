@@ -59,6 +59,25 @@ static bool textIOToUInt64Mask(JSGlobalObject* globalObject, JSValue value, ASCI
     return true;
 }
 
+// The flags of a decoder's state, which CPython keeps in a C int. (The format "i" of PyArg_ParseTuple().) Check for an exception.
+static int textIODecoderFlags(JSGlobalObject* globalObject, JSValue value)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue index = toIndex(globalObject, value);
+    RETURN_IF_EXCEPTION(scope, 0);
+    auto number = tryInt64(index);
+    if (!number)
+        raiseOverflowError(globalObject, scope, "Python int too large to convert to C long"_s);
+    else if (*number > std::numeric_limits<int>::max())
+        raiseOverflowError(globalObject, scope, "signed integer is greater than maximum"_s);
+    else if (*number < std::numeric_limits<int>::min())
+        raiseOverflowError(globalObject, scope, "signed integer is less than minimum"_s);
+    else
+        return static_cast<int>(*number);
+    return 0;
+}
+
 // The two items of what a decoder's getstate() returns, or of the argument of its setstate(). False: a TypeError.
 static bool textIOUnpackState(JSGlobalObject* globalObject, JSValue state, ASCIILiteral notATuple, ASCIILiteral wrongLength, JSValue& buffer, JSValue& flags)
 {
@@ -883,7 +902,7 @@ bool TextStream::getDecoderState(int64_t& bufferLength, int& flags)
     JSValue buffer, flagsValue;
     if (!textIOUnpackState(globalObject, state, "illegal decoder state"_s, "illegal decoder state"_s, buffer, flagsValue))
         return false;
-    flags = toCInt(globalObject, flagsValue);
+    flags = textIODecoderFlags(globalObject, flagsValue);
     RETURN_IF_EXCEPTION(scope, false);
     auto* bytes = PyBytes::tryFrom(buffer);
     if (!bytes) {
@@ -1737,7 +1756,7 @@ static JSValue textIOTell(JSGlobalObject* globalObject, JSValue self)
     RETURN_IF_EXCEPTION(scope, { });
 
     // Back to the snapshot.
-    cookie.decoderFlags = toCInt(globalObject, stream.get(TextIOSnapshotFlagsField));
+    cookie.decoderFlags = textIODecoderFlags(globalObject, stream.get(TextIOSnapshotFlagsField));
     RETURN_IF_EXCEPTION(scope, { });
     PyBytes* nextInput = PyBytes::from(stream.get(TextIOSnapshotInputField));
     cookie.startPosition -= nextInput->length();

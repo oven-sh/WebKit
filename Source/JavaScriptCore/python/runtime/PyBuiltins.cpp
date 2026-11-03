@@ -686,11 +686,11 @@ static JSValue builtinInput(JSGlobalObject* globalObject, JSValue prompt)
             return raiseRuntimeError(globalObject, scope, message);
         return file;
     };
-    JSValue input = stream(rt.names.stdin_(), "input(): lost sys.stdin"_s);
+    JSValue input = stream(rt.names.stdin_(), "lost sys.stdin"_s);
     RETURN_IF_EXCEPTION(scope, { });
-    JSValue output = stream(rt.names.stdout_(), "input(): lost sys.stdout"_s);
+    JSValue output = stream(rt.names.stdout_(), "lost sys.stdout"_s);
     RETURN_IF_EXCEPTION(scope, { });
-    JSValue errors = stream(rt.names.stderr_(), "input(): lost sys.stderr"_s);
+    JSValue errors = stream(rt.names.stderr_(), "lost sys.stderr"_s);
     RETURN_IF_EXCEPTION(scope, { });
     if (!audit(globalObject, "builtins.input"_s, prompt))
         return { };
@@ -1065,7 +1065,7 @@ void initializeBuiltinsModule(JSGlobalObject* globalObject, PyModule* module)
     Runtime& rt = runtime(globalObject);
     module->addFunctions(globalObject, builtinFunctions);
     rt.setDefaultImportFunction(module->dict()->get(rt.names.dImport()));
-    module->add(globalObject, "__doc__"_s, makeStr(rt.vm(), "Built-in functions, types, exceptions, and other objects."_s));
+    module->add(globalObject, "__doc__"_s, docstringFor(globalObject, "module builtins"_s));
     module->add(globalObject, "__package__"_s, rt.names.empty());
 
     module->add(globalObject, "None"_s, jsUndefined());

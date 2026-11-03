@@ -635,7 +635,7 @@ static JSValue signalSetWakeupFD(JSGlobalObject* globalObject, JSValue descripto
 
 // ---- Interval timers ----
 
-static constexpr TypeDef signalItimerErrorTypeDef { "signal.ItimerError"_s, { TypeFlag::Base }, { }, { }, { } };
+static constexpr TypeDef signalItimerErrorTypeDef { "signal.ItimerError"_s, { TypeFlag::Base, TypeFlag::Mutable, TypeFlag::HasWeakref }, { }, { }, { } };
 
 static PyType* signalItimerError(JSGlobalObject* globalObject)
 {
@@ -846,7 +846,7 @@ static JSValue signalSigWait(JSGlobalObject* globalObject, JSValue setValue)
 static constexpr ASCIILiteral signalInfoFields[] = { "si_signo"_s, "si_code"_s, "si_errno"_s, "si_pid"_s, "si_uid"_s, "si_status"_s, "si_band"_s };
 static constexpr StructSeqDef signalInfoDef { "signal.struct_siginfo"_s, signalInfoFields, 7 };
 // Never seen from Python: its dict is where struct_siginfo is kept, out of reach of what is done to the module.
-static constexpr TypeDef signalStateTypeDef { "signal._state"_s, { TypeFlag::DisallowInstantiation }, { }, { }, { } };
+static constexpr TypeDef signalStateTypeDef { "signal._state"_s, { TypeFlag::DisallowInstantiation, TypeFlag::Internal }, { }, { }, { } };
 
 static PyType* signalInfoType(JSGlobalObject* globalObject)
 {

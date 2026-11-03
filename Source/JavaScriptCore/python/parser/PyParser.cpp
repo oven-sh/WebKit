@@ -185,6 +185,7 @@ std::nullptr_t Parser::raise(SyntaxErrorInfo::Type type, int lineno, int colOffs
         return characterCount(line, bytes) + (bytes > line.size());
     };
 
+    m_errorIsGeneric = m_quiet;
     m_error.type = type;
     m_error.message = message;
     m_error.hasLocation = true;
@@ -256,8 +257,9 @@ std::nullptr_t Parser::invalidSyntax()
         m_errorIsFinal = true;
         return indentationError(last.kind == TokenKind::Indent ? "unexpected indent"_s : "unexpected unindent"_s);
     }
+    syntaxErrorAt(last, "invalid syntax"_s);
     m_errorIsGeneric = true;
-    return syntaxErrorAt(last, "invalid syntax"_s);
+    return nullptr;
 }
 
 std::nullptr_t Parser::stackOverflow()
@@ -459,6 +461,7 @@ Mod* Parser::parseInteractive()
         }
         if (c != '#') {
             m_errorIsAboutWhatFollows = true;
+            m_errorIsFinal = true;
             return syntaxError("multiple statements found while compiling a single statement"_s);
         }
         while (i < rest.size() && rest[i] != '\n')
@@ -578,9 +581,10 @@ bool Parser::parseStatement(StmtVector& out, bool* isCompound)
         // `match` is a keyword only if what follows makes a match statement.
         auto saved = checkpoint();
         std::optional<Token> newlineInsteadOfColon;
-        if (Stmt* statement = parseMatch(newlineInsteadOfColon))
+        bool isMatchStatement = false;
+        if (Stmt* statement = parseMatch(newlineInsteadOfColon, isMatchStatement))
             return finishCompoundStatement(statement);
-        if (m_errorIsFatal)
+        if (m_errorIsFatal || isMatchStatement)
             return false;
         SyntaxErrorInfo matchError = m_error;
         bool matchErrorIsSpecific = failed() && !m_errorIsGeneric;
@@ -679,12 +683,16 @@ Stmt* Parser::parseCompoundStatement()
 bool Parser::parseSimpleStatements(StmtVector& out)
 {
     for (;;) {
+        auto statementStart = checkpoint();
         Stmt* statement = parseSimpleStatement();
         if (!statement)
             return false;
         out.append(statement);
-        if (!accept(TokenKind::Semi))
+        if (!accept(TokenKind::Semi)) {
+            if (!at(TokenKind::Newline) && statement->kind == StmtKind::Expr && !diagnoseNamedExpressions(statementStart)) [[unlikely]]
+                return false;
             break;
+        }
         if (at(TokenKind::Newline))
             break;
     }
@@ -723,8 +731,20 @@ Stmt* Parser::parseSimpleStatement()
     case TokenKind::KwFrom:
         return parseImportFrom(nullptr, start);
     case TokenKind::Name:
-        if (*peek().identifier == m_typeKeyword && peek(1).kind == TokenKind::Name)
-            return parseTypeAlias();
+        if (*peek().identifier == m_typeKeyword && peek(1).kind == TokenKind::Name) {
+            auto saved = checkpoint();
+            Stmt* alias = parseTypeAlias();
+            if (alias || m_errorIsFatal) [[likely]]
+                return alias;
+            // Whatever is wrong with it, it was looked at as an expression before that, with `type` a name.
+            SyntaxErrorInfo error = m_error;
+            bool errorIsGeneric = m_errorIsGeneric;
+            if (diagnoseNamedExpressions(saved)) {
+                m_error = error;
+                m_errorIsGeneric = errorIsGeneric;
+            }
+            return nullptr;
+        }
         if (*peek().identifier == m_lazyKeyword) {
             if (peek(1).kind == TokenKind::KwImport) {
                 advance();
@@ -785,8 +805,16 @@ Stmt* Parser::parseExpressionStatement()
     Checkpoint statementStart = checkpoint();
 
     Expr* first = parseAnnotatedRHS();
-    if (!first)
+    if (!first) {
+        if (m_errorIsGeneric && !m_errorIsFatal && !m_acceptsPrefix) {
+            SyntaxErrorInfo unexplained = m_error;
+            if (diagnoseNamedExpressions(statementStart)) {
+                m_error = unexplained;
+                m_errorIsGeneric = true;
+            }
+        }
         return nullptr;
+    }
 
     if (at(TokenKind::Colon) && !first->is<Yield>() && !first->is<YieldFrom>())
         return parseAnnotatedAssignment(start, first, firstKind == TokenKind::Name);
@@ -853,15 +881,23 @@ Stmt* Parser::parseExpressionStatement()
     return statement;
 }
 
-// Before anything else is said about a statement that looked like an assignment and is none, it is tried as the start of
-// `a, b: annotation` (see invalid_assignment in the grammar). Nothing comes of that, but for each element being looked at as
-// a named_expression, which takes `a = b` and `a.b := c` for mistakes. False: it did.
+// Before anything else is said about a statement that looked like an assignment and is none, it is tried as
+// `a, b: annotation` (see invalid_assignment in the grammar: after the first comma, the elements need no commas between them).
+// On the way each element is looked at as a named_expression, which takes `a = b` and `a.b := c` for mistakes.
+// False: something was found.
 bool Parser::diagnoseNamedExpressions(const Checkpoint& statementStart)
 {
     SetForScope diagnosing(m_diagnosing, true);
+    SetForScope acceptsPrefix(m_acceptsPrefix, true);
     Checkpoint here = checkpoint();
     rewind(statementStart);
-    while (parseStarNamedExpression() && accept(TokenKind::Comma) && atStartOfExpression()) { }
+    Expr* first = parseStarNamedExpression();
+    if (first && accept(TokenKind::Comma)) {
+        while ((atStartOfExpression() || at(TokenKind::Star)) && parseStarNamedExpression())
+            accept(TokenKind::Comma);
+        if (!failed() && accept(TokenKind::Colon) && parseExpression())
+            syntaxErrorAt(first->range, "only single target (not tuple) can be annotated"_s);
+    }
     if (failed() && (m_errorIsFatal || !m_errorIsGeneric))
         return false;
     rewind(here);
@@ -979,11 +1015,14 @@ Stmt* Parser::parseRaise()
             return nullptr;
         if (at(TokenKind::KwFrom)) {
             const Token fromToken = advance();
-            if (endsSimpleStatement(kind()))
+            m_failedExpressionHasPrefix = false;
+            cause = endsSimpleStatement(kind()) ? invalidSyntax() : parseExpression();
+            if (!cause) {
+                if (!m_errorIsGeneric || m_errorIsFatal || m_failedExpressionHasPrefix)
+                    return nullptr;
+                m_error = { };
                 return syntaxErrorAt(fromToken, "did you forget an expression after 'from'?"_s);
-            cause = parseExpression();
-            if (!cause)
-                return nullptr;
+            }
         }
     }
     auto* statement = make<Raise>(rangeFrom(start));
@@ -997,21 +1036,38 @@ Stmt* Parser::parseDelete()
 {
     Position start = startPosition();
     advance();
+    auto afterDel = checkpoint();
     ExprVector targets;
+    // A target is a primary of a certain form.
+    bool areTargets = true;
     for (;;) {
-        Expr* target = parseStarExpression();
-        if (!target)
-            return nullptr;
+        Expr* target = parsePrimary();
+        if (!target) {
+            if (m_errorIsFatal || !m_errorIsGeneric)
+                return nullptr;
+            areTargets = false;
+            break;
+        }
+        areTargets = !findInvalidTarget(target, TargetKind::Del);
+        if (!areTargets)
+            break;
         targets.append(target);
         if (!accept(TokenKind::Comma) || endsSimpleStatement(kind()))
             break;
     }
-    for (Expr* target : targets) {
-        if (findInvalidTarget(target, TargetKind::Del))
-            return raiseInvalidTarget(target, TargetKind::Del);
-    }
-    if (!endsSimpleStatement(kind()))
+    if (!areTargets || !endsSimpleStatement(kind())) {
+        // Read as expressions, they tell what is wrong.
+        SetForScope diagnosing(m_diagnosing, true);
+        SetForScope acceptsPrefix(m_acceptsPrefix, true);
+        rewind(afterDel);
+        Expr* expressions = parseStarExpressions();
+        if (expressions && findInvalidTarget(expressions, TargetKind::Del))
+            return raiseInvalidTarget(expressions, TargetKind::Del);
+        if (failed() && (m_errorIsFatal || !m_errorIsGeneric))
+            return nullptr;
+        m_error = { };
         return invalidSyntax();
+    }
     for (Expr* target : targets)
         setContext(target, ExprContext::Del);
     auto* statement = make<Delete>(rangeFrom(start));
@@ -1120,6 +1176,7 @@ Stmt* Parser::parseImport(bool isLazy, Position start)
         if (accept(TokenKind::KwAs)) {
             if (!(at(TokenKind::Name) && endsImportTarget(peek(1).kind))) {
                 SetForScope diagnosing(m_diagnosing, true);
+                SetForScope acceptsPrefix(m_acceptsPrefix, true);
                 Expr* target = parseExpression();
                 if (!target)
                     return nullptr;
@@ -1156,6 +1213,7 @@ Alias* Parser::parseImportFromAsName()
     if (accept(TokenKind::KwAs)) {
         if (!(at(TokenKind::Name) && endsImportTarget(peek(1).kind))) {
             SetForScope diagnosing(m_diagnosing, true);
+            SetForScope acceptsPrefix(m_acceptsPrefix, true);
             Expr* target = parseExpression();
             if (!target)
                 return nullptr;
@@ -1273,6 +1331,9 @@ Stmt* Parser::parseTypeAlias()
     advance();
     NameExpr* name = makeName(advance(), ExprContext::Store);
     Seq<TypeParam*> typeParams;
+    // CPython's parser has by now tried `type` as a name, and has read that far.
+    if (at(TokenKind::LSqb) && peek(1).kind == TokenKind::RSqb)
+        peek(2);
     if (at(TokenKind::LSqb) && !parseTypeParams(typeParams))
         return nullptr;
     if (!expect(TokenKind::Equal))
@@ -1294,7 +1355,6 @@ bool Parser::parseTypeParams(Seq<TypeParam*>& result)
 {
     advance();
     if (at(TokenKind::RSqb)) {
-        peek(1);
         syntaxErrorStartingFrom(peek().startPosition, "Type parameter list cannot be empty"_s);
         return false;
     }
@@ -1733,7 +1793,15 @@ Stmt* Parser::parseFunctionDef(bool isAsync, Position start, Seq<Expr*> decorato
     Expr* returns = nullptr;
     if (at(TokenKind::RArrow)) {
         const Token arrow = advance();
+        auto afterArrow = checkpoint();
         returns = parseExpression();
+        if (!returns && m_errorIsGeneric && !m_errorIsFatal) {
+            // As much as is an expression is the annotation.
+            SetForScope diagnosing(m_diagnosing, true);
+            SetForScope acceptsPrefix(m_acceptsPrefix, true);
+            rewind(afterArrow);
+            returns = parseExpression();
+        }
         if (!returns)
             return missingAfterOptionalPart(arrow, "expected ':'"_s);
     }
@@ -1878,6 +1946,7 @@ Arguments* Parser::parseParameters(bool isLambda)
             if (sawStar)
                 return syntaxErrorAt(slash, "/ must be ahead of *"_s);
             if (positional.isEmpty()) {
+                SetForScope diagnosing(m_diagnosing, true);
                 if (!at(TokenKind::Comma)) {
                     --m_index;
                     return invalidSyntax();
@@ -1929,8 +1998,12 @@ Arguments* Parser::parseParameters(bool isLambda)
             arguments->vararg = parseParameter(true);
             if (!arguments->vararg)
                 return nullptr;
-            if (at(TokenKind::Equal))
+            if (at(TokenKind::Equal)) {
+                // `*args: *Ts` is a form of its own, which the rule that explains this does not know.
+                if (arguments->vararg->annotation && arguments->vararg->annotation->is<Starred>())
+                    return invalidSyntax();
                 return syntaxErrorAt(peek(), "var-positional parameter cannot have default value"_s);
+            }
             if (!finishParameter(arguments->vararg))
                 return nullptr;
             continue;
@@ -2016,8 +2089,8 @@ Arguments* Parser::parseParameters(bool isLambda)
     return arguments;
 }
 
-// "match" subject_expr ':' NEWLINE INDENT case_block+ DEDENT. Null without a fatal error: `match` is a name here.
-Stmt* Parser::parseMatch(std::optional<Token>& newlineInsteadOfColon)
+// "match" subject_expr ':' NEWLINE INDENT case_block+ DEDENT. Null, and it is not known to be a match statement: `match` may be a name here.
+Stmt* Parser::parseMatch(std::optional<Token>& newlineInsteadOfColon, bool& isMatchStatement)
 {
     Position start = startPosition();
     const Token matchToken = advance();
@@ -2052,17 +2125,17 @@ Stmt* Parser::parseMatch(std::optional<Token>& newlineInsteadOfColon)
         return invalidSyntax();
     if (!accept(TokenKind::Indent)) {
         indentationError(makeString("expected an indented block after 'match' statement on line "_s, matchToken.startPosition.line));
-        m_errorIsFatal = true;
+        isMatchStatement = true;
         return nullptr;
     }
     if (!atSoftKeyword(m_caseKeyword))
         return invalidSyntax();
 
     // It is a match statement: from here on errors are errors.
+    isMatchStatement = true;
     auto fatal = [&]() -> Stmt* {
         if (!failed())
             invalidSyntax();
-        m_errorIsFatal = true;
         return nullptr;
     };
 

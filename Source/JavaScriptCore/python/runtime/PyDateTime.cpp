@@ -172,7 +172,7 @@ DEFINE_VISIT_CHILDREN(State);
 // ---- The state ----
 
 // Never seen from Python.
-static constexpr TypeDef stateTypeDef { "datetime._state"_s, { TypeFlag::OwnLayout, TypeFlag::DisallowInstantiation }, { }, { }, { } };
+static constexpr TypeDef stateTypeDef { "datetime._state"_s, { TypeFlag::OwnLayout, TypeFlag::DisallowInstantiation, TypeFlag::Internal }, { }, { }, { } };
 
 static State* createState(JSGlobalObject* globalObject, PyType* holder)
 {

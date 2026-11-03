@@ -117,7 +117,27 @@ static JSValue sysDisplayHook(JSGlobalObject* globalObject, JSValue value)
     JSString* text = repr(globalObject, value);
     RETURN_IF_EXCEPTION(scope, { });
     writeToFile(globalObject, output, text);
-    RETURN_IF_EXCEPTION(scope, { });
+    if (scope.exception()) [[unlikely]] {
+        // What the encoding of the stream has no way to write is shown escaped.
+        if (!clearPendingExceptionIfMatches(globalObject, rt.UnicodeEncodeError()))
+            return { };
+        JSValue encoding = getAttr(globalObject, output, internString(vm, "encoding"_s));
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!isStr(encoding))
+            return raiseTypeError(globalObject, scope, "bad argument type for built-in operation"_s);
+        JSValue encoded = strEncode(globalObject, text, strValue(encoding), makeStr(vm, "backslashreplace"_s));
+        RETURN_IF_EXCEPTION(scope, { });
+        JSValue buffer = getAttrIfPresent(globalObject, output, internString(vm, "buffer"_s));
+        RETURN_IF_EXCEPTION(scope, { });
+        if (buffer)
+            callMethod(globalObject, buffer, rt.names.write(), encoded);
+        else {
+            JSValue escaped = callMethod(globalObject, encoded, internString(vm, "decode"_s), encoding, makeStr(vm, "strict"_s));
+            RETURN_IF_EXCEPTION(scope, { });
+            callMethod(globalObject, output, rt.names.write(), escaped);
+        }
+        RETURN_IF_EXCEPTION(scope, { });
+    }
     writeToFile(globalObject, output, jsSingleCharacterString(vm, '\n'));
     RETURN_IF_EXCEPTION(scope, { });
     rt.builtins()->set(vm, underscore, value);
@@ -128,6 +148,9 @@ static JSValue sysUnraisableHook(JSGlobalObject* globalObject, JSValue unraisabl
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue argumentsType = runtime(globalObject).sysDict()->get(internString(vm, "__unraisable_hook_args_type__"_s));
+    if (!argumentsType || JSValue(typeOf(globalObject, unraisable)) != argumentsType)
+        return raiseTypeError(globalObject, scope, "sys.unraisablehook argument type must be UnraisableHookArgs"_s);
     auto attribute = [&](ASCIILiteral name) { return getAttr(globalObject, unraisable, internString(vm, name)); };
     JSValue message = attribute("err_msg"_s);
     RETURN_IF_EXCEPTION(scope, { });
@@ -526,7 +549,7 @@ static JSValue sysCallTracing(JSGlobalObject* globalObject, JSValue function, JS
 }
 
 static constexpr ASCIILiteral asyncGenHooksFields[] = { "firstiter"_s, "finalizer"_s };
-static constexpr StructSeqDef asyncGenHooksDef { "asyncgen_hooks"_s, asyncGenHooksFields, 2 };
+static constexpr StructSeqDef asyncGenHooksDef { "asyncgen_hooks"_s, asyncGenHooksFields, 2, true, true };
 
 static JSValue sysGetAsyncGenHooks(JSGlobalObject* globalObject)
 {
@@ -636,40 +659,79 @@ static constexpr NativeDef sysFunctions[] = {
 // ---- Data ----
 
 static constexpr ASCIILiteral versionInfoFields[] = { "major"_s, "minor"_s, "micro"_s, "releaselevel"_s, "serial"_s };
-static constexpr StructSeqDef versionInfoDef { "sys.version_info"_s, versionInfoFields, 5, false };
+static constexpr StructSeqDef versionInfoDef { "sys.version_info"_s, versionInfoFields, 5, false, true };
 
 static constexpr ASCIILiteral flagsFields[] = {
     "debug"_s, "inspect"_s, "interactive"_s, "optimize"_s, "dont_write_bytecode"_s, "no_user_site"_s, "no_site"_s, "ignore_environment"_s, "verbose"_s,
     "bytes_warning"_s, "quiet"_s, "hash_randomization"_s, "isolated"_s, "dev_mode"_s, "utf8_mode"_s, "warn_default_encoding"_s, "safe_path"_s, "int_max_str_digits"_s,
     "gil"_s, "thread_inherit_context"_s, "context_aware_warnings"_s, "lazy_imports"_s,
 };
-static constexpr StructSeqDef flagsDef { "sys.flags"_s, flagsFields, 18, false };
+static constexpr StructSeqDef flagsDef { "sys.flags"_s, flagsFields, 18, false, true };
 
 static constexpr ASCIILiteral floatInfoFields[] = { "max"_s, "max_exp"_s, "max_10_exp"_s, "min"_s, "min_exp"_s, "min_10_exp"_s, "dig"_s, "mant_dig"_s, "epsilon"_s, "radix"_s, "rounds"_s };
-static constexpr StructSeqDef floatInfoDef { "sys.float_info"_s, floatInfoFields, 11, false };
+static constexpr StructSeqDef floatInfoDef { "sys.float_info"_s, floatInfoFields, 11, true, true };
 
 static constexpr ASCIILiteral intInfoFields[] = { "bits_per_digit"_s, "sizeof_digit"_s, "default_max_str_digits"_s, "str_digits_check_threshold"_s };
-static constexpr StructSeqDef intInfoDef { "sys.int_info"_s, intInfoFields, 4, false };
+static constexpr StructSeqDef intInfoDef { "sys.int_info"_s, intInfoFields, 4, true, true };
 
 static constexpr ASCIILiteral hashInfoFields[] = { "width"_s, "modulus"_s, "inf"_s, "nan"_s, "imag"_s, "algorithm"_s, "hash_bits"_s, "seed_bits"_s, "cutoff"_s };
-static constexpr StructSeqDef hashInfoDef { "sys.hash_info"_s, hashInfoFields, 9, false };
+static constexpr StructSeqDef hashInfoDef { "sys.hash_info"_s, hashInfoFields, 9, true, true };
 
 static constexpr ASCIILiteral threadInfoFields[] = { "name"_s, "lock"_s, "version"_s };
-static constexpr StructSeqDef threadInfoDef { "sys.thread_info"_s, threadInfoFields, 3, false };
+static constexpr StructSeqDef threadInfoDef { "sys.thread_info"_s, threadInfoFields, 3, true, true };
 
 // Where the standard library is: <prefix>/lib/python3.15, where the prefix is $PYTHONHOME, or else what the host has it under.
 String standardLibraryDirectory()
 {
-    if (const char* directory = getenv("BUN_PYTHON_STDLIB"))
-        return String::fromUTF8(directory);
     String prefix;
     if (!configuration().home.isNull())
         prefix = configuration().home;
+    else if (const char* directory = getenv("BUN_PYTHON_STDLIB"))
+        return String::fromUTF8(directory);
     else if (auto* fileSystem = virtualFileSystem())
         prefix = fileSystem->prefix;
     else
         return { };
     return makeString(prefix, "/lib/python"_s, versionMajor, '.', versionMinor);
+}
+
+// python3._pth beside the program, as it was started or where it really is: its lines are all there is to sys.path, and neither
+// the environment nor, unless a line says `import site`, the site module has any say. (Modules/getpath.py in CPython.)
+// The directory the file is in, which is the prefix then. Null: there is none.
+static String readPathFile(Configuration& configuration, Vector<String>& searchPath)
+{
+    if (configuration.executable.isEmpty())
+        return { };
+    for (const String& program : { configuration.executable, realPath(configuration.executable) }) {
+        if (program.isEmpty())
+            continue;
+        auto contents = readFile(makeString(program, "._pth"_s));
+        if (!contents)
+            continue;
+        String directory = FileSystem::parentPath(program);
+        configuration.isolated = true;
+        configuration.useEnvironment = false;
+        configuration.siteImport = false;
+        configuration.userSiteDirectory = false;
+        configuration.safePath = true;
+        configuration.home = { };
+        configuration.pythonPath = { };
+        String text = decodeFilesystem(contents->span());
+        for (auto whole : StringView(text).splitAllowingEmptyEntries('\n')) {
+            size_t comment = whole.find('#');
+            StringView line = (comment == notFound ? whole : whole.left(comment)).trim(isASCIIWhitespace<char16_t>);
+            if (line.isEmpty())
+                continue;
+            if (line == "import site"_s)
+                configuration.siteImport = true;
+            else if (line.startsWith("import "_s))
+                fputs("unsupported 'import' line in ._pth file\n", stderr);
+            else
+                searchPath.append(absolutePath(line.startsWith('/') ? line.toString() : makeString(directory, '/', line)));
+        }
+        return directory;
+    }
+    return { };
 }
 
 String shortVersionText()
@@ -714,10 +776,12 @@ void initializeSysModule(JSGlobalObject* globalObject, PyModule* module)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
+    Vector<String> pathFromFile;
+    String directoryOfPathFile = readPathFile(Python::configuration(), pathFromFile);
     const Configuration& configuration = Python::configuration();
     module->addFunctions(globalObject, sysFunctions);
     addSysExtras(globalObject, module);
-    module->add(globalObject, "__doc__"_s, makeStr(vm, "Objects the interpreter uses or maintains, and functions that have to do with it."_s));
+    module->add(globalObject, "__doc__"_s, docstringFor(globalObject, "module sys"_s));
     module->add(globalObject, "__package__"_s, rt.names.empty());
     PyDict* dict = module->dict();
     auto text = [&](const String& string) -> JSValue { return makeStr(vm, string); };
@@ -756,19 +820,22 @@ void initializeSysModule(JSGlobalObject* globalObject, PyModule* module)
     module->add(globalObject, "lazy_modules"_s, rt.slot(Runtime::Slot::LazyModules));
 
     JSArray* path = newList(globalObject);
-    if (!configuration.pythonPath.isNull()) {
-        for (auto& part : configuration.pythonPath.splitAllowingEmptyEntries(':'))
-            listAppend(globalObject, path, text(part));
-    }
     String library = standardLibraryDirectory();
-    if (!library.isNull())
-        listAppend(globalObject, path, text(library));
-    if (auto* fileSystem = virtualFileSystem(); fileSystem && !fileSystem->hostLibrary.isNull())
-        listAppend(globalObject, path, text(fileSystem->hostLibrary));
+    if (!directoryOfPathFile.isNull()) {
+        for (auto& part : pathFromFile)
+            listAppend(globalObject, path, text(part));
+    } else {
+        if (!configuration.pythonPath.isNull()) {
+            for (auto& part : configuration.pythonPath.splitAllowingEmptyEntries(':'))
+                listAppend(globalObject, path, text(absolutePath(part)));
+        }
+        if (!library.isNull())
+            listAppend(globalObject, path, text(library));
+    }
     module->add(globalObject, "path"_s, path);
     module->add(globalObject, "_stdlib_dir"_s, library.isNull() ? jsUndefined() : text(library));
 
-    String prefix = library.isNull() ? emptyString() : FileSystem::parentPath(FileSystem::parentPath(library));
+    String prefix = !directoryOfPathFile.isNull() ? directoryOfPathFile : library.isNull() ? emptyString() : FileSystem::parentPath(FileSystem::parentPath(library));
     // A virtual environment is where there is a pyvenv.cfg beside the executable or one directory up. `site` does the rest.
     String environment = prefix;
     if (!configuration.executable.isEmpty()) {

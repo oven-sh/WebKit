@@ -30,6 +30,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <wtf/FileSystem.h>
+#include <wtf/HexNumber.h>
 #include <wtf/text/StringBuilder.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -740,6 +741,21 @@ static void printImportTimeHeader()
         printToStderr("import time: self [us] | cumulative | imported package\n"_s);
 }
 
+// As sys.stderr would show the name: what cannot be encoded is escaped.
+static String nameForImportTime(const String& name)
+{
+    if (name.is8Bit())
+        return name;
+    StrBuilder result;
+    for (char32_t character : StringView(name).codePoints()) {
+        if (U_IS_SURROGATE(character))
+            result.append("\\u"_s, WTF::hex(static_cast<unsigned>(character), 4, WTF::Lowercase));
+        else
+            result.append(character);
+    }
+    return result.toString();
+}
+
 void ImportTimeReport::start(const String& moduleName)
 {
     printImportTimeHeader();
@@ -759,7 +775,7 @@ void ImportTimeReport::finish()
     line.append(String::fromLatin1(numbers));
     for (int i = 0; i < s_importLevel * 2; ++i)
         line.append(' ');
-    line.append(m_name, '\n');
+    line.append(nameForImportTime(m_name), '\n');
     printToStderr(line.toString());
     s_importTimeAccumulated = m_accumulatedBefore + cumulative;
 }
@@ -771,7 +787,7 @@ void ImportTimeReport::reportCached(const String& moduleName)
     line.append("import time: cached    | cached     | "_s);
     for (int i = moduleName.length(); i < s_importLevel * 2; ++i)
         line.append(' ');
-    line.append(moduleName, '\n');
+    line.append(nameForImportTime(moduleName), '\n');
     printToStderr(line.toString());
 }
 
@@ -977,8 +993,16 @@ static String dedent(const String& text)
 
 static void runCommand(JSGlobalObject* globalObject, const String& command, JSValue* unfinished)
 {
-    auto utf8 = dedent(command).utf8();
-    runSourceInMain(globalObject, byteCast<uint8_t>(utf8.span()), "<string>"_s, CompileIgnoreCookie | CompileAllowTopLevelAwait | CompileSourceIsShown, unfinished);
+    String text = dedent(command);
+    auto utf8 = tryEncodeUTF8(text);
+    if (!utf8) {
+        // There were bytes in it that are not UTF-8.
+        printToStderr("Unable to decode the command from the command line:\n"_s);
+        VM& vm = getVM(globalObject);
+        strEncode(globalObject, makeStr(vm, text), makeStr(vm, "utf-8"_s), makeStr(vm, "strict"_s));
+        return;
+    }
+    runSourceInMain(globalObject, utf8->span(), "<string>"_s, CompileIgnoreCookie | CompileAllowTopLevelAwait | CompileSourceIsShown, unfinished);
 }
 
 // runpy._run_module_as_main(name, changesFirstArgument)
@@ -1343,6 +1367,36 @@ std::optional<int> commandLineProgramEnded(JSGlobalObject* globalObject, JSValue
     return status;
 }
 
+String standardLibraryDirectory(); // PySys.cpp
+
+// Nothing works without the standard library. Where it was looked for, and why there, in CPython's words.
+static void reportMissingStandardLibrary(JSGlobalObject* globalObject)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    Configuration& configuration = Python::configuration();
+    auto shown = [](const String& text) { return text.isNull() ? "(not set)"_str : asciiEscape(strRepr(text)); };
+    StrBuilder text;
+    if (!configuration.home.isNull())
+        text.append("WARN: Could not find the standard library directory! The Python 'home' directory was set to "_s, strRepr(configuration.home), ", is this correct?\n"_s);
+    text.append("Python path configuration:\n  PYTHONHOME = "_s, shown(configuration.home), "\n  PYTHONPATH = "_s, shown(configuration.pythonPath), "\n  program name = "_s, shown(configuration.programName));
+    text.append("\n  isolated = "_s, configuration.isolated ? 1 : 0, "\n  environment = "_s, configuration.useEnvironment ? 1 : 0, "\n  user site = "_s, configuration.userSiteDirectory ? 1 : 0);
+    text.append("\n  safe_path = "_s, configuration.safePath ? 1 : 0, "\n  import site = "_s, configuration.siteImport ? 1 : 0, "\n  is in build tree = 0\n  stdlib dir = "_s, shown(standardLibraryDirectory()));
+    text.append("\n  sys.path[0] = "_s, shown(configuration.firstSearchPath), '\n');
+    for (ASCIILiteral name : { "_base_executable"_s, "base_prefix"_s, "base_exec_prefix"_s, "platlibdir"_s, "executable"_s, "prefix"_s, "exec_prefix"_s }) {
+        JSValue value = rt.sysDict()->get(internString(vm, name));
+        text.append("  sys."_s, name, " = "_s, value ? asciiEscape(reprForMessage(globalObject, value)) : "(not set)"_str, '\n');
+    }
+    if (auto* searchPath = tryAsList(rt.sysDict()->get(rt.names.path()))) {
+        text.append("  sys.path = [\n"_s);
+        for (unsigned i = 0; i < listLength(searchPath); ++i)
+            text.append("    "_s, asciiEscape(reprForMessage(globalObject, listGet(searchPath, i))), ",\n"_s);
+        text.append("  ]\n"_s);
+    }
+    text.append("Fatal Python error: Failed to import encodings module\nPython runtime state: core initialized\nModuleNotFoundError: No module named 'encodings'\n"_s);
+    printToStderr(text.toString());
+}
+
 std::optional<int> runCommandLine(JSGlobalObject* globalObject, JSValue* unfinished)
 {
     Runtime& rt = Runtime::ensure(globalObject);
@@ -1350,6 +1404,11 @@ std::optional<int> runCommandLine(JSGlobalObject* globalObject, JSValue* unfinis
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     Configuration& configuration = Python::configuration();
     std::optional<int> status;
+
+    if (!rt.slot(Runtime::Slot::FindAndLoad)) {
+        reportMissingStandardLibrary(globalObject);
+        return 1;
+    }
 
     installSignalHandlers(globalObject);
     ensureMainModule(globalObject);

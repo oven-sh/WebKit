@@ -19,8 +19,8 @@ namespace Python {
 
 // The module binascii. (Modules/binascii.c in CPython is the reference.)
 
-static constexpr TypeDef binasciiErrorTypeDef { "binascii.Error"_s, { TypeFlag::Base }, { }, { }, { } };
-static constexpr TypeDef binasciiIncompleteTypeDef { "binascii.Incomplete"_s, { TypeFlag::Base }, { }, { }, { } };
+static constexpr TypeDef binasciiErrorTypeDef { "binascii.Error"_s, { TypeFlag::Base, TypeFlag::Mutable, TypeFlag::HasWeakref }, { }, { }, { } };
+static constexpr TypeDef binasciiIncompleteTypeDef { "binascii.Incomplete"_s, { TypeFlag::Base, TypeFlag::Mutable, TypeFlag::HasWeakref }, { }, { }, { } };
 
 static PyType* binasciiError(JSGlobalObject* globalObject)
 {

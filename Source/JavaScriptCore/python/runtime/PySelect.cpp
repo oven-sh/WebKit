@@ -208,7 +208,7 @@ static constexpr NativeDef descriptorGuardMethods[] = {
     PY_SLOT("__del__", descriptorGuardFinalize, "($self, /)"),
 };
 
-static constexpr TypeDef descriptorGuardTypeDef { "select._descriptor_guard"_s, { TypeFlag::DisallowInstantiation }, descriptorGuardMethods, { }, { } };
+static constexpr TypeDef descriptorGuardTypeDef { "select._descriptor_guard"_s, { TypeFlag::DisallowInstantiation, TypeFlag::Internal }, descriptorGuardMethods, { }, { } };
 
 JSValue makeDescriptorGuard(JSGlobalObject* globalObject, int fd)
 {

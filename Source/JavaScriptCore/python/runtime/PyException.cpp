@@ -1104,7 +1104,6 @@ static constexpr NativeDef plainExceptionMethods[] = {
 void initializeExceptionTypes(JSGlobalObject* globalObject)
 {
     Runtime& rt = runtime(globalObject);
-    VM& vm = rt.vm();
 
     static constexpr OptionSet<TypeFlag> flags { TypeFlag::Base, TypeFlag::HasDict };
     static constexpr OptionSet<TypeFlag> flagsWithFields { TypeFlag::Base, TypeFlag::HasDict, TypeFlag::OwnLayout };
@@ -1161,7 +1160,9 @@ void initializeExceptionTypes(JSGlobalObject* globalObject)
         } else if (type == rt.JSError()) {
             def.name = "_js.JSError"_s;
             def.getsets = jsErrorGetSets;
-        } else if (base->solidBase() == rt.BaseException() && type != rt.BaseExceptionGroup() && type != rt.ExceptionGroup())
+        } else if (type == rt.IncompleteInputError())
+            def.name = "_IncompleteInputError"_s;
+        else if (base->solidBase() == rt.BaseException() && type != rt.BaseExceptionGroup() && type != rt.ExceptionGroup())
             def.methods = plainExceptionMethods;
         type->initializeBuiltin(globalObject, def, rt.typeType(), base);
     };
@@ -1174,7 +1175,6 @@ void initializeExceptionTypes(JSGlobalObject* globalObject)
 #undef PY_DEFINE_BASE_GETTER
 #undef PY_INITIALIZE_EXCEPTION
 
-    rt.IncompleteInputError()->setNameString(vm, internString(vm, "_IncompleteInputError"_s));
     initializeExceptionGroupTypes(globalObject);
 }
 

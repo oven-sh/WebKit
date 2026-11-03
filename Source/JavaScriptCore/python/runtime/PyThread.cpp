@@ -564,7 +564,7 @@ static constexpr TypeDef threadHandleTypeDef { "_thread._ThreadHandle"_s, { }, t
 // ---- Functions ----
 
 // Never seen from Python: its dict is where the module keeps what it must find again whatever is done to the module.
-static constexpr TypeDef threadStateTypeDef { "_thread._state"_s, { TypeFlag::DisallowInstantiation }, { }, { }, { } };
+static constexpr TypeDef threadStateTypeDef { "_thread._state"_s, { TypeFlag::DisallowInstantiation, TypeFlag::Internal }, { }, { }, { } };
 
 static constexpr ASCIILiteral exceptHookArgsFields[] = { "exc_type"_s, "exc_value"_s, "exc_traceback"_s, "thread"_s };
 static constexpr StructSeqDef exceptHookArgsDef { "_thread._ExceptHookArgs"_s, exceptHookArgsFields, 4 };

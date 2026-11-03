@@ -6,7 +6,9 @@
 #include "config.h"
 #include "PyInternals.h"
 
+#include "HeapIterationScope.h"
 #include "JSCInlines.h"
+#include "MarkedSpaceInlines.h"
 #include "PyCodecs.h"
 #include "PyErrors.h"
 #include "PyException.h"
@@ -109,7 +111,7 @@ String addressForRepr(JSGlobalObject* globalObject, JSValue value)
 
 static JSValue typeModule(JSGlobalObject* globalObject, PyType* type)
 {
-    if (!type->isHeapType())
+    if (!type->isHeapType() && !type->has(TypeFlag::Mutable))
         return type->builtinModule();
     return type->dict()->get(runtime(globalObject).names.dModule());
 }
@@ -161,13 +163,13 @@ static PyType* layoutBase(PyType* type)
     return base;
 }
 
-JSValue allocateInstance(JSGlobalObject* globalObject, PyType* type)
+JSValue allocateInstance(JSGlobalObject* globalObject, PyType* type, PyType* layout)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     if (type == rt.objectType())
         return PyObject::create(vm, rt.structure<PyObject>(), type);
-    ASSERT(layoutBase(type) == rt.objectType());
+    ASSERT_UNUSED(layout, layoutBase(type) == (layout ? layout : rt.objectType()));
     PyInstance* instance = PyInstance::create(vm, type);
     if (type->lookup(Special::Del)) [[unlikely]]
         rt.registerFinalizable(instance);
@@ -256,7 +258,7 @@ static JSValue objectNe(JSGlobalObject* globalObject, JSValue self, JSValue othe
     auto scope = DECLARE_THROW_SCOPE(vm);
     // The opposite of whatever __eq__ says, if it says anything.
     JSValue method = rt.typeOf(self)->lookup(Special::Eq);
-    JSValue result = callSpecial(globalObject, method, self, other);
+    JSValue result = callOperatorMethod(globalObject, method, self, other);
     RETURN_IF_EXCEPTION(scope, { });
     if (result == rt.notImplemented())
         return result;
@@ -424,6 +426,39 @@ static JSValue objectGetClass(JSGlobalObject* globalObject, JSValue self)
     return typeOf(globalObject, self);
 }
 
+// Objects register for finalization when they are made, if their class has a __del__ then. This is for a class that gets one
+// later, by assignment to the attribute or to __bases__: it finds the instances there are, of it and of what derives from it.
+// (Among them those that nothing refers to any more but no collection has found yet. An object dies when a collection finds it.)
+static void registerInstancesForFinalization(JSGlobalObject* globalObject, PyType* type)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    MarkedArgumentBuffer instances;
+    {
+        HeapIterationScope iterationScope(vm.heap);
+        vm.heap.objectSpace().forEachLiveCell(iterationScope, [&](HeapCell* heapCell, HeapCell::Kind kind) {
+            if (!isJSCellKind(kind))
+                return IterationStatus::Continue;
+            auto* cell = static_cast<JSCell*>(heapCell);
+            if (!cell->structureID() || !cell->isObject() || cell->structure()->realm() != globalObject)
+                return IterationStatus::Continue;
+            PyType* cellType = nullptr;
+            if (isPyObject(cell))
+                cellType = uncheckedDowncast<PyObject>(cell)->type();
+            else if (PyListObject::is(cell))
+                cellType = uncheckedDowncast<PyListObject>(cell)->type();
+            else if (PyType::is(cell))
+                cellType = uncheckedDowncast<PyType>(cell)->type();
+            // One that is being made has no type yet, and a type that is being made no MRO.
+            if (cellType && cellType->isHeapType() && cellType->mro() && cellType->isSubtypeOf(type))
+                instances.append(cell);
+            return IterationStatus::Continue;
+        });
+    }
+    for (unsigned i = 0; i < instances.size(); ++i)
+        rt.registerFinalizable(instances.at(i).asCell());
+}
+
 static bool sameSlots(PyType* a, PyType* b)
 {
     PyTuple* slotsA = a->slots();
@@ -489,7 +524,30 @@ static void objectSetClass(JSGlobalObject* globalObject, JSValue self, JSValue v
         uncheckedDowncast<PyListObject>(cell)->setType(vm, newType);
     else
         PyType::from(self)->setType(vm, newType);
+    if (newType->lookup(Special::Del) && !oldType->lookup(Special::Del)) [[unlikely]]
+        rt.registerFinalizable(cell);
 }
+
+static constexpr NativeDef defaultComparisonMethods[] = {
+    PY_SLOT("__eq__", objectNotComparable, "($self, value, /)"),
+    PY_SLOT("__ne__", objectNe, "($self, value, /)"),
+    PY_SLOT("__lt__", objectNotComparable, "($self, value, /)"),
+    PY_SLOT("__le__", objectNotComparable, "($self, value, /)"),
+    PY_SLOT("__gt__", objectNotComparable, "($self, value, /)"),
+    PY_SLOT("__ge__", objectNotComparable, "($self, value, /)"),
+};
+
+std::span<const NativeDef> defaultComparisons() { return defaultComparisonMethods; }
+
+static constexpr NativeDef repeatableObjectMethods[] = {
+    PY_SLOT("__getattribute__", objectGetAttribute, "($self, name, /)"),
+    PY_SLOT("__setattr__", objectSetAttr, "($self, name, value, /)"),
+    PY_SLOT("__delattr__", objectDelAttr, "($self, name, /)"),
+    PY_SLOT("__hash__", objectHash, "($self, /)"),
+    PY_SLOT("__eq__", objectEq, "($self, value, /)"),
+};
+
+std::span<const NativeDef> repeatableSlotsOfObject() { return repeatableObjectMethods; }
 
 static constexpr NativeDef objectMethods[] = {
     PY_NEW(objectNew, "($type, *args, **kwargs)"),
@@ -610,10 +668,11 @@ static void builtinInstanceSetDict(JSGlobalObject* globalObject, JSValue self, J
 }
 
 static constexpr NativeGetSet instanceDictGetSet[] = { { "__dict__"_s, instanceGetDict, instanceSetDict, false, "dictionary for instance variables"_s } };
-static constexpr NativeGetSet builtinInstanceDictGetSet[] = { { "__dict__"_s, builtinInstanceGetDict, builtinInstanceSetDict, false, "dictionary for instance variables"_s } };
+static constexpr NativeGetSet builtinInstanceDictGetSet[] = { { "__dict__"_s, builtinInstanceGetDict, builtinInstanceSetDict } };
 static constexpr NativeGetSet instanceWeakrefGetSet[] = { { "__weakref__"_s, instanceGetWeakref, nullptr, false, "list of weak references to the object"_s } };
 
 std::span<const NativeGetSet> dictGetSet() { return builtinInstanceDictGetSet; }
+std::span<const NativeGetSet> weakrefGetSet() { return instanceWeakrefGetSet; }
 
 // ---- type: attributes ----
 
@@ -671,6 +730,7 @@ static void typeSetAttrImpl(JSGlobalObject* globalObject, PyType* type, JSString
 
     name = internString(globalObject, name);
     RETURN_IF_EXCEPTION(scope, void());
+    bool getsFinalizer = value && isIdentical(name, rt.name(Special::Del)) && !type->lookup(Special::Del);
     if (value)
         type->dict()->set(vm, name, value);
     else if (!type->dict()->remove(vm, name)) {
@@ -678,6 +738,8 @@ static void typeSetAttrImpl(JSGlobalObject* globalObject, PyType* type, JSString
         return;
     }
     type->didChange(vm);
+    if (getsFinalizer) [[unlikely]]
+        registerInstancesForFinalization(globalObject, type);
 }
 
 static JSValue typeSetAttr(JSGlobalObject* globalObject, JSValue self, JSValue name, JSValue value)
@@ -722,14 +784,29 @@ JSValue typeCall(JSGlobalObject* globalObject, PyType* type, const CallArgs& arg
         return raiseTypeError(globalObject, scope, "cannot create '"_s, type->nameInMessages(), "' instances"_s);
 
     JSValue object;
-    auto* native = PyNativeFunction::tryFrom(newMethod);
-    // class C: __new__ = dict.__new__. In CPython the __new__ of a built-in type in a class stands for "what the class inherits",
-    // whichever type it is of.
-    for (PyType* base = type->base(); native && native->kind() == NativeKind::New && !type->isSubtypeOf(native->ownerType()) && base; base = base->base()) {
-        newMethod = base->lookup(Special::New);
-        native = PyNativeFunction::tryFrom(newMethod);
+    auto nativeNew = [](JSValue method) {
+        auto* native = PyNativeFunction::tryFrom(method);
+        return native && native->kind() == NativeKind::New ? native : nullptr;
+    };
+    PyNativeFunction* native = nativeNew(newMethod);
+    bool isChecked = false;
+    // In CPython the __new__ of a built-in type, found in a class or in the classes it derives from, stands for "what the class
+    // inherits", whichever type it is of: that of __base__, which decides the layout. So class C(tzinfo, dict) is made by dict's,
+    // and so is class C(dict): __new__ = object.__new__.
+    if (native && type->isHeapType() && (native->ownerType()->solidBase() != layoutBase(type) || !type->isSubtypeOf(native->ownerType()))) [[unlikely]] {
+        PyNativeFunction* inherited = native;
+        for (PyType* base = type->base(); base; base = base->base()) {
+            inherited = nativeNew(base->lookup(Special::New));
+            if (!inherited || !base->isHeapType())
+                break;
+        }
+        // What it inherits may be "look __new__ up", from a class with one written in Python. That finds the same again.
+        if (inherited)
+            native = inherited;
+        else
+            isChecked = true;
     }
-    if (native && native->kind() == NativeKind::New)
+    if (native && !isChecked)
         object = native->invokeWithSelf(globalObject, type, args);
     else {
         JSValue function;
@@ -903,6 +980,19 @@ static MROResult resolveMRO(JSGlobalObject* globalObject, PyType* type)
         return MROResult::Superseded;
     type->setMRO(vm, mro);
     type->didChange(vm);
+    // An mro() may name a class that the type does not derive from. What is remembered of the type's attributes depends on that
+    // class all the same.
+    if (type->type() != rt.typeType()) {
+        PyTuple* bases = type->bases();
+        for (unsigned i = 0; i < mro->length(); ++i) {
+            PyType* entry = PyType::from(mro->at(i));
+            bool isAncestor = entry == type;
+            for (unsigned j = 0; !isAncestor && j < bases->length(); ++j)
+                isAncestor = PyType::from(bases->at(j))->isSubtypeOf(entry);
+            if (!isAncestor)
+                entry->addDependent(globalObject, type);
+        }
+    }
     return MROResult::Set;
 }
 
@@ -1472,6 +1562,7 @@ static void typeSetBases(JSGlobalObject* globalObject, JSValue self, JSValue val
 
     PyTuple* oldBases = type->bases();
     PyType* oldBase = type->base();
+    bool hadFinalizer = !!type->lookup(Special::Del);
     type->setBases(vm, bases);
     type->setBase(vm, base);
     updateSolidBases(vm, type);
@@ -1502,6 +1593,8 @@ static void typeSetBases(JSGlobalObject* globalObject, JSValue self, JSValue val
     for (unsigned i = 0; i < bases->length(); ++i)
         PyType::from(bases->at(i))->addSubclass(globalObject, type);
     type->didChange(vm);
+    if (!hadFinalizer && type->lookup(Special::Del)) [[unlikely]]
+        registerInstancesForFinalization(globalObject, type);
 }
 
 static JSValue typeGetDict(JSGlobalObject* globalObject, JSValue self)
@@ -1509,7 +1602,6 @@ static JSValue typeGetDict(JSGlobalObject* globalObject, JSValue self)
     return makeMappingProxy(globalObject, PyType::from(self)->dict());
 }
 
-JSValue docstringFor(JSGlobalObject*, const String& key); // PyDocstrings.cpp
 
 static JSValue typeGetDoc(JSGlobalObject* globalObject, JSValue self)
 {
@@ -1520,6 +1612,11 @@ static JSValue typeGetDoc(JSGlobalObject* globalObject, JSValue self)
     JSValue doc = type->dict()->get(runtime(globalObject).names.dDoc());
     if (!doc)
         return jsUndefined();
+    // So it is for property, whose instances have a __doc__ each.
+    if (!type->isHeapType() && !isStr(doc) && !isNone(doc)) {
+        if (JSValue text = docstringFor(globalObject, makeString("type "_s, type->nameInMessages())); !isNone(text))
+            return text;
+    }
     return bindDescriptor(globalObject, doc, { }, type);
 }
 
@@ -1699,6 +1796,8 @@ static constexpr std::pair<ASCIILiteral, ASCIILiteral> typeSignatures[] = {
     { "_asyncio.Task"_s, "(coro, *, loop=None, name=None, context=None, eager_start=False)"_s },
     { "_blake2.blake2b"_s, "(data=b'', *, digest_size=_blake2.blake2b.MAX_DIGEST_SIZE,\n        key=b'', salt=b'', person=b'', fanout=1, depth=1, leaf_size=0,\n        node_offset=0, node_depth=0, inner_size=0, last_node=False,\n        usedforsecurity=True, string=None)"_s },
     { "_blake2.blake2s"_s, "(data=b'', *, digest_size=_blake2.blake2s.MAX_DIGEST_SIZE,\n        key=b'', salt=b'', person=b'', fanout=1, depth=1, leaf_size=0,\n        node_offset=0, node_depth=0, inner_size=0, last_node=False,\n        usedforsecurity=True, string=None)"_s },
+    { "_bz2.BZ2Compressor"_s, "(compresslevel=9, /)"_s },
+    { "_bz2.BZ2Decompressor"_s, "()"_s },
     { "_hashlib.HASH"_s, "(name, string=b'')"_s },
     { "_hashlib.HASHXOF"_s, "(name, string=b'')"_s },
     { "_io.BufferedRWPair"_s, "(reader, writer, buffer_size=DEFAULT_BUFFER_SIZE, /)"_s },
@@ -1710,6 +1809,7 @@ static constexpr std::pair<ASCIILiteral, ASCIILiteral> typeSignatures[] = {
     { "_io.IncrementalNewlineDecoder"_s, "(decoder, translate, errors='strict')"_s },
     { "_io.StringIO"_s, "(initial_value='', newline='\\n')"_s },
     { "_io.TextIOWrapper"_s, "(buffer, encoding=None, errors=None, newline=None,\n              line_buffering=False, write_through=False)"_s },
+    { "_lzma.LZMADecompressor"_s, "(format=FORMAT_AUTO, memlimit=None, filters=None)"_s },
     { "_pickle.Pickler"_s, "(file, protocol=None, fix_imports=True, buffer_callback=None)"_s },
     { "_pickle.Unpickler"_s, "(file, *, fix_imports=True, encoding='ASCII', errors='strict',\n          buffers=())"_s },
     { "_queue.SimpleQueue"_s, "()"_s },
@@ -1823,10 +1923,13 @@ static JSValue typeGetFlags(JSGlobalObject* globalObject, JSValue self)
         if (type->has(flag))
             flags |= static_cast<uint64_t>(1) << bit;
     }
-    if (type->has(TypeFlag::Mutable))
-        flags |= 1 << 9;
-    else if (!type->isHeapType())
-        flags |= 1 << 8; // Immutable.
+    if (!type->isHeapType()) {
+        if (!type->has(TypeFlag::Mutable))
+            flags |= 1 << 8; // Immutable.
+        // Made at run time in CPython: see PyType::initializeBuiltin().
+        if (JSValue module = type->dict()->get(runtime(globalObject).names.dModule()); module && module.isString())
+            flags |= 1 << 9;
+    }
     // Its instances may refer to other objects. (They are all the collector's here.)
     Runtime& rt = runtime(globalObject);
     bool isAtomic = false;
@@ -1835,6 +1938,15 @@ static JSValue typeGetFlags(JSGlobalObject* globalObject, JSValue self)
     if (!isAtomic)
         flags |= 1 << 14;
     return makeInt(globalObject, flags);
+}
+
+// As in CPython, but for the table of the names of the instances' attributes, which grows with them there.
+static JSValue typeSizeOf(JSGlobalObject*, JSValue self)
+{
+    PyType* type = PyType::from(self);
+    if (!type->isHeapType() && !type->has(TypeFlag::Mutable))
+        return jsNumber(424);
+    return jsNumber(type->has(TypeFlag::HasDict) && !itemSize(type) ? 1712 : 944);
 }
 
 // The sizes are CPython's, for what is asked about most. They say nothing about the cells here.
@@ -1878,6 +1990,7 @@ static constexpr NativeDef typeMethods[] = {
     PY_METHOD("__instancecheck__", typeInstanceCheck, "($self, instance, /)"),
     PY_METHOD("__subclasscheck__", typeSubclassCheck, "($self, subclass, /)"),
     PY_METHOD("__dir__", typeDir, "($self, /)"),
+    PY_METHOD("__sizeof__", typeSizeOf, "($self, /)"),
 };
 
 static constexpr NativeGetSet typeGetSets[] = {

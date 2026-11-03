@@ -951,6 +951,23 @@ JSValue callOperatorMethod(JSGlobalObject* globalObject, JSValue method, JSValue
     return result;
 }
 
+// For the special methods that an object can do without. What the type has under the name may be any descriptor, and an
+// AttributeError from its __get__ says that there is no such method after all: then `method` is emptied and nothing is raised.
+template<typename... Arguments>
+static JSValue callSpecialIfThere(JSGlobalObject* globalObject, JSValue& method, JSValue self, Arguments... arguments)
+{
+    if (isMethodDescriptor(method)) [[likely]]
+        return callSpecial(globalObject, method, self, arguments...);
+    Runtime& rt = runtime(globalObject);
+    JSValue bound = bindDescriptor(globalObject, method, self, rt.typeOf(self));
+    if (!bound) {
+        if (clearPendingExceptionIfMatches(globalObject, rt.AttributeError()))
+            method = { };
+        return { };
+    }
+    return call(globalObject, bound, arguments...);
+}
+
 JSValue callWithTupleAndDict(JSGlobalObject* globalObject, JSValue callable, PyTuple* positional, PyDict* keywords)
 {
     Runtime& rt = runtime(globalObject);
@@ -1161,12 +1178,15 @@ int64_t hash(JSGlobalObject* globalObject, JSValue value)
 
     PyType* type = rt.typeOf(value);
     JSValue method = type->lookup(Special::Hash);
+    JSValue result;
+    if (method && !isNone(method)) {
+        result = callSpecialIfThere(globalObject, method, value);
+        RETURN_IF_EXCEPTION(scope, -1);
+    }
     if (!method || isNone(method)) {
         raiseTypeError(globalObject, scope, "unhashable type: '"_s, type->nameInMessages(), '\'');
         return -1;
     }
-    JSValue result = callSpecial(globalObject, method, value);
-    RETURN_IF_EXCEPTION(scope, -1);
     if (!isInt(result)) {
         raiseTypeError(globalObject, scope, "__hash__ method should return an integer"_s);
         return -1;
@@ -1229,15 +1249,23 @@ bool isTrue(JSGlobalObject* globalObject, JSValue value)
             raiseTypeError(globalObject, scope, '\'', type->nameInMessages(), "' cannot be interpreted as a boolean"_s);
             return false;
         }
-        JSValue result = callSpecial(globalObject, method, value);
+        JSValue result = callSpecialIfThere(globalObject, method, value);
         RETURN_IF_EXCEPTION(scope, false);
-        if (!result.isBoolean()) {
+        if (method && !result.isBoolean()) {
             raiseTypeError(globalObject, scope, typeNameForMessage(globalObject, type), ".__bool__() must return a bool, not "_s, typeNameForMessage(globalObject, rt.typeOf(result)));
             return false;
         }
-        return result.asBoolean();
+        if (method)
+            return result.asBoolean();
     }
-    if (type->lookup(Special::Len)) {
+    if (JSValue method = type->lookup(Special::Len)) {
+        if (!isMethodDescriptor(method)) [[unlikely]] {
+            JSValue result = callSpecialIfThere(globalObject, method, value);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (!method)
+                return true;
+            RELEASE_AND_RETURN(scope, isTrue(globalObject, result));
+        }
         int64_t size = length(globalObject, value);
         RETURN_IF_EXCEPTION(scope, false);
         return !!size;
@@ -1622,11 +1650,12 @@ bool contains(JSGlobalObject* globalObject, JSValue container, JSValue item)
     PyType* type = rt.typeOf(container);
     JSValue method = type->lookup(Special::Contains);
     if (method && !isNone(method)) {
-        JSValue result = callSpecial(globalObject, method, container, item);
+        JSValue result = callSpecialIfThere(globalObject, method, container, item);
         RETURN_IF_EXCEPTION(scope, false);
-        if (result.isBoolean())
+        if (method && result.isBoolean())
             return result.asBoolean();
-        RELEASE_AND_RETURN(scope, isTrue(globalObject, result));
+        if (method)
+            RELEASE_AND_RETURN(scope, isTrue(globalObject, result));
     }
     if (method) {
         raiseTypeError(globalObject, scope, '\'', type->nameInMessages(), "' object is not a container"_s);
@@ -1663,15 +1692,25 @@ JSValue getIter(JSGlobalObject* globalObject, JSValue value)
 
     PyType* type = rt.typeOf(value);
     JSValue method = type->lookup(Special::Iter);
+    bool hadMethod = !!method;
     if (method && !isNone(method)) {
-        JSValue iterator = callSpecial(globalObject, method, value);
+        JSValue iterator = callSpecialIfThere(globalObject, method, value);
         RETURN_IF_EXCEPTION(scope, { });
-        if (!isIterator(globalObject, iterator))
+        if (method && !isIterator(globalObject, iterator))
             return raiseTypeError(globalObject, scope, typeNameForMessage(globalObject, type), ".__iter__() must return an iterator, not "_s, typeNameForMessage(globalObject, rt.typeOf(iterator)));
-        return iterator;
+        if (method)
+            return iterator;
     }
-    if (!method && isIterableThroughGetItem(type))
+    if (!method && isIterableThroughGetItem(type)) {
+        // After an __iter__ that was not there, the same goes for __getitem__, which is only asked for.
+        if (JSValue getItem = type->lookup(Special::GetItem); hadMethod && !isMethodDescriptor(getItem)) [[unlikely]] {
+            if (!bindDescriptor(globalObject, getItem, value, type)) {
+                takePendingException(globalObject);
+                return raiseTypeError(globalObject, scope, '\'', type->nameInMessages(), "' object is not iterable"_s);
+            }
+        }
         return PyIterator::create(globalObject, PyIterator::Kind::Sequence, value);
+    }
     return raiseTypeError(globalObject, scope, '\'', type->nameInMessages(), "' object is not iterable"_s);
 }
 

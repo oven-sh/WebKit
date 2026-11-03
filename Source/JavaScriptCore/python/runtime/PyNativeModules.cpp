@@ -80,7 +80,14 @@ static void initializeMissingStdlibInfoModule(JSGlobalObject* globalObject, PyMo
 }
 
 void initializeAsyncioModule(JSGlobalObject*, PyModule*); // PyAsyncio.cpp
+void initializeCodecsCNModule(JSGlobalObject*, PyModule*); // PyCJKCodecs.cpp, as the five that follow
+void initializeCodecsHKModule(JSGlobalObject*, PyModule*);
+void initializeCodecsISO2022Module(JSGlobalObject*, PyModule*);
+void initializeCodecsJPModule(JSGlobalObject*, PyModule*);
+void initializeCodecsKRModule(JSGlobalObject*, PyModule*);
+void initializeCodecsTWModule(JSGlobalObject*, PyModule*);
 void initializeDateTimeModule(JSGlobalObject*, PyModule*); // PyDateTime.cpp
+void initializeMultibyteCodecModule(JSGlobalObject*, PyModule*); // PyMultibyteCodec.cpp
 
 static constexpr NativeModuleDef nativeModuleTable[] = {
     { "_abc"_s, initializeAbcModule },
@@ -88,6 +95,12 @@ static constexpr NativeModuleDef nativeModuleTable[] = {
     { "_asyncio"_s, initializeAsyncioModule },
     { "_bisect"_s, initializeBisectModule },
     { "_codecs"_s, initializeCodecsModule },
+    { "_codecs_cn"_s, initializeCodecsCNModule },
+    { "_codecs_hk"_s, initializeCodecsHKModule },
+    { "_codecs_iso2022"_s, initializeCodecsISO2022Module },
+    { "_codecs_jp"_s, initializeCodecsJPModule },
+    { "_codecs_kr"_s, initializeCodecsKRModule },
+    { "_codecs_tw"_s, initializeCodecsTWModule },
     { "_collections"_s, initializeCollectionsModule },
     { "_contextvars"_s, initializeContextVarsModule },
     { "_csv"_s, initializeCsvModule },
@@ -101,6 +114,7 @@ static constexpr NativeModuleDef nativeModuleTable[] = {
     { "_lsprof"_s, initializeLsprofModule },
     { "_math_integer"_s, initializeMathIntegerModule },
     { "_missing_stdlib_info"_s, initializeMissingStdlibInfoModule },
+    { "_multibytecodec"_s, initializeMultibyteCodecModule },
     { "_opcode"_s, initializeOpcodeModule },
     { "_operator"_s, initializeOperatorModule },
     { "_pickle"_s, initializePickleModule },

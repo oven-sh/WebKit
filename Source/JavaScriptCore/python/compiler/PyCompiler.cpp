@@ -521,7 +521,11 @@ void Unit::declareVariables()
             map->add(name->impl(), variable);
             recordVariable(name, variable, false);
         };
-        if (m_scope->needsClassClosure)
+        if (Symbol* symbol = m_scope->find(names().classCell->impl()); m_scope->needsClassClosure && symbol && symbol->binding == Binding::Free) {
+            Variable variable { g.addVar(), Variable::Kind::Cell, true };
+            m_classCellOfMethods = variable.reg;
+            recordVariable(names().classCell, variable, false);
+        } else if (m_scope->needsClassClosure)
             addCell(names().classCell);
         if (m_scope->needsClassDict)
             addCell(names().classDict);
@@ -749,6 +753,8 @@ Unit::Access Unit::resolve(Name mangled)
 RegisterID* Unit::cellFor(Name name)
 {
     auto* impl = name->impl();
+    if (m_classCellOfMethods && impl == names().classCell->impl())
+        return m_classCellOfMethods;
     for (size_t i = m_overlays.size(); i--;) {
         Symbol* symbol = m_overlays[i]->find(impl);
         if (symbol && symbol->binding == Binding::Cell)

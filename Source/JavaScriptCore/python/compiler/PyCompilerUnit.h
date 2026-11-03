@@ -400,6 +400,7 @@ private:
     AST::Arguments* m_arguments;
     CodeSpec::IterateFirstParameter m_iterateFirstParameter;
     RegisterID* m_firstIterator { nullptr }; // In the body of a generator expression: what the binder got from the parameter.
+    RegisterID* m_classCellOfMethods { nullptr }; // In the body of a class that itself means the __class__ of an enclosing method by the name.
 
     UncheckedKeyHashMap<Scope*, std::unique_ptr<VariableMap>> m_variables;
     Vector<Scope*, 2> m_overlays; // The inlined comprehensions being compiled, the innermost last.
