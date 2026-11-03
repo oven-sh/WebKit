@@ -1,0 +1,2673 @@
+diff --git a/Source/JavaScriptCore/bytecode/BytecodeGeneratorification.cpp b/Source/JavaScriptCore/bytecode/BytecodeGeneratorification.cpp
+index 4c55e775..02a5d29f 100644
+--- a/Source/JavaScriptCore/bytecode/BytecodeGeneratorification.cpp
++++ b/Source/JavaScriptCore/bytecode/BytecodeGeneratorification.cpp
+@@ -43,6 +43,7 @@ namespace JSC {
+ 
+ struct YieldData {
+     JSInstructionStream::Offset point { 0 };
++    JSInstructionStream::Offset instructionBefore { 0 };
+     VirtualRegister argument { 0 };
+     FastBitVector liveness;
+     bool found { false }; // The bytecode optimizer may have removed an unreachable op_yield, leaving a hole in the numbering.
+@@ -68,7 +69,9 @@ public:
+         , m_generatorFrameSymbolTable(codeBlock->vm(), generatorFrameSymbolTable)
+         , m_generatorFrameSymbolTableIndex(generatorFrameSymbolTableIndex)
+     {
++        JSInstructionStream::Offset previous = 0;
+         for (const auto& instruction : m_instructions) {
++            JSInstructionStream::Offset instructionBefore = std::exchange(previous, instruction.offset());
+             switch (instruction->opcodeID()) {
+             case op_enter: {
+                 m_enterPoint = instruction.offset();
+@@ -82,11 +85,21 @@ public:
+                     m_yields.grow(liveCalleeLocalsIndex + 1);
+                 YieldData& data = m_yields[liveCalleeLocalsIndex];
+                 data.point = instruction.offset();
++                data.instructionBefore = instructionBefore;
+                 data.argument = bytecode.m_argument;
+                 data.found = true;
+                 break;
+             }
+ 
++            case op_py_generator_registers: {
++                // The one that is there already takes the values of the parameters from the first slots.
++                auto bytecode = instruction->as<OpPyGeneratorRegisters>();
++                ASSERT(!bytecode.m_offset && !bytecode.m_isSave);
++                m_firstPythonParameter = bytecode.m_first;
++                m_pythonParameterCount = bytecode.m_count;
++                break;
++            }
++
+             case op_create_generator_frame_environment: {
+                 auto bytecode = instruction->as<OpCreateGeneratorFrameEnvironment>();
+                 GeneratorFrameData data;
+@@ -181,6 +194,8 @@ private:
+     }
+ 
+     BytecodeGenerator& m_bytecodeGenerator;
++    VirtualRegister m_firstPythonParameter;
++    unsigned m_pythonParameterCount { 0 };
+     JSInstructionStream::Offset m_enterPoint;
+     std::optional<GeneratorFrameData> m_generatorFrameData;
+     UnlinkedCodeBlockGenerator* m_codeBlock;
+@@ -228,6 +243,10 @@ private:
+             return instruction->as<OpCallIgnoreResult>().m_argv - CallFrame::headerSizeInRegisters;
+         case op_call_varargs:
+             return instruction->as<OpCallVarargs>().m_firstFree.toLocal();
++        case op_py_for_iter:
++            return instruction->as<OpPyForIter>().m_stackOffset - CallFrame::headerSizeInRegisters;
++        case op_py_send:
++            return instruction->as<OpPySend>().m_stackOffset - CallFrame::headerSizeInRegisters;
+         case op_tail_call:
+         case op_tail_call_varargs:
+         case op_call_direct_eval:
+@@ -283,6 +302,10 @@ private:
+                 result = instruction->as<OpCall>().m_dst;
+             else if (instruction->is<OpCallVarargs>())
+                 result = instruction->as<OpCallVarargs>().m_dst;
++            else if (instruction->is<OpPyForIter>())
++                result = instruction->as<OpPyForIter>().m_dst;
++            else if (instruction->is<OpPySend>())
++                result = instruction->as<OpPySend>().m_dst;
+             resetLiveRegisters(instruction.next().offset(), false, *firstLocal, { result });
+         }
+ 
+@@ -309,6 +332,7 @@ void BytecodeGeneratorification::run()
+     // We calculate the liveness at each merge point. This gives us the information which registers should be saved and resumed conservatively.
+ 
+     VM& vm = m_bytecodeGenerator.vm();
++    bool isPython = m_codeBlock->isPython();
+     {
+         GeneratorLivenessAnalysis pass(*this);
+         pass.run(m_codeBlock, m_instructions);
+@@ -333,15 +357,18 @@ void BytecodeGeneratorification::run()
+         jumpTable.m_defaultOffset = nextToEnterPoint.offset();
+ 
+         rewriter.insertFragmentBefore(nextToEnterPoint, [&] (BytecodeRewriter::Fragment& fragment) {
++            if (isPython)
++                fragment.appendInstruction<OpPyGeneratorEnter>();
+             fragment.appendInstruction<OpSwitchImm>(switchTableIndex, state);
+         });
+     }
+ 
+     // Before what follows: where one of these is right before a yield, it has to come before the registers are saved.
++    VirtualRegister anyValue = m_resets.isEmpty() ? VirtualRegister() : m_bytecodeGenerator.pythonConstant(jsUndefined())->virtualRegister();
+     for (const Reset& reset : m_resets) {
+         auto emitReset = [&] (BytecodeRewriter::Fragment& fragment) {
+             for (VirtualRegister local : reset.registers)
+-                fragment.appendInstruction<OpMov>(local, m_generatorFrameData->m_initialValue);
++                fragment.appendInstruction<OpMov>(local, anyValue);
+         };
+         auto instruction = m_instructions.at(reset.point);
+         if (reset.isForJumpsToo)
+@@ -350,12 +377,86 @@ void BytecodeGeneratorification::run()
+             rewriter.insertFragmentBefore(instruction, emitReset);
+     }
+ 
++    // A Python generator has a slot for each register that is ever saved, the parameters first. Registers that follow one another
++    // are saved and restored with one instruction, so their slots follow one another as well.
++    Vector<int> slotOfLocal;
++    if (isPython) {
++        unsigned slotCount = 0;
++        auto allot = [&](size_t local) {
++            while (slotOfLocal.size() <= local)
++                slotOfLocal.append(-1);
++            if (slotOfLocal[local] < 0)
++                slotOfLocal[local] = slotCount++;
++        };
++        for (unsigned i = 0; i < m_pythonParameterCount; ++i)
++            allot(m_firstPythonParameter.toLocal() + i);
++        for (YieldData& data : m_yields) {
++            if (!data.found)
++                continue;
++            // All the variables are kept, needed or not: gi_frame.f_locals shows them. And a generator that is resumed
++            // counts on it (llint_python_generator_resume).
++            for (unsigned local = m_bytecodeGenerator.firstPythonVariable(); local < m_codeBlock->numVars(); ++local)
++                data.liveness[local] = true;
++            data.liveness.forEachSetBit(allot);
++        }
++        // In the order of the registers, whichever yield they were first seen at.
++        unsigned next = m_pythonParameterCount;
++        for (size_t local = 0; local < slotOfLocal.size(); ++local) {
++            if (slotOfLocal[local] >= static_cast<int>(m_pythonParameterCount))
++                slotOfLocal[local] = next++;
++        }
++        ASSERT(next == slotCount);
++        m_bytecodeGenerator.setPythonGeneratorSlotCount(slotCount);
++    }
++    auto forEachRunOfLiveRegisters = [&](const YieldData& data, const auto& function) {
++        size_t first = 0;
++        unsigned count = 0;
++        data.liveness.forEachSetBit([&](size_t index) {
++            if (count && index == first + count && slotOfLocal[index] == slotOfLocal[first] + static_cast<int>(count)) {
++                ++count;
++                return;
++            }
++            if (count)
++                function(virtualRegisterForLocal(first), count, static_cast<unsigned>(slotOfLocal[first]));
++            first = index;
++            count = 1;
++        });
++        if (count)
++            function(virtualRegisterForLocal(first), count, static_cast<unsigned>(slotOfLocal[first]));
++    };
++
+     for (const YieldData& data : m_yields) {
+         if (!data.found)
+             continue;
+         VirtualRegister scope = virtualRegisterForArgumentIncludingThis(static_cast<int32_t>(JSGenerator::Argument::Frame));
+ 
+         auto instruction = m_instructions.at(data.point);
++        if (isPython) {
++            // See BytecodeGenerator::emitPythonYieldPoint().
++            auto placeholder = m_instructions.at(data.instructionBefore);
++            RELEASE_ASSERT(placeholder->opcodeID() == op_nop);
++            rewriter.replaceBytecodeWithFragment(placeholder, [&] (BytecodeRewriter::Fragment& fragment) {
++                struct Run {
++                    VirtualRegister first;
++                    unsigned count { 0 };
++                    unsigned offset { 0 };
++                };
++                Run last { data.argument };
++                forEachRunOfLiveRegisters(data, [&](VirtualRegister first, unsigned count, unsigned offset) {
++                    if (last.count)
++                        fragment.appendInstruction<OpPyGeneratorRegisters>(last.first, last.count, last.offset, true);
++                    last = { first, count, offset };
++                });
++                fragment.appendInstruction<OpPyGeneratorSuspend>(data.argument, last.first, last.count, last.offset);
++            });
++            rewriter.replaceBytecodeWithFragment(instruction, [&] (BytecodeRewriter::Fragment& fragment) {
++                forEachRunOfLiveRegisters(data, [&](VirtualRegister first, unsigned count, unsigned offset) {
++                    fragment.appendInstruction<OpPyGeneratorRegisters>(first, count, offset, false);
++                });
++            });
++            continue;
++        }
++
+         // Emit save sequence.
+         rewriter.insertFragmentBefore(instruction, [&] (BytecodeRewriter::Fragment& fragment) {
+             data.liveness.forEachSetBit([&](size_t index) {
+diff --git a/Source/JavaScriptCore/bytecode/BytecodeList.rb b/Source/JavaScriptCore/bytecode/BytecodeList.rb
+index cf6df156..dff0ddd2 100644
+--- a/Source/JavaScriptCore/bytecode/BytecodeList.rb
++++ b/Source/JavaScriptCore/bytecode/BytecodeList.rb
+@@ -1450,12 +1450,56 @@ op :py_get_iter,
+         iterable: VirtualRegister,
+     }
+ 
+-# The next item, or a jump when there is none.
++# The next item, or a jump when there is none. `stackOffset`, as the argv of op_call, is where there is room for the frame of
++# the body of a generator, which the instruction calls itself.
+ op :py_for_iter,
+     args: {
+         dst: VirtualRegister,
+         iterator: VirtualRegister,
+         targetLabel: BoundLabel,
++        stackOffset: unsigned,
++    }
++
++# A step of `yield from` or `await`: `value` goes to the iterator, as send() does it, or throw() if `mode` says so
++# (JSGenerator::ResumeMode). What the iterator yields, or what it returns and a jump.
++op :py_send,
++    args: {
++        dst: VirtualRegister,
++        iterator: VirtualRegister,
++        value: VirtualRegister,
++        mode: VirtualRegister,
++        targetLabel: BoundLabel,
++        stackOffset: unsigned,
++    }
++
++# The body of a generator (python/runtime/PyGenerator.h) has been called: the generator is running. If it has run before it
++# goes on where it stopped. (The op_switch_imm that follows never gets to do that: it is there to say where control may go.)
++op :py_generator_enter
++
++# It stops running, and `value` goes to whoever resumed it. The next time it goes on with the instruction that follows.
++# First it saves registers as op_py_generator_registers does, if `count` is not 0.
++op :py_generator_suspend,
++    args: {
++        value: VirtualRegister,
++        first: VirtualRegister,
++        count: unsigned,
++        offset: unsigned,
++    }
++
++# It is done, and `value` goes to whoever resumed it.
++op :py_generator_return,
++    args: {
++        value: VirtualRegister,
++    }
++
++# `count` registers from `first` down go to (`isSave`), or come from, the slots of the generator (Python::PyGenerator::slots())
++# from `offset` up. What comes from a slot leaves it empty.
++op :py_generator_registers,
++    args: {
++        first: VirtualRegister,
++        count: unsigned,
++        offset: unsigned,
++        isSave: bool,
+     }
+ 
+ # The items of an iterable go in `before` registers from `argv` down. If `afterPlusOne` is not 0, then a list of all but the
+diff --git a/Source/JavaScriptCore/bytecode/BytecodeUseDef.cpp b/Source/JavaScriptCore/bytecode/BytecodeUseDef.cpp
+index d6222617..b08d56ed 100644
+--- a/Source/JavaScriptCore/bytecode/BytecodeUseDef.cpp
++++ b/Source/JavaScriptCore/bytecode/BytecodeUseDef.cpp
+@@ -108,6 +108,7 @@ void computeUsesForBytecodeIndexImpl(const JSInstruction* instruction, Checkpoin
+     case op_super_sampler_end:
+     case op_get_scope:
+     case op_py_bind_args:
++    case op_py_generator_enter:
+         return;
+ 
+     USES(OpPyLoadCell, cell)
+@@ -154,6 +155,24 @@ void computeUsesForBytecodeIndexImpl(const JSInstruction* instruction, Checkpoin
+     USES(OpPyJfalse, condition)
+     USES(OpPyGetIter, iterable)
+     USES(OpPyForIter, iterator)
++    USES(OpPySend, iterator, value, mode)
++    USES(OpPyGeneratorReturn, value)
++
++    case op_py_generator_suspend: {
++        auto bytecode = instruction->as<OpPyGeneratorSuspend>();
++        functor(bytecode.m_value);
++        for (unsigned i = 0; i < bytecode.m_count; ++i)
++            functor(VirtualRegister { bytecode.m_first.offset() - static_cast<int>(i) });
++        return;
++    }
++
++    case op_py_generator_registers: {
++        auto bytecode = instruction->as<OpPyGeneratorRegisters>();
++        for (unsigned i = 0; bytecode.m_isSave && i < bytecode.m_count; ++i)
++            functor(VirtualRegister { bytecode.m_first.offset() - static_cast<int>(i) });
++        return;
++    }
++
+     USES(OpPyUnpack, iterable)
+ 
+     case op_py_runtime:
+@@ -466,6 +485,9 @@ void computeDefsForBytecodeIndexImpl(unsigned numVars, const JSInstruction* inst
+     case op_jtrue:
+     case op_jfalse:
+     case op_py_bind_args:
++    case op_py_generator_enter:
++    case op_py_generator_suspend:
++    case op_py_generator_return:
+     case op_py_store_cell:
+     case op_py_store_global:
+     case op_py_store_name:
+@@ -750,6 +772,15 @@ void computeDefsForBytecodeIndexImpl(unsigned numVars, const JSInstruction* inst
+     DEFS(OpPyCompare, dst)
+     DEFS(OpPyGetIter, dst)
+     DEFS(OpPyForIter, dst)
++    DEFS(OpPySend, dst, iterator)
++
++    case op_py_generator_registers: {
++        auto bytecode = instruction->as<OpPyGeneratorRegisters>();
++        for (unsigned i = 0; !bytecode.m_isSave && i < bytecode.m_count; ++i)
++            functor(VirtualRegister { bytecode.m_first.offset() - static_cast<int>(i) });
++        return;
++    }
++
+     DEFS(OpPyRuntime, dst)
+ 
+     case op_py_unpack: {
+diff --git a/Source/JavaScriptCore/bytecode/Opcode.h b/Source/JavaScriptCore/bytecode/Opcode.h
+index c82f7fc1..39c2f425 100644
+--- a/Source/JavaScriptCore/bytecode/Opcode.h
++++ b/Source/JavaScriptCore/bytecode/Opcode.h
+@@ -231,6 +231,7 @@ inline bool isBranch(OpcodeID opcodeID)
+     case op_py_jtrue:
+     case op_py_jfalse:
+     case op_py_for_iter:
++    case op_py_send:
+     case op_py_jeq:
+     case op_py_jne:
+     case op_py_jlt:
+@@ -288,6 +289,8 @@ inline bool isTerminal(OpcodeID opcodeID)
+     switch (opcodeID) {
+     case op_ret:
+     case op_py_ret:
++    case op_py_generator_suspend:
++    case op_py_generator_return:
+     case op_unreachable:
+         return true;
+     default:
+diff --git a/Source/JavaScriptCore/bytecode/PreciseJumpTargetsInlines.h b/Source/JavaScriptCore/bytecode/PreciseJumpTargetsInlines.h
+index ef8ccdec..c78e8084 100644
+--- a/Source/JavaScriptCore/bytecode/PreciseJumpTargetsInlines.h
++++ b/Source/JavaScriptCore/bytecode/PreciseJumpTargetsInlines.h
+@@ -42,6 +42,7 @@ namespace JSC {
+     CASE_OP(OpPyJtrue) \
+     CASE_OP(OpPyJfalse) \
+     CASE_OP(OpPyForIter) \
++    CASE_OP(OpPySend) \
+     CASE_OP(OpPyJeq) \
+     CASE_OP(OpPyJne) \
+     CASE_OP(OpPyJlt) \
+diff --git a/Source/JavaScriptCore/bytecompiler/BytecodeGenerator.cpp b/Source/JavaScriptCore/bytecompiler/BytecodeGenerator.cpp
+index eed9c72f..fda06ca3 100644
+--- a/Source/JavaScriptCore/bytecompiler/BytecodeGenerator.cpp
++++ b/Source/JavaScriptCore/bytecompiler/BytecodeGenerator.cpp
+@@ -134,6 +134,7 @@ void Label::setLocation(BytecodeGenerator& generator, unsigned location)
+         CASE(OpPyJtrue)
+         CASE(OpPyJfalse)
+         CASE(OpPyForIter)
++        CASE(OpPySend)
+         CASE(OpPyJeq)
+         CASE(OpPyJne)
+         CASE(OpPyJlt)
+@@ -1068,15 +1069,10 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, PythonCodeNode* node, UnlinkedFunct
+     RELEASE_ASSERT(frameObject->virtualRegister() == Python::frameObjectRegister());
+ 
+     if (node->isGeneratorBody()) {
+-        // As for a JS generator: the registers that are live across a yield are kept in an environment, the frame.
++        // As for a JS generator, but that the registers that are live across a yield are kept in the generator itself.
+         ASSERT(node->parameterCount() == static_cast<unsigned>(JSGenerator::Argument::Frame));
+         m_needsGeneratorification = true;
+         m_generatorRegister = &m_parameters[static_cast<unsigned>(JSGenerator::Argument::Generator)];
+-        SymbolTable* frameSymbolTable = SymbolTable::create(m_vm);
+-        m_generatorFrameSymbolTable.set(m_vm, frameSymbolTable);
+-        m_generatorFrameSymbolTableIndex = addConstantValue(frameSymbolTable)->index();
+-        OpCreateGeneratorFrameEnvironment::emit(this, generatorFrameRegister(), scopeRegister(), VirtualRegister { m_generatorFrameSymbolTableIndex }, addConstantValue(jsUndefined()));
+-        emitPutInternalField(generatorRegister(), Python::generatorFrameField, generatorFrameRegister());
+     }
+     m_firstPythonVariable = m_calleeLocals.size();
+ }
+@@ -1086,7 +1082,9 @@ ParserError BytecodeGenerator::generatePython(VM& vm, PythonCodeNode* node, Unli
+     DeferGC deferGC(vm);
+     auto generator = makeUnique<BytecodeGenerator>(vm, node, codeBlock);
+     unsigned size;
+-    return generator->generate(size);
++    ParserError error = generator->generate(size);
++    node->setGeneratorSlotCount(generator->m_pythonGeneratorSlotCount);
++    return error;
+ }
+ 
+ Vector<TryContext> BytecodeGenerator::suspendTryContexts(size_t depth)
+@@ -1391,9 +1389,29 @@ RegisterID* BytecodeGenerator::emitPyGetIter(RegisterID* dst, RegisterID* iterab
+     return dst;
+ }
+ 
++// Where the frame of the body of a generator goes, for an instruction that calls it: after everything that is in use.
++unsigned BytecodeGenerator::stackOffsetForGeneratorBody()
++{
++    CallArguments arguments(*this, nullptr, static_cast<unsigned>(JSGenerator::Argument::Frame));
++    Vector<RefPtr<RegisterID>, CallFrame::headerSizeInRegisters, UnsafeVectorOverflow> callFrame;
++    for (int i = 0; i < CallFrame::headerSizeInRegisters; ++i)
++        callFrame.append(newTemporary());
++    return arguments.stackOffset();
++}
++
+ void BytecodeGenerator::emitPyForIter(RegisterID* dst, RegisterID* iterator, Label& exhausted)
+ {
+-    OpPyForIter::emit(this, dst, iterator, bindLabel(exhausted));
++    OpPyForIter::emit(this, dst, iterator, bindLabel(exhausted), stackOffsetForGeneratorBody());
++}
++
++void BytecodeGenerator::emitPyRestoreRegisters(RegisterID* first, unsigned count, unsigned offset)
++{
++    OpPyGeneratorRegisters::emit(this, first, count, offset, false);
++}
++
++void BytecodeGenerator::emitPySend(RegisterID* dst, RegisterID* iterator, RegisterID* value, RegisterID* mode, Label& returned)
++{
++    OpPySend::emit(this, dst, iterator, value, mode, bindLabel(returned), stackOffsetForGeneratorBody());
+ }
+ 
+ void BytecodeGenerator::emitPyUnpack(RegisterID* argv, RegisterID* iterable, unsigned before, int after)
+@@ -1447,7 +1465,6 @@ void BytecodeGenerator::emitPythonYieldPoint(RegisterID* argument)
+ {
+     Ref<Label> mergePoint = newLabel();
+     unsigned yieldPointIndex = m_yieldPoints++;
+-    emitPutInternalField(generatorRegister(), Python::generatorStateField, emitLoad(nullptr, jsNumber(yieldPointIndex + 1)));
+ 
+     // No try block covers the instructions that save and restore the registers.
+     Ref<Label> savePoint = newEmittedLabel();
+@@ -1456,6 +1473,9 @@ void BytecodeGenerator::emitPythonYieldPoint(RegisterID* argument)
+         m_tryRanges.append(TryRange { context.start.copyRef(), savePoint.copyRef(), context.tryData });
+         context.start = mergePoint.get();
+     }
++    // BytecodeGeneratorification puts what saves the registers in the place of the first and what restores them in the place of the
++    // second. They are two because what jumps here has to find the one, and what resumes the generator the other.
++    OpNop::emit(this);
+     OpYield::emit(this, yieldPointIndex, argument);
+     emitLabel(mergePoint.get());
+ }
+@@ -4682,10 +4702,12 @@ RegisterID* BytecodeGenerator::emitReturn(RegisterID* src)
+         }
+     }
+ 
+-    // The body of a generator returns to PyGenerator::resume().
+-    if (m_codeBlock->isPython() && !m_needsGeneratorification)
+-        OpPyRet::emit(this, src);
+-    else
++    if (m_codeBlock->isPython()) {
++        if (m_needsGeneratorification)
++            OpPyGeneratorReturn::emit(this, src);
++        else
++            OpPyRet::emit(this, src);
++    } else
+         OpRet::emit(this, src);
+     return src;
+ }
+diff --git a/Source/JavaScriptCore/bytecompiler/BytecodeGenerator.h b/Source/JavaScriptCore/bytecompiler/BytecodeGenerator.h
+index 83e495ff..6d24d00f 100644
+--- a/Source/JavaScriptCore/bytecompiler/BytecodeGenerator.h
++++ b/Source/JavaScriptCore/bytecompiler/BytecodeGenerator.h
+@@ -428,6 +428,10 @@ namespace JSC {
+         void resumeTryContexts(Vector<TryContext>&&);
+         // Returns `argument` to whoever resumed the generator. The next instruction runs when it is resumed again.
+         void emitPythonYieldPoint(RegisterID* argument);
++        void emitPySend(RegisterID* dst, RegisterID* iterator, RegisterID* value, RegisterID* mode, Label& returned);
++        void emitPyRestoreRegisters(RegisterID* first, unsigned count, unsigned offset);
++        // How many slots a generator needs for the registers of this code, its body. BytecodeGeneratorification finds out.
++        void setPythonGeneratorSlotCount(unsigned count) { m_pythonGeneratorSlotCount = count; }
+         // A set of up to 64 variables, numbered by the compiler, that are known to have a value wherever the next instruction
+         // is reached from. The compiler adds a variable when it emits what gives it a value. Where paths meet (a label that
+         // was jumped to, an exception handler) what is left is what all of them have. A jump back to a label takes nothing
+@@ -1569,6 +1573,8 @@ namespace JSC {
+         Vector<TryContext> m_tryContextStack;
+ 
+         BoundLabel bindLabel(Label&);
++        unsigned stackOffsetForGeneratorBody();
++        unsigned m_pythonGeneratorSlotCount { 0 };
+         void notePathToLabel(Label&);
+         void didEmitLabel(Label&, bool hasJumps);
+         uint64_t m_pythonBoundVariables { 0 };
+diff --git a/Source/JavaScriptCore/interpreter/Interpreter.cpp b/Source/JavaScriptCore/interpreter/Interpreter.cpp
+index d13dec23..5437fff4 100644
+--- a/Source/JavaScriptCore/interpreter/Interpreter.cpp
++++ b/Source/JavaScriptCore/interpreter/Interpreter.cpp
+@@ -1386,9 +1386,18 @@ public:
+             if (m_codeBlock->unlinkedCodeBlock()->isPython()) [[unlikely]] {
+                 Python::Runtime* runtime = m_codeBlock->globalObject()->pythonRuntime();
+                 runtime->frameIsEnding(m_callFrame);
+-                // op_py_bind_args counts a frame in. Before it comes op_enter, which polls for traps.
+-                if (m_codeBlock->unlinkedCodeBlock()->parseMode() != SourceParseMode::GeneratorBodyMode && visitor->bytecodeIndex().offset())
+-                    runtime->leaveFrame();
++                if (m_codeBlock->unlinkedCodeBlock()->parseMode() != SourceParseMode::GeneratorBodyMode) {
++                    // op_py_bind_args counts a frame in. Before it comes op_enter, which polls for traps.
++                    if (visitor->bytecodeIndex().offset())
++                        runtime->leaveFrame();
++                } else {
++                    Python::generatorBodyIsUnwinding(m_codeBlock->globalObject(), m_callFrame, m_isTermination);
++                    Exception* exception = m_vm.exceptionForInspection();
++                    m_thrownValue = exception->value();
++#if ENABLE(WEBASSEMBLY)
++                    m_exception = exception;
++#endif
++                }
+             }
+         }
+ 
+@@ -1452,7 +1461,7 @@ private:
+     mutable JSValue m_thrownValue;
+ 
+ #if ENABLE(WEBASSEMBLY)
+-    Exception* m_exception;
++    mutable Exception* m_exception;
+     mutable RefPtr<const Wasm::Tag> m_wasmTag;
+     bool m_catchableFromWasm { false };
+ #endif
+diff --git a/Source/JavaScriptCore/llint/LLIntOffsetsExtractor.cpp b/Source/JavaScriptCore/llint/LLIntOffsetsExtractor.cpp
+index 1381557f..9b5aac8c 100644
+--- a/Source/JavaScriptCore/llint/LLIntOffsetsExtractor.cpp
++++ b/Source/JavaScriptCore/llint/LLIntOffsetsExtractor.cpp
+@@ -93,6 +93,7 @@
+ #include "PyAbstract.h"
+ #include "PyBytecode.h"
+ #include "PyFunction.h"
++#include "PyGenerator.h"
+ #include "PyIterators.h"
+ #include "PyModule.h"
+ #include "PyRuntime.h"
+diff --git a/Source/JavaScriptCore/llint/LowLevelInterpreter64.asm b/Source/JavaScriptCore/llint/LowLevelInterpreter64.asm
+index 5a40f196..522e6d6f 100644
+--- a/Source/JavaScriptCore/llint/LowLevelInterpreter64.asm
++++ b/Source/JavaScriptCore/llint/LowLevelInterpreter64.asm
+@@ -2711,8 +2711,21 @@ llintOp(op_py_ret, OpPyRet, macro (size, get, dispatch)
+     loadConstantOrVariable(size, t2, r0)
+     btqnz r0, notCellMask, .return
+     loadb JSCell::m_type[r0], t2
+-    bbeq t2, PyFloatType, .slow
++    bbeq t2, PyFloatType, .notForJS
+     bbneq t2, PyGeneratorType, .return
++    bbneq (constexpr (Python::PyGenerator::offsetOfKind()))[r0], constexpr Python::PyGenerator::Kind::Coroutine, .return
++.notForJS:
++    # Python::resultForCaller(): Python code gets it as it is.
++    loadp CodeBlock[cfr], t2
++    loadp CodeBlock::m_vm[t2], t2
++    loadp CallerFrame[cfr], t3
++    bpeq t3, VM::topEntryFrame[t2], .slow
++    loadq Callee[t3], t3
++    move t3, t2
++    andq (constexpr JSValue::NativeCalleeMask), t2
++    bqeq t2, (constexpr JSValue::NativeCalleeTag), .slow
++    loadi JSCell::m_structureID[t3], t3
++    bieq t3, Python::Runtime::functionStructureID[t1], .return
+ .slow:
+     storePC()
+     prepareStateForCCall()
+@@ -2778,6 +2791,23 @@ slowPathJumpOp(py_jngt)
+ slowPathJumpOp(py_jnge)
+ slowPathJumpOp(py_for_iter)
+ slowPathOp(py_instrumented)
++slowPathJumpOp(py_send)
++slowPathJumpOp(py_generator_enter)
++slowPathOp(py_generator_registers)
++
++llintOp(op_py_generator_suspend, OpPyGeneratorSuspend, macro (size, get, dispatch)
++    callSlowPath(_slow_path_py_generator_suspend)
++    get(m_value, t2)
++    loadConstantOrVariable(size, t2, r0)
++    doReturn()
++end)
++
++llintOp(op_py_generator_return, OpPyGeneratorReturn, macro (size, get, dispatch)
++    callSlowPath(_slow_path_py_generator_return)
++    get(m_value, t2)
++    loadConstantOrVariable(size, t2, r0)
++    doReturn()
++end)
+ 
+ else
+ 
+@@ -3655,7 +3685,42 @@ llintOp(op_py_set_item, OpPySetItem, macro (size, get, dispatch)
+ end)
+ 
+ 
+-# The iterators of range (while the numbers are int32s), list and tuple.
++# Calls the body of the generator in t0, if it can be resumed (see Python::PyGenerator::resume()): the frame is made where
++# m_stackOffset says, as op_call makes one. What the body returns is in r0.
++macro pyResumeGenerator(size, opcodeStruct, loadValueAndMode, slow)
++    if ARM64E
++        jmp slow
++    end
++    loadq (constexpr (Python::PyGenerator::offsetOfState()))[t0], t1
++    bilt t1, 0, slow
++    loadp (constexpr (Python::PyGenerator::offsetOfBody()))[t0], t2
++    loadp JSFunction::m_executableOrRareData[t2], t3
++    btpnz t3, (constexpr JSFunction::rareDataTag), slow
++    loadp FunctionExecutable::m_codeBlockForCall[t3], t3
++    btpz t3, slow
++    loadValueAndMode(t6, t7)
++    getu(size, opcodeStruct, m_stackOffset, t5)
++    lshifti 3, t5
++    negp t5
++    addp cfr, t5
++    storei 6, ArgumentCountIncludingThis + LowWordOffset[t5] # JSGenerator::Argument
++    storeq t2, Callee[t5]
++    storep t3, CodeBlock[t5]
++    storeq ValueUndefined, ThisArgumentOffset[t5]
++    storeq t0, FirstArgumentOffset[t5]
++    storeq t1, FirstArgumentOffset + 8[t5]
++    storeq t6, FirstArgumentOffset + 16[t5]
++    storeq t7, FirstArgumentOffset + 24[t5]
++    storeq ValueUndefined, FirstArgumentOffset + 32[t5]
++    storePC()
++    move t5, sp
++    addp CallerFrameAndPCSize, sp
++    call _llint_python_generator_resume
++    restoreStackPointerAfterCall()
++    loadPC()
++end
++
++# The iterators of range (while the numbers are int32s), list and tuple, and generators.
+ llintOpWithJump(op_py_for_iter, OpPyForIter, macro (size, get, jump, dispatch)
+     macro storeItem(value)
+         get(m_dst, t2)
+@@ -3668,7 +3733,7 @@ llintOpWithJump(op_py_for_iter, OpPyForIter, macro (size, get, jump, dispatch)
+     btqnz t0, notCellMask, .slow
+     loadPythonRuntime(t1)
+     loadi Python::Runtime::iteratorStructureID[t1], t1
+-    bineq t1, JSCell::m_structureID[t0], .slow
++    bineq t1, JSCell::m_structureID[t0], .notIterator
+     loadq (constexpr (Python::PyIterator::offsetOfTarget()))[t0], t1
+     btqz t1, .exhausted
+     loadq (constexpr (Python::PyIterator::offsetOfPosition()))[t0], t2
+@@ -3709,6 +3774,17 @@ llintOpWithJump(op_py_for_iter, OpPyForIter, macro (size, get, jump, dispatch)
+     move t2, t3
+     storeItem(t3)
+ 
++.notIterator:
++    bbneq JSCell::m_type[t0], PyGeneratorType, .slow
++    pyResumeGenerator(size, OpPyForIter, macro (value, mode)
++        move ValueUndefined, value
++        move numberTag, mode
++    end, .slow)
++    get(m_iterator, t1)
++    loadq [cfr, t1, 8], t1
++    bieq (constexpr (Python::PyGenerator::offsetOfState()))[t1], constexpr Python::PyGenerator::Completed, .exhausted
++    storeItem(r0)
++
+ .exhausted:
+     jump(m_targetLabel)
+ 
+@@ -3718,6 +3794,213 @@ llintOpWithJump(op_py_for_iter, OpPyForIter, macro (size, get, jump, dispatch)
+ end)
+ 
+ 
++# A generator or a coroutine that is sent a value.
++llintOpWithJump(op_py_send, OpPySend, macro (size, get, jump, dispatch)
++    get(m_iterator, t0)
++    loadq [cfr, t0, 8], t0
++    btqnz t0, notCellMask, .slow
++    bbneq JSCell::m_type[t0], PyGeneratorType, .slow
++    bbeq (constexpr (Python::PyGenerator::offsetOfKind()))[t0], constexpr Python::PyGenerator::Kind::AsyncGenerator, .slow
++    pyResumeGenerator(size, OpPySend, macro (value, mode)
++        get(m_mode, mode)
++        loadq [cfr, mode, 8], mode
++        bqeq mode, numberTag, .normal
++        # `await` of a coroutine that has not started: it is what to iterate over.
++        addq (constexpr Python::firstSendOfAwait), numberTag, value
++        bqb mode, value, .slow
++        bbneq (constexpr (Python::PyGenerator::offsetOfKind()))[t0], constexpr Python::PyGenerator::Kind::Coroutine, .slow
++        btinz t1, .slow
++        move numberTag, mode
++    .normal:
++        get(m_value, value)
++        loadq [cfr, value, 8], value
++        # One that has not started takes nothing but None.
++        btinz t1, .started
++        bqneq value, ValueUndefined, .slow
++    .started:
++    end, .slow)
++    get(m_dst, t2)
++    storeq r0, [cfr, t2, 8]
++    get(m_iterator, t1)
++    loadq [cfr, t1, 8], t1
++    bieq (constexpr (Python::PyGenerator::offsetOfState()))[t1], constexpr Python::PyGenerator::Completed, .returned
++    # The generator that is running this is waiting for that one.
++    loadq FirstArgumentOffset[cfr], t3
++    storeq t1, (constexpr (Python::PyGenerator::offsetOfDelegate()))[t3]
++    pythonWriteBarrier(t3, t1, t2)
++    dispatch()
++
++.returned:
++    jump(m_targetLabel)
++
++.slow:
++    callSlowPath(_slow_path_py_send)
++    nextInstruction()
++end)
++
++
++# See Python::PyGenerator::resume(). `state`: what it was, an int32.
++macro pyEnterGeneratorBody(generator, runtime, state, scratch, slow)
++    loadPythonRuntime(runtime)
++    loadi Python::Runtime::frameDepth[runtime], scratch
++    addi 1, scratch
++    bigt scratch, Python::Runtime::recursionLimit[runtime], slow
++    storei scratch, Python::Runtime::frameDepth[runtime]
++    loadi (constexpr (Python::PyGenerator::offsetOfState()))[generator], state
++    move constexpr Python::PyGenerator::Executing, scratch
++    zxi2q scratch, scratch
++    orq numberTag, scratch
++    storeq scratch, (constexpr (Python::PyGenerator::offsetOfState()))[generator]
++    storeq ValueEmpty, (constexpr (Python::PyGenerator::offsetOfDelegate()))[generator]
++    loadp (constexpr (Python::Runtime::offsetOfRunningGenerator()))[runtime], scratch
++    storep scratch, (constexpr (Python::PyGenerator::offsetOfResumedBy()))[generator]
++    storep generator, (constexpr (Python::Runtime::offsetOfRunningGenerator()))[runtime]
++end
++
++macro pyLeaveGeneratorBody(generator, runtime, scratch)
++    loadPythonRuntime(runtime)
++    loadp (constexpr (Python::PyGenerator::offsetOfResumedBy()))[generator], scratch
++    storep scratch, (constexpr (Python::Runtime::offsetOfRunningGenerator()))[runtime]
++    storep 0, (constexpr (Python::PyGenerator::offsetOfResumedBy()))[generator]
++    loadi Python::Runtime::frameDepth[runtime], scratch
++    subi 1, scratch
++    storei scratch, Python::Runtime::frameDepth[runtime]
++end
++
++llintOp(op_py_generator_enter, OpPyGeneratorEnter, macro (size, get, dispatch)
++    loadq FirstArgumentOffset[cfr], t1
++    pyEnterGeneratorBody(t1, t3, t2, t0, .slow)
++    btiz t2, .start
++    move t2, PC
++    nextInstruction()
++
++.start:
++    dispatch()
++
++.slow:
++    callSlowPath(_slow_path_py_generator_enter)
++    nextInstruction()
++end)
++
++# Where the body of a generator is called to resume it: llint_function_for_call_prologue, op_enter and op_py_generator_enter in
++# one, for the common case. The variables are not given a value: what follows takes them all from the generator.
++    global _llint_python_generator_resume
++_llint_python_generator_resume:
++    prologue(_llint_entry_osr_function_for_call, _llint_trace_prologue_function_for_call)
++    if X86_64 or ARM64
++        loadi CodeBlock::m_numberOfArgumentsToSkipAndCouldBeTainted[t1], t0
++        btis t0, .fromTheTop
++        loadp CodeBlock::m_vm[t1], t0
++        loadb JSCell::m_cellState[t1], t2
++        loadi (constexpr (VM::offsetOfHeapBarrierThreshold()))[t0], t0
++        bibeq t2, t0, .fromTheTop
++        loadq FirstArgumentOffset[cfr], t5
++        btiz (constexpr (Python::PyGenerator::offsetOfState()))[t5], .fromTheTop
++        pyEnterGeneratorBody(t5, t3, t2, t0, .fromTheTop)
++        loadis CodeBlock::m_scopeRegister[t1], t3
++        loadp Callee[cfr], t0
++        loadp JSCallee::m_scope[t0], t0
++        storeq t0, [cfr, t3, 8]
++        # Python::frameObjectRegister()
++        storeq ValueUndefined, -((CalleeSaveSpaceAsVirtualRegisters + 2) * SlotSize)[cfr]
++        move t2, PC
++        nextInstruction()
++    end
++.fromTheTop:
++    dispatch(0)
++
++
++llintOp(op_py_generator_suspend, OpPyGeneratorSuspend, macro (size, get, dispatch)
++    loadq FirstArgumentOffset[cfr], t3
++    btpnz (constexpr (Python::PyGenerator::offsetOfFrameObject()))[t3], .slow
++    getu(size, OpPyGeneratorSuspend, m_count, t5)
++    btiz t5, .saved
++    get(m_first, t1)
++    leap [cfr, t1, 8], t1
++    getu(size, OpPyGeneratorSuspend, m_offset, t2)
++    leap (constexpr (Python::PyGenerator::offsetOfSlots()))[t3, t2, 8], t2
++.loop:
++    loadq [t1], t0
++    storeq t0, [t2]
++    subp 8, t1
++    addp 8, t2
++    subi 1, t5
++    btinz t5, .loop
++.saved:
++    move PC, t0
++    genericDispatchOpJS(macro (length) addp length, t0 end, size, op_py_generator_suspend)
++    orq numberTag, t0
++    storeq t0, (constexpr (Python::PyGenerator::offsetOfState()))[t3]
++    pyLeaveGeneratorBody(t3, t1, t0)
++    # For all that this and op_py_generator_registers have stored, whatever it is: that costs less than to look at it.
++    move t3, t0
++    pythonWriteBarrier(t3, t0, t1)
++.return:
++    get(m_value, t2)
++    loadConstantOrVariable(size, t2, r0)
++    doReturn()
++
++.slow:
++    callSlowPath(_slow_path_py_generator_suspend)
++    jmp .return
++end)
++
++
++llintOp(op_py_generator_return, OpPyGeneratorReturn, macro (size, get, dispatch)
++    loadq FirstArgumentOffset[cfr], t3
++    btpnz (constexpr (Python::PyGenerator::offsetOfFrameObject()))[t3], .slow
++    bbeq (constexpr (Python::PyGenerator::offsetOfFinalization()))[t3], constexpr Python::PyGenerator::Finalization::Registered, .slow
++    # Python::PyGenerator::complete(). Its slots are empty while it runs, and it waits for nothing.
++    move constexpr Python::PyGenerator::Finalization::None, t0
++    storeb t0, (constexpr (Python::PyGenerator::offsetOfFinalization()))[t3]
++    move constexpr Python::PyGenerator::Completed, t0
++    zxi2q t0, t0
++    orq numberTag, t0
++    storeq t0, (constexpr (Python::PyGenerator::offsetOfState()))[t3]
++    storeq ValueEmpty, (constexpr (Python::PyGenerator::offsetOfHandledException()))[t3]
++    pyLeaveGeneratorBody(t3, t1, t0)
++.return:
++    get(m_value, t2)
++    loadConstantOrVariable(size, t2, r0)
++    doReturn()
++
++.slow:
++    callSlowPath(_slow_path_py_generator_return)
++    jmp .return
++end)
++
++
++llintOp(op_py_generator_registers, OpPyGeneratorRegisters, macro (size, get, dispatch)
++    loadq FirstArgumentOffset[cfr], t3
++    get(m_first, t1)
++    leap [cfr, t1, 8], t1
++    getu(size, OpPyGeneratorRegisters, m_offset, t2)
++    leap (constexpr (Python::PyGenerator::offsetOfSlots()))[t3, t2, 8], t2
++    getu(size, OpPyGeneratorRegisters, m_count, t5)
++    getu(size, OpPyGeneratorRegisters, m_isSave, t0)
++    btinz t0, .save
++.restore:
++    loadq [t2], t0
++    storeq t0, [t1]
++    storeq ValueEmpty, [t2]
++    subp 8, t1
++    addp 8, t2
++    subi 1, t5
++    btinz t5, .restore
++    dispatch()
++
++    # The write barrier is left to the op_py_generator_suspend that follows.
++.save:
++    loadq [t1], t0
++    storeq t0, [t2]
++    subp 8, t1
++    addp 8, t2
++    subi 1, t5
++    btinz t5, .save
++    dispatch()
++end)
++
++
+ # A tuple or a list of as many items as there are targets, none of them starred.
+ llintOp(op_py_unpack, OpPyUnpack, macro (size, get, dispatch)
+     getu(size, OpPyUnpack, m_afterPlusOne, t0)
+diff --git a/Source/JavaScriptCore/python/DEFERRED.md b/Source/JavaScriptCore/python/DEFERRED.md
+index d86f04a8..a1a1f382 100644
+--- a/Source/JavaScriptCore/python/DEFERRED.md
++++ b/Source/JavaScriptCore/python/DEFERRED.md
+@@ -28,7 +28,7 @@ stays), **experiment** (needs trying out before it can be decided), **deferred**
+ | dict as a JS object or Map        | `PyDict` is its own hash table (keys compare with `__eq__`/`__hash__`, insertion order, any hashable key). JS sees it as an exotic object. Whether it should also be a `Map` to JS is open.                                                          |
+ | Prompt finalization               | How far escape analysis or scoped regions (`with`, function exit) can bring back "freed when the function returns" for objects that provably do not escape.                                                                                         |
+ | JIT                               | Python runs in the LLInt, with fast paths and inline caches there (README, Code). No Baseline, DFG or FTL. The caches are monomorphic.                                                                                                              |
+-| Generators without leaving the interpreter | Each resumption enters the VM anew from C++ and saves and restores registers one by one through a scope object: 2.5 times CPython's cost. Design: the bookkeeping of `PyGenerator::resume` moves into the body (an instruction at its start, one in place of `ret`), registers are saved in bulk, `op_py_for_iter` makes the frame and calls the body, and the unwinder does the cleaning up when the body raises. |
++| Consumers of generators in C++    | `for`, `yield from` and `await` resume a generator without leaving the interpreter (README, Code). `sum`, `list`, `any`, `min`, `"".join`, `next()`, `send()` and the like are C++ and enter the VM anew for each item: about 1.3 times CPython's cost. They could be hidden functions in bytecode, which needs frames that tracebacks skip. asyncio's own tasks and futures are the pure Python ones (no `_asyncio`): 2.5 times CPython's cost per task switch. |
+ | Recursion limit                   | `sys.setrecursionlimit` against the real stack limit of JSC.                                                                                                                                                                                        |
+ 
+ ## Deferred
+diff --git a/Source/JavaScriptCore/python/PyBytecode.h b/Source/JavaScriptCore/python/PyBytecode.h
+index ba55af3c..4834f70b 100644
+--- a/Source/JavaScriptCore/python/PyBytecode.h
++++ b/Source/JavaScriptCore/python/PyBytecode.h
+@@ -67,7 +67,6 @@ enum class CompareOperator : uint8_t {
+     ExceptionMatch, // lhs: an exception; rhs: what follows `except`.
+ };
+ 
+-// A generator is laid out so that op_get_internal_field and op_put_internal_field reach these. (Field 0 is its type.)
+ // ---- What the compiler tells whoever traces the program: PythonMark, in UnlinkedCodeBlock.h ----
+ //
+ // Line: `value` is lineMarkValue().
+@@ -89,7 +88,7 @@ constexpr bool isSilentLine(unsigned value) { return value & 2; }
+ struct TracedBlock {
+     enum Kind : uint8_t {
+         ForLoop, // The register holds the iterator,
+-        With, // __exit__,
++        With, // __exit__, and the next register what to pass it first, or the empty value,
+         ExceptionHandler, // the exception that was being handled before the one that is now.
+         ExceptionHandlerWithMore, // The same, and there is more in other registers: `except*`, `finally` on the way of an exception.
+         Other,
+@@ -99,11 +98,9 @@ struct TracedBlock {
+     static constexpr int registerOffsetOf(uint64_t bits) { return static_cast<int32_t>(static_cast<uint32_t>(bits >> 8)); }
+ };
+ 
+-static constexpr unsigned generatorStateField = 1; // As JSGenerator::Field::State.
+-static constexpr unsigned generatorBodyField = 2; // The function to call to resume it.
+-static constexpr unsigned generatorFrameField = 3; // The environment its registers are kept in while it is suspended.
+-static constexpr unsigned generatorArgumentsField = 4; // Until it starts: a tuple, the values of the parameters.
+-static constexpr unsigned numberOfGeneratorFields = 4;
++// op_py_send. The mode is a JSGenerator::ResumeMode, or this plus 0, or 1 after __aenter__, or 2 after __aexit__: `iterator` holds
++// what `await` was given, which the instruction replaces by what to iterate over, and then sends None to.
++constexpr int firstSendOfAwait = 8;
+ 
+ // op_py_runtime. name, number of arguments (-1: any). "empty" is the empty JSValue, for what is not there.
+ #define FOR_EACH_PY_RUNTIME_FUNCTION(v) \
+@@ -138,7 +135,7 @@ static constexpr unsigned numberOfGeneratorFields = 4;
+     /* Functions */ \
+     v(MakeFunction, -1) /* index, defaults or empty, kwdefaults or empty, annotate or empty, the cells of the closure... */ \
+     v(SetFunctionTypeParams, 2) /* function, type params: the function */ \
+-    v(MakeGenerator, -1) /* for a generator expression: the iterator of its first iterable */ \
++    v(MakeGenerator, -1) /* how many slots it needs; for a generator expression: the iterator of its first iterable */ \
+     v(CallArguments, 3) /* function, args, kwargs or empty: an array of the arguments, and sets aside the names of the keywords */ \
+     v(TakeKeywordNames, 0) \
+     /* Imports */ \
+@@ -154,19 +151,14 @@ static constexpr unsigned numberOfGeneratorFields = 4;
+     v(TakeExceptionGroupRest, 0) \
+     v(PrepareReraiseStar, 2) /* the original, a list of what was raised: what to raise, or None */ \
+     /* with */ \
+-    v(LoadSpecial, 2) /* object, SpecialMethodForWith: bound */ \
+-    v(WithExit, 2) /* __exit__, exception */ \
++    v(WithExit, 3) /* __exit__, what to pass it first or empty, exception */ \
+     /* Generators and coroutines */ \
+     v(GetYieldFromIter, 1) \
+-    v(GetAwaitable, 2) /* object, where: 0, or 1 after __aenter__, 2 after __aexit__ */ \
+     v(GetAIter, 1) \
+     v(GetANext, 1) \
+     v(EndAsyncFor, 1) /* exception: swallows StopAsyncIteration, throws anything else */ \
+-    v(Send, 3) /* iterator, value, resume mode: what it yields, or empty when it is done */ \
+-    v(TakeSendResult, 1) /* iterator, for whoever traces the program */ \
+     v(AsyncGenWrap, 1) \
+     v(ThrowIntoGenerator, 1) \
+-    v(KeepVariables, -1) /* does nothing with them: see Unit::keepVariablesAcrossYield() */ \
+     /* match */ \
+     v(MatchSequence, 1) \
+     v(MatchMapping, 1) \
+@@ -194,6 +186,7 @@ enum class RuntimeFunction : uint8_t {
+ };
+ 
+ // RuntimeFunction::LoadSpecial
++// As the `name` of op_py_get_method, in place of a str: the method is looked for as `with` does it, in the class alone.
+ enum class SpecialMethodForWith : uint8_t { Enter, Exit, AEnter, AExit };
+ 
+ // RuntimeFunction::ImportName
+diff --git a/Source/JavaScriptCore/python/README.md b/Source/JavaScriptCore/python/README.md
+index 5a7bcdcc..ea842347 100644
+--- a/Source/JavaScriptCore/python/README.md
++++ b/Source/JavaScriptCore/python/README.md
+@@ -71,6 +71,9 @@ unpacking, cells, the binding of arguments when they are simply the parameters.
+   attributes into a real dict, for good, and gives the object a Structure that says so.
+ - _Calls_ are JSC's.
+ 
++`object.name(...)` makes no bound method: `op_py_get_method` gives the function and the object, which is passed as the first argument.
++`with` finds `__enter__` and `__exit__` with the same instruction (a number stands for the name: they are looked for in the class alone).
++
+ `Name(...)`, where the name looks like that of a class, is compiled so that, if it is a class with `object.__new__` and an `__init__`
+ in Python, the instance is made and `__init__` called without leaving the interpreter (`op_py_prepare_construct`).
+ 
+@@ -80,10 +83,27 @@ Python function, and Python a JS function, with the engine's own call sequence a
+ When Python calls what is not Python, the frame is adapted on the way (`prepareForeignCall`, from `linkFor`): keyword arguments
+ become a trailing object, whole floats become numbers.
+ 
+-**Generators, coroutines, async generators** are JSC generators: a function that makes the generator object, and a body that the
+-generatorification pass turns into a state machine. What that pass saves at a yield is what its analysis finds live, which may be
+-more than is in use: a register above the variables may hold the remains of a callee's frame, which the collector must never see
+-in the heap. For Python code the pass gives such registers a value where they lose theirs (`findRegistersWithoutValue()`).
++**Generators, coroutines, async generators** are made as JSC makes generators: a function that makes the generator object
++(`PyGenerator`), and a body, a function of its own, that the generatorification pass turns into a state machine.
++
++- _To resume a generator is to call its body_, and the body keeps the books. `op_py_generator_enter`, its first instruction,
++  notes that the generator is running and goes on where it stopped: the state of a suspended generator is the offset of the
++  instruction to go on with. `op_py_generator_suspend` and `op_py_generator_return` note that it no longer runs, and return to
++  the caller. If an exception leaves the body, the unwinder does that (`generatorBodyIsUnwinding`). The caller tells a yield from
++  a return by the state.
++- So anybody can resume one: `PyGenerator::resume()` in C++, and two instructions, which make the frame and call the body without
++  leaving the interpreter: `op_py_for_iter`, and `op_py_send`, which is a step of `yield from` or `await`. Both enter at
++  `llint_python_generator_resume`: the prologue, `op_enter` and `op_py_generator_enter` in one.
++- _The registers_ that are live across a yield, and all the variables (`gi_frame.f_locals` shows them), are kept in slots at the
++  end of the generator object, which is as large as its code needs. Runs of registers are saved and restored by one instruction
++  (`op_py_generator_registers`; the last run is saved by the suspend itself). Until it starts the first slots hold the arguments.
++  While it runs they are empty.
++- What the pass saves at a yield is what its analysis finds live, which may be more than is in use: a register above the
++  variables may hold the remains of a callee's frame, which the collector must never see in the heap. For Python code the pass
++  gives such registers a value where they lose theirs (`findRegistersWithoutValue()`).
++- One that may have something to do when it is dropped (a `finally`, a `with`, a coroutine never awaited) is registered for
++  finalization, but not when it is made: most are done long before the next collection. It is written down
++  (`noteFinalizableGenerator`), and those still unfinished when a collection comes are registered then.
+ 
+ **Exceptions** are JSC exceptions whose value is a `PyException`. The unwinder tells the runtime about each Python frame it
+ passes (`addTracebackEntry`), which is how tracebacks are built.
+diff --git a/Source/JavaScriptCore/python/compiler/PyCodeNode.h b/Source/JavaScriptCore/python/compiler/PyCodeNode.h
+index 94b1ae70..79079e18 100644
+--- a/Source/JavaScriptCore/python/compiler/PyCodeNode.h
++++ b/Source/JavaScriptCore/python/compiler/PyCodeNode.h
+@@ -25,6 +25,9 @@ public:
+ 
+     unsigned parameterCount() const { return m_parameterCount; } // Without `this`.
+     bool isGeneratorBody() const { return m_isGeneratorBody; }
++    // Known once the code has been generated: see PyGenerator::slots().
++    unsigned generatorSlotCount() const { return m_generatorSlotCount; }
++    void setGeneratorSlotCount(unsigned count) { m_generatorSlotCount = count; }
+ 
+ private:
+     static JSTokenLocation locationOf(const SourceCode& source)
+@@ -39,6 +42,7 @@ private:
+ 
+     unsigned m_parameterCount;
+     bool m_isGeneratorBody;
++    unsigned m_generatorSlotCount { 0 };
+     Emitter m_emitter;
+ };
+ 
+diff --git a/Source/JavaScriptCore/python/compiler/PyCompiler.cpp b/Source/JavaScriptCore/python/compiler/PyCompiler.cpp
+index f82fc2ee..b44d0a97 100644
+--- a/Source/JavaScriptCore/python/compiler/PyCompiler.cpp
++++ b/Source/JavaScriptCore/python/compiler/PyCompiler.cpp
+@@ -137,13 +137,15 @@ UnlinkedFunctionExecutable* Compiler::compile()
+     return failed() ? nullptr : executable;
+ }
+ 
+-UnlinkedFunctionExecutable* Compiler::generate(const SourceCode& parentSource, const SourceCode& source, SourceParseMode parseMode, Ref<CodeInfo>&& info, unsigned parameterCount, bool isGeneratorBody, Function<void(BytecodeGenerator&)>&& emitter)
++UnlinkedFunctionExecutable* Compiler::generate(const SourceCode& parentSource, const SourceCode& source, SourceParseMode parseMode, Ref<CodeInfo>&& info, unsigned parameterCount, bool isGeneratorBody, Function<void(BytecodeGenerator&)>&& emitter, unsigned* generatorSlotCount)
+ {
+     ExecutableInfo executableInfo(false, PrivateBrandRequirement::None, false, ConstructorKind::None, JSParserScriptMode::Classic, SuperBinding::NotNeeded, parseMode, DerivedContextType::None, NeedsClassFieldInitializer::No, false, false, EvalContextType::None);
+     auto* codeBlock = UnlinkedFunctionCodeBlock::create(m_vm, FunctionCode, executableInfo, { });
+     ParserArena arena;
+     PythonCodeNode node(arena, source, parameterCount, isGeneratorBody, WTF::move(emitter));
+     ParserError error = BytecodeGenerator::generatePython(m_vm, &node, codeBlock);
++    if (generatorSlotCount)
++        *generatorSlotCount = node.generatorSlotCount();
+     if (error.isValid())
+         failWithoutLocation(SyntaxErrorInfo::Type::MemoryError, "the code is too large to compile"_s);
+     return UnlinkedFunctionExecutable::createForPython(m_vm, parentSource, source, parseMode, WTF::move(info), parameterCount, codeBlock);
+@@ -251,15 +253,16 @@ UnlinkedFunctionExecutable* Compiler::compileCode(Unit* parent, const CodeSpec&
+     return generate(parentSource, source, SourceParseMode::MethodMode, info.copyRef(), parameterCount, false, [&](BytecodeGenerator& generator) {
+         Unit binder(*this, parent, spec, generator, info.get(), source, Unit::Part::GeneratorBinder);
+         binder.emitPrologue();
++        unsigned slotCount = 0;
+         auto* body = generate(source, source, SourceParseMode::GeneratorBodyMode, info.copyRef(), static_cast<unsigned>(JSGenerator::Argument::Frame), true, [&](BytecodeGenerator& bodyGenerator) {
+             Unit unit(*this, parent, spec, bodyGenerator, info.get(), source, Unit::Part::GeneratorBody);
+             unit.emitPrologue();
+             emitBody(unit);
+             unit.finishConstants();
+-        });
++        }, &slotCount);
+         unsigned index = generator.addPythonFunction(body);
+         ASSERT_UNUSED(index, index == CodeInfo::generatorBodyIndex);
+-        binder.emitMakeGenerator();
++        binder.emitMakeGenerator(slotCount);
+     });
+ }
+ 
+@@ -591,10 +594,7 @@ void Unit::emitPrologue()
+         if (count) {
+             // The first variable declared is the first parameter.
+             RegisterID* first = isFunctionLike() ? g.pythonRegister(virtualRegisterForLocal(g.firstPythonVariable())) : m_namespace;
+-            Reg arguments = newTemporary();
+-            g.emitGetInternalField(arguments.get(), g.generatorRegister(), generatorArgumentsField);
+-            g.emitPyUnpack(first, arguments.get(), count, -1);
+-            g.emitPutInternalField(g.generatorRegister(), generatorArgumentsField, constant(jsUndefined()));
++            g.emitPyRestoreRegisters(first, count, 0);
+         }
+     }
+ 
+@@ -654,7 +654,7 @@ bool Unit::isParameterRegister(RegisterID* reg)
+     return local >= first && local < first + static_cast<int>(m_scope->parameters.size());
+ }
+ 
+-void Unit::emitMakeGenerator()
++void Unit::emitMakeGenerator(unsigned slotCount)
+ {
+     ASSERT(m_part == Part::GeneratorBinder);
+     Reg result = newTemporary();
+@@ -668,9 +668,9 @@ void Unit::emitMakeGenerator()
+             callRuntime(iterator.get(), RuntimeFunction::GetAIter, { parameter });
+         else
+             g.emitPyGetIter(iterator.get(), parameter);
+-        callRuntime(result.get(), RuntimeFunction::MakeGenerator, { iterator.get() });
++        callRuntime(result.get(), RuntimeFunction::MakeGenerator, { constant(jsNumber(slotCount)), iterator.get() });
+     } else
+-        callRuntime(result.get(), RuntimeFunction::MakeGenerator);
++        callRuntime(result.get(), RuntimeFunction::MakeGenerator, { constant(jsNumber(slotCount)) });
+     g.emitReturn(result.get());
+ }
+ 
+@@ -1011,7 +1011,7 @@ void Unit::unwindBlock(const Block& block, Vector<TryContext>& suspended)
+     case BlockKind::AsyncWith: {
+         Reg result = newTemporary();
+         RegisterID* none = constant(jsUndefined());
+-        emitSimpleCall(result.get(), block.saved, { none, none, none }, block.range);
++        emitMethodCall(result.get(), block.saved, block.savedSelf, { none, none, none }, block.range);
+         if (block.kind == BlockKind::AsyncWith)
+             emitAwait(result.get(), result.get(), 2);
+         return;
+@@ -1813,20 +1813,26 @@ void Unit::withStatement(With* node, unsigned index)
+     const Range& range = item->contextExpr->range;
+     Ref<Label> end = g.newLabel();
+ 
++    // No bound methods are made: the functions are called with the manager as their first argument.
+     Reg exit = newTemporary();
++    Reg exitSelf = newTemporary();
++    ASSERT(exitSelf->index() == exit->index() - 1); // TracedBlock::With
+     Reg value = newTemporary();
+     {
+-        Reg manager = expr(item->contextExpr);
+-        loc(range);
+-        callRuntime(exit.get(), RuntimeFunction::LoadSpecial, { manager.get(), constant(jsNumber(static_cast<int>(isAsync ? SpecialMethodForWith::AExit : SpecialMethodForWith::Exit))) });
+-        callRuntime(value.get(), RuntimeFunction::LoadSpecial, { manager.get(), constant(jsNumber(static_cast<int>(isAsync ? SpecialMethodForWith::AEnter : SpecialMethodForWith::Enter))) });
++        Reg enterSelf = newTemporary();
++        {
++            Reg manager = expr(item->contextExpr);
++            loc(range);
++            g.emitPyGetMethod(exit.get(), exitSelf.get(), manager.get(), constant(jsNumber(static_cast<int>(isAsync ? SpecialMethodForWith::AExit : SpecialMethodForWith::Exit))));
++            g.emitPyGetMethod(value.get(), enterSelf.get(), manager.get(), constant(jsNumber(static_cast<int>(isAsync ? SpecialMethodForWith::AEnter : SpecialMethodForWith::Enter))));
++        }
++        emitMethodCall(value.get(), value.get(), enterSelf.get(), { }, range);
+     }
+-    emitSimpleCall(value.get(), value.get(), { }, range);
+     if (isAsync)
+         emitAwait(value.get(), value.get(), 1);
+ 
+     Try body = beginTry();
+-    pushBlock({ .kind = isAsync ? BlockKind::AsyncWith : BlockKind::With, .tryDepth = body.depthBefore, .saved = exit.get(), .range = range });
++    pushBlock({ .kind = isAsync ? BlockKind::AsyncWith : BlockKind::With, .tryDepth = body.depthBefore, .saved = exit.get(), .savedSelf = exitSelf.get(), .range = range });
+     if (item->optionalVars)
+         store(item->optionalVars, value.get());
+     value = nullptr;
+@@ -1840,7 +1846,7 @@ void Unit::withStatement(With* node, unsigned index)
+     {
+         Reg result = newTemporary();
+         RegisterID* none = constant(jsUndefined());
+-        emitSimpleCall(result.get(), exit.get(), { none, none, none }, range);
++        emitMethodCall(result.get(), exit.get(), exitSelf.get(), { none, none, none }, range);
+         if (isAsync)
+             emitAwait(result.get(), result.get(), 2);
+     }
+@@ -1852,7 +1858,7 @@ void Unit::withStatement(With* node, unsigned index)
+     Try cleanup = beginTry();
+     Reg result = newTemporary();
+     loc(range);
+-    callRuntime(result.get(), RuntimeFunction::WithExit, { exit.get(), exception.get() });
++    callRuntime(result.get(), RuntimeFunction::WithExit, { exit.get(), exitSelf.get(), exception.get() });
+     if (isAsync)
+         emitAwait(result.get(), result.get(), 2);
+     Ref<Label> suppress = g.newLabel();
+diff --git a/Source/JavaScriptCore/python/compiler/PyCompiler.h b/Source/JavaScriptCore/python/compiler/PyCompiler.h
+index b2572947..27ccbc15 100644
+--- a/Source/JavaScriptCore/python/compiler/PyCompiler.h
++++ b/Source/JavaScriptCore/python/compiler/PyCompiler.h
+@@ -63,7 +63,7 @@ private:
+ 
+     // Compiles a function, a class body or the like. `emitBody` emits what follows the binding of the arguments.
+     UnlinkedFunctionExecutable* compileCode(Unit* parent, const CodeSpec&, const SourceCode& parentSource, const Function<void(Unit&)>& emitBody);
+-    UnlinkedFunctionExecutable* generate(const SourceCode& parentSource, const SourceCode&, SourceParseMode, Ref<CodeInfo>&&, unsigned parameterCount, bool isGeneratorBody, Function<void(BytecodeGenerator&)>&&);
++    UnlinkedFunctionExecutable* generate(const SourceCode& parentSource, const SourceCode&, SourceParseMode, Ref<CodeInfo>&&, unsigned parameterCount, bool isGeneratorBody, Function<void(BytecodeGenerator&)>&&, unsigned* generatorSlotCount = nullptr);
+ 
+     void fail(const Range&, const String& message);
+     void failWithoutLocation(SyntaxErrorInfo::Type, const String& message);
+diff --git a/Source/JavaScriptCore/python/compiler/PyCompilerExpressions.cpp b/Source/JavaScriptCore/python/compiler/PyCompilerExpressions.cpp
+index 7c500273..9411c624 100644
+--- a/Source/JavaScriptCore/python/compiler/PyCompilerExpressions.cpp
++++ b/Source/JavaScriptCore/python/compiler/PyCompilerExpressions.cpp
+@@ -270,6 +270,10 @@ void Unit::exprForEffect(Expr* node)
+ {
+     if (node->is<Constant>())
+         return line(node->range.lineno);
++    if (auto* yielding = node->tryAs<Yield>(); yielding && isSafeToRecurse()) {
++        Reg ignored = yield(yielding, nullptr, true);
++        return;
++    }
+     Reg ignored = expr(node);
+ }
+ 
+@@ -1223,6 +1227,40 @@ RegisterID* Unit::emitSimpleCall(RegisterID* dst, RegisterID* callee, std::initi
+     return g.emitPyCall(dst, callee, arguments, args.size());
+ }
+ 
++RegisterID* Unit::emitMethodCall(RegisterID* dst, RegisterID* callee, RegisterID* self, std::initializer_list<RegisterID*> args, const Range& range)
++{
++    Reg heldCallee = callee;
++    Reg heldSelf = self;
++    Vector<Reg, 4> held;
++    for (RegisterID* argument : args)
++        held.append(argument);
++    unsigned count = args.size();
++    CallArguments arguments(g, nullptr, count + 1);
++    load(arguments.thisRegister(), jsUndefined());
++    g.move(arguments.argumentRegister(0), self);
++    unsigned next = 1;
++    for (RegisterID* argument : args)
++        g.move(arguments.argumentRegister(next++), argument);
++
++    Ref<Label> notMethod = g.newLabel();
++    Ref<Label> done = g.newLabel();
++    {
++        Reg isEmpty = newTemporary();
++        g.emitIsEmpty(isEmpty.get(), self);
++        g.emitJumpIfTrue(isEmpty.get(), notMethod.get());
++    }
++    loc(range);
++    g.emitPyCall(dst, callee, arguments, count + 1);
++    hiddenJump(done.get());
++    g.emitLabel(notMethod.get());
++    for (unsigned i = 0; i < count; ++i)
++        g.move(arguments.argumentRegister(i), arguments.argumentRegister(i + 1));
++    loc(range);
++    g.emitPyCall(dst, callee, arguments, count);
++    g.emitLabel(done.get());
++    return dst;
++}
++
+ static bool isSimpleCall(Seq<Expr*> args, Seq<Keyword*> keywords, unsigned extra)
+ {
+     if (args.size() + keywords.size() + extra > maxItemsInRegisters)
+@@ -1425,21 +1463,6 @@ RegisterID* Unit::call(Call* node, RegisterID* dst)
+ 
+ // ---- Generators and coroutines ----
+ 
+-// A suspended generator keeps the registers that are still needed, which is worked out from the code that can follow. But
+-// gi_frame.f_locals shows all the variables, needed or not. So on a path out of every yield that is seldom taken, this is
+-// emitted: an instruction that reads them all.
+-void Unit::keepVariablesAcrossYield()
+-{
+-    int first = g.firstPythonVariable();
+-    int end = first;
+-    for (auto& variable : m_info.variables) {
+-        if (variable.reg.isLocal())
+-            end = std::max(end, variable.reg.toLocal() + 1);
+-    }
+-    if (end > first)
+-        g.emitPyRuntime(newTemporary().get(), RuntimeFunction::KeepVariables, g.pythonRegister(virtualRegisterForLocal(first)), end - first);
+-}
+-
+ RegisterID* Unit::emitYield(RegisterID* dst, RegisterID* value)
+ {
+     Reg held = value;
+@@ -1447,13 +1470,12 @@ RegisterID* Unit::emitYield(RegisterID* dst, RegisterID* value)
+     // Resumed: by send(), or by throw().
+     Ref<Label> normal = g.newLabel();
+     g.emitPyJumpIfFalse(g.generatorResumeModeRegister(), normal.get());
+-    keepVariablesAcrossYield();
+     callRuntimeForEffect(RuntimeFunction::ThrowIntoGenerator, { g.generatorValueRegister() });
+     g.emitLabel(normal.get());
+-    return g.move(dst, g.generatorValueRegister());
++    return dst ? g.move(dst, g.generatorValueRegister()) : nullptr;
+ }
+ 
+-RegisterID* Unit::yield(Yield* node, RegisterID* dst)
++RegisterID* Unit::yield(Yield* node, RegisterID* dst, bool isForEffect)
+ {
+     if (!isFunctionLike()) {
+         fail(node->range, "'yield' outside function"_s);
+@@ -1467,37 +1489,32 @@ RegisterID* Unit::yield(Yield* node, RegisterID* dst)
+     loc(node->range);
+     if (isAsyncGenerator())
+         callRuntime(result.get(), RuntimeFunction::AsyncGenWrap, { result.get() });
+-    emitYield(result.get(), result.get());
++    emitYield(isForEffect ? nullptr : result.get(), result.get());
+     return dst ? g.move(dst, result.get()) : result.get();
+ }
+ 
+-RegisterID* Unit::emitDelegate(RegisterID* dst, RegisterID* iterator)
++RegisterID* Unit::emitDelegate(RegisterID* dst, RegisterID* iterator, int firstMode)
+ {
+     Reg heldResult = dst;
+-    Arguments arguments(*this, 3);
+-    g.move(arguments[0], iterator);
+-    load(arguments[1], jsUndefined());
+-    load(arguments[2], jsNumber(static_cast<int>(JSGenerator::ResumeMode::NormalMode)));
+-
+-    Ref<Label> loop = g.newLabel();
+-    Ref<Label> done = g.newLabel();
++    Reg delegate = newTemporary();
+     Reg yielded = newTemporary();
+-    Reg isDone = newTemporary();
+-    g.emitLabel(loop.get());
+-    callRuntime(yielded.get(), RuntimeFunction::Send, arguments);
+-    g.emitIsEmpty(isDone.get(), yielded.get());
+-    g.emitJumpIfTrue(isDone.get(), done.get());
++    g.move(delegate.get(), iterator);
++    Ref<Label> suspend = g.newLabel();
++    Ref<Label> done = g.newLabel();
++    {
++        Reg value = newTemporary();
++        Reg mode = newTemporary();
++        load(value.get(), jsUndefined());
++        load(mode.get(), jsNumber(firstMode));
++        g.emitPySend(yielded.get(), delegate.get(), value.get(), mode.get(), done.get());
++    }
++    g.emitLabel(suspend.get());
+     g.emitPythonYieldPoint(yielded.get());
+-    Ref<Label> normal = g.newLabel();
+-    g.emitPyJumpIfFalse(g.generatorResumeModeRegister(), normal.get());
+-    keepVariablesAcrossYield();
+-    g.emitLabel(normal.get());
+     // Whatever comes in goes on to the iterator.
+-    g.move(arguments[1], g.generatorValueRegister());
+-    g.move(arguments[2], g.generatorResumeModeRegister());
+-    hiddenJump(loop.get());
++    g.emitPySend(yielded.get(), delegate.get(), g.generatorValueRegister(), g.generatorResumeModeRegister(), done.get());
++    hiddenJump(suspend.get());
+     g.emitLabel(done.get());
+-    return callRuntime(dst, RuntimeFunction::TakeSendResult, { arguments[0] });
++    return g.move(dst, yielded.get());
+ }
+ 
+ RegisterID* Unit::yieldFrom(YieldFrom* node, RegisterID* dst)
+@@ -1530,9 +1547,7 @@ RegisterID* Unit::yieldFrom(YieldFrom* node, RegisterID* dst)
+ 
+ RegisterID* Unit::emitAwait(RegisterID* dst, RegisterID* awaitable, int where)
+ {
+-    Reg iterator = newTemporary();
+-    callRuntime(iterator.get(), RuntimeFunction::GetAwaitable, { awaitable, constant(jsNumber(where)) });
+-    return emitDelegate(dst, iterator.get());
++    return emitDelegate(dst, awaitable, firstSendOfAwait + where);
+ }
+ 
+ RegisterID* Unit::await(Await* node, RegisterID* dst)
+diff --git a/Source/JavaScriptCore/python/compiler/PyCompilerUnit.h b/Source/JavaScriptCore/python/compiler/PyCompilerUnit.h
+index bafdc1c9..8e8e8580 100644
+--- a/Source/JavaScriptCore/python/compiler/PyCompilerUnit.h
++++ b/Source/JavaScriptCore/python/compiler/PyCompilerUnit.h
+@@ -44,7 +44,7 @@ public:
+     // ---- Entry and exit ----
+ 
+     void emitPrologue();
+-    void emitMakeGenerator();
++    void emitMakeGenerator(unsigned slotCount);
+     void emitReturnNone();
+ 
+     // ---- Bodies ----
+@@ -128,6 +128,7 @@ private:
+         Label* breakTarget { nullptr };
+         Seq<Stmt*> finalBody { }; // FinallyTry
+         RegisterID* saved { nullptr }; // Handlers: the exception that was being handled before. With: __exit__. ForLoop: the iterator.
++        RegisterID* savedSelf { nullptr }; // With: what to pass __exit__ first, or the empty value. The register after `saved`.
+         Name name { nullptr }; // HandlerCleanup: what follows `as`.
+         Range range { }; // With
+         Scope* comprehension { nullptr }; // InlinedComprehension
+@@ -340,6 +341,8 @@ private:
+     // callee(pushed..., *args, **keywords). `injected`: a variable to pass after the positional arguments.
+     RegisterID* emitCall(RegisterID* dst, RegisterID* callee, std::span<RegisterID* const> pushed, Seq<Expr*> args, Seq<AST::Keyword*> keywords, Name injected, const Range&);
+     RegisterID* emitSimpleCall(RegisterID* dst, RegisterID* callee, std::initializer_list<RegisterID*> args, const Range&);
++    // What op_py_get_method gave is called: with `self` before the arguments, unless it is the empty value.
++    RegisterID* emitMethodCall(RegisterID* dst, RegisterID* callee, RegisterID* self, std::initializer_list<RegisterID*> args, const Range&);
+     void validateKeywords(Seq<AST::Keyword*>);
+     JSValue keywordNames(Seq<AST::Keyword*>);
+     void checkCaller(Expr*);
+@@ -358,13 +361,12 @@ private:
+     RegisterID* templateStr(AST::TemplateStr*, RegisterID* dst);
+     RegisterID* interpolation(AST::Interpolation*, RegisterID* dst);
+     RegisterID* namedExpr(AST::NamedExpr*, RegisterID* dst);
+-    RegisterID* yield(AST::Yield*, RegisterID* dst);
++    RegisterID* yield(AST::Yield*, RegisterID* dst, bool isForEffect = false);
+     RegisterID* yieldFrom(AST::YieldFrom*, RegisterID* dst);
+     RegisterID* await(AST::Await*, RegisterID* dst);
+-    RegisterID* emitYield(RegisterID* dst, RegisterID* value);
+-    void keepVariablesAcrossYield();
++    RegisterID* emitYield(RegisterID* dst, RegisterID* value); // No `dst`: what is sent is not wanted.
+     // `yield from` an iterator, or `await` one: the value it finishes with.
+-    RegisterID* emitDelegate(RegisterID* dst, RegisterID* iterator);
++    RegisterID* emitDelegate(RegisterID* dst, RegisterID* iterator, int firstMode = 0);
+     RegisterID* emitAwait(RegisterID* dst, RegisterID* awaitable, int where);
+     void unpack(Seq<Expr*> targets, RegisterID* value, const Range&);
+ 
+diff --git a/Source/JavaScriptCore/python/runtime/PyAbstract.cpp b/Source/JavaScriptCore/python/runtime/PyAbstract.cpp
+index 92b451fc..19df177c 100644
+--- a/Source/JavaScriptCore/python/runtime/PyAbstract.cpp
++++ b/Source/JavaScriptCore/python/runtime/PyAbstract.cpp
+@@ -583,6 +583,22 @@ bool describeAttribute(JSGlobalObject* globalObject, JSValue object, JSString* n
+     return true;
+ }
+ 
++bool describeSpecialMethod(JSGlobalObject* globalObject, JSValue object, Special special, AttributeCache& cache)
++{
++    if (!object.isCell() || !isPyObjectType(object.asCell()->type()))
++        return false;
++    Runtime& rt = runtime(globalObject);
++    PyType* type = rt.typeOf(object);
++    JSValue descriptor = type->lookup(special);
++    if (!descriptor || !isMethodDescriptor(descriptor) || mayBecomeAnotherKindOfDescriptor(rt, descriptor))
++        return false;
++    cache.structureID = object.asCell()->structureID();
++    cache.typeVersion = type->version();
++    cache.payload = JSValue::encode(descriptor);
++    cache.offset = AttributeCache::classValue;
++    return true;
++}
++
+ bool describeSetAttribute(JSGlobalObject* globalObject, JSValue object, JSString* name, Structure* oldStructure, SetAttributeCache& cache)
+ {
+     // As in genericSetAttr().
+@@ -634,10 +650,28 @@ JSValue lookupSpecial(JSGlobalObject* globalObject, JSValue object, Special spec
+     return bindDescriptor(globalObject, method, object, type);
+ }
+ 
++JSValue getSpecialMethod(JSGlobalObject* globalObject, JSValue object, Special special, JSValue& self)
++{
++    PyType* type = typeOf(globalObject, object);
++    JSValue method = type->lookup(special);
++    if (!method)
++        return { };
++    if (isMethodDescriptor(method)) {
++        self = object;
++        return method;
++    }
++    return bindDescriptor(globalObject, method, object, type);
++}
++
+ // ---- Calls ----
+ 
++#if (CPU(ARM64) || CPU(X86_64)) && CPU(ADDRESS64) && !ENABLE(C_LOOP)
++extern "C" void llint_python_generator_resume(); // LowLevelInterpreter64.asm
++#endif
++
+ // What Interpreter::executeCall() comes to in the common case. It guards the code it is about to enter against being replaced
+ // or thrown away, which does not happen to code that stays in the interpreter. False: this is not the common case.
++template<bool isResumption = false>
+ static ALWAYS_INLINE bool tryEnterFunction(VM& vm, PyFunction* function, JSValue thisValue, const JSValue* arguments, size_t count, JSValue& result)
+ {
+ #if (CPU(ARM64) || CPU(X86_64)) && CPU(ADDRESS64) && !ENABLE(C_LOOP)
+@@ -647,6 +681,10 @@ static ALWAYS_INLINE bool tryEnterFunction(VM& vm, PyFunction* function, JSValue
+     if (!codeBlock || count > 6 || count + 1 < codeBlock->numParameters() || !vm.entryScope || vm.disallowVMEntryCount || !vm.isSafeToRecurseSoft()) [[unlikely]]
+         return false;
+     void* entry = executable->generatedJITCodeAddressForCall();
++#if !CPU(ARM64E)
++    if constexpr (isResumption)
++        entry = reinterpret_cast<void*>(llint_python_generator_resume);
++#endif
+     vm.clearLastException();
+     EncodedJSValue encoded;
+     switch (count) {
+@@ -686,7 +724,11 @@ static ALWAYS_INLINE bool tryEnterFunction(VM& vm, PyFunction* function, JSValue
+ #endif
+ }
+ 
+-static ALWAYS_INLINE JSValue callJSFunction(JSGlobalObject* globalObject, JSObject* function, const CallArgs& args)
++// The frame of this function is on the stack for as long as the function it calls runs, and the collector takes every word of it
++// that looks like a reference for one. What such a frame has room for and does not write still holds what earlier calls left
++// there: `del x; gc.collect()` would not free what x was. So this is a function of its own, with room for little, and not a part
++// of call(), which needs buffers for its other cases; and call() is gone from the stack when this runs.
++static NEVER_INLINE JSValue callJSFunction(JSGlobalObject* globalObject, JSObject* function, const CallArgs& args)
+ {
+     JSValue thisValue = args.hasKeywords() ? JSValue(args.keywordNames()) : jsUndefined();
+     Runtime& rt = runtime(globalObject);
+@@ -705,6 +747,21 @@ static ALWAYS_INLINE JSValue callJSFunction(JSGlobalObject* globalObject, JSObje
+     return result;
+ }
+ 
++JSValue callBodyOfGenerator(JSGlobalObject* globalObject, PyFunction* body, std::span<const JSValue> arguments)
++{
++    VM& vm = getVM(globalObject);
++    auto scope = DECLARE_THROW_SCOPE(vm);
++    JSValue result;
++    if (!tryEnterFunction<true>(vm, body, jsUndefined(), arguments.data(), arguments.size(), result)) [[unlikely]] {
++        if (!vm.isSafeToRecurseSoft()) [[unlikely]]
++            return raiseRecursionError(globalObject, scope, "maximum recursion depth exceeded"_s);
++        ArgList list(reinterpret_cast<EncodedJSValue*>(const_cast<JSValue*>(arguments.data())), arguments.size());
++        result = JSC::call(globalObject, body, JSC::getCallData(body), jsUndefined(), list);
++    }
++    RETURN_IF_EXCEPTION(scope, { });
++    return result;
++}
++
+ JSValue call(JSGlobalObject* globalObject, JSValue callable, const CallArgs& args)
+ {
+     Runtime& rt = runtime(globalObject);
+@@ -1531,8 +1588,12 @@ JSValue iterNext(JSGlobalObject* globalObject, JSValue iterator)
+         } else if (cell->type() == PyGeneratorType) {
+             auto* generator = uncheckedDowncast<PyGenerator>(cell);
+             if (generator->kind() == PyGenerator::Kind::Generator) {
+-                JSValue ignored;
+-                RELEASE_AND_RETURN(scope, generatorSend(globalObject, generator, jsUndefined(), ignored));
++                JSValue result;
++                if (generator->state() >= 0) [[likely]] {
++                    scope.release();
++                    return generator->resume(globalObject, jsUndefined(), JSGenerator::ResumeMode::NormalMode, result) == PyGenerator::Outcome::Yielded ? result : JSValue();
++                }
++                RELEASE_AND_RETURN(scope, generatorSend(globalObject, generator, jsUndefined(), result));
+             }
+         }
+     }
+diff --git a/Source/JavaScriptCore/python/runtime/PyAbstract.h b/Source/JavaScriptCore/python/runtime/PyAbstract.h
+index 069de48a..15f9585b 100644
+--- a/Source/JavaScriptCore/python/runtime/PyAbstract.h
++++ b/Source/JavaScriptCore/python/runtime/PyAbstract.h
+@@ -35,6 +35,8 @@ void genericSetAttr(JSGlobalObject*, JSValue object, JSString* name, JSValue val
+ 
+ // For object.name(...): the function and, in `self`, what to pass it first; or the attribute, and an empty `self`.
+ JSValue getMethod(JSGlobalObject*, JSValue object, JSString* name, JSValue& self);
++// The same for a method that the language itself calls, which is looked for in the class alone. Empty, and no exception: there is none.
++JSValue getSpecialMethod(JSGlobalObject*, JSValue object, Special, JSValue& self);
+ 
+ // The __dict__ of the object. Null: it has none, or, unless `create`, has had no use for one yet.
+ PyDict* instanceDict(JSGlobalObject*, JSValue object, bool create);
+@@ -56,6 +58,8 @@ struct AttributeCache {
+ };
+ // False: there is nothing to remember. The object has the attribute.
+ bool describeAttribute(JSGlobalObject*, JSValue object, JSString* name, bool forCall, AttributeCache&);
++// For getSpecialMethod().
++bool describeSpecialMethod(JSGlobalObject*, JSValue object, Special, AttributeCache&);
+ 
+ // The same for op_py_set_attr, which has just set the attribute of an object that had the Structure.
+ struct SetAttributeCache {
+diff --git a/Source/JavaScriptCore/python/runtime/PyBuiltins.cpp b/Source/JavaScriptCore/python/runtime/PyBuiltins.cpp
+index 2dca723f..a84fc285 100644
+--- a/Source/JavaScriptCore/python/runtime/PyBuiltins.cpp
++++ b/Source/JavaScriptCore/python/runtime/PyBuiltins.cpp
+@@ -518,6 +518,12 @@ static JSValue builtinSum(JSGlobalObject* globalObject, JSValue iterable, JSValu
+         RETURN_IF_EXCEPTION(scope, { });
+         if (!hasItem)
+             return result;
++        if (isSmallInt(result) && isSmallInt(item)) [[likely]] {
++            if (int64_t total = smallIntValue(result) + smallIntValue(item); fitsSmallInt(total)) [[likely]] {
++                result = smallInt(total);
++                continue;
++            }
++        }
+         bool goesOn = isExactInt(item) || item.isBoolean();
+         result = binaryOperation(globalObject, BinaryOperator::Add, result, item);
+         RETURN_IF_EXCEPTION(scope, { });
+diff --git a/Source/JavaScriptCore/python/runtime/PyFinalization.cpp b/Source/JavaScriptCore/python/runtime/PyFinalization.cpp
+index 01255d55..cfcce0d8 100644
+--- a/Source/JavaScriptCore/python/runtime/PyFinalization.cpp
++++ b/Source/JavaScriptCore/python/runtime/PyFinalization.cpp
+@@ -53,9 +53,21 @@ void Runtime::unregisterFinalizable(JSCell* cell)
+     m_finalizable.remove(cell);
+ }
+ 
++void Runtime::registerNotedGenerators()
++{
++    for (PyGenerator* generator : m_newFinalizableGenerators) {
++        if (generator->finalization() != PyGenerator::Finalization::Noted)
++            continue;
++        generator->setFinalization(PyGenerator::Finalization::Registered);
++        m_finalizable.add(generator);
++    }
++    m_newFinalizableGenerators.shrink(0);
++}
++
+ bool Runtime::keepUnreachableObjectsToFinalize(SlotVisitor& visitor)
+ {
+     Locker locker { m_finalizationLock };
++    registerNotedGenerators();
+     // All of them are found before any is marked.
+     Vector<JSCell*> candidates;
+     for (JSCell* cell : m_finalizable) {
+@@ -363,6 +375,10 @@ void Runtime::runPendingCalls()
+ 
+ void Runtime::finalizeAllAtExit()
+ {
++    {
++        Locker locker { m_finalizationLock };
++        registerNotedGenerators();
++    }
+     auto isDone = [&] {
+         Locker locker { m_finalizationLock };
+         return m_finalizable.isEmpty() && m_pendingFinalization.isEmpty() && m_pendingWeakRefCallbacks.isEmpty();
+diff --git a/Source/JavaScriptCore/python/runtime/PyFrame.cpp b/Source/JavaScriptCore/python/runtime/PyFrame.cpp
+index 8c0a9c76..9b1b9199 100644
+--- a/Source/JavaScriptCore/python/runtime/PyFrame.cpp
++++ b/Source/JavaScriptCore/python/runtime/PyFrame.cpp
+@@ -72,6 +72,9 @@ bool liveLocalsOfFrame(CallFrame* callFrame, CodeBlock* codeBlock, bool isCallin
+     case op_call_varargs:
+     case op_construct:
+     case op_construct_varargs:
++    // These call the body of a generator. (What else op_py_send sets, the iterator, it sets before that. It reads it too, so it is live.)
++    case op_py_for_iter:
++    case op_py_send:
+         return true;
+     default:
+         break;
+@@ -310,10 +313,21 @@ public:
+         PyGenerator* generator = frame->generator();
+         if (!generator)
+             return;
+-        if (generator->isStarted())
+-            m_environment = dynamicDowncast<JSLexicalEnvironment>(generator->frame());
+-        else
+-            m_arguments = PyTuple::tryFrom(generator->arguments());
++        m_generator = generator;
++        m_holdsArguments = !generator->isStarted();
++        if (m_holdsArguments)
++            return;
++        // Which slot belongs to which register is in the instructions that save and restore them.
++        auto note = [&](const auto& bytecode) {
++            for (unsigned i = 0; i < bytecode.m_count; ++i)
++                m_slots.append({ VirtualRegister(bytecode.m_first.offset() - static_cast<int>(i)), bytecode.m_offset + i });
++        };
++        for (const auto& instruction : generator->body()->functionExecutable()->codeBlockForCall()->instructions()) {
++            if (instruction->opcodeID() == op_py_generator_registers)
++                note(instruction->as<OpPyGeneratorRegisters>());
++            else if (instruction->opcodeID() == op_py_generator_suspend)
++                note(instruction->as<OpPyGeneratorSuspend>());
++        }
+     }
+ 
+     const CodeInfo& info() const { return m_info; }
+@@ -325,7 +339,7 @@ public:
+     {
+         JSValue held = registerOf(index);
+         // The cells of a generator are made when it starts.
+-        if (!held || at(index).kind == CodeInfo::VariableKind::Local || m_arguments)
++        if (!held || at(index).kind == CodeInfo::VariableKind::Local || m_holdsArguments)
+             return held;
+         // So are those of a function, and something may look at the frame before that.
+         auto* cell = PyCell::tryFrom(held);
+@@ -336,7 +350,7 @@ public:
+     bool setValue(unsigned index, JSValue value)
+     {
+         auto& variable = at(index);
+-        if (variable.kind != CodeInfo::VariableKind::Local && !m_arguments) {
++        if (variable.kind != CodeInfo::VariableKind::Local && !m_holdsArguments) {
+             auto* cell = PyCell::tryFrom(registerOf(index));
+             if (!cell)
+                 return false;
+@@ -351,16 +365,9 @@ public:
+             m_values->initializeAt(m_vm, index, value);
+             return true;
+         }
+-        if (m_environment) {
+-            ScopeOffset offset = offsetInEnvironment(variable.reg);
+-            if (!offset)
+-                return false;
+-            m_environment->variableAt(offset).set(m_vm, m_environment, value);
+-            return true;
+-        }
+-        if (m_arguments) {
+-            if (auto parameter = parameterOf(variable)) {
+-                m_arguments->initializeAt(m_vm, *parameter, value);
++        if (m_generator) {
++            if (auto slot = slotOf(variable)) {
++                m_generator->setSlot(m_vm, *slot, value);
+                 return true;
+             }
+         }
+@@ -381,11 +388,12 @@ public:
+             return m_callFrame->r(m_info.namespaceRegister).jsValue();
+         if (m_names)
+             return m_names;
+-        if (m_environment) {
+-            ScopeOffset offset = offsetInEnvironment(m_info.namespaceRegister);
+-            return !offset ? JSValue() : m_environment->variableAt(offset).get();
+-        }
+-        return m_arguments ? m_arguments->at(0) : JSValue();
++        if (!m_generator)
++            return { };
++        if (m_holdsArguments)
++            return m_generator->slot(0);
++        auto slot = slotOf(m_info.namespaceRegister);
++        return slot ? m_generator->slot(*slot) : JSValue();
+     }
+ 
+     // Those that have a value, in a new dict.
+@@ -419,31 +427,29 @@ private:
+             return m_callFrame->r(variable.reg).jsValue();
+         if (m_values)
+             return m_values->at(index);
+-        if (m_environment) {
+-            ScopeOffset offset = offsetInEnvironment(variable.reg);
+-            return !offset ? JSValue() : m_environment->variableAt(offset).get();
+-        }
+-        if (m_arguments) {
+-            if (auto parameter = parameterOf(variable))
+-                return m_arguments->at(*parameter);
++        if (m_generator) {
++            if (auto slot = slotOf(variable))
++                return m_generator->slot(*slot);
+         }
+         return { };
+     }
+ 
+-    // The pass that makes a function resumable (BytecodeGeneratorification) names the place of a register after its number.
+-    ScopeOffset offsetInEnvironment(VirtualRegister reg) const
++    std::optional<unsigned> slotOf(VirtualRegister reg) const
+     {
+-        if (!reg.isLocal())
+-            return { };
+-        auto entry = m_environment->symbolTable()->get(Identifier::from(m_vm, static_cast<unsigned>(reg.toLocal())).impl());
+-        return entry.isNull() ? ScopeOffset() : entry.scopeOffset();
++        for (auto& entry : m_slots) {
++            if (entry.first == reg)
++                return entry.second;
++        }
++        return std::nullopt;
+     }
+ 
+-    std::optional<unsigned> parameterOf(const CodeInfo::Variable& variable) const
++    std::optional<unsigned> slotOf(const CodeInfo::Variable& variable) const
+     {
++        if (!m_holdsArguments)
++            return slotOf(variable.reg);
+         if (variable.isHidden)
+             return std::nullopt;
+-        for (unsigned i = 0; i < m_info.parameterNames.size() && i < m_arguments->length(); ++i) {
++        for (unsigned i = 0; i < m_info.parameterNames.size() && i < m_generator->slotCount(); ++i) {
+             if (m_info.parameterNames[i] == variable.name)
+                 return i;
+         }
+@@ -454,8 +460,9 @@ private:
+     const CodeInfo& m_info;
+     CallFrame* m_callFrame; // In progress: in its registers.
+     PyTuple* m_values { nullptr }; // Ended: the frame object has what the registers held.
+-    JSLexicalEnvironment* m_environment { nullptr }; // A suspended generator: where it keeps its registers meanwhile.
+-    PyTuple* m_arguments { nullptr }; // A generator that has not started: all there is are the values of the parameters.
++    PyGenerator* m_generator { nullptr }; // A suspended generator: in its slots.
++    Vector<std::pair<VirtualRegister, unsigned>, 16> m_slots;
++    bool m_holdsArguments { false }; // It has not started: all there is are the values of the parameters, in the first slots.
+     JSValue m_names;
+ };
+ 
+@@ -537,21 +544,10 @@ PyFrame* PyFrame::of(JSGlobalObject* globalObject, PyGenerator* generator)
+ // Where a generator in that state goes on. False: at the start.
+ static bool bytecodeOffsetOfState(PyFunction* body, int32_t state, unsigned& result)
+ {
+-    // The state is an index in the table of the switch the body starts with.
+-    CodeBlock* codeBlock = state > 0 ? body->functionExecutable()->codeBlockForCall() : nullptr;
+-    if (!codeBlock)
++    if (state <= 0 || !body->functionExecutable()->codeBlockForCall())
+         return false;
+-    for (const auto& instruction : codeBlock->instructions()) {
+-        if (instruction->opcodeID() != op_switch_imm)
+-            continue;
+-        auto bytecode = instruction->as<OpSwitchImm>();
+-        int32_t offset = codeBlock->unlinkedSwitchJumpTable(bytecode.m_tableIndex).offsetForValue(state);
+-        if (!offset)
+-            return false;
+-        result = instruction.offset() + offset;
+-        return true;
+-    }
+-    return false;
++    result = state;
++    return true;
+ }
+ 
+ PyFrame* PyFrame::createSuspended(JSGlobalObject* globalObject, PyFunction* function, int32_t state)
+@@ -662,7 +658,6 @@ void PyFrame::callIsEnding(JSGlobalObject* globalObject, CallFrame* callFrame)
+ void PyFrame::generatorHasStopped(bool isCompleted)
+ {
+     m_callFrame = nullptr;
+-    // FIXME: What the variables held when it returned is lost: op_ret does not say that the frame ends.
+     if (isCompleted)
+         m_generator.clear();
+ }
+@@ -1246,7 +1241,7 @@ JSValue addTracebackEntry(JSGlobalObject* globalObject, JSValue exceptionValue,
+     bool isRaisedAgain = std::exchange(rt.reraisingFrame, nullptr) == callFrame;
+     // A call whose arguments do not fit never began.
+     CodeBlock* codeBlock = callFrame->codeBlock();
+-    if (codeBlock->instructionAt(index)->opcodeID() == op_py_bind_args)
++    if (OpcodeID opcodeID = codeBlock->instructionAt(index)->opcodeID(); opcodeID == op_py_bind_args || opcodeID == op_py_generator_enter)
+         return exceptionValue;
+     if (!isRaisedAgain) {
+         DeferGC deferGC(vm);
+diff --git a/Source/JavaScriptCore/python/runtime/PyGenerator.cpp b/Source/JavaScriptCore/python/runtime/PyGenerator.cpp
+index 67001b78..41a1af19 100644
+--- a/Source/JavaScriptCore/python/runtime/PyGenerator.cpp
++++ b/Source/JavaScriptCore/python/runtime/PyGenerator.cpp
+@@ -36,32 +36,26 @@ static constexpr ResumeMode throwThrough = ResumeMode::ReturnMode;
+ PY_DEFINE_CELL(PyGenerator);
+ PY_DEFINE_CELL(PyAsyncGenAwaitable);
+ 
+-PyGenerator::PyGenerator(VM& vm, Structure* structure, PyType* type, Kind kind)
++PyGenerator::PyGenerator(VM& vm, Structure* structure, PyType* type, Kind kind, unsigned slotCount)
+     : Base(vm, structure, type)
++    , m_slotCount(slotCount)
+     , m_kind(kind)
+ {
++    for (unsigned i = 0; i < slotCount; ++i)
++        slots()[i].clear();
+ }
+ 
+-PyGenerator* PyGenerator::create(JSGlobalObject* globalObject, PyFunction* function, PyFunction* body, PyTuple* arguments)
++PyGenerator* PyGenerator::create(JSGlobalObject* globalObject, PyFunction* function, PyFunction* body, unsigned slotCount)
+ {
+-    static constexpr size_t fieldsOffset = JSInternalFieldObjectImpl<>::offsetOfInternalFields();
+-    static_assert(offsetOfType() == fieldsOffset);
+-    static_assert(OBJECT_OFFSETOF(PyGenerator, m_state) == fieldsOffset + generatorStateField * sizeof(WriteBarrier<Unknown>));
+-    static_assert(OBJECT_OFFSETOF(PyGenerator, m_body) == fieldsOffset + generatorBodyField * sizeof(WriteBarrier<Unknown>));
+-    static_assert(OBJECT_OFFSETOF(PyGenerator, m_frame) == fieldsOffset + generatorFrameField * sizeof(WriteBarrier<Unknown>));
+-    static_assert(OBJECT_OFFSETOF(PyGenerator, m_arguments) == fieldsOffset + generatorArgumentsField * sizeof(WriteBarrier<Unknown>));
+-
+     Runtime& rt = runtime(globalObject);
+     VM& vm = rt.vm();
+     auto flags = function->codeInfo().flags;
+     Kind kind = flags.contains(CodeFlag::AsyncGenerator) ? Kind::AsyncGenerator : flags.contains(CodeFlag::Coroutine) ? Kind::Coroutine : Kind::Generator;
+     PyType* type = kind == Kind::AsyncGenerator ? rt.asyncGeneratorType() : kind == Kind::Coroutine ? rt.coroutineType() : rt.generatorType();
+-    auto* generator = new (NotNull, allocateCell<PyGenerator>(vm)) PyGenerator(vm, rt.structure<PyGenerator>(), type, kind);
++    auto* generator = new (NotNull, allocateCell<PyGenerator>(vm, allocationSize(slotCount))) PyGenerator(vm, rt.structure<PyGenerator>(), type, kind, slotCount);
+     generator->finishCreation(vm);
+     generator->m_state.setWithoutWriteBarrier(jsNumber(NotStarted));
+     generator->m_body.set(vm, generator, body);
+-    generator->m_frame.setWithoutWriteBarrier(jsUndefined());
+-    generator->m_arguments.set(vm, generator, arguments);
+     generator->m_function.set(vm, generator, function);
+     generator->m_name.set(vm, generator, function->name());
+     generator->m_qualname.set(vm, generator, function->qualname());
+@@ -69,11 +63,16 @@ PyGenerator* PyGenerator::create(JSGlobalObject* globalObject, PyFunction* funct
+     if (kind == Kind::Coroutine && rt.coroutineOriginTrackingDepth > 0) [[unlikely]]
+         generator->m_origin.set(vm, generator, coroutineOrigin(globalObject, rt.coroutineOriginTrackingDepth));
+ 
+-    // One that is dropped before it is done may have something to clean up (a `finally`, a `with`), or to complain of.
+     bool hasHandlers = body->functionExecutable()->unlinkedExecutable()->pythonCodeHasExceptionHandlers();
+     if (hasHandlers || kind != Kind::Generator) {
+-        generator->m_isRegisteredForFinalization = true;
+-        rt.registerFinalizable(generator);
++        if (rt.allocationTracebackLimit) [[unlikely]] {
++            // Where it was made is known now only.
++            generator->m_finalization = Finalization::Registered;
++            rt.registerFinalizable(generator);
++        } else {
++            generator->m_finalization = Finalization::Noted;
++            rt.noteFinalizableGenerator(generator);
++        }
+     }
+     return generator;
+ }
+@@ -85,14 +84,12 @@ void PyGenerator::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+     Base::visitChildren(thisObject, visitor);
+     visitor.append(thisObject->m_state);
+     visitor.append(thisObject->m_body);
+-    visitor.append(thisObject->m_frame);
+-    visitor.append(thisObject->m_arguments);
++    visitor.appendValues(thisObject->slots(), thisObject->m_slotCount);
+     visitor.append(thisObject->m_function);
+     visitor.append(thisObject->m_name);
+     visitor.append(thisObject->m_qualname);
+     visitor.append(thisObject->m_delegate);
+     visitor.append(thisObject->m_handledException);
+-    visitor.append(thisObject->m_resumedBy);
+     visitor.append(thisObject->m_frameObject);
+     visitor.append(thisObject->m_finalizer);
+     visitor.append(thisObject->m_origin);
+@@ -103,15 +100,13 @@ DEFINE_VISIT_CHILDREN(PyGenerator);
+ void PyGenerator::complete()
+ {
+     setState(Completed);
+-    m_frame.setWithoutWriteBarrier(jsUndefined());
+-    m_arguments.setWithoutWriteBarrier(jsUndefined());
++    for (unsigned i = 0; i < m_slotCount; ++i)
++        slots()[i].clear();
+     m_delegate.clear();
+     m_handledException.clear();
+     m_frameObject.clear();
+-    if (m_isRegisteredForFinalization) {
+-        m_isRegisteredForFinalization = false;
++    if (std::exchange(m_finalization, Finalization::None) == Finalization::Registered)
+         structure()->realm()->pythonRuntime()->unregisterFinalizable(this);
+-    }
+ }
+ 
+ static ASCIILiteral describe(PyGenerator::Kind kind)
+@@ -149,45 +144,83 @@ static void replaceStopIteration(JSGlobalObject* globalObject, PyGenerator::Kind
+     error->setContext(vm, original);
+ }
+ 
+-PyGenerator::Outcome PyGenerator::resume(JSGlobalObject* globalObject, JSValue value, ResumeMode mode, JSValue& result)
++bool PyGenerator::enterBody(JSGlobalObject* globalObject)
+ {
+     Runtime& rt = runtime(globalObject);
+-    VM& vm = rt.vm();
+-    auto scope = DECLARE_THROW_SCOPE(vm);
+-    int32_t resumePoint = state();
+-    ASSERT(resumePoint >= 0);
+-    ASSERT(resumePoint || mode == ResumeMode::NormalMode);
+-
++    ASSERT(state() >= 0);
+     setState(Executing);
+     m_delegate.clear();
+-    PyGenerator* previous = rt.runningGenerator();
+-    setResumedBy(vm, previous);
++    m_resumedBy = rt.runningGenerator();
+     rt.setRunningGenerator(this);
++    // The unwinder counts the frame out again.
++    if (++rt.frameDepth <= rt.recursionLimit) [[likely]]
++        return true;
++    auto scope = DECLARE_THROW_SCOPE(rt.vm());
++    raiseRecursionError(globalObject, scope, "maximum recursion depth exceeded"_s);
++    return false;
++}
+ 
+-    JSValue returned;
+-    if (rt.tryEnterFrame()) {
+-        JSValue arguments[] = { this, jsNumber(resumePoint), value, jsNumber(static_cast<int32_t>(mode)), m_frame.get() };
+-        returned = call(globalObject, m_body.get(), CallArgs(arguments, std::size(arguments)));
+-        rt.leaveFrame();
+-    }
++ALWAYS_INLINE void PyGenerator::leaveBody(Runtime& rt)
++{
++    ASSERT(rt.runningGenerator() == this);
++    rt.setRunningGenerator(m_resumedBy);
++    m_resumedBy = nullptr;
++    rt.leaveFrame();
++}
++
++void PyGenerator::suspendBody(JSGlobalObject* globalObject, unsigned resumeOffset)
++{
++    leaveBody(runtime(globalObject));
++    setState(static_cast<int32_t>(resumeOffset));
++    if (PyFrame* frame = m_frameObject.get())
++        frame->generatorHasStopped(false);
++}
++
++void PyGenerator::returnFromBody(JSGlobalObject* globalObject)
++{
++    leaveBody(runtime(globalObject));
++    if (PyFrame* frame = m_frameObject.get())
++        frame->generatorHasStopped(true);
++    complete();
++}
+ 
+-    rt.setRunningGenerator(previous);
+-    setResumedBy(vm, nullptr);
+-    if (PyFrame* frame = m_frameObject.get()) [[unlikely]]
+-        frame->generatorHasStopped(scope.exception() || state() == Executing);
++void PyGenerator::bodyIsUnwinding(JSGlobalObject* globalObject, bool isTermination)
++{
++    // The exception may come from before the body's first instruction.
++    if (!isRunning())
++        return;
++    leaveBody(runtime(globalObject));
++    if (PyFrame* frame = m_frameObject.get())
++        frame->generatorHasStopped(true);
++    complete();
++    if (isTermination)
++        return;
++    replaceStopIteration(globalObject, m_kind);
++    unwrapPendingException(globalObject);
++}
+ 
++void generatorBodyIsUnwinding(JSGlobalObject* globalObject, CallFrame* callFrame, bool isTermination)
++{
++    uncheckedDowncast<PyGenerator>(callFrame->uncheckedArgument(0).asCell())->bodyIsUnwinding(globalObject, isTermination);
++}
++
++PyGenerator::Outcome PyGenerator::resume(JSGlobalObject* globalObject, JSValue value, ResumeMode mode, JSValue& result)
++{
++    VM& vm = getVM(globalObject);
++    auto scope = DECLARE_THROW_SCOPE(vm);
++    ASSERT(state() >= 0);
++    ASSERT(state() || mode == ResumeMode::NormalMode);
++
++    JSValue arguments[] = { this, m_state.get(), value, jsNumber(static_cast<int32_t>(mode)), jsUndefined() };
++    JSValue returned = callBodyOfGenerator(globalObject, body(), arguments);
+     if (scope.exception()) [[unlikely]] {
+-        complete();
+-        scope.release();
+-        replaceStopIteration(globalObject, m_kind);
+-        unwrapPendingException(globalObject);
++        // It did not get as far as the body: there was no room on the stack for its frame.
++        if (!isCompleted())
++            complete();
+         return Outcome::Threw;
+     }
+     result = returned;
+-    if (state() != Executing)
+-        return Outcome::Yielded;
+-    complete();
+-    return Outcome::Returned;
++    return isCompleted() ? Outcome::Returned : Outcome::Yielded;
+ }
+ 
+ static JSValue raiseAlreadyExecuting(JSGlobalObject* globalObject, PyGenerator* generator)
+diff --git a/Source/JavaScriptCore/python/runtime/PyGenerator.h b/Source/JavaScriptCore/python/runtime/PyGenerator.h
+index c264ef06..e86ffebb 100644
+--- a/Source/JavaScriptCore/python/runtime/PyGenerator.h
++++ b/Source/JavaScriptCore/python/runtime/PyGenerator.h
+@@ -15,26 +15,20 @@ namespace Python {
+ 
+ // A generator, a coroutine or an asynchronous generator.
+ class PyGenerator final : public PyObject {
+-    // The compiled code reads and writes these four as "internal fields", so they come first. See PyBytecode.h.
+-    WriteBarrier<Unknown> m_state;
+-    WriteBarrier<Unknown> m_body;
+-    WriteBarrier<Unknown> m_frame;
+-    WriteBarrier<Unknown> m_arguments;
+-
+ public:
+     PY_DECLARE_CELL(PyGenerator, PyObject, PyGeneratorType);
+     DECLARE_VISIT_CHILDREN;
+ 
+     enum class Kind : uint8_t { Generator, Coroutine, AsyncGenerator };
+ 
+-    // As JSGenerator::State: a positive state is where to resume.
++    // A positive state is where to resume: the offset of an instruction of the body.
+     enum State : int32_t {
+         Completed = -1,
+         Executing = -2,
+         NotStarted = 0,
+     };
+ 
+-    static PyGenerator* create(JSGlobalObject*, PyFunction* function, PyFunction* body, PyTuple* arguments);
++    static PyGenerator* create(JSGlobalObject*, PyFunction* function, PyFunction* body, unsigned slotCount);
+ 
+     Kind kind() const { return m_kind; }
+     int32_t state() const { return m_state.get().asInt32(); }
+@@ -44,9 +38,16 @@ public:
+     bool isStarted() const { return state() != NotStarted; }
+ 
+     PyFunction* function() const { return m_function.get(); }
+-    PyFunction* body() const { return uncheckedDowncast<PyFunction>(m_body.get().asCell()); }
+-    JSValue frame() const { return m_frame.get(); } // Once it has started: a JSLexicalEnvironment, where its registers are while it is suspended.
+-    JSValue arguments() const { return m_arguments.get(); } // Until it starts: a tuple, the values of the parameters.
++    PyFunction* body() const { return m_body.get(); }
++
++    // Where the registers of the body are kept while it is suspended: those that hold something that is still needed. Which
++    // slot belongs to which register is in the instructions that save and restore them (op_py_generator_registers,
++    // op_py_generator_suspend). Until it starts, the first slots hold the values of the parameters. While it is running, and
++    // when it is done, they are all empty.
++    unsigned slotCount() const { return m_slotCount; }
++    JSValue slot(unsigned index) const { ASSERT(index < m_slotCount); return slots()[index].get(); }
++    void setSlot(VM& vm, unsigned index, JSValue value) { ASSERT(index < m_slotCount); slots()[index].set(vm, this, value); }
++    static constexpr size_t allocationSize(unsigned slotCount) { return offsetOfSlots() + slotCount * sizeof(WriteBarrier<Unknown>); }
+     JSValue name() const { return m_name.get(); }
+     void setName(VM& vm, JSValue value) { m_name.set(vm, this, value); }
+     JSValue qualname() const { return m_qualname.get(); }
+@@ -59,8 +60,8 @@ public:
+     // The exception being handled in the generator, which stays with it while it is suspended.
+     JSValue handledException() const { return m_handledException.get(); }
+     void setHandledException(VM& vm, JSValue value) { m_handledException.set(vm, this, value); }
+-    PyGenerator* resumedBy() const { return m_resumedBy.get(); }
+-    void setResumedBy(VM& vm, PyGenerator* value) { m_resumedBy.setMayBeNull(vm, this, value); }
++    // While it is running: the generator that was running when it was resumed, Runtime::runningGenerator() then.
++    PyGenerator* resumedBy() const { return m_resumedBy; }
+     // gi_frame, once somebody has asked for it. See PyFrame::of().
+     PyFrame* frameObject() const { return m_frameObject.get(); }
+     void setFrameObject(VM& vm, PyFrame* frame) { m_frameObject.set(vm, this, frame); }
+@@ -87,24 +88,64 @@ public:
+         Threw,
+     };
+     // Runs it until it next yields. With ThrowMode, `value` is an exception to raise where it is suspended.
++    // It is neither running nor completed.
++    //
++    // To resume a generator is to call its body, with the arguments JSGenerator::Argument lists. The body does the rest:
++    // op_py_generator_enter, its first instruction, notes that the generator is running; op_py_generator_suspend and
++    // op_py_generator_return, with which it returns, that it no longer is; and the unwinder, if an exception leaves the body
++    // (bodyIsUnwinding()). Whoever called the body tells from isCompleted() whether it has yielded or returned. So
++    // instructions can do it as well as this function: op_py_for_iter and op_py_send do.
+     Outcome resume(JSGlobalObject*, JSValue value, JSGenerator::ResumeMode, JSValue& result);
+ 
++    // What those instructions do, when the interpreter leaves it to C++. False: an exception.
++    bool enterBody(JSGlobalObject*);
++    void suspendBody(JSGlobalObject*, unsigned resumeOffset);
++    void returnFromBody(JSGlobalObject*);
++    // An exception is about to leave the frame of the body. It may be replaced by another.
++    void bodyIsUnwinding(JSGlobalObject*, bool isTermination);
++
++    static constexpr ptrdiff_t offsetOfState() { return OBJECT_OFFSETOF(PyGenerator, m_state); }
++    static constexpr ptrdiff_t offsetOfBody() { return OBJECT_OFFSETOF(PyGenerator, m_body); }
++    static constexpr ptrdiff_t offsetOfSlots();
++    static constexpr ptrdiff_t offsetOfDelegate() { return OBJECT_OFFSETOF(PyGenerator, m_delegate); }
++    static constexpr ptrdiff_t offsetOfResumedBy() { return OBJECT_OFFSETOF(PyGenerator, m_resumedBy); }
++    static constexpr ptrdiff_t offsetOfFrameObject() { return OBJECT_OFFSETOF(PyGenerator, m_frameObject); }
++    static constexpr ptrdiff_t offsetOfKind() { return OBJECT_OFFSETOF(PyGenerator, m_kind); }
++    static constexpr ptrdiff_t offsetOfHandledException() { return OBJECT_OFFSETOF(PyGenerator, m_handledException); }
++    static constexpr ptrdiff_t offsetOfFinalization() { return OBJECT_OFFSETOF(PyGenerator, m_finalization); }
++
++    // One that is dropped before it is done may have something to clean up (a `finally`, a `with`), or to complain of.
++    enum class Finalization : uint8_t {
++        None, // It has not, or it is done.
++        Noted, // Runtime::noteFinalizableGenerator() has been told.
++        Registered, // Runtime::registerFinalizable() has.
++    };
++    Finalization finalization() const { return m_finalization; }
++    void setFinalization(Finalization finalization) { m_finalization = finalization; }
++
+ private:
+-    PyGenerator(VM&, Structure*, PyType*, Kind);
++    PyGenerator(VM&, Structure*, PyType*, Kind, unsigned slotCount);
++    void leaveBody(Runtime&);
++    WriteBarrier<Unknown>* slots() const { return std::bit_cast<WriteBarrier<Unknown>*>(std::bit_cast<char*>(this) + offsetOfSlots()); }
+ 
++    WriteBarrier<Unknown> m_state; // An int32.
++    WriteBarrier<PyFunction> m_body;
+     WriteBarrier<PyFunction> m_function;
+     WriteBarrier<Unknown> m_name;
+     WriteBarrier<Unknown> m_qualname;
+     WriteBarrier<Unknown> m_delegate;
+     WriteBarrier<Unknown> m_handledException;
+-    WriteBarrier<PyGenerator> m_resumedBy;
++    PyGenerator* m_resumedBy { nullptr }; // It is running, so the frame of its body refers to it.
+     WriteBarrier<PyFrame> m_frameObject;
+     WriteBarrier<Unknown> m_finalizer;
+     WriteBarrier<Unknown> m_origin;
++    unsigned m_slotCount;
+     Kind m_kind;
+-    bool m_isRegisteredForFinalization { false };
++    Finalization m_finalization { Finalization::None };
+ };
+ 
++constexpr ptrdiff_t PyGenerator::offsetOfSlots() { return WTF::roundUpToMultipleOf<sizeof(WriteBarrier<Unknown>)>(sizeof(PyGenerator)); }
++
+ // What asend(), athrow() and aclose() return.
+ class PyAsyncGenAwaitable final : public PyObject {
+ public:
+diff --git a/Source/JavaScriptCore/python/runtime/PyHooks.h b/Source/JavaScriptCore/python/runtime/PyHooks.h
+index adac291b..e747435a 100644
+--- a/Source/JavaScriptCore/python/runtime/PyHooks.h
++++ b/Source/JavaScriptCore/python/runtime/PyHooks.h
+@@ -44,6 +44,9 @@ void didCreateCodeBlock(CodeBlock*);
+ // again: `del x; gc.collect()` would not free what x was. So the temporaries of Python frames that are dead are emptied.
+ // (Variables are left alone: an object lives as long as a variable names it, whether the code goes on to use it or not.)
+ void clearDeadTemporaries(VM&);
++// An exception is about to leave the frame of the body of a generator. The generator is done, and the exception that is pending
++// afterwards may be another.
++void generatorBodyIsUnwinding(JSGlobalObject*, CallFrame*, bool isTermination);
+ 
+ // A constant of compiled code that is an object of Python's, as what it is made of, which is how the bytecode cache keeps it
+ // (runtime/CachedTypes.cpp).
+diff --git a/Source/JavaScriptCore/python/runtime/PyInternals.h b/Source/JavaScriptCore/python/runtime/PyInternals.h
+index 028474db..9fcaa01e 100644
+--- a/Source/JavaScriptCore/python/runtime/PyInternals.h
++++ b/Source/JavaScriptCore/python/runtime/PyInternals.h
+@@ -55,6 +55,8 @@ JSValue typeGetAttr(JSGlobalObject*, PyType*, JSString* name, bool suppress = fa
+ JSValue typeCall(JSGlobalObject*, PyType*, const CallArgs&);
+ // An instance of the type with nothing set: what object.__new__ makes, given how the type's instances are laid out.
+ JSValue allocateInstance(JSGlobalObject*, PyType*);
++// For PyGenerator::resume().
++JSValue callBodyOfGenerator(JSGlobalObject*, PyFunction* body, std::span<const JSValue> arguments);
+ // What gc.collect() does: collects, runs the finalizers of what was found, and so on until there is nothing left to do. Not from
+ // a finalizer. Throws nothing but the host's termination.
+ void collectAndFinalize(JSGlobalObject*);
+@@ -122,19 +124,11 @@ bool findSuperArguments(JSGlobalObject*, JSValue& type, JSValue& instance);
+ inline JSValue* valuesOf(MarkedArgumentBuffer& buffer) { return reinterpret_cast<JSValue*>(buffer.data()); }
+ inline std::span<const JSValue> spanOf(MarkedArgumentBuffer& buffer) { return { valuesOf(buffer), buffer.size() }; }
+ 
+-// function(CallArgs) with `first` before the positional arguments.
++// Apart, so that the frame of whoever uses withFirstArgument() has no room for a buffer that it seldom writes: see callJSFunction().
+ template<typename Function>
+-ALWAYS_INLINE JSValue withFirstArgument(JSValue first, const CallArgs& args, const Function& function)
++NEVER_INLINE JSValue withFirstOfManyArguments(JSValue first, const CallArgs& args, const Function& function)
+ {
+     unsigned total = args.totalCount() + 1;
+-    static constexpr unsigned inlineCapacity = 12;
+-    if (total <= inlineCapacity) [[likely]] {
+-        JSValue buffer[inlineCapacity];
+-        buffer[0] = first;
+-        for (unsigned i = 1; i < total; ++i)
+-            buffer[i] = args.values()[i - 1];
+-        return function(CallArgs(buffer, args.size() + 1, args.keywordNames()));
+-    }
+     MarkedArgumentBuffer buffer;
+     buffer.ensureCapacity(total);
+     buffer.append(first);
+@@ -143,6 +137,21 @@ ALWAYS_INLINE JSValue withFirstArgument(JSValue first, const CallArgs& args, con
+     return function(CallArgs(reinterpret_cast<const JSValue*>(ArgList(buffer).data()), args.size() + 1, args.keywordNames()));
+ }
+ 
++// function(CallArgs) with `first` before the positional arguments.
++template<typename Function>
++ALWAYS_INLINE JSValue withFirstArgument(JSValue first, const CallArgs& args, const Function& function)
++{
++    unsigned total = args.totalCount() + 1;
++    static constexpr unsigned inlineCapacity = 12;
++    if (total > inlineCapacity) [[unlikely]]
++        return withFirstOfManyArguments(first, args, function);
++    JSValue buffer[inlineCapacity];
++    buffer[0] = first;
++    for (unsigned i = 1; i < total; ++i)
++        buffer[i] = args.values()[i - 1];
++    return function(CallArgs(buffer, args.size() + 1, args.keywordNames()));
++}
++
+ // The name as a str that is not a rope and is the one of its kind. Null: a TypeError, "attribute name must be string, not 'x'".
+ JSString* attributeName(JSGlobalObject*, JSValue);
+ // False: a TypeError, "f() takes no keyword arguments".
+diff --git a/Source/JavaScriptCore/python/runtime/PyMonitoring.cpp b/Source/JavaScriptCore/python/runtime/PyMonitoring.cpp
+index 740434a2..96ad80fe 100644
+--- a/Source/JavaScriptCore/python/runtime/PyMonitoring.cpp
++++ b/Source/JavaScriptCore/python/runtime/PyMonitoring.cpp
+@@ -217,6 +217,8 @@ static bool fallsThrough(OpcodeID opcode)
+     case op_jmp:
+     case op_ret:
+     case op_py_ret:
++    case op_py_generator_suspend:
++    case op_py_generator_return:
+     case op_throw:
+     case op_unreachable:
+     case op_switch_imm:
+@@ -450,8 +452,6 @@ void CodeMonitor::findPoints(bool everyInstruction)
+             jumpsFromSameLine.append({ item.offset, targetOffset });
+     };
+ 
+-    VirtualRegister generatorRegister = virtualRegisterForArgumentIncludingThis(static_cast<int>(JSGenerator::Argument::Generator));
+-    bool isAboutToYield = false;
+     bool isBeingResumed = false;
+     bool isExceptionMatch = false;
+     for (auto& item : items) {
+@@ -468,26 +468,18 @@ void CodeMonitor::findPoints(bool everyInstruction)
+             point.kinds |= bit(Event::Instruction);
+ 
+         // The registers are put back first.
+-        bool isResumption = isBeingResumed && item.opcode != op_get_from_scope;
++        bool isResumption = isBeingResumed && item.opcode != op_py_generator_registers;
+         if (isResumption) {
+             point.kinds |= bit(Event::PyResume);
+             isBeingResumed = false;
+         }
+ 
+-        bool wasAboutToYield = std::exchange(isAboutToYield, false);
+         bool previousIsExceptionMatch = std::exchange(isExceptionMatch, item.opcode == op_py_compare && static_cast<CompareOperator>(instructions.at(item.offset)->as<OpPyCompare>().m_operation) == CompareOperator::ExceptionMatch);
+         switch (item.opcode) {
+-        case op_put_internal_field: {
+-            auto bytecode = instructions.at(item.offset)->as<OpPutInternalField>();
+-            isAboutToYield = isGeneratorBody && bytecode.m_base == generatorRegister && bytecode.m_index == generatorStateField;
+-            break;
+-        }
+-        case op_put_to_scope:
+-            isAboutToYield = wasAboutToYield;
+-            break;
+-        case op_ret:
+-            point.kinds |= bit(wasAboutToYield ? Event::PyYield : Event::PyReturn);
++        case op_py_generator_suspend:
++            point.kinds |= bit(Event::PyYield);
+             break;
++        case op_py_generator_return:
+         case op_py_ret:
+             point.kinds |= bit(Event::PyReturn);
+             break;
+@@ -498,9 +490,8 @@ void CodeMonitor::findPoints(bool everyInstruction)
+         case op_py_prepare_construct:
+             point.kinds |= Point::construct;
+             break;
+-        case op_py_runtime:
+-            if (static_cast<RuntimeFunction>(instructions.at(item.offset)->as<OpPyRuntime>().m_function) == RuntimeFunction::TakeSendResult)
+-                point.kinds |= bit(Event::StopIteration);
++        case op_py_send:
++            point.kinds |= bit(Event::StopIteration);
+             break;
+         case op_jmp:
+             if (!item.isHiddenJump)
+@@ -1380,9 +1371,11 @@ Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject, CallFrame*
+             return threw;
+         return runIt;
+ 
+-    case op_ret: {
+-        unsigned event = kinds & bit(Event::PyYield) ? Event::PyYield : Event::PyReturn;
+-        if (!fire(globalObject, callFrame, monitor, offset, event, wanted(event), callFrame->r(pc->as<OpRet>().m_value).jsValue()))
++    case op_py_generator_suspend:
++    case op_py_generator_return: {
++        unsigned event = opcode == op_py_generator_suspend ? Event::PyYield : Event::PyReturn;
++        VirtualRegister value = opcode == op_py_generator_suspend ? pc->as<OpPyGeneratorSuspend>().m_value : pc->as<OpPyGeneratorReturn>().m_value;
++        if (!fire(globalObject, callFrame, monitor, offset, event, wanted(event), callFrame->r(value).jsValue()))
+             return threw;
+         if (jumped(elsewhere))
+             return elsewhere;
+@@ -1502,15 +1495,18 @@ Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject, CallFrame*
+     // `yield from` or `await` is over. If it was a generator, that has returned without raising StopIteration, and is told of as if it had.
+     if (kinds & bit(Event::StopIteration)) {
+         uint8_t tools = wanted(Event::StopIteration);
+-        auto bytecode = pc->as<OpPyRuntime>();
+-        if (!tools || !PyGenerator::is(callFrame->uncheckedR(bytecode.m_argv).jsValue()))
++        if (!tools)
+             return runIt;
++        auto bytecode = pc->as<OpPySend>();
+         const void* target;
+         const void* signal;
+-        decodeResult(slow_path_py_runtime(callFrame, pc), target, signal);
++        decodeResult(slow_path_py_send(callFrame, pc), target, signal);
+         if (signal == LLInt::exceptionSignal())
+             return threw;
+         callFrame->setCurrentVPC(pc);
++        auto* destination = static_cast<const JSInstruction*>(target);
++        if (destination == next() || !PyGenerator::is(callFrame->uncheckedR(bytecode.m_iterator).jsValue()))
++            return { destination, goOn };
+         JSValue value = callFrame->uncheckedR(bytecode.m_dst).jsValue();
+         PyException* exception;
+         if (auto* tuple = PyTuple::tryFrom(value))
+@@ -1521,7 +1517,7 @@ Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject, CallFrame*
+             exception = newException(globalObject, m_runtime.StopIteration(), std::span<const JSValue> { &value, 1 });
+         if (!exception || !fire(globalObject, callFrame, monitor, offset, Event::StopIteration, tools, exception))
+             return threw;
+-        return { next(), goOn };
++        return { destination, goOn };
+     }
+ 
+     // Which way a branch goes is known once it has gone.
+@@ -1822,12 +1818,20 @@ void Monitoring::jump(JSGlobalObject* globalObject, PyFrame* frame, int requeste
+         if (block.kind == TracedBlock::ExceptionHandler || block.kind == TracedBlock::ExceptionHandlerWithMore)
+             m_runtime.setHandledExceptionInTopSlot(callFrame->r(block.reg).jsValue());
+     }
+-    Vector<JSValue, 8> held;
+-    for (unsigned i = 0; i < best->blocks.size(); ++i)
+-        held.append(from->at(i).reg.isValid() ? callFrame->r(from->at(i).reg).jsValue() : JSValue());
++    // (A `with` holds two registers, other blocks one.)
++    auto next = [](VirtualRegister reg) { return VirtualRegister(reg.offset() - 1); };
++    Vector<std::pair<JSValue, JSValue>, 8> held;
+     for (unsigned i = 0; i < best->blocks.size(); ++i) {
+-        if (best->blocks[i].reg.isValid() && from->at(i).reg.isValid())
+-            callFrame->r(best->blocks[i].reg) = held[i];
++        auto& block = from->at(i);
++        held.append({ block.reg.isValid() ? callFrame->r(block.reg).jsValue() : JSValue(), block.kind == TracedBlock::With ? callFrame->r(next(block.reg)).jsValue() : JSValue() });
++    }
++    for (unsigned i = 0; i < best->blocks.size(); ++i) {
++        auto& block = best->blocks[i];
++        if (!block.reg.isValid() || !from->at(i).reg.isValid())
++            continue;
++        callFrame->r(block.reg) = held[i].first;
++        if (block.kind == TracedBlock::With)
++            callFrame->r(next(block.reg)) = held[i].second;
+     }
+ 
+     frame->jumpTarget = best->offset;
+diff --git a/Source/JavaScriptCore/python/runtime/PyRuntime.cpp b/Source/JavaScriptCore/python/runtime/PyRuntime.cpp
+index c86ae93a..8b0c9c8f 100644
+--- a/Source/JavaScriptCore/python/runtime/PyRuntime.cpp
++++ b/Source/JavaScriptCore/python/runtime/PyRuntime.cpp
+@@ -118,7 +118,6 @@ void Runtime::visit(Visitor& visitor)
+     for (auto& slot : m_slots)
+         visitor.append(slot);
+     visitor.append(m_handledException);
+-    visitor.append(m_runningGenerator);
+     visitor.append(m_asyncGenFirstIter);
+     visitor.append(m_asyncGenFinalizer);
+     visitor.append(m_threadLocals);
+@@ -163,6 +162,7 @@ void Runtime::initializeStructures()
+     m_typeStructure.set(vm, globalObject, PyType::createStructure(vm, globalObject, functionPrototype));
+     m_nativeFunctionStructure.set(vm, globalObject, PyNativeFunction::createStructure(vm, globalObject, functionPrototype));
+     m_functionStructure.set(vm, globalObject, PyFunction::createStructure(vm, globalObject, functionPrototype));
++    functionStructureID = m_functionStructure->id();
+     m_listSubclassStructure.set(vm, globalObject, PyListObject::createStructure(vm, globalObject, globalObject->arrayPrototype()));
+     m_weakRefStructure.set(vm, globalObject, PyWeakRef::createStructure(vm, globalObject));
+ }
+@@ -327,14 +327,14 @@ PyType* Runtime::typeOf(JSValue value) const
+ 
+ JSValue Runtime::handledExceptionInTopSlot() const
+ {
+-    if (PyGenerator* generator = m_runningGenerator.get())
++    if (PyGenerator* generator = m_runningGenerator)
+         return generator->handledException();
+     return m_handledException.get();
+ }
+ 
+ JSValue Runtime::setHandledExceptionInTopSlot(JSValue value)
+ {
+-    if (PyGenerator* generator = m_runningGenerator.get()) {
++    if (PyGenerator* generator = m_runningGenerator) {
+         JSValue previous = generator->handledException();
+         generator->setHandledException(m_vm, value);
+         return previous;
+@@ -346,26 +346,20 @@ JSValue Runtime::setHandledExceptionInTopSlot(JSValue value)
+ 
+ JSValue Runtime::handledException() const
+ {
+-    for (PyGenerator* generator = m_runningGenerator.get(); generator; generator = generator->resumedBy()) {
++    for (PyGenerator* generator = m_runningGenerator; generator; generator = generator->resumedBy()) {
+         if (JSValue value = generator->handledException())
+             return value;
+     }
+     return m_handledException.get();
+ }
+ 
+-void Runtime::setRunningGenerator(PyGenerator* generator)
+-{
+-    m_runningGenerator.setMayBeNull(m_vm, m_globalObject, generator);
+-}
+-
+ void Runtime::takeThreadLocalState(ThreadLocalState& state)
+ {
+     auto& thrownException = m_slots[static_cast<unsigned>(Slot::ThrownException)];
+     auto& throwArguments = m_slots[static_cast<unsigned>(Slot::ThrowArguments)];
+     state.currentContext = take(m_slots[static_cast<unsigned>(Slot::CurrentContext)]);
+     state.handledException = take(m_handledException);
+-    state.runningGenerator = m_runningGenerator.get();
+-    m_runningGenerator.clear();
++    state.runningGenerator = std::exchange(m_runningGenerator, nullptr);
+     state.asyncGenFirstIter = take(m_asyncGenFirstIter);
+     state.asyncGenFinalizer = take(m_asyncGenFinalizer);
+     state.pendingKeywordNames = take(m_pendingKeywordNames);
+@@ -399,7 +393,7 @@ void Runtime::putThreadLocalState(ThreadLocalState& state)
+     };
+     put(m_slots[static_cast<unsigned>(Slot::CurrentContext)], state.currentContext);
+     put(m_handledException, state.handledException);
+-    m_runningGenerator.setMayBeNull(m_vm, m_globalObject, state.runningGenerator);
++    m_runningGenerator = state.runningGenerator;
+     put(m_asyncGenFirstIter, state.asyncGenFirstIter);
+     put(m_asyncGenFinalizer, state.asyncGenFinalizer);
+     put(m_pendingKeywordNames, state.pendingKeywordNames);
+diff --git a/Source/JavaScriptCore/python/runtime/PyRuntime.h b/Source/JavaScriptCore/python/runtime/PyRuntime.h
+index 41d2e5b0..e6f06e51 100644
+--- a/Source/JavaScriptCore/python/runtime/PyRuntime.h
++++ b/Source/JavaScriptCore/python/runtime/PyRuntime.h
+@@ -418,8 +418,9 @@ public:
+     JSValue handledExceptionInTopSlot() const;
+     JSValue setHandledExceptionInTopSlot(JSValue); // Returns what was there.
+     JSValue handledException() const; // In the topmost slot that has one. Empty: none.
+-    PyGenerator* runningGenerator() const { return m_runningGenerator.get(); }
+-    void setRunningGenerator(PyGenerator*);
++    PyGenerator* runningGenerator() const { return m_runningGenerator; }
++    void setRunningGenerator(PyGenerator* generator) { m_runningGenerator = generator; }
++    static constexpr ptrdiff_t offsetOfRunningGenerator() { return OBJECT_OFFSETOF(Runtime, m_runningGenerator); }
+ 
+     // ---- Threads (PyThreads.h) ----
+ 
+@@ -496,6 +497,9 @@ public:
+ 
+     void registerFinalizable(JSCell*);
+     void unregisterFinalizable(JSCell*);
++    // Most generators and coroutines are done long before the next collection. So they are only written down when they are made,
++    // and those that still have PyGenerator::Finalization::Noted when a collection comes are registered then.
++    void noteFinalizableGenerator(PyGenerator* generator) { m_newFinalizableGenerators.append(generator); }
+     // For the collector, with the world stopped, once all that is reachable is marked. True: it marked something.
+     bool keepUnreachableObjectsToFinalize(SlotVisitor&);
+     // For a weak reference whose referent has just died.
+@@ -552,7 +556,7 @@ public:
+     unsigned allocationTracebackLimit { 0 };
+     int coroutineOriginTrackingDepth { 0 }; // sys.set_coroutine_origin_tracking_depth()
+     // How many frames of Python code there are. op_py_bind_args counts a frame in; op_py_ret, or the unwinder when an exception
+-    // leaves the frame, counts it out. The body of a generator has neither instruction: PyGenerator::resume() counts it.
++    // leaves the frame, counts it out. For the body of a generator: op_py_generator_enter, op_py_generator_suspend and _return.
+     int frameDepth { 0 };
+     // How many buffers this thread holds of memory that JS could take away if it ran: see PyBuffer.h.
+     unsigned buffersThatKeepGIL { 0 };
+@@ -566,6 +570,7 @@ public:
+     // ---- For the interpreter (LowLevelInterpreter64.asm) ----
+ 
+     StructureID iteratorStructureID; // Of PyIterator.
++    StructureID functionStructureID; // Of PyFunction.
+     static constexpr ptrdiff_t offsetOfType(TypeID id) { return OBJECT_OFFSETOF(Runtime, m_types) + static_cast<unsigned>(id) * sizeof(WriteBarrier<PyType>); }
+ 
+ private:
+@@ -613,7 +618,7 @@ private:
+     std::array<WriteBarrier<Unknown>, static_cast<unsigned>(Slot::Count)> m_slots;
+ 
+     WriteBarrier<Unknown> m_handledException;
+-    WriteBarrier<PyGenerator> m_runningGenerator;
++    PyGenerator* m_runningGenerator { nullptr }; // The frame of its body refers to it.
+     WriteBarrier<Unknown> m_asyncGenFirstIter;
+     WriteBarrier<Unknown> m_asyncGenFinalizer;
+     WriteBarrier<Unknown> m_threadLocals;
+@@ -630,6 +635,10 @@ private:
+ 
+     Lock m_finalizationLock;
+     ListHashSet<JSCell*> m_finalizable WTF_GUARDED_BY_LOCK(m_finalizationLock); // Not visited.
++    // Not visited. All were made since the last collection looked at this, so none has been freed. The thread that runs Python
++    // code adds to it, and the collector takes from it while that thread is stopped.
++    Vector<PyGenerator*> m_newFinalizableGenerators;
++    void registerNotedGenerators() WTF_REQUIRES_LOCK(m_finalizationLock);
+     Deque<JSCell*> m_pendingFinalization WTF_GUARDED_BY_LOCK(m_finalizationLock);
+     Deque<PyWeakRef*> m_pendingWeakRefCallbacks WTF_GUARDED_BY_LOCK(m_finalizationLock);
+     bool m_pendingWeakRefCallbacksAreInOrder WTF_GUARDED_BY_LOCK(m_finalizationLock) { true };
+diff --git a/Source/JavaScriptCore/python/runtime/PySlowPaths.cpp b/Source/JavaScriptCore/python/runtime/PySlowPaths.cpp
+index 9a349cfb..dc5ab102 100644
+--- a/Source/JavaScriptCore/python/runtime/PySlowPaths.cpp
++++ b/Source/JavaScriptCore/python/runtime/PySlowPaths.cpp
+@@ -371,12 +371,28 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_set_attr)
+     END();
+ }
+ 
++static JSValue loadSpecialForWith(JSGlobalObject*, JSValue object, SpecialMethodForWith, JSValue& self, AttributeCache&);
++
+ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_get_method)
+ {
+     BEGIN();
+     auto bytecode = pc->as<OpPyGetMethod>();
+     JSValue self;
+     JSValue base = GET_C(bytecode.m_base).jsValue();
++    if (JSValue which = GET_C(bytecode.m_name).jsValue(); which.isInt32()) [[unlikely]] {
++        AttributeCache cache;
++        JSValue method = loadSpecialForWith(globalObject, base, static_cast<SpecialMethodForWith>(which.asInt32()), self, cache);
++        CHECK_EXCEPTION();
++        auto& metadata = bytecode.metadata(codeBlock);
++        metadata.m_payload = cache.payload;
++        metadata.m_structureID = cache.structureID;
++        metadata.m_typeVersion = cache.typeVersion;
++        metadata.m_offset = cache.offset;
++        metadata.m_jsType = cache.jsType;
++        GET(bytecode.m_self) = self;
++        GET(bytecode.m_dst) = method;
++        END_IMPL();
++    }
+     JSString* name = asString(GET_C(bytecode.m_name).jsValue());
+     JSValue method = getMethod(globalObject, base, name, self);
+     CHECK_EXCEPTION();
+@@ -528,6 +544,78 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_for_iter)
+     JUMP_IF(!item);
+ }
+ 
++JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_send)
++{
++    BEGIN();
++    auto bytecode = pc->as<OpPySend>();
++    int mode = GET(bytecode.m_mode).jsValue().asInt32();
++    if (mode >= firstSendOfAwait) {
++        JSValue iterator = getAwaitable(globalObject, GET(bytecode.m_iterator).jsValue(), mode - firstSendOfAwait);
++        CHECK_EXCEPTION();
++        GET(bytecode.m_iterator) = iterator;
++        mode = static_cast<int>(JSGenerator::ResumeMode::NormalMode);
++    }
++    JSValue yielded = sendToDelegate(globalObject, GET(bytecode.m_iterator).jsValue(), GET(bytecode.m_value).jsValue(), static_cast<JSGenerator::ResumeMode>(mode));
++    CHECK_EXCEPTION();
++    GET(bytecode.m_dst) = yielded ? yielded : runtime(globalObject).takeSendResult();
++    JUMP_IF(!yielded);
++}
++
++// ---- The body of a generator: see PyGenerator::resume() ----
++
++static_assert(static_cast<int>(JSGenerator::Argument::NumberOfArguments) + 1 == 6); // pyResumeGenerator in LowLevelInterpreter64.asm
++
++static ALWAYS_INLINE PyGenerator* generatorOf(CallFrame* callFrame)
++{
++    return uncheckedDowncast<PyGenerator>(callFrame->uncheckedArgument(0).asCell());
++}
++
++JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_generator_enter)
++{
++    BEGIN();
++    PyGenerator* generator = generatorOf(callFrame);
++    int32_t state = generator->state();
++    generator->enterBody(globalObject);
++    CHECK_EXCEPTION();
++    pc = state ? codeBlock->instructions().at(state).ptr() : reinterpret_cast<const JSInstruction*>(reinterpret_cast<const uint8_t*>(pc) + pc->size());
++    END_IMPL();
++}
++
++JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_generator_suspend)
++{
++    BEGIN();
++    auto bytecode = pc->as<OpPyGeneratorSuspend>();
++    PyGenerator* generator = generatorOf(callFrame);
++    for (unsigned i = 0; i < bytecode.m_count; ++i)
++        generator->setSlot(vm, bytecode.m_offset + i, GET(VirtualRegister(bytecode.m_first.offset() - static_cast<int>(i))).jsValue());
++    // For what the op_py_generator_registers before this one have stored, which the interpreter does without.
++    vm.writeBarrier(generator);
++    generator->suspendBody(globalObject, codeBlock->bytecodeOffset(pc) + pc->size());
++    END_IMPL();
++}
++
++JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_generator_return)
++{
++    BEGIN();
++    runtime(globalObject).frameIsEnding(callFrame);
++    generatorOf(callFrame)->returnFromBody(globalObject);
++    END_IMPL();
++}
++
++JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_generator_registers)
++{
++    BEGIN();
++    auto bytecode = pc->as<OpPyGeneratorRegisters>();
++    PyGenerator* generator = generatorOf(callFrame);
++    for (unsigned i = 0; i < bytecode.m_count; ++i) {
++        Register& reg = GET(VirtualRegister(bytecode.m_first.offset() - static_cast<int>(i)));
++        if (!bytecode.m_isSave)
++            reg = generator->slot(bytecode.m_offset + i);
++        generator->setSlot(vm, bytecode.m_offset + i, bytecode.m_isSave ? reg.jsValue() : JSValue());
++    }
++    END_IMPL();
++}
++
+ static void unpackIterable(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue iterable, VirtualRegister first, unsigned before, int after)
+ {
+     Runtime& rt = runtime(globalObject);
+@@ -702,17 +790,19 @@ static JSValue makeFunction(JSGlobalObject* globalObject, CallFrame* callFrame,
+ }
+ 
+ // What the body starts with: the values of the parameters, and then `extra` if there is one.
+-static JSValue makeGenerator(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue extra)
++static JSValue makeGenerator(JSGlobalObject* globalObject, CallFrame* callFrame, unsigned slotCount, JSValue extra)
+ {
++    VM& vm = getVM(globalObject);
+     PyFunction* function = calleeOf(callFrame);
+     CodeInfo& info = function->codeInfo();
+     unsigned count = info.takesNamespace ? 1 : info.parameterCount();
+-    PyTuple* arguments = PyTuple::create(globalObject, count + !!extra);
++    ASSERT(count + !!extra <= slotCount);
++    PyGenerator* generator = PyGenerator::create(globalObject, function, function->generatorBody(globalObject, callFrame->codeBlock()), slotCount);
+     for (unsigned i = 0; i < count; ++i)
+-        arguments->initializeAt(getVM(globalObject), i, callFrame->r(virtualRegisterForArgumentIncludingThis(i + 1)).jsValue()); // There may be fewer arguments than parameters.
++        generator->setSlot(vm, i, callFrame->r(virtualRegisterForArgumentIncludingThis(i + 1)).jsValue()); // There may be fewer arguments than parameters.
+     if (extra)
+-        arguments->initializeAt(getVM(globalObject), count, extra);
+-    return PyGenerator::create(globalObject, function, function->generatorBody(globalObject, callFrame->codeBlock()), arguments);
++        generator->setSlot(vm, count, extra);
++    return generator;
+ }
+ 
+ // callee(*args, **kwargs): the arguments in an array, as op_call_varargs takes them. The names of the keywords are set aside.
+@@ -809,17 +899,20 @@ static JSValue importNameForInstruction(JSGlobalObject* globalObject, CallFrame*
+     RELEASE_AND_RETURN(scope, call(globalObject, importFunction, name, function->globals(), locals, fromList, level));
+ }
+ 
+-static JSValue loadSpecialForWith(JSGlobalObject* globalObject, JSValue object, SpecialMethodForWith which)
++static JSValue loadSpecialForWith(JSGlobalObject* globalObject, JSValue object, SpecialMethodForWith which, JSValue& self, AttributeCache& cache)
+ {
+     Runtime& rt = runtime(globalObject);
+     VM& vm = rt.vm();
+     auto scope = DECLARE_THROW_SCOPE(vm);
+     static constexpr Special specials[] = { Special::Enter, Special::Exit, Special::AEnter, Special::AExit };
+     Special special = specials[static_cast<unsigned>(which)];
+-    JSValue method = lookupSpecial(globalObject, object, special);
++    JSValue method = getSpecialMethod(globalObject, object, special, self);
+     RETURN_IF_EXCEPTION(scope, { });
+-    if (method)
++    if (method) {
++        if (!describeSpecialMethod(globalObject, object, special, cache))
++            cache = { };
+         return method;
++    }
+ 
+     PyType* type = rt.typeOf(object);
+     bool isAsync = which == SpecialMethodForWith::AEnter || which == SpecialMethodForWith::AExit;
+@@ -1110,7 +1203,7 @@ static JSValue runRuntimeFunction(JSGlobalObject* globalObject, CallFrame* callF
+         PyFunction::from(args[0])->setTypeParams(vm, args[1]);
+         return args[0];
+     case RuntimeFunction::MakeGenerator:
+-        return makeGenerator(globalObject, callFrame, args.size() ? args[0] : JSValue());
++        return makeGenerator(globalObject, callFrame, args[0].asInt32(), args.size() > 1 ? args[1] : JSValue());
+     case RuntimeFunction::CallArguments:
+         RELEASE_AND_RETURN(scope, callArguments(globalObject, args[0], args[1], args[2]));
+     case RuntimeFunction::TakeKeywordNames:
+@@ -1155,19 +1248,19 @@ static JSValue runRuntimeFunction(JSGlobalObject* globalObject, CallFrame* callF
+         RELEASE_AND_RETURN(scope, prepareReraiseStar(globalObject, args[0], args[1]));
+ 
+     // ---- with ----
+-    case RuntimeFunction::LoadSpecial:
+-        RELEASE_AND_RETURN(scope, loadSpecialForWith(globalObject, args[0], static_cast<SpecialMethodForWith>(args[1].asInt32())));
+     case RuntimeFunction::WithExit: {
+-        JSValue exception = args[1];
++        JSValue exception = args[2];
+         JSValue traceback = PyException::from(exception)->traceback();
+-        RELEASE_AND_RETURN(scope, call(globalObject, args[0], rt.typeOf(exception), exception, traceback ? traceback : jsUndefined()));
++        if (!traceback)
++            traceback = jsUndefined();
++        if (args[1])
++            RELEASE_AND_RETURN(scope, call(globalObject, args[0], args[1], rt.typeOf(exception), exception, traceback));
++        RELEASE_AND_RETURN(scope, call(globalObject, args[0], rt.typeOf(exception), exception, traceback));
+     }
+ 
+     // ---- Generators and coroutines ----
+     case RuntimeFunction::GetYieldFromIter:
+         RELEASE_AND_RETURN(scope, getYieldFromIter(globalObject, args[0], calleeOf(callFrame)->codeOwner()->isIterableCoroutine() || calleeOf(callFrame)->codeInfo().flags.contains(CodeFlag::Coroutine)));
+-    case RuntimeFunction::GetAwaitable:
+-        RELEASE_AND_RETURN(scope, getAwaitable(globalObject, args[0], args[1].asInt32()));
+     case RuntimeFunction::GetAIter:
+         RELEASE_AND_RETURN(scope, getAIter(globalObject, args[0]));
+     case RuntimeFunction::GetANext:
+@@ -1181,16 +1274,10 @@ static JSValue runRuntimeFunction(JSGlobalObject* globalObject, CallFrame* callF
+         throwPythonException(globalObject, scope, exception);
+         return { };
+     }
+-    case RuntimeFunction::Send:
+-        RELEASE_AND_RETURN(scope, sendToDelegate(globalObject, args[0], args[1], static_cast<JSGenerator::ResumeMode>(args[2].asInt32())));
+-    case RuntimeFunction::TakeSendResult:
+-        return rt.takeSendResult();
+     case RuntimeFunction::AsyncGenWrap:
+         return wrapAsyncGeneratorValue(globalObject, args[0]);
+     case RuntimeFunction::ThrowIntoGenerator:
+         return raiseException(globalObject, scope, args[0]);
+-    case RuntimeFunction::KeepVariables:
+-        return jsUndefined();
+ 
+     // ---- match ----
+     case RuntimeFunction::MatchSequence:
+diff --git a/Source/JavaScriptCore/python/runtime/PySlowPaths.h b/Source/JavaScriptCore/python/runtime/PySlowPaths.h
+index 94d97547..b30b9832 100644
+--- a/Source/JavaScriptCore/python/runtime/PySlowPaths.h
++++ b/Source/JavaScriptCore/python/runtime/PySlowPaths.h
+@@ -19,6 +19,11 @@ JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_store_name);
+ JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_get_attr);
+ JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_set_attr);
+ JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_get_method);
++JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_send);
++JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_generator_enter);
++JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_generator_suspend);
++JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_generator_return);
++JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_generator_registers);
+ JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_instrumented); // In PyMonitoring.cpp.
+ JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_prepare_construct);
+ JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_finish_construct);
