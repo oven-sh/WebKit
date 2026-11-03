@@ -1,0 +1,256 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#pragma once
+
+#include "PyBytecode.h"
+#include "PyRuntime.h"
+#include "Strong.h"
+#include "UnlinkedCodeBlock.h"
+#include <wtf/HashSet.h>
+#include <wtf/Lock.h>
+
+namespace JSC {
+namespace Python {
+
+class CallArgs;
+class PyCode;
+class PyFrame;
+
+// sys.monitoring (PEP 669), and sys.settrace() and sys.setprofile(), which are two of its tools.
+//
+// Code that nobody wants to hear about pays nothing: no instruction is there for the sake of tracing, and none tests a flag.
+//
+// Most events happen at places in the code: a line begins, a call is made, the function returns. When a tool asks for such
+// events, the code is changed where it stands. The opcode of the instruction at each such place is replaced by
+// op_py_instrumented; the operands stay. That instruction calls the runtime (slow_path_py_instrumented), which tells the tools
+// and returns the opcode that was there, and the interpreter goes on to the code for that with the same PC. Python code is only
+// ever interpreted, so there is no other copy of the instructions to keep up to date. Whatever else reads instructions
+// (liveness analysis for the collector, the slow paths, co_lines()) sees the opcode that was there: Instruction::opcodeID().
+//
+// The instructions belong to the UnlinkedCodeBlock, and so does what is known about the places in them: a CodeMonitor, which
+// hangs off the CodeInfo. It is made when the code is first to be changed. Which places there are is found by looking at
+// the instructions, and at the marks the compiler left (PythonMark), which say where lines begin.
+//
+// When the events that are wanted everywhere change, all the code that has a CodeBlock is changed at once, and code that gets one
+// later is changed then (didCreateCodeBlock()). So there is nothing to check when a function is entered either.
+//
+// The other events have to do with exceptions, and are told of by the unwinder: addTracebackEntry(), exceptionStaysOrLeaves().
+
+namespace Event {
+enum : uint8_t {
+    // At places in the code.
+    PyStart, PyResume, PyReturn, PyYield, Call, Line, Instruction, Jump, BranchLeft, BranchRight, StopIteration,
+    // Others.
+    Raise, ExceptionHandled, PyUnwind, PyThrow, Reraise,
+    // Asked for with Call.
+    CReturn, CRaise,
+    // The two of old in one.
+    Branch,
+};
+static constexpr unsigned instrumentedCount = StopIteration + 1;
+static constexpr unsigned ungroupedCount = Reraise + 1;
+static constexpr unsigned count = Branch + 1;
+}
+
+static constexpr unsigned numberOfMonitoringTools = 8;
+static constexpr unsigned numberOfFreeMonitoringTools = 6; // Those a program can use.
+static constexpr unsigned profileTool = 6; // sys.setprofile()
+static constexpr unsigned traceTool = 7; // sys.settrace()
+
+// The line the instruction at the offset comes from. -1: none.
+int lineOfMarks(std::span<const PythonMark>, unsigned offset);
+// Each of the lines that begin at an instruction has one of its bytes, in order, and the last of them the rest. That is how co_lines() has
+// it, and this is where it has the instruction itself: what the program is given for its offset.
+unsigned visibleOffset(std::span<const PythonMark>, unsigned offset);
+// The instruction is one of the program's own, not one of those that set up the frame.
+bool isPastStart(std::span<const PythonMark>, unsigned offset);
+
+class Monitoring;
+
+class CodeMonitor {
+    WTF_MAKE_NONCOPYABLE(CodeMonitor);
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(CodeMonitor);
+public:
+    CodeMonitor(Monitoring&, UnlinkedCodeBlock*);
+    ~CodeMonitor();
+
+    // A line that begins at a place. There may be several, one after the other: of the earlier ones no instruction came.
+    struct LineStart {
+        int line;
+        unsigned offset; // As co_lines() has it.
+        uint8_t disabledTools { 0 };
+        bool isShared { false }; // By several places: see Point::lineStartOfTarget.
+    };
+    static constexpr unsigned noLineStart = std::numeric_limits<unsigned>::max();
+
+    // A place where something may happen that tools can ask to be told of.
+    struct Point {
+        static constexpr uint16_t construct = 1 << 15; // op_py_prepare_construct: see Monitoring::handle().
+        static constexpr uint16_t forLoop = 1 << 14; // op_py_for_iter
+
+        unsigned offset { 0 };
+        uint16_t kinds { 0 }; // 1 << event, for the events that are told of here.
+        uint8_t opcode { 0 }; // The opcode of the instruction.
+        bool isPatched { false };
+        // Whether the first of the lines is news depends on where the frame comes from: see findPoints().
+        bool firstLineIsInDoubt { false };
+        unsigned firstLineStart { 0 };
+        unsigned lineStartCount { 0 };
+        // op_jmp: the line that begins where it goes, if that is told of here: see findPoints().
+        unsigned lineStartOfTarget { noLineStart };
+        std::array<uint8_t, Event::instrumentedCount> disabledTools { }; // By event; not for Line.
+    };
+
+    UnlinkedCodeBlock* code() const { return m_code.get(); }
+    Point* pointAt(unsigned offset);
+    std::span<LineStart> lineStartsOf(Point& point) { return m_lineStarts.mutableSpan().subspan(point.firstLineStart, point.lineStartCount); }
+    // The line the instruction comes from. -1: none.
+    int lineAt(unsigned offset) const;
+
+    uint32_t localEvents(unsigned tool) const;
+    void setLocalEvents(unsigned tool, uint32_t events);
+    uint8_t localTools(unsigned event) const { return m_localTools[event]; }
+    void removeLocalTool(unsigned event, unsigned tool) { m_localTools[event] &= ~(1 << tool); }
+    // The tools that want to be told of the event in this code.
+    uint8_t tools(unsigned event) const;
+
+    // Makes the instructions what the tools now want them to be.
+    void update();
+    void update(Point&);
+    // After a tool has been added to LineStart::disabledTools.
+    void didDisableLine(unsigned offset, const LineStart&);
+    // What DISABLE switched off is on again.
+    void restart();
+    // Makes the instructions what the compiler left, until the next update().
+    void putBackInstructions();
+
+private:
+    friend class Monitoring;
+
+    void findPoints(bool everyInstruction);
+    void noteLineTools();
+    uint8_t toolsWantedAt(Point&);
+    uint8_t* opcodeAddress(const Point&) const;
+
+    Monitoring& m_monitoring;
+    Strong<UnlinkedCodeBlock> m_code;
+    Vector<Point> m_points; // By offset.
+    Vector<LineStart> m_lineStarts;
+    std::array<uint8_t, Event::ungroupedCount> m_localTools { };
+    bool m_hasPoints { false };
+    bool m_hasEveryInstruction { false };
+    // There is a place where a line is in doubt. Then the frame has to know which line it was last on (PyFrame::lastLine), so every
+    // place where a line begins says so for as long as any tool wants to be told of any of them.
+    bool m_needsLastLine { false };
+    uint8_t m_lineToolsStillOn { 0 };
+};
+
+// There is one for each Runtime.
+class Monitoring {
+    WTF_MAKE_NONCOPYABLE(Monitoring);
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(Monitoring);
+public:
+    explicit Monitoring(Runtime&);
+
+    Runtime& runtime() { return m_runtime; }
+
+    // ---- What is wanted ----
+
+    uint32_t events(unsigned tool) const { return m_events[tool]; }
+    void setEvents(unsigned tool, uint32_t events);
+    void setLocalEvents(CodeMonitor&, unsigned tool, uint32_t events);
+    uint8_t globalTools(unsigned event) const { return m_globalTools[event]; }
+    void clearTool(unsigned tool);
+    void restartEvents();
+    // Null: the code cannot be traced.
+    CodeMonitor* monitorFor(JSGlobalObject*, PyCode*);
+    CodeMonitor* monitorFor(CodeBlock*);
+    void didCreateCodeBlock(CodeBlock*);
+
+    JSValue callback(unsigned tool, unsigned event); // Empty: none.
+    JSValue setCallback(unsigned tool, unsigned event, JSValue); // What it was.
+    JSValue toolName(unsigned tool); // Empty: it is not in use.
+    void setToolName(unsigned tool, JSValue);
+    JSValue disable();
+    JSValue missing();
+
+    // While there is one, all instructions are as the compiler left them: for whatever copies them.
+    class OriginalInstructions {
+        WTF_MAKE_NONCOPYABLE(OriginalInstructions);
+    public:
+        explicit OriginalInstructions(Monitoring&);
+        ~OriginalInstructions();
+    private:
+        Monitoring& m_monitoring;
+    };
+
+    // ---- sys.settrace(), sys.setprofile(): for the current thread ----
+
+    void setTraceFunction(JSValue); // Empty: none.
+    void setProfileFunction(JSValue);
+    // A thread has been given, or has lost, a function while it was not running, or has ended.
+    void tracingThreadCountChanged(int traceDelta, int profileDelta);
+
+    // ---- What happens ----
+
+    // What f_lineno and f_lasti of a frame are while something is told of an event in it. -1: those of the instruction it is at.
+    struct Shown {
+        int line { -1 };
+        int offset { -1 };
+    };
+
+    struct Outcome {
+        const JSInstruction* pc; // Null: an exception.
+        unsigned opcode; // Run this at pc. 256: whatever is there.
+    };
+    Outcome handle(JSGlobalObject*, CallFrame*, const JSInstruction*);
+    // True: it is worth calling these two.
+    bool wantsExceptions() const { return m_wantsExceptions; }
+    // With no exception pending. False: one is now.
+    bool exceptionEvent(JSGlobalObject*, CallFrame*, unsigned offset, unsigned event, JSValue exception);
+
+    // frame.f_lineno = line. With an exception if it cannot be.
+    void jump(JSGlobalObject*, PyFrame*, int line);
+    // frame.f_trace_opcodes = true, or false
+    void setTracesOpcodes(JSGlobalObject*, PyFrame*, bool);
+    // sys.monitoring._places(code)
+    JSValue places(JSGlobalObject*, PyCode*);
+    // code.co_branches(), as a list
+    JSArray* branches(JSGlobalObject*, PyCode*);
+
+private:
+    friend class CodeMonitor;
+
+    JSArray* state();
+    void updateAll();
+    void noteWhatIsWanted();
+    void noteWhereFramesAre();
+
+    // 0: go on. 1: DISABLE. -1: an exception.
+    int callTool(JSGlobalObject*, CallFrame*, unsigned tool, unsigned event, Shown, std::span<const JSValue> arguments);
+    // Tells the tools (bits) of an event at a place. False: an exception.
+    bool fire(JSGlobalObject*, CallFrame*, CodeMonitor&, unsigned offset, unsigned event, uint8_t tools, JSValue third = { }, JSValue fourth = { });
+    bool fireLine(JSGlobalObject*, CallFrame*, CodeMonitor&, unsigned offset);
+    bool fireLineStart(JSGlobalObject*, CallFrame*, CodeMonitor&, unsigned offset, unsigned lineStart);
+    bool legacyEvent(JSGlobalObject*, CallFrame*, CodeMonitor&, unsigned tool, unsigned event, unsigned offset, JSValue third, JSValue fourth, bool& disable);
+    bool callTraceFunction(JSGlobalObject*, PyFrame*, unsigned event, Shown, ASCIILiteral what, JSValue argument);
+    bool callProfileFunction(JSGlobalObject*, PyFrame*, unsigned event, Shown, ASCIILiteral what, JSValue argument);
+    JSValue callWhileTracing(JSGlobalObject*, CallFrame*, unsigned event, Shown, JSValue function, const CallArgs&);
+    bool traceLine(JSGlobalObject*, PyFrame*, Shown);
+
+    Runtime& m_runtime;
+    std::array<uint32_t, numberOfMonitoringTools> m_events { };
+    std::array<uint8_t, Event::ungroupedCount> m_globalTools { };
+    bool m_wantsExceptions { false };
+    unsigned m_tracingThreads { 0 };
+    unsigned m_profilingThreads { 0 };
+
+    Lock m_monitorsLock; // A monitor may go away in a sweep.
+    HashSet<CodeMonitor*> m_monitors;
+};
+
+} // namespace Python
+} // namespace JSC

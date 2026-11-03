@@ -154,7 +154,8 @@ public:
         // the block. If it's not set and the block has nothing marked, then we'll make the
         // mistake of making a pop freelist rather than a bump freelist.
         // Takes bitvectorLock().mutate() itself, so callers must not hold it.
-        void sweep(FreeList*);
+        // False: it was left as it is, because of Heap::mayRunEmbedderFinalizers().
+        bool sweep(FreeList*);
 
 #if ASAN_ENABLED
         void poisonDeadCells();

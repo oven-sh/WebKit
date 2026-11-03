@@ -896,7 +896,9 @@ private:
                 node->clearFlags(NodeMustGenerate);
                 break;
             }
-            if (node->child1()->shouldSpeculateObject() && node->child2()->shouldSpeculateObject()) {
+            // ObjectUse lets any object through, so == is a comparison of pointers only if no object at all overloads it.
+            auto objectsAreEqualIfSame = [&] { return m_graph.isWatchingOperatorOverloadingWatchpoint(); };
+            if (node->child1()->shouldSpeculateObject() && node->child2()->shouldSpeculateObject() && objectsAreEqualIfSame()) {
                 fixEdge<ObjectUse>(node->child1());
                 fixEdge<ObjectUse>(node->child2());
                 node->clearFlags(NodeMustGenerate);
@@ -945,13 +947,13 @@ private:
                 break;
             }
 
-            if (node->child1()->shouldSpeculateObject() && node->child2()->shouldSpeculateObjectOrOther()) {
+            if (node->child1()->shouldSpeculateObject() && node->child2()->shouldSpeculateObjectOrOther() && objectsAreEqualIfSame()) {
                 fixEdge<ObjectUse>(node->child1());
                 fixEdge<ObjectOrOtherUse>(node->child2());
                 node->clearFlags(NodeMustGenerate);
                 break;
             }
-            if (node->child1()->shouldSpeculateObjectOrOther() && node->child2()->shouldSpeculateObject()) {
+            if (node->child1()->shouldSpeculateObjectOrOther() && node->child2()->shouldSpeculateObject() && objectsAreEqualIfSame()) {
                 fixEdge<ObjectOrOtherUse>(node->child1());
                 fixEdge<ObjectUse>(node->child2());
                 node->clearFlags(NodeMustGenerate);

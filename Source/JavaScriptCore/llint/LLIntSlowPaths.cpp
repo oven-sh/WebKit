@@ -73,6 +73,8 @@
 #include "ObjectConstructor.h"
 #include "ObjectPropertyConditionSet.h"
 #include "ProtoCallFrameInlines.h"
+#include "PyHooks.h"
+#include "PyRuntime.h"
 #include "RegExpObjectInlines.h"
 #include "RepatchInlines.h"
 #include "ShadowChicken.h"
@@ -375,6 +377,9 @@ static FunctionAllowlist& ensureGlobalJITAllowlist()
 
 static inline bool shouldJIT(CodeBlock* codeBlock)
 {
+    if (codeBlock->unlinkedCodeBlock()->isPython())
+        return false;
+
     if (!Options::bytecodeRangeToJITCompile().isInRange(codeBlock->instructionsSize())
         || !ensureGlobalJITAllowlist().contains(codeBlock))
         return false;
@@ -715,7 +720,8 @@ void* handleUnlinkedCall(VM& vm, CallFrame* calleeFrame)
     void* callTarget;
     if (lazyCallLinkInfo.hasNeverExecuted(vm)) {
         lazyCallLinkInfo.setExecutedOnce(vm);
-        callTarget = firstCallToJSFunction(vm, calleeFrame, CallLinkInfo::specializationKindFor(callType));
+        bool isForeignCall = owner->unlinkedCodeBlock()->isPython() && Python::isForeignCallee(calleeFrame->guaranteedJSValueCallee());
+        callTarget = isForeignCall ? nullptr : firstCallToJSFunction(vm, calleeFrame, CallLinkInfo::specializationKindFor(callType));
         if (!callTarget && !scope.exception()) {
             DataOnlyCallLinkInfo callLinkInfo;
             callLinkInfo.initialize(vm, owner, callType, CodeOrigin { bytecodeIndex });
@@ -2675,10 +2681,24 @@ LLINT_SLOW_PATH_DECL(slow_path_throw)
 LLINT_SLOW_PATH_DECL(slow_path_handle_traps)
 {
     LLINT_BEGIN_NO_SET_PC();
-    ASSERT(vm.traps().needHandling(VMTraps::AsyncEvents));
-    vm.traps().handleTraps(VMTraps::AsyncEvents);
+    ASSERT(vm.traps().needHandling(VMTraps::PythonAsyncEvents));
+    if (vm.traps().needHandling(VMTraps::AsyncEvents))
+        vm.traps().handleTraps(VMTraps::AsyncEvents);
+    if (codeBlock->unlinkedCodeBlock()->isPython() && !throwScope.exception())
+        Python::makeCallsOwed(vm);
     UNUSED_PARAM(pc);
     LLINT_RETURN_TWO(throwScope.exception(), globalObject);
+}
+
+// The value to return: not the PyFloat that the instruction returns, if it is for JS. A frame object is told that the call ends.
+LLINT_SLOW_PATH_DECL(slow_path_py_ret)
+{
+    LLINT_BEGIN_NO_SET_PC();
+    UNUSED_VARIABLE(throwScope);
+    globalObject->pythonRuntime()->frameIsEnding(callFrame);
+    JSValue value = getOperand(callFrame, pc->as<OpPyRet>().m_value);
+    value = Python::resultForCaller(globalObject, callFrame, value);
+    LLINT_RETURN_TWO(std::bit_cast<void*>(JSValue::encode(value)), nullptr);
 }
 
 LLINT_SLOW_PATH_DECL(slow_path_debug)

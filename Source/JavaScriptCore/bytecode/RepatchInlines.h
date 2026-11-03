@@ -35,15 +35,27 @@
 #include "JSObjectInlines.h"
 #include "LLIntEntrypoint.h"
 #include "ProxyObject.h"
+#include "PyHooks.h"
 #include "Repatch.h"
 #include "VMTrapsInlines.h"
 
 namespace JSC {
 
+ALWAYS_INLINE bool isPythonCode(JSCell* owner)
+{
+    auto* codeBlock = dynamicDowncast<CodeBlock>(owner);
+    return codeBlock && codeBlock->unlinkedCodeBlock()->isPython();
+}
+
 inline void* throwNotAFunctionErrorFromCallIC(JSGlobalObject* globalObject, JSCell* owner, JSValue callee, [[maybe_unused]] JSValue receiver, CallLinkInfo* callLinkInfo)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (isPythonCode(owner)) {
+        scope.release();
+        Python::throwNotCallable(globalObject, callee);
+        return nullptr;
+    }
     auto errorMessage = constructErrorMessage(globalObject, callee, "is not a function"_s);
     RETURN_IF_EXCEPTION(scope, nullptr);
     if (!errorMessage) [[unlikely]] {
@@ -190,6 +202,14 @@ ALWAYS_INLINE void* linkFor(VM& vm, JSCell* owner, CallFrame* calleeFrame, CallL
     CodeSpecializationKind kind = callLinkInfo->specializationKind();
 
     JSValue calleeAsValue = calleeFrame->guaranteedJSValueCallee();
+
+    bool isCalledByPython = isPythonCode(owner);
+    if (isCalledByPython && Python::isForeignCallee(calleeAsValue)) [[unlikely]] {
+        // The frame of each such call is changed on the way (see virtualForWithFunction()), so the call site must not be linked.
+        JSCell* unusedCalleeAsFunctionCell;
+        RELEASE_AND_RETURN(throwScope, virtualForWithFunction(vm, owner, calleeFrame, callLinkInfo, unusedCalleeAsFunctionCell));
+    }
+
     JSCell* calleeAsFunctionCell = getJSFunction(calleeAsValue);
     if (!calleeAsFunctionCell) {
         // The call site sees the proxy as its callee, so it must not be linked to the target.
@@ -211,6 +231,8 @@ ALWAYS_INLINE void* linkFor(VM& vm, JSCell* owner, CallFrame* calleeFrame, CallL
             }
             case CallLinkInfo::Mode::Monomorphic:
             case CallLinkInfo::Mode::Polymorphic: {
+                if (isCalledByPython)
+                    break; // See below.
                 if (kind == CodeSpecializationKind::CodeForCall) {
                     linkPolymorphicCall(vm, owner, calleeFrame, *callLinkInfo, CallVariant(internalFunction));
                     break;
@@ -274,6 +296,10 @@ ALWAYS_INLINE void* linkFor(VM& vm, JSCell* owner, CallFrame* calleeFrame, CallL
     }
     case CallLinkInfo::Mode::Monomorphic:
     case CallLinkInfo::Mode::Polymorphic: {
+        // A call site that has gone virtual enters whatever function it is given without coming here, foreign ones too.
+        // FIXME: So call sites in Python code that see a second callee come here for it each time.
+        if (isCalledByPython)
+            break;
         if (kind == CodeSpecializationKind::CodeForCall) {
             linkPolymorphicCall(vm, owner, calleeFrame, *callLinkInfo, CallVariant(callee));
             break;
@@ -295,6 +321,10 @@ ALWAYS_INLINE void* virtualForWithFunction(VM& vm, JSCell* owner, CallFrame* cal
     CodeSpecializationKind kind = callLinkInfo->specializationKind();
 
     JSValue calleeAsValue = calleeFrame->guaranteedJSValueCallee();
+    if (isPythonCode(owner) && Python::isForeignCallee(calleeAsValue)) [[unlikely]] {
+        Python::prepareForeignCall(callLinkInfo->globalObjectForSlowPath(owner), calleeFrame);
+        RETURN_IF_EXCEPTION(throwScope, nullptr);
+    }
     calleeAsFunctionCell = getJSFunction(calleeAsValue);
     // The call site sees the proxy as its callee, so a forwarded call must not report the target for linking.
     bool forwardedFromProxy = false;

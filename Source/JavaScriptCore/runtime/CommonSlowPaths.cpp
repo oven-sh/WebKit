@@ -62,6 +62,7 @@
 #include "LLIntExceptions.h"
 #include "MathCommon.h"
 #include "ObjectConstructor.h"
+#include "PyHooks.h"
 #include "ScopedArguments.h"
 #include "TypeProfilerLog.h"
 #include "runtime/Error.h"
@@ -316,6 +317,10 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_check_tdz)
 {
     BEGIN();
     auto bytecode = pc->as<OpCheckTdz>();
+    if (codeBlock->unlinkedCodeBlock()->isPython()) {
+        Python::throwUnboundLocal(globalObject, codeBlock, bytecode.m_targetVirtualRegister);
+        CHECK_EXCEPTION();
+    }
     if (bytecode.m_targetVirtualRegister == codeBlock->thisRegister())  {
         THROW(createReferenceError(globalObject, "'super()' must be called in derived constructor before accessing |this| or returning non-object."_s));
     } else {
@@ -433,10 +438,16 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_negate)
     BEGIN();
     auto bytecode = pc->as<OpNegate>();
     JSValue operand = GET_C(bytecode.m_operand).jsValue();
+    auto& profile = codeBlock->unlinkedCodeBlock()->unaryArithProfile(bytecode.m_profileIndex);
+    if (JSValue result; tryOverloadedOperator(globalObject, Python::JSOperator::Negate, operand, result)) [[unlikely]] {
+        CHECK_EXCEPTION();
+        RETURN_WITH_PROFILING(result, {
+            profile.observeArg(operand);
+            profile.observeResult(result);
+        });
+    }
     JSValue primValue = operand.toPrimitive(globalObject, PreferNumber);
     CHECK_EXCEPTION();
-
-    auto& profile = codeBlock->unlinkedCodeBlock()->unaryArithProfile(bytecode.m_profileIndex);
 
     if (primValue.isHeapBigInt()) {
         JSValue result = JSBigInt::unaryMinus(globalObject, primValue.asHeapBigInt());

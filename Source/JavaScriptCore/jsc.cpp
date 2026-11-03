@@ -78,6 +78,7 @@
 #include "ParserError.h"
 #include "ProfilerDatabase.h"
 #include "PyASTDump.h"
+#include "PyExec.h"
 #include "PyParser.h"
 #include "ReleaseHeapAccessScope.h"
 #include "SamplingProfiler.h"
@@ -518,6 +519,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionRunString);
 static JSC_DECLARE_HOST_FUNCTION(functionLoad);
 static JSC_DECLARE_HOST_FUNCTION(functionLoadString);
 static JSC_DECLARE_HOST_FUNCTION(functionReadFile);
+static JSC_DECLARE_HOST_FUNCTION(functionPythonImport);
 static JSC_DECLARE_HOST_FUNCTION(functionWriteFile);
 static JSC_DECLARE_HOST_FUNCTION(functionCheckSyntax);
 static JSC_DECLARE_HOST_FUNCTION(functionOpenFile);
@@ -887,6 +889,7 @@ private:
         addFunction(vm, "load"_s, functionLoad, 1);
         addFunction(vm, "loadString"_s, functionLoadString, 1);
         addFunction(vm, "readFile"_s, functionReadFile, 2);
+        addFunction(vm, "pythonImport"_s, functionPythonImport, 1);
         addFunction(vm, "read"_s, functionReadFile, 2);
         addFunction(vm, "writeFile"_s, functionWriteFile, 2);
         addFunction(vm, "write"_s, functionWriteFile, 2);
@@ -2722,6 +2725,16 @@ JSC_DEFINE_HOST_FUNCTION(functionLoadString, (JSGlobalObject* globalObject, Call
     return JSValue::encode(result);
 }
 
+// pythonImport("package.module"): the Python module.
+JSC_DEFINE_HOST_FUNCTION(functionPythonImport, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    String name = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    RELEASE_AND_RETURN(scope, JSValue::encode(Python::importModuleFromJS(globalObject, name)));
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionReadFile, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -4522,10 +4535,16 @@ static void runWithOptions(GlobalObject* globalObject, CommandLine& options, boo
                     success = false;
                     return;
                 }
-                if (getenv("PYTHON_DUMP_AST"))
+                if (getenv("PYTHON_DUMP_AST")) {
                     dumpPythonAST(vm, fileName, scriptBuffer);
-                scriptBuffer.clear();
-                continue;
+                    scriptBuffer.clear();
+                    continue;
+                }
+                // As `python file.py arguments...`: the program is the last thing to run.
+                int status = Python::runMainFile(globalObject, fileName, byteCast<uint8_t>(scriptBuffer.span()), options.m_arguments);
+                fflush(stdout);
+                fflush(stderr);
+                jscExit(status);
             }
             if (scripts[i].strictMode == Script::StrictMode::Strict)
                 scriptBuffer.append("\"use strict\";\n"_span);

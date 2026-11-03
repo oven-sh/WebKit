@@ -32,8 +32,13 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
+// An instruction of Python code whose opcode op_py_instrumented has taken the place of is, to all but the interpreter, the
+// instruction it was.
+JS_EXPORT_PRIVATE OpcodeID originalOpcodeOfInstrumentedInstruction(const void* instruction);
+
 struct JSOpcodeTraits {
     using OpcodeID = ::JSC::OpcodeID;
+    static constexpr OpcodeID instrumented = op_py_instrumented;
     static constexpr OpcodeID numberOfBytecodesWithCheckpoints = static_cast<OpcodeID>(NUMBER_OF_BYTECODE_WITH_CHECKPOINTS);
     static constexpr OpcodeID numberOfBytecodesWithMetadata = static_cast<OpcodeID>(NUMBER_OF_BYTECODE_WITH_METADATA);
     static_assert(numberOfBytecodesWithCheckpoints <= numberOfBytecodesWithMetadata);
@@ -66,11 +71,12 @@ private:
 public:
     typename Traits::OpcodeID opcodeID() const
     {
-        if (isWide32())
-            return wide32()->opcodeID();
-        if (isWide16())
-            return wide16()->opcodeID();
-        return narrow()->opcodeID();
+        typename Traits::OpcodeID opcodeID = isWide32() ? wide32()->opcodeID() : isWide16() ? wide16()->opcodeID() : narrow()->opcodeID();
+        if constexpr (requires { Traits::instrumented; }) {
+            if (opcodeID == Traits::instrumented) [[unlikely]]
+                return originalOpcodeOfInstrumentedInstruction(this);
+        }
+        return opcodeID;
     }
 
     const ASCIILiteral name() const

@@ -246,6 +246,7 @@ const NoPtrTag = constexpr NoPtrTag
  
 # VMTraps data
 const VMTrapsAsyncEvents = constexpr VMTraps::AsyncEvents
+const VMTrapsPythonAsyncEvents = constexpr VMTraps::PythonAsyncEvents
 
 # VM offsets
 const VMTrapAwareSoftStackLimitOffset = VM::m_threadContext + VMThreadContext::m_traps + VMTraps::m_stack + StackManager::m_trapAwareSoftStackLimit
@@ -626,6 +627,11 @@ const FinalObjectType = constexpr FinalObjectType
 const JSFunctionType = constexpr JSFunctionType
 const InternalFunctionType = constexpr InternalFunctionType
 const ArrayType = constexpr ArrayType
+const PyObjectType = constexpr PyObjectType
+const PyTupleType = constexpr PyTupleType
+const PyKwNamesType = constexpr PyKwNamesType
+const PyFloatType = constexpr PyFloatType
+const PyGeneratorType = constexpr PyGeneratorType
 const DerivedArrayType = constexpr DerivedArrayType
 const ProxyObjectType = constexpr ProxyObjectType
 const HeapBigIntType = constexpr HeapBigIntType
@@ -2331,6 +2337,19 @@ macro slowPathOp(opcodeName)
     end)
 end
 
+# The other instructions of Python are in LowLevelInterpreter64.asm.
+slowPathOp(py_load_name)
+slowPathOp(py_prepare_construct)
+slowPathOp(py_store_name)
+slowPathOp(py_get_iter)
+
+macro slowPathJumpOp(opcodeName)
+    llintOp(op_%opcodeName%, unused, macro (unused, unused, unused)
+        callSlowPath(_slow_path_%opcodeName%)
+        nextInstruction()
+    end)
+end
+
 slowPathOp(create_rest)
 slowPathOp(create_this)
 slowPathOp(create_promise)
@@ -2531,11 +2550,11 @@ llintOp(op_loop_hint, OpLoopHint, macro (unused, unused, dispatch)
 end)
 
 
-macro checkTraps(dispatch)
+macro checkTraps(events, dispatch)
     loadp CodeBlock[cfr], t1
     loadp CodeBlock::m_vm[t1], t1
     loadi VM::m_threadContext+VMThreadContext::m_traps+VMTraps::m_trapBits[t1], t0
-    andi VMTrapsAsyncEvents, t0
+    andi events, t0
     btpnz t0, .handleTraps
 .afterHandlingTraps:
     dispatch()
@@ -2547,7 +2566,11 @@ macro checkTraps(dispatch)
 end
 
 llintOp(op_check_traps, OpCheckTraps, macro (unused, unused, dispatch)
-    checkTraps(dispatch)
+    checkTraps(VMTrapsAsyncEvents, dispatch)
+end)
+
+llintOp(op_py_check_traps, OpPyCheckTraps, macro (unused, unused, dispatch)
+    checkTraps(VMTrapsPythonAsyncEvents, dispatch)
 end)
 
 

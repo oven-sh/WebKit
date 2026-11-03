@@ -169,6 +169,7 @@ LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_strcat);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_to_primitive);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_throw);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_handle_traps);
+LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_py_ret);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_debug);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_handle_exception);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_get_from_scope);

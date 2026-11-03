@@ -36,6 +36,8 @@ NEVER_INLINE JSValue jsAddSlowCase(JSGlobalObject* globalObject, JSValue v1, JSV
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (JSValue result; tryOverloadedOperator(globalObject, Python::JSOperator::Add, v1, v2, result)) [[unlikely]]
+        RELEASE_AND_RETURN(scope, result);
     JSValue p1 = v1.toPrimitive(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
     JSValue p2 = v2.toPrimitive(globalObject);

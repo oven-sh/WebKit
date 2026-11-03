@@ -27,6 +27,7 @@
 #include <wtf/Noncopyable.h>
 #include <wtf/RefPtr.h>
 #include <wtf/Threading.h>
+#include <wtf/Vector.h>
 #include <wtf/text/AtomStringTable.h>
 
 namespace JSC {
@@ -51,7 +52,12 @@ namespace JSC {
 // thread acquired it to begin with.
 
 class CallFrame;
+class EntryFrame;
+class Exception;
+class ExceptionScope;
+class JSPIContext;
 class VM;
+class VMEntryScope;
 class JSGlobalObject;
 class JSLock;
 
@@ -132,6 +138,64 @@ public:
         unsigned m_dropDepth;
     };
 
+    // Threads that take turns in the VM.
+    //
+    // With DropAllLocks, another thread may use the VM in the middle of a call of this one, but it has to be gone from the VM
+    // when this one takes the lock back: what the VM knows about the code that is running (the chain of frames, the entry
+    // scope, the limits of the stack) is there once, so drops have to end in the reverse of the order they began in.
+    //
+    // A thread that parks takes all that out of the VM and leaves the VM as it is when nothing runs in it. Any number of
+    // threads may be parked, each in the middle of calls of its own, and they come back in any order. Who runs next is for
+    // the client to say (Python has its global interpreter lock): unpark() just takes the lock.
+    //
+    // The stack of a parked thread is scanned like that of any thread that has held the lock. The object must be on that
+    // stack: it refers to cells.
+    class ParkedThread {
+        WTF_MAKE_NONCOPYABLE(ParkedThread);
+    public:
+        ParkedThread() = default;
+
+        // The frames of the thread, for walking them as one does from VM::topCallFrame and VM::topEntryFrame.
+        CallFrame* topCallFrame() const { return m_topCallFrame; }
+        EntryFrame* topEntryFrame() const { return m_topEntryFrame; }
+        Thread& thread() const { return *m_thread; }
+
+    private:
+        friend class JSLock;
+
+        SUPPRESS_UNCOUNTED_MEMBER Thread* m_thread { nullptr };
+        intptr_t m_lockCount { 0 };
+        CallFrame* m_topCallFrame { nullptr };
+        EntryFrame* m_topEntryFrame { nullptr };
+        void* m_maybeReturnPC { nullptr };
+        JSPIContext* m_topJSPIContext { nullptr };
+        VMEntryScope* m_entryScope { nullptr };
+        Exception* m_exception { nullptr };
+        Exception* m_lastException { nullptr };
+        void* m_stackPointerAtVMEntry { nullptr };
+        void* m_lastStackTop { nullptr };
+        size_t m_softReservedZoneSize { 0 };
+        unsigned m_disallowVMEntryCount { 0 };
+        unsigned m_allowLazyMaterializationOfImmutablePropertiesCount { 0 };
+        // With ENABLE(EXCEPTION_SCOPE_VERIFICATION) only.
+        ExceptionScope* m_topExceptionScope { nullptr };
+        unsigned m_simulatedThrowPointRecursionDepth { 0 };
+        bool m_needExceptionCheck { false };
+    };
+
+    // The current thread holds the lock, and the collector is not at work on it.
+    JS_EXPORT_PRIVATE void park(ParkedThread&);
+    JS_EXPORT_PRIVATE void unpark(ParkedThread&);
+    bool hasParkedThreads() const { return m_parkedThreadCount.load(std::memory_order_relaxed); }
+    // For the thread that holds the lock, and for the collector while the world is stopped.
+    template<typename Functor>
+    void forEachParkedThread(const Functor& functor)
+    {
+        Locker locker { m_parkedThreadsLock };
+        for (ParkedThread* parked : m_parkedThreads)
+            functor(*parked);
+    }
+
     void makeWebThreadAware()
     {
         m_isWebThreadAware = true;
@@ -168,6 +232,9 @@ private:
     uint32_t m_lastOwnerThread { 0 };
     VM* m_vm;
     AtomStringTable* m_entryAtomStringTable; 
+    Lock m_parkedThreadsLock;
+    Vector<ParkedThread*, 4> m_parkedThreads WTF_GUARDED_BY_LOCK(m_parkedThreadsLock);
+    std::atomic<unsigned> m_parkedThreadCount { 0 };
 };
 
 } // namespace

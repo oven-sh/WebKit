@@ -72,6 +72,11 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
+namespace Python {
+class PyWeakRef;
+class Runtime;
+}
+
 class CagedAlignedMemoryAllocator;
 class CodeBlock;
 class CodeBlockSet;
@@ -331,6 +336,7 @@ class Heap;
     v(unlinkedModuleProgramCodeBlockSpace, destructibleCellHeapCellType, UnlinkedModuleProgramCodeBlock) \
     v(unlinkedProgramCodeBlockSpace, destructibleCellHeapCellType, UnlinkedProgramCodeBlock) \
     v(weakObjectRefSpace, cellHeapCellType, JSWeakObjectRef) \
+    v(pyWeakRefSpace, cellHeapCellType, Python::PyWeakRef) \
     v(weakMapSpace, weakMapHeapCellType, JSWeakMap) \
     v(weakSetSpace, weakSetHeapCellType, JSWeakSet) \
     v(withScopeSpace, cellHeapCellType, JSWithScope) \
@@ -368,6 +374,11 @@ public:
 
     bool isMarked(const void*);
     static bool testAndSetMarked(HeapVersion, const void*);
+
+    // The global objects in which Python runs have objects to finalize. Only the mutator changes the list.
+    void addPythonRuntime(Python::Runtime* runtime) { m_pythonRuntimes.append(runtime); }
+    void removePythonRuntime(Python::Runtime* runtime) { m_pythonRuntimes.removeFirst(runtime); }
+    const Vector<Python::Runtime*, 1>& pythonRuntimes() const { return m_pythonRuntimes; }
 
     static inline size_t cellSize(const void*);
 
@@ -455,6 +466,22 @@ public:
     JS_EXPORT_PRIVATE void addFinalizer(JSCell*, CFinalizer);
     using LambdaFinalizer = WTF::Function<void(JSCell*)>;
     JS_EXPORT_PRIVATE void addFinalizer(JSCell*, LambdaFinalizer);
+    // The same, for a finalizer that does not care which thread it runs on: see mayRunEmbedderFinalizers().
+    JS_EXPORT_PRIVATE void addFinalizerForAnyThread(JSCell*, CFinalizer);
+    JS_EXPORT_PRIVATE void addFinalizerForAnyThread(JSCell*, LambdaFinalizer);
+
+    // Several threads may take turns in a VM, as those of Python do. But what an embedder hangs on cells, destructors and
+    // finalizers of weak handles, is written for the one thread that its VM used to have: it uses that thread's event loop
+    // and thread-local state. Whoever hands the VM from thread to thread says here whether the thread that has it is that
+    // one. While it is not, cells with such things on them are left unswept: the allocator passes over their blocks, and
+    // nothing is swept for the sake of sweeping. The right thread makes up for it with runPostponedEmbedderFinalizers().
+    // (What happens in the collector itself, with the world stopped, has always happened on any thread.)
+    bool mayRunEmbedderFinalizers() const { return m_mayRunEmbedderFinalizers; }
+    void setMayRunEmbedderFinalizers(bool value) { m_mayRunEmbedderFinalizers = value; }
+    bool hasPostponedEmbedderFinalizers() const { return m_hasPostponedEmbedderFinalizers; }
+    void didPostponeEmbedderFinalizers() { m_hasPostponedEmbedderFinalizers = true; }
+    JS_EXPORT_PRIVATE void runPostponedEmbedderFinalizers();
+    bool finalizesOnAnyThread(const WeakHandleOwner* owner) const { return !owner || owner == &m_cFinalizerOwnerForAnyThread || owner == &m_lambdaFinalizerOwnerForAnyThread; }
 
     void notifyIsSafeToCollect();
     
@@ -855,7 +882,12 @@ private:
     template<typename CellType, typename CellSet>
     void reconcileWeakReferencesInMarkedCells(CellSet&, CollectionScope);
 
+    Vector<Python::Runtime*, 1> m_pythonRuntimes;
+
     void reconcileWeakReferencesAtGCEnd();
+
+    // Once marking has converged. True: more was marked.
+    bool keepUnreachablePythonObjectsToFinalize(SlotVisitor&);
 
     void deleteUnmarkedCompiledCode();
     void releaseUnusedSharedBaselineCode();
@@ -997,6 +1029,10 @@ private:
     std::unique_ptr<JITStubRoutineSet> m_jitStubRoutines;
     CFinalizerOwner m_cFinalizerOwner;
     LambdaFinalizerOwner m_lambdaFinalizerOwner;
+    CFinalizerOwner m_cFinalizerOwnerForAnyThread;
+    LambdaFinalizerOwner m_lambdaFinalizerOwnerForAnyThread;
+    bool m_mayRunEmbedderFinalizers { true };
+    bool m_hasPostponedEmbedderFinalizers { false };
     
     bool m_isSafeToCollect { false };
     bool m_isShuttingDown { false };

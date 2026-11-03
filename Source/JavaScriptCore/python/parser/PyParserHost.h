@@ -67,6 +67,8 @@ struct SyntaxErrorInfo {
 
     // SyntaxError(message, (filename, lineno, offset, text, end_lineno, end_offset)). Offsets count characters, from 1.
     bool hasLocation { false };
+    // As the symbol table reports what it finds: SyntaxError(message), which is then told where through its attributes.
+    bool locationIsNotAnArgument { false };
     int lineno { 0 };
     int offset { 0 };
     String text; // Null: None

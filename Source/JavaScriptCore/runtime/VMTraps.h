@@ -134,6 +134,15 @@ public:
     //  NeedDebuggerBreak
     //  - Services asynchronous debugger break requests.
     //
+    //  NeedPythonCalls
+    //  - There are calls that the Python runtime owes: finalizers of objects the collector found
+    //    unreachable, callbacks of weak references it cleared, handlers of signals that arrived.
+    //
+    //  - They are arbitrary code, which nothing expects in the middle of a C++ function or at a
+    //    poll in JS code (the optimizing JITs take a poll to change nothing). So this is not one of
+    //    the AsyncEvents: only the polls in Python code (op_py_check_traps) service it, and whoever
+    //    runs an event loop may, between two turns.
+    //
     //  NeedExceptionHandling
     //  - Unlike the other events (which are asynchronous to the mutator thread),
     //    NeedExceptionHandling is set when the mutator thread throws a JS exception
@@ -153,6 +162,7 @@ public:
     v(NeedWatchdogCheck) \
     v(NeedDebuggerBreak) \
     v(NeedStopTheWorld) \
+    v(NeedPythonCalls) \
     v(NeedExceptionHandling)
 
 #define DECLARE_VMTRAPS_EVENT_BIT_SHIFT(event__)  event__##BitShift,
@@ -180,7 +190,8 @@ public:
 
     static_assert(NumberOfEvents <= bitsInBitField);
     static constexpr BitField AllEvents = (1ull << NumberOfEvents) - 1;
-    static constexpr BitField AsyncEvents = AllEvents & ~NeedExceptionHandling;
+    static constexpr BitField AsyncEvents = AllEvents & ~NeedExceptionHandling & ~NeedPythonCalls;
+    static constexpr BitField PythonAsyncEvents = AsyncEvents | NeedPythonCalls;
     static constexpr BitField NonDebuggerEvents = AllEvents & ~NeedDebuggerBreak;
     static constexpr BitField NonDebuggerAsyncEvents = AsyncEvents & ~NeedDebuggerBreak;
 
@@ -206,7 +217,7 @@ public:
         return m_trapBits.loadRelaxed() & mask;
     }
     // Designed to be a fast check to rule out if we might need handling, and we need to ensure needHandling on the slow path.
-    ALWAYS_INLINE bool maybeNeedHandling() const { return m_trapBits.loadRelaxed(); }
+    ALWAYS_INLINE bool maybeNeedHandling() const { return m_trapBits.loadRelaxed() & ~NeedPythonCalls; }
     void* trapBitsAddress() LIFETIME_BOUND { return &m_trapBits; }
     static constexpr ptrdiff_t offsetOfTrapsBits() { return OBJECT_OFFSETOF(VMTraps, m_trapBits); }
 

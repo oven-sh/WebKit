@@ -147,6 +147,29 @@ UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(VM& vm, Structure* struct
         ensureRareData().m_parentPrivateNameEnvironment = WTF::move(*parentPrivateNameEnvironment);
 }
 
+UnlinkedFunctionExecutable* UnlinkedFunctionExecutable::createForPython(VM& vm, const SourceCode& parentSource, const SourceCode& source, SourceParseMode parseMode, Ref<Python::CodeInfo>&& info, unsigned parameterCount, UnlinkedFunctionCodeBlock* codeBlock)
+{
+    JSTokenLocation location;
+    location.startOffset = source.startOffset();
+    location.endOffset = source.endOffset();
+    FunctionMetadataNode metadata(location, location, source.startOffset(), source.startOffset(), source.startOffset(), ImplementationVisibility::Public, StrictModeLexicallyScopedFeature, ConstructorKind::None, SuperBinding::NotNeeded, parameterCount, parseMode, false);
+    // A tree that a program has made may name a function "", which to JS is a function without a name.
+    metadata.finishParsing(source, info->name.isEmpty() ? Identifier() : info->name, FunctionMode::MethodDefinition);
+    auto* executable = create(vm, parentSource, &metadata, UnlinkedNormalFunction, ConstructAbility::CannotConstruct, InlineAttribute::None, JSParserScriptMode::Classic, nullptr, { }, std::nullopt, DerivedContextType::None, EvalContextType::None, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None);
+    executable->ensureRareData().m_pythonCodeInfo = WTF::move(info);
+    executable->m_isPython = true;
+    executable->m_unlinkedCodeBlockForCall.set(vm, executable, codeBlock);
+    return executable;
+}
+
+bool UnlinkedFunctionExecutable::pythonCodeHasExceptionHandlers()
+{
+    ASSERT(m_isPython);
+    if (m_isCached)
+        decodeCachedCodeBlocks(vm());
+    return m_unlinkedCodeBlockForCall->numberOfExceptionHandlers();
+}
+
 const Identifier& UnlinkedFunctionExecutable::name() const
 {
     if (m_hasName)

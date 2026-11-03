@@ -125,6 +125,10 @@ class FFIContext;
 } // namespace FFI
 #endif
 
+namespace Python {
+class Runtime;
+} // namespace Python
+
 enum class ArrayBufferSharingMode : bool;
 enum class CodeGenerationMode : uint8_t;
 enum class ErrorType : uint8_t;
@@ -538,6 +542,7 @@ public:
 #if ENABLE(FFI)
     std::unique_ptr<FFI::FFIContext> m_ffiContext;
 #endif
+    std::unique_ptr<Python::Runtime> m_pythonRuntime;
 
 #if ENABLE(REMOTE_INSPECTOR)
     // FIXME: <http://webkit.org/b/246237> Local inspection should be controlled by `inspectable` API.
@@ -1152,6 +1157,10 @@ public:
     Structure* ffiCallbackStructure() const { return m_ffiCallbackStructure.get(this); }
     JS_EXPORT_PRIVATE FFI::FFIContext& ffiContext();
 #endif
+
+    // Null until the global object first has to do with Python. Python::Runtime::ensure() makes it.
+    Python::Runtime* pythonRuntime() const { return m_pythonRuntime.get(); }
+    void setPythonRuntime(std::unique_ptr<Python::Runtime>&&);
 
     JS_EXPORT_PRIVATE void setInspectable(bool);
     JS_EXPORT_PRIVATE bool inspectable() const;

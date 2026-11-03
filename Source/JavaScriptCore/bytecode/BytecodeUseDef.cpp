@@ -99,12 +99,65 @@ void computeUsesForBytecodeIndexImpl(const JSInstruction* instruction, Checkpoin
     case op_create_cloned_arguments:
     case op_create_rest:
     case op_check_traps:
+    case op_py_check_traps:
+    case op_py_instrumented:
     case op_get_argument:
     case op_nop:
     case op_unreachable:
     case op_super_sampler_begin:
     case op_super_sampler_end:
     case op_get_scope:
+    case op_py_bind_args:
+        return;
+
+    USES(OpPyLoadCell, cell)
+    USES(OpPyStoreCell, cell, value)
+    USES(OpPyLoadGlobal, name)
+    USES(OpPyStoreGlobal, name, value)
+    USES(OpPyLoadName, locals, name)
+    USES(OpPyStoreName, locals, name, value)
+    USES(OpPyGetAttr, base, name)
+    USES(OpPySetAttr, base, name, value)
+    USES(OpPyGetMethod, base, name)
+    USES(OpPyPrepareConstruct, callee)
+    USES(OpPyFinishConstruct, self, result)
+    USES(OpPyGetItem, base, key)
+    USES(OpPySetItem, base, key, value)
+    USES(OpPyBinary, lhs, rhs)
+    USES(OpPyAdd, lhs, rhs)
+    USES(OpPySub, lhs, rhs)
+    USES(OpPyMul, lhs, rhs)
+    USES(OpPyDiv, lhs, rhs)
+    USES(OpPyFloorDiv, lhs, rhs)
+    USES(OpPyMod, lhs, rhs)
+    USES(OpPyEq, lhs, rhs)
+    USES(OpPyNe, lhs, rhs)
+    USES(OpPyLt, lhs, rhs)
+    USES(OpPyLe, lhs, rhs)
+    USES(OpPyGt, lhs, rhs)
+    USES(OpPyGe, lhs, rhs)
+    USES(OpPyJeq, lhs, rhs)
+    USES(OpPyJne, lhs, rhs)
+    USES(OpPyJlt, lhs, rhs)
+    USES(OpPyJle, lhs, rhs)
+    USES(OpPyJgt, lhs, rhs)
+    USES(OpPyJge, lhs, rhs)
+    USES(OpPyJneq, lhs, rhs)
+    USES(OpPyJnne, lhs, rhs)
+    USES(OpPyJnlt, lhs, rhs)
+    USES(OpPyJnle, lhs, rhs)
+    USES(OpPyJngt, lhs, rhs)
+    USES(OpPyJnge, lhs, rhs)
+    USES(OpPyUnary, operand)
+    USES(OpPyCompare, lhs, rhs)
+    USES(OpPyJtrue, condition)
+    USES(OpPyJfalse, condition)
+    USES(OpPyGetIter, iterable)
+    USES(OpPyForIter, iterator)
+    USES(OpPyUnpack, iterable)
+
+    case op_py_runtime:
+        handleNewArrayLike(instruction->as<OpPyRuntime>());
         return;
 
     USES(OpToThis, srcDst)
@@ -115,6 +168,7 @@ void computeUsesForBytecodeIndexImpl(const JSInstruction* instruction, Checkpoin
     USES(OpThrowStaticError, message)
     USES(OpDebug, data)
     USES(OpRet, value)
+    USES(OpPyRet, value)
     USES(OpJtrue, condition)
     USES(OpJfalse, condition)
     USES(OpJeqNull, value)
@@ -407,9 +461,30 @@ void computeDefsForBytecodeIndexImpl(unsigned numVars, const JSInstruction* inst
     case op_check_tdz:
     case op_debug:
     case op_ret:
+    case op_py_ret:
     case op_jmp:
     case op_jtrue:
     case op_jfalse:
+    case op_py_bind_args:
+    case op_py_store_cell:
+    case op_py_store_global:
+    case op_py_store_name:
+    case op_py_set_attr:
+    case op_py_set_item:
+    case op_py_jtrue:
+    case op_py_jfalse:
+    case op_py_jeq:
+    case op_py_jne:
+    case op_py_jlt:
+    case op_py_jle:
+    case op_py_jgt:
+    case op_py_jge:
+    case op_py_jneq:
+    case op_py_jnne:
+    case op_py_jnlt:
+    case op_py_jnle:
+    case op_py_jngt:
+    case op_py_jnge:
     case op_jeq_null:
     case op_jneq_null:
     case op_jundefined_or_null:
@@ -457,6 +532,8 @@ void computeDefsForBytecodeIndexImpl(unsigned numVars, const JSInstruction* inst
     case op_call_ignore_result:
     case op_set_function_name:
     case op_check_traps:
+    case op_py_check_traps:
+    case op_py_instrumented:
     case op_log_shadow_chicken_prologue:
     case op_log_shadow_chicken_tail:
     case op_yield:
@@ -645,6 +722,41 @@ void computeDefsForBytecodeIndexImpl(unsigned numVars, const JSInstruction* inst
     case op_enter: {
         for (unsigned i = numVars; i--;)
             functor(virtualRegisterForLocal(i));
+        return;
+    }
+
+    DEFS(OpPyLoadCell, dst)
+    DEFS(OpPyLoadGlobal, dst)
+    DEFS(OpPyLoadName, dst)
+    DEFS(OpPyGetAttr, dst)
+    DEFS(OpPyGetMethod, dst, self)
+    DEFS(OpPyPrepareConstruct, dst, self)
+    DEFS(OpPyFinishConstruct, dst)
+    DEFS(OpPyGetItem, dst)
+    DEFS(OpPyBinary, dst)
+    DEFS(OpPyAdd, dst)
+    DEFS(OpPySub, dst)
+    DEFS(OpPyMul, dst)
+    DEFS(OpPyDiv, dst)
+    DEFS(OpPyFloorDiv, dst)
+    DEFS(OpPyMod, dst)
+    DEFS(OpPyEq, dst)
+    DEFS(OpPyNe, dst)
+    DEFS(OpPyLt, dst)
+    DEFS(OpPyLe, dst)
+    DEFS(OpPyGt, dst)
+    DEFS(OpPyGe, dst)
+    DEFS(OpPyUnary, dst)
+    DEFS(OpPyCompare, dst)
+    DEFS(OpPyGetIter, dst)
+    DEFS(OpPyForIter, dst)
+    DEFS(OpPyRuntime, dst)
+
+    case op_py_unpack: {
+        auto bytecode = instruction->as<OpPyUnpack>();
+        int count = static_cast<int>(bytecode.m_before + bytecode.m_afterPlusOne);
+        for (int i = 0; i < count; ++i)
+            functor(VirtualRegister { bytecode.m_argv.offset() - i });
         return;
     }
 

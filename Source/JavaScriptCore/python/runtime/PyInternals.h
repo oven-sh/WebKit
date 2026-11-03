@@ -1,0 +1,617 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#pragma once
+
+#include "JSLock.h"
+#include "PyAbstract.h"
+#include "PyDescriptors.h"
+#include "PyUnicode.h"
+#include <wtf/FastBitVector.h>
+#include <wtf/ScopedLambda.h>
+#include <wtf/text/StringBuilder.h>
+
+namespace JSC {
+namespace Python {
+
+// What one file of the runtime needs of another and nothing outside it does.
+
+class ParseTree;
+class ParserHost;
+class PyBytes;
+class PyFrame;
+class PyGenerator;
+class PyModule;
+class PySlice;
+struct SyntaxErrorInfo;
+
+// ---- object and type (PyTypeObject.cpp) ----
+
+// The C++ functions behind these methods, by which the interpreter knows a type has not replaced them.
+JSValue objectGetAttribute(JSGlobalObject*, JSValue self, JSValue name);
+JSValue objectSetAttr(JSGlobalObject*, JSValue self, JSValue name, JSValue value);
+JSValue objectDelAttr(JSGlobalObject*, JSValue self, JSValue name);
+JSValue objectNew(JSGlobalObject*, JSValue cls, const CallArgs&);
+JSValue objectInit(JSGlobalObject*, JSValue self, const CallArgs&);
+JSValue objectRepr(JSGlobalObject*, JSValue self);
+JSValue objectStr(JSGlobalObject*, JSValue self);
+JSValue objectHash(JSGlobalObject*, JSValue self);
+JSValue objectEq(JSGlobalObject*, JSValue self, JSValue other);
+JSValue typeGetAttribute(JSGlobalObject*, JSValue self, JSValue name);
+// For pickle and copy (PyReduce.cpp).
+JSValue objectReduce(JSGlobalObject*, JSValue self);
+JSValue objectReduceEx(JSGlobalObject*, JSValue self, JSValue protocol);
+JSValue objectGetState(JSGlobalObject*, JSValue self);
+// The __dict__ attribute of the instances of a built-in type that have one.
+std::span<const NativeGetSet> dictGetSet();
+// "<method 'append' of 'list' objects>"; what belongs to object is "<method '__reduce__'>".
+String descriptorRepr(JSGlobalObject*, ASCIILiteral kind, StringView name, PyType* owner);
+
+// type.__getattribute__. With `suppress`, a missing attribute is an empty value and no exception.
+JSValue typeGetAttr(JSGlobalObject*, PyType*, JSString* name, bool suppress = false);
+// type.__call__: makes an instance.
+JSValue typeCall(JSGlobalObject*, PyType*, const CallArgs&);
+// An instance of the type with nothing set: what object.__new__ makes, given how the type's instances are laid out.
+JSValue allocateInstance(JSGlobalObject*, PyType*);
+// What gc.collect() does: collects, runs the finalizers of what was found, and so on until there is nothing left to do. Not from
+// a finalizer.
+void collectAndFinalize(JSGlobalObject*);
+// If all that callee(...) does is self = object.__new__(callee), then callee.__init__(self, ...), and that is a function written
+// in Python: the function, and a new `self`. Otherwise the empty value.
+JSValue prepareConstruct(JSGlobalObject*, JSValue callee, JSValue& self);
+// __build_class__(function, name, *bases, **keywords)
+JSValue buildClass(JSGlobalObject*, const CallArgs&);
+// The most derived of the metaclass given and those of the bases. Null: an exception.
+PyType* calculateMetaclass(JSGlobalObject*, PyType* metatype, PyTuple* bases);
+// "module.qualname", or the qualname alone for a built-in.
+String qualifiedTypeName(JSGlobalObject*, PyType*);
+// The same, without the module for a class of __main__ either: what messages call a type (%T in CPython's formats).
+String typeNameForMessage(JSGlobalObject*, PyType*);
+// A number that tells the object from all others alive: id().
+JSValue identityOf(JSGlobalObject*, JSValue);
+String addressForRepr(JSGlobalObject*, JSValue);
+
+bool isInstanceWithoutHook(JSGlobalObject*, JSValue object, JSValue cls);
+bool isSubclassWithoutHook(JSGlobalObject*, JSValue derived, JSValue cls);
+
+// The __class_getitem__ of the built-in containers.
+JSValue classGetItem(JSGlobalObject*, JSValue cls, JSValue item);
+// list[int]
+JSValue makeGenericAlias(JSGlobalObject*, JSValue origin, JSValue arguments);
+// int | str
+JSValue makeUnion(JSGlobalObject*, JSValue left, JSValue right);
+
+// What a type written in C++ keeps with an instance that has no field for it (a dict subclass, say): a property of the
+// object that JS cannot see. `index` is less than Runtime::numberOfHiddenKeys - 1 (the last is taken: see PyWeakRef.cpp); each
+// type decides what its indices mean, and a type must not use those of its bases. Empty: not set.
+inline JSValue hiddenField(JSGlobalObject* globalObject, JSValue object, unsigned index)
+{
+    return asObject(object)->getDirect(getVM(globalObject), runtime(globalObject).hiddenKey(index));
+}
+inline void setHiddenField(JSGlobalObject* globalObject, JSValue object, unsigned index, JSValue value)
+{
+    asObject(object)->putDirect(getVM(globalObject), runtime(globalObject).hiddenKey(index), value, PropertyAttribute::DontEnum | 0);
+}
+
+// The hidden field of a tuple of keyword names that has the keys of the dict they came from, if some are not plain strs.
+static constexpr unsigned keywordKeysField = 0;
+
+// The members of int | str. Null: the value is not a union.
+PyTuple* unionArguments(JSGlobalObject*, JSValue);
+// object.__getstate__(), as copy and pickle call it: one the class has overridden counts.
+JSValue getObjectState(JSGlobalObject*, JSValue);
+
+// ---- Descriptors ----
+
+JSValue memberDescriptorGet(JSGlobalObject*, PyMemberDescriptor*, JSValue object);
+void memberDescriptorSet(JSGlobalObject*, PyMemberDescriptor*, JSValue object, JSValue value);
+// For super() without arguments: the class being defined and the first argument of the function that is running.
+bool findSuperArguments(JSGlobalObject*, JSValue& type, JSValue& instance);
+
+// ---- Arguments ----
+
+// The values in a buffer the collector knows of. They move when the buffer grows.
+inline JSValue* valuesOf(MarkedArgumentBuffer& buffer) { return reinterpret_cast<JSValue*>(buffer.data()); }
+inline std::span<const JSValue> spanOf(MarkedArgumentBuffer& buffer) { return { valuesOf(buffer), buffer.size() }; }
+
+// function(CallArgs) with `first` before the positional arguments.
+template<typename Function>
+ALWAYS_INLINE JSValue withFirstArgument(JSValue first, const CallArgs& args, const Function& function)
+{
+    unsigned total = args.totalCount() + 1;
+    static constexpr unsigned inlineCapacity = 12;
+    if (total <= inlineCapacity) [[likely]] {
+        JSValue buffer[inlineCapacity];
+        buffer[0] = first;
+        for (unsigned i = 1; i < total; ++i)
+            buffer[i] = args.values()[i - 1];
+        return function(CallArgs(buffer, args.size() + 1, args.keywordNames()));
+    }
+    MarkedArgumentBuffer buffer;
+    buffer.ensureCapacity(total);
+    buffer.append(first);
+    for (unsigned i = 1; i < total; ++i)
+        buffer.append(args.values()[i - 1]);
+    return function(CallArgs(reinterpret_cast<const JSValue*>(ArgList(buffer).data()), args.size() + 1, args.keywordNames()));
+}
+
+// The name as a str that is not a rope and is the one of its kind. Null: a TypeError, "attribute name must be string, not 'x'".
+JSString* attributeName(JSGlobalObject*, JSValue);
+// False: a TypeError, "f() takes no keyword arguments".
+// As VM::isSafeToRecurseSoft(), that much earlier: for a function that recurses by way of others that make the check themselves,
+// and that has something more precise to say than they have.
+inline bool isSafeToRecurseWithMargin(VM& vm, size_t margin)
+{
+    return std::bit_cast<uintptr_t>(currentStackPointer()) >= std::bit_cast<uintptr_t>(vm.softStackLimit()) + margin;
+}
+
+bool rejectKeywords(JSGlobalObject*, ASCIILiteral function, const CallArgs&);
+// For the __new__ and the __init__ of a built-in type `base` that takes no keyword arguments. A class derived from it may be
+// called with some if the other of the two methods is its own, and so takes them.
+bool rejectKeywordsInNew(JSGlobalObject*, ASCIILiteral function, PyType*, PyType* base, const CallArgs&);
+bool rejectKeywordsInInit(JSGlobalObject*, ASCIILiteral function, JSValue self, PyType* base, const CallArgs&);
+// False: a TypeError, "f expected at most 2 arguments, got 3" and the like.
+bool checkPositional(JSGlobalObject*, ASCIILiteral function, const CallArgs&, unsigned min, unsigned max);
+
+// The keyword arguments of a function that takes any number of positional ones: values[i] is set for names[i] if it is given.
+// False: a keyword that is none of the names, a TypeError.
+bool parseKeywordArguments(JSGlobalObject*, ASCIILiteral function, const CallArgs&, std::span<const ASCIILiteral> names, JSValue* values);
+
+// The arguments of a function written in C++ whose messages name it otherwise than its definition does. `keywords` names the
+// parameters; the first maxPositional of them may be given by position. With hasVarPositional, more positional arguments
+// than that are the caller's business. No parameter is positional-only, and no keyword-only one is required.
+bool unpackKeywordArguments(JSGlobalObject*, ASCIILiteral functionName, std::span<const ASCIILiteral> keywords, unsigned minPositional, unsigned maxPositional, bool hasVarPositional, const CallArgs&, JSValue* values);
+
+// ---- Numbers ----
+
+// The __format__ of int, float, complex and str. `self` may be an instance of a subclass.
+JSString* formatInt(JSGlobalObject*, JSValue self, JSString* spec);
+JSString* formatFloat(JSGlobalObject*, JSValue self, JSString* spec);
+JSString* formatComplex(JSGlobalObject*, JSValue self, JSString* spec);
+JSString* formatStr(JSGlobalObject*, JSValue self, JSString* spec);
+// The module _string.
+JSValue formatterParser(JSGlobalObject*, JSValue formatString);
+JSValue formatterFieldNameSplit(JSGlobalObject*, JSValue fieldName);
+JSValue intFromByteSpan(JSGlobalObject*, std::span<const uint8_t>, bool littleEndian, bool isSigned);
+// int(text, base). Empty with no exception: it is not the text of an int.
+JSValue intFromText(JSGlobalObject*, StringView, int base);
+// float(text). nullopt: it is not the text of a float.
+std::optional<double> floatFromText(StringView);
+// How many characters at the start are the text of a float. 0: none.
+size_t scanDouble(std::span<const Latin1Character>, double& value);
+// ASCII, with the whitespace at the ends gone, any decimal digit as an ASCII one, and the underscores between digits gone.
+// False: there is something no number has.
+bool normalizeNumberText(StringView, Vector<Latin1Character, 64>&);
+// (a + bj) ** (c + dj)
+JSValue complexPower(JSGlobalObject*, double baseReal, double baseImaginary, double exponentReal, double exponentImaginary);
+void initializeComplexType(JSGlobalObject*);
+// The operations of float, which complain of a zero divisor.
+JSValue floatBinaryOperation(JSGlobalObject*, BinaryOperator, double, double);
+// 0-9, or -1: any decimal digit Unicode knows.
+int decimalDigitValue(char32_t);
+// 0-35, or 36 if it is neither an ASCII digit nor an ASCII letter.
+inline unsigned alphanumericDigitValue(char32_t character)
+{
+    if (character >= '0' && character <= '9')
+        return character - '0';
+    if (character >= 'a' && character <= 'z')
+        return character - 'a' + 10;
+    if (character >= 'A' && character <= 'Z')
+        return character - 'A' + 10;
+    return 36;
+}
+
+// ---- Text ----
+
+inline bool isPythonWhitespace(char32_t character) { return character < 0x80 ? character == ' ' || (character >= 0x09 && character <= 0x0d) || (character >= 0x1c && character <= 0x1f) : isWhitespace(character); }
+// format % arguments
+JSValue strFormatPercent(JSGlobalObject*, JSString* format, JSValue arguments);
+JSValue bytesFormatPercent(JSGlobalObject*, std::span<const uint8_t> format, JSValue arguments, bool makeByteArray);
+// str.format, str.format_map
+JSValue strFormatMethod(JSGlobalObject*, JSValue self, const CallArgs&);
+JSValue strFormatMap(JSGlobalObject*, JSValue self, JSValue mapping);
+// str.join
+JSString* strJoin(JSGlobalObject*, JSString* separator, JSValue iterable);
+// str.encode, bytes.decode. A null encoding or handler is the default.
+JSValue strEncode(JSGlobalObject*, JSString*, JSString* encoding, JSString* errors);
+JSValue bytesDecode(JSGlobalObject*, JSValue bytesLike, JSString* encoding, JSString* errors);
+
+// bytes(object), for anything but a str or an int.
+JSValue bytesFromObject(JSGlobalObject*, JSValue);
+
+// ---- Containers ----
+
+// The index for a sequence of that length, from an index that may be negative. False: an IndexError with the message.
+bool normalizeIndex(JSGlobalObject*, JSValue index, int64_t length, ASCIILiteral message, int64_t& result);
+// As the start and end arguments of str.find() and list.index(): None or absent is the default, and what is out of range is clipped.
+bool sliceBounds(JSGlobalObject*, JSValue start, JSValue end, int64_t length, int64_t& from, int64_t& to);
+// The same in two steps, for a sequence that can change: the first may call __index__ methods, the second is for the length after that.
+bool unpackSliceBounds(JSGlobalObject*, JSValue start, JSValue end, int64_t& from, int64_t& to);
+void adjustSliceBounds(int64_t length, int64_t& from, int64_t& to);
+// dict.update(other), for `other` a mapping or an iterable of pairs.
+void dictUpdate(JSGlobalObject*, PyDict*, JSValue other);
+// The same for what must be a mapping: other.keys() is called whether it is there or not.
+void dictUpdateFromMapping(JSGlobalObject*, PyDict*, JSValue mapping);
+// {**a, **b} in a call: a key twice over is a TypeError that names the function.
+void dictMergeForCall(JSGlobalObject*, PyDict*, JSValue mapping, JSValue function);
+// dict[key], with __missing__ for a subclass.
+JSValue dictSubscript(JSGlobalObject*, PyDict*, JSValue key);
+JSValue makeMappingProxy(JSGlobalObject*, JSValue mapping);
+void setUpdate(JSGlobalObject*, JSValue set, JSValue iterable);
+int64_t hashOfTuple(JSGlobalObject*, PyTuple*);
+JSValue makeRangeIterator(JSGlobalObject*, JSValue range);
+
+// ---- Signals, the thread (PySignal.cpp, PyThread.cpp) ----
+
+// Calls the handlers of the signals that have arrived. False: one of them raised. (PyErr_CheckSignals)
+// For a function that waits in a system call, when that fails with EINTR: if this returns true, it tries again (PEP 475).
+bool checkSignals(JSGlobalObject*);
+// Sleeps for so many nanoseconds (negative: for ever) or until a signal arrives, whichever is first, then does the above.
+bool waitForSignal(JSGlobalObject*, int64_t timeout);
+// Whether the program has given a function for any signal. (Not counting the one SIGINT has to begin with.)
+bool signalMayBeHandled(JSGlobalObject*);
+// As if the signal had arrived. Nothing happens if it is ignored or has its default effect. False: there is no such signal.
+// (PyErr_SetInterruptEx)
+bool simulateSignal(JSGlobalObject*, int number);
+// For a program in Python: SIGINT raises KeyboardInterrupt, SIGPIPE is ignored. May raise.
+void installSignalHandlers(JSGlobalObject*);
+// When the interpreter exits, before what is left is finalized: the signals it had functions for have their default effect again.
+void finalizeSignals(JSGlobalObject*);
+// For the end of the interpreter. (PyThread.cpp) What the callbacks raise is reported.
+void runAtexitCallbacks(JSGlobalObject*);
+void waitForThreadsAtExit(JSGlobalObject*); // _thread._shutdown()
+void stopWaitingForThreadsAtExit(JSGlobalObject*); // The threads there are count as daemons from now on.
+// There are threads to wait for (not daemons), or callbacks to run.
+bool hasThreadsOrAtexitCallbacks(JSGlobalObject*);
+// The runtime is going away.
+void detachSignals(Runtime&);
+// For faulthandler (PyFaultHandler.cpp). From now on, when the signal has arrived, dumpTracebackForSignal() is called at the next
+// safe point; what would have happened without this happens after that if `chains`, and not at all otherwise. Returns an errno.
+int watchSignal(JSGlobalObject*, int number, bool chains);
+void unwatchSignal(int number);
+// Asks for dumpTracebackForSignal(globalObject, 0), from any thread. The first function is to be called beforehand.
+void prepareForTracebackDumpRequests(JSGlobalObject*);
+void requestTracebackDump();
+// There will be no more of them: faulthandler.cancel_dump_traceback_later().
+void cancelTracebackDumpRequests();
+void dumpTracebackForSignal(JSGlobalObject*, int number);
+
+// What _thread.get_ident() returns.
+uint64_t currentThreadIdent();
+
+enum class TimeRounding : uint8_t { Floor, Ceiling, AwayFromZero };
+// A number of seconds, an int or a float, as nanoseconds. False: an exception. (_PyTime_FromSecondsObject)
+bool nanosecondsFromSeconds(JSGlobalObject*, JSValue seconds, TimeRounding, int64_t& result);
+
+// ---- Functions, frames ----
+
+// The frame of the Python function that is running, `depth` calls up. Null: there is none.
+PyFrame* currentFrame(JSGlobalObject*, unsigned depth = 0);
+// The frame object of the call, if anything has asked for it.
+PyFrame* frameObjectIfAny(CallFrame*);
+// The code as it is run: that of the body, for a generator function. Null: an exception.
+CodeBlock* codeBlockOf(JSGlobalObject*, PyCode*);
+// In PyMonitoring.cpp.
+PyModule* makeMonitoringModule(JSGlobalObject*);
+JSValue sysSetTrace(JSGlobalObject*, JSValue function);
+JSValue sysGetTrace(JSGlobalObject*);
+JSValue sysSetProfile(JSGlobalObject*, JSValue function);
+JSValue sysGetProfile(JSGlobalObject*);
+JSValue sysSetTraceAllThreads(JSGlobalObject*, JSValue function);
+JSValue sysSetProfileAllThreads(JSGlobalObject*, JSValue function);
+// See addTracebackEntry() in PyHooks.h. In PyMonitoring.cpp.
+JSValue exceptionIsRaised(JSGlobalObject*, JSValue exception, CallFrame*, BytecodeIndex, bool isRaisedAgain);
+// The same for a thread that is not running. Null: it is in no Python code.
+PyFrame* topFrameOf(JSGlobalObject*, JSLock::ParkedThread&);
+// The code and the line of each Python frame, from the innermost outwards, for as long as the function returns true. For the
+// handler of a fatal signal: nothing is allocated, no lock taken.
+void forEachPythonFrameWithoutAllocating(CallFrame* topCallFrame, EntryFrame*, const ScopedLambda<bool(const CodeInfo&, int line)>&);
+// The globals and locals of the Python function that called the native function that is running.
+PyDict* currentGlobals(JSGlobalObject*);
+JSValue currentLocals(JSGlobalObject*);
+// That function. Null: there is none.
+// Not an instance of a class derived from dict or frozendict, which may have a __getitem__ or a __missing__ of its own.
+inline bool isExactDict(Runtime& rt, PyDict* dict)
+{
+    PyType* type = dict->type();
+    return type == rt.dictType() || type == rt.frozendictType();
+}
+
+PyFunction* currentFunction(JSGlobalObject*);
+// cr_origin, for the coroutine function that is being called: (file name, line, name of the function) of the frame that calls it
+// and of those below, `depth` of them at most.
+JSValue coroutineOrigin(JSGlobalObject*, unsigned depth);
+// Its builtins, or those of the interpreter if there is none.
+JSValue currentBuiltins(JSGlobalObject*);
+// currentBuiltins()[name]. If there is no such key, an AttributeError.
+JSValue currentBuiltin(JSGlobalObject*, JSString* name);
+// The variables of the frame as they are now: the namespace of the body of a module or a class, for a function a new dict.
+JSValue frameLocals(JSGlobalObject*, PyFrame*);
+
+// The name among the candidates that is closest to the one given. Null: none is close.
+String calculateSuggestion(const Vector<String>& candidates, const String& name);
+// What printException() prints.
+String formatException(JSGlobalObject*, JSValue exception);
+
+// ---- Exception groups (PyExceptionGroup.cpp) ----
+
+// For `except* type`: the part of the exception that matches, as a group, or None; `rest` is what is left, or None.
+JSValue matchExceptionGroup(JSGlobalObject*, JSValue exception, JSValue type, JSValue& rest);
+// At the end of a try with `except*` clauses: what to raise, or None. `raised` is a list of what the clauses raised or left.
+JSValue prepareReraiseStar(JSGlobalObject*, JSValue original, JSValue raised);
+
+// ---- Type parameters (PyTyping.cpp) ----
+
+// def f[T: bound](): ... The evaluators are functions of one argument, the format; either may be empty.
+JSValue makeTypeVar(JSGlobalObject*, JSValue name, JSValue evaluateBound, JSValue evaluateConstraints);
+JSValue makeParamSpec(JSGlobalObject*, JSValue name);
+JSValue makeTypeVarTuple(JSGlobalObject*, JSValue name);
+// Returns the type parameter.
+JSValue setTypeParamDefault(JSGlobalObject*, JSValue typeParameter, JSValue evaluateDefault);
+// Generic[*parameters], the base a class with type parameters is given.
+JSValue subscriptGeneric(JSGlobalObject*, JSValue parameters);
+// type name[*parameters] = value
+JSValue makeTypeAlias(JSGlobalObject*, JSValue name, JSValue parametersOrNone, JSValue evaluateValue);
+void initializeTypingModule(JSGlobalObject*, PyModule*); // _typing
+
+// ---- Template strings (PyTemplate.cpp) ----
+
+// `conversion` is None or a str of one character; an empty format spec is "".
+JSValue buildInterpolation(JSGlobalObject*, JSValue value, JSValue expression, JSValue conversion, JSValue formatSpec);
+// From a tuple of str and a tuple of interpolations.
+JSValue buildTemplate(JSGlobalObject*, JSValue strings, JSValue interpolations);
+
+// ---- Codecs (PyCodecs.cpp) ----
+
+void initializeCodecsModule(JSGlobalObject*, PyModule*); // _codecs
+
+// ---- Streams (PyIO.h) ----
+
+void initializeIOModule(JSGlobalObject*, PyModule*); // _io
+
+// ---- Regular expressions, the Unicode database (PySre.cpp, PyUnicodeData.cpp) ----
+
+void initializeSreModule(JSGlobalObject*, PyModule*); // _sre
+void initializeUnicodeDataModule(JSGlobalObject*, PyModule*); // unicodedata
+
+// ---- Numbers, time, constants of the platform (PyMath.cpp, PyCMath.cpp, PyRandom.cpp, PyTime.cpp, PyErrno.cpp) ----
+
+void initializeMathModule(JSGlobalObject*, PyModule*); // math
+void initializeMathIntegerModule(JSGlobalObject*, PyModule*); // _math_integer, which is math.integer
+void initializeStatisticsModule(JSGlobalObject*, PyModule*); // _statistics
+void initializeCMathModule(JSGlobalObject*, PyModule*); // cmath
+void initializeRandomModule(JSGlobalObject*, PyModule*); // _random
+void initializeTimeModule(JSGlobalObject*, PyModule*); // time
+void initializeErrnoModule(JSGlobalObject*, PyModule*); // errno
+void initializeStatModule(JSGlobalObject*, PyModule*); // _stat
+
+// ---- Containers and binary data (PyCollections.cpp, PyHeapq.cpp, PyArray.cpp, PyStruct.cpp, PyBinascii.cpp) ----
+
+void initializeCollectionsModule(JSGlobalObject*, PyModule*); // _collections
+void initializeHeapqModule(JSGlobalObject*, PyModule*); // _heapq
+void initializeBisectModule(JSGlobalObject*, PyModule*); // _bisect
+void initializeArrayModule(JSGlobalObject*, PyModule*); // array
+void initializeStructModule(JSGlobalObject*, PyModule*); // _struct
+void initializeBinasciiModule(JSGlobalObject*, PyModule*); // binascii
+void initializeAbcModule(JSGlobalObject*, PyModule*); // _abc
+void initializeCsvModule(JSGlobalObject*, PyModule*); // _csv
+void initializeJsonModule(JSGlobalObject*, PyModule*); // _json
+void initializeExpatModule(JSGlobalObject*, PyModule*); // pyexpat
+void initializePickleModule(JSGlobalObject*, PyModule*); // _pickle (PickleBuffer is in PyMemoryView.cpp)
+
+// ---- The operating system, except on Windows (PyPosix*.cpp, PyPwd.cpp, PyFcntl.cpp, PyLocale.cpp) ----
+
+void initializePosixModule(JSGlobalObject*, PyModule*); // posix
+void initializeResourceModule(JSGlobalObject*, PyModule*); // resource
+void initializePwdModule(JSGlobalObject*, PyModule*); // pwd
+void initializeGrpModule(JSGlobalObject*, PyModule*); // grp
+void initializeFcntlModule(JSGlobalObject*, PyModule*); // fcntl
+void initializeLocaleModule(JSGlobalObject*, PyModule*); // _locale
+void initializeMmapModule(JSGlobalObject*, PyModule*); // mmap
+void initializeMultiprocessingModule(JSGlobalObject*, PyModule*); // _multiprocessing
+void initializePosixShmemModule(JSGlobalObject*, PyModule*); // _posixshmem (PyMmap.cpp)
+void initializePosixSubprocessModule(JSGlobalObject*, PyModule*); // _posixsubprocess
+void initializeSelectModule(JSGlobalObject*, PyModule*); // select
+void initializeSocketModule(JSGlobalObject*, PyModule*); // _socket
+void initializeSyslogModule(JSGlobalObject*, PyModule*); // syslog
+void initializeTermiosModule(JSGlobalObject*, PyModule*); // termios
+
+// ---- Modules ----
+
+// module.__getattribute__. With `suppress`, a missing attribute is an empty value and no exception.
+JSValue moduleGetAttr(JSGlobalObject*, PyModule*, JSString* name, bool suppress = false);
+JSValue moduleGetAttribute(JSGlobalObject*, JSValue self, JSValue name);
+// import name: what __import__ does.
+JSValue importName(JSGlobalObject*, JSString* name, JSValue globals, JSValue locals, JSValue fromList, int level);
+// Calls what is not Python code, with the arguments as JS takes them (see PyHooks.h).
+JSValue callForeignFunction(JSGlobalObject*, JSValue function, const CallArgs&);
+
+JSValue importModule(JSGlobalObject*, JSString* absoluteName);
+JSValue importModule(JSGlobalObject*, ASCIILiteral absoluteName);
+JSValue importFrom(JSGlobalObject*, JSValue module, JSString* name);
+void importStar(JSGlobalObject*, JSValue module, JSValue locals);
+bool specIsInitializing(JSGlobalObject*, JSValue spec);
+// For a module written in C++ that has no __spec__ and __loader__ yet: has importlib make them. False: an exception.
+bool ensureNativeModuleSpec(JSGlobalObject*, PyModule*);
+// For the collector, when all that is reachable is marked. For each of the candidates, which are not marked: how many rounds of
+// finalizers come before its own, 0 for one that no other candidate reaches. (PyFinalizationOrder.cpp)
+Vector<unsigned> finalizationRanks(SlotVisitor&, std::span<JSCell* const> candidates);
+
+// Which of the locals of a frame of the LLInt or the Baseline JIT hold values that the code may still read. `isCalling`: there is a
+// frame that this one called. False: there is no telling.
+bool liveLocalsOfFrame(CallFrame*, CodeBlock*, bool isCalling, FastBitVector& live);
+
+// A function of the host's event loop module (setEventLoopModule). Empty without an exception: the host has none.
+JSValue eventLoopFunction(JSGlobalObject*, ASCIILiteral name);
+// The same of the host's module for the import system. Empty, without an exception: there is no such module or function.
+JSValue importSystemFunction(JSGlobalObject*, ASCIILiteral name);
+// There are calls to make at the next safe point. Any thread, and signal handlers.
+void noteCallsOwed(VM&);
+
+// Makes importlib the import system, if there is a standard library to take it from, and imports `site`. What goes wrong
+// is printed.
+void startImportSystem(JSGlobalObject*);
+
+// ---- Lazy imports (PyImport.cpp) ----
+
+PyRecord* asLazyImportSlow(JSGlobalObject*, JSCell*);
+// The placeholder `lazy import` leaves in a namespace, if the value is one.
+ALWAYS_INLINE PyRecord* asLazyImport(JSGlobalObject* globalObject, JSValue value)
+{
+    if (!value || !value.isCell() || value.asCell()->type() != PyObjectType) [[likely]]
+        return nullptr;
+    return asLazyImportSlow(globalObject, value.asCell());
+}
+bool lazyImportIsBeingResolved(PyRecord*);
+PyType* typeOfLazyImports(JSGlobalObject*); // types.LazyImportType
+// What __lazy_import__ does: a placeholder, or the module if the filter wants it imported now.
+JSValue lazyImportName(JSGlobalObject*, JSValue name, JSValue builtins, JSValue globals, JSValue locals, JSValue fromList, int level);
+// Whether __lazy_modules__ in the globals makes `import name` lazy.
+bool isInLazyModules(JSGlobalObject*, JSString* name, PyDict* globals, int level);
+// Carries out the import, and puts the result in the place of the placeholder, which was found under the name in the mapping.
+JSValue reifyLazyImport(JSGlobalObject*, PyRecord*, JSString* name, JSValue mapping);
+// The module has no such attribute. If a lazy import named such a submodule, it is imported now. Empty, with or without an
+// exception: there is none. `lookAgain`: the dict of the module may have it all the same.
+JSValue loadLazySubmodule(JSGlobalObject*, PyModule*, JSString* name, bool suppress, bool& lookAgain);
+// The module of that name has been imported.
+void didImportLazyModule(JSGlobalObject*, JSString* name);
+void initializeBuiltinsModule(JSGlobalObject*, PyModule*);
+void initializeSysModule(JSGlobalObject*, PyModule*);
+void addSysExtras(JSGlobalObject*, PyModule* sys); // PySysExtras.cpp
+void initializeTypesModule(JSGlobalObject*, PyModule*); // _types
+void initializeSysconfigDataModule(JSGlobalObject*, PyModule*); // _sysconfigdata__linux_
+void initializeFunctoolsModule(JSGlobalObject*, PyModule*); // _functools
+void initializeItertoolsModule(JSGlobalObject*, PyModule*); // itertools
+void initializeOperatorModule(JSGlobalObject*, PyModule*); // _operator
+
+// ---- Compiling and running ----
+
+// The flags of compile(), besides those of CodeFlag that stand for __future__ features.
+enum CompileFlag : int {
+    CompileSourceIsUTF8 = 0x100,
+    CompileDontImplyDedent = 0x200,
+    CompileOnlyAST = 0x400,
+    CompileIgnoreCookie = 0x800,
+    CompileTypeComments = 0x1000,
+    CompileAllowTopLevelAwait = 0x2000,
+    CompileAllowIncompleteInput = 0x4000,
+    CompileOptimizedAST = 0x8000 | CompileOnlyAST,
+    // Not one of compile()'s: the bytes were read from the file by the interpreter itself, which a message may then name.
+    CompileSourceIsFile = 0x40000000,
+    // Nor this: tracebacks show the lines of the source although its name is not that of a file (-c, the interactive interpreter).
+    CompileSourceIsShown = 0x20000000,
+};
+void showSourceInTracebacks(SourceProvider&); // PyFrame.cpp
+// compile(source, filename, mode): a code object. `mode` is "exec", "eval" or "single". A negative `optimize`: as the interpreter.
+// `module`, here and below: the name of the module the code is for, by which the filters of warnings select. Empty or None: go by the file name.
+JSValue compileSource(JSGlobalObject*, std::span<const uint8_t> source, const String& filename, ASCIILiteral mode, int flags, int optimize, JSValue module = { });
+// The text to compile, as bytes; if it is a str, the flags then say to ignore a coding cookie. False: an exception.
+// `what`: "string, bytes or code".
+bool sourceBytes(JSGlobalObject*, JSValue source, ASCIILiteral function, ASCIILiteral what, Vector<uint8_t>& bytes, int& flags);
+// os.fsdecode(), for a file name that is only shown.
+String filenameArgument(JSGlobalObject*, JSValue);
+// Its two halves. `mode` may be "func_type" too; a negative feature version is the latest. False: an exception.
+bool parseSource(JSGlobalObject*, ParseTree&, ParserHost&, std::span<const uint8_t> source, const String& filename, ASCIILiteral mode, int flags, int featureVersion = -1);
+JSValue compileTree(JSGlobalObject*, ParseTree&, ParserHost&, const String& filename, int flags, int optimize);
+// What the parser and the compiler ask of the runtime, for source said to come from that file.
+std::unique_ptr<ParserHost> makeParserHost(JSGlobalObject*, const String& filename, JSValue module = { });
+// raise SyntaxError(...), or whatever the failure calls for.
+JSValue raiseSyntaxErrorInfo(JSGlobalObject*, const SyntaxErrorInfo&, const String& filename);
+// compile(source, filename, mode, PyCF_ONLY_AST): the tree as objects of the module ast (PyAstToObject.cpp).
+JSValue parseToAST(JSGlobalObject*, std::span<const uint8_t> source, const String& filename, ASCIILiteral mode, int flags, int optimize, int featureVersion, JSValue module = { });
+// compile(tree, filename, mode): a code object or, with PyCF_ONLY_AST, another tree (PyAstFromObject.cpp).
+JSValue compileAST(JSGlobalObject*, JSValue tree, const String& filename, ASCIILiteral mode, int flags, int optimize, JSValue module = { });
+// isinstance(value, ast.AST). May throw.
+bool isAST(JSGlobalObject*, JSValue);
+void initializeAstModule(JSGlobalObject*, PyModule*); // _ast
+void initializeTokenizeModule(JSGlobalObject*, PyModule*); // _tokenize
+void initializeSymtableModule(JSGlobalObject*, PyModule*); // _symtable
+void initializeOpcodeModule(JSGlobalObject*, PyModule*); // _opcode
+// exec(compile(source, filename, "exec", flags), vars(__main__)). What is raised propagates. Code that awaits at the top level
+// (CompileAllowTopLevelAwait) runs on the event loop of the host, if that has one and `unfinished` is not null: that is then
+// the JS promise of its end.
+void runSourceInMain(JSGlobalObject*, std::span<const uint8_t> source, const String& filename, int flags, JSValue* unfinished);
+void runCodeInMain(JSGlobalObject*, JSValue code, JSValue* unfinished);
+// linecache._register_code(code, source, filename)
+void registerSourceWithLinecache(JSGlobalObject*, JSValue code, std::span<const uint8_t> source, const String& filename);
+// The same for a file that is the program: __main__ gets its __file__ and __loader__. (PyCommandLine.cpp)
+void runFileInMain(JSGlobalObject*, const String& path, std::span<const uint8_t> source, JSValue* unfinished);
+// sys._baserepl(). The exit status, if the program asked to exit. (PyCommandLine.cpp)
+std::optional<int> runBasicInteractiveLoop(JSGlobalObject*);
+// As os.path.abspath(): no symbolic link is followed.
+String absolutePath(const String&);
+// As os.path.realpath(). Null: there is no such file.
+String realPath(const String&);
+// sys.version, its first word, and sys.platform.
+String versionText();
+String shortVersionText();
+ASCIILiteral platformText();
+// sys.flags, anew from the configuration.
+void updateSysFlags(JSGlobalObject*);
+// exec(code, globals, locals)
+// Code that runs with these globals finds its builtins in globals["__builtins__"]: if there is no such item, those of the code that is running
+// are put there. False: an exception.
+bool ensureBuiltins(JSGlobalObject*, PyDict* globals);
+JSValue runCode(JSGlobalObject*, JSValue code, PyDict* globals, JSValue locals, PyTuple* closure = nullptr);
+
+// ---- Warnings ----
+
+// warnings.warn(message, category). False: the warning was turned into an exception.
+// ---- Audit hooks ----
+
+// sys.audit(event, *arguments), for what the runtime itself is about to do. An empty value stands for None. False: a hook has
+// raised an exception, and it is not to be done.
+// For tracemalloc, while it is on. (PyProfilers.cpp)
+void noteWhereObjectWasMade(JSGlobalObject*, JSCell*);
+
+bool auditWithHooks(JSGlobalObject*, ASCIILiteral event, std::span<const JSValue> arguments);
+// For where the arguments cost something to make.
+ALWAYS_INLINE bool isAudited(JSGlobalObject* globalObject) { return !!runtime(globalObject).slot(Runtime::Slot::AuditHooks); }
+template<typename... Arguments>
+ALWAYS_INLINE bool audit(JSGlobalObject* globalObject, ASCIILiteral event, Arguments... arguments)
+{
+    if (!isAudited(globalObject)) [[likely]]
+        return true;
+    std::array<JSValue, sizeof...(Arguments)> values { JSValue(arguments)... };
+    return auditWithHooks(globalObject, event, values);
+}
+
+bool warn(JSGlobalObject*, PyType* category, const String& message, int stackLevel = 1);
+// The same about an object: the `source` of a ResourceWarning, which tracemalloc may know where it was made.
+bool warnAbout(JSGlobalObject*, PyType* category, const String& message, int stackLevel, JSValue source);
+bool warnExplicit(JSGlobalObject*, PyType* category, const String& message, const String& filename, int lineno, JSValue module = { });
+
+// exception.add_note(note), for the exception that is propagating.
+void addNoteToPendingException(JSGlobalObject*, const String& note);
+
+// ---- Exceptions nobody can catch ----
+
+// Hands the exception that is propagating to sys.unraisablehook; it propagates no further. A null message is none.
+void reportUnraisable(JSGlobalObject*, const String& message, JSValue object);
+
+void initializeGCModule(JSGlobalObject*, PyModule*); // gc
+void initializeJSModule(JSGlobalObject*, PyModule*); // _js
+void initializeThreadModule(JSGlobalObject*, PyModule*); // _thread
+void initializeQueueModule(JSGlobalObject*, PyModule*); // _queue
+void initializeSignalModule(JSGlobalObject*, PyModule*); // _signal
+void initializeFaultHandlerModule(JSGlobalObject*, PyModule*); // faulthandler
+void initializeLsprofModule(JSGlobalObject*, PyModule*); // _lsprof
+void initializeTracemallocModule(JSGlobalObject*, PyModule*); // _tracemalloc
+void initializeSysconfigModule(JSGlobalObject*, PyModule*); // _sysconfig
+void initializeAtexitModule(JSGlobalObject*, PyModule*); // atexit
+void initializeContextVarsModule(JSGlobalObject*, PyModule*); // _contextvars
+void initializeImpModule(JSGlobalObject*, PyModule*); // _imp
+void initializeMarshalModule(JSGlobalObject*, PyModule*); // marshal
+void initializeWarningsModule(JSGlobalObject*, PyModule*); // _warnings
+void initializeWeakrefModule(JSGlobalObject*, PyModule*); // _weakref
+
+// ---- Output ----
+
+// sys.stdout.write(text) and the like. `file` may be None, which writes nothing.
+void writeToFile(JSGlobalObject*, JSValue file, JSString* text);
+void writeToStderr(JSGlobalObject*, const String&);
+
+} // namespace Python
+} // namespace JSC

@@ -364,25 +364,29 @@ EOF
     def constructors
         fields = (@args || []) + (@metadata.empty? ? [] : [@metadata])
         init = ->(size) { fields.empty?  ? "" : ": #{fields.map.with_index { |arg, i| arg.load_from_stream(i, size) }.join "\n        , " }" }
+        is_opcode = ->(size) {
+            found = "static_cast<#{opcodeIDType}>(std::bit_cast<const typename OpcodeIDWidthBySize<#{type_prefix}OpcodeTraits, #{size}>::opcodeType*>(stream)[-1])"
+            type_prefix == "JS" ? "#{found} == opcodeID || #{found} == op_py_instrumented" : "#{found} == opcodeID"
+        }
 
         <<-EOF
     #{capitalized_name}(const uint8_t* stream)
         #{init.call("OpcodeSize::Narrow")}
     {
-        ASSERT_UNUSED(stream, static_cast<#{opcodeIDType}>(std::bit_cast<const typename OpcodeIDWidthBySize<#{type_prefix}OpcodeTraits, OpcodeSize::Narrow>::opcodeType*>(stream)[-1]) == opcodeID);
+        ASSERT_UNUSED(stream, #{is_opcode.call("OpcodeSize::Narrow")});
     }
 
     #{capitalized_name}(const uint16_t* stream)
         #{init.call("OpcodeSize::Wide16")}
     {
-        ASSERT_UNUSED(stream, static_cast<#{opcodeIDType}>(std::bit_cast<const typename OpcodeIDWidthBySize<#{type_prefix}OpcodeTraits, OpcodeSize::Wide16>::opcodeType*>(stream)[-1]) == opcodeID);
+        ASSERT_UNUSED(stream, #{is_opcode.call("OpcodeSize::Wide16")});
     }
 
 
     #{capitalized_name}(const uint32_t* stream)
         #{init.call("OpcodeSize::Wide32")}
     {
-        ASSERT_UNUSED(stream, static_cast<#{opcodeIDType}>(std::bit_cast<const typename OpcodeIDWidthBySize<#{type_prefix}OpcodeTraits, OpcodeSize::Wide32>::opcodeType*>(stream)[-1]) == opcodeID);
+        ASSERT_UNUSED(stream, #{is_opcode.call("OpcodeSize::Wide32")});
     }
 
     static #{capitalized_name} decode(const uint8_t* stream)

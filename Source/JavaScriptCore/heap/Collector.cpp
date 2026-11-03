@@ -627,7 +627,14 @@ NEVER_INLINE bool Collector::runFixpointPhase(GCConductor conn)
         // https://bugs.webkit.org/show_bug.cgi?id=180310
         if (converged && visitor.isEmpty()) {
             assertMarkStacksEmpty();
-            return changePhase(conn, CollectorPhase::End);
+            // All that is reachable is marked. A Python object that is not and has a finalizer is kept, with all it reaches,
+            // for the finalizer to find it whole; so there may be more to mark.
+            bool keptSomething = false;
+            forEachHeap([&](Heap& heap) {
+                keptSomething |= heap.keepUnreachablePythonObjectsToFinalize(visitor);
+            });
+            if (!keptSomething)
+                return changePhase(conn, CollectorPhase::End);
         }
 
         m_scheduler->didExecuteConstraints();

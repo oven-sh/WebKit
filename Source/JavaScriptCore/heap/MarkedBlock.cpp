@@ -845,7 +845,7 @@ void MarkedBlock::Handle::validateFreeIntervals(const WTF::BitSet<atomsPerBlock>
     RELEASE_ASSERT(intervalIndex == intervals.size());
 }
 
-void MarkedBlock::Handle::sweep(FreeList* freeList)
+bool MarkedBlock::Handle::sweep(FreeList* freeList)
 {
     SweepMode sweepMode = freeList ? SweepToFreeList : SweepOnly;
     bool needsDestruction = false;
@@ -861,7 +861,14 @@ void MarkedBlock::Handle::sweep(FreeList* freeList)
     // Nothing has been allocated into a block that is still swept, so no weak handle into it can have
     // been created and died since; re-sweeping its weak set would find nothing.
     if (sweepMode == SweepOnly && !needsDestruction && !isUnswept)
-        return;
+        return true;
+
+    // A thread that is not the embedder's allocates no cells of the embedder's classes, so what it finds in a subspace for one
+    // class has a destructor of the engine's.
+    if (!heap()->mayRunEmbedderFinalizers() && ((needsDestruction && !subspace()->isIsoSubspace()) || m_weakSet.hasDeadHandlesOfEmbedder())) [[unlikely]] {
+        heap()->didPostponeEmbedderFinalizers();
+        return false;
+    }
 
     // A sweep while a full collection is marking cannot go by that collection's marks yet (the version has moved on, the
     // marks have not caught up): it is not that collection's first sweep and must not count as it. An eden collection's
@@ -896,7 +903,7 @@ void MarkedBlock::Handle::sweep(FreeList* freeList)
         Locker locker { m_directory->bitvectorLock().mutate() };
         m_directory->assertInUse(index());
         m_directory->setIsUnswept(index(), false);
-        return;
+        return true;
     }
 
     m_zeroPagesDuringSweep = m_decommittedPages;
@@ -929,7 +936,7 @@ void MarkedBlock::Handle::sweep(FreeList* freeList)
             if (Options::useZombieMode()) [[unlikely]]
                 scribbleDeadCells(*this, m_decommittedPages);
         }
-        return;
+        return true;
     }
     
     // Handle the no-destructor specializations here, since we have the most of those. This
@@ -975,10 +982,11 @@ void MarkedBlock::Handle::sweep(FreeList* freeList)
     };
     
     if (trySpecialized())
-        return;
+        return true;
 
     // The template arguments don't matter because the first one is false.
     specializedSweep<false, IsEmpty, SweepOnly, BlockHasNoDestructors, DontScribble, HasNewlyAllocated, MarksStale>(freeList, emptyMode, sweepMode, BlockHasNoDestructors, scribbleMode, newlyAllocatedMode, marksMode, [] (VM&, JSCell*) { });
+    return true;
 }
 
 NO_RETURN_DUE_TO_CRASH NEVER_INLINE static void crashDueToGarbageCollectorClientDanglingReference_CheckRootsAndBarriers(HeapCell* heapCell, uint64_t cellFirst8Bytes, uint64_t zeroCounts, uint64_t bitfield, uint64_t subspaceHash, VM* blockVM, VM* actualVM)

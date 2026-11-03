@@ -252,7 +252,8 @@ void DataOnlyCallLinkInfo::initialize(VM& vm, CodeBlock* owner, CallType callTyp
     m_codeOrigin = codeOrigin;
     m_callType = callType;
     m_mode = static_cast<unsigned>(Mode::Init);
-    if (!Options::useLLIntICs()) [[unlikely]]
+    m_isInPythonCode = owner->unlinkedCodeBlock()->isPython();
+    if (!Options::useLLIntICs() && !m_isInPythonCode) [[unlikely]]
         setVirtualCall(vm);
 }
 
@@ -363,7 +364,7 @@ void CallLinkInfo::reset(VM&)
 
 void CallLinkInfo::revertCall(VM& vm)
 {
-    if (!Options::useLLIntICs() && type() == CallLinkInfo::Type::DataOnly) [[unlikely]]
+    if (!Options::useLLIntICs() && type() == CallLinkInfo::Type::DataOnly && !m_isInPythonCode) [[unlikely]]
         setVirtualCall(vm);
     else
         reset(vm);

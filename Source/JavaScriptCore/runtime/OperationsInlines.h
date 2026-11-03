@@ -370,6 +370,14 @@ ALWAYS_INLINE bool jsLess(JSGlobalObject* globalObject, JSValue v1, JSValue v2)
         return codePointCompareLessThan(s1, s2);
     }
 
+    if (mayOverloadOperators(v1) || mayOverloadOperators(v2)) [[unlikely]] {
+        // Without leftFirst, this is v2 > v1.
+        auto result = leftFirst ? Python::compareForJS(globalObject, Python::JSOperator::Less, v1, v2) : Python::compareForJS(globalObject, Python::JSOperator::Greater, v2, v1);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (result)
+            return *result;
+    }
+
     double n1;
     double n2;
     JSValue p1;
@@ -418,6 +426,14 @@ ALWAYS_INLINE bool jsLessEq(JSGlobalObject* globalObject, JSValue v1, JSValue v2
         auto s2 = asString(v2)->value(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
         return !codePointCompareLessThan(s2, s1);
+    }
+
+    if (mayOverloadOperators(v1) || mayOverloadOperators(v2)) [[unlikely]] {
+        // Without leftFirst, this is v2 >= v1.
+        auto result = leftFirst ? Python::compareForJS(globalObject, Python::JSOperator::LessEq, v1, v2) : Python::compareForJS(globalObject, Python::JSOperator::GreaterEq, v2, v1);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (result)
+            return *result;
     }
 
     double n1;
@@ -482,6 +498,29 @@ ALWAYS_INLINE JSValue jsAdd(JSGlobalObject* globalObject, JSValue v1, JSValue v2
     return jsAddNonNumber(globalObject, v1, v2);
 }
 
+// True: the operator is overloaded, and `result` is what it returns, or empty for an exception.
+ALWAYS_INLINE bool tryOverloadedOperator(JSGlobalObject* globalObject, Python::JSOperator op, JSValue v1, JSValue v2, JSValue& result)
+{
+    if (!mayOverloadOperators(v1) && !mayOverloadOperators(v2)) [[likely]]
+        return false;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    result = Python::binaryOperatorForJS(globalObject, op, v1, v2);
+    RETURN_IF_EXCEPTION(scope, true);
+    return !!result;
+}
+
+ALWAYS_INLINE bool tryOverloadedOperator(JSGlobalObject* globalObject, Python::JSOperator op, JSValue v, JSValue& result)
+{
+    if (!mayOverloadOperators(v)) [[likely]]
+        return false;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    result = Python::unaryOperatorForJS(globalObject, op, v);
+    RETURN_IF_EXCEPTION(scope, true);
+    return !!result;
+}
+
 template<typename DoubleOperation, typename BigIntOp>
 ALWAYS_INLINE JSValue arithmeticBinaryOp(JSGlobalObject* globalObject, JSValue v1, JSValue v2, NOESCAPE const DoubleOperation& doubleOp, NOESCAPE const BigIntOp& bigIntOp, ASCIILiteral errorMessage)
 {
@@ -504,6 +543,9 @@ ALWAYS_INLINE JSValue arithmeticBinaryOp(JSGlobalObject* globalObject, JSValue v
 
 ALWAYS_INLINE JSValue jsSub(JSGlobalObject* globalObject, JSValue v1, JSValue v2)
 {
+    if (JSValue result; tryOverloadedOperator(globalObject, Python::JSOperator::Sub, v1, v2, result)) [[unlikely]]
+        return result;
+
     auto doubleOp = [] (double left, double right) -> double {
         return left - right;
     };
@@ -517,6 +559,9 @@ ALWAYS_INLINE JSValue jsSub(JSGlobalObject* globalObject, JSValue v1, JSValue v2
 
 ALWAYS_INLINE JSValue jsMul(JSGlobalObject* globalObject, JSValue v1, JSValue v2)
 {
+    if (JSValue result; tryOverloadedOperator(globalObject, Python::JSOperator::Mul, v1, v2, result)) [[unlikely]]
+        return result;
+
     auto doubleOp = [] (double left, double right) -> double {
         return left * right;
     };
@@ -530,6 +575,9 @@ ALWAYS_INLINE JSValue jsMul(JSGlobalObject* globalObject, JSValue v1, JSValue v2
 
 ALWAYS_INLINE JSValue jsDiv(JSGlobalObject* globalObject, JSValue v1, JSValue v2)
 {
+    if (JSValue result; tryOverloadedOperator(globalObject, Python::JSOperator::Div, v1, v2, result)) [[unlikely]]
+        return result;
+
     auto doubleOp = [] (double left, double right) -> double {
         return left / right;
     };
@@ -543,6 +591,9 @@ ALWAYS_INLINE JSValue jsDiv(JSGlobalObject* globalObject, JSValue v1, JSValue v2
 
 ALWAYS_INLINE JSValue jsRemainder(JSGlobalObject* globalObject, JSValue v1, JSValue v2)
 {
+    if (JSValue result; tryOverloadedOperator(globalObject, Python::JSOperator::Mod, v1, v2, result)) [[unlikely]]
+        return result;
+
     auto doubleOp = [] (double left, double right) -> double {
         return Math::fmodDouble(left, right);
     };
@@ -556,6 +607,9 @@ ALWAYS_INLINE JSValue jsRemainder(JSGlobalObject* globalObject, JSValue v1, JSVa
 
 ALWAYS_INLINE JSValue jsPow(JSGlobalObject* globalObject, JSValue v1, JSValue v2)
 {
+    if (JSValue result; tryOverloadedOperator(globalObject, Python::JSOperator::Pow, v1, v2, result)) [[unlikely]]
+        return result;
+
     auto doubleOp = [] (double left, double right) -> double {
         return operationMathPow(left, right);
     };
@@ -569,6 +623,9 @@ ALWAYS_INLINE JSValue jsPow(JSGlobalObject* globalObject, JSValue v1, JSValue v2
 
 ALWAYS_INLINE JSValue jsInc(JSGlobalObject* globalObject, JSValue v)
 {
+    if (JSValue result; tryOverloadedOperator(globalObject, Python::JSOperator::Add, v, jsNumber(1), result)) [[unlikely]]
+        return result;
+
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -584,6 +641,9 @@ ALWAYS_INLINE JSValue jsInc(JSGlobalObject* globalObject, JSValue v)
 
 ALWAYS_INLINE JSValue jsDec(JSGlobalObject* globalObject, JSValue v)
 {
+    if (JSValue result; tryOverloadedOperator(globalObject, Python::JSOperator::Sub, v, jsNumber(1), result)) [[unlikely]]
+        return result;
+
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -599,6 +659,9 @@ ALWAYS_INLINE JSValue jsDec(JSGlobalObject* globalObject, JSValue v)
 
 ALWAYS_INLINE JSValue jsBitwiseNot(JSGlobalObject* globalObject, JSValue v)
 {
+    if (JSValue result; tryOverloadedOperator(globalObject, Python::JSOperator::BitNot, v, result)) [[unlikely]]
+        return result;
+
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -642,12 +705,18 @@ ALWAYS_INLINE JSValue shift(JSGlobalObject* globalObject, JSValue v1, JSValue v2
 
 ALWAYS_INLINE JSValue jsLShift(JSGlobalObject* globalObject, JSValue v1, JSValue v2)
 {
+    if (JSValue result; tryOverloadedOperator(globalObject, Python::JSOperator::LShift, v1, v2, result)) [[unlikely]]
+        return result;
+
     constexpr bool isLeft = true;
     return shift<isLeft>(globalObject, v1, v2);
 }
 
 ALWAYS_INLINE JSValue jsRShift(JSGlobalObject* globalObject, JSValue v1, JSValue v2)
 {
+    if (JSValue result; tryOverloadedOperator(globalObject, Python::JSOperator::RShift, v1, v2, result)) [[unlikely]]
+        return result;
+
     constexpr bool isLeft = false;
     return shift<isLeft>(globalObject, v1, v2);
 }
@@ -692,6 +761,9 @@ ALWAYS_INLINE JSValue bitwiseBinaryOp(JSGlobalObject* globalObject, JSValue v1, 
 
 ALWAYS_INLINE JSValue jsBitwiseAnd(JSGlobalObject* globalObject, JSValue v1, JSValue v2)
 {
+    if (JSValue result; tryOverloadedOperator(globalObject, Python::JSOperator::BitAnd, v1, v2, result)) [[unlikely]]
+        return result;
+
     auto int32Op = [] (int32_t left, int32_t right) -> int32_t {
         return left & right;
     };
@@ -705,6 +777,9 @@ ALWAYS_INLINE JSValue jsBitwiseAnd(JSGlobalObject* globalObject, JSValue v1, JSV
 
 ALWAYS_INLINE JSValue jsBitwiseOr(JSGlobalObject* globalObject, JSValue v1, JSValue v2)
 {
+    if (JSValue result; tryOverloadedOperator(globalObject, Python::JSOperator::BitOr, v1, v2, result)) [[unlikely]]
+        return result;
+
     auto int32Op = [] (int32_t left, int32_t right) -> int32_t {
         return left | right;
     };
@@ -718,6 +793,9 @@ ALWAYS_INLINE JSValue jsBitwiseOr(JSGlobalObject* globalObject, JSValue v1, JSVa
 
 ALWAYS_INLINE JSValue jsBitwiseXor(JSGlobalObject* globalObject, JSValue v1, JSValue v2)
 {
+    if (JSValue result; tryOverloadedOperator(globalObject, Python::JSOperator::BitXor, v1, v2, result)) [[unlikely]]
+        return result;
+
     auto int32Op = [] (int32_t left, int32_t right) -> int32_t {
         return left ^ right;
     };

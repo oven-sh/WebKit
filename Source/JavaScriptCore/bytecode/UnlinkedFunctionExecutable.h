@@ -37,6 +37,7 @@
 #include "JSCast.h"
 #include "ParserModes.h"
 #include "ParserTokens.h"
+#include "PyCodeInfo.h"
 #include "RegExp.h"
 #include "SourceCode.h"
 #include "VariableEnvironment.h"
@@ -82,6 +83,17 @@ public:
         instance->finishCreation(vm);
         return instance;
     }
+
+    // A function compiled from Python. Its code is generated along with the code around it, and stays.
+    JS_EXPORT_PRIVATE static UnlinkedFunctionExecutable* createForPython(VM&, const SourceCode& parentSource, const SourceCode&, SourceParseMode, Ref<Python::CodeInfo>&&, unsigned parameterCount, UnlinkedFunctionCodeBlock*);
+    Python::CodeInfo* pythonCodeInfo() const
+    {
+        if (!m_isPython)
+            return nullptr;
+        materializeDeferredMembersIfNeeded();
+        return m_members.live().rareData->m_pythonCodeInfo.get();
+    }
+    JS_EXPORT_PRIVATE bool pythonCodeHasExceptionHandlers();
 
     ~UnlinkedFunctionExecutable();
 
@@ -335,12 +347,13 @@ public:
         // Only while generating with OptimizeBytecode::Yes and only until this executable's code is generated: the
         // enclosing scopes at the creation site. Never encoded into a bytecode cache.
         RefPtr<DeclaredNamesLink> m_parentDeclaredNames;
+        RefPtr<Python::CodeInfo> m_pythonCodeInfo;
 
         bool isEmpty() const
         {
             return m_classSource.isNull() && m_sourceURLDirective.isNull() && m_sourceMappingURLDirective.isNull()
                 && m_generatorOrAsyncWrapperFunctionParameterNames.isEmpty() && m_classElementDefinitions.isEmpty()
-                && m_parentPrivateNameEnvironment.isEmpty() && !m_parentDeclaredNames;
+                && m_parentPrivateNameEnvironment.isEmpty() && !m_parentDeclaredNames && !m_pythonCodeInfo;
         }
     };
 
@@ -377,7 +390,7 @@ private:
     {
         // Currently, bytecode cache assumes that the tree of UnlinkedFunctionExecutable and UnlinkedCodeBlock will not be destroyed while the parent is live.
         // Bytecode cache uses this asumption to avoid duplicate materialization by bookkeeping the heap cells in the offste-to-pointer map.
-        return VM::useUnlinkedCodeBlockJettisoning() && !m_isGeneratedFromCache;
+        return VM::useUnlinkedCodeBlockJettisoning() && !m_isGeneratedFromCache && !m_isPython;
     }
 
     unsigned m_hasCapturedVariables : 1;
@@ -414,6 +427,7 @@ private:
     bool m_nameIsDeferred { false }; // m_ecmaName is still in the cache record; implies m_membersAreDeferred
     bool m_membersAreDeferred { false }; // TDZ variables + rare data are still in the cache record; the m_deferredMembers* union members are live
     bool m_scalarsAreDeferred { false }; // the record's cold tail was not read yet (those two members are 0); implies m_membersAreDeferred (that state holds the record)
+    bool m_isPython { false };
 
     union {
         WriteBarrier<UnlinkedFunctionCodeBlock> m_unlinkedCodeBlockForCall;

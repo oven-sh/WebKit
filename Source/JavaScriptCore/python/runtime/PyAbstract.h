@@ -1,0 +1,228 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#pragma once
+
+#include "PyBytecode.h"
+#include "PyNative.h"
+#include "PyRuntime.h"
+#include "PyType.h"
+
+namespace JSC {
+namespace Python {
+
+// What can be done with any object. Whatever runs Python code may throw: a JSValue that comes back empty says so, unless
+// the comment says what else it may mean; after anything else, ask the VM.
+
+inline PyType* typeOf(JSGlobalObject* globalObject, JSValue value) { return runtime(globalObject).typeOf(value); }
+
+// ---- Attributes ----
+
+JSValue getAttr(JSGlobalObject*, JSValue object, JSString* name);
+// Empty, with no exception, if there is no such attribute.
+JSValue getAttrIfPresent(JSGlobalObject*, JSValue object, JSString* name);
+void setAttr(JSGlobalObject*, JSValue object, JSString* name, JSValue value);
+void delAttr(JSGlobalObject*, JSValue object, JSString* name);
+bool hasAttr(JSGlobalObject*, JSValue object, JSString* name);
+
+// object.__getattribute__, object.__setattr__ (an empty value deletes).
+// With `suppress`, a missing attribute is an empty value and no exception.
+JSValue genericGetAttr(JSGlobalObject*, JSValue object, JSString* name, bool suppress = false);
+// `key`: what goes in the __dict__, if that is not the name: an instance of a class derived from str.
+void genericSetAttr(JSGlobalObject*, JSValue object, JSString* name, JSValue value, JSValue key = { });
+
+// For object.name(...): the function and, in `self`, what to pass it first; or the attribute, and an empty `self`.
+JSValue getMethod(JSGlobalObject*, JSValue object, JSString* name, JSValue& self);
+
+// The __dict__ of the object. Null: it has none, or, unless `create`, has had no use for one yet.
+PyDict* instanceDict(JSGlobalObject*, JSValue object, bool create);
+// What op_py_get_attr and op_py_get_method remember of the last attribute they got (their metadata has these fields), so as to
+// get it again without a lookup from an object that is alike. The code that does so is in LowLevelInterpreter64.asm.
+struct AttributeCache {
+    // `offset`, if it is not that of a property of the object, which holds the attribute.
+    static constexpr int32_t classValue = -1; // `payload` is the attribute. In a call, it is a function that takes the object as its first argument.
+    static constexpr int32_t unboundClassValue = -2; // op_py_get_method only: `payload` is the attribute.
+    static constexpr int32_t moduleEntry = -3; // The attribute is the value of entry `typeVersion` of the dict of the module, while PyDict::watchedVersion() of that is `payload`.
+
+    uint64_t payload { 0 };
+    // The object is alike if it has this Structure and, unless it is a module, its type has this version...
+    StructureID structureID;
+    uint32_t typeVersion { 0 };
+    int32_t offset { 0 };
+    // ... or, if this is not 0, if it has this JSType: a str, a list. Then `payload` is as for classValue.
+    uint32_t jsType { 0 };
+};
+// False: there is nothing to remember. The object has the attribute.
+bool describeAttribute(JSGlobalObject*, JSValue object, JSString* name, bool forCall, AttributeCache&);
+
+// The same for op_py_set_attr, which has just set the attribute of an object that had the Structure.
+struct SetAttributeCache {
+    StructureID oldStructureID;
+    StructureID newStructureID; // Null: the object had the attribute already.
+    uint32_t typeVersion { 0 };
+    int32_t offset { 0 };
+};
+bool describeSetAttribute(JSGlobalObject*, JSValue object, JSString* name, Structure* oldStructure, SetAttributeCache&);
+
+// What object.__dict__[name] is, without asking for the dict, which costs an instance of a class its layout: see PyInstance.
+// Empty: there is no such item, or no dict.
+JSValue instanceAttribute(JSGlobalObject*, JSValue object, JSString* name);
+bool setInstanceDict(JSGlobalObject*, JSValue object, PyDict*);
+
+// descriptor.__get__(object, type), if it has one. `object` is empty for an access through the type.
+JSValue bindDescriptor(JSGlobalObject*, JSValue descriptor, JSValue object, PyType*);
+
+// ---- Special methods: looked up on the type, never on the instance ----
+
+// Bound to the object. Empty, with no exception, if the type has none.
+JSValue lookupSpecial(JSGlobalObject*, JSValue object, Special);
+// `method` is what type(self).lookup() found.
+JSValue callSpecial(JSGlobalObject*, JSValue method, JSValue self, const CallArgs&);
+inline JSValue callSpecial(JSGlobalObject* globalObject, JSValue method, JSValue self) { return callSpecial(globalObject, method, self, CallArgs()); }
+inline JSValue callSpecial(JSGlobalObject* globalObject, JSValue method, JSValue self, JSValue argument) { return callSpecial(globalObject, method, self, CallArgs(&argument, 1)); }
+inline JSValue callSpecial(JSGlobalObject* globalObject, JSValue method, JSValue self, JSValue first, JSValue second)
+{
+    JSValue arguments[] = { first, second };
+    return callSpecial(globalObject, method, self, CallArgs(arguments, 2));
+}
+
+// ---- Calls ----
+
+JSValue call(JSGlobalObject*, JSValue callable, const CallArgs&);
+inline JSValue call(JSGlobalObject* globalObject, JSValue callable) { return call(globalObject, callable, CallArgs()); }
+template<typename... Arguments>
+requires(sizeof...(Arguments) > 0 && (std::is_convertible_v<Arguments, JSValue> && ...))
+JSValue call(JSGlobalObject* globalObject, JSValue callable, Arguments... arguments)
+{
+    JSValue values[] = { JSValue(arguments)... };
+    return call(globalObject, callable, CallArgs(values, sizeof...(Arguments)));
+}
+// callable(*args, **kwargs). `kwargs` may be null.
+JSValue callWithTupleAndDict(JSGlobalObject*, JSValue callable, PyTuple* args, PyDict* kwargs);
+template<typename... Arguments>
+JSValue callMethod(JSGlobalObject* globalObject, JSValue object, JSString* name, Arguments... arguments)
+{
+    JSValue values[] = { JSValue(), JSValue(arguments)... };
+    JSValue method = getMethod(globalObject, object, name, values[0]);
+    if (!method)
+        return { };
+    if (values[0])
+        return call(globalObject, method, CallArgs(values, sizeof...(Arguments) + 1));
+    return call(globalObject, method, CallArgs(values + 1, sizeof...(Arguments)));
+}
+bool isCallable(JSGlobalObject*, JSValue);
+
+// ---- Text ----
+
+JSString* repr(JSGlobalObject*, JSValue);
+// What __repr__ or __str__ returned, which may be an instance of a class derived from str.
+JSValue reprObject(JSGlobalObject*, JSValue);
+JSValue strObject(JSGlobalObject*, JSValue);
+JSString* str(JSGlobalObject*, JSValue);
+JSString* ascii(JSGlobalObject*, JSValue);
+JSString* format(JSGlobalObject*, JSValue, JSString* spec); // A null spec is an empty one.
+// For messages: the text, or "<?>" and no exception if that throws... never throws.
+String reprForMessage(JSGlobalObject*, JSValue);
+
+// ---- Comparison ----
+
+// `a is b`
+bool isIdentical(JSValue, JSValue);
+int64_t hash(JSGlobalObject*, JSValue); // -1: an exception.
+// The same, for a key: "cannot use 'list' as a dict key (unhashable type: 'list')". `what`: "a dict key".
+int64_t hashForContainer(JSGlobalObject*, JSValue, ASCIILiteral what);
+bool isTrue(JSGlobalObject*, JSValue);
+// One of Eq, NotEq, Lt, LtE, Gt, GtE.
+JSValue richCompare(JSGlobalObject*, JSValue, JSValue, CompareOperator);
+// The same as a bool; an object is taken to equal itself.
+bool richCompareBool(JSGlobalObject*, JSValue, JSValue, CompareOperator);
+inline bool isEqual(JSGlobalObject* globalObject, JSValue a, JSValue b) { return richCompareBool(globalObject, a, b, CompareOperator::Eq); }
+// Any of the operators.
+JSValue compare(JSGlobalObject*, JSValue, JSValue, CompareOperator);
+
+// ---- Containers ----
+
+int64_t length(JSGlobalObject*, JSValue); // -1: an exception.
+int64_t lengthHint(JSGlobalObject*, JSValue, int64_t defaultValue); // -1: an exception.
+JSValue getItem(JSGlobalObject*, JSValue object, JSValue key);
+void setItem(JSGlobalObject*, JSValue object, JSValue key, JSValue value);
+void delItem(JSGlobalObject*, JSValue object, JSValue key);
+bool contains(JSGlobalObject*, JSValue container, JSValue item);
+
+JSValue getIter(JSGlobalObject*, JSValue);
+// Empty, with no exception, when there are no more.
+JSValue iterNext(JSGlobalObject*, JSValue iterator);
+bool isIterator(JSGlobalObject*, JSValue);
+
+// Calls the function with each item until it returns false. False: it did, or an exception.
+template<typename Function>
+bool forEach(JSGlobalObject*, JSValue iterable, const Function&);
+
+// ---- Numbers ----
+
+JSValue binaryOperation(JSGlobalObject*, BinaryOperator, JSValue, JSValue);
+JSValue unaryOperation(JSGlobalObject*, UnaryOperator, JSValue);
+JSValue power(JSGlobalObject*, JSValue base, JSValue exponent, JSValue modulus);
+JSValue divmod(JSGlobalObject*, JSValue, JSValue);
+JSValue absolute(JSGlobalObject*, JSValue);
+
+// operator.index(): an exact int.
+JSValue toIndex(JSGlobalObject*, JSValue);
+bool hasIndex(JSGlobalObject*, JSValue);
+// The same as an int64_t. What does not fit throws an exception of the given type; with none, it is clipped.
+int64_t toSsize(JSGlobalObject*, JSValue, PyType* overflowError);
+// As toDouble(), but an instance of a class derived from float is asked through its __float__, as float(value) asks it.
+double toDoubleAsFloatDoes(JSGlobalObject*, JSValue);
+// For an argument that must be an int that fits: OverflowError otherwise.
+int64_t toInt64(JSGlobalObject*, JSValue);
+int toCInt(JSGlobalObject*, JSValue);
+// float(): for an argument that must be a real number.
+double toDouble(JSGlobalObject*, JSValue);
+// int(): through __int__, __index__ or __trunc__.
+JSValue toInt(JSGlobalObject*, JSValue);
+
+// ---- Types ----
+
+bool isInstance(JSGlobalObject*, JSValue object, JSValue classOrTuple);
+bool isSubclass(JSGlobalObject*, JSValue derived, JSValue classOrTuple);
+// Without __instancecheck__.
+inline bool isInstanceOf(JSGlobalObject* globalObject, JSValue object, PyType* type) { return typeOf(globalObject, object)->isSubtypeOf(type); }
+
+// ---- Recursion in repr() ----
+
+// True: the object is already being shown further up, and the caller shows "..." in its place.
+class ReprGuard {
+public:
+    ReprGuard(JSGlobalObject*, JSValue);
+    ~ReprGuard();
+    bool isRecursive() const { return m_isRecursive; }
+
+private:
+    JSGlobalObject* m_globalObject;
+    JSCell* m_cell;
+    bool m_isRecursive;
+};
+
+template<typename Function>
+bool forEach(JSGlobalObject* globalObject, JSValue iterable, const Function& function)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue iterator = getIter(globalObject, iterable);
+    RETURN_IF_EXCEPTION(scope, false);
+    while (true) {
+        JSValue item = iterNext(globalObject, iterator);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!item)
+            return true;
+        bool goOn = function(item);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!goOn)
+            return false;
+    }
+}
+
+} // namespace Python
+} // namespace JSC

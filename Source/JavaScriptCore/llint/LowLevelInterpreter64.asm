@@ -877,7 +877,7 @@ _llint_op_enter:
     storeq t0, [cfr, t1, 8]
 
 .opEnterDispatch:
-    checkTraps(macro()
+    checkTraps(VMTrapsAsyncEvents, macro()
         dispatchOp(narrow, op_enter)
     end)
 
@@ -2696,6 +2696,1114 @@ llintOp(op_ret, OpRet, macro (size, get, dispatch)
     loadConstantOrVariable(size, t2, r0)
     doReturn()
 end)
+
+llintOp(op_py_ret, OpPyRet, macro (size, get, dispatch)
+    loadp CodeBlock[cfr], t1
+    loadp CodeBlock::m_globalObject[t1], t1
+    loadp JSGlobalObject::m_pythonRuntime[t1], t1
+    loadi Python::Runtime::frameDepth[t1], t2
+    subi 1, t2
+    storei t2, Python::Runtime::frameDepth[t1]
+    # Python::frameObjectRegister()
+    loadq -((CalleeSaveSpaceAsVirtualRegisters + 2) * SlotSize)[cfr], t2
+    btqz t2, notCellMask, .slow
+    get(m_value, t2)
+    loadConstantOrVariable(size, t2, r0)
+    btqnz r0, notCellMask, .return
+    loadb JSCell::m_type[r0], t2
+    bbeq t2, PyFloatType, .slow
+    bbneq t2, PyGeneratorType, .return
+.slow:
+    storePC()
+    prepareStateForCCall()
+    move cfr, a0
+    move PC, a1
+    cCall2(_llint_slow_path_py_ret)
+.return:
+    doReturn()
+end)
+
+# ---- Python ----
+#
+# What the instructions do is in python/runtime/PySlowPaths.cpp. Here are the cases that are common and short; for any other,
+# and whenever something has to be allocated or raised, the slow path does the whole instruction.
+#
+# Numbers (python/runtime/PyNumbers.h): a number that is whole, not -0.0, and below 2^53 in magnitude is an int, however it is
+# encoded. Any other is a float. A float with the value of such an int is an object, and so is a NaN that Python made: no
+# instruction here may store those as numbers. The booleans are not numbers here.
+
+if C_LOOP
+
+slowPathOp(py_bind_args)
+slowPathOp(py_load_cell)
+slowPathOp(py_store_cell)
+slowPathOp(py_load_global)
+slowPathOp(py_store_global)
+slowPathOp(py_get_attr)
+slowPathOp(py_get_method)
+slowPathOp(py_set_attr)
+slowPathOp(py_finish_construct)
+slowPathOp(py_get_item)
+slowPathOp(py_set_item)
+slowPathOp(py_binary)
+slowPathOp(py_add)
+slowPathOp(py_sub)
+slowPathOp(py_mul)
+slowPathOp(py_div)
+slowPathOp(py_floor_div)
+slowPathOp(py_mod)
+slowPathOp(py_unary)
+slowPathOp(py_eq)
+slowPathOp(py_ne)
+slowPathOp(py_lt)
+slowPathOp(py_le)
+slowPathOp(py_gt)
+slowPathOp(py_ge)
+slowPathOp(py_compare)
+slowPathOp(py_unpack)
+slowPathOp(py_runtime)
+slowPathJumpOp(py_jtrue)
+slowPathJumpOp(py_jfalse)
+slowPathJumpOp(py_jeq)
+slowPathJumpOp(py_jne)
+slowPathJumpOp(py_jlt)
+slowPathJumpOp(py_jle)
+slowPathJumpOp(py_jgt)
+slowPathJumpOp(py_jge)
+slowPathJumpOp(py_jneq)
+slowPathJumpOp(py_jnne)
+slowPathJumpOp(py_jnlt)
+slowPathJumpOp(py_jnle)
+slowPathJumpOp(py_jngt)
+slowPathJumpOp(py_jnge)
+slowPathJumpOp(py_for_iter)
+slowPathOp(py_instrumented)
+
+else
+
+macro loadPythonRuntime(dst)
+    loadp CodeBlock[cfr], dst
+    loadp CodeBlock::m_globalObject[dst], dst
+    loadp JSGlobalObject::m_pythonRuntime[dst], dst
+end
+
+# After `value` has been stored in `owner`. As Heap::writeBarrier(): unlike writeBarrierOnCellWithReload, without a fence unless
+# the collector is running. Clobbers `value`, and every temporary if the barrier fires.
+macro pythonWriteBarrier(owner, value, scratch)
+    btqnz value, notCellMask, .done
+    btqz value, .done
+    loadp CodeBlock[cfr], scratch
+    loadp CodeBlock::m_vm[scratch], scratch
+    loadi (constexpr (VM::offsetOfHeapBarrierThreshold()))[scratch], scratch
+    loadb JSCell::m_cellState[owner], value
+    bia value, scratch, .done
+    push PB, PC
+    move owner, a1
+    move cfr, a0
+    cCall2Void(_llint_write_barrier_slow)
+    pop PC, PB
+.done:
+end
+
+llintOp(op_py_bind_args, OpPyBindArgs, macro (size, get, dispatch)
+    # Every argument is where its parameter is if there are as many as parameters and none was passed by name.
+    getu(size, OpPyBindArgs, m_simpleArgumentCountIncludingThis, t0)
+    loadi LowWordOffset + ArgumentCountIncludingThis[cfr], t1
+    bineq t0, t1, .slow
+    loadq ThisArgumentOffset[cfr], t2
+    btqnz t2, notCellMask, .noKeywordNames
+    bbeq JSCell::m_type[t2], PyKwNamesType, .slow
+.noKeywordNames:
+    # From JS, the last argument may be what kwargs() made, which is one of the objects of this type. (With no arguments, this
+    # looks at `this`.)
+    loadq ThisArgumentOffset - 8[cfr, t1, 8], t2
+    btqnz t2, notCellMask, .noKeywordMarker
+    btqz t2, .noKeywordMarker
+    bbeq JSCell::m_type[t2], PyObjectType, .slow
+.noKeywordMarker:
+    loadPythonRuntime(t3)
+    loadi Python::Runtime::frameDepth[t3], t0
+    addi 1, t0
+    bigt t0, Python::Runtime::recursionLimit[t3], .slow
+    loadp Python::Runtime::runtimeCall[t3], t2
+    btpz t2, .noRuntimeCall
+    btpz Python::Runtime::RuntimeCall::entryFrame[t2], .slow
+.noRuntimeCall:
+    loadp CodeBlock[cfr], t2
+    loadp CodeBlock::m_vm[t2], t2
+    btinz VM::m_threadContext + VMThreadContext::m_traps + VMTraps::m_trapBits[t2], constexpr VMTraps::NeedPythonCalls, .slow
+    storei t0, Python::Runtime::frameDepth[t3]
+    dispatch()
+
+.slow:
+    callSlowPath(_slow_path_py_bind_args)
+    dispatch()
+end)
+
+
+llintOpWithReturn(op_py_load_cell, OpPyLoadCell, macro (size, get, dispatch, return)
+    get(m_cell, t0)
+    loadq [cfr, t0, 8], t0
+    loadq (constexpr (Python::PyCell::offsetOfValue()))[t0], t0
+    btqz t0, .slow
+    return(t0)
+
+.slow:
+    callSlowPath(_slow_path_py_load_cell)
+    dispatch()
+end)
+
+
+llintOp(op_py_store_cell, OpPyStoreCell, macro (size, get, dispatch)
+    get(m_value, t0)
+    loadConstantOrVariable(size, t0, t1)
+    get(m_cell, t0)
+    loadq [cfr, t0, 8], t0
+    storeq t1, (constexpr (Python::PyCell::offsetOfValue()))[t0]
+    pythonWriteBarrier(t0, t1, t2)
+    dispatch()
+end)
+
+
+# See Python::PyDict::watchedVersion().
+llintOpWithMetadata(op_py_load_global, OpPyLoadGlobal, macro (size, get, dispatch, metadata, return)
+    metadata(t5, t0)
+    loadp Callee[cfr], t0
+    loadp (constexpr (Python::PyFunction::offsetOfGlobals()))[t0], t1
+    loadq OpPyLoadGlobal::Metadata::m_globalsVersion[t5], t2
+    bqneq t2, (constexpr (Python::PyDict::offsetOfWatchedVersion()))[t1], .slow
+    loadq OpPyLoadGlobal::Metadata::m_builtinsVersion[t5], t2
+    btqz t2, .found
+    loadp (constexpr (Python::PyFunction::offsetOfBuiltins()))[t0], t1
+    bqneq t2, (constexpr (Python::PyDict::offsetOfWatchedVersion()))[t1], .slow
+.found:
+    loadi OpPyLoadGlobal::Metadata::m_index[t5], t2
+    loadp (constexpr (Python::PyDict::offsetOfStorage()))[t1], t1
+    lshiftq 1, t2
+    loadq (constexpr (Python::PyDictStorage::offsetOfFirstValue()))[t1, t2, 8], t0
+    btqnz t0, notCellMask, .done
+    # It may stand for a module that is yet to be imported.
+    bbeq JSCell::m_type[t0], PyObjectType, .slow
+.done:
+    return(t0)
+
+.slow:
+    callSlowPath(_slow_path_py_load_global)
+    dispatch()
+end)
+
+
+llintOpWithMetadata(op_py_store_global, OpPyStoreGlobal, macro (size, get, dispatch, metadata, return)
+    metadata(t5, t0)
+    loadp Callee[cfr], t0
+    loadp (constexpr (Python::PyFunction::offsetOfGlobals()))[t0], t1
+    loadq OpPyStoreGlobal::Metadata::m_globalsVersion[t5], t2
+    bqneq t2, (constexpr (Python::PyDict::offsetOfWatchedVersion()))[t1], .slow
+    loadi OpPyStoreGlobal::Metadata::m_index[t5], t2
+    loadp (constexpr (Python::PyDict::offsetOfStorage()))[t1], t3
+    lshiftq 1, t2
+    get(m_value, t0)
+    loadConstantOrVariable(size, t0, t1)
+    storeq t1, (constexpr (Python::PyDictStorage::offsetOfFirstValue()))[t3, t2, 8]
+    pythonWriteBarrier(t3, t1, t2)
+    dispatch()
+
+.slow:
+    callSlowPath(_slow_path_py_store_global)
+    dispatch()
+end)
+
+
+# See Python::AttributeCache. The object is in t3, the metadata in t5, m_offset in t1.
+macro pyCheckTypeVersion(opcodeStruct, slow)
+    loadp (constexpr (Python::PyObject::offsetOfType()))[t3], t0
+    loadi (constexpr (Python::PyType::offsetOfVersion()))[t0], t0
+    bineq t0, %opcodeStruct%::Metadata::m_typeVersion[t5], slow
+end
+
+macro pyLoadCachedModuleEntry(opcodeStruct, slow)
+    loadp (constexpr (Python::PyModule::offsetOfDict()))[t3], t1
+    loadq %opcodeStruct%::Metadata::m_payload[t5], t2
+    bqneq t2, (constexpr (Python::PyDict::offsetOfWatchedVersion()))[t1], slow
+    loadi %opcodeStruct%::Metadata::m_typeVersion[t5], t2
+    loadp (constexpr (Python::PyDict::offsetOfStorage()))[t1], t1
+    lshiftq 1, t2
+    loadq (constexpr (Python::PyDictStorage::offsetOfFirstValue()))[t1, t2, 8], t0
+    btqnz t0, notCellMask, .loaded
+    # It may stand for a module that is yet to be imported.
+    bbeq JSCell::m_type[t0], PyObjectType, slow
+.loaded:
+end
+
+llintOpWithMetadata(op_py_get_attr, OpPyGetAttr, macro (size, get, dispatch, metadata, return)
+    get(m_base, t0)
+    loadConstantOrVariableCell(size, t0, t3, .slow)
+    metadata(t5, t0)
+    loadi OpPyGetAttr::Metadata::m_structureID[t5], t0
+    bineq t0, JSCell::m_structureID[t3], .slow
+    loadi OpPyGetAttr::Metadata::m_offset[t5], t1
+    bieq t1, constexpr Python::AttributeCache::moduleEntry, .module
+    pyCheckTypeVersion(OpPyGetAttr, .slow)
+    bilt t1, 0, .classValue
+    loadPropertyAtVariableOffset(t1, t3, t0)
+    return(t0)
+
+.classValue:
+    loadq OpPyGetAttr::Metadata::m_payload[t5], t0
+    return(t0)
+
+.module:
+    pyLoadCachedModuleEntry(OpPyGetAttr, .slow)
+    return(t0)
+
+.slow:
+    callSlowPath(_slow_path_py_get_attr)
+    dispatch()
+end)
+
+
+llintOpWithMetadata(op_py_get_method, OpPyGetMethod, macro (size, get, dispatch, metadata, return)
+    get(m_base, t0)
+    loadConstantOrVariableCell(size, t0, t3, .slow)
+    metadata(t5, t0)
+    loadi OpPyGetMethod::Metadata::m_structureID[t5], t0
+    bineq t0, JSCell::m_structureID[t3], .byJSType
+    loadi OpPyGetMethod::Metadata::m_offset[t5], t1
+    bieq t1, constexpr Python::AttributeCache::moduleEntry, .module
+    pyCheckTypeVersion(OpPyGetMethod, .slow)
+    bigteq t1, 0, .property
+    loadq OpPyGetMethod::Metadata::m_payload[t5], t0
+    bieq t1, constexpr Python::AttributeCache::unboundClassValue, .unbound
+.bound:
+    get(m_self, t1)
+    storeq t3, [cfr, t1, 8]
+    return(t0)
+
+.byJSType:
+    loadi OpPyGetMethod::Metadata::m_jsType[t5], t1
+    btiz t1, .slow
+    loadb JSCell::m_type[t3], t0
+    bineq t0, t1, .slow
+    loadq OpPyGetMethod::Metadata::m_payload[t5], t0
+    jmp .bound
+
+.module:
+    pyLoadCachedModuleEntry(OpPyGetMethod, .slow)
+    jmp .unbound
+
+.property:
+    loadPropertyAtVariableOffset(t1, t3, t0)
+.unbound:
+    get(m_self, t1)
+    storeq ValueEmpty, [cfr, t1, 8]
+    return(t0)
+
+.slow:
+    callSlowPath(_slow_path_py_get_method)
+    dispatch()
+end)
+
+
+llintOpWithMetadata(op_py_set_attr, OpPySetAttr, macro (size, get, dispatch, metadata, return)
+    get(m_base, t0)
+    loadConstantOrVariableCell(size, t0, t3, .slow)
+    metadata(t5, t0)
+    loadi OpPySetAttr::Metadata::m_oldStructureID[t5], t0
+    bineq t0, JSCell::m_structureID[t3], .slow
+    pyCheckTypeVersion(OpPySetAttr, .slow)
+    get(m_value, t0)
+    loadConstantOrVariable(size, t0, t2)
+    loadi OpPySetAttr::Metadata::m_offset[t5], t1
+    move t3, t0
+    storePropertyAtVariableOffset(t1, t0, t2)
+    loadi OpPySetAttr::Metadata::m_newStructureID[t5], t1
+    btiz t1, .stored
+    storei t1, JSCell::m_structureID[t3]
+    # That refers to a cell as well, whatever the value is.
+    move t3, t2
+.stored:
+    pythonWriteBarrier(t3, t2, t1)
+    dispatch()
+
+.slow:
+    callSlowPath(_slow_path_py_set_attr)
+    dispatch()
+end)
+
+
+llintOpWithReturn(op_py_finish_construct, OpPyFinishConstruct, macro (size, get, dispatch, return)
+    get(m_result, t0)
+    bqneq [cfr, t0, 8], ValueUndefined, .slow
+    get(m_self, t0)
+    loadq [cfr, t0, 8], t0
+    return(t0)
+
+.slow:
+    callSlowPath(_slow_path_py_finish_construct)
+    dispatch()
+end)
+
+
+macro pyTruthJumpOp(opcodeName, opcodeStruct, whenTrue, whenFalse)
+    llintOpWithJump(op_%opcodeName%, opcodeStruct, macro (size, get, jump, dispatch)
+        get(m_condition, t1)
+        loadConstantOrVariable(size, t1, t0)
+        btqnz t0, ~0xf, .notMisc
+        # False, True, None (undefined or null).
+        btqnz t0, 1, .true
+    .false:
+        whenFalse(jump, dispatch)
+
+    .notMisc:
+        bqb t0, numberTag, .notInt32
+        btiz t0, .false
+    .true:
+        whenTrue(jump, dispatch)
+
+    .notInt32:
+        btqnz t0, notCellMask, .slow
+        loadb JSCell::m_type[t0], t1
+        bbeq t1, StringType, .string
+        bbneq t1, ArrayType, .slow
+        loadp JSObjectWithButterfly::m_butterfly[t0], t1
+        btpz t1, .false
+        btiz -sizeof IndexingHeader + IndexingHeader::u.lengths.publicLength[t1], .false
+        jmp .true
+
+    .string:
+        loadp JSString::m_fiber[t0], t1
+        btpnz t1, isRopeInPointer, .slow
+        btiz StringImpl::m_length[t1], .false
+        jmp .true
+
+    .slow:
+        callSlowPath(_slow_path_%opcodeName%)
+        nextInstruction()
+    end)
+end
+
+pyTruthJumpOp(py_jtrue, OpPyJtrue,
+    macro (jump, dispatch) jump(m_targetLabel) end,
+    macro (jump, dispatch) dispatch() end)
+
+pyTruthJumpOp(py_jfalse, OpPyJfalse,
+    macro (jump, dispatch) dispatch() end,
+    macro (jump, dispatch) jump(m_targetLabel) end)
+
+
+# `bits` are those of a double that is whole, an infinity or a NaN. Branches unless it is an int other than 0.
+macro branchIfNotNonZeroPythonInt(bits, slow)
+    lshiftq 1, bits
+    btqz bits, slow
+    urshiftq 53, bits
+    bqaeq bits, 1023 + 53, slow
+end
+
+# + - *
+macro pyArithmeticOp(opcodeName, opcodeStruct, integerOperation, doubleOperation)
+    llintOp(op_%opcodeName%, opcodeStruct, macro (size, get, dispatch)
+        macro storeResult(value)
+            get(m_dst, t2)
+            storeq value, [cfr, t2, 8]
+            dispatch()
+        end
+
+        # If the result is not whole, one of the operands was not, so it is a float, and one that a number stands for.
+        macro operateOnDoubles(whole)
+            moved ft0, ft2
+            doubleOperation(ft1, ft2)
+            truncated ft2, ft3
+            bdequn ft2, ft3, whole
+            fd2q ft2, t0
+            subq numberTag, t0
+            storeResult(t0)
+        end
+
+        macro branchIfNotInt(value, bits)
+            truncated value, ft3
+            bdnequn value, ft3, .slow
+            branchIfNotNonZeroPythonInt(bits, .slow)
+        end
+
+        get(m_rhs, t0)
+        get(m_lhs, t2)
+        loadConstantOrVariable(size, t0, t1)
+        loadConstantOrVariable(size, t2, t0)
+        bqb t0, numberTag, .lhsNotInt32
+        bqb t1, numberTag, .rhsNotInt32
+        move t0, t3
+        integerOperation(t1, t3, .overflow)
+        orq numberTag, t3
+        storeResult(t3)
+
+    .overflow:
+        ci2ds t0, ft0
+        ci2ds t1, ft1
+        moved ft0, ft2
+        doubleOperation(ft1, ft2)
+        jmp .wholeOfInts
+
+    .lhsNotInt32:
+        btqz t0, numberTag, .slow
+        addq numberTag, t0
+        fq2d t0, ft0
+        bqb t1, numberTag, .neitherInt32
+        ci2ds t1, ft1
+        operateOnDoubles(.wholeIfLhsIsInt)
+
+    .neitherInt32:
+        btqz t1, numberTag, .slow
+        addq numberTag, t1
+        fq2d t1, ft1
+        operateOnDoubles(.wholeIfBothAreInts)
+
+    .rhsNotInt32:
+        btqz t1, numberTag, .slow
+        ci2ds t0, ft0
+        addq numberTag, t1
+        fq2d t1, ft1
+        operateOnDoubles(.wholeIfRhsIsInt)
+
+    # The result is whole, an infinity or a NaN. Of two ints it is an int, which is exact if it is small enough for a number.
+    .wholeIfBothAreInts:
+        branchIfNotInt(ft1, t1)
+    .wholeIfLhsIsInt:
+        branchIfNotInt(ft0, t0)
+        jmp .wholeOfInts
+    .wholeIfRhsIsInt:
+        branchIfNotInt(ft1, t1)
+    .wholeOfInts:
+        fd2q ft2, t0
+        move t0, t1
+        branchIfNotNonZeroPythonInt(t1, .slow)
+        subq numberTag, t0
+        storeResult(t0)
+
+    .slow:
+        callSlowPath(_slow_path_%opcodeName%)
+        dispatch()
+    end)
+end
+
+pyArithmeticOp(py_add, OpPyAdd,
+    macro (rhs, lhs, overflow) baddio rhs, lhs, overflow end,
+    macro (rhs, lhs) addd rhs, lhs end)
+
+pyArithmeticOp(py_sub, OpPySub,
+    macro (rhs, lhs, overflow) bsubio rhs, lhs, overflow end,
+    macro (rhs, lhs) subd rhs, lhs end)
+
+pyArithmeticOp(py_mul, OpPyMul,
+    macro (rhs, lhs, overflow) bmulio rhs, lhs, overflow end,
+    macro (rhs, lhs) muld rhs, lhs end)
+
+
+# The quotient is a float whatever the operands are. A division by zero gives an infinity or a NaN.
+llintOpWithReturn(op_py_div, OpPyDiv, macro (size, get, dispatch, return)
+    get(m_rhs, t0)
+    get(m_lhs, t2)
+    loadConstantOrVariable(size, t0, t1)
+    loadConstantOrVariable(size, t2, t0)
+    bqb t0, numberTag, .lhsNotInt32
+    ci2ds t0, ft0
+    jmp .lhsReady
+.lhsNotInt32:
+    btqz t0, numberTag, .slow
+    addq numberTag, t0
+    fq2d t0, ft0
+.lhsReady:
+    bqb t1, numberTag, .rhsNotInt32
+    ci2ds t1, ft1
+    jmp .rhsReady
+.rhsNotInt32:
+    btqz t1, numberTag, .slow
+    addq numberTag, t1
+    fq2d t1, ft1
+.rhsReady:
+    divd ft1, ft0
+    truncated ft0, ft3
+    bdequn ft0, ft3, .slow
+    fd2q ft0, t0
+    subq numberTag, t0
+    return(t0)
+
+.slow:
+    callSlowPath(_slow_path_py_div)
+    dispatch()
+end)
+
+
+# // and % of int32s. The quotient of two int32s as doubles is never rounded up to a whole number.
+macro pyFloorDivisionOp(opcodeName, opcodeStruct, finish)
+    llintOpWithReturn(op_%opcodeName%, opcodeStruct, macro (size, get, dispatch, return)
+        get(m_rhs, t0)
+        get(m_lhs, t2)
+        loadConstantOrVariableInt32(size, t0, t1, .slow)
+        loadConstantOrVariableInt32(size, t2, t0, .slow)
+        btiz t1, .slow
+        bieq t1, -1, .slow
+        ci2ds t0, ft0
+        ci2ds t1, ft1
+        divd ft1, ft0
+        floord ft0, ft0
+        truncated2is ft0, t2
+        finish(t0, t1, t2)
+        orq numberTag, t2
+        return(t2)
+
+    .slow:
+        callSlowPath(_slow_path_%opcodeName%)
+        dispatch()
+    end)
+end
+
+pyFloorDivisionOp(py_floor_div, OpPyFloorDiv,
+    macro (lhs, rhs, quotient) end)
+
+pyFloorDivisionOp(py_mod, OpPyMod,
+    macro (lhs, rhs, quotient)
+        muli rhs, quotient
+        subi quotient, lhs
+        move lhs, quotient
+    end)
+
+
+# & | ^ << >> of int32s.
+llintOpWithReturn(op_py_binary, OpPyBinary, macro (size, get, dispatch, return)
+    get(m_rhs, t0)
+    get(m_lhs, t2)
+    loadConstantOrVariableInt32(size, t0, t3, .slow)
+    loadConstantOrVariableInt32(size, t2, t0, .slow)
+    getu(size, OpPyBinary, m_operation, t2)
+    bib t2, constexpr Python::BinaryOperator::FirstInPlace, .haveOperator
+    subi constexpr Python::BinaryOperator::FirstInPlace, t2
+.haveOperator:
+    bieq t2, constexpr Python::BinaryOperator::BitAnd, .bitAnd
+    bieq t2, constexpr Python::BinaryOperator::BitOr, .bitOr
+    bieq t2, constexpr Python::BinaryOperator::BitXor, .bitXor
+    bieq t2, constexpr Python::BinaryOperator::RShift, .rightShift
+    bineq t2, constexpr Python::BinaryOperator::LShift, .slow
+    bia t3, 31, .slow
+    sxi2q t0, t0
+    lshiftq t3, t0
+    sxi2q t0, t1
+    bqneq t0, t1, .slow
+    zxi2q t0, t0
+    orq numberTag, t0
+    return(t0)
+
+.rightShift:
+    bilt t3, 0, .slow
+    bibeq t3, 31, .shiftCountReady
+    move 31, t3
+.shiftCountReady:
+    rshifti t3, t0
+    orq numberTag, t0
+    return(t0)
+
+.bitAnd:
+    andq t3, t0
+    return(t0)
+
+.bitOr:
+    orq t3, t0
+    return(t0)
+
+.bitXor:
+    xorq t3, t0
+    orq numberTag, t0
+    return(t0)
+
+.slow:
+    callSlowPath(_slow_path_py_binary)
+    dispatch()
+end)
+
+
+llintOpWithReturn(op_py_unary, OpPyUnary, macro (size, get, dispatch, return)
+    get(m_operand, t0)
+    loadConstantOrVariable(size, t0, t1)
+    getu(size, OpPyUnary, m_operation, t2)
+    bieq t2, constexpr Python::UnaryOperator::Negative, .negative
+    bineq t2, constexpr Python::UnaryOperator::Not, .slow
+    btqnz t1, ~0xf, .notOfNumber
+    andq 1, t1
+    xorq ValueTrue, t1
+    return(t1)
+
+.notOfNumber:
+    bqb t1, numberTag, .slow
+    cieq t1, 0, t1
+    orq ValueFalse, t1
+    return(t1)
+
+.negative:
+    bqb t1, numberTag, .slow
+    # Neither 0 nor -2^31.
+    btiz t1, 0x7fffffff, .slow
+    negi t1
+    orq numberTag, t1
+    return(t1)
+
+.slow:
+    callSlowPath(_slow_path_py_unary)
+    dispatch()
+end)
+
+
+# Ints that are numbers are exact as doubles, so numbers compare as JS compares them.
+macro pyCompareOp(opcodeName, opcodeStruct, integerCompareAndSet, doubleCompareAndSet)
+    llintOpWithReturn(op_%opcodeName%, opcodeStruct, macro (size, get, dispatch, return)
+        get(m_lhs, t2)
+        get(m_rhs, t0)
+        loadConstantOrVariable(size, t0, t1)
+        loadConstantOrVariable(size, t2, t0)
+        bqb t0, numberTag, .lhsNotInt32
+        bqb t1, numberTag, .rhsNotInt32
+        integerCompareAndSet(t0, t1, t0)
+        orq ValueFalse, t0
+        return(t0)
+
+    .lhsNotInt32:
+        btqz t0, numberTag, .slow
+        bqb t1, numberTag, .neitherInt32
+        ci2ds t1, ft1
+        jmp .rhsReady
+
+    .neitherInt32:
+        btqz t1, numberTag, .slow
+        addq numberTag, t1
+        fq2d t1, ft1
+
+    .rhsReady:
+        addq numberTag, t0
+        fq2d t0, ft0
+        doubleCompareAndSet(ft0, ft1, t0)
+        orq ValueFalse, t0
+        return(t0)
+
+    .rhsNotInt32:
+        ci2ds t0, ft0
+        btqz t1, numberTag, .slow
+        addq numberTag, t1
+        fq2d t1, ft1
+        doubleCompareAndSet(ft0, ft1, t0)
+        orq ValueFalse, t0
+        return(t0)
+
+    .slow:
+        callSlowPath(_slow_path_%opcodeName%)
+        dispatch()
+    end)
+end
+
+pyCompareOp(py_eq, OpPyEq,
+    macro (left, right, result) cieq left, right, result end,
+    macro (left, right, result) cdeq left, right, result end)
+
+pyCompareOp(py_ne, OpPyNe,
+    macro (left, right, result) cineq left, right, result end,
+    macro (left, right, result) cdnequn left, right, result end)
+
+pyCompareOp(py_lt, OpPyLt,
+    macro (left, right, result) cilt left, right, result end,
+    macro (left, right, result) cdlt left, right, result end)
+
+pyCompareOp(py_le, OpPyLe,
+    macro (left, right, result) cilteq left, right, result end,
+    macro (left, right, result) cdlteq left, right, result end)
+
+pyCompareOp(py_gt, OpPyGt,
+    macro (left, right, result) cigt left, right, result end,
+    macro (left, right, result) cdgt left, right, result end)
+
+pyCompareOp(py_ge, OpPyGe,
+    macro (left, right, result) cigteq left, right, result end,
+    macro (left, right, result) cdgteq left, right, result end)
+
+
+# `is` and `is not`. Two encodings may be one number, undefined and null are one None, and two cells may be one str.
+llintOpWithReturn(op_py_compare, OpPyCompare, macro (size, get, dispatch, return)
+    getu(size, OpPyCompare, m_operation, t2)
+    subi constexpr Python::CompareOperator::Is, t2
+    bia t2, (constexpr Python::CompareOperator::IsNot) - (constexpr Python::CompareOperator::Is), .slow
+    get(m_lhs, t3)
+    get(m_rhs, t0)
+    loadConstantOrVariable(size, t0, t1)
+    loadConstantOrVariable(size, t3, t0)
+    bqeq t0, t1, .identical
+    btqnz t0, notCellMask, .lhsNotCell
+    btqnz t1, notCellMask, .different
+    bbneq JSCell::m_type[t0], StringType, .different
+    bbeq JSCell::m_type[t1], StringType, .slow
+    jmp .different
+.lhsNotCell:
+    btqnz t1, notCellMask, .slow
+.different:
+    orq ValueFalse, t2
+    return(t2)
+
+.identical:
+    xorq ValueTrue, t2
+    return(t2)
+
+.slow:
+    callSlowPath(_slow_path_py_compare)
+    dispatch()
+end)
+
+
+macro pyCompareJumpOp(opcodeName, opcodeStruct, integerCompare, doubleCompare)
+    llintOpWithJump(op_%opcodeName%, opcodeStruct, macro (size, get, jump, dispatch)
+        get(m_lhs, t2)
+        get(m_rhs, t3)
+        loadConstantOrVariable(size, t2, t0)
+        loadConstantOrVariable(size, t3, t1)
+        bqb t0, numberTag, .lhsNotInt32
+        bqb t1, numberTag, .rhsNotInt32
+        integerCompare(t0, t1, .jumpTarget)
+        dispatch()
+
+    .lhsNotInt32:
+        btqz t0, numberTag, .slow
+        bqb t1, numberTag, .neitherInt32
+        ci2ds t1, ft1
+        jmp .rhsReady
+
+    .neitherInt32:
+        btqz t1, numberTag, .slow
+        addq numberTag, t1
+        fq2d t1, ft1
+
+    .rhsReady:
+        addq numberTag, t0
+        fq2d t0, ft0
+        doubleCompare(ft0, ft1, .jumpTarget)
+        dispatch()
+
+    .rhsNotInt32:
+        ci2ds t0, ft0
+        btqz t1, numberTag, .slow
+        addq numberTag, t1
+        fq2d t1, ft1
+        doubleCompare(ft0, ft1, .jumpTarget)
+        dispatch()
+
+    .jumpTarget:
+        jump(m_targetLabel)
+
+    .slow:
+        callSlowPath(_slow_path_%opcodeName%)
+        nextInstruction()
+    end)
+end
+
+pyCompareJumpOp(py_jeq, OpPyJeq,
+    macro (left, right, target) bieq left, right, target end,
+    macro (left, right, target) bdeq left, right, target end)
+
+pyCompareJumpOp(py_jne, OpPyJne,
+    macro (left, right, target) bineq left, right, target end,
+    macro (left, right, target) bdnequn left, right, target end)
+
+pyCompareJumpOp(py_jlt, OpPyJlt,
+    macro (left, right, target) bilt left, right, target end,
+    macro (left, right, target) bdlt left, right, target end)
+
+pyCompareJumpOp(py_jle, OpPyJle,
+    macro (left, right, target) bilteq left, right, target end,
+    macro (left, right, target) bdlteq left, right, target end)
+
+pyCompareJumpOp(py_jgt, OpPyJgt,
+    macro (left, right, target) bigt left, right, target end,
+    macro (left, right, target) bdgt left, right, target end)
+
+pyCompareJumpOp(py_jge, OpPyJge,
+    macro (left, right, target) bigteq left, right, target end,
+    macro (left, right, target) bdgteq left, right, target end)
+
+# These jump if the comparison is false, as it is for all but != when an operand is a NaN.
+pyCompareJumpOp(py_jneq, OpPyJneq,
+    macro (left, right, target) bineq left, right, target end,
+    macro (left, right, target) bdnequn left, right, target end)
+
+pyCompareJumpOp(py_jnne, OpPyJnne,
+    macro (left, right, target) bieq left, right, target end,
+    macro (left, right, target) bdeq left, right, target end)
+
+pyCompareJumpOp(py_jnlt, OpPyJnlt,
+    macro (left, right, target) bigteq left, right, target end,
+    macro (left, right, target) bdgtequn left, right, target end)
+
+pyCompareJumpOp(py_jnle, OpPyJnle,
+    macro (left, right, target) bigt left, right, target end,
+    macro (left, right, target) bdgtun left, right, target end)
+
+pyCompareJumpOp(py_jngt, OpPyJngt,
+    macro (left, right, target) bilteq left, right, target end,
+    macro (left, right, target) bdltequn left, right, target end)
+
+pyCompareJumpOp(py_jnge, OpPyJnge,
+    macro (left, right, target) bilt left, right, target end,
+    macro (left, right, target) bdltun left, right, target end)
+
+
+# `index`, sign-extended, counts from the end if it is negative. Branches if it is out of range.
+macro normalizePythonIndex(index, length, outOfRange)
+    bqgteq index, 0, .notNegative
+    addq length, index
+.notNegative:
+    bqaeq index, length, outOfRange
+end
+
+# The item of a list, given its indexing type and its butterfly. A hole, which only JS can make, is for the slow path.
+macro loadListItem(indexingType, butterfly, index, result, slow)
+    andi IndexingShapeMask, indexingType
+    bieq indexingType, ContiguousShape, .values
+    bieq indexingType, Int32Shape, .values
+    bineq indexingType, DoubleShape, slow
+    loadd [butterfly, index, 8], ft0
+    bdnequn ft0, ft0, slow
+    fd2q ft0, result
+    subq numberTag, result
+    jmp .done
+.values:
+    loadq [butterfly, index, 8], result
+    btqz result, slow
+.done:
+end
+
+# list[int32], tuple[int32]
+llintOpWithReturn(op_py_get_item, OpPyGetItem, macro (size, get, dispatch, return)
+    get(m_base, t0)
+    loadConstantOrVariableCell(size, t0, t1, .slow)
+    get(m_key, t0)
+    loadConstantOrVariableInt32(size, t0, t2, .slow)
+    sxi2q t2, t2
+    loadb JSCell::m_type[t1], t0
+    bbeq t0, ArrayType, .list
+    bbneq t0, PyTupleType, .slow
+    # A class derived from tuple may have a __getitem__ of its own.
+    loadPythonRuntime(t0)
+    loadp (constexpr (Python::Runtime::offsetOfType(Python::TypeID::tupleType)))[t0], t0
+    bpneq t0, (constexpr (Python::PyObject::offsetOfType()))[t1], .slow
+    loadi (constexpr (Python::PyTuple::offsetOfLength()))[t1], t3
+    normalizePythonIndex(t2, t3, .slow)
+    loadq (constexpr (Python::PyTuple::offsetOfItems()))[t1, t2, 8], t0
+    return(t0)
+
+.list:
+    loadb JSCell::m_indexingTypeAndMisc[t1], t0
+    loadp JSObjectWithButterfly::m_butterfly[t1], t1
+    btpz t1, .slow
+    loadi -sizeof IndexingHeader + IndexingHeader::u.lengths.publicLength[t1], t3
+    normalizePythonIndex(t2, t3, .slow)
+    loadListItem(t0, t1, t2, t3, .slow)
+    return(t3)
+
+.slow:
+    callSlowPath(_slow_path_py_get_item)
+    dispatch()
+end)
+
+
+# list[int32] = value
+llintOp(op_py_set_item, OpPySetItem, macro (size, get, dispatch)
+    get(m_base, t0)
+    loadConstantOrVariableCell(size, t0, t1, .slow)
+    bbneq JSCell::m_type[t1], ArrayType, .slow
+    get(m_key, t0)
+    loadConstantOrVariableInt32(size, t0, t2, .slow)
+    sxi2q t2, t2
+    loadb JSCell::m_indexingTypeAndMisc[t1], t0
+    btinz t0, CopyOnWrite, .slow
+    loadp JSObjectWithButterfly::m_butterfly[t1], t5
+    btpz t5, .slow
+    loadi -sizeof IndexingHeader + IndexingHeader::u.lengths.publicLength[t5], t3
+    normalizePythonIndex(t2, t3, .slow)
+    get(m_value, t3)
+    loadConstantOrVariable(size, t3, t6)
+    andi IndexingShapeMask, t0
+    bieq t0, ContiguousShape, .contiguous
+    bieq t0, Int32Shape, .int32
+    bineq t0, DoubleShape, .slow
+    bqb t6, numberTag, .notInt32
+    ci2ds t6, ft0
+    jmp .storeDouble
+.notInt32:
+    btqz t6, numberTag, .slow
+    addq numberTag, t6
+    fq2d t6, ft0
+    bdnequn ft0, ft0, .slow
+.storeDouble:
+    stored ft0, [t5, t2, 8]
+    dispatch()
+
+.int32:
+    bqb t6, numberTag, .slow
+    storeq t6, [t5, t2, 8]
+    dispatch()
+
+.contiguous:
+    storeq t6, [t5, t2, 8]
+    pythonWriteBarrier(t1, t6, t2)
+    dispatch()
+
+.slow:
+    callSlowPath(_slow_path_py_set_item)
+    dispatch()
+end)
+
+
+# The iterators of range (while the numbers are int32s), list and tuple.
+llintOpWithJump(op_py_for_iter, OpPyForIter, macro (size, get, jump, dispatch)
+    macro storeItem(value)
+        get(m_dst, t2)
+        storeq value, [cfr, t2, 8]
+        dispatch()
+    end
+
+    get(m_iterator, t0)
+    loadq [cfr, t0, 8], t0
+    btqnz t0, notCellMask, .slow
+    loadPythonRuntime(t1)
+    loadi Python::Runtime::iteratorStructureID[t1], t1
+    bineq t1, JSCell::m_structureID[t0], .slow
+    loadq (constexpr (Python::PyIterator::offsetOfTarget()))[t0], t1
+    btqz t1, .exhausted
+    loadq (constexpr (Python::PyIterator::offsetOfPosition()))[t0], t2
+    loadb (constexpr (Python::PyIterator::offsetOfKind()))[t0], t3
+    bbeq t3, constexpr Python::PyIterator::Kind::Range, .range
+    bbeq t3, constexpr Python::PyIterator::Kind::List, .list
+    bbneq t3, constexpr Python::PyIterator::Kind::Tuple, .slow
+    loadi (constexpr (Python::PyTuple::offsetOfLength()))[t1], t3
+    bqaeq t2, t3, .slow
+    loadq (constexpr (Python::PyTuple::offsetOfItems()))[t1, t2, 8], t3
+    addq 1, t2
+    storeq t2, (constexpr (Python::PyIterator::offsetOfPosition()))[t0]
+    storeItem(t3)
+
+.list:
+    loadb JSCell::m_indexingTypeAndMisc[t1], t5
+    loadp JSObjectWithButterfly::m_butterfly[t1], t1
+    btpz t1, .slow
+    loadi -sizeof IndexingHeader + IndexingHeader::u.lengths.publicLength[t1], t3
+    bqaeq t2, t3, .slow
+    loadListItem(t5, t1, t2, t3, .slow)
+    addq 1, t2
+    storeq t2, (constexpr (Python::PyIterator::offsetOfPosition()))[t0]
+    storeItem(t3)
+
+.range:
+    loadq (constexpr (Python::PyIterator::offsetOfRemaining()))[t0], t1
+    bqlteq t1, 0, .exhausted
+    sxi2q t2, t3
+    bqneq t2, t3, .slow
+    subq 1, t1
+    storeq t1, (constexpr (Python::PyIterator::offsetOfRemaining()))[t0]
+    loadq (constexpr (Python::PyIterator::offsetOfStep()))[t0], t1
+    addq t2, t1
+    storeq t1, (constexpr (Python::PyIterator::offsetOfPosition()))[t0]
+    zxi2q t2, t2
+    orq numberTag, t2
+    move t2, t3
+    storeItem(t3)
+
+.exhausted:
+    jump(m_targetLabel)
+
+.slow:
+    callSlowPath(_slow_path_py_for_iter)
+    nextInstruction()
+end)
+
+
+# A tuple or a list of as many items as there are targets, none of them starred.
+llintOp(op_py_unpack, OpPyUnpack, macro (size, get, dispatch)
+    getu(size, OpPyUnpack, m_afterPlusOne, t0)
+    btinz t0, .slow
+    get(m_iterable, t0)
+    loadConstantOrVariableCell(size, t0, t1, .slow)
+    getu(size, OpPyUnpack, m_before, t2)
+    loadb JSCell::m_type[t1], t0
+    bbeq t0, PyTupleType, .tuple
+    bbneq t0, ArrayType, .slow
+    loadb JSCell::m_indexingTypeAndMisc[t1], t0
+    andi IndexingShapeMask, t0
+    bieq t0, ContiguousShape, .list
+    bineq t0, Int32Shape, .slow
+.list:
+    loadp JSObjectWithButterfly::m_butterfly[t1], t1
+    btpz t1, .slow
+    bineq t2, -sizeof IndexingHeader + IndexingHeader::u.lengths.publicLength[t1], .slow
+    jmp .copy
+
+.tuple:
+    loadPythonRuntime(t0)
+    loadp (constexpr (Python::Runtime::offsetOfType(Python::TypeID::tupleType)))[t0], t0
+    bpneq t0, (constexpr (Python::PyObject::offsetOfType()))[t1], .slow
+    bineq t2, (constexpr (Python::PyTuple::offsetOfLength()))[t1], .slow
+    addp (constexpr (Python::PyTuple::offsetOfItems())), t1
+
+.copy:
+    btiz t2, .done
+    get(m_argv, t3)
+    leap [cfr, t3, 8], t3
+.loop:
+    loadq [t1], t0
+    btqnz t0, .store
+    # A hole in a list.
+    move ValueUndefined, t0
+.store:
+    storeq t0, [t3]
+    addp 8, t1
+    subp 8, t3
+    subi 1, t2
+    btinz t2, .loop
+.done:
+    dispatch()
+
+.slow:
+    callSlowPath(_slow_path_py_unpack)
+    dispatch()
+end)
+
+
+# A function copies the cells of its closure into registers when it starts.
+llintOpWithReturn(op_py_runtime, OpPyRuntime, macro (size, get, dispatch, return)
+    getu(size, OpPyRuntime, m_function, t0)
+    bineq t0, constexpr Python::RuntimeFunction::LoadClosure, .slow
+    get(m_argv, t0)
+    loadi LowWordOffset[cfr, t0, 8], t1
+    loadp Callee[cfr], t0
+    loadp (constexpr (Python::PyFunction::offsetOfClosure()))[t0], t0
+    loadq (constexpr (Python::PyTuple::offsetOfItems()))[t0, t1, 8], t0
+    return(t0)
+
+.slow:
+    callSlowPath(_slow_path_py_runtime)
+    dispatch()
+end)
+
+
+# This has taken the place of an opcode: see python/runtime/PyMonitoring.h. The slow path tells whoever wants to know what is
+# about to happen, and returns that opcode, for the instruction to be run as if nothing had been, or 256: it has been dealt
+# with, and the PC is where to go on.
+llintOp(op_py_instrumented, OpPyInstrumented, macro (size, get, dispatch)
+    callSlowPath(_slow_path_py_instrumented)
+    move r1, t0
+    bpaeq t0, 256, .goOn
+    leap _os_script_config_storage, t1
+    size(
+        macro () jmp JSC::LLInt::OpcodeConfig::opcodeMap[t1, t0, PtrSize] end,
+        macro () jmp JSC::LLInt::OpcodeConfig::opcodeMapWide16[t1, t0, PtrSize] end,
+        macro () jmp JSC::LLInt::OpcodeConfig::opcodeMapWide32[t1, t0, PtrSize] end,
+        macro (gen) gen() end)
+.goOn:
+    nextInstruction()
+end)
+
+end # not C_LOOP
 
 
 llintOpWithReturn(op_to_primitive, OpToPrimitive, macro (size, get, dispatch, return)

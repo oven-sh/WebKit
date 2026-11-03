@@ -505,7 +505,15 @@ Expr* Parser::parseReplacementField(bool isTemplate, bool isRaw, bool inFormatSp
     }
 
     const Token firstToken = peek();
+    auto beforeExpression = checkpoint();
     Expr* value = parseAnnotatedRHS();
+    if (!value && m_errorIsGeneric && !m_errorIsFatal) {
+        // If it starts with an expression, the complaint is about what follows that.
+        rewind(beforeExpression);
+        SetForScope acceptsPrefix(m_acceptsPrefix, true);
+        SetForScope diagnosing(m_diagnosing, true);
+        value = parseAnnotatedRHS();
+    }
     if (!value) {
         if (m_errorIsGeneric && !m_errorIsFatal) {
             m_error = { };
@@ -688,6 +696,8 @@ Expr* Parser::parseInterpolatedString()
 
     Range range = rangeBetween(rangeOf(startToken), rangeOf(endToken));
     if (isTemplate) {
+        if (!checkVersion(14, "t-strings are"_s))
+            return nullptr;
         auto* result = make<TemplateStr>(range);
         result->values = m_arena.copy(values);
         return result;

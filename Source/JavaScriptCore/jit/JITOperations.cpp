@@ -5076,6 +5076,9 @@ JSC_DEFINE_JIT_OPERATION(operationArithNegate, EncodedJSValue, (JSGlobalObject* 
 
     JSValue operand = JSValue::decode(encodedOperand);
 
+    if (JSValue result; tryOverloadedOperator(globalObject, Python::JSOperator::Negate, operand, result)) [[unlikely]]
+        OPERATION_RETURN(scope, JSValue::encode(result));
+
     JSValue primValue = operand.toPrimitive(globalObject, PreferNumber);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
@@ -5099,6 +5102,12 @@ JSC_DEFINE_JIT_OPERATION(operationArithNegateProfiled, EncodedJSValue, (JSGlobal
 
     JSValue operand = JSValue::decode(encodedOperand);
     arithProfile->observeArg(operand);
+
+    if (JSValue result; tryOverloadedOperator(globalObject, Python::JSOperator::Negate, operand, result)) [[unlikely]] {
+        OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+        arithProfile->observeResult(result);
+        OPERATION_RETURN(scope, JSValue::encode(result));
+    }
 
     JSValue primValue = operand.toPrimitive(globalObject, PreferNumber);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
@@ -5136,6 +5145,12 @@ JSC_DEFINE_JIT_OPERATION(operationArithNegateProfiledOptimize, EncodedJSValue, (
     callFrame->codeBlock()->dumpMathICStats();
 #endif
     
+    if (JSValue result; tryOverloadedOperator(globalObject, Python::JSOperator::Negate, operand, result)) [[unlikely]] {
+        OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+        arithProfile->observeResult(result);
+        OPERATION_RETURN(scope, JSValue::encode(result));
+    }
+
     JSValue primValue = operand.toPrimitive(globalObject, PreferNumber);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
@@ -5170,6 +5185,9 @@ JSC_DEFINE_JIT_OPERATION(operationArithNegateOptimize, EncodedJSValue, (JSGlobal
 #if ENABLE(MATH_IC_STATS)
     callFrame->codeBlock()->dumpMathICStats();
 #endif
+
+    if (JSValue result; tryOverloadedOperator(globalObject, Python::JSOperator::Negate, operand, result)) [[unlikely]]
+        OPERATION_RETURN(scope, JSValue::encode(result));
 
     JSValue primValue = operand.toPrimitive(globalObject, PreferNumber);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());

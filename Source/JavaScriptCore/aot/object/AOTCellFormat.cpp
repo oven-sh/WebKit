@@ -52,7 +52,7 @@ static constexpr uint32_t classTokenLengthBits = (1u << 17) - 1;
 static_assert(ClassToken::firstNameSlot + std::numeric_limits<decltype(LayoutData::numberOfFields)>::max() <= classTokenLengthBits);
 static_assert(!canPassShapeTest(classTokenLengthBits) && !mayBeUpperHalfOfSlimClosureWord(classTokenLengthBits));
 
-static_assert(LastJSCObjectType - ObjectType + 1 == 69);
+static_assert(LastJSCObjectType - ObjectType + 1 == 88);
 static_assert(!hasButterflyField(WebAssemblyGCObjectType) && !hasButterflyField(CompiledObjectType) && !hasButterflyField(SlimClosureType));
 
 static constexpr WordAtShapeOffset wordAtShapeOffset(JSType type)

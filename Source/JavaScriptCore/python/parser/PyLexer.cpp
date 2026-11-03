@@ -192,6 +192,9 @@ bool SourceText::initialize(std::span<const uint8_t> input, OptionSet<Flag> flag
 
     m_bytes.clear();
     appendTranslatingNewlines(m_bytes, input);
+    // Before anything is decoded, as in CPython: in UTF-16 that newline is half a character.
+    if (flags.contains(Flag::EndWithNewline) && !m_bytes.isEmpty() && m_bytes.last() != '\n')
+        m_bytes.append('\n');
 
     if (!flags.contains(Flag::IgnoreCookie)) {
         bool hasBOM = m_bytes.size() >= 3 && m_bytes[0] == 0xEF && m_bytes[1] == 0xBB && m_bytes[2] == 0xBF;
@@ -328,9 +331,21 @@ static inline bool isHexDigit(int c) { return isDigit(c) || (c >= 'a' && c <= 'f
 bool Lexer::readLine()
 {
     ASSERT(m_cursor == m_lineEnd);
+    if (!m_tokenHasBegun && m_strings.isEmpty())
+        m_firstBufferedLine = m_line + 1;
     if (m_lineEnd == m_source.size()) {
-        m_status = Status::EndOfFile;
-        return false;
+        auto result = m_lineSource ? m_lineSource->readLine(m_source) : LineSource::Result::EndOfText;
+        if (result == LineSource::Result::Failed) {
+            m_error = { };
+            m_error.type = SyntaxErrorInfo::Type::HostException;
+            m_status = Status::Error;
+            return false;
+        }
+        if (result == LineSource::Result::EndOfText) {
+            m_status = Status::EndOfFile;
+            return false;
+        }
+        ASSERT(m_lineEnd < m_source.size());
     }
     auto* newline = static_cast<const uint8_t*>(memchr(m_source.data() + m_lineEnd, '\n', m_source.size() - m_lineEnd));
     m_lineStart = m_cursor;
@@ -1248,11 +1263,13 @@ void Lexer::lexCode(Token& token)
 
 nextLine:
     blankLine = false;
+    m_tokenHasBegun = false;
     if (m_atLineStart && !lexIndentation(token, blankLine))
         return;
 
     m_tokenStart = m_cursor;
     m_tokenStartColumn = static_cast<int>(m_cursor - m_lineStart);
+    m_tokenHasBegun = true;
 
     if (m_pendingIndents) {
         bool isDedent = m_pendingIndents < 0;
@@ -1268,12 +1285,14 @@ nextLine:
     }
 
 again:
+    m_tokenHasBegun = false;
     do {
         c = next();
     } while (c == ' ' || c == '\t' || c == '\014');
 
     m_tokenStart = c == endOfFile ? m_cursor : m_cursor - 1;
     m_tokenStartColumn = static_cast<int>(m_cursor - m_lineStart) - 1;
+    m_tokenHasBegun = true;
 
     if (c == '#') {
         do {
@@ -1303,8 +1322,9 @@ again:
                 int endColumn = static_cast<int>(m_cursor - m_lineStart);
                 int line = m_line;
                 if (isTypeIgnore && blankLine) {
-                    // Alone on its line: the line ending goes with it.
-                    next();
+                    // Alone on its line: the line ending goes with it, and is part of the tag.
+                    if (next() != endOfFile)
+                        ++textEnd;
                     m_atLineStart = true;
                 }
                 token.kind = isTypeIgnore ? TokenKind::TypeIgnore : TokenKind::TypeComment;
@@ -1378,7 +1398,21 @@ again:
             return;
         }
         finish(token, isASCII ? keywordOrName(m_source.subspan(m_tokenStart, m_cursor - m_tokenStart)) : TokenKind::Name);
-        token.identifier = makeIdentifier(m_tokenStart, m_cursor, isASCII);
+        if (!m_flags.contains(Flag::WithoutIdentifiers)) {
+            token.identifier = makeIdentifier(m_tokenStart, m_cursor, isASCII);
+            if (!isASCII) [[unlikely]] {
+                // Not the keyword, and not a name a variable can have.
+                for (auto constant : { "None"_s, "True"_s, "False"_s }) {
+                    if (token.identifier->string() != constant)
+                        continue;
+                    m_error = { };
+                    m_error.type = SyntaxErrorInfo::Type::ValueError;
+                    m_error.message = makeString("identifier field can't represent '"_s, constant, "' constant"_s);
+                    m_status = Status::Error;
+                    token.kind = TokenKind::ErrorToken;
+                }
+            }
+        }
         return;
     }
 
@@ -1557,6 +1591,7 @@ void Lexer::lexStringPart(Token& token, InterpolatedString& string)
     m_tokenStart = m_cursor;
     m_tokenStartLine = m_line;
     m_tokenStartColumn = static_cast<int>(m_cursor - m_lineStart);
+    m_tokenHasBegun = true;
 
     auto enterField = [&]() -> bool {
         if (++string.fieldDepth >= maxFieldNesting) {

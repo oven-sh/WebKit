@@ -271,8 +271,14 @@ bool PreciseAllocation::isEmpty()
     return !isMarked() && m_weakSet.isEmpty() && !isNewlyAllocated();
 }
 
-void PreciseAllocation::sweep()
+bool PreciseAllocation::sweep()
 {
+    JSC::Heap& heap = vm().heap;
+    if (!heap.mayRunEmbedderFinalizers() && ((m_hasValidCell && !isLive() && m_attributes.destruction != DoesNotNeedDestruction) || m_weakSet.hasDeadHandlesOfEmbedder())) [[unlikely]] {
+        heap.didPostponeEmbedderFinalizers();
+        return false;
+    }
+
     m_weakSet.sweep();
     
     if (m_hasValidCell && !isLive()) {
@@ -286,6 +292,7 @@ void PreciseAllocation::sweep()
         if (Options::useZombieMode()) [[unlikely]]
             scribble(cell(), m_cellSize);
     }
+    return true;
 }
 
 void PreciseAllocation::destroy()

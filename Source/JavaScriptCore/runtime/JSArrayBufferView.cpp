@@ -180,7 +180,7 @@ void JSArrayBufferView::finishCreation(VM& vm)
     case FastTypedArray:
         return;
     case OversizeTypedArray:
-        vm.heap.addFinalizer(this, finalize);
+        vm.heap.addFinalizerForAnyThread(this, finalize);
         return;
     case WastefulTypedArray:
     case ResizableNonSharedWastefulTypedArray:

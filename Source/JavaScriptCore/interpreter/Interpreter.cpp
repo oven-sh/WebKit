@@ -88,6 +88,8 @@
 #include "NativeCallee.h"
 #include "ProgramCodeBlock.h"
 #include "ProtoCallFrameInlines.h"
+#include "PyHooks.h"
+#include "PyRuntime.h"
 #include "Register.h"
 #include "RegisterAtOffsetList.h"
 #include "ScopedArguments.h"
@@ -1307,6 +1309,7 @@ public:
         , m_codeBlock(codeBlock)
         , m_handler(handler)
         , m_seenRemoteFunction(seenRemoteFunction)
+        , m_thrownValue(thrownValue)
 #if ENABLE(WEBASSEMBLY)
         , m_exception(exception)
     {
@@ -1329,7 +1332,6 @@ public:
     }
 #else
     {
-        UNUSED_PARAM(thrownValue);
     }
 #endif
 
@@ -1371,9 +1373,22 @@ public:
         m_handler.m_valid = false;
         if (m_codeBlock) {
             if (!m_isTermination) {
+                bool isPython = m_codeBlock->unlinkedCodeBlock()->isPython();
+                if (isPython) [[unlikely]]
+                    m_thrownValue = Python::addTracebackEntry(m_codeBlock->globalObject(), m_thrownValue, m_callFrame, visitor->bytecodeIndex());
                 m_handler = { findExceptionHandler(visitor, m_codeBlock, RequiredHandler::AnyHandler), m_codeBlock };
+                if (isPython) [[unlikely]]
+                    m_thrownValue = Python::exceptionStaysOrLeaves(m_codeBlock->globalObject(), m_thrownValue, m_callFrame, visitor->bytecodeIndex(), m_handler.m_valid);
                 if (m_handler.m_valid)
                     return IterationStatus::Done;
+            }
+            // See Python::Runtime::frameDepth.
+            if (m_codeBlock->unlinkedCodeBlock()->isPython()) [[unlikely]] {
+                Python::Runtime* runtime = m_codeBlock->globalObject()->pythonRuntime();
+                runtime->frameIsEnding(m_callFrame);
+                // op_py_bind_args counts a frame in. Before it comes op_enter, which polls for traps.
+                if (m_codeBlock->unlinkedCodeBlock()->parseMode() != SourceParseMode::GeneratorBodyMode && visitor->bytecodeIndex().offset())
+                    runtime->leaveFrame();
             }
         }
 
@@ -1434,6 +1449,7 @@ private:
     CodeBlock*& m_codeBlock;
     CatchInfo& m_handler;
     JSRemoteFunction*& m_seenRemoteFunction;
+    mutable JSValue m_thrownValue;
 
 #if ENABLE(WEBASSEMBLY)
     Exception* m_exception;

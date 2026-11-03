@@ -46,6 +46,7 @@
 #include "Nodes.h"
 #include "ParserError.h"
 #include "ProfileTypeBytecodeFlag.h"
+#include "PyBytecode.h"
 #include "RegisterID.h"
 #include "StaticPropertyAnalyzer.h"
 #include "SymbolTable.h"
@@ -64,6 +65,7 @@ namespace JSC {
     class JSCellButterfly;
     class Identifier;
     class ForInContext;
+    class PythonCodeNode;
     class UnlinkedEvalCodeBlock;
     class UnlinkedModuleProgramCodeBlock;
     class UnlinkedProgramCodeBlock;
@@ -372,8 +374,74 @@ namespace JSC {
         BytecodeGenerator(VM&, EvalNode*, UnlinkedEvalCodeBlock*, OptionSet<CodeGenerationMode>, const RefPtr<TDZEnvironmentLink>&, const FixedVector<Identifier>*, const PrivateNameEnvironment*, OptimizeBytecode, RefPtr<DeclaredNamesLink>&& parentDeclaredNames);
         BytecodeGenerator(VM&, ModuleProgramNode*, UnlinkedModuleProgramCodeBlock*, OptionSet<CodeGenerationMode>, const RefPtr<TDZEnvironmentLink>&, const FixedVector<Identifier>*, const PrivateNameEnvironment*, OptimizeBytecode, RefPtr<DeclaredNamesLink>&& parentDeclaredNames);
 
+        BytecodeGenerator(VM&, PythonCodeNode*, UnlinkedFunctionCodeBlock*);
+
         ~BytecodeGenerator();
-        
+
+        // ---- For Python (python/compiler) ----
+
+        static ParserError generatePython(VM&, PythonCodeNode*, UnlinkedFunctionCodeBlock*);
+        RegisterID* pythonParameter(unsigned index) { return &m_parameters[index + 1]; }
+        RegisterID* calleeRegister() { return &m_calleeRegister; }
+        RegisterID* pythonConstant(JSValue value) { return value ? addConstantValue(value) : addConstantEmptyValue(); }
+        RegisterID* pythonRegister(VirtualRegister reg) { return &registerFor(reg); }
+        // The index, among the locals, of the first variable the compiler declares.
+        int firstPythonVariable() const { return m_firstPythonVariable; }
+        unsigned addPythonFunction(UnlinkedFunctionExecutable* executable) { return m_codeBlock->addFunctionExpr(executable); }
+
+        void emitPyBindArgs(unsigned simpleArgumentCountIncludingThis);
+        RegisterID* emitPyLoadCell(RegisterID* dst, RegisterID* cell, RegisterID* name, Python::UnboundKind);
+        void emitPyStoreCell(RegisterID* cell, RegisterID* value);
+        RegisterID* emitPyLoadGlobal(RegisterID* dst, RegisterID* name);
+        void emitPyStoreGlobal(RegisterID* name, RegisterID* value);
+        RegisterID* emitPyLoadName(RegisterID* dst, RegisterID* locals, RegisterID* name);
+        void emitPyStoreName(RegisterID* locals, RegisterID* name, RegisterID* value);
+        RegisterID* emitPyGetAttr(RegisterID* dst, RegisterID* base, RegisterID* name);
+        void emitPySetAttr(RegisterID* base, RegisterID* name, RegisterID* value);
+        void emitPyGetMethod(RegisterID* dst, RegisterID* self, RegisterID* base, RegisterID* name);
+        void emitPyPrepareConstruct(RegisterID* dst, RegisterID* self, RegisterID* callee);
+        RegisterID* emitPyFinishConstruct(RegisterID* dst, RegisterID* self, RegisterID* result);
+        RegisterID* emitPyGetItem(RegisterID* dst, RegisterID* base, RegisterID* key);
+        void emitPySetItem(RegisterID* base, RegisterID* key, RegisterID* value);
+        RegisterID* emitPyBinary(RegisterID* dst, RegisterID* lhs, RegisterID* rhs, Python::BinaryOperator);
+        RegisterID* emitPyUnary(RegisterID* dst, RegisterID* operand, Python::UnaryOperator);
+        RegisterID* emitPyCompare(RegisterID* dst, RegisterID* lhs, RegisterID* rhs, Python::CompareOperator);
+        // For == != < <= > >= only. Jumps if the truth of the result is `jumpIf`.
+        void emitPyCompareAndJump(RegisterID* lhs, RegisterID* rhs, Python::CompareOperator, bool jumpIf, Label& target);
+        RegisterID* emitPyIsNone(RegisterID* dst, RegisterID* value);
+        RegisterID* emitPyBooleanNot(RegisterID* dst, RegisterID* boolean);
+        void emitPyJumpIfTrue(RegisterID* condition, Label& target);
+        void emitPyJumpIfFalse(RegisterID* condition, Label& target);
+        RegisterID* emitPyGetIter(RegisterID* dst, RegisterID* iterable);
+        void emitPyForIter(RegisterID* dst, RegisterID* iterator, Label& exhausted);
+        void emitPyUnpack(RegisterID* argv, RegisterID* iterable, unsigned before, int after);
+        // `argv` may be null when there are no arguments.
+        RegisterID* emitPyRuntime(RegisterID* dst, Python::RuntimeFunction, RegisterID* argv, unsigned argc);
+        RegisterID* emitPyNewList(RegisterID* dst, RegisterID* argv, unsigned argc);
+        // Passes the first `argumentCount` of the arguments.
+        RegisterID* emitPyCall(RegisterID* dst, RegisterID* function, CallArguments&, unsigned argumentCount);
+        RegisterID* emitPyCallVarargs(RegisterID* dst, RegisterID* function, RegisterID* thisRegister, RegisterID* arguments);
+        // Code emitted between these two is not covered by the try blocks entered after the first `depth`:
+        // the code of a `finally` clause that a `return` inside the `try` runs on its way out.
+        size_t tryDepth() const { return m_tryContextStack.size(); }
+        Vector<TryContext> suspendTryContexts(size_t depth);
+        void resumeTryContexts(Vector<TryContext>&&);
+        // Returns `argument` to whoever resumed the generator. The next instruction runs when it is resumed again.
+        void emitPythonYieldPoint(RegisterID* argument);
+        // A set of up to 64 variables, numbered by the compiler, that are known to have a value wherever the next instruction
+        // is reached from. The compiler adds a variable when it emits what gives it a value. Where paths meet (a label that
+        // was jumped to, an exception handler) what is left is what all of them have. A jump back to a label takes nothing
+        // from the set the label had, so a variable may only be taken out again where no loop entered before it was
+        // put in can come by.
+        uint64_t pythonBoundVariables() const { return m_pythonBoundVariables; }
+        void setPythonBoundVariables(uint64_t variables) { m_pythonBoundVariables = variables; }
+        // Something for tracing to know about the place of the next instruction.
+        void addPythonMark(PythonMark::Kind, unsigned value, uint64_t bits = 0);
+        // A line that has been marked and that no instruction has followed is given one that does nothing. Until then, the mark is
+        // on whatever comes next, which is as good, unless that can be reached from elsewhere. emitLabel() sees to this
+        // for a label that has been jumped to; it is for the compiler to do before a label that will be.
+        void settlePythonLineMark();
+
         VM& vm() const { return m_vm; }
         ParserArena& parserArena() const LIFETIME_BOUND { return m_scopeNode->parserArena(); }
         const CommonIdentifiers& propertyNames() const { return *m_vm.propertyNames; }
@@ -1499,9 +1567,19 @@ namespace JSC {
         Vector<SwitchInfo> m_switchContextStack;
         Vector<Ref<ForInContext>> m_forInContextStack;
         Vector<TryContext> m_tryContextStack;
+
+        BoundLabel bindLabel(Label&);
+        void notePathToLabel(Label&);
+        void didEmitLabel(Label&, bool hasJumps);
+        uint64_t m_pythonBoundVariables { 0 };
+        void giveFirstPythonLineMarkAnInstruction();
+        size_t m_pythonLineMarkPosition { std::numeric_limits<size_t>::max() };
+        unsigned m_pythonLineMarkCount { 0 }; // How many lines are marked there.
+        UncheckedKeyHashMap<Label*, uint64_t> m_pythonVariablesBoundAtLabels; // For the labels still to be emitted.
         SegmentedVector<UsingScope, 8> m_usingScopeStack;
         unsigned m_yieldPoints { 0 };
         bool m_needsGeneratorification { false };
+        int m_firstPythonVariable { 0 };
 
         Strong<SymbolTable> m_generatorFrameSymbolTable;
         // ModuleCode: the heap allocated function declarations of the module environment (see ResolvedLazyClosureVar).

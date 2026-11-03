@@ -97,6 +97,8 @@ public:
     bool hasFreeCell() const { return !!m_freeList; }
 
     void sweep();
+    // Whether sweep() would call a finalizer that must not run on just any thread: see Heap::mayRunEmbedderFinalizers().
+    bool hasDeadHandlesOfEmbedder() const;
 
     JS_EXPORT_PRIVATE void visit(AbstractSlotVisitor&);
     JS_EXPORT_PRIVATE void visit(SlotVisitor&);

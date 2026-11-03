@@ -228,6 +228,21 @@ inline bool isBranch(OpcodeID opcodeID)
     case op_jmp:
     case op_jtrue:
     case op_jfalse:
+    case op_py_jtrue:
+    case op_py_jfalse:
+    case op_py_for_iter:
+    case op_py_jeq:
+    case op_py_jne:
+    case op_py_jlt:
+    case op_py_jle:
+    case op_py_jgt:
+    case op_py_jge:
+    case op_py_jneq:
+    case op_py_jnne:
+    case op_py_jnlt:
+    case op_py_jnle:
+    case op_py_jngt:
+    case op_py_jnge:
     case op_jeq_null:
     case op_jneq_null:
     case op_jundefined_or_null:
@@ -272,6 +287,7 @@ inline bool isTerminal(OpcodeID opcodeID)
 {
     switch (opcodeID) {
     case op_ret:
+    case op_py_ret:
     case op_unreachable:
         return true;
     default:

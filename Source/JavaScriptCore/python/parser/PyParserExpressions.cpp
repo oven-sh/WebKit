@@ -61,9 +61,13 @@ Expr* Parser::parseStarExpressions()
     while (accept(TokenKind::Comma)) {
         if (!atStartOfExpression() && !at(TokenKind::Star))
             break;
+        auto afterComma = checkpoint();
         Expr* element = parseStarExpression();
-        if (!element)
+        if (!element) {
+            if (endsBeforeOperator(afterComma))
+                break;
             return nullptr;
+        }
         elements.append(element);
     }
     return makeTuple(elements, rangeFrom(start));
@@ -116,18 +120,20 @@ Expr* Parser::parseYield()
 {
     Position start = startPosition();
     advance();
+    auto afterYield = checkpoint();
     if (accept(TokenKind::KwFrom)) {
-        Expr* value = parseExpression();
-        if (!value)
+        if (Expr* value = parseExpression()) {
+            auto* yield = make<YieldFrom>(rangeFrom(start));
+            yield->value = value;
+            return yield;
+        }
+        if (!endsBeforeOperator(afterYield))
             return nullptr;
-        auto* yield = make<YieldFrom>(rangeFrom(start));
-        yield->value = value;
-        return yield;
     }
     Expr* value = nullptr;
     if (atStartOfExpression() || at(TokenKind::Star)) {
         value = parseStarExpressions();
-        if (!value)
+        if (!value && !endsBeforeOperator(afterYield))
             return nullptr;
     }
     auto* yield = make<Yield>(rangeFrom(start));
@@ -149,10 +155,11 @@ Expr* Parser::parseExpression()
         return nullptr;
 
     if (at(TokenKind::KwIf)) {
+        auto beforeIf = checkpoint();
         advance();
         Expr* test = parseDisjunction();
         if (!test)
-            return nullptr;
+            return endsBeforeOperator(beforeIf) ? body : nullptr;
         if (!at(TokenKind::KwElse)) {
             if (at(TokenKind::Colon))
                 return invalidSyntax();
@@ -176,8 +183,11 @@ Expr* Parser::parseExpression()
     }
 
     // Nothing valid has two expressions side by side.
-    if (atStartOfExpression() && !m_quiet) [[unlikely]]
-        return diagnoseJuxtaposition(body, startIndex);
+    if (atStartOfExpression() && !m_quiet) [[unlikely]] {
+        auto afterBody = checkpoint();
+        diagnoseJuxtaposition(body, startIndex);
+        return endsBeforeOperator(afterBody) ? body : nullptr;
+    }
     return body;
 }
 
@@ -271,6 +281,8 @@ Expr* Parser::parseNamedExpression()
         advance();
         Expr* value = parseExpression();
         if (!value)
+            return nullptr;
+        if (!checkVersion(8, "Assignment expressions are"_s))
             return nullptr;
         auto* named = make<NamedExpr>(rangeFrom(start));
         named->target = target;
@@ -390,12 +402,19 @@ Expr* Parser::parseDisjunction()
         return first;
     ExprVector values;
     values.append(first);
-    while (accept(TokenKind::KwOr)) {
+    while (at(TokenKind::KwOr)) {
+        auto beforeOperator = checkpoint();
+        advance();
         Expr* value = parseConjunction();
-        if (!value)
+        if (!value) {
+            if (endsBeforeOperator(beforeOperator))
+                break;
             return nullptr;
+        }
         values.append(value);
     }
+    if (values.size() == 1)
+        return first;
     auto* result = make<BoolOp>(rangeFrom(start));
     result->op = BoolOperator::Or;
     result->values = m_arena.copy(values);
@@ -410,12 +429,19 @@ Expr* Parser::parseConjunction()
         return first;
     ExprVector values;
     values.append(first);
-    while (accept(TokenKind::KwAnd)) {
+    while (at(TokenKind::KwAnd)) {
+        auto beforeOperator = checkpoint();
+        advance();
         Expr* value = parseInversion();
-        if (!value)
+        if (!value) {
+            if (endsBeforeOperator(beforeOperator))
+                break;
             return nullptr;
+        }
         values.append(value);
     }
+    if (values.size() == 1)
+        return first;
     auto* result = make<BoolOp>(rangeFrom(start));
     result->op = BoolOperator::And;
     result->values = m_arena.copy(values);
@@ -433,7 +459,7 @@ Expr* Parser::parseInversion()
     if (!operand)
         return nullptr;
     auto* result = make<UnaryOp>(rangeFrom(start));
-    result->op = UnaryOperator::Not;
+    result->op = UnaryKind::Not;
     result->operand = operand;
     return result;
 }
@@ -445,57 +471,61 @@ Expr* Parser::parseComparison()
     if (!left)
         return nullptr;
 
-    Vector<CompareOperator, 4> operators;
+    Vector<CompareKind, 4> operators;
     ExprVector comparators;
     for (;;) {
-        CompareOperator op;
+        CompareKind op;
+        auto beforeOperator = checkpoint();
         switch (kind()) {
         case TokenKind::EqEqual:
-            op = CompareOperator::Eq;
+            op = CompareKind::Eq;
             break;
         case TokenKind::NotEqual:
             // Only under `from __future__ import barry_as_FLUFL` does the lexer make <> a token, and then it is the only spelling.
             if (m_flags.contains(ParserFlag::BarryAsBDFL) && textOf(peek())[0] == '!')
                 return syntaxError("with Barry as BDFL, use '<>' instead of '!='"_s);
-            op = CompareOperator::NotEq;
+            op = CompareKind::NotEq;
             break;
         case TokenKind::LessEqual:
-            op = CompareOperator::LtE;
+            op = CompareKind::LtE;
             break;
         case TokenKind::Less:
             if (peek(1).kind == TokenKind::Greater && peek().end == peek(1).start)
                 return syntaxErrorAt(rangeBetween(rangeOf(peek()), rangeOf(peek(1))), "invalid syntax.  Maybe you meant '!=' instead of '<>'?"_s);
-            op = CompareOperator::Lt;
+            op = CompareKind::Lt;
             break;
         case TokenKind::GreaterEqual:
-            op = CompareOperator::GtE;
+            op = CompareKind::GtE;
             break;
         case TokenKind::Greater:
-            op = CompareOperator::Gt;
+            op = CompareKind::Gt;
             break;
         case TokenKind::KwIn:
-            op = CompareOperator::In;
+            op = CompareKind::In;
             break;
         case TokenKind::KwNot:
             if (peek(1).kind != TokenKind::KwIn)
                 goto done;
             advance();
-            op = CompareOperator::NotIn;
+            op = CompareKind::NotIn;
             break;
         case TokenKind::KwIs:
             if (peek(1).kind == TokenKind::KwNot) {
                 advance();
-                op = CompareOperator::IsNot;
+                op = CompareKind::IsNot;
             } else
-                op = CompareOperator::Is;
+                op = CompareKind::Is;
             break;
         default:
             goto done;
         }
         advance();
         Expr* right = parseBitwiseOr();
-        if (!right)
+        if (!right) {
+            if (endsBeforeOperator(beforeOperator))
+                break;
             return nullptr;
+        }
         operators.append(op);
         comparators.append(right);
     }
@@ -544,6 +574,7 @@ Expr* Parser::parseBinary(int minimumPrecedence)
         auto [precedence, op] = binaryOperator(kind());
         if (!precedence || precedence < minimumPrecedence)
             return left;
+        auto beforeOperator = checkpoint();
         advance();
         if (at(TokenKind::KwNot) && precedence >= 5) {
             SetForScope diagnosing(m_diagnosing, true);
@@ -554,6 +585,8 @@ Expr* Parser::parseBinary(int minimumPrecedence)
         }
         Expr* right = parseBinary(precedence + 1);
         if (!right)
+            return endsBeforeOperator(beforeOperator) ? left : nullptr;
+        if (op == Operator::MatMult && !checkVersion(5, "The '@' operator is"_s))
             return nullptr;
         auto* result = make<BinOp>(rangeFrom(start));
         result->left = left;
@@ -565,16 +598,16 @@ Expr* Parser::parseBinary(int minimumPrecedence)
 
 Expr* Parser::parseFactor()
 {
-    UnaryOperator op;
+    UnaryKind op;
     switch (kind()) {
     case TokenKind::Plus:
-        op = UnaryOperator::UAdd;
+        op = UnaryKind::UAdd;
         break;
     case TokenKind::Minus:
-        op = UnaryOperator::USub;
+        op = UnaryKind::USub;
         break;
     case TokenKind::Tilde:
-        op = UnaryOperator::Invert;
+        op = UnaryKind::Invert;
         break;
     default:
         return parsePower();
@@ -606,10 +639,12 @@ Expr* Parser::parsePower()
     Expr* base = parseAwaitPrimary();
     if (!base || !at(TokenKind::DoubleStar))
         return base;
+    CHECK_RECURSION();
+    auto beforeOperator = checkpoint();
     advance();
     Expr* exponent = parseFactor();
     if (!exponent)
-        return nullptr;
+        return endsBeforeOperator(beforeOperator) ? base : nullptr;
     auto* result = make<BinOp>(rangeFrom(start));
     result->left = base;
     result->op = Operator::Pow;
@@ -625,6 +660,8 @@ Expr* Parser::parseAwaitPrimary()
     advance();
     Expr* value = parsePrimary();
     if (!value)
+        return nullptr;
+    if (!checkVersion(5, "Await expressions are"_s))
         return nullptr;
     auto* result = make<Await>(rangeFrom(start));
     result->value = value;
@@ -645,10 +682,11 @@ Expr* Parser::parseTrailers(Expr* expression, Position start)
     for (;;) {
         switch (kind()) {
         case TokenKind::Dot: {
+            auto beforeOperator = checkpoint();
             advance();
             Name name = expectName();
             if (!name)
-                return nullptr;
+                return endsBeforeOperator(beforeOperator) ? expression : nullptr;
             auto* attribute = make<Attribute>(rangeFrom(start));
             attribute->value = expression;
             attribute->attr = name;
@@ -657,13 +695,14 @@ Expr* Parser::parseTrailers(Expr* expression, Position start)
             break;
         }
         case TokenKind::LPar: {
+            auto beforeOperator = checkpoint();
             Position open = startPosition();
             advance();
             Seq<Expr*> arguments;
             Seq<Keyword*> keywords;
             Expr* soleGenerator = nullptr;
             if (!parseArguments(arguments, keywords, open, soleGenerator))
-                return nullptr;
+                return endsBeforeOperator(beforeOperator) ? expression : nullptr;
             auto* call = make<Call>(rangeFrom(start));
             call->func = expression;
             call->args = soleGenerator ? m_arena.single(soleGenerator) : arguments;
@@ -672,10 +711,11 @@ Expr* Parser::parseTrailers(Expr* expression, Position start)
             break;
         }
         case TokenKind::LSqb: {
+            auto beforeOperator = checkpoint();
             advance();
             Expr* slice = parseSlices();
             if (!slice || !expect(TokenKind::RSqb))
-                return nullptr;
+                return endsBeforeOperator(beforeOperator) ? expression : nullptr;
             auto* subscript = make<Subscript>(rangeFrom(start));
             subscript->value = expression;
             subscript->slice = slice;
@@ -807,6 +847,11 @@ bool Parser::parseArguments(Seq<Expr*>& resultArguments, Seq<Keyword*>& resultKe
             generator->parenthesized = true;
             soleGenerator = generator;
             return true;
+        }
+        // Alone, it has to be followed by a comma to be taken for an argument that lacks parentheses.
+        if (arguments.isEmpty() && keywords.isEmpty() && !at(TokenKind::Comma)) {
+            invalidSyntax();
+            return false;
         }
         syntaxErrorAt(rangeBetween(element->range, lastItemOf(generators.last())->range), "Generator expression must be parenthesized"_s);
         return false;
@@ -977,7 +1022,8 @@ Expr* Parser::parseForTargets(bool inComprehension)
     SetForScope diagnosing(m_diagnosing, true);
     rewind(saved);
     if (inComprehension) {
-        bool parsed = true;
+        // At least one variable, or it is not known to be a loop at all.
+        bool parsed = atStartOfExpression();
         do {
             if (!atStartOfExpression())
                 break;
@@ -1017,6 +1063,8 @@ bool Parser::parseComprehensionClauses(Seq<Comprehension*>& result)
                 return false;
             conditions.append(condition);
         }
+        if (clause->isAsync && !checkVersion(6, "Async comprehensions are"_s))
+            return false;
         clause->ifs = m_arena.copy(conditions);
         clauses.append(clause);
     }
@@ -1107,12 +1155,16 @@ Expr* Parser::parseAtom()
         return parseBraceDisplay();
     case TokenKind::KwPass:
     case TokenKind::KwBreak:
-    case TokenKind::KwContinue:
-        if (peek(1).kind == TokenKind::KwIf && !m_quiet) {
-            peek();
-            return diagnoseStatementBeforeIf();
+    case TokenKind::KwContinue: {
+        bool isBeforeIf;
+        {
+            SetForScope diagnosing(m_diagnosing, true);
+            isBeforeIf = peek(1).kind == TokenKind::KwIf;
         }
+        if (isBeforeIf && !m_quiet)
+            return diagnoseStatementBeforeIf();
         return invalidSyntax();
+    }
     default:
         return invalidSyntax();
     }
@@ -1485,6 +1537,8 @@ Expr* Parser::parseNumber()
 {
     const Token token = advance();
     auto text = textOf(token);
+    if (m_featureVersion < 6 && std::ranges::find(text, '_') != text.end())
+        return syntaxError("Underscores in numeric literals are only supported in Python 3.6 and greater"_s);
     auto* constant = make<Constant>(rangeOf(token));
 
     Vector<Latin1Character, 32> digits;

@@ -59,6 +59,14 @@ public:
 
     void reap();
     void sweep();
+    bool hasDeadHandlesOfEmbedder() const
+    {
+        for (WeakBlock* block = m_blocks.head(); block; block = block->next()) {
+            if (block->hasDeadHandlesOfEmbedder())
+                return true;
+        }
+        return false;
+    }
     JS_EXPORT_PRIVATE void shrink();
 
     static constexpr ptrdiff_t offsetOfVM() { return OBJECT_OFFSETOF(WeakSet, m_vm); }

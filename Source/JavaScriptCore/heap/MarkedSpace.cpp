@@ -293,8 +293,7 @@ void MarkedSpace::sweepPreciseAllocations()
     unsigned dstIndex = srcIndex;
     while (srcIndex < m_preciseAllocations.size()) {
         PreciseAllocation* allocation = m_preciseAllocations[srcIndex++];
-        allocation->sweep();
-        if (allocation->isEmpty()) {
+        if (allocation->sweep() && allocation->isEmpty()) {
             if (auto& set = preciseAllocationSet())
                 set->remove(allocation->cell());
             if (allocation->isLowerTierPrecise())

@@ -275,7 +275,10 @@ void* LocalAllocator::tryAllocateWithoutCollecting(size_t cellSize)
         if (MarkedBlock::Handle* block = allocator->findEmptyBlockToSteal()) {
             RELEASE_ASSERT(block->alignedMemoryAllocator() == allocator);
 
-            block->sweep(nullptr);
+            if (!block->sweep(nullptr)) [[unlikely]] {
+                block->directory()->didFinishUsingBlock(block);
+                return nullptr;
+            }
             // A block must own no WeakBlock before it changes cell size and owner: a survivor would
             // go on reading mark bits for cells that no longer exist at those addresses. Sweeping an
             // empty block leaves it that way, since every handle in it is reaped dead and finalized.
@@ -303,7 +306,11 @@ void* LocalAllocator::tryAllocateIn(MarkedBlock::Handle* block, size_t cellSize)
     ASSERT(block);
     ASSERT(!block->isFreeListed());
     
-    block->sweep(&m_freeList);
+    if (!block->sweep(&m_freeList)) [[unlikely]] {
+        // Nothing is allocated in it before the next collection. By then the thread that may has swept it.
+        m_directory->didFinishUsingBlock(block);
+        return nullptr;
+    }
     
     // It's possible to stumble on a completely full block. Marking tries to retire these, but
     // that algorithm is racy and may forget to do it sometimes.

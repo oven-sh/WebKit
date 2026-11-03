@@ -1,0 +1,61 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#pragma once
+
+#include "CommonSlowPaths.h"
+
+namespace JSC {
+
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_bind_args);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_load_cell);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_store_cell);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_load_global);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_store_global);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_load_name);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_store_name);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_get_attr);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_set_attr);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_get_method);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_instrumented); // In PyMonitoring.cpp.
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_prepare_construct);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_finish_construct);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_get_item);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_set_item);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_binary);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_add);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_sub);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_mul);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_div);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_floor_div);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_mod);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_eq);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_jeq);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_jneq);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_ne);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_jne);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_jnne);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_lt);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_jlt);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_jnlt);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_le);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_jle);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_jnle);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_gt);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_jgt);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_jngt);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_ge);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_jge);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_jnge);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_unary);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_compare);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_jtrue);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_jfalse);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_get_iter);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_for_iter);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_unpack);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_runtime);
+
+} // namespace JSC

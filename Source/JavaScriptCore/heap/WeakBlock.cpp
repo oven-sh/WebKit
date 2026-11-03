@@ -133,6 +133,19 @@ void WeakBlock::unpoisonCellsAwaitingFinalizers()
 }
 #endif
 
+bool WeakBlock::hasDeadHandlesOfEmbedder() const
+{
+    for (size_t i = 0, found = 0; found < m_deadCount && i < weakImplCount(); ++i) {
+        const WeakImpl* weakImpl = &const_cast<WeakBlock*>(this)->weakImpls()[i];
+        if (const_cast<WeakImpl*>(weakImpl)->state() != WeakImpl::Dead)
+            continue;
+        ++found;
+        if (!m_heap.finalizesOnAnyThread(const_cast<WeakImpl*>(weakImpl)->weakHandleOwner()))
+            return true;
+    }
+    return false;
+}
+
 void WeakBlock::sweep()
 {
     for (size_t i = 0; m_deadCount && i < weakImplCount(); ++i) {

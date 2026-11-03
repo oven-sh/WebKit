@@ -1,0 +1,377 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#include "config.h"
+#include "PyModule.h"
+
+#include "JSCInlines.h"
+#include "PyAbstract.h"
+#include "PyErrors.h"
+#include "PyInternals.h"
+#include "PyList.h"
+#include "PyStr.h"
+#include "PyTypes.h"
+
+namespace JSC {
+namespace Python {
+
+// Module objects. (Objects/moduleobject.c in CPython is the reference.)
+
+PY_DEFINE_CELL(PyModule);
+
+PyModule::PyModule(VM& vm, Structure* structure, PyType* type)
+    : Base(vm, structure, type)
+{
+}
+
+PyModule* PyModule::create(VM& vm, Structure* structure, PyType* type)
+{
+    auto* module = new (NotNull, allocateCell<PyModule>(vm)) PyModule(vm, structure, type);
+    module->finishCreation(vm);
+    return module;
+}
+
+static void initializeModuleDict(JSGlobalObject* globalObject, PyModule* module, JSValue name, JSValue doc)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    PyDict* dict = module->dict();
+    dict->set(vm, rt.names.dName(), name);
+    dict->set(vm, rt.names.dDoc(), doc);
+    dict->set(vm, rt.names.dPackage(), jsUndefined());
+    dict->set(vm, rt.names.dLoader(), jsUndefined());
+    dict->set(vm, rt.names.dSpec(), jsUndefined());
+}
+
+PyModule* PyModule::create(JSGlobalObject* globalObject, JSString* name)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    PyModule* module = create(vm, rt.structure<PyModule>(), rt.moduleType());
+    module->setDict(vm, PyDict::create(globalObject));
+    initializeModuleDict(globalObject, module, name, jsUndefined());
+    return module;
+}
+
+PyModule* PyModule::create(JSGlobalObject* globalObject, ASCIILiteral name)
+{
+    return create(globalObject, internString(getVM(globalObject), name));
+}
+
+template<typename Visitor>
+void PyModule::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = uncheckedDowncast<PyModule>(cell);
+    Base::visitChildren(thisObject, visitor);
+    visitor.append(thisObject->m_dict);
+}
+
+DEFINE_VISIT_CHILDREN(PyModule);
+
+void PyModule::add(JSGlobalObject* globalObject, ASCIILiteral name, JSValue value)
+{
+    VM& vm = getVM(globalObject);
+    dict()->set(vm, internString(vm, name), value);
+}
+
+void PyModule::addFunctions(JSGlobalObject* globalObject, std::span<const NativeDef> defs)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    JSValue moduleName = dict()->get(rt.names.dName());
+    for (auto& def : defs) {
+        ASSERT(def.kind == NativeKind::Function);
+        dict()->set(vm, internString(vm, def.name), PyNativeFunction::create(globalObject, def, NativeKind::Function, { }, moduleName));
+    }
+}
+
+// ---- The type ----
+
+static JSValue moduleNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs&)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    PyModule* module = PyModule::create(vm, rt.structure<PyModule>(), PyType::from(cls));
+    module->setDict(vm, PyDict::create(globalObject));
+    return module;
+}
+
+static JSValue moduleInit(JSGlobalObject* globalObject, JSValue self, JSValue name, JSValue doc)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!isStr(name))
+        return raiseTypeError(globalObject, scope, "module() argument 'name' must be str, not "_s, typeNameOfArgument(globalObject, name));
+    initializeModuleDict(globalObject, PyModule::from(self), name, doc ? doc : jsUndefined());
+    return jsUndefined();
+}
+
+// The text of a value of the module's dict, if it is a str. Null otherwise.
+static String moduleStringEntry(JSGlobalObject* globalObject, PyDict* dict, JSString* key)
+{
+    JSValue value = dict->get(key);
+    if (!value || !isStr(value))
+        return { };
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    String text = strValue(value)->value(globalObject);
+    if (scope.exception()) {
+        takePendingException(globalObject);
+        return { };
+    }
+    return text;
+}
+
+// As importlib._bootstrap._module_repr().
+static JSValue moduleRepr(JSGlobalObject* globalObject, JSValue self)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // As _module_repr() of importlib has it, which gets attributes: a __getattr__ of the module has its say.
+    JSValue loader = getAttrIfPresent(globalObject, self, rt.names.dLoader());
+    RETURN_IF_EXCEPTION(scope, { });
+    JSValue spec = getAttrIfPresent(globalObject, self, rt.names.dSpec());
+    RETURN_IF_EXCEPTION(scope, { });
+    bool hasSpec = spec && isTrue(globalObject, spec);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (hasSpec) {
+        // <module 'x' from 'origin'>, <module 'x' (origin)> or <module 'x' (loader)>
+        String nameRepr = "'?'"_s;
+        JSValue specName = getAttr(globalObject, spec, rt.names.name());
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!isNone(specName))
+            nameRepr = reprForMessage(globalObject, specName);
+        JSValue origin = getAttrIfPresent(globalObject, spec, internString(vm, "origin"_s));
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!origin || isNone(origin)) {
+            JSValue specLoader = getAttrIfPresent(globalObject, spec, internString(vm, "loader"_s));
+            RETURN_IF_EXCEPTION(scope, { });
+            if (!specLoader || isNone(specLoader))
+                return makeStr(vm, makeString("<module "_s, nameRepr, '>'));
+            return makeStr(vm, makeString("<module "_s, nameRepr, " ("_s, reprForMessage(globalObject, specLoader), ")>"_s));
+        }
+        JSValue hasLocation = getAttrIfPresent(globalObject, spec, internString(vm, "has_location"_s));
+        RETURN_IF_EXCEPTION(scope, { });
+        bool isLocation = hasLocation && isTrue(globalObject, hasLocation);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (isLocation)
+            return makeStr(vm, makeString("<module "_s, nameRepr, " from "_s, reprForMessage(globalObject, origin), '>'));
+        JSString* originText = str(globalObject, origin);
+        RETURN_IF_EXCEPTION(scope, { });
+        String text = originText->value(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
+        return makeStr(vm, makeString("<module "_s, nameRepr, " ("_s, text, ")>"_s));
+    }
+
+    JSValue name = getAttrIfPresent(globalObject, self, rt.names.dName());
+    RETURN_IF_EXCEPTION(scope, { });
+    String nameRepr = name ? reprForMessage(globalObject, name) : "'?'"_str;
+    JSValue file = getAttrIfPresent(globalObject, self, rt.names.dFile());
+    RETURN_IF_EXCEPTION(scope, { });
+    if (file)
+        return makeStr(vm, makeString("<module "_s, nameRepr, " from "_s, reprForMessage(globalObject, file), '>'));
+    if (loader && !isNone(loader))
+        return makeStr(vm, makeString("<module "_s, nameRepr, " ("_s, reprForMessage(globalObject, loader), ")>"_s));
+    return makeStr(vm, makeString("<module "_s, nameRepr, '>'));
+}
+
+bool specIsInitializing(JSGlobalObject* globalObject, JSValue spec)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!spec || isNone(spec))
+        return false;
+    JSValue value = getAttrIfPresent(globalObject, spec, internString(vm, "_initializing"_s));
+    bool result = !scope.exception() && value && isTrue(globalObject, value);
+    if (scope.exception()) {
+        takePendingException(globalObject);
+        return false;
+    }
+    return result;
+}
+
+JSValue moduleGetAttr(JSGlobalObject* globalObject, PyModule* module, JSString* name, bool suppress)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Nearly always the name is in the dict, and nothing on the type comes before that but a data descriptor.
+    PyDict* dict = module->dict();
+    JSValue value;
+    if (module->type() == rt.moduleType()) [[likely]] {
+        value = dict->get(name);
+        if (value && rt.moduleType()->lookup(name)) [[unlikely]]
+            value = { };
+    }
+    if (!value) {
+        value = genericGetAttr(globalObject, module, name, true);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    if (!value) {
+        bool lookAgain;
+        value = loadLazySubmodule(globalObject, module, name, suppress, lookAgain);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!value && lookAgain)
+            value = dict->get(name);
+    }
+    if (value) {
+        if (PyRecord* lazy = asLazyImport(globalObject, value)) [[unlikely]] {
+            // Asked whether it has the attribute while that is being imported, the answer is no.
+            if (suppress && lazyImportIsBeingResolved(lazy))
+                return { };
+            RELEASE_AND_RETURN(scope, reifyLazyImport(globalObject, lazy, name, dict));
+        }
+        // Modules written in C++ are given these two when they are first asked for.
+        if (value.isUndefined() && (name->tryGetValueImpl() == rt.names.dSpec()->tryGetValueImpl() || name->tryGetValueImpl() == rt.names.dLoader()->tryGetValueImpl())) [[unlikely]] {
+            ensureNativeModuleSpec(globalObject, module);
+            RETURN_IF_EXCEPTION(scope, { });
+            if (JSValue made = dict->get(name))
+                return made;
+        }
+        return value;
+    }
+
+    JSValue getter = dict->get(rt.name(Special::GetAttr));
+    if (PyRecord* lazy = asLazyImport(globalObject, getter)) [[unlikely]] {
+        getter = { };
+        if (!lazyImportIsBeingResolved(lazy)) {
+            getter = reifyLazyImport(globalObject, lazy, rt.name(Special::GetAttr), dict);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
+    }
+    if (getter) {
+        JSValue result = call(globalObject, getter, name);
+        if (!result && suppress)
+            clearPendingExceptionIfMatches(globalObject, rt.AttributeError());
+        return result;
+    }
+    if (suppress)
+        return { };
+
+    String moduleName = moduleStringEntry(globalObject, dict, rt.names.dName());
+    if (moduleName.isNull())
+        return raiseAttributeError(globalObject, scope, module, name, makeString("module has no attribute '"_s, stringOf(name), '\''));
+    if (specIsInitializing(globalObject, dict->get(rt.names.dSpec())))
+        return raiseAttributeError(globalObject, scope, module, name, makeString("partially initialized module '"_s, moduleName, "' has no attribute '"_s, stringOf(name), "' (most likely due to a circular import)"_s));
+    return raiseAttributeError(globalObject, scope, module, name, makeString("module '"_s, moduleName, "' has no attribute '"_s, stringOf(name), '\''));
+}
+
+JSValue moduleGetAttribute(JSGlobalObject* globalObject, JSValue self, JSValue nameValue)
+{
+    JSString* name = attributeName(globalObject, nameValue);
+    if (!name)
+        return { };
+    return moduleGetAttr(globalObject, PyModule::from(self), name, false);
+}
+
+static JSValue moduleDir(JSGlobalObject* globalObject, JSValue self)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue dictValue = getAttr(globalObject, self, rt.names.dDict());
+    RETURN_IF_EXCEPTION(scope, { });
+    auto* dict = PyDict::tryFrom(dictValue);
+    if (!dict)
+        return raiseTypeError(globalObject, scope, "<module>.__dict__ is not a dictionary"_s);
+    if (JSValue dirFunction = dict->get(rt.name(Special::Dir)))
+        RELEASE_AND_RETURN(scope, call(globalObject, dirFunction));
+    RELEASE_AND_RETURN(scope, listFromIterable(globalObject, dict));
+}
+
+static JSValue moduleGetDict(JSGlobalObject*, JSValue self) { return PyModule::from(self)->dict(); }
+
+static JSValue moduleGetAnnotate(JSGlobalObject* globalObject, JSValue self)
+{
+    Runtime& rt = runtime(globalObject);
+    PyDict* dict = PyModule::from(self)->dict();
+    if (JSValue annotate = dict->get(rt.names.dAnnotate()))
+        return annotate;
+    dict->set(rt.vm(), rt.names.dAnnotate(), jsUndefined());
+    return jsUndefined();
+}
+
+static void moduleSetAnnotate(JSGlobalObject* globalObject, JSValue self, JSValue value)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PyDict* dict = PyModule::from(self)->dict();
+    if (!value) {
+        raiseTypeError(globalObject, scope, "cannot delete __annotate__ attribute"_s);
+        return;
+    }
+    if (!isNone(value) && !isCallable(globalObject, value)) {
+        raiseTypeError(globalObject, scope, "__annotate__ must be callable or None"_s);
+        return;
+    }
+    dict->set(vm, rt.names.dAnnotate(), value);
+    if (!isNone(value))
+        dict->remove(vm, rt.names.dAnnotations());
+}
+
+static JSValue moduleGetAnnotations(JSGlobalObject* globalObject, JSValue self)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PyDict* dict = PyModule::from(self)->dict();
+    if (JSValue annotations = dict->get(rt.names.dAnnotations()))
+        return annotations;
+    bool isInitializing = specIsInitializing(globalObject, dict->get(rt.names.dSpec()));
+    JSValue annotations;
+    JSValue annotate = dict->get(rt.names.dAnnotate());
+    if (annotate && !isNone(annotate)) {
+        annotations = call(globalObject, annotate, jsNumber(1));
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!isDict(annotations))
+            return raiseTypeError(globalObject, scope, "__annotate__() must return a dict, not "_s, typeName(globalObject, annotations));
+    } else
+        annotations = PyDict::create(globalObject);
+    // What a module that is still running has annotated so far is not the last word.
+    if (!isInitializing)
+        dict->set(vm, rt.names.dAnnotations(), annotations);
+    return annotations;
+}
+
+static void moduleSetAnnotations(JSGlobalObject* globalObject, JSValue self, JSValue value)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PyDict* dict = PyModule::from(self)->dict();
+    if (value)
+        dict->set(vm, rt.names.dAnnotations(), value);
+    else if (!dict->remove(vm, rt.names.dAnnotations())) {
+        raise(globalObject, scope, rt.AttributeError(), "__annotations__"_s);
+        return;
+    }
+    dict->remove(vm, rt.names.dAnnotate());
+}
+
+static constexpr NativeDef moduleMethods[] = {
+    PY_NEW(moduleNew, "($type, *args, **kwargs)"),
+    PY_SLOT("__init__", moduleInit, "($self, /, name, doc=None)"),
+    PY_SLOT("__repr__", moduleRepr, "($self, /)"),
+    PY_SLOT("__getattribute__", moduleGetAttribute, "($self, name, /)"),
+    PY_METHOD("__dir__", moduleDir, "($self, /)"),
+};
+
+static constexpr NativeGetSet moduleGetSets[] = {
+    PY_MEMBER("__dict__", moduleGetDict),
+    { "__annotations__"_s, moduleGetAnnotations, moduleSetAnnotations },
+    { "__annotate__"_s, moduleGetAnnotate, moduleSetAnnotate },
+};
+
+void initializeModuleTypes(JSGlobalObject* globalObject)
+{
+    Runtime& rt = runtime(globalObject);
+    rt.moduleType()->initializeBuiltin(globalObject, { "module"_s, { TypeFlag::Base, TypeFlag::OwnLayout, TypeFlag::HasDict, TypeFlag::HasWeakref }, moduleMethods, moduleGetSets, { } }, rt.typeType(), rt.objectType());
+}
+
+} // namespace Python
+} // namespace JSC

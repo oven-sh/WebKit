@@ -38,8 +38,8 @@ struct Arguments;
 enum class ExprContext : uint8_t { Load, Store, Del };
 enum class BoolOperator : uint8_t { And, Or };
 enum class Operator : uint8_t { Add, Sub, Mult, MatMult, Div, Mod, Pow, LShift, RShift, BitOr, BitXor, BitAnd, FloorDiv };
-enum class UnaryOperator : uint8_t { Invert, Not, UAdd, USub };
-enum class CompareOperator : uint8_t { Eq, NotEq, Lt, LtE, Gt, GtE, Is, IsNot, In, NotIn };
+enum class UnaryKind : uint8_t { Invert, Not, UAdd, USub };
+enum class CompareKind : uint8_t { Eq, NotEq, Lt, LtE, Gt, GtE, Is, IsNot, In, NotIn };
 
 // ---- Constants ----
 
@@ -55,10 +55,14 @@ struct ConstantValue {
         BigInt, // Digits in a radix, most significant first, no sign, prefix or underscores.
         Float,
         Complex,
+        // The parser makes none of these, nor a negative number: they come from trees that programs make.
+        Tuple,
+        FrozenSet,
     };
 
     Kind kind { Kind::None };
     uint8_t radix { 0 };
+    bool isNegative { false }; // BigInt
     union {
         StringImpl* string;
         struct {
@@ -75,6 +79,10 @@ struct ConstantValue {
             double real;
             double imaginary;
         } complex;
+        struct {
+            const ConstantValue* data;
+            size_t size;
+        } items;
     };
 
     ConstantValue()
@@ -187,7 +195,7 @@ struct BinOp : Expr {
 
 struct UnaryOp : Expr {
     PY_AST_EXPR(UnaryOp)
-    UnaryOperator op;
+    UnaryKind op;
     Expr* operand;
 };
 
@@ -258,7 +266,7 @@ struct YieldFrom : Expr {
 struct Compare : Expr {
     PY_AST_EXPR(Compare)
     Expr* left;
-    Seq<CompareOperator> ops;
+    Seq<CompareKind> ops;
     Seq<Expr*> comparators;
 };
 

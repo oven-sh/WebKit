@@ -45,6 +45,20 @@ public:
         TypeComments = 1 << 0,
         BarryAsBDFL = 1 << 1, // from __future__ import barry_as_FLUFL: <> is an operator
         ExtraTokens = 1 << 2, // For the tokenize module: comments and non-logical newlines are tokens, and less is rejected.
+        WithoutIdentifiers = 1 << 3, // Only the text of a name is wanted.
+    };
+
+    // Text that comes a line at a time, as the lexer asks for it.
+    class LineSource {
+    public:
+        virtual ~LineSource() = default;
+        enum class Result : uint8_t {
+            Line,
+            EndOfText,
+            Failed, // The host has a pending exception.
+        };
+        // Adds a line, with its "\n", to the text, all of which is then `source`.
+        virtual Result readLine(std::span<const uint8_t>& source) = 0;
     };
 
     // How the text ended, or why lexing stopped. Besides Error, it is the parser that words the message.
@@ -67,6 +81,8 @@ public:
     Status status() const { return m_status; }
     const SyntaxErrorInfo& error() const { return m_error; }
     void setBarryAsBDFL() { m_flags.add(Flag::BarryAsBDFL); }
+    // What follows the source given at first.
+    void setLineSource(LineSource* lineSource) { m_lineSource = lineSource; }
     // The text is over: whatever is indented ends here.
     void implyDedents()
     {
@@ -85,6 +101,9 @@ public:
     uint32_t currentOffset() const { return m_cursor; }
     uint32_t currentLineStart() const { return m_lineStart; }
     uint32_t currentLineEnd() const { return m_lineEnd; }
+    // For the tokenize module, whose errors show it: the first of the lines CPython's tokenizer would have in its buffer, which
+    // it empties when it reads a line with no token begun, outside of f-strings. One more than currentLine(): none.
+    int firstBufferedLine() const { return m_firstBufferedLine; }
 
     struct OpenBracket {
         uint8_t character;
@@ -170,6 +189,7 @@ private:
     IdentifierArena& m_identifiers;
     ParserHost& m_host;
     std::span<const uint8_t> m_source;
+    LineSource* m_lineSource { nullptr };
     OptionSet<Flag> m_flags;
 
     // The text is read a line at a time: the line number moves when the first character of a line is asked for.
@@ -183,7 +203,8 @@ private:
     int m_tokenStartColumn { 0 };
     int m_tokenStartLine { 0 }; // Of a string, which may span lines.
     uint32_t m_tokenStartLineStart { 0 };
-    bool m_tokenIsString { false };
+    bool m_tokenHasBegun { false };
+    int m_firstBufferedLine { 1 };
 
     bool m_atLineStart { true };
     bool m_commentOnOwnLine { false };

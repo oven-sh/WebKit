@@ -1,0 +1,1721 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#include "config.h"
+#include "PyAbstract.h"
+
+#include "FunctionCodeBlock.h"
+#include "JSCInlines.h"
+#include "LLIntThunks.h"
+#include "PyBytes.h"
+#include "PyDescriptors.h"
+#include "PyErrors.h"
+#include "PyException.h"
+#include "PyFunction.h"
+#include "PyGenerator.h"
+#include "PyInternals.h"
+#include "PyIterators.h"
+#include "PyList.h"
+#include "PyModule.h"
+#include "PyNumbers.h"
+#include "PyRange.h"
+#include "PySet.h"
+#include "PyStr.h"
+#include "TopExceptionScope.h"
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
+namespace JSC {
+namespace Python {
+
+// ---- Instance dictionaries ----
+
+PyDict* instanceDict(JSGlobalObject* globalObject, JSValue object, bool create)
+{
+    if (!object.isCell())
+        return nullptr;
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    JSCell* cell = object.asCell();
+
+    auto lazily = [&](auto* holder) -> PyDict* {
+        PyDict* dict = holder->dict();
+        if (!dict && create) {
+            dict = PyDict::create(globalObject);
+            holder->setDict(vm, dict);
+        }
+        return dict;
+    };
+
+    switch (cell->type()) {
+    case PyInstanceType: {
+        auto* instance = uncheckedDowncast<PyInstance>(cell);
+        if (!instance->type()->has(TypeFlag::HasDict))
+            return nullptr;
+        if (!create && !instance->hasAttributes(vm))
+            return instance->dict();
+        return instance->ensureDict(globalObject);
+    }
+    case PyModuleType:
+        return uncheckedDowncast<PyModule>(cell)->dict();
+    case PyExceptionType:
+        return lazily(uncheckedDowncast<PyException>(cell));
+    case JSFunctionType:
+        if (PyFunction::is(cell))
+            return lazily(uncheckedDowncast<PyFunction>(cell));
+        return nullptr;
+    case StringType:
+    case HeapBigIntType:
+    case ArrayType:
+    case InternalFunctionType:
+        return nullptr;
+    default:
+        break;
+    }
+
+    if (!rt.typeOf(object)->has(TypeFlag::HasDict))
+        return nullptr;
+    if (cell->inherits<PyWrapperObject>())
+        return lazily(uncheckedDowncast<PyWrapperObject>(cell));
+    // An instance of a class that derives from a built-in one. There is no field for the dict.
+    JSObject* jsObject = asObject(cell);
+    if (JSValue dict = jsObject->getDirect(vm, rt.dictKey()))
+        return PyDict::from(dict);
+    if (!create)
+        return nullptr;
+    PyDict* dict = PyDict::create(globalObject);
+    jsObject->putDirect(vm, rt.dictKey(), dict, PropertyAttribute::DontEnum | 0);
+    return dict;
+}
+
+JSValue instanceAttribute(JSGlobalObject* globalObject, JSValue object, JSString* name)
+{
+    if (auto* instance = PyInstance::tryFrom(object)) [[likely]]
+        return instance->getAttribute(getVM(globalObject), name);
+    PyDict* dict = instanceDict(globalObject, object, false);
+    return dict ? dict->get(name) : JSValue();
+}
+
+bool setInstanceDict(JSGlobalObject* globalObject, JSValue object, PyDict* dict)
+{
+    if (!object.isCell())
+        return false;
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    JSCell* cell = object.asCell();
+    switch (cell->type()) {
+    case PyInstanceType:
+        if (!uncheckedDowncast<PyInstance>(cell)->type()->has(TypeFlag::HasDict))
+            return false;
+        uncheckedDowncast<PyInstance>(cell)->setDict(globalObject, dict);
+        return true;
+    case PyExceptionType:
+        uncheckedDowncast<PyException>(cell)->setDict(vm, dict);
+        return true;
+    case JSFunctionType:
+        if (!PyFunction::is(cell))
+            return false;
+        uncheckedDowncast<PyFunction>(cell)->setDict(vm, dict);
+        return true;
+    case PyModuleType:
+    case StringType:
+    case HeapBigIntType:
+    case ArrayType:
+    case InternalFunctionType:
+        return false;
+    default:
+        break;
+    }
+    if (!rt.typeOf(object)->has(TypeFlag::HasDict))
+        return false;
+    if (cell->inherits<PyWrapperObject>()) {
+        uncheckedDowncast<PyWrapperObject>(cell)->setDict(vm, dict);
+        return true;
+    }
+    asObject(cell)->putDirect(vm, rt.dictKey(), dict, PropertyAttribute::DontEnum | 0);
+    return true;
+}
+
+// ---- Descriptors ----
+
+static ALWAYS_INLINE bool isMethodDescriptor(JSValue descriptor)
+{
+    if (!descriptor.isCell())
+        return false;
+    JSCell* cell = descriptor.asCell();
+    if (cell->type() == JSFunctionType)
+        return PyFunction::is(cell);
+    if (PyNativeFunction::is(cell)) {
+        NativeKind kind = uncheckedDowncast<PyNativeFunction>(cell)->kind();
+        return kind == NativeKind::Method || kind == NativeKind::SlotWrapper;
+    }
+    return false;
+}
+
+JSValue memberDescriptorGet(JSGlobalObject* globalObject, PyMemberDescriptor* descriptor, JSValue object)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue value = asObject(object)->getDirect(vm, PropertyName(&descriptor->key()->uid()));
+    if (!value)
+        return raiseAttributeError(globalObject, scope, object, descriptor->name(), makeString('\'', typeName(globalObject, object), "' object has no attribute '"_s, stringOf(descriptor->name()), '\''));
+    return value;
+}
+
+void memberDescriptorSet(JSGlobalObject* globalObject, PyMemberDescriptor* descriptor, JSValue object, JSValue value)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* holder = asObject(object);
+    PropertyName key(&descriptor->key()->uid());
+    if (value) {
+        holder->putDirect(vm, key, value, PropertyAttribute::DontEnum | 0);
+        return;
+    }
+    if (!holder->getDirect(vm, key)) {
+        raiseAttributeError(globalObject, scope, object, descriptor->name(), stringOf(descriptor->name()));
+        return;
+    }
+    DeletePropertySlot slot;
+    JSObject::deleteProperty(holder, globalObject, key, slot);
+}
+
+JSValue bindDescriptor(JSGlobalObject* globalObject, JSValue descriptor, JSValue object, PyType* type)
+{
+    if (!descriptor.isCell())
+        return descriptor;
+    Runtime& rt = runtime(globalObject);
+    JSCell* cell = descriptor.asCell();
+    switch (cell->type()) {
+    case JSFunctionType:
+        if (PyFunction::is(cell))
+            return object ? JSValue(PyMethod::create(globalObject, descriptor, object)) : descriptor;
+        return descriptor;
+    case InternalFunctionType:
+        if (auto* native = PyNativeFunction::tryFrom(descriptor)) {
+            switch (native->kind()) {
+            case NativeKind::Method:
+            case NativeKind::SlotWrapper:
+                if (!object)
+                    return descriptor;
+                return PyNativeFunction::createBound(globalObject, native, object);
+            case NativeKind::ClassMethod:
+                return PyNativeFunction::createBound(globalObject, native, type);
+            default:
+                return descriptor;
+            }
+        }
+        return descriptor;
+    case StringType:
+    case HeapBigIntType:
+    case ArrayType:
+    case PyTupleType:
+    case PyDictType:
+        return descriptor;
+    default:
+        break;
+    }
+    JSValue getter = rt.typeOf(descriptor)->lookup(Special::Get);
+    if (!getter)
+        return descriptor;
+    // After A.__get__ = A(), to call that it has to be bound, by calling it.
+    if (!rt.vm().isSafeToRecurseSoft()) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(rt.vm());
+        return raiseRecursionError(globalObject, scope, "maximum recursion depth exceeded"_s);
+    }
+    return callSpecial(globalObject, getter, descriptor, object ? object : jsUndefined(), type);
+}
+
+// ---- Attributes ----
+
+static NEVER_INLINE JSValue raiseNoAttribute(JSGlobalObject* globalObject, JSValue object, JSString* name)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    return raiseAttributeError(globalObject, scope, object, name, makeString('\'', typeName(globalObject, object), "' object has no attribute '"_s, stringOf(name), '\''));
+}
+
+JSValue genericGetAttr(JSGlobalObject* globalObject, JSValue object, JSString* name, bool suppress)
+{
+    Runtime& rt = runtime(globalObject);
+    PyType* type = rt.typeOf(object);
+    JSValue descriptor = type->lookup(name);
+    JSValue getter;
+    bool bindsDirectly = false;
+    if (descriptor) {
+        if (isMethodDescriptor(descriptor))
+            bindsDirectly = true;
+        else if (descriptor.isCell() && isPyObject(descriptor.asCell())) {
+            JSCell* cell = descriptor.asCell();
+            // The data descriptors written in C++.
+            if (cell->type() == PyObjectType) {
+                const ClassInfo* info = cell->classInfo();
+                if (info == PyGetSetDescriptor::info())
+                    return uncheckedDowncast<PyGetSetDescriptor>(cell)->def().getter(globalObject, object);
+                if (info == PyMemberDescriptor::info())
+                    return memberDescriptorGet(globalObject, uncheckedDowncast<PyMemberDescriptor>(cell), object);
+            }
+            PyType* descriptorType = uncheckedDowncast<PyObject>(cell)->type();
+            getter = descriptorType->lookup(Special::Get);
+            if (getter && (descriptorType->lookup(Special::Set) || descriptorType->lookup(Special::Delete)))
+                return callSpecial(globalObject, getter, descriptor, object, type);
+        } else if (descriptor.isCell() && descriptor.asCell()->type() == InternalFunctionType)
+            bindsDirectly = true; // A class method, or nothing to bind.
+    }
+
+    if (JSValue value = instanceAttribute(globalObject, object, name))
+        return value;
+
+    if (bindsDirectly)
+        return bindDescriptor(globalObject, descriptor, object, type);
+    if (getter)
+        return callSpecial(globalObject, getter, descriptor, object, type);
+    if (descriptor)
+        return descriptor;
+    if (suppress)
+        return { };
+    return raiseNoAttribute(globalObject, object, name);
+}
+
+void genericSetAttr(JSGlobalObject* globalObject, JSValue object, JSString* name, JSValue value, JSValue key)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PyType* type = rt.typeOf(object);
+    JSValue descriptor = type->lookup(name);
+    if (descriptor && descriptor.isCell() && isPyObject(descriptor.asCell())) {
+        JSCell* cell = descriptor.asCell();
+        if (cell->type() == PyObjectType) {
+            const ClassInfo* info = cell->classInfo();
+            if (info == PyGetSetDescriptor::info()) {
+                auto& def = uncheckedDowncast<PyGetSetDescriptor>(cell)->def();
+                if (!def.setter) {
+                    if (def.isMember)
+                        raise(globalObject, scope, rt.AttributeError(), "readonly attribute"_s);
+                    else
+                        raiseAttributeError(globalObject, scope, object, name, makeString("attribute '"_s, def.name, "' of '"_s, uncheckedDowncast<PyGetSetDescriptor>(cell)->owner()->nameInMessages(), "' objects is not writable"_s));
+                    return;
+                }
+                RELEASE_AND_RETURN(scope, def.setter(globalObject, object, value));
+            }
+            if (info == PyMemberDescriptor::info())
+                RELEASE_AND_RETURN(scope, memberDescriptorSet(globalObject, uncheckedDowncast<PyMemberDescriptor>(cell), object, value));
+        }
+        PyType* descriptorType = uncheckedDowncast<PyObject>(cell)->type();
+        JSValue setter = descriptorType->lookup(Special::Set);
+        JSValue deleter = descriptorType->lookup(Special::Delete);
+        if (setter || deleter) {
+            if (value) {
+                if (!setter) {
+                    raise(globalObject, scope, rt.AttributeError(), "__set__"_s);
+                    return;
+                }
+                scope.release();
+                callSpecial(globalObject, setter, descriptor, object, value);
+                return;
+            }
+            if (!deleter) {
+                raise(globalObject, scope, rt.AttributeError(), "__delete__"_s);
+                return;
+            }
+            scope.release();
+            callSpecial(globalObject, deleter, descriptor, object);
+            return;
+        }
+    }
+
+    if (auto* instance = PyInstance::tryFrom(object); instance && !key && instance->type()->has(TypeFlag::HasDict)) [[likely]] {
+        if (value)
+            instance->setAttribute(globalObject, name, value);
+        else if (!instance->deleteAttribute(globalObject, name))
+            raiseNoAttribute(globalObject, object, name);
+        return;
+    }
+
+    PyDict* dict = instanceDict(globalObject, object, true);
+    if (!dict) {
+        String text = stringOf(name);
+        if (descriptor)
+            raiseAttributeError(globalObject, scope, object, name, makeString('\'', type->name(), "' object attribute '"_s, text, "' is read-only"_s));
+        else {
+            // The hint is for classes that leave setting attributes to object.
+            auto* setter = PyNativeFunction::tryFrom(type->lookup(Special::SetAttr));
+            bool isGeneric = setter && setter->def().pointer.f3 == objectSetAttr;
+            raiseAttributeError(globalObject, scope, object, name, makeString('\'', type->nameInMessages(), "' object has no attribute '"_s, text, '\'', isGeneric ? " and no __dict__ for setting new attributes"_s : ""_s));
+        }
+        return;
+    }
+    if (value) {
+        if (key) [[unlikely]]
+            RELEASE_AND_RETURN(scope, dict->set(globalObject, key, value));
+        dict->set(vm, name, value);
+        return;
+    }
+    if (!dict->remove(vm, name))
+        raiseNoAttribute(globalObject, object, name);
+}
+
+static ALWAYS_INLINE bool isNative(JSValue method, NativeDef::F2 function)
+{
+    auto* native = PyNativeFunction::tryFrom(method);
+    return native && native->def().pointer.f2 == function;
+}
+
+static ALWAYS_INLINE bool isNative(JSValue method, NativeDef::F3 function)
+{
+    auto* native = PyNativeFunction::tryFrom(method);
+    return native && native->def().pointer.f3 == function;
+}
+
+static JSValue getAttrImpl(JSGlobalObject* globalObject, JSValue object, JSString* name, bool suppress)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    ASSERT(!name->isRope());
+
+    PyType* type = rt.typeOf(object);
+    JSValue getAttribute = type->lookup(Special::GetAttribute);
+    JSValue fallback = type->lookup(Special::GetAttr);
+
+    JSValue result;
+    if (isNative(getAttribute, objectGetAttribute)) [[likely]]
+        result = genericGetAttr(globalObject, object, name, suppress || fallback);
+    else if (isNative(getAttribute, typeGetAttribute))
+        result = typeGetAttr(globalObject, PyType::from(object), name, suppress || fallback);
+    else if (isNative(getAttribute, moduleGetAttribute))
+        result = moduleGetAttr(globalObject, PyModule::from(object), name, suppress || fallback);
+    else
+        result = callSpecial(globalObject, getAttribute, object, name);
+    if (result) [[likely]]
+        return result;
+
+    if (scope.exception()) {
+        if (!suppress && !fallback)
+            return { };
+        if (!clearPendingExceptionIfMatches(globalObject, rt.AttributeError()))
+            return { };
+    }
+    if (!fallback)
+        return { };
+    result = callSpecial(globalObject, fallback, object, name);
+    if (!result && suppress)
+        clearPendingExceptionIfMatches(globalObject, rt.AttributeError());
+    return result;
+}
+
+JSValue getAttr(JSGlobalObject* globalObject, JSValue object, JSString* name)
+{
+    return getAttrImpl(globalObject, object, name, false);
+}
+
+JSValue getAttrIfPresent(JSGlobalObject* globalObject, JSValue object, JSString* name)
+{
+    return getAttrImpl(globalObject, object, name, true);
+}
+
+bool hasAttr(JSGlobalObject* globalObject, JSValue object, JSString* name)
+{
+    return !!getAttrImpl(globalObject, object, name, true);
+}
+
+void setAttr(JSGlobalObject* globalObject, JSValue object, JSString* name, JSValue value)
+{
+    ASSERT(value);
+    JSValue method = typeOf(globalObject, object)->lookup(Special::SetAttr);
+    if (isNative(method, objectSetAttr)) [[likely]]
+        return genericSetAttr(globalObject, object, name, value);
+    callSpecial(globalObject, method, object, name, value);
+}
+
+void delAttr(JSGlobalObject* globalObject, JSValue object, JSString* name)
+{
+    JSValue method = typeOf(globalObject, object)->lookup(Special::DelAttr);
+    if (isNative(method, objectDelAttr)) [[likely]]
+        return genericSetAttr(globalObject, object, name, { });
+    callSpecial(globalObject, method, object, name);
+}
+
+JSValue getMethod(JSGlobalObject* globalObject, JSValue object, JSString* name, JSValue& self)
+{
+    Runtime& rt = runtime(globalObject);
+    self = JSValue();
+    PyType* type = rt.typeOf(object);
+    if (!isNative(type->lookup(Special::GetAttribute), objectGetAttribute) || type->lookup(Special::GetAttr))
+        return getAttr(globalObject, object, name);
+
+    JSValue descriptor = type->lookup(name);
+    if (!descriptor || !isMethodDescriptor(descriptor))
+        return genericGetAttr(globalObject, object, name);
+    if (JSValue value = instanceAttribute(globalObject, object, name))
+        return value;
+    self = object;
+    return descriptor;
+}
+
+// ---- What the instructions remember ----
+
+// The key of the property of an instance that holds the attribute, for a name that is not a rope. Null: no property does.
+static UniquedStringImpl* propertyKeyOfAttribute(JSString* name)
+{
+    StringImpl* impl = name->tryGetValueImpl();
+    if (!impl->isAtom())
+        return nullptr;
+    auto* key = static_cast<UniquedStringImpl*>(impl);
+    return parseIndex(*key) ? nullptr : key;
+}
+
+static bool isDataDescriptor(JSValue descriptor)
+{
+    if (!descriptor || !descriptor.isCell() || !isPyObject(descriptor.asCell()))
+        return false;
+    PyType* type = uncheckedDowncast<PyObject>(descriptor.asCell())->type();
+    return type->lookup(Special::Set) || type->lookup(Special::Delete);
+}
+
+// What was found in the class of an object stays there while the class has its version. But what it does as a descriptor is up
+// to its own class, which may be given a __get__ or a __set__ at any time, unless it is a built-in one.
+static bool mayBecomeAnotherKindOfDescriptor(Runtime& rt, JSValue descriptor)
+{
+    return descriptor && rt.typeOf(descriptor)->isHeapType();
+}
+
+// Whether the Structure tells all about which attributes the object itself has.
+static bool structureTellsAttributes(Runtime& rt, JSCell* cell, PyType* type, Structure* structure)
+{
+    if (structure->isDictionary())
+        return false;
+    if (!type->has(TypeFlag::HasDict))
+        return true;
+    return cell->type() == PyInstanceType && !uncheckedDowncast<PyInstance>(cell)->dict() && !isValidOffset(structure->get(rt.vm(), rt.instanceHasDictKey()));
+}
+
+bool describeAttribute(JSGlobalObject* globalObject, JSValue object, JSString* name, bool forCall, AttributeCache& cache)
+{
+    if (!object.isCell())
+        return false;
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    JSCell* cell = object.asCell();
+    JSType jsType = cell->type();
+
+    // As in moduleGetAttr().
+    if (jsType == PyModuleType) {
+        auto* module = uncheckedDowncast<PyModule>(cell);
+        if (module->type() != rt.moduleType() || rt.moduleType()->lookup(name))
+            return false;
+        StringImpl* impl = name->tryGetValueImpl();
+        if (impl == rt.names.dSpec()->tryGetValueImpl() || impl == rt.names.dLoader()->tryGetValueImpl())
+            return false;
+        int32_t index = module->dict()->indexOf(name);
+        if (index < 0)
+            return false;
+        cache.structureID = cell->structureID();
+        cache.offset = AttributeCache::moduleEntry;
+        cache.typeVersion = index;
+        cache.payload = module->dict()->watchedVersion();
+        return true;
+    }
+
+    // As in genericGetAttr() and getMethod().
+    bool isPython = isPyObjectType(jsType);
+    if (!isPython && jsType != StringType && jsType != ArrayType)
+        return false;
+    PyType* type = rt.typeOf(object);
+    if (!isNative(type->lookup(Special::GetAttribute), objectGetAttribute))
+        return false;
+    JSValue descriptor = type->lookup(name);
+    if (mayBecomeAnotherKindOfDescriptor(rt, descriptor))
+        return false;
+
+    if (!isPython) {
+        if (!forCall || !descriptor || !isMethodDescriptor(descriptor))
+            return false;
+        cache.jsType = jsType;
+        cache.payload = JSValue::encode(descriptor);
+        return true;
+    }
+
+    Structure* structure = cell->structure();
+    cache.structureID = cell->structureID();
+    cache.typeVersion = type->version();
+
+    // One of the __slots__.
+    if (descriptor && descriptor.isCell() && descriptor.asCell()->type() == PyObjectType && descriptor.asCell()->classInfo() == PyMemberDescriptor::info()) {
+        if (structure->isDictionary())
+            return false;
+        cache.offset = structure->get(vm, PropertyName(&uncheckedDowncast<PyMemberDescriptor>(descriptor.asCell())->key()->uid()));
+        return isValidOffset(cache.offset);
+    }
+    if (isDataDescriptor(descriptor) || !structureTellsAttributes(rt, cell, type, structure))
+        return false;
+
+    if (jsType == PyInstanceType) {
+        UniquedStringImpl* key = propertyKeyOfAttribute(name);
+        if (!key)
+            return false;
+        cache.offset = structure->get(vm, PropertyName(key));
+        if (isValidOffset(cache.offset))
+            return true;
+    }
+
+    if (!descriptor)
+        return false;
+    cache.payload = JSValue::encode(descriptor);
+    if (isMethodDescriptor(descriptor)) {
+        cache.offset = AttributeCache::classValue;
+        return forCall; // Otherwise the attribute is a new bound method each time.
+    }
+    // What is left is the attribute as it is, if there is nothing to bind.
+    if (descriptor.isCell()) {
+        if (auto* native = PyNativeFunction::tryFrom(descriptor); native && native->kind() == NativeKind::ClassMethod)
+            return false;
+        if (rt.typeOf(descriptor)->lookup(Special::Get))
+            return false;
+    }
+    cache.offset = forCall ? AttributeCache::unboundClassValue : AttributeCache::classValue;
+    return true;
+}
+
+bool describeSetAttribute(JSGlobalObject* globalObject, JSValue object, JSString* name, Structure* oldStructure, SetAttributeCache& cache)
+{
+    // As in genericSetAttr().
+    if (!object.isCell() || !isPyObjectType(object.asCell()->type()))
+        return false;
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto* cell = uncheckedDowncast<PyObject>(object.asCell());
+    PyType* type = cell->type();
+    if (!isNative(type->lookup(Special::SetAttr), objectSetAttr))
+        return false;
+    Structure* structure = cell->structure();
+    if (structure->isDictionary() || oldStructure->isDictionary())
+        return false;
+
+    JSValue descriptor = type->lookup(name);
+    if (mayBecomeAnotherKindOfDescriptor(rt, descriptor))
+        return false;
+    UniquedStringImpl* key;
+    if (descriptor && descriptor.isCell() && descriptor.asCell()->type() == PyObjectType && descriptor.asCell()->classInfo() == PyMemberDescriptor::info())
+        key = &uncheckedDowncast<PyMemberDescriptor>(descriptor.asCell())->key()->uid();
+    else {
+        if (isDataDescriptor(descriptor) || cell->JSCell::type() != PyInstanceType || !type->has(TypeFlag::HasDict) || !structureTellsAttributes(rt, cell, type, structure))
+            return false;
+        key = propertyKeyOfAttribute(name);
+        if (!key)
+            return false;
+    }
+    cache.offset = structure->get(vm, PropertyName(key));
+    if (!isValidOffset(cache.offset))
+        return false;
+    cache.oldStructureID = oldStructure->id();
+    cache.typeVersion = type->version();
+    if (structure == oldStructure)
+        return true;
+    // The instruction does not allocate.
+    if (structure->previousID() != oldStructure || structure->outOfLineCapacity() != oldStructure->outOfLineCapacity())
+        return false;
+    cache.newStructureID = structure->id();
+    return true;
+}
+
+JSValue lookupSpecial(JSGlobalObject* globalObject, JSValue object, Special special)
+{
+    PyType* type = typeOf(globalObject, object);
+    JSValue method = type->lookup(special);
+    if (!method)
+        return { };
+    return bindDescriptor(globalObject, method, object, type);
+}
+
+// ---- Calls ----
+
+// What Interpreter::executeCall() comes to in the common case. It guards the code it is about to enter against being replaced
+// or thrown away, which does not happen to code that stays in the interpreter. False: this is not the common case.
+static ALWAYS_INLINE bool tryEnterFunction(VM& vm, PyFunction* function, JSValue thisValue, const JSValue* arguments, size_t count, JSValue& result)
+{
+#if (CPU(ARM64) || CPU(X86_64)) && CPU(ADDRESS64) && !ENABLE(C_LOOP)
+    FunctionExecutable* executable = function->functionExecutable();
+    CodeBlock* codeBlock = executable->codeBlockForCall();
+    // These entry points make a frame for the arguments there are, which has to hold all the parameters.
+    if (!codeBlock || count > 6 || count + 1 < codeBlock->numParameters() || !vm.entryScope || vm.disallowVMEntryCount || !vm.isSafeToRecurseSoft()) [[unlikely]]
+        return false;
+    void* entry = executable->generatedJITCodeAddressForCall();
+    vm.clearLastException();
+    EncodedJSValue encoded;
+    switch (count) {
+    case 0:
+        encoded = vmEntryToJavaScriptWith0Arguments(entry, &vm, codeBlock, function, thisValue, nullptr);
+        break;
+    case 1:
+        encoded = vmEntryToJavaScriptWith1Arguments(entry, &vm, codeBlock, function, thisValue, nullptr, arguments[0]);
+        break;
+    case 2:
+        encoded = vmEntryToJavaScriptWith2Arguments(entry, &vm, codeBlock, function, thisValue, nullptr, arguments[0], arguments[1]);
+        break;
+    case 3:
+        encoded = vmEntryToJavaScriptWith3Arguments(entry, &vm, codeBlock, function, thisValue, nullptr, arguments[0], arguments[1], arguments[2]);
+        break;
+    case 4:
+        encoded = vmEntryToJavaScriptWith4Arguments(entry, &vm, codeBlock, function, thisValue, nullptr, arguments[0], arguments[1], arguments[2], arguments[3]);
+        break;
+    case 5:
+        encoded = vmEntryToJavaScriptWith5Arguments(entry, &vm, codeBlock, function, thisValue, nullptr, arguments[0], arguments[1], arguments[2], arguments[3], arguments[4]);
+        break;
+    default:
+        encoded = vmEntryToJavaScriptWith6Arguments(entry, &vm, codeBlock, function, thisValue, nullptr, arguments[0], arguments[1], arguments[2], arguments[3], arguments[4], arguments[5]);
+        break;
+    }
+    vm.didEnterVM = true;
+    result = JSValue::decode(encoded);
+    return true;
+#else
+    UNUSED_PARAM(vm);
+    UNUSED_PARAM(function);
+    UNUSED_PARAM(thisValue);
+    UNUSED_PARAM(arguments);
+    UNUSED_PARAM(count);
+    UNUSED_PARAM(result);
+    return false;
+#endif
+}
+
+static ALWAYS_INLINE JSValue callJSFunction(JSGlobalObject* globalObject, JSObject* function, const CallArgs& args)
+{
+    JSValue thisValue = args.hasKeywords() ? JSValue(args.keywordNames()) : jsUndefined();
+    Runtime& rt = runtime(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(rt.vm());
+    Runtime::RuntimeCall record { rt.runtimeCall };
+    rt.runtimeCall = &record;
+    JSValue result;
+    if (!tryEnterFunction(rt.vm(), uncheckedDowncast<PyFunction>(function), thisValue, args.values(), args.totalCount(), result)) [[unlikely]] {
+        CallData callData = JSC::getCallData(function);
+        ASSERT(callData.type != CallData::Type::None);
+        ArgList list(reinterpret_cast<EncodedJSValue*>(const_cast<JSValue*>(args.values())), args.totalCount());
+        result = JSC::call(globalObject, function, callData, thisValue, list);
+    }
+    rt.runtimeCall = record.previous;
+    RETURN_IF_EXCEPTION(scope, { });
+    return result;
+}
+
+JSValue call(JSGlobalObject* globalObject, JSValue callable, const CallArgs& args)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (!vm.isSafeToRecurseSoft()) [[unlikely]]
+        return raiseRecursionError(globalObject, scope, "maximum recursion depth exceeded"_s);
+
+    if (callable.isCell()) {
+        JSCell* cell = callable.asCell();
+        switch (cell->type()) {
+        case JSFunctionType:
+            if (!PyFunction::is(cell))
+                RELEASE_AND_RETURN(scope, callForeignFunction(globalObject, cell, args));
+            RELEASE_AND_RETURN(scope, callJSFunction(globalObject, asObject(cell), args));
+        case InternalFunctionType: {
+            auto native = uncheckedDowncast<InternalFunction>(cell)->nativeFunctionFor(CodeSpecializationKind::CodeForCall);
+            if (native == TaggedNativeFunction(callNativeFunction))
+                RELEASE_AND_RETURN(scope, uncheckedDowncast<PyNativeFunction>(cell)->invoke(globalObject, args));
+            if (native == TaggedNativeFunction(callType)) {
+                auto* type = uncheckedDowncast<PyType>(cell);
+                if (type->type() == rt.typeType()) [[likely]]
+                    RELEASE_AND_RETURN(scope, typeCall(globalObject, type, args));
+                break;
+            }
+            RELEASE_AND_RETURN(scope, callForeignFunction(globalObject, cell, args));
+        }
+        case PyMethodType: {
+            auto* method = uncheckedDowncast<PyMethod>(cell);
+            RELEASE_AND_RETURN(scope, withFirstArgument(method->self(), args, [&](const CallArgs& all) {
+                return call(globalObject, method->function(), all);
+            }));
+        }
+        default:
+            break;
+        }
+    }
+
+    PyType* type = rt.typeOf(callable);
+    JSValue method = type->lookup(Special::Call);
+    if (!method) {
+        if (callable.isObject() && !isPyObject(callable.asCell()) && asObject(callable)->isCallable())
+            RELEASE_AND_RETURN(scope, callForeignFunction(globalObject, callable, args));
+        return raiseTypeError(globalObject, scope, '\'', type->nameInMessages(), "' object is not callable"_s);
+    }
+    RELEASE_AND_RETURN(scope, callSpecial(globalObject, method, callable, args));
+}
+
+JSValue callSpecial(JSGlobalObject* globalObject, JSValue method, JSValue self, const CallArgs& args)
+{
+    if (method.isCell()) {
+        JSCell* cell = method.asCell();
+        if (cell->type() == InternalFunctionType) {
+            if (auto* native = PyNativeFunction::tryFrom(method)) {
+                NativeKind kind = native->kind();
+                if (kind == NativeKind::SlotWrapper || kind == NativeKind::Method) [[likely]]
+                    return native->invokeWithSelf(globalObject, self, args);
+            }
+        } else if (cell->type() == JSFunctionType && PyFunction::is(cell)) {
+            return withFirstArgument(self, args, [&](const CallArgs& all) {
+                return callJSFunction(globalObject, asObject(cell), all);
+            });
+        }
+    }
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue bound = bindDescriptor(globalObject, method, self, typeOf(globalObject, self));
+    RETURN_IF_EXCEPTION(scope, { });
+    // After A.__call__ = A(), to call an A is to call an A. That has to end, although it may use no stack: these are tail calls.
+    Runtime& rt = runtime(globalObject);
+    if (!rt.tryEnterFrame()) [[unlikely]]
+        return { };
+    JSValue result = call(globalObject, bound, args);
+    rt.leaveFrame();
+    scope.release();
+    return result;
+}
+
+JSValue callWithTupleAndDict(JSGlobalObject* globalObject, JSValue callable, PyTuple* positional, PyDict* keywords)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!keywords || keywords->isEmpty())
+        RELEASE_AND_RETURN(scope, call(globalObject, callable, CallArgs(positional->span())));
+
+    MarkedArgumentBuffer buffer;
+    for (JSValue value : positional->span())
+        buffer.append(value);
+    PyTuple* names = PyTuple::createUninitialized(vm, rt.keywordNamesStructure(), rt.tupleType(), keywords->size());
+    unsigned index = 0;
+    JSValue key, value;
+    for (unsigned position = 0; keywords->next(position, key, value);) {
+        if (!isStr(key))
+            return raiseTypeError(globalObject, scope, "keywords must be strings"_s);
+        names->initializeAt(vm, index++, strValue(key));
+        buffer.append(value);
+    }
+    RELEASE_AND_RETURN(scope, call(globalObject, callable, CallArgs(reinterpret_cast<const JSValue*>(ArgList(buffer).data()), positional->length(), names)));
+}
+
+bool isCallable(JSGlobalObject* globalObject, JSValue value)
+{
+    if (!value.isCell())
+        return false;
+    JSCell* cell = value.asCell();
+    switch (cell->type()) {
+    case JSFunctionType:
+    case InternalFunctionType:
+    case PyMethodType:
+        return true;
+    default:
+        break;
+    }
+    if (typeOf(globalObject, value)->lookup(Special::Call))
+        return true;
+    return cell->isObject() && !isPyObject(cell) && asObject(cell)->isCallable();
+}
+
+// ---- Text ----
+
+static JSValue checkString(JSGlobalObject* globalObject, JSValue value, JSValue result, ASCIILiteral method)
+{
+    if (!result || isStr(result)) [[likely]]
+        return result;
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    return raiseTypeError(globalObject, scope, typeNameForMessage(globalObject, typeOf(globalObject, value)), '.', method, "() must return a str, not "_s, typeNameForMessage(globalObject, typeOf(globalObject, result)));
+}
+
+JSValue reprObject(JSGlobalObject* globalObject, JSValue value)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!vm.isSafeToRecurseSoft()) [[unlikely]]
+        return raiseRecursionError(globalObject, scope, "maximum recursion depth exceeded while getting the repr of an object"_s);
+    JSValue method = typeOf(globalObject, value)->lookup(Special::Repr);
+    JSValue result = callSpecial(globalObject, method, value);
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, checkString(globalObject, value, result, "__repr__"_s));
+}
+
+JSString* repr(JSGlobalObject* globalObject, JSValue value)
+{
+    JSValue result = reprObject(globalObject, value);
+    return result ? strValue(result) : nullptr;
+}
+
+JSValue strObject(JSGlobalObject* globalObject, JSValue value)
+{
+    if (value.isString())
+        return value;
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!vm.isSafeToRecurseSoft()) [[unlikely]]
+        return raiseRecursionError(globalObject, scope, "maximum recursion depth exceeded while getting the str of an object"_s);
+    JSValue method = typeOf(globalObject, value)->lookup(Special::Str);
+    JSValue result = callSpecial(globalObject, method, value);
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, checkString(globalObject, value, result, "__str__"_s));
+}
+
+JSString* str(JSGlobalObject* globalObject, JSValue value)
+{
+    if (value.isString())
+        return asString(value);
+    JSValue result = strObject(globalObject, value);
+    return result ? strValue(result) : nullptr;
+}
+
+JSString* ascii(JSGlobalObject* globalObject, JSValue value)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSString* text = repr(globalObject, value);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    auto view = text->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (view->containsOnlyASCII())
+        return text;
+    RELEASE_AND_RETURN(scope, makeStrUnlessTooLong(globalObject, asciiEscape(view)));
+}
+
+JSString* format(JSGlobalObject* globalObject, JSValue value, JSString* spec)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    bool isEmptySpec = !spec || !spec->length();
+    // What most f-strings hold.
+    if (isEmptySpec) {
+        if (value.isString())
+            return asString(value);
+        if (isExactInt(value))
+            RELEASE_AND_RETURN(scope, str(globalObject, value));
+    }
+    JSValue method = rt.typeOf(value)->lookup(Special::Format);
+    JSValue result = callSpecial(globalObject, method, value, spec ? spec : rt.names.empty());
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (!isStr(result)) {
+        raiseTypeError(globalObject, scope, typeNameForMessage(globalObject, rt.typeOf(value)), ".__format__() must return a str, not "_s, typeNameForMessage(globalObject, rt.typeOf(result)));
+        return nullptr;
+    }
+    return strValue(result);
+}
+
+String reprForMessage(JSGlobalObject* globalObject, JSValue value)
+{
+    VM& vm = getVM(globalObject);
+    // The message may be about an exception that is propagating, which is set aside: nothing runs while one is.
+    Exception* propagating = nullptr;
+    String result;
+    {
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        propagating = scope.exception();
+        scope.clearException();
+        JSString* text = repr(globalObject, value);
+        if (!scope.exception())
+            result = text->value(globalObject);
+        if (scope.exception()) {
+            scope.clearException();
+            result = "<?>"_s;
+        }
+    }
+    if (propagating) {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        scope.throwException(globalObject, propagating);
+    }
+    return result;
+}
+
+ReprGuard::ReprGuard(JSGlobalObject* globalObject, JSValue value)
+    : m_globalObject(globalObject)
+    , m_cell(value.asCell())
+{
+    auto& stack = runtime(globalObject).reprStack;
+    m_isRecursive = stack.contains(m_cell);
+    if (!m_isRecursive)
+        stack.append(m_cell);
+}
+
+ReprGuard::~ReprGuard()
+{
+    if (m_isRecursive)
+        return;
+    auto& stack = runtime(m_globalObject).reprStack;
+    ASSERT(stack.last() == m_cell);
+    stack.removeLast();
+}
+
+// ---- Identity, hashing, truth ----
+
+bool isIdentical(JSValue a, JSValue b)
+{
+    if (a == b)
+        return true;
+    // The same number may be tagged in two ways, and None is two values.
+    if (a.isNumber() && b.isNumber())
+        return a.asNumber() == b.asNumber() && std::signbit(a.asNumber()) == std::signbit(b.asNumber());
+    // Cells that share their text are one str: that is what interning amounts to.
+    if (a.isString() && b.isString()) {
+        const StringImpl* impl = asString(a)->tryGetValueImpl();
+        return impl && impl == asString(b)->tryGetValueImpl();
+    }
+    return a.isUndefinedOrNull() && b.isUndefinedOrNull();
+}
+
+int64_t hash(JSGlobalObject* globalObject, JSValue value)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (value.isString()) {
+        JSString* string = asString(value);
+        if (string->isRope()) {
+            string->value(globalObject);
+            RETURN_IF_EXCEPTION(scope, -1);
+        }
+        return hashOfString(string);
+    }
+    if (value.isInt32())
+        return value.asInt32() == -1 ? -2 : value.asInt32();
+    if (value.isDouble())
+        return hashOfDouble(value.asDouble());
+
+    PyType* type = rt.typeOf(value);
+    JSValue method = type->lookup(Special::Hash);
+    if (!method || isNone(method)) {
+        raiseTypeError(globalObject, scope, "unhashable type: '"_s, type->nameInMessages(), '\'');
+        return -1;
+    }
+    JSValue result = callSpecial(globalObject, method, value);
+    RETURN_IF_EXCEPTION(scope, -1);
+    if (!isInt(result)) {
+        raiseTypeError(globalObject, scope, "__hash__ method should return an integer"_s);
+        return -1;
+    }
+    result = intValue(result);
+    if (auto small = tryInt64(result))
+        return *small == -1 ? -2 : *small;
+    return hashOfInt(result);
+}
+
+int64_t hashForContainer(JSGlobalObject* globalObject, JSValue value, ASCIILiteral what)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    int64_t result = hash(globalObject, value);
+    if (!scope.exception()) [[likely]]
+        return result;
+    JSValue exception = pendingException(globalObject);
+    if (rt.typeOf(exception) != rt.TypeError())
+        return -1;
+    takePendingException(globalObject);
+    JSString* message = str(globalObject, exception);
+    RETURN_IF_EXCEPTION(scope, -1);
+    String text = message->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, -1);
+    raiseTypeError(globalObject, scope, "cannot use '"_s, typeNameForMessage(globalObject, rt.typeOf(value)), "' as "_s, what, " ("_s, text, ')');
+    return -1;
+}
+
+bool isTrue(JSGlobalObject* globalObject, JSValue value)
+{
+    if (value.isBoolean())
+        return value.asBoolean();
+    if (value.isUndefinedOrNull())
+        return false;
+    if (value.isInt32())
+        return !!value.asInt32();
+    if (value.isDouble())
+        return !!value.asDouble(); // A NaN is true.
+
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSCell* cell = value.asCell();
+    switch (cell->type()) {
+    case StringType:
+        return !!uncheckedDowncast<JSString>(cell)->length();
+    case ArrayType:
+        return !!uncheckedDowncast<JSArray>(cell)->length();
+    case HeapBigIntType:
+        return !uncheckedDowncast<JSBigInt>(cell)->isZero();
+    default:
+        break;
+    }
+
+    PyType* type = rt.typeOf(value);
+    if (JSValue method = type->lookup(Special::Bool)) {
+        if (isNone(method)) {
+            raiseTypeError(globalObject, scope, '\'', type->nameInMessages(), "' cannot be interpreted as a boolean"_s);
+            return false;
+        }
+        JSValue result = callSpecial(globalObject, method, value);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!result.isBoolean()) {
+            raiseTypeError(globalObject, scope, typeNameForMessage(globalObject, type), ".__bool__() must return a bool, not "_s, typeNameForMessage(globalObject, rt.typeOf(result)));
+            return false;
+        }
+        return result.asBoolean();
+    }
+    if (type->lookup(Special::Len)) {
+        int64_t size = length(globalObject, value);
+        RETURN_IF_EXCEPTION(scope, false);
+        return !!size;
+    }
+    return true;
+}
+
+// ---- Comparison ----
+
+static constexpr Special comparisonMethods[] = { Special::Eq, Special::Ne, Special::Lt, Special::Le, Special::Gt, Special::Ge };
+static constexpr CompareOperator swappedOperators[] = { CompareOperator::Eq, CompareOperator::NotEq, CompareOperator::Gt, CompareOperator::GtE, CompareOperator::Lt, CompareOperator::LtE };
+static constexpr ASCIILiteral operatorSymbols[] = { "=="_s, "!="_s, "<"_s, "<="_s, ">"_s, ">="_s };
+
+template<typename T>
+static ALWAYS_INLINE bool compareOrdered(T a, T b, CompareOperator op)
+{
+    switch (op) {
+    case CompareOperator::Eq:
+        return a == b;
+    case CompareOperator::NotEq:
+        return a != b;
+    case CompareOperator::Lt:
+        return a < b;
+    case CompareOperator::LtE:
+        return a <= b;
+    case CompareOperator::Gt:
+        return a > b;
+    case CompareOperator::GtE:
+        return a >= b;
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+}
+
+static JSValue richCompareOrNotImplemented(JSGlobalObject*, JSValue, JSValue, CompareOperator);
+
+JSValue richCompare(JSGlobalObject* globalObject, JSValue a, JSValue b, CompareOperator op)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue result = richCompareOrNotImplemented(globalObject, a, b, op);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (result != rt.notImplemented()) [[likely]]
+        return result;
+    switch (op) {
+    case CompareOperator::Eq:
+        return jsBoolean(isIdentical(a, b));
+    case CompareOperator::NotEq:
+        return jsBoolean(!isIdentical(a, b));
+    default:
+        return raiseTypeError(globalObject, scope, '\'', operatorSymbols[static_cast<unsigned>(op)], "' not supported between instances of '"_s, rt.typeOf(a)->nameInMessages(), "' and '"_s, rt.typeOf(b)->nameInMessages(), '\'');
+    }
+}
+
+std::optional<bool> compareForJS(JSGlobalObject* globalObject, JSOperator op, JSValue a, JSValue b)
+{
+    static constexpr CompareOperator operators[] = { CompareOperator::Lt, CompareOperator::LtE, CompareOperator::Gt, CompareOperator::GtE };
+    ASSERT(op >= JSOperator::Less);
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue result = richCompareOrNotImplemented(globalObject, a, b, operators[static_cast<unsigned>(op) - static_cast<unsigned>(JSOperator::Less)]);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    if (result == runtime(globalObject).notImplemented())
+        return std::nullopt;
+    RELEASE_AND_RETURN(scope, isTrue(globalObject, result));
+}
+
+std::optional<bool> equalForJS(JSGlobalObject* globalObject, JSValue a, JSValue b)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue result = richCompareOrNotImplemented(globalObject, a, b, CompareOperator::Eq);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    if (result == runtime(globalObject).notImplemented())
+        return std::nullopt;
+    RELEASE_AND_RETURN(scope, isTrue(globalObject, result));
+}
+
+static JSValue richCompareOrNotImplemented(JSGlobalObject* globalObject, JSValue a, JSValue b, CompareOperator op)
+{
+    // Numbers that are not boxed compare as JS numbers do, whether they are ints or floats.
+    if (a.isNumber() && b.isNumber())
+        return jsBoolean(compareOrdered(a.asNumber(), b.asNumber(), op));
+
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!vm.isSafeToRecurseSoft()) [[unlikely]]
+        return raiseRecursionError(globalObject, scope, "maximum recursion depth exceeded in comparison"_s);
+
+    unsigned index = static_cast<unsigned>(op);
+    PyType* typeA = rt.typeOf(a);
+    PyType* typeB = rt.typeOf(b);
+    JSValue notImplemented = rt.notImplemented();
+    Special reflected = comparisonMethods[static_cast<unsigned>(swappedOperators[index])];
+
+    bool checkedReflected = false;
+    if (typeA != typeB && typeB->isSubtypeOf(typeA)) {
+        if (JSValue method = typeB->lookup(reflected)) {
+            checkedReflected = true;
+            JSValue result = callSpecial(globalObject, method, b, a);
+            RETURN_IF_EXCEPTION(scope, { });
+            if (result != notImplemented)
+                return result;
+        }
+    }
+    if (JSValue method = typeA->lookup(comparisonMethods[index])) {
+        JSValue result = callSpecial(globalObject, method, a, b);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (result != notImplemented)
+            return result;
+    }
+    if (!checkedReflected) {
+        if (JSValue method = typeB->lookup(reflected)) {
+            JSValue result = callSpecial(globalObject, method, b, a);
+            RETURN_IF_EXCEPTION(scope, { });
+            if (result != notImplemented)
+                return result;
+        }
+    }
+    return notImplemented;
+}
+
+bool richCompareBool(JSGlobalObject* globalObject, JSValue a, JSValue b, CompareOperator op)
+{
+    if (isIdentical(a, b)) {
+        if (op == CompareOperator::Eq)
+            return true;
+        if (op == CompareOperator::NotEq)
+            return false;
+    }
+    if (a.isString() && b.isString() && (op == CompareOperator::Eq || op == CompareOperator::NotEq)) {
+        bool equal = asString(a)->equal(globalObject, asString(b));
+        return equal == (op == CompareOperator::Eq);
+    }
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue result = richCompare(globalObject, a, b, op);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (result.isBoolean())
+        return result.asBoolean();
+    RELEASE_AND_RETURN(scope, isTrue(globalObject, result));
+}
+
+JSValue compare(JSGlobalObject* globalObject, JSValue a, JSValue b, CompareOperator op)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    switch (op) {
+    case CompareOperator::Is:
+        return jsBoolean(isIdentical(a, b));
+    case CompareOperator::IsNot:
+        return jsBoolean(!isIdentical(a, b));
+    case CompareOperator::In:
+    case CompareOperator::NotIn: {
+        bool found = contains(globalObject, b, a);
+        RETURN_IF_EXCEPTION(scope, { });
+        return jsBoolean(found == (op == CompareOperator::In));
+    }
+    case CompareOperator::ExceptionMatch: {
+        bool matches = exceptionMatches(globalObject, a, b);
+        RETURN_IF_EXCEPTION(scope, { });
+        return jsBoolean(matches);
+    }
+    default:
+        RELEASE_AND_RETURN(scope, richCompare(globalObject, a, b, op));
+    }
+}
+
+// ---- Containers ----
+
+int64_t length(JSGlobalObject* globalObject, JSValue value)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (value.isCell()) {
+        JSCell* cell = value.asCell();
+        switch (cell->type()) {
+        case ArrayType:
+            return uncheckedDowncast<JSArray>(cell)->length();
+        case StringType:
+            RELEASE_AND_RETURN(scope, strLength(globalObject, uncheckedDowncast<JSString>(cell)));
+        default:
+            break;
+        }
+    }
+    PyType* type = rt.typeOf(value);
+    JSValue method = type->lookup(Special::Len);
+    if (!method) {
+        raiseTypeError(globalObject, scope, "object of type '"_s, type->nameInMessages(), "' has no len()"_s);
+        return -1;
+    }
+    JSValue result = callSpecial(globalObject, method, value);
+    RETURN_IF_EXCEPTION(scope, -1);
+    if (result.isInt32() && result.asInt32() >= 0) [[likely]]
+        return result.asInt32();
+    result = toIndex(globalObject, result);
+    RETURN_IF_EXCEPTION(scope, -1);
+    if (intSign(result) < 0) {
+        raiseValueError(globalObject, scope, "__len__() should return >= 0"_s);
+        return -1;
+    }
+    RELEASE_AND_RETURN(scope, toSsize(globalObject, result, rt.OverflowError()));
+}
+
+int64_t lengthHint(JSGlobalObject* globalObject, JSValue value, int64_t defaultValue)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PyType* type = rt.typeOf(value);
+    if (type->lookup(Special::Len)) {
+        int64_t size = length(globalObject, value);
+        if (size >= 0)
+            return size;
+        if (!clearPendingExceptionIfMatches(globalObject, rt.TypeError()))
+            return -1;
+    }
+    JSValue method = type->lookup(Special::LengthHint);
+    if (!method)
+        return defaultValue;
+    JSValue result = callSpecial(globalObject, method, value);
+    if (!result) {
+        if (clearPendingExceptionIfMatches(globalObject, rt.TypeError()))
+            return defaultValue;
+        return -1;
+    }
+    if (result == rt.notImplemented())
+        return defaultValue;
+    if (!isInt(result)) {
+        raiseTypeError(globalObject, scope, typeNameForMessage(globalObject, type), ".__length_hint__() must return an int, not "_s, typeNameForMessage(globalObject, rt.typeOf(result)));
+        return -1;
+    }
+    auto converted = tryInt64(intValue(result));
+    if (!converted) {
+        raiseOverflowError(globalObject, scope, "Python int too large to convert to C ssize_t"_s);
+        return -1;
+    }
+    int64_t size = *converted;
+    if (size < 0) {
+        raiseValueError(globalObject, scope, typeNameForMessage(globalObject, type), ".__length_hint__() must return a non-negative int"_s);
+        return -1;
+    }
+    return size;
+}
+
+JSValue getItem(JSGlobalObject* globalObject, JSValue object, JSValue key)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (object.isCell()) {
+        JSCell* cell = object.asCell();
+        switch (cell->type()) {
+        case ArrayType:
+            if (key.isInt32()) {
+                auto* list = uncheckedDowncast<JSArray>(cell);
+                int64_t index = key.asInt32();
+                int64_t size = list->length();
+                if (index < 0)
+                    index += size;
+                if (index >= 0 && index < size) [[likely]]
+                    return listGet(list, static_cast<unsigned>(index));
+                return raiseIndexError(globalObject, scope, "list index out of range"_s);
+            }
+            break;
+        case PyTupleType:
+            if (key.isInt32()) {
+                auto* tuple = uncheckedDowncast<PyTuple>(cell);
+                if (tuple->type() != rt.tupleType())
+                    break;
+                int64_t index = key.asInt32();
+                int64_t size = tuple->length();
+                if (index < 0)
+                    index += size;
+                if (index >= 0 && index < size) [[likely]]
+                    return tuple->at(static_cast<unsigned>(index));
+                return raiseIndexError(globalObject, scope, "tuple index out of range"_s);
+            }
+            break;
+        case PyDictType: {
+            auto* dict = uncheckedDowncast<PyDict>(cell);
+            if (dict->type() != rt.dictType())
+                break;
+            JSValue value = dict->get(globalObject, key);
+            RETURN_IF_EXCEPTION(scope, { });
+            if (value) [[likely]]
+                return value;
+            return raiseKeyError(globalObject, scope, key);
+        }
+        default:
+            break;
+        }
+    }
+
+    PyType* type = rt.typeOf(object);
+    if (JSValue method = type->lookup(Special::GetItem))
+        RELEASE_AND_RETURN(scope, callSpecial(globalObject, method, object, key));
+
+    if (PyType* asType = PyType::tryFrom(object)) {
+        // list[int]
+        if (asType == rt.typeType())
+            RELEASE_AND_RETURN(scope, makeGenericAlias(globalObject, object, key));
+        JSValue method = getAttrIfPresent(globalObject, object, rt.name(Special::ClassGetItem));
+        RETURN_IF_EXCEPTION(scope, { });
+        if (method && !isNone(method))
+            RELEASE_AND_RETURN(scope, call(globalObject, method, key));
+        return raiseTypeError(globalObject, scope, "type '"_s, asType->nameInMessages(), "' is not subscriptable"_s);
+    }
+    return raiseTypeError(globalObject, scope, '\'', type->nameInMessages(), "' object is not subscriptable"_s);
+}
+
+void setItem(JSGlobalObject* globalObject, JSValue object, JSValue key, JSValue value)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (object.isCell()) {
+        JSCell* cell = object.asCell();
+        if (cell->type() == PyDictType) {
+            auto* dict = uncheckedDowncast<PyDict>(cell);
+            if (dict->type() == rt.dictType())
+                RELEASE_AND_RETURN(scope, dict->set(globalObject, key, value));
+        } else if (cell->type() == ArrayType && key.isInt32()) {
+            auto* list = uncheckedDowncast<JSArray>(cell);
+            int64_t index = key.asInt32();
+            int64_t size = list->length();
+            if (index < 0)
+                index += size;
+            if (index >= 0 && index < size) [[likely]]
+                RELEASE_AND_RETURN(scope, listSet(globalObject, list, static_cast<unsigned>(index), value));
+            raiseIndexError(globalObject, scope, "list assignment index out of range"_s);
+            return;
+        }
+    }
+
+    PyType* type = rt.typeOf(object);
+    JSValue method = type->lookup(Special::SetItem);
+    if (!method) {
+        raiseTypeError(globalObject, scope, '\'', type->nameInMessages(), "' object does not support item assignment"_s);
+        return;
+    }
+    scope.release();
+    callSpecial(globalObject, method, object, key, value);
+}
+
+void delItem(JSGlobalObject* globalObject, JSValue object, JSValue key)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PyType* type = typeOf(globalObject, object);
+    JSValue method = type->lookup(Special::DelItem);
+    if (!method) {
+        // CPython words it otherwise for an index into what has any of the operations of sequences.
+        bool isSequenceLike = type->isHeapType() || type->lookup(Special::Len) || type->lookup(Special::GetItem) || type->lookup(Special::Contains);
+        raiseTypeError(globalObject, scope, '\'', type->nameInMessages(), isSequenceLike && hasIndex(globalObject, key) ? "' object doesn't support item deletion"_s : "' object does not support item deletion"_s);
+        return;
+    }
+    scope.release();
+    callSpecial(globalObject, method, object, key);
+}
+
+// Anything with a __getitem__ written in Python may be a sequence, and can then be iterated over without an __iter__. A built-in
+// type that is a sequence has an __iter__; the __getitem__ of the others (re.Match, int | str) takes keys.
+static bool isIterableThroughGetItem(PyType* type)
+{
+    if (type->has(TypeFlag::DictSubclass))
+        return false;
+    JSValue method = type->lookup(Special::GetItem);
+    return method && !PyNativeFunction::is(method);
+}
+
+bool contains(JSGlobalObject* globalObject, JSValue container, JSValue item)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PyType* type = rt.typeOf(container);
+    JSValue method = type->lookup(Special::Contains);
+    if (method && !isNone(method)) {
+        JSValue result = callSpecial(globalObject, method, container, item);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (result.isBoolean())
+            return result.asBoolean();
+        RELEASE_AND_RETURN(scope, isTrue(globalObject, result));
+    }
+    if (method) {
+        raiseTypeError(globalObject, scope, '\'', type->nameInMessages(), "' object is not a container"_s);
+        return false;
+    }
+    JSValue iterator = getIter(globalObject, container);
+    if (!iterator) {
+        if (clearPendingExceptionIfMatches(globalObject, rt.TypeError()))
+            raiseTypeError(globalObject, scope, "argument of type '"_s, type->nameInMessages(), "' is not a container or iterable"_s);
+        return false;
+    }
+    while (true) {
+        JSValue candidate = iterNext(globalObject, iterator);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!candidate)
+            return false;
+        bool found = isEqual(globalObject, candidate, item);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (found)
+            return true;
+    }
+}
+
+// ---- Iteration ----
+
+JSValue getIter(JSGlobalObject* globalObject, JSValue value)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (value.isCell() && value.asCell()->type() == ArrayType)
+        return PyIterator::create(globalObject, PyIterator::Kind::List, value);
+
+    PyType* type = rt.typeOf(value);
+    JSValue method = type->lookup(Special::Iter);
+    if (method && !isNone(method)) {
+        JSValue iterator = callSpecial(globalObject, method, value);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!isIterator(globalObject, iterator))
+            return raiseTypeError(globalObject, scope, typeNameForMessage(globalObject, type), ".__iter__() must return an iterator, not "_s, typeNameForMessage(globalObject, rt.typeOf(iterator)));
+        return iterator;
+    }
+    if (!method && isIterableThroughGetItem(type))
+        return PyIterator::create(globalObject, PyIterator::Kind::Sequence, value);
+    return raiseTypeError(globalObject, scope, '\'', type->nameInMessages(), "' object is not iterable"_s);
+}
+
+bool isIterator(JSGlobalObject* globalObject, JSValue value)
+{
+    JSValue method = typeOf(globalObject, value)->lookup(Special::Next);
+    return method && !isNone(method);
+}
+
+JSValue iterNext(JSGlobalObject* globalObject, JSValue iterator)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (iterator.isCell()) {
+        JSCell* cell = iterator.asCell();
+        if (cell->type() == PyObjectType) {
+            const ClassInfo* info = cell->classInfo();
+            if (info == PyIterator::info())
+                RELEASE_AND_RETURN(scope, uncheckedDowncast<PyIterator>(cell)->next(globalObject));
+            if (info == PyMultiIterator::info() && !uncheckedDowncast<PyMultiIterator>(cell)->type()->isHeapType())
+                RELEASE_AND_RETURN(scope, uncheckedDowncast<PyMultiIterator>(cell)->next(globalObject));
+        } else if (cell->type() == PyGeneratorType) {
+            auto* generator = uncheckedDowncast<PyGenerator>(cell);
+            if (generator->kind() == PyGenerator::Kind::Generator) {
+                JSValue ignored;
+                RELEASE_AND_RETURN(scope, generatorSend(globalObject, generator, jsUndefined(), ignored));
+            }
+        }
+    }
+
+    PyType* type = rt.typeOf(iterator);
+    JSValue method = type->lookup(Special::Next);
+    if (!method || isNone(method))
+        return raiseTypeError(globalObject, scope, '\'', type->name(), "' object is not an iterator"_s);
+    JSValue result = callSpecial(globalObject, method, iterator);
+    if (result) [[likely]]
+        return result;
+    clearPendingExceptionIfMatches(globalObject, rt.StopIteration());
+    return { };
+}
+
+// ---- isinstance, issubclass ----
+
+static JSValue abstractBases(JSGlobalObject* globalObject, JSValue cls)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue bases = getAttrIfPresent(globalObject, cls, runtime(globalObject).names.dBases());
+    RETURN_IF_EXCEPTION(scope, { });
+    if (bases && !PyTuple::is(bases))
+        return { };
+    return bases;
+}
+
+static bool abstractIsSubclass(JSGlobalObject* globalObject, JSValue derived, JSValue cls)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    while (true) {
+        if (derived == cls)
+            return true;
+        JSValue bases = abstractBases(globalObject, derived);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!bases)
+            return false;
+        PyTuple* tuple = PyTuple::from(bases);
+        if (!tuple->length())
+            return false;
+        if (tuple->length() == 1) {
+            derived = tuple->at(0);
+            continue;
+        }
+        // Whatever has a __bases__ counts as a class here, and that may lead anywhere, or round in circles.
+        if (!vm.isSafeToRecurseSoft()) [[unlikely]] {
+            raiseRecursionError(globalObject, scope, "maximum recursion depth exceeded in __issubclass__"_s);
+            return false;
+        }
+        for (unsigned i = 0; i < tuple->length(); ++i) {
+            bool result = abstractIsSubclass(globalObject, tuple->at(i), cls);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (result)
+                return true;
+        }
+        return false;
+    }
+}
+
+// type.__instancecheck__
+bool isInstanceWithoutHook(JSGlobalObject* globalObject, JSValue object, JSValue cls)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (PyType* type = PyType::tryFrom(cls)) {
+        PyType* objectType = rt.typeOf(object);
+        if (objectType->isSubtypeOf(type))
+            return true;
+        // An object may claim another class.
+        JSValue claimed = getAttrIfPresent(globalObject, object, rt.names.dClass());
+        RETURN_IF_EXCEPTION(scope, false);
+        if (PyType* claimedType = PyType::tryFrom(claimed); claimedType && claimedType != objectType)
+            return claimedType->isSubtypeOf(type);
+        return false;
+    }
+    JSValue bases = abstractBases(globalObject, cls);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!bases) {
+        raiseTypeError(globalObject, scope, "isinstance() arg 2 must be a type, a tuple of types, or a union"_s);
+        return false;
+    }
+    JSValue claimed = getAttrIfPresent(globalObject, object, rt.names.dClass());
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!claimed)
+        return false;
+    RELEASE_AND_RETURN(scope, abstractIsSubclass(globalObject, claimed, cls));
+}
+
+// type.__subclasscheck__
+bool isSubclassWithoutHook(JSGlobalObject* globalObject, JSValue derived, JSValue cls)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PyType* derivedType = PyType::tryFrom(derived);
+    PyType* type = PyType::tryFrom(cls);
+    if (derivedType && type)
+        return derivedType->isSubtypeOf(type);
+    JSValue bases = abstractBases(globalObject, derived);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!bases) {
+        raiseTypeError(globalObject, scope, "issubclass() arg 1 must be a class"_s);
+        return false;
+    }
+    bases = abstractBases(globalObject, cls);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!bases) {
+        raiseTypeError(globalObject, scope, "issubclass() arg 2 must be a class, a tuple of classes, or a union"_s);
+        return false;
+    }
+    RELEASE_AND_RETURN(scope, abstractIsSubclass(globalObject, derived, cls));
+}
+
+bool isInstance(JSGlobalObject* globalObject, JSValue object, JSValue cls)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    PyType* objectType = rt.typeOf(object);
+    if (cls.isCell() && cls.asCell() == objectType)
+        return true;
+    PyType* classType = rt.typeOf(cls);
+    if (classType == rt.typeType())
+        RELEASE_AND_RETURN(scope, isInstanceWithoutHook(globalObject, object, cls));
+    if (auto* tuple = PyTuple::tryFrom(cls)) {
+        if (!vm.isSafeToRecurseSoft()) {
+            raiseRecursionError(globalObject, scope, "maximum recursion depth exceeded in __instancecheck__"_s);
+            return false;
+        }
+        for (unsigned i = 0; i < tuple->length(); ++i) {
+            bool result = isInstance(globalObject, object, tuple->at(i));
+            RETURN_IF_EXCEPTION(scope, false);
+            if (result)
+                return true;
+        }
+        return false;
+    }
+    if (PyTuple* members = unionArguments(globalObject, cls))
+        RELEASE_AND_RETURN(scope, isInstance(globalObject, object, members));
+    if (JSValue method = classType->lookup(Special::InstanceCheck)) {
+        JSValue result = callSpecial(globalObject, method, cls, object);
+        RETURN_IF_EXCEPTION(scope, false);
+        RELEASE_AND_RETURN(scope, isTrue(globalObject, result));
+    }
+    RELEASE_AND_RETURN(scope, isInstanceWithoutHook(globalObject, object, cls));
+}
+
+bool isSubclass(JSGlobalObject* globalObject, JSValue derived, JSValue cls)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    PyType* classType = rt.typeOf(cls);
+    if (classType == rt.typeType()) {
+        if (derived == cls)
+            return true;
+        RELEASE_AND_RETURN(scope, isSubclassWithoutHook(globalObject, derived, cls));
+    }
+    if (auto* tuple = PyTuple::tryFrom(cls)) {
+        if (!vm.isSafeToRecurseSoft()) {
+            raiseRecursionError(globalObject, scope, "maximum recursion depth exceeded in __subclasscheck__"_s);
+            return false;
+        }
+        for (unsigned i = 0; i < tuple->length(); ++i) {
+            bool result = isSubclass(globalObject, derived, tuple->at(i));
+            RETURN_IF_EXCEPTION(scope, false);
+            if (result)
+                return true;
+        }
+        return false;
+    }
+    if (PyTuple* members = unionArguments(globalObject, cls))
+        RELEASE_AND_RETURN(scope, isSubclass(globalObject, derived, members));
+    if (JSValue method = classType->lookup(Special::SubclassCheck)) {
+        JSValue result = callSpecial(globalObject, method, cls, derived);
+        RETURN_IF_EXCEPTION(scope, false);
+        RELEASE_AND_RETURN(scope, isTrue(globalObject, result));
+    }
+    RELEASE_AND_RETURN(scope, isSubclassWithoutHook(globalObject, derived, cls));
+}
+
+} // namespace Python
+} // namespace JSC
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

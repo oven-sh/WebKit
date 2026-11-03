@@ -106,6 +106,19 @@ public:
         setNonCellTypeForNode(edge.node(), std::forward<Arguments>(arguments)...);
     }
     
+    // For an operator applied to operands of any type. If one of them may be an object that overloads it, the result is
+    // whatever the object's method returns.
+    void setTypeForOverloadableOperator(Node* node, SpeculatedType typeWithoutOverloading)
+    {
+        SpeculatedType operands = forNode(node->child1()).m_type;
+        if (node->child2())
+            operands |= forNode(node->child2()).m_type;
+        if (m_graph.mayOverloadOperators(operands))
+            makeHeapTopForNode(node);
+        else
+            setTypeForNode(node, typeWithoutOverloading);
+    }
+
     ALWAYS_INLINE void makeBytecodeTopForNode(NodeFlowProjection node)
     {
         m_state.makeBytecodeTopForNode(node);

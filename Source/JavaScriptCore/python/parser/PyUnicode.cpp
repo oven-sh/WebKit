@@ -6,8 +6,13 @@
 #include "config.h"
 #include "PyUnicode.h"
 
+#include "PyUnicodeNameAliases.h"
+#include "PyUnicodeNewNames.h"
+#include "PyUnicodeTables.h"
+#include <algorithm>
 #include <unicode/uchar.h>
 #include <unicode/unorm2.h>
+#include <wtf/HexNumber.h>
 #include <wtf/Vector.h>
 #include <wtf/text/StringView.h>
 
@@ -16,49 +21,77 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 namespace JSC {
 namespace Python {
 
-bool isXIDStart(char32_t c)
+static ALWAYS_INLINE const UnicodeTables::Record& recordOf(char32_t c)
 {
-    return u_hasBinaryProperty(c, UCHAR_XID_START);
+    using namespace UnicodeTables;
+    if (c > 0x10ffff)
+        return records[0];
+    return records[stage2[(stage1[c >> shift] << shift) + (c & ((1 << shift) - 1))]];
 }
 
-bool isXIDContinue(char32_t c)
+static ALWAYS_INLINE bool has(char32_t c, UnicodeTables::Flag flag) { return recordOf(c).flags & flag; }
+
+namespace Unicode {
+
+bool isAlpha(char32_t c) { return has(c, UnicodeTables::IsAlpha); }
+bool isLowercase(char32_t c) { return has(c, UnicodeTables::IsLowercase); }
+bool isUppercase(char32_t c) { return has(c, UnicodeTables::IsUppercase); }
+bool isTitlecase(char32_t c) { return has(c, UnicodeTables::IsTitlecase); }
+bool isCased(char32_t c) { return has(c, UnicodeTables::IsCased); }
+bool isCaseIgnorable(char32_t c) { return has(c, UnicodeTables::IsCaseIgnorable); }
+bool isDecimal(char32_t c) { return has(c, UnicodeTables::IsDecimal); }
+bool isDigit(char32_t c) { return has(c, UnicodeTables::IsDigit); }
+bool isNumeric(char32_t c) { return has(c, UnicodeTables::IsNumeric); }
+bool isLineBreak(char32_t c) { return has(c, UnicodeTables::IsLineBreak); }
+
+int decimalValue(char32_t c)
 {
-    return u_hasBinaryProperty(c, UCHAR_XID_CONTINUE);
+    auto& record = recordOf(c);
+    return record.flags & UnicodeTables::IsDecimal ? record.decimal : -1;
 }
 
-bool isPrintable(char32_t c)
+static ALWAYS_INLINE int32_t mappingOf(const UnicodeTables::Record& record, CaseMapping mapping)
 {
-    if (c == ' ')
-        return true;
-    switch (u_charType(c)) {
-    case U_CONTROL_CHAR:
-    case U_FORMAT_CHAR:
-    case U_SURROGATE:
-    case U_PRIVATE_USE_CHAR:
-    case U_UNASSIGNED:
-    case U_LINE_SEPARATOR:
-    case U_PARAGRAPH_SEPARATOR:
-    case U_SPACE_SEPARATOR:
-        return false;
-    default:
-        return true;
+    switch (mapping) {
+    case CaseMapping::Lower:
+        return record.lower;
+    case CaseMapping::Upper:
+        return record.upper;
+    case CaseMapping::Title:
+        return record.title;
+    case CaseMapping::Fold:
+        return record.fold;
     }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
-bool isWhitespace(char32_t c)
+unsigned mapCase(char32_t c, CaseMapping mapping, char32_t (&result)[3])
 {
-    switch (c) {
-    case 0x0009: case 0x000A: case 0x000B: case 0x000C: case 0x000D:
-    case 0x001C: case 0x001D: case 0x001E: case 0x001F: case 0x0020:
-    case 0x0085: case 0x00A0: case 0x1680:
-    case 0x2000: case 0x2001: case 0x2002: case 0x2003: case 0x2004: case 0x2005:
-    case 0x2006: case 0x2007: case 0x2008: case 0x2009: case 0x200A:
-    case 0x2028: case 0x2029: case 0x202F: case 0x205F: case 0x3000:
-        return true;
-    default:
-        return false;
+    auto& record = recordOf(c);
+    int32_t value = mappingOf(record, mapping);
+    if (!(record.flags & UnicodeTables::HasSequences)) {
+        result[0] = c + value;
+        return 1;
     }
+    unsigned length = value & 3;
+    for (unsigned i = 0; i < length; ++i)
+        result[i] = UnicodeTables::sequences[(value >> 2) + i];
+    return length;
 }
+
+char32_t mapCaseToOne(char32_t c, CaseMapping mapping)
+{
+    auto& record = recordOf(c);
+    int32_t value = mappingOf(record, mapping);
+    return record.flags & UnicodeTables::HasSequences ? UnicodeTables::sequences[value >> 2] : c + value;
+}
+
+} // namespace Unicode
+
+bool isXIDStart(char32_t c) { return has(c, UnicodeTables::IsXIDStart); }
+bool isXIDContinue(char32_t c) { return has(c, UnicodeTables::IsXIDContinue); }
+bool isPrintable(char32_t c) { return has(c, UnicodeTables::IsPrintable); }
+bool isWhitespace(char32_t c) { return has(c, UnicodeTables::IsWhitespace); }
 
 String normalizeNFKC(const String& string)
 {
@@ -85,6 +118,46 @@ String normalizeNFKC(const String& string)
     return String(buffer.span().first(length));
 }
 
+String nameOfNewCodePoint(char32_t c)
+{
+    for (auto& range : unicodeNewNameRanges) {
+        if (c >= range.first && c <= range.last)
+            return makeString(range.prefix, hex(static_cast<unsigned>(c), 4));
+    }
+    auto* entry = std::ranges::lower_bound(unicodeNewNames, c, { }, &UnicodeNewName::character);
+    if (entry != std::end(unicodeNewNames) && entry->character == c && entry->name.length())
+        return entry->name;
+    return { };
+}
+
+std::optional<char32_t> newCodePointFromName(std::span<const uint8_t> name)
+{
+    // Whatever the case of the letters, as ICU has it.
+    Vector<char, 128> upperName;
+    for (uint8_t byte : name)
+        upperName.append(toASCIIUpper(static_cast<char>(byte)));
+    std::span<const char> wanted = upperName.span();
+    for (auto& range : unicodeNewNameRanges) {
+        auto prefix = range.prefix.span();
+        if (wanted.size() <= prefix.size() || wanted.size() > prefix.size() + 6 || !equalSpans(wanted.first(prefix.size()), prefix))
+            continue;
+        char32_t c = 0;
+        for (char digit : wanted.subspan(prefix.size())) {
+            if (!isASCIIHexDigit(digit))
+                return std::nullopt;
+            c = c * 16 + toASCIIHexValue(digit);
+        }
+        // Written as the name has it: no zeros in front.
+        if (c >= range.first && c <= range.last && wanted.size() - prefix.size() == (c > 0xFFFFF ? 6u : c > 0xFFFF ? 5u : 4u))
+            return c;
+    }
+    auto compare = [](std::span<const char> a, std::span<const char> b) { return std::ranges::lexicographical_compare(a, b); };
+    auto* index = std::ranges::lower_bound(unicodeNewNamesByName, wanted, compare, [](uint16_t index) { return unicodeNewNames[index].name.span(); });
+    if (index != std::end(unicodeNewNamesByName) && wanted.size() && equalSpans(unicodeNewNames[*index].name.span(), wanted))
+        return unicodeNewNames[*index].character;
+    return std::nullopt;
+}
+
 std::optional<char32_t> codePointFromName(std::span<const uint8_t> name)
 {
     Vector<char, 128> buffer;
@@ -96,6 +169,17 @@ std::optional<char32_t> codePointFromName(std::span<const uint8_t> name)
         if (U_SUCCESS(status))
             return static_cast<char32_t>(result);
     }
+    if (auto added = newCodePointFromName(name))
+        return added;
+
+    // The other aliases: the names of control characters, abbreviations...
+    for (char& character : buffer)
+        character = toASCIIUpper(character);
+    auto upperName = buffer.span().first(name.size());
+    auto compare = [](std::span<const char> a, std::span<const char> b) { return std::ranges::lexicographical_compare(a, b); };
+    auto* alias = std::ranges::lower_bound(unicodeNameAliases, upperName, compare, [](const UnicodeNameAlias& alias) { return alias.name.span(); });
+    if (alias != std::end(unicodeNameAliases) && equalSpans(alias->name.span(), std::span<const char>(upperName)))
+        return alias->character;
     return std::nullopt;
 }
 

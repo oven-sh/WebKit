@@ -63,6 +63,8 @@ inline void BytecodeGenerator::reclaimFreeRegisters()
 
 inline void BytecodeGenerator::emitLabel(Label& label)
 {
+    if (m_pythonLineMarkPosition == m_writer.position() && label.isBound()) [[unlikely]]
+        settlePythonLineMark();
     label.setLocation(*this, m_writer.position());
     m_lastOpcodeID = op_debug;
 }

@@ -304,6 +304,7 @@ protected:
     bool m_clearedByGC : 1 { false };
     bool m_clearedByVirtual : 1 { false };
     bool m_isSharedByUnlinkedCallSites : 1 { false };
+    bool m_isInPythonCode : 1 { false }; // Such a call site never is virtual: see linkFor().
     unsigned m_callType : 4 { CallType::None }; // CallType
     unsigned m_type : 1; // Type
     unsigned m_mode : 3 { static_cast<unsigned>(Mode::Init) }; // Mode

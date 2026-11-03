@@ -1,0 +1,422 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#include "config.h"
+#include "PyType.h"
+
+#include "JSCInlines.h"
+#include "PyAbstract.h"
+#include "PyDescriptors.h"
+#include "PyErrors.h"
+#include "PyHooks.h"
+#include "PyInternals.h"
+#include "PyJSView.h"
+#include "PyList.h"
+#include "PyRuntime.h"
+#include "PyStr.h"
+#include "PyWeakRef.h"
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
+namespace JSC {
+namespace Python {
+
+const ClassInfo PyType::s_info = { "PyType"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(PyType) };
+
+JSC_DEFINE_HOST_FUNCTION(callType, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    CallArgs args(callFrame);
+    if (!args.hasKeywords() && hasKeywordMarker(globalObject, callFrame)) [[unlikely]]
+        return JSValue::encode(resultForCaller(globalObject, callFrame, callWithKeywordMarker(globalObject, callFrame)));
+    return JSValue::encode(resultForCaller(globalObject, callFrame, call(globalObject, callFrame->jsCallee(), args)));
+}
+
+// `new T(...)` in JS.
+JSC_DEFINE_HOST_FUNCTION(constructType, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    if (hasKeywordMarker(globalObject, callFrame)) [[unlikely]]
+        return JSValue::encode(valueForJS(callWithKeywordMarker(globalObject, callFrame)));
+    CallArgs args(reinterpret_cast<const JSValue*>(callFrame->addressOfArgumentsStart()), static_cast<unsigned>(callFrame->argumentCount()));
+    return JSValue::encode(valueForJS(call(globalObject, callFrame->jsCallee(), args)));
+}
+
+PY_DEFINE_JS_VIEW(PyType)
+
+bool PyType::customHasInstance(JSObject* object, JSGlobalObject*, JSValue value)
+{
+    return isInstance(object->realm(), value, object);
+}
+
+PyType::PyType(VM& vm, Structure* structure)
+    : Base(vm, structure, callType, constructType)
+    , m_version(nextVersion())
+{
+}
+
+PyType* PyType::createBare(VM& vm, Structure* structure)
+{
+    auto* type = new (NotNull, allocateCell<PyType>(vm)) PyType(vm, structure);
+    type->finishCreation(vm);
+    type->m_originalName.set(vm, type, jsEmptyString(vm));
+    return type;
+}
+
+template<typename Visitor>
+void PyType::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = uncheckedDowncast<PyType>(cell);
+    Base::visitChildren(thisObject, visitor);
+    visitor.append(thisObject->m_type);
+    visitor.append(thisObject->m_name);
+    visitor.append(thisObject->m_qualname);
+    visitor.append(thisObject->m_module);
+    visitor.append(thisObject->m_slots);
+    visitor.append(thisObject->m_base);
+    visitor.append(thisObject->m_solidBase);
+    visitor.append(thisObject->m_bases);
+    visitor.append(thisObject->m_mro);
+    visitor.append(thisObject->m_dict);
+    visitor.append(thisObject->m_subclasses);
+    visitor.append(thisObject->m_instanceStructure);
+    visitor.appendValues(thisObject->m_specials.data(), numberOfSpecials);
+    for (auto& entry : thisObject->m_lookupCache) {
+        visitor.append(entry.name);
+        visitor.append(entry.value);
+    }
+}
+
+DEFINE_VISIT_CHILDREN(PyType);
+
+String PyType::name() const
+{
+    return stringOf(m_name.get());
+}
+
+String PyType::nameInMessages() const
+{
+    if (isHeapType() || !m_module)
+        return name();
+    String module = stringOf(m_module.get());
+    if (module == "builtins"_s)
+        return name();
+    return makeString(module, '.', name());
+}
+
+void PyType::initializeBuiltin(JSGlobalObject* globalObject, const TypeDef& def, PyType* metatype, PyType* base)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+
+    String fullName = def.name;
+    size_t dot = fullName.reverseFind('.');
+    m_type.set(vm, this, metatype);
+    setNameString(vm, internString(vm, dot == notFound ? fullName : fullName.substring(dot + 1)));
+    m_flags = def.flags;
+    m_dict.set(vm, this, PyDict::create(globalObject));
+    if (base) {
+        m_base.set(vm, this, base);
+        m_flags.add(base->m_flags & inheritedTypeFlags);
+        m_bases.set(vm, this, PyTuple::create(globalObject, { JSValue(base) }));
+        PyTuple* baseMRO = base->mro();
+        ASSERT(baseMRO);
+        PyTuple* mro = PyTuple::create(globalObject, baseMRO->length() + 1);
+        mro->initializeAt(vm, 0, this);
+        for (unsigned i = 0; i < baseMRO->length(); ++i)
+            mro->initializeAt(vm, i + 1, baseMRO->at(i));
+        m_mro.set(vm, this, mro);
+        m_solidBase.set(vm, this, has(TypeFlag::OwnLayout) ? this : base->solidBase());
+        base->addSubclass(globalObject, this);
+    } else {
+        m_bases.set(vm, this, rt.emptyTuple());
+        m_mro.set(vm, this, PyTuple::create(globalObject, { JSValue(this) }));
+        m_solidBase.set(vm, this, this);
+    }
+
+    m_module.set(vm, this, dot == notFound ? rt.names.builtins() : internString(vm, fullName.left(dot)));
+    m_dict->set(vm, rt.names.dDoc(), def.doc.isNull() ? jsUndefined() : JSValue(makeStr(vm, def.doc)));
+    addMethods(globalObject, def.methods);
+    addGetSets(globalObject, def.getsets);
+    if (def.flags.contains(TypeFlag::HasDict) && !(base && base->has(TypeFlag::HasDict)) && !m_dict->get(rt.names.dDict()))
+        addGetSets(globalObject, dictGetSet());
+
+    // Nothing makes an instance of a built-in type that has not said how.
+    bool hasNew = false;
+    for (auto& method : def.methods)
+        hasNew |= method.kind == NativeKind::New;
+    if (!hasNew && base && (base == rt.objectType() || base->has(TypeFlag::DisallowInstantiation)))
+        m_flags.add(TypeFlag::DisallowInstantiation);
+}
+
+void PyType::addMethods(JSGlobalObject* globalObject, std::span<const NativeDef> methods)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    for (auto& def : methods) {
+        JSValue value;
+        switch (def.kind) {
+        case NativeKind::Method:
+        case NativeKind::SlotWrapper:
+        case NativeKind::ClassMethod:
+        case NativeKind::Function:
+            value = PyNativeFunction::create(globalObject, def, def.kind, { }, this);
+            break;
+        case NativeKind::New:
+            value = PyNativeFunction::create(globalObject, def, NativeKind::New, this, this);
+            break;
+        case NativeKind::StaticMethod:
+            value = PyWrapperObject::create(globalObject, rt.staticmethodType(), PyNativeFunction::create(globalObject, def, NativeKind::Function, { }, this));
+            break;
+        }
+        m_dict->set(vm, internString(vm, def.name), value);
+    }
+    didChange(vm);
+}
+
+void PyType::addGetSets(JSGlobalObject* globalObject, std::span<const NativeGetSet> getsets)
+{
+    VM& vm = getVM(globalObject);
+    for (auto& def : getsets)
+        m_dict->set(vm, internString(vm, def.name), PyGetSetDescriptor::create(globalObject, def, this));
+    didChange(vm);
+}
+
+bool PyType::isSubtypeOf(const PyType* other) const
+{
+    // The mro() of a metaclass may have put the type anywhere, or left it out.
+    if (PyTuple* mro = m_mro.get()) {
+        for (unsigned i = 0; i < mro->length(); ++i) {
+            if (mro->at(i).asCell() == other)
+                return true;
+        }
+        return false;
+    }
+    // The MRO is still being worked out.
+    for (const PyType* type = this; type; type = type->base()) {
+        if (type == other)
+            return true;
+    }
+    return false;
+}
+
+JSValue PyType::lookupSlow(JSString* name)
+{
+    PyTuple* mro = m_mro.get();
+    if (!mro)
+        return { };
+    JSValue value;
+    for (unsigned i = 0; !value && i < mro->length(); ++i)
+        value = uncheckedDowncast<PyType>(mro->at(i).asCell())->dict()->get(name);
+    VM& vm = this->vm();
+    StringImpl* impl = name->tryGetValueImpl();
+    LookupCacheEntry& entry = lookupCacheEntry(impl);
+    entry.impl = impl;
+    entry.name.set(vm, this, name);
+    entry.value.set(vm, this, value);
+    return value;
+}
+
+JSValue PyType::lookupSpecialSlow(Special special)
+{
+    Runtime& rt = Runtime::from(realm());
+    JSValue value = lookup(rt.name(special));
+    unsigned index = static_cast<unsigned>(special);
+    m_specials[index].set(rt.vm(), this, value);
+    m_specialIsCached[index] = true;
+    return value;
+}
+
+// Null: the class is gone.
+static PyType* subclassInEntry(JSValue entry)
+{
+    JSCell* cell = entry.asCell();
+    if (!PyType::is(cell))
+        cell = uncheckedDowncast<PyWeakRef>(cell)->referent();
+    return cell ? uncheckedDowncast<PyType>(cell) : nullptr;
+}
+
+uint32_t PyType::nextVersion()
+{
+    static std::atomic<uint32_t> last;
+    uint32_t version = ++last;
+    RELEASE_ASSERT(version);
+    return version;
+}
+
+Structure* PyType::createInstanceStructure(VM& vm)
+{
+    JSGlobalObject* globalObject = realm();
+    Structure* structure = PyInstance::createStructure(vm, globalObject, Runtime::from(globalObject));
+    m_instanceStructure.set(vm, this, structure);
+    return structure;
+}
+
+void PyType::didChange(VM& vm)
+{
+    m_version = nextVersion();
+    // What the caches held must not be kept alive by them: it may be what was just taken out of the class.
+    m_specialIsCached.fill(false);
+    for (auto& special : m_specials)
+        special.clear();
+    for (auto& entry : m_lookupCache) {
+        entry.impl = nullptr;
+        entry.name.clear();
+        entry.value.clear();
+    }
+    JSValue subclasses = m_subclasses.get();
+    if (!subclasses)
+        return;
+    JSArray* list = asList(subclasses);
+    for (unsigned i = 0; i < listLength(list); ++i) {
+        if (PyType* subclass = subclassInEntry(listGet(list, i)))
+            subclass->didChange(vm);
+    }
+}
+
+void PyType::appendSubclassesTo(MarkedArgumentBuffer& result) const
+{
+    JSValue subclasses = m_subclasses.get();
+    if (!subclasses)
+        return;
+    JSArray* list = asList(subclasses);
+    for (unsigned i = 0; i < listLength(list); ++i) {
+        if (PyType* subclass = subclassInEntry(listGet(list, i)))
+            result.append(subclass);
+    }
+}
+
+void PyType::addSubclass(JSGlobalObject* globalObject, PyType* subclass)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    if (!m_subclasses)
+        m_subclasses.set(vm, this, newList(globalObject));
+    JSArray* list = asList(m_subclasses.get());
+    // Now and then, what is left of the classes that are gone goes too.
+    if (unsigned length = listLength(list); length >= 16 && !(length & (length - 1))) {
+        for (unsigned i = length; i--;) {
+            if (!subclassInEntry(listGet(list, i)))
+                listRemove(globalObject, list, i);
+        }
+    }
+    JSValue entry = subclass;
+    if (subclass->isHeapType())
+        entry = PyWeakRef::create(vm, rt.weakRefStructure(), rt.weakRefType(), subclass, { });
+    listAppend(globalObject, list, entry);
+}
+
+void PyType::removeSubclass(JSGlobalObject* globalObject, PyType* subclass)
+{
+    if (!m_subclasses)
+        return;
+    JSArray* list = asList(m_subclasses.get());
+    for (unsigned i = 0; i < listLength(list); ++i) {
+        if (subclassInEntry(listGet(list, i)) == subclass) {
+            listRemove(globalObject, list, i);
+            return;
+        }
+    }
+}
+
+// ---- The C3 linearization ----
+
+PyTuple* computeMRO(JSGlobalObject* globalObject, PyType* type)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    PyTuple* bases = type->bases();
+    unsigned baseCount = bases->length();
+    for (unsigned i = 0; i < baseCount; ++i) {
+        PyType* base = PyType::from(bases->at(i));
+        if (!base->mro()) {
+            raiseTypeError(globalObject, scope, "Cannot extend an incomplete type '"_s, base->name(), '\'');
+            return nullptr;
+        }
+    }
+
+    // One base: its MRO after the type.
+    if (baseCount == 1) {
+        PyTuple* baseMRO = PyType::from(bases->at(0))->mro();
+        PyTuple* result = PyTuple::create(globalObject, baseMRO->length() + 1);
+        result->initializeAt(vm, 0, type);
+        for (unsigned i = 0; i < baseMRO->length(); ++i)
+            result->initializeAt(vm, i + 1, baseMRO->at(i));
+        return result;
+    }
+
+    for (unsigned i = 0; i < baseCount; ++i) {
+        for (unsigned j = i + 1; j < baseCount; ++j) {
+            if (bases->at(i) == bases->at(j)) {
+                raiseTypeError(globalObject, scope, "duplicate base class "_s, PyType::from(bases->at(i))->name());
+                return nullptr;
+            }
+        }
+    }
+
+    // Merge the MROs of the bases and the list of the bases itself. All of these are reachable from the type.
+    Vector<PyTuple*, 8> sequences;
+    for (unsigned i = 0; i < baseCount; ++i)
+        sequences.append(PyType::from(bases->at(i))->mro());
+    sequences.append(bases);
+    Vector<unsigned, 8> positions;
+    positions.fill(0, sequences.size());
+
+    Vector<JSValue, 16> result;
+    result.append(type);
+    auto isInTail = [&](JSValue candidate) {
+        for (unsigned i = 0; i < sequences.size(); ++i) {
+            for (unsigned j = positions[i] + 1; j < sequences[i]->length(); ++j) {
+                if (sequences[i]->at(j) == candidate)
+                    return true;
+            }
+        }
+        return false;
+    };
+    while (true) {
+        unsigned exhausted = 0;
+        bool found = false;
+        for (unsigned i = 0; i < sequences.size(); ++i) {
+            if (positions[i] >= sequences[i]->length()) {
+                ++exhausted;
+                continue;
+            }
+            JSValue candidate = sequences[i]->at(positions[i]);
+            if (isInTail(candidate))
+                continue;
+            result.append(candidate);
+            for (unsigned j = 0; j < sequences.size(); ++j) {
+                if (positions[j] < sequences[j]->length() && sequences[j]->at(positions[j]) == candidate)
+                    ++positions[j];
+            }
+            found = true;
+            break;
+        }
+        if (found)
+            continue;
+        if (exhausted == sequences.size())
+            break;
+
+        StrBuilder message;
+        message.append("Cannot create a consistent method resolution order (MRO) for bases "_s);
+        Vector<JSValue, 8> remaining;
+        for (unsigned i = 0; i < sequences.size(); ++i) {
+            if (positions[i] < sequences[i]->length() && !remaining.contains(sequences[i]->at(positions[i])))
+                remaining.append(sequences[i]->at(positions[i]));
+        }
+        for (unsigned i = 0; i < remaining.size(); ++i) {
+            if (i)
+                message.append(", "_s);
+            message.append(PyType::from(remaining[i])->name());
+        }
+        raiseTypeError(globalObject, scope, message.toString());
+        return nullptr;
+    }
+    return PyTuple::create(globalObject, result.span());
+}
+
+} // namespace Python
+} // namespace JSC
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

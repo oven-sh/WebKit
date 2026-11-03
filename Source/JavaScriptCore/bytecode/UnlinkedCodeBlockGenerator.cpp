@@ -81,6 +81,7 @@ bool UnlinkedCodeBlockGenerator::finalize(std::unique_ptr<JSInstructionStream> i
                 || !m_unlinkedStringSwitchJumpTables.isEmpty()
                 || !m_typeProfilerInfoMap.isEmpty()
                 || !m_opProfileControlFlowBytecodeOffsets.isEmpty()
+                || !m_pythonMarks.isEmpty()
                 || !m_bitVectors.isEmpty()
                 || !m_constantIdentifierSets.isEmpty())
                 m_codeBlock->createRareDataIfNecessary(locker);
@@ -92,6 +93,7 @@ bool UnlinkedCodeBlockGenerator::finalize(std::unique_ptr<JSInstructionStream> i
             m_codeBlock->m_rareData->m_unlinkedStringSwitchJumpTables = WTF::move(m_unlinkedStringSwitchJumpTables);
             m_codeBlock->m_rareData->m_typeProfilerInfoMap = WTF::move(m_typeProfilerInfoMap);
             m_codeBlock->m_rareData->m_opProfileControlFlowBytecodeOffsets = WTF::move(m_opProfileControlFlowBytecodeOffsets);
+            m_codeBlock->m_rareData->m_pythonMarks = WTF::move(m_pythonMarks);
             m_codeBlock->m_rareData->m_bitVectors = WTF::move(m_bitVectors);
             m_codeBlock->m_rareData->m_constantIdentifierSets = WTF::move(m_constantIdentifierSets);
         }
@@ -130,6 +132,9 @@ void UnlinkedCodeBlockGenerator::applyModification(BytecodeRewriter& rewriter)
 
     for (size_t i = 0; i < m_opProfileControlFlowBytecodeOffsets.size(); ++i)
         m_opProfileControlFlowBytecodeOffsets[i] = rewriter.adjustAbsoluteOffset(m_opProfileControlFlowBytecodeOffsets[i]);
+
+    for (PythonMark& mark : m_pythonMarks)
+        mark.offset = rewriter.adjustAbsoluteOffset(mark.offset);
 
     if (!m_typeProfilerInfoMap.isEmpty()) {
         UncheckedKeyHashMap<unsigned, UnlinkedCodeBlock::RareData::TypeProfilerExpressionRange> adjustedTypeProfilerInfoMap;

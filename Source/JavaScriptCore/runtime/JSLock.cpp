@@ -311,7 +311,8 @@ void JSLock::willReleaseLock()
             });
 #endif
 
-            if (!m_lockDropDepth || useLegacyDrain)
+            // While threads are parked, the one that lets go is not the last to have something going on in the VM.
+            if ((!m_lockDropDepth && !hasParkedThreads()) || useLegacyDrain)
                 protectedVM->drainMicrotasks();
 
             if (!protectedVM->topCallFrame)
@@ -382,6 +383,86 @@ void JSLock::grabAllLocks(DropAllLocks* dropper, unsigned droppedLockCount)
     auto& thread = Thread::currentSingleton();
     m_vm->setStackPointerAtVMEntry(thread.savedStackPointerAtVMEntry());
     m_vm->setLastStackTop(thread);
+}
+
+void JSLock::park(ParkedThread& parked)
+{
+    RELEASE_ASSERT(currentThreadIsHoldingLock());
+    VM& vm = *m_vm;
+    RELEASE_ASSERT(!vm.isCollectorBusyOnCurrentThread());
+    ASSERT(!vm.hasCheckpointOSRSideState());
+
+    parked.m_thread = &Thread::currentSingleton();
+    parked.m_lockCount = m_lockCount;
+    parked.m_topCallFrame = std::exchange(vm.topCallFrame, nullptr);
+    parked.m_topEntryFrame = std::exchange(vm.topEntryFrame, nullptr);
+    parked.m_maybeReturnPC = std::exchange(vm.maybeReturnPC, nullptr);
+    parked.m_topJSPIContext = std::exchange(vm.topJSPIContext, nullptr);
+    parked.m_entryScope = std::exchange(vm.entryScope, nullptr);
+    parked.m_lastException = std::exchange(vm.m_lastException, nullptr);
+#if ENABLE(EXCEPTION_SCOPE_VERIFICATION)
+    parked.m_needExceptionCheck = vm.m_needExceptionCheck;
+#endif
+    parked.m_exception = vm.m_exception;
+    if (parked.m_exception)
+        vm.clearException();
+    parked.m_stackPointerAtVMEntry = vm.m_stackPointerAtVMEntry;
+    parked.m_lastStackTop = vm.m_lastStackTop;
+    parked.m_softReservedZoneSize = vm.m_currentSoftReservedZoneSize;
+    vm.m_currentSoftReservedZoneSize = Options::softReservedZoneSize();
+    parked.m_disallowVMEntryCount = std::exchange(vm.disallowVMEntryCount, 0);
+    parked.m_allowLazyMaterializationOfImmutablePropertiesCount = std::exchange(vm.allowLazyMaterializationOfImmutablePropertiesCount, 0);
+#if ENABLE(EXCEPTION_SCOPE_VERIFICATION)
+    parked.m_topExceptionScope = std::exchange(vm.m_topExceptionScope, nullptr);
+    parked.m_simulatedThrowPointRecursionDepth = std::exchange(vm.m_simulatedThrowPointRecursionDepth, 0);
+    vm.m_needExceptionCheck = false;
+#endif
+
+    {
+        Locker locker { m_parkedThreadsLock };
+        m_parkedThreads.append(&parked);
+        m_parkedThreadCount.store(m_parkedThreads.size(), std::memory_order_relaxed);
+    }
+
+    // Whoever comes next acquires access to the heap for itself; and if nobody comes, the collector need not wait for anybody.
+    m_shouldReleaseHeapAccess = vm.heap.hasAccess();
+    unlock(m_lockCount);
+}
+
+void JSLock::unpark(ParkedThread& parked)
+{
+    ASSERT(parked.m_thread == &Thread::currentSingleton());
+    ASSERT(!currentThreadIsHoldingLock());
+    lock(parked.m_lockCount);
+
+    // From here on the collector can only run where this thread lets it.
+    {
+        Locker locker { m_parkedThreadsLock };
+        bool wasThere = m_parkedThreads.removeFirst(&parked);
+        RELEASE_ASSERT(wasThere);
+        m_parkedThreadCount.store(m_parkedThreads.size(), std::memory_order_relaxed);
+    }
+
+    VM& vm = *m_vm;
+    RELEASE_ASSERT(!vm.topCallFrame && !vm.entryScope && !vm.m_exception);
+    vm.topCallFrame = parked.m_topCallFrame;
+    vm.topEntryFrame = parked.m_topEntryFrame;
+    vm.maybeReturnPC = parked.m_maybeReturnPC;
+    vm.topJSPIContext = parked.m_topJSPIContext;
+    vm.entryScope = parked.m_entryScope;
+    vm.m_lastException = parked.m_lastException;
+    if (parked.m_exception)
+        vm.setException(parked.m_exception);
+    vm.m_lastStackTop = parked.m_lastStackTop;
+    vm.m_currentSoftReservedZoneSize = parked.m_softReservedZoneSize;
+    vm.setStackPointerAtVMEntry(parked.m_stackPointerAtVMEntry);
+    vm.disallowVMEntryCount = parked.m_disallowVMEntryCount;
+    vm.allowLazyMaterializationOfImmutablePropertiesCount = parked.m_allowLazyMaterializationOfImmutablePropertiesCount;
+#if ENABLE(EXCEPTION_SCOPE_VERIFICATION)
+    vm.m_topExceptionScope = parked.m_topExceptionScope;
+    vm.m_simulatedThrowPointRecursionDepth = parked.m_simulatedThrowPointRecursionDepth;
+    vm.m_needExceptionCheck = parked.m_needExceptionCheck;
+#endif
 }
 
 JSLock::DropAllLocks::DropAllLocks(VM* vm)

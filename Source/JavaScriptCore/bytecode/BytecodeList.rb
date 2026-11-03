@@ -652,6 +652,60 @@ op :get_private_name,
         property: WriteBarrier[JSCell],
     }
 
+# Python: see below. The versions are Python::PyDict::watchedVersion() of the dicts when entry `index` was found to hold the
+# name. `builtinsVersion` is 0 if that was in the globals.
+op :py_load_global,
+    args: {
+        dst: VirtualRegister,
+        name: VirtualRegister,
+    },
+    metadata: {
+        globalsVersion: uint64_t,
+        builtinsVersion: uint64_t,
+        index: unsigned,
+    }
+
+op :py_store_global,
+    args: {
+        name: VirtualRegister,
+        value: VirtualRegister,
+    },
+    metadata: {
+        globalsVersion: uint64_t,
+        index: unsigned,
+    }
+
+# The metadata of these two is a Python::AttributeCache: see python/runtime/PyAbstract.h.
+op :py_get_attr,
+    args: {
+        dst: VirtualRegister,
+        base: VirtualRegister,
+        name: VirtualRegister,
+    },
+    metadata: {
+        payload: uint64_t,
+        structureID: StructureID,
+        typeVersion: unsigned,
+        offset: int,
+        jsType: unsigned,
+    }
+
+# For base.name(...): the function and what to pass it as its first argument, or what base.name is and the empty value.
+op :py_get_method,
+    args: {
+        dst: VirtualRegister,
+        self: VirtualRegister,
+        base: VirtualRegister,
+        name: VirtualRegister,
+    },
+    metadata: {
+        payload: uint64_t,
+        structureID: StructureID,
+        typeVersion: unsigned,
+        offset: int,
+        jsType: unsigned,
+    }
+
 # Alignment: 4
 op :get_by_val_with_this,
     args: {
@@ -803,6 +857,21 @@ op :get_by_id_direct,
     metadata: {
         structureID: StructureID,
         offset: unsigned,
+    }
+
+# An instance of a class with the old Structure, whose type has the version, has the attribute at the offset, or has it there
+# once it has the new Structure.
+op :py_set_attr,
+    args: {
+        base: VirtualRegister,
+        name: VirtualRegister,
+        value: VirtualRegister,
+    },
+    metadata: {
+        oldStructureID: StructureID,
+        newStructureID: StructureID,
+        typeVersion: unsigned,
+        offset: int,
     }
 
 # Alignment: 1
@@ -1200,6 +1269,214 @@ op :yield,
 
 op :check_traps
 
+# Python. What these do is in python/runtime/PySlowPaths.cpp. A `name` is a constant, a JSString.
+
+# Puts the arguments of the call in the parameters of the function. If all parameters can be passed by position and by name
+# and there is nothing else to fill in, `simpleArgumentCountIncludingThis` is what a call that passes them all by position has.
+# Otherwise it is 0.
+op :py_bind_args,
+    args: {
+        simpleArgumentCountIncludingThis: unsigned,
+    }
+
+# As check_traps, and makes the calls the Python runtime owes (VMTraps::NeedPythonCalls).
+op :py_check_traps
+
+# No code is compiled to this. It takes the place of the opcode of an instruction, whose operands stay, for as long as
+# sys.monitoring is to tell of what happens there: see python/runtime/PyMonitoring.h and Instruction::opcodeID().
+op :py_instrumented
+
+# As ret. A float that is a whole number is an object (Python::PyFloat); code that is not Python gets the number.
+op :py_ret,
+    args: {
+        value: VirtualRegister,
+    }
+
+# Throws if the cell is empty. `kind`: Python::UnboundKind.
+op :py_load_cell,
+    args: {
+        dst: VirtualRegister,
+        cell: VirtualRegister,
+        name: VirtualRegister,
+        kind: unsigned,
+    }
+
+op :py_store_cell,
+    args: {
+        cell: VirtualRegister,
+        value: VirtualRegister,
+    }
+
+op :py_load_name,
+    args: {
+        dst: VirtualRegister,
+        locals: VirtualRegister,
+        name: VirtualRegister,
+    }
+
+op :py_store_name,
+    args: {
+        locals: VirtualRegister,
+        name: VirtualRegister,
+        value: VirtualRegister,
+    }
+
+# For callee(...), where callee may be a class whose instances are made by object.__new__ and have an __init__ written in
+# Python: a new instance and that function, which the code then calls itself. For any other callee, `self` is the empty value.
+op :py_prepare_construct,
+    args: {
+        dst: VirtualRegister,
+        self: VirtualRegister,
+        callee: VirtualRegister,
+    }
+
+# What such a call evaluates to, after __init__ has returned `result`.
+op :py_finish_construct,
+    args: {
+        dst: VirtualRegister,
+        self: VirtualRegister,
+        result: VirtualRegister,
+    }
+
+op :py_get_item,
+    args: {
+        dst: VirtualRegister,
+        base: VirtualRegister,
+        key: VirtualRegister,
+    }
+
+op :py_set_item,
+    args: {
+        base: VirtualRegister,
+        key: VirtualRegister,
+        value: VirtualRegister,
+    }
+
+# `operation`: Python::BinaryOperator
+op :py_binary,
+    args: {
+        dst: VirtualRegister,
+        lhs: VirtualRegister,
+        rhs: VirtualRegister,
+        operation: unsigned,
+    }
+
+# The same, for the operators that the interpreter does itself when the operands are numbers.
+op_group :PyArithmetic,
+    [
+        :py_add,
+        :py_sub,
+        :py_mul,
+        :py_div,
+        :py_floor_div,
+        :py_mod,
+    ],
+    args: {
+        dst: VirtualRegister,
+        lhs: VirtualRegister,
+        rhs: VirtualRegister,
+        operation: unsigned,
+    }
+
+# `operation`: Python::UnaryOperator
+op :py_unary,
+    args: {
+        dst: VirtualRegister,
+        operand: VirtualRegister,
+        operation: unsigned,
+    }
+
+# `operation`: Python::CompareOperator
+op :py_compare,
+    args: {
+        dst: VirtualRegister,
+        lhs: VirtualRegister,
+        rhs: VirtualRegister,
+        operation: unsigned,
+    }
+
+op_group :PyRichCompare,
+    [
+        :py_eq,
+        :py_ne,
+        :py_lt,
+        :py_le,
+        :py_gt,
+        :py_ge,
+    ],
+    args: {
+        dst: VirtualRegister,
+        lhs: VirtualRegister,
+        rhs: VirtualRegister,
+    }
+
+# A comparison, and py_jtrue on its result. With an n: py_jfalse.
+op_group :PyCompareJump,
+    [
+        :py_jeq,
+        :py_jne,
+        :py_jlt,
+        :py_jle,
+        :py_jgt,
+        :py_jge,
+        :py_jneq,
+        :py_jnne,
+        :py_jnlt,
+        :py_jnle,
+        :py_jngt,
+        :py_jnge,
+    ],
+    args: {
+        lhs: VirtualRegister,
+        rhs: VirtualRegister,
+        targetLabel: BoundLabel,
+    }
+
+op :py_jtrue,
+    args: {
+        condition: VirtualRegister,
+        targetLabel: BoundLabel,
+    }
+
+op :py_jfalse,
+    args: {
+        condition: VirtualRegister,
+        targetLabel: BoundLabel,
+    }
+
+op :py_get_iter,
+    args: {
+        dst: VirtualRegister,
+        iterable: VirtualRegister,
+    }
+
+# The next item, or a jump when there is none.
+op :py_for_iter,
+    args: {
+        dst: VirtualRegister,
+        iterator: VirtualRegister,
+        targetLabel: BoundLabel,
+    }
+
+# The items of an iterable go in `before` registers from `argv` down. If `afterPlusOne` is not 0, then a list of all but the
+# last `afterPlusOne - 1` goes in the next, and those in the ones that follow.
+op :py_unpack,
+    args: {
+        argv: VirtualRegister,
+        iterable: VirtualRegister,
+        before: unsigned,
+        afterPlusOne: unsigned,
+    }
+
+# Everything else. `function`: Python::RuntimeFunction. Its arguments are in `argc` registers from `argv` down.
+op :py_runtime,
+    args: {
+        dst: VirtualRegister,
+        function: unsigned,
+        argv: VirtualRegister,
+        argc: unsigned,
+    }
+
 op :log_shadow_chicken_prologue,
     args: {
         scope: VirtualRegister,
@@ -1467,6 +1744,8 @@ begin_section :NativeHelpers,
     emit_in_asm_file: true,
     macro_name_component: :BYTECODE_HELPER
 
+# This one has to fit in a byte (LLInt::initialize()), so it comes right after the bytecodes.
+op :llint_throw_from_slow_path_trampoline, extras: { asm_section: :trampoline }
 op :llint_program_prologue
 op :llint_eval_prologue
 op :llint_module_program_prologue
@@ -1475,7 +1754,6 @@ op :llint_function_for_construct_prologue
 op :llint_function_for_call_arity_check
 op :llint_function_for_construct_arity_check
 op :llint_generic_return_point
-op :llint_throw_from_slow_path_trampoline, extras: { asm_section: :trampoline }
 op :llint_throw_during_call_trampoline, extras: { asm_section: :trampoline }
 op :llint_native_call_trampoline, extras: { asm_section: :trampoline }
 op :llint_native_construct_trampoline, extras: { asm_section: :trampoline }

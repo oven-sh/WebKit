@@ -39,6 +39,21 @@ namespace JSC {
     \
     CASE_OP(OpJtrue) \
     CASE_OP(OpJfalse) \
+    CASE_OP(OpPyJtrue) \
+    CASE_OP(OpPyJfalse) \
+    CASE_OP(OpPyForIter) \
+    CASE_OP(OpPyJeq) \
+    CASE_OP(OpPyJne) \
+    CASE_OP(OpPyJlt) \
+    CASE_OP(OpPyJle) \
+    CASE_OP(OpPyJgt) \
+    CASE_OP(OpPyJge) \
+    CASE_OP(OpPyJneq) \
+    CASE_OP(OpPyJnne) \
+    CASE_OP(OpPyJnlt) \
+    CASE_OP(OpPyJnle) \
+    CASE_OP(OpPyJngt) \
+    CASE_OP(OpPyJnge) \
     CASE_OP(OpJeqNull) \
     CASE_OP(OpJneqNull) \
     CASE_OP(OpJundefinedOrNull) \

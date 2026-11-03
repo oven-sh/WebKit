@@ -189,7 +189,7 @@ private:
                 if (carry)
                     limbs.append(static_cast<uint32_t>(carry));
             }
-            m_out.append("i:"_s, hex(limbs.last(), Lowercase));
+            m_out.append(constant.isNegative ? "i:-"_s : "i:"_s, hex(limbs.last(), Lowercase));
             for (size_t i = limbs.size() - 1; i--;)
                 m_out.append(hex(limbs[i], 8, Lowercase));
             break;
@@ -203,6 +203,16 @@ private:
             hexDouble(constant.complex.real);
             m_out.append(',');
             hexDouble(constant.complex.imaginary);
+            break;
+        case ConstantValue::Kind::Tuple:
+        case ConstantValue::Kind::FrozenSet:
+            m_out.append(constant.kind == ConstantValue::Kind::Tuple ? "t:["_s : "z:["_s);
+            for (size_t i = 0; i < constant.items.size; ++i) {
+                if (i)
+                    m_out.append(',');
+                value(constant.items.data[i]);
+            }
+            m_out.append(']');
             break;
         }
     }
@@ -218,12 +228,12 @@ private:
         static constexpr ASCIILiteral names[] = { "Add"_s, "Sub"_s, "Mult"_s, "MatMult"_s, "Div"_s, "Mod"_s, "Pow"_s, "LShift"_s, "RShift"_s, "BitOr"_s, "BitXor"_s, "BitAnd"_s, "FloorDiv"_s };
         m_out.append(names[static_cast<unsigned>(op)]);
     }
-    void value(UnaryOperator op)
+    void value(UnaryKind op)
     {
         static constexpr ASCIILiteral names[] = { "Invert"_s, "Not"_s, "UAdd"_s, "USub"_s };
         m_out.append(names[static_cast<unsigned>(op)]);
     }
-    void value(CompareOperator op)
+    void value(CompareKind op)
     {
         static constexpr ASCIILiteral names[] = { "Eq"_s, "NotEq"_s, "Lt"_s, "LtE"_s, "Gt"_s, "GtE"_s, "Is"_s, "IsNot"_s, "In"_s, "NotIn"_s };
         m_out.append(names[static_cast<unsigned>(op)]);

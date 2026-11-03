@@ -48,6 +48,8 @@
 #include "MarkedBlockCage.h"
 #include "Options.h"
 #include "PrivateFieldPutKind.h"
+#include "PyCodeNode.h"
+#include "PyRuntime.h"
 #include "StrongInlines.h"
 #include "SuperSampler.h"
 #include "SymbolTableInlines.h"
@@ -109,6 +111,8 @@ struct VarArgsOp<OpSuperConstruct> {
 void Label::setLocation(BytecodeGenerator& generator, unsigned location)
 {
     generator.invalidateLoadedPrivateNames();
+    if (generator.m_codeBlock->isPython())
+        generator.didEmitLabel(*this, !m_unresolvedJumps.isEmpty());
     m_location = location;
     
     for (auto offset : m_unresolvedJumps) {
@@ -127,6 +131,21 @@ void Label::setLocation(BytecodeGenerator& generator, unsigned location)
         CASE(OpJmp)
         CASE(OpJtrue)
         CASE(OpJfalse)
+        CASE(OpPyJtrue)
+        CASE(OpPyJfalse)
+        CASE(OpPyForIter)
+        CASE(OpPyJeq)
+        CASE(OpPyJne)
+        CASE(OpPyJlt)
+        CASE(OpPyJle)
+        CASE(OpPyJgt)
+        CASE(OpPyJge)
+        CASE(OpPyJneq)
+        CASE(OpPyJnne)
+        CASE(OpPyJnlt)
+        CASE(OpPyJnle)
+        CASE(OpPyJngt)
+        CASE(OpPyJnge)
         CASE(OpJeqNull)
         CASE(OpJneqNull)
         CASE(OpJundefinedOrNull)
@@ -1026,6 +1045,421 @@ IGNORE_GCC_WARNINGS_END
     pushLexicalScope(m_scopeNode, ScopeType::LetConstScope, TDZCheckOptimization::Optimize, NestedScopeType::IsNotNested, nullptr, shouldInitializeBlockScopedFunctions);
 }
 
+BytecodeGenerator::BytecodeGenerator(VM& vm, PythonCodeNode* node, UnlinkedFunctionCodeBlock* codeBlock)
+    : m_codeBlock(makeUnique<UnlinkedCodeBlockGenerator>(vm, codeBlock))
+    , m_optimizeBytecode(false)
+    , m_scopeNode(node)
+    , m_codeType(FunctionCode)
+    , m_vm(vm)
+    , m_needsToUpdateArrowFunctionContext(false)
+    , m_ecmaMode(ECMAMode::strict())
+{
+    codeBlock->setIsPython();
+    allocateCalleeSaveSpace();
+
+    m_calleeRegister.setIndex(CallFrameSlot::callee);
+    m_thisRegister.setIndex(VirtualRegister(initializeNextParameter()->index()));
+    for (unsigned i = 0; i < node->parameterCount(); ++i)
+        initializeNextParameter();
+
+    emitEnter();
+    allocateScope();
+    RegisterID* frameObject = addVar();
+    RELEASE_ASSERT(frameObject->virtualRegister() == Python::frameObjectRegister());
+
+    if (node->isGeneratorBody()) {
+        // As for a JS generator: the registers that are live across a yield are kept in an environment, the frame.
+        ASSERT(node->parameterCount() == static_cast<unsigned>(JSGenerator::Argument::Frame));
+        m_needsGeneratorification = true;
+        m_generatorRegister = &m_parameters[static_cast<unsigned>(JSGenerator::Argument::Generator)];
+        SymbolTable* frameSymbolTable = SymbolTable::create(m_vm);
+        m_generatorFrameSymbolTable.set(m_vm, frameSymbolTable);
+        m_generatorFrameSymbolTableIndex = addConstantValue(frameSymbolTable)->index();
+        OpCreateGeneratorFrameEnvironment::emit(this, generatorFrameRegister(), scopeRegister(), VirtualRegister { m_generatorFrameSymbolTableIndex }, addConstantValue(jsUndefined()));
+        emitPutInternalField(generatorRegister(), Python::generatorFrameField, generatorFrameRegister());
+    }
+    m_firstPythonVariable = m_calleeLocals.size();
+}
+
+ParserError BytecodeGenerator::generatePython(VM& vm, PythonCodeNode* node, UnlinkedFunctionCodeBlock* codeBlock)
+{
+    DeferGC deferGC(vm);
+    auto generator = makeUnique<BytecodeGenerator>(vm, node, codeBlock);
+    unsigned size;
+    return generator->generate(size);
+}
+
+Vector<TryContext> BytecodeGenerator::suspendTryContexts(size_t depth)
+{
+    Vector<TryContext> suspended;
+    if (m_tryContextStack.size() <= depth)
+        return suspended;
+    m_usesExceptions = true;
+    Ref<Label> here = newEmittedLabel();
+    // Innermost first, which is the order handlers are looked up in.
+    for (size_t i = m_tryContextStack.size(); i-- > depth;) {
+        TryContext& context = m_tryContextStack[i];
+        m_tryRanges.append(TryRange { context.start.copyRef(), here.copyRef(), context.tryData });
+    }
+    for (size_t i = depth; i < m_tryContextStack.size(); ++i)
+        suspended.append(m_tryContextStack[i]);
+    m_tryContextStack.shrink(depth);
+    return suspended;
+}
+
+void BytecodeGenerator::resumeTryContexts(Vector<TryContext>&& suspended)
+{
+    if (suspended.isEmpty())
+        return;
+    Ref<Label> here = newEmittedLabel();
+    for (auto& context : suspended)
+        m_tryContextStack.append(TryContext { here.copyRef(), context.tryData });
+}
+
+void BytecodeGenerator::addPythonMark(PythonMark::Kind kind, unsigned value, uint64_t bits)
+{
+    if (m_pythonLineMarkPosition != m_writer.position())
+        m_pythonLineMarkCount = 0;
+    // Each line has a byte of the instruction to itself, which is where f_lasti and co_lines() say it is. Whatever comes next has two.
+    if (kind == PythonMark::Line && m_pythonLineMarkCount == 2)
+        giveFirstPythonLineMarkAnInstruction();
+    m_codeBlock->addPythonMark(PythonMark(m_writer.position(), kind, value, bits));
+    if (kind == PythonMark::Line || kind == PythonMark::Start)
+        m_pythonLineMarkPosition = m_writer.position();
+    m_pythonLineMarkCount += kind == PythonMark::Line;
+}
+
+void BytecodeGenerator::giveFirstPythonLineMarkAnInstruction()
+{
+    unsigned position = m_writer.position();
+    OpNop::emit(this);
+    if (m_pythonLineMarkCount <= 1)
+        return;
+    m_codeBlock->movePythonMarksAfterFirstLine(position, m_writer.position());
+    m_pythonLineMarkPosition = m_writer.position();
+    --m_pythonLineMarkCount;
+}
+
+void BytecodeGenerator::settlePythonLineMark()
+{
+    while (m_pythonLineMarkPosition == m_writer.position())
+        giveFirstPythonLineMarkAnInstruction();
+}
+
+void BytecodeGenerator::notePathToLabel(Label& label)
+{
+    ASSERT(label.isForward());
+    auto result = m_pythonVariablesBoundAtLabels.add(&label, m_pythonBoundVariables);
+    result.iterator->value &= m_pythonBoundVariables;
+}
+
+BoundLabel BytecodeGenerator::bindLabel(Label& label)
+{
+    if (m_codeBlock->isPython() && label.isForward())
+        notePathToLabel(label);
+    return label.bind(m_writer);
+}
+
+void BytecodeGenerator::didEmitLabel(Label& label, bool hasJumps)
+{
+    // What comes before the label counts as a path to it even if it ends in a jump: that can only make the set smaller.
+    auto it = m_pythonVariablesBoundAtLabels.find(&label);
+    if (it != m_pythonVariablesBoundAtLabels.end()) {
+        m_pythonBoundVariables &= it->value;
+        m_pythonVariablesBoundAtLabels.remove(it);
+    } else if (hasJumps)
+        m_pythonBoundVariables = 0; // Something that does not use bindLabel() jumps here.
+}
+
+void BytecodeGenerator::emitPyBindArgs(unsigned simpleArgumentCountIncludingThis)
+{
+    OpPyBindArgs::emit(this, simpleArgumentCountIncludingThis);
+}
+
+RegisterID* BytecodeGenerator::emitPyLoadCell(RegisterID* dst, RegisterID* cell, RegisterID* name, Python::UnboundKind kind)
+{
+    OpPyLoadCell::emit(this, dst, cell, name, static_cast<unsigned>(kind));
+    return dst;
+}
+
+void BytecodeGenerator::emitPyStoreCell(RegisterID* cell, RegisterID* value)
+{
+    OpPyStoreCell::emit(this, cell, value);
+}
+
+RegisterID* BytecodeGenerator::emitPyLoadGlobal(RegisterID* dst, RegisterID* name)
+{
+    OpPyLoadGlobal::emit(this, dst, name);
+    return dst;
+}
+
+void BytecodeGenerator::emitPyStoreGlobal(RegisterID* name, RegisterID* value)
+{
+    OpPyStoreGlobal::emit(this, name, value);
+}
+
+RegisterID* BytecodeGenerator::emitPyLoadName(RegisterID* dst, RegisterID* locals, RegisterID* name)
+{
+    OpPyLoadName::emit(this, dst, locals, name);
+    return dst;
+}
+
+void BytecodeGenerator::emitPyStoreName(RegisterID* locals, RegisterID* name, RegisterID* value)
+{
+    OpPyStoreName::emit(this, locals, name, value);
+}
+
+RegisterID* BytecodeGenerator::emitPyGetAttr(RegisterID* dst, RegisterID* base, RegisterID* name)
+{
+    OpPyGetAttr::emit(this, dst, base, name);
+    return dst;
+}
+
+void BytecodeGenerator::emitPySetAttr(RegisterID* base, RegisterID* name, RegisterID* value)
+{
+    OpPySetAttr::emit(this, base, name, value);
+}
+
+void BytecodeGenerator::emitPyGetMethod(RegisterID* dst, RegisterID* self, RegisterID* base, RegisterID* name)
+{
+    OpPyGetMethod::emit(this, dst, self, base, name);
+}
+
+void BytecodeGenerator::emitPyPrepareConstruct(RegisterID* dst, RegisterID* self, RegisterID* callee)
+{
+    OpPyPrepareConstruct::emit(this, dst, self, callee);
+}
+
+RegisterID* BytecodeGenerator::emitPyFinishConstruct(RegisterID* dst, RegisterID* self, RegisterID* result)
+{
+    OpPyFinishConstruct::emit(this, dst, self, result);
+    return dst;
+}
+
+RegisterID* BytecodeGenerator::emitPyGetItem(RegisterID* dst, RegisterID* base, RegisterID* key)
+{
+    OpPyGetItem::emit(this, dst, base, key);
+    return dst;
+}
+
+void BytecodeGenerator::emitPySetItem(RegisterID* base, RegisterID* key, RegisterID* value)
+{
+    OpPySetItem::emit(this, base, key, value);
+}
+
+RegisterID* BytecodeGenerator::emitPyBinary(RegisterID* dst, RegisterID* lhs, RegisterID* rhs, Python::BinaryOperator op)
+{
+    using enum Python::BinaryOperator;
+    unsigned operation = static_cast<unsigned>(op);
+    switch (op) {
+    case Add:
+    case InPlaceAdd:
+        OpPyAdd::emit(this, dst, lhs, rhs, operation);
+        break;
+    case Sub:
+    case InPlaceSub:
+        OpPySub::emit(this, dst, lhs, rhs, operation);
+        break;
+    case Mult:
+    case InPlaceMult:
+        OpPyMul::emit(this, dst, lhs, rhs, operation);
+        break;
+    case Div:
+    case InPlaceDiv:
+        OpPyDiv::emit(this, dst, lhs, rhs, operation);
+        break;
+    case FloorDiv:
+    case InPlaceFloorDiv:
+        OpPyFloorDiv::emit(this, dst, lhs, rhs, operation);
+        break;
+    case Mod:
+    case InPlaceMod:
+        OpPyMod::emit(this, dst, lhs, rhs, operation);
+        break;
+    default:
+        OpPyBinary::emit(this, dst, lhs, rhs, operation);
+        break;
+    }
+    return dst;
+}
+
+RegisterID* BytecodeGenerator::emitPyUnary(RegisterID* dst, RegisterID* operand, Python::UnaryOperator op)
+{
+    OpPyUnary::emit(this, dst, operand, static_cast<unsigned>(op));
+    return dst;
+}
+
+RegisterID* BytecodeGenerator::emitPyCompare(RegisterID* dst, RegisterID* lhs, RegisterID* rhs, Python::CompareOperator op)
+{
+    using enum Python::CompareOperator;
+    switch (op) {
+    case Eq:
+        OpPyEq::emit(this, dst, lhs, rhs);
+        break;
+    case NotEq:
+        OpPyNe::emit(this, dst, lhs, rhs);
+        break;
+    case Lt:
+        OpPyLt::emit(this, dst, lhs, rhs);
+        break;
+    case LtE:
+        OpPyLe::emit(this, dst, lhs, rhs);
+        break;
+    case Gt:
+        OpPyGt::emit(this, dst, lhs, rhs);
+        break;
+    case GtE:
+        OpPyGe::emit(this, dst, lhs, rhs);
+        break;
+    default:
+        OpPyCompare::emit(this, dst, lhs, rhs, static_cast<unsigned>(op));
+        break;
+    }
+    return dst;
+}
+
+void BytecodeGenerator::emitPyCompareAndJump(RegisterID* lhs, RegisterID* rhs, Python::CompareOperator op, bool jumpIf, Label& target)
+{
+    using enum Python::CompareOperator;
+    switch (op) {
+    case Eq:
+        if (jumpIf)
+            OpPyJeq::emit(this, lhs, rhs, bindLabel(target));
+        else
+            OpPyJneq::emit(this, lhs, rhs, bindLabel(target));
+        return;
+    case NotEq:
+        if (jumpIf)
+            OpPyJne::emit(this, lhs, rhs, bindLabel(target));
+        else
+            OpPyJnne::emit(this, lhs, rhs, bindLabel(target));
+        return;
+    case Lt:
+        if (jumpIf)
+            OpPyJlt::emit(this, lhs, rhs, bindLabel(target));
+        else
+            OpPyJnlt::emit(this, lhs, rhs, bindLabel(target));
+        return;
+    case LtE:
+        if (jumpIf)
+            OpPyJle::emit(this, lhs, rhs, bindLabel(target));
+        else
+            OpPyJnle::emit(this, lhs, rhs, bindLabel(target));
+        return;
+    case Gt:
+        if (jumpIf)
+            OpPyJgt::emit(this, lhs, rhs, bindLabel(target));
+        else
+            OpPyJngt::emit(this, lhs, rhs, bindLabel(target));
+        return;
+    case GtE:
+        if (jumpIf)
+            OpPyJge::emit(this, lhs, rhs, bindLabel(target));
+        else
+            OpPyJnge::emit(this, lhs, rhs, bindLabel(target));
+        return;
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+}
+
+RegisterID* BytecodeGenerator::emitPyIsNone(RegisterID* dst, RegisterID* value)
+{
+    OpIsUndefinedOrNull::emit(this, dst, value);
+    return dst;
+}
+
+RegisterID* BytecodeGenerator::emitPyBooleanNot(RegisterID* dst, RegisterID* boolean)
+{
+    OpNot::emit(this, dst, boolean);
+    return dst;
+}
+
+void BytecodeGenerator::emitPyJumpIfTrue(RegisterID* condition, Label& target)
+{
+    OpPyJtrue::emit(this, condition, bindLabel(target));
+}
+
+void BytecodeGenerator::emitPyJumpIfFalse(RegisterID* condition, Label& target)
+{
+    OpPyJfalse::emit(this, condition, bindLabel(target));
+}
+
+RegisterID* BytecodeGenerator::emitPyGetIter(RegisterID* dst, RegisterID* iterable)
+{
+    OpPyGetIter::emit(this, dst, iterable);
+    return dst;
+}
+
+void BytecodeGenerator::emitPyForIter(RegisterID* dst, RegisterID* iterator, Label& exhausted)
+{
+    OpPyForIter::emit(this, dst, iterator, bindLabel(exhausted));
+}
+
+void BytecodeGenerator::emitPyUnpack(RegisterID* argv, RegisterID* iterable, unsigned before, int after)
+{
+    ASSERT(after >= -1);
+    OpPyUnpack::emit(this, argv, iterable, before, static_cast<unsigned>(after + 1));
+}
+
+RegisterID* BytecodeGenerator::emitPyRuntime(RegisterID* dst, Python::RuntimeFunction function, RegisterID* argv, unsigned argc)
+{
+    ASSERT(argv || !argc);
+    OpPyRuntime::emit(this, dst, static_cast<unsigned>(function), argv ? VirtualRegister(argv) : VirtualRegister { 0 }, argc);
+    switch (function) {
+    case Python::RuntimeFunction::Raise:
+    case Python::RuntimeFunction::Reraise:
+    case Python::RuntimeFunction::ThrowIntoGenerator:
+        // They never return. The analysis of what is live need not think that whatever comes next in the code is reached from here.
+        emitUnreachable();
+        break;
+    default:
+        break;
+    }
+    return dst;
+}
+
+RegisterID* BytecodeGenerator::emitPyNewList(RegisterID* dst, RegisterID* argv, unsigned argc)
+{
+    ASSERT(argv || !argc);
+    OpNewArray::emit(this, dst, argv ? VirtualRegister(argv) : VirtualRegister { 0 }, argc, argc ? ArrayWithContiguous : ArrayWithUndecided);
+    return dst;
+}
+
+RegisterID* BytecodeGenerator::emitPyCall(RegisterID* dst, RegisterID* function, CallArguments& arguments, unsigned argumentCount)
+{
+    ASSERT(argumentCount < arguments.argumentCountIncludingThis());
+    Vector<RefPtr<RegisterID>, CallFrame::headerSizeInRegisters, UnsafeVectorOverflow> callFrame;
+    for (int i = 0; i < CallFrame::headerSizeInRegisters; ++i)
+        callFrame.append(newTemporary());
+    OpCall::emit(this, dst, function, argumentCount + 1, arguments.stackOffset(), nextValueProfileIndex());
+    return dst;
+}
+
+RegisterID* BytecodeGenerator::emitPyCallVarargs(RegisterID* dst, RegisterID* function, RegisterID* thisRegister, RegisterID* arguments)
+{
+    RefPtr<RegisterID> firstFree = newTemporary();
+    OpCallVarargs::emit(this, dst, function, thisRegister, arguments, firstFree.get(), 0, nextValueProfileIndex());
+    return dst;
+}
+
+void BytecodeGenerator::emitPythonYieldPoint(RegisterID* argument)
+{
+    Ref<Label> mergePoint = newLabel();
+    unsigned yieldPointIndex = m_yieldPoints++;
+    emitPutInternalField(generatorRegister(), Python::generatorStateField, emitLoad(nullptr, jsNumber(yieldPointIndex + 1)));
+
+    // No try block covers the instructions that save and restore the registers.
+    Ref<Label> savePoint = newEmittedLabel();
+    for (unsigned i = m_tryContextStack.size(); i--;) {
+        TryContext& context = m_tryContextStack[i];
+        m_tryRanges.append(TryRange { context.start.copyRef(), savePoint.copyRef(), context.tryData });
+        context.start = mergePoint.get();
+    }
+    OpYield::emit(this, yieldPointIndex, argument);
+    emitLabel(mergePoint.get());
+}
+
 BytecodeGenerator::BytecodeGenerator(VM& vm, EvalNode* evalNode, UnlinkedEvalCodeBlock* codeBlock, OptionSet<CodeGenerationMode> codeGenerationMode, const RefPtr<TDZEnvironmentLink>& parentScopeTDZVariables, const FixedVector<Identifier>*, const PrivateNameEnvironment* parentPrivateNameEnvironment, OptimizeBytecode optimize, RefPtr<DeclaredNamesLink>&& parentDeclaredNames)
     : m_codeBlock(makeUnique<UnlinkedCodeBlockGenerator>(vm, codeBlock))
     , m_codeGenerationMode(codeGenerationMode)
@@ -1534,18 +1968,23 @@ void BytecodeGenerator::emitEnter()
 
 void BytecodeGenerator::emitLoopHint()
 {
-    OpLoopHint::emit(this);
+    // It counts towards compilation, which there is none of for Python.
+    if (!m_codeBlock->isPython())
+        OpLoopHint::emit(this);
     emitCheckTraps();
 }
 
 void BytecodeGenerator::emitJump(Label& target)
 {
-    OpJmp::emit(this, target.bind(m_writer));
+    OpJmp::emit(this, bindLabel(target));
 }
 
 void BytecodeGenerator::emitCheckTraps()
 {
-    OpCheckTraps::emit(this);
+    if (m_codeBlock->isPython())
+        OpPyCheckTraps::emit(this);
+    else
+        OpCheckTraps::emit(this);
 }
 
 void ALWAYS_INLINE BytecodeGenerator::rewind()
@@ -1588,7 +2027,7 @@ bool BytecodeGenerator::fuseCompareAndJump(RegisterID* cond, Label& target, bool
         if (swapOperands)
             std::swap(binop.m_lhs, binop.m_rhs);
 
-        JmpOp::emit(this, binop.m_lhs, binop.m_rhs, target.bind(m_writer));
+        JmpOp::emit(this, binop.m_lhs, binop.m_rhs, bindLabel(target));
         return true;
     }
     return false;
@@ -1602,7 +2041,7 @@ bool BytecodeGenerator::fuseTestAndJmp(RegisterID* cond, Label& target)
     if (cond->index() == unop.m_dst.offset() && cond->isTemporary() && !cond->refCount()) {
         rewind();
 
-        JmpOp::emit(this, unop.m_operand, target.bind(m_writer));
+        JmpOp::emit(this, unop.m_operand, bindLabel(target));
         return true;
     }
     return false;
@@ -1653,7 +2092,7 @@ void BytecodeGenerator::emitJumpIfTrue(RegisterID* cond, Label& target)
         }
     }
 
-    OpJtrue::emit(this, cond, target.bind(m_writer));
+    OpJtrue::emit(this, cond, bindLabel(target));
 }
 
 void BytecodeGenerator::emitJumpIfFalse(RegisterID* cond, Label& target)
@@ -1704,7 +2143,7 @@ void BytecodeGenerator::emitJumpIfFalse(RegisterID* cond, Label& target)
         }
     }
 
-    OpJfalse::emit(this, cond, target.bind(m_writer));
+    OpJfalse::emit(this, cond, bindLabel(target));
 }
 
 void BytecodeGenerator::emitJumpIfNotFunctionCall(RegisterID* cond, Label& target)
@@ -1824,7 +2263,8 @@ RegisterID* BytecodeGenerator::moveEmptyValue(RegisterID* dst)
 RegisterID* BytecodeGenerator::emitMove(RegisterID* dst, RegisterID* src)
 {
     m_staticPropertyAnalyzer.mov(dst, src);
-    if (canDoPeepholeOptimization() && m_lastInstruction->is<OpMov>()) {
+    // In Python the two may be of different lines, between which a debugger can stop.
+    if (canDoPeepholeOptimization() && m_lastInstruction->is<OpMov>() && m_pythonLineMarkPosition != m_writer.position()) {
         auto op = m_lastInstruction->as<OpMov>();
         if (op.m_dst == dst->virtualRegister()) {
             replaceLastInstruction<OpMov>(dst, src);
@@ -4242,7 +4682,11 @@ RegisterID* BytecodeGenerator::emitReturn(RegisterID* src)
         }
     }
 
-    OpRet::emit(this, src);
+    // The body of a generator returns to PyGenerator::resume().
+    if (m_codeBlock->isPython() && !m_needsGeneratorification)
+        OpPyRet::emit(this, src);
+    else
+        OpRet::emit(this, src);
     return src;
 }
 
@@ -4495,6 +4939,8 @@ void BytecodeGenerator::allocateScope()
 
 TryData* BytecodeGenerator::pushTry(Label& start, Label& handlerLabel, HandlerType handlerType)
 {
+    if (m_codeBlock->isPython())
+        notePathToLabel(handlerLabel);
     m_tryData.append(TryData { handlerLabel, handlerType });
     TryData* result = &m_tryData.last();
     

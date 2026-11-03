@@ -140,6 +140,33 @@ struct UnlinkedSimpleJumpTable {
     bool isList() const { return !!m_isList; }
 };
 
+// Python: what tracing has to know about the place where an instruction begins and cannot tell from the instruction. They are
+// in the order in which the compiler came by, so by offset; there may be several for one place. See python/runtime/PyMonitoring.h.
+struct PythonMark {
+    enum Kind : unsigned {
+        Line, // The code from here on comes from line `value`. `bits`: BytecodeGenerator::pythonBoundVariables().
+        NoLine, // It comes from no line: the compiler added it.
+        Start, // The function has its arguments and its variables are set up: its code begins.
+        BlockBegin, // What follows needs something that only the code before it provides. `value` numbers the block. `bits`: Python::TracedBlock.
+        BlockEnd,
+    };
+    static constexpr unsigned kindBits = 3;
+
+    PythonMark() = default;
+    PythonMark(unsigned offset, Kind kind, unsigned value, uint64_t bits)
+        : bits(bits)
+        , offset(offset)
+        , kindAndValue(kind | value << kindBits)
+    {
+    }
+    Kind kind() const { return static_cast<Kind>(kindAndValue & ((1 << kindBits) - 1)); }
+    unsigned value() const { return kindAndValue >> kindBits; }
+
+    uint64_t bits { 0 };
+    unsigned offset { 0 };
+    unsigned kindAndValue { 0 };
+};
+
 class UnlinkedCodeBlock : public JSCell {
 public:
     typedef JSCell Base;
@@ -168,6 +195,9 @@ public:
     bool isClassContext() const { return m_isClassContext; }
     bool hasTailCalls() const { return m_hasTailCalls; }
     void setHasTailCalls() { m_hasTailCalls = true; }
+    // Compiled from Python. Only the interpreter runs it.
+    bool isPython() const { return m_isPython; }
+    void setIsPython() { m_isPython = true; }
     bool isBuiltinDefaultClassConstructor() const { return m_isBuiltinDefaultClassConstructor; }
 
     // Decoded on first use when the block came from a persistent bytecode cache.
@@ -303,6 +333,10 @@ public:
     bool hasOpProfileControlFlowBytecodeOffsets() const
     {
         return m_rareData && !m_rareData->m_opProfileControlFlowBytecodeOffsets.isEmpty();
+    }
+    std::span<const PythonMark> pythonMarks() const
+    {
+        return m_rareData ? m_rareData->m_pythonMarks.span() : std::span<const PythonMark> { };
     }
 
     void dumpExpressionInfo(); // For debugging purpose only.
@@ -452,6 +486,7 @@ private:
     bool m_hasCheckpoints : 1;
     TriState m_quickDFGTierUp : 2 { TriState::Indeterminate };
     bool m_quickFTLTierUp : 1 { false };
+    bool m_isPython : 1 { false };
     unsigned m_numberOfArrayProfiles { 0 };
 
 public:
@@ -502,6 +537,7 @@ public:
         };
         UncheckedKeyHashMap<unsigned, TypeProfilerExpressionRange> m_typeProfilerInfoMap;
         FixedVector<JSInstructionStream::Offset> m_opProfileControlFlowBytecodeOffsets;
+        FixedVector<PythonMark> m_pythonMarks;
         FixedVector<BitVector> m_bitVectors;
         FixedVector<IdentifierSet> m_constantIdentifierSets;
 

@@ -245,6 +245,7 @@
 #include "ProfilerSupport.h"
 #include "ProxyConstructorInlines.h"
 #include "ProxyObjectInlines.h"
+#include "PyRuntime.h"
 #include "ReflectObjectInlines.h"
 #include "RegExpConstructorInlines.h"
 #include "RegExpGlobalDataInlines.h"
@@ -3276,6 +3277,8 @@ void JSGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     if (thisObject->m_ffiContext)
         thisObject->m_ffiContext->visitLiveCallbacks(*thisObject, visitor);
 #endif
+    if (thisObject->m_pythonRuntime)
+        thisObject->m_pythonRuntime->visit(visitor);
 
     visitor.append(thisObject->m_globalLexicalEnvironment);
     visitor.append(thisObject->m_globalScopeExtension);
@@ -4153,6 +4156,13 @@ FFI::FFIContext& JSGlobalObject::ffiContext()
     return *m_ffiContext;
 }
 #endif
+
+void JSGlobalObject::setPythonRuntime(std::unique_ptr<Python::Runtime>&& runtime)
+{
+    ASSERT(!m_pythonRuntime);
+    WTF::storeStoreFence();
+    m_pythonRuntime = WTF::move(runtime);
+}
 
 void JSGlobalObject::setMicrotaskQueue(Ref<MicrotaskQueue>&& queue)
 {

@@ -34,6 +34,7 @@
 #include <wtf/FileSystem.h>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
+#include <wtf/RefCountedFixedVector.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/UniqueArray.h>
 #include <wtf/text/AtomStringImpl.h>
@@ -55,6 +56,7 @@ class SourceCodeKey;
 class SourceProvider;
 class CachedSymbolTable;
 class ExpressionInfo;
+class JSGlobalObject;
 class SymbolTable;
 class UnlinkedCodeBlock;
 class UnlinkedFunctionCodeBlock;
@@ -318,6 +320,9 @@ public:
     void setHandleForTDZEnvironment(CompactTDZEnvironment*, const CompactTDZEnvironmentMap::Handle&);
     void addLeafExecutable(const UnlinkedFunctionExecutable*, ptrdiff_t);
     RefPtr<SourceProvider> LEGACY_NODELETE provider() const;
+    // For code of Python's: whose types its constants have. Whatever leads to the code (a function, a code object) keeps it alive.
+    JSGlobalObject* pythonGlobalObject() const { return m_pythonGlobalObject; }
+    void setPythonContext(JSGlobalObject*, RefPtr<SourceProvider>&&);
     // This decoder's payload in VM::persistentBytecodePayloads(), or 0: what a code block decoded from it needs to remember
     // (with its record's offset) to be decoded again later.
     uint16_t persistentPayloadIndex() const { return m_persistentPayloadIndex; }
@@ -352,6 +357,7 @@ private:
     Vector<std::function<void()>> m_finalizers;
     UncheckedKeyHashMap<CompactTDZEnvironment*, CompactTDZEnvironmentMap::Handle> m_environmentToHandleMap;
     RefPtr<SourceProvider> m_provider;
+    JSGlobalObject* m_pythonGlobalObject { nullptr };
     bool m_canDeferIntoPayload { false };
     bool m_canBorrowPayload { false };
     uint16_t m_persistentPayloadIndex { 0 };
@@ -458,6 +464,13 @@ UnlinkedCodeBlock* decodeCodeBlockImpl(VM&, const SourceCodeKey&, Ref<CachedByte
 JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeBuiltinFunction(VM&, const UnlinkedFunctionExecutable*, const SourceCode&, unsigned embedderStamp, EncoderStringTable* = nullptr, BytecodeCacheUpdatable = BytecodeCacheUpdatable::Yes);
 // RecoverableCode::No: for a pass over everything a payload holds, which must not share code with the program (see Decoder::create).
 JS_EXPORT_PRIVATE UnlinkedFunctionExecutable* decodeBuiltinFunction(VM&, Ref<CachedBytecode>, SourceProvider&, unsigned embedderStamp, Decoder::RecoverableCode = Decoder::RecoverableCode::Yes);
+
+// A code object of Python (UnlinkedFunctionExecutable::createForPython) with all the code in it, and the text it was compiled
+// from. The SourceCode is the executable's own. Null: it cannot be encoded.
+RefPtr<CachedBytecode> encodePythonCode(VM&, UnlinkedFunctionExecutable*, const SourceCode&);
+// What to link() the executable with is returned too. The code in it is decoded when it is first run. Null: the payload was not
+// made by this build of JSC, or is cut short. One that has been tampered with is not found out.
+UnlinkedFunctionExecutable* decodePythonCode(JSGlobalObject*, Ref<ThreadSafeRefCountedFixedVector<uint8_t>>&& payload, SourceCode& parentSource);
 
 template<typename UnlinkedCodeBlockType>
 UnlinkedCodeBlockType* decodeCodeBlock(VM& vm, const SourceCodeKey& key, Ref<CachedBytecode> cachedBytecode, Decoder::RecoverableCode recoverableCode = Decoder::RecoverableCode::Yes)

@@ -118,9 +118,9 @@ Pattern* Parser::parseOrPattern()
 Expr* Parser::parseSignedNumberOrComplex()
 {
     Position start = startPosition();
-    std::optional<UnaryOperator> sign;
+    std::optional<UnaryKind> sign;
     if (at(TokenKind::Minus) || at(TokenKind::Plus))
-        sign = advance().kind == TokenKind::Minus ? UnaryOperator::USub : UnaryOperator::UAdd;
+        sign = advance().kind == TokenKind::Minus ? UnaryKind::USub : UnaryKind::UAdd;
     if (!at(TokenKind::Number))
         return invalidSyntax();
     Expr* number = parseNumber();
@@ -205,7 +205,8 @@ Pattern* Parser::parseClosedPattern()
     }
     case TokenKind::Name: {
         TokenKind next = peek(1).kind;
-        if (next != TokenKind::Dot && next != TokenKind::LPar) {
+        // `_` is the wildcard whatever follows: there is no `_.x` and no `_()`.
+        if ((next != TokenKind::Dot && next != TokenKind::LPar) || *peek().identifier == m_underscore) {
             if (next == TokenKind::Equal)
                 return invalidSyntax();
             Name name = advance().identifier;

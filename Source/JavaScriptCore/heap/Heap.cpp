@@ -82,6 +82,9 @@
 #include "JSVirtualMachineInternal.h"
 #include "JSWeakMap.h"
 #include "JSWeakObjectRef.h"
+#include "PyHooks.h"
+#include "PyRuntime.h"
+#include "PyWeakRef.h"
 #include "JSWeakSet.h"
 #include "MachineStackMarker.h"
 #include "MarkStackMergingConstraint.h"
@@ -807,6 +810,8 @@ void Heap::reconcileWeakReferencesAtGCEnd()
         reconcileWeakReferencesInMarkedCells<JSWeakMap>(*m_weakMapSpace, collectionScope);
     if (m_weakObjectRefSpace)
         reconcileWeakReferencesInMarkedCells<JSWeakObjectRef>(*m_weakObjectRefSpace, collectionScope);
+    if (m_pyWeakRefSpace)
+        reconcileWeakReferencesInMarkedCells<Python::PyWeakRef>(*m_pyWeakRefSpace, collectionScope);
     if (m_errorInstanceSpace)
         reconcileWeakReferencesInMarkedCells<ErrorInstance>(*m_errorInstanceSpace, collectionScope);
 
@@ -823,6 +828,14 @@ void Heap::reconcileWeakReferencesAtGCEnd()
 
     if (auto* clientData = vm().clientData)
         clientData->reconcileWeakReferencesAtGCEnd(vm(), collectionScope);
+}
+
+bool Heap::keepUnreachablePythonObjectsToFinalize(SlotVisitor& visitor)
+{
+    bool keptSomething = false;
+    for (auto* runtime : m_pythonRuntimes)
+        keptSomething |= runtime->keepUnreachableObjectsToFinalize(visitor);
+    return keptSomething;
 }
 
 void Heap::willStartIterating()
@@ -871,6 +884,8 @@ void Heap::iterateExecutingAndCompilingCodeBlocksWithoutHoldingLocks(Visitor& vi
 void Heap::gatherStackRoots(ConservativeRoots& roots)
 {
     ASSERT(m_collector->m_conductorThread);
+    if (!m_pythonRuntimes.isEmpty())
+        Python::clearDeadTemporaries(vm());
     m_machineThreads->gatherConservativeRoots(roots, *m_jitStubRoutines, *m_codeBlocks, m_collector->m_conductingMutatorState, m_collector->m_conductorThread);
 #if ENABLE(C_LOOP)
     vm().cloopStack().gatherConservativeRoots(roots, *m_jitStubRoutines, *m_codeBlocks);
@@ -1462,6 +1477,11 @@ void Heap::sweepSynchronously()
     if (!Options::useGC()) [[unlikely]]
         return;
 
+    if (!mayRunEmbedderFinalizers()) [[unlikely]] {
+        didPostponeEmbedderFinalizers();
+        return;
+    }
+
     MonotonicTime before { };
     if (Options::logGC()) [[unlikely]] {
         dataLog("Full sweep: ", capacity() / 1024, "kb ");
@@ -1974,7 +1994,8 @@ void Heap::collectNow(Synchronousness synchronousness, GCRequest request)
             sweepSynchronously();
             dataLogIf(Options::logGC(), "]\n");
         }
-        m_objectSpace.assertNoUnswept();
+        if (mayRunEmbedderFinalizers()) [[likely]]
+            m_objectSpace.assertNoUnswept();
         return;
     } }
     RELEASE_ASSERT_NOT_REACHED();
@@ -2177,7 +2198,12 @@ void Heap::waitForCollector(NOESCAPE const Func& func)
         m_mutatorDidRun = true;
         // FIXME: We wouldn't need this if stopIfNecessarySlow() had a mode where it knew to just
         // do the collection.
-        if (!Options::runsCompiledImage())
+#if ENABLE(AOT)
+        bool threadMayBeRefused = Thread::survivesFailedCreation();
+#else
+        constexpr bool threadMayBeRefused = false;
+#endif
+        if (!threadMayBeRefused)
             relinquishConn();
         else if (relinquishConn(oldState))
             continue;
@@ -2757,6 +2783,36 @@ void Heap::addFinalizer(JSCell* cell, LambdaFinalizer function)
 {
     ASSERT(cell->heap() == this);
     WeakSet::allocate(cell, &m_lambdaFinalizerOwner, function.leak()); // Balanced by LambdaFinalizerOwner::finalize().
+}
+
+void Heap::addFinalizerForAnyThread(JSCell* cell, CFinalizer finalizer)
+{
+    ASSERT(cell->heap() == this);
+    WeakSet::allocate(cell, &m_cFinalizerOwnerForAnyThread, std::bit_cast<void*>(finalizer)); // Balanced by CFinalizerOwner::finalize().
+}
+
+void Heap::addFinalizerForAnyThread(JSCell* cell, LambdaFinalizer function)
+{
+    ASSERT(cell->heap() == this);
+    WeakSet::allocate(cell, &m_lambdaFinalizerOwnerForAnyThread, function.leak()); // Balanced by LambdaFinalizerOwner::finalize().
+}
+
+void Heap::runPostponedEmbedderFinalizers()
+{
+    ASSERT(m_mayRunEmbedderFinalizers);
+    if (!m_hasPostponedEmbedderFinalizers)
+        return;
+    m_hasPostponedEmbedderFinalizers = false;
+    DeferGCForAWhile deferGC(vm());
+    m_objectSpace.sweepBlocks();
+    // While a collection is under way the marks of these say nothing yet. Its epilogue sweeps them, if it runs on this thread.
+    if (m_collectionScope) {
+        m_hasPostponedEmbedderFinalizers = true;
+        return;
+    }
+    // This runs what is on the dead ones. MarkedSpace::sweepPreciseAllocations() frees them, in its time.
+    for (PreciseAllocation* allocation : m_objectSpace.preciseAllocations())
+        allocation->sweep();
 }
 
 void Heap::CFinalizerOwner::finalize(Handle<Unknown> handle, void* context)

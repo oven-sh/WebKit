@@ -81,6 +81,7 @@
 #include "ProfilerDatabase.h"
 #include "ProgramCodeBlock.h"
 #include "PropertyInlineCache.h"
+#include "PyHooks.h"
 #include "ReduceWhitespace.h"
 #include "SlotVisitorInlines.h"
 #include "SourceProvider.h"
@@ -390,7 +391,8 @@ CodeBlock::CodeBlock(VM& vm, Structure* structure, ScriptExecutable* ownerExecut
     ASSERT(m_scopeRegister.isLocal());
 
     ASSERT(source().provider());
-    constexpr bool allocateArgumentValueProfiles = true;
+    // Nothing reads the profiles of code that stays in the interpreter.
+    bool allocateArgumentValueProfiles = !unlinkedCodeBlock->isPython();
     setNumParameters(unlinkedCodeBlock->numParameters(), allocateArgumentValueProfiles);
 
     m_couldBeTainted = source().provider()->couldBeTainted();
@@ -607,6 +609,11 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
 
         LINK(OpJneqPtr)
         LINK(OpIteratorCloseCheck)
+        LINK(OpPyLoadGlobal)
+        LINK(OpPyStoreGlobal)
+        LINK(OpPyGetAttr)
+        LINK(OpPyGetMethod)
+        LINK(OpPySetAttr)
 
         LINK(OpCatch)
         LINK(OpProfileControlFlow)
@@ -890,6 +897,8 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
 
     initializeTemplateObjects(topLevelExecutable, templateObjectIndices);
     RETURN_IF_EXCEPTION(throwScope, false);
+    if (unlinkedCodeBlock->isPython())
+        Python::didCreateCodeBlock(this);
     return true;
 }
 
@@ -1722,6 +1731,16 @@ void CodeBlock::propagateTransitions(const ConcurrentJSLocker&, Visitor& visitor
                 }
             });
 
+            m_metadata->forEach<OpPySetAttr>([&] (auto& metadata) {
+                StructureID oldStructureID = metadata.m_oldStructureID;
+                StructureID newStructureID = metadata.m_newStructureID;
+                if (!oldStructureID || !newStructureID)
+                    return;
+
+                if (visitor.isMarked(oldStructureID.decode()))
+                    visitor.appendUnbarriered(newStructureID.decode());
+            });
+
             m_metadata->forEach<OpPutPrivateName>([&] (auto& metadata) {
                 StructureID oldStructureID = metadata.m_oldStructureID;
                 StructureID newStructureID = metadata.m_newStructureID;
@@ -1949,6 +1968,24 @@ NEVER_INLINE void CodeBlock::reconcileLLIntInlineCachesAtGCEnd()
             metadata.m_offset = 0;
             metadata.m_newStructureID = StructureID();
             metadata.m_structureChain.clear();
+        });
+
+        auto clearPythonAttributeCacheIfNeeded = [&] (auto& metadata) {
+            if (!metadata.m_structureID || vm.heap.isMarked(metadata.m_structureID.decode()))
+                return;
+            metadata.m_structureID = StructureID();
+        };
+        m_metadata->forEach<OpPyGetAttr>(clearPythonAttributeCacheIfNeeded);
+        m_metadata->forEach<OpPyGetMethod>(clearPythonAttributeCacheIfNeeded);
+
+        m_metadata->forEach<OpPySetAttr>([&] (auto& metadata) {
+            StructureID oldStructureID = metadata.m_oldStructureID;
+            StructureID newStructureID = metadata.m_newStructureID;
+            if ((!oldStructureID || vm.heap.isMarked(oldStructureID.decode()))
+                && (!newStructureID || vm.heap.isMarked(newStructureID.decode())))
+                return;
+            metadata.m_oldStructureID = StructureID();
+            metadata.m_newStructureID = StructureID();
         });
 
         m_metadata->forEach<OpPutPrivateName>([&] (auto& metadata) {

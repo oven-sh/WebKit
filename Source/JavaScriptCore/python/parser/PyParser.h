@@ -40,6 +40,8 @@ public:
     IdentifierArena identifiers;
     AST::Mod* root { nullptr };
     Vector<uint32_t> lineStarts; // By line, from 0: its offset in the source.
+    // The tree was made from objects of the module ast: a node need not lie within the one that holds it.
+    bool positionsAreArbitrary { false };
 };
 
 // A recursive descent parser for the grammar of Python 3.15 (Grammar/python.gram in CPython is the reference).
@@ -105,6 +107,8 @@ private:
     };
     Checkpoint checkpoint() const { return { m_index, m_lastEnd }; }
     void rewind(const Checkpoint&);
+    // What follows an operator is not an operand. True: the operator is left to read, and the expression ends before it.
+    bool endsBeforeOperator(const Checkpoint& beforeOperator);
 
     bool isSafeToRecurse();
 
@@ -123,6 +127,14 @@ private:
     // What no message explains. An enclosing production that knows better may replace it.
     std::nullptr_t invalidSyntax();
     std::nullptr_t stackOverflow();
+    // For ast.parse(feature_version=...). False: what has just been parsed came with a later version, which is an error.
+    bool checkVersion(int version, ASCIILiteral what)
+    {
+        if (m_featureVersion >= version) [[likely]]
+            return true;
+        syntaxError(makeString(what, " only supported in Python 3."_s, version, " and greater"_s));
+        return false;
+    }
     void raiseLexerError();
     void raiseUnclosedBracket();
     void checkRestOfSourceForLexerErrors();
@@ -145,7 +157,8 @@ private:
 
     Stmt* parseExpressionStatement();
     Stmt* parseAnnotatedAssignment(Position start, Expr* target, bool startsWithName);
-    std::nullptr_t diagnoseInvalidAssignment(Expr* target, TokenKind firstKind, bool isFirstTarget);
+    std::nullptr_t diagnoseInvalidAssignment(Expr* target, TokenKind firstKind, bool isFirstTarget, const Checkpoint& statementStart);
+    bool diagnoseNamedExpressions(const Checkpoint& statementStart);
     std::nullptr_t diagnoseStatementBeforeIf();
     Stmt* parseReturn();
     Stmt* parseRaise();
@@ -282,6 +295,8 @@ private:
     bool m_errorIsGeneric { false };
     bool m_errorIsFinal { false }; // No error of the lexer further on replaces it.
     bool m_quiet { false }; // Nothing is diagnosed: what does not parse just fails.
+    // `a +` is `a`, with the '+' left to read, as it is to a parser that backtracks: some messages are about that '+'.
+    bool m_acceptsPrefix { false };
     Vector<uint32_t> m_warnedEscapes;
     Vector<AST::TypeIgnore*> m_typeIgnores;
     Position m_lastStatementStart;

@@ -52,6 +52,9 @@ namespace JSC {
 namespace DOMJIT {
 class Signature;
 }
+namespace Python {
+class ListStorage;
+}
 
 inline JSCell* getJSFunction(JSValue); // Defined in JSObjectInlines.h
 
@@ -108,6 +111,7 @@ class JSObject : public JSCell {
     friend class JSFinalObject;
     friend class JSObjectWithButterfly;
     friend class MarkedBlock;
+    friend class Python::ListStorage;
 
     enum PutMode : uint8_t {
         PutModePut,

@@ -39,6 +39,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "JSCellInlines.h"
 #include "JSStringInlines.h"
 #include "MathCommon.h"
+#include "PyHooks.h"
 #include "ThrowScope.h"
 #include <wtf/MediaTime.h>
 #include <wtf/text/MakeString.h>
@@ -316,6 +317,14 @@ inline JSValue JSValue::toThis(JSGlobalObject* globalObject, ECMAMode ecmaMode) 
     return toThisSloppySlowCase(globalObject);
 }
 
+// Whether the value is an object whose class may say what the operators of JS do to it: an object of Python.
+// The optimizing JITs know which operators those are, and that there is no such object until
+// VM::operatorOverloadingWatchpointSet() fires.
+ALWAYS_INLINE bool mayOverloadOperators(JSValue value)
+{
+    return value.isCell() && isPyObjectType(value.asCell()->type());
+}
+
 ALWAYS_INLINE bool JSValue::equalSlowCaseInline(JSGlobalObject* globalObject, JSValue v1, JSValue v2)
 {
     VM& vm = getVM(globalObject);
@@ -345,6 +354,13 @@ ALWAYS_INLINE bool JSValue::equalSlowCaseInline(JSGlobalObject* globalObject, JS
             if (!v1.isCell())
                 return false;
             return v1.asCell()->structure()->masqueradesAsUndefined(globalObject);
+        }
+
+        if (mayOverloadOperators(v1) || mayOverloadOperators(v2)) [[unlikely]] {
+            auto result = Python::equalForJS(globalObject, v1, v2);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (result)
+                return *result;
         }
 
         if (v1.isObject()) {

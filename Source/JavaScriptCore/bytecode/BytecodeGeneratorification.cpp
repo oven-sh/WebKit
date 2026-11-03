@@ -111,6 +111,13 @@ public:
         ScopeOffset scopeOffset;
     };
 
+    // Registers to give a value, any value, at a place in the code: see GeneratorLivenessAnalysis::findRegistersWithoutValue().
+    struct Reset {
+        JSInstructionStream::Offset point;
+        bool isForJumpsToo; // Otherwise only for what comes from the instruction before.
+        Vector<VirtualRegister, 4> registers;
+    };
+
     void run();
 
     BytecodeGraph& LEGACY_NODELETE graph() { return m_graph; }
@@ -123,6 +130,11 @@ public:
     Yields& LEGACY_NODELETE yields()
     {
         return m_yields;
+    }
+
+    Vector<Reset>& LEGACY_NODELETE resets()
+    {
+        return m_resets;
     }
 
     JSInstructionStream::Ref LEGACY_NODELETE enterPoint() const
@@ -176,6 +188,7 @@ private:
     BytecodeGraph m_graph;
     Vector<std::optional<Storage>> m_storages;
     Yields m_yields;
+    Vector<Reset> m_resets;
     Strong<SymbolTable> m_generatorFrameSymbolTable;
     int m_generatorFrameSymbolTableIndex;
 };
@@ -199,9 +212,95 @@ public:
                 continue;
             data.liveness = getLivenessInfoAtInstruction(codeBlock, instructions, m_generatorification.graph(), BytecodeIndex(m_generatorification.instructions().at(data.point).next().offset()));
         }
+
+        if (codeBlock->isPython())
+            findRegistersWithoutValue(codeBlock, instructions);
     }
 
 private:
+    // The first of the locals that a call leaves something in that is no value: the frame of the callee begins there.
+    static std::optional<unsigned> firstLocalOverwrittenBy(const JSInstruction* instruction)
+    {
+        switch (instruction->opcodeID()) {
+        case op_call:
+            return instruction->as<OpCall>().m_argv - CallFrame::headerSizeInRegisters;
+        case op_call_ignore_result:
+            return instruction->as<OpCallIgnoreResult>().m_argv - CallFrame::headerSizeInRegisters;
+        case op_call_varargs:
+            return instruction->as<OpCallVarargs>().m_firstFree.toLocal();
+        case op_tail_call:
+        case op_tail_call_varargs:
+        case op_call_direct_eval:
+        case op_construct:
+        case op_construct_varargs:
+        case op_super_construct:
+        case op_super_construct_varargs:
+        case op_iterator_open:
+        case op_iterator_next:
+        case op_async_iterator_open:
+        case op_async_iterator_next:
+            RELEASE_ASSERT_NOT_REACHED(); // Python code has none of these.
+        default:
+            return std::nullopt;
+        }
+    }
+
+    // What is in a register that is live at a yield goes into an object, where the collector takes it for a value. But the
+    // analysis errs on the side of "live": it follows paths that are never taken, such as from an instruction that cannot
+    // throw to a handler. So it may find a use for a register that is not in use at the yield at all, and what is in such a
+    // register is whatever was last on that part of the stack: the header of the frame of a callee, say.
+    //
+    // A register that is really in use is never without a value, because the generator of the code does not put the frame of
+    // a callee on top of it. So a register that is live where it has just lost its value, or never had one, is not in use
+    // there, and may be given a value: at the start of the code, after a call, and where an exception that a call may have thrown
+    // is caught. (A register that is live after a yield gets its value back. One that is not is written before the next
+    // yield at which it is live, or it would be live after this one as well.)
+    void findRegistersWithoutValue(UnlinkedCodeBlockGenerator* codeBlock, JSInstructionStreamWriter& instructions)
+    {
+        BytecodeGraph& graph = m_generatorification.graph();
+        auto resetLiveRegisters = [&](JSInstructionStream::Offset point, bool isForJumpsToo, unsigned firstLocal, std::initializer_list<VirtualRegister> written) {
+            BytecodeGeneratorification::Reset reset { point, isForJumpsToo, { } };
+            getLivenessInfoAtInstruction(codeBlock, instructions, graph, BytecodeIndex(point)).forEachSetBit([&](size_t index) {
+                VirtualRegister local = virtualRegisterForLocal(index);
+                if (index >= firstLocal && std::ranges::find(written, local) == written.end())
+                    reset.registers.append(local);
+            });
+            if (!reset.registers.isEmpty())
+                m_generatorification.resets().append(WTF::move(reset));
+        };
+
+        // op_enter gives the variables a value.
+        resetLiveRegisters(m_generatorification.enterPoint().next().offset(), true, codeBlock->numVars(), { });
+
+        Vector<std::pair<JSInstructionStream::Offset, unsigned>> calls;
+        for (const auto& instruction : instructions) {
+            std::optional<unsigned> firstLocal = firstLocalOverwrittenBy(instruction.ptr());
+            if (!firstLocal)
+                continue;
+            calls.append({ instruction.offset(), *firstLocal });
+            VirtualRegister result;
+            if (instruction->is<OpCall>())
+                result = instruction->as<OpCall>().m_dst;
+            else if (instruction->is<OpCallVarargs>())
+                result = instruction->as<OpCallVarargs>().m_dst;
+            resetLiveRegisters(instruction.next().offset(), false, *firstLocal, { result });
+        }
+
+        for (size_t i = 0; i < codeBlock->numberOfExceptionHandlers(); ++i) {
+            UnlinkedHandlerInfo& handler = codeBlock->exceptionHandler(i);
+            unsigned firstLocal = std::numeric_limits<unsigned>::max();
+            for (auto [offset, first] : calls) {
+                if (offset >= handler.start && offset < handler.end)
+                    firstLocal = std::min(firstLocal, first);
+            }
+            if (firstLocal == std::numeric_limits<unsigned>::max())
+                continue;
+            auto target = instructions.at(handler.target);
+            auto bytecode = target->as<OpCatch>();
+            resetLiveRegisters(target.next().offset(), false, firstLocal, { bytecode.m_exception, bytecode.m_thrownValue });
+        }
+    }
+
     BytecodeGeneratorification& m_generatorification;
 };
 
@@ -236,6 +335,19 @@ void BytecodeGeneratorification::run()
         rewriter.insertFragmentBefore(nextToEnterPoint, [&] (BytecodeRewriter::Fragment& fragment) {
             fragment.appendInstruction<OpSwitchImm>(switchTableIndex, state);
         });
+    }
+
+    // Before what follows: where one of these is right before a yield, it has to come before the registers are saved.
+    for (const Reset& reset : m_resets) {
+        auto emitReset = [&] (BytecodeRewriter::Fragment& fragment) {
+            for (VirtualRegister local : reset.registers)
+                fragment.appendInstruction<OpMov>(local, m_generatorFrameData->m_initialValue);
+        };
+        auto instruction = m_instructions.at(reset.point);
+        if (reset.isForJumpsToo)
+            rewriter.insertFragmentAfter(instruction, emitReset);
+        else
+            rewriter.insertFragmentBefore(instruction, emitReset);
     }
 
     for (const YieldData& data : m_yields) {

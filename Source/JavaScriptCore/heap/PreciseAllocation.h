@@ -146,7 +146,8 @@ public:
     void assertValidCell(VM&, HeapCell*) const { }
 #endif
     
-    JS_EXPORT_PRIVATE void sweep();
+    // False: it was left as it is, because of Heap::mayRunEmbedderFinalizers().
+    JS_EXPORT_PRIVATE bool sweep();
     
     void destroy();
     

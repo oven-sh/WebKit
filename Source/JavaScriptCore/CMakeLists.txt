@@ -1159,6 +1159,50 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     profiler/ProfilerProfiledBytecodes.h
     profiler/ProfilerUID.h
 
+    python/PyBytecode.h
+    python/compiler/PyCodeInfo.h
+    python/parser/PyUnicode.h
+    python/runtime/PyAbstract.h
+    python/runtime/PyAstModule.h
+    python/runtime/PyBuffer.h
+    python/runtime/PyBytes.h
+    python/runtime/PyCodecs.h
+    python/runtime/PyCommandLine.h
+    python/runtime/PyDescriptors.h
+    python/runtime/PyDict.h
+    python/runtime/PyErrors.h
+    python/runtime/PyEventWait.h
+    python/runtime/PyException.h
+    python/runtime/PyExec.h
+    python/runtime/PyFunction.h
+    python/runtime/PyGenerator.h
+    python/runtime/PyHooks.h
+    python/runtime/PyIO.h
+    python/runtime/PyInternals.h
+    python/runtime/PyIterators.h
+    python/runtime/PyJSView.h
+    python/runtime/PyList.h
+    python/runtime/PyModule.h
+    python/runtime/PyModuleHelpers.h
+    python/runtime/PyNames.h
+    python/runtime/PyNamespace.h
+    python/runtime/PyNative.h
+    python/runtime/PyNumbers.h
+    python/runtime/PyObject.h
+    python/runtime/PyRange.h
+    python/runtime/PyRuntime.h
+    python/runtime/PySet.h
+    python/runtime/PySlowPaths.h
+    python/runtime/PyStdlibModuleNames.h
+    python/runtime/PyStr.h
+    python/runtime/PyStructSeq.h
+    python/runtime/PyThreads.h
+    python/runtime/PyTuple.h
+    python/runtime/PyType.h
+    python/runtime/PyTypes.h
+    python/runtime/PyVirtualFiles.h
+    python/runtime/PyWeakRef.h
+
     runtime/AbstractModuleRecord.h
     runtime/AggregateError.h
     runtime/AggregateErrorConstructor.h

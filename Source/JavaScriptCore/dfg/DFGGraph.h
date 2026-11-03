@@ -1013,6 +1013,28 @@ public:
         return false;
     }
 
+    // Without overloading, an arithmetic operator returns a number, a BigInt or a string whatever it is given, and two objects
+    // are == when they are the same object.
+    bool isWatchingOperatorOverloadingWatchpoint()
+    {
+        if (m_plan.isUnlinked())
+            return false;
+        InlineWatchpointSet& set = m_vm.operatorOverloadingWatchpointSet();
+        if (watchpoints().isWatched(set))
+            return true;
+        if (set.isStillValid()) {
+            watchpoints().addLazily(set);
+            return true;
+        }
+        return false;
+    }
+
+    // The objects that overload operators are all SpecObjectOther (see JSType.h).
+    bool mayOverloadOperators(SpeculatedType operands)
+    {
+        return (operands & SpecObjectOther) && !isWatchingOperatorOverloadingWatchpoint();
+    }
+
     bool isWatchingHavingABadTimeWatchpoint(Node* node)
     {
         JSGlobalObject* globalObject = globalObjectFor(node->origin.semantic);

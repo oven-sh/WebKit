@@ -32,5 +32,7 @@ namespace JSC {
 
 JS_EXPORT_PRIVATE NEVER_INLINE uint32_t computeJSCBytecodeCacheVersion();
 JS_EXPORT_PRIVATE NEVER_INLINE void dangerouslyOverrideJSCBytecodeCacheVersion(uint32_t version);
+// From what names the build of the binary that JSC is part of (its build ID, its UUID). 0: it has no such thing.
+JS_EXPORT_PRIVATE NEVER_INLINE uint32_t computeJSCBinaryVersion();
 
 }

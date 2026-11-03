@@ -94,6 +94,19 @@ public:
         return tryBinarySearch<BasicBlockType, unsigned>(m_basicBlocks, m_basicBlocks.size(), leaderOffset, [] (BasicBlockType* basicBlock) { return basicBlock->leaderOffset(); });
     }
 
+    // The block that an exception thrown by the instruction at the offset goes to, if it is caught in this code block.
+    // CodeBlock::handlerForBytecodeIndex() goes through all the handlers, which is too slow to do for every instruction
+    // of a code block that has hundreds of them.
+    BasicBlockType* findHandlerBlockForBytecodeOffset(typename InstructionStreamType::Offset bytecodeOffset)
+    {
+        if (m_handlerRanges.isEmpty() || bytecodeOffset < m_handlerRanges.first().start)
+            return nullptr;
+        auto* range = std::upper_bound(m_handlerRanges.begin(), m_handlerRanges.end(), bytecodeOffset, [] (unsigned offset, const HandlerRange& range) {
+            return offset < range.start;
+        });
+        return range[-1].handlerBlock;
+    }
+
     unsigned size() const { return m_basicBlocks.size(); }
     BasicBlockType& at(unsigned index) const { return const_cast<BytecodeGraph*>(this)->m_basicBlocks[index]; }
     BasicBlockType& operator[](unsigned index) const { return at(index); }
@@ -111,7 +124,14 @@ public:
     }
 
 private:
+    // From `start` to the start of the next range.
+    struct HandlerRange {
+        unsigned start;
+        BasicBlockType* handlerBlock;
+    };
+
     BasicBlocksVector m_basicBlocks;
+    Vector<HandlerRange> m_handlerRanges;
 };
 
 
@@ -120,6 +140,31 @@ BytecodeGraph::BytecodeGraph(CodeBlockType* codeBlock, const InstructionStreamTy
     : m_basicBlocks(BasicBlockType::compute(codeBlock, instructions))
 {
     ASSERT(m_basicBlocks.size());
+
+    unsigned numberOfHandlers = codeBlock->numberOfExceptionHandlers();
+    if (!numberOfHandlers)
+        return;
+    Vector<unsigned> boundaries;
+    boundaries.reserveInitialCapacity(numberOfHandlers * 2);
+    for (unsigned i = 0; i < numberOfHandlers; ++i) {
+        auto& handler = codeBlock->exceptionHandler(i);
+        boundaries.append(handler.start);
+        boundaries.append(handler.end);
+    }
+    std::ranges::sort(boundaries);
+    boundaries.shrink(std::unique(boundaries.begin(), boundaries.end()) - boundaries.begin());
+    m_handlerRanges = WTF::map(boundaries, [] (unsigned start) {
+        return HandlerRange { start, nullptr };
+    });
+    // Handlers are ordered innermost first, so going backwards, the innermost has the last word.
+    for (unsigned i = numberOfHandlers; i--;) {
+        auto& handler = codeBlock->exceptionHandler(i);
+        auto* handlerBlock = findBasicBlockWithLeaderOffset(handler.target);
+        ASSERT(handlerBlock);
+        size_t index = std::ranges::lower_bound(boundaries, handler.start) - boundaries.begin();
+        for (; boundaries[index] < handler.end; ++index)
+            m_handlerRanges[index].handlerBlock = handlerBlock;
+    }
 }
 
 } // namespace JSC

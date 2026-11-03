@@ -181,6 +181,34 @@ private:
         NodeType op = node->op();
 
         bool changed = false;
+
+        switch (op) {
+        case ValueAdd:
+        case ValueSub:
+        case ValueMul:
+        case ValueDiv:
+        case ValueMod:
+        case ValuePow:
+        case ValueBitAnd:
+        case ValueBitOr:
+        case ValueBitXor:
+        case ValueBitLShift:
+        case ValueBitRShift:
+        case ValueBitNot:
+        case ValueNegate:
+        case Inc:
+        case Dec: {
+            // An overloaded operator most often returns another object of the kind it was given.
+            SpeculatedType operands = node->child1()->prediction();
+            if (node->child2())
+                operands |= node->child2()->prediction();
+            if (m_graph.mayOverloadOperators(operands))
+                changed |= mergePrediction(SpecObjectOther);
+            break;
+        }
+        default:
+            break;
+        }
         
         switch (op) {
         case GetLocal: {

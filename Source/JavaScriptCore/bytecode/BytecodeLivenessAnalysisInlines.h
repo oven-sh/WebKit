@@ -83,15 +83,12 @@ inline void BytecodeLivenessPropagation::stepOverBytecodeIndexUse(CodeBlockType*
 }
 
 template<typename CodeBlockType, typename UseFunctor>
-inline void BytecodeLivenessPropagation::stepOverBytecodeIndexUseInExceptionHandler(CodeBlockType* codeBlock, const JSInstructionStream&, BytecodeGraph& graph, BytecodeIndex bytecodeIndex, NOESCAPE const UseFunctor& use)
+inline void BytecodeLivenessPropagation::stepOverBytecodeIndexUseInExceptionHandler(CodeBlockType*, const JSInstructionStream&, BytecodeGraph& graph, BytecodeIndex bytecodeIndex, NOESCAPE const UseFunctor& use)
 {
     // If we have an exception handler, we want the live-in variables of the
     // exception handler block to be included in the live-in of this particular BytecodeIndex.
-    if (auto* handler = codeBlock->handlerForBytecodeIndex(bytecodeIndex)) {
-        auto* handlerBlock = graph.findBasicBlockWithLeaderOffset(handler->target);
-        ASSERT(handlerBlock);
+    if (auto* handlerBlock = graph.findHandlerBlockForBytecodeOffset(bytecodeIndex.offset()))
         handlerBlock->in().forEachSetBit(use);
-    }
 }
 
 // Simplified interface to bytecode use/def, which determines defs first and then uses, and includes

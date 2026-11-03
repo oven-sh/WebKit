@@ -2288,7 +2288,8 @@ void VM::executeEntryScopeServicesOnExit()
     if (watchdog) [[unlikely]]
         watchdog->exitedVM();
 
-    if (hasEntryScopeServiceRequest(EntryScopeService::PopListeners)) {
+    // They wait for nothing to be running in the VM. A parked thread may be in the middle of something.
+    if (hasEntryScopeServiceRequest(EntryScopeService::PopListeners) && !m_apiLock->hasParkedThreads()) {
         auto listeners = WTF::move(m_didPopListeners);
         for (auto& listener : listeners)
             listener();

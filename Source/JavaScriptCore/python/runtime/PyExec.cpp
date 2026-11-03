@@ -1,0 +1,741 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#include "config.h"
+#include "PyExec.h"
+
+#include "JSCInlines.h"
+#include "PyAbstract.h"
+#include "PyCommandLine.h"
+#include "PyCompiler.h"
+#include "PyErrors.h"
+#include "PyException.h"
+#include "PyGenerator.h"
+#include "PyIO.h"
+#include "PyInternals.h"
+#include "PyList.h"
+#include "PyModule.h"
+#include "PyNumbers.h"
+#include "PyParser.h"
+#include "PyStr.h"
+#include "PyThreads.h"
+#include "PyVirtualFiles.h"
+#include "TopExceptionScope.h"
+#include <signal.h>
+#include <unistd.h>
+#include <wtf/FileSystem.h>
+
+namespace JSC {
+namespace Python {
+
+// From source text to running code; and what the interpreter does around a program: Python/pythonrun.c in CPython.
+
+// ---- Compiling ----
+
+namespace {
+
+class RuntimeParserHost final : public ParserHost {
+public:
+    // Whoever makes one keeps the module alive.
+    RuntimeParserHost(JSGlobalObject* globalObject, const String& filename, JSValue module)
+        : m_globalObject(globalObject)
+        , m_filename(filename)
+        , m_module(module)
+    {
+    }
+
+    WarningResult warn(const Warning& warning) final
+    {
+        Runtime& rt = runtime(m_globalObject);
+        PyType* category = warning.category == WarningCategory::SyntaxWarning ? rt.SyntaxWarning() : rt.DeprecationWarning();
+        if (warnExplicit(m_globalObject, category, warning.message, m_filename, warning.lineno, m_module))
+            return WarningResult::Reported;
+        if (clearPendingExceptionIfMatches(m_globalObject, category))
+            return WarningResult::BecameException;
+        return WarningResult::OtherException;
+    }
+
+    bool lineOfFile(int lineno, Vector<uint8_t>& line) final
+    {
+        if (!m_hasReadFile) {
+            m_hasReadFile = true;
+            if (!m_filename.startsWith('<'))
+                m_file = readFile(m_filename);
+        }
+        if (!m_file)
+            return false;
+        std::span<const uint8_t> rest = m_file->span();
+        for (int current = 1; !rest.empty(); ++current) {
+            size_t length = 0;
+            while (length < rest.size() && rest[length] != '\n' && rest[length] != '\r')
+                ++length;
+            bool hasEnding = length < rest.size();
+            size_t endingLength = hasEnding ? (rest[length] == '\r' && length + 1 < rest.size() && rest[length + 1] == '\n' ? 2 : 1) : 0;
+            if (current == lineno) {
+                line.append(rest.first(length));
+                if (hasEnding)
+                    line.append('\n');
+                return true;
+            }
+            rest = rest.subspan(length + endingLength);
+        }
+        return false;
+    }
+
+    int maxStrDigits() final { return runtime(m_globalObject).maxStrDigits; }
+
+    // bytes.decode(encoding)
+    UTF8CString decodeSource(std::span<const uint8_t> bytes, const ASCIICString& encoding, String& error, bool& unknownEncoding) final
+    {
+        Runtime& rt = runtime(m_globalObject);
+        VM& vm = rt.vm();
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        JSValue text = callMethod(m_globalObject, PyBytes::create(m_globalObject, bytes), internString(vm, "decode"_s), makeStr(vm, String(byteCast<Latin1Character>(encoding.span()))));
+        String result;
+        if (!scope.exception())
+            result = strValue(text)->value(m_globalObject);
+        if (scope.exception()) {
+            // Whatever went wrong is a SyntaxError that says the same.
+            JSValue exception = takePendingException(m_globalObject);
+            unknownEncoding = rt.typeOf(exception)->isSubtypeOf(rt.LookupError());
+            JSString* message = str(m_globalObject, exception);
+            error = scope.exception() ? "encoding problem"_str : message->value(m_globalObject);
+            scope.clearException();
+            return { };
+        }
+        return result.utf8();
+    }
+
+private:
+    JSGlobalObject* m_globalObject;
+    String m_filename;
+    JSValue m_module;
+    std::optional<Vector<uint8_t>> m_file;
+    bool m_hasReadFile { false };
+};
+
+}
+
+std::unique_ptr<ParserHost> makeParserHost(JSGlobalObject* globalObject, const String& filename, JSValue module)
+{
+    return makeUniqueWithoutFastMallocCheck<RuntimeParserHost>(globalObject, filename, module);
+}
+
+JSValue raiseSyntaxErrorInfo(JSGlobalObject* globalObject, const SyntaxErrorInfo& info, const String& filename)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    using Type = SyntaxErrorInfo::Type;
+    PyType* type = nullptr;
+    switch (info.type) {
+    case Type::None:
+        RELEASE_ASSERT_NOT_REACHED();
+    case Type::HostException:
+        ASSERT(scope.exception());
+        return { };
+    case Type::SyntaxError:
+        type = rt.SyntaxError();
+        break;
+    case Type::IndentationError:
+        type = rt.IndentationError();
+        break;
+    case Type::TabError:
+        type = rt.TabError();
+        break;
+    case Type::IncompleteInputError:
+        type = rt.IncompleteInputError();
+        break;
+    case Type::ValueError:
+        return raiseValueError(globalObject, scope, info.message);
+    case Type::OverflowError:
+        return raiseOverflowError(globalObject, scope, info.message);
+    case Type::MemoryError:
+        return raiseWithArgs(globalObject, scope, rt.MemoryError(), { makeStr(vm, info.message) });
+    case Type::RecursionError:
+        return raiseRecursionError(globalObject, scope, info.message);
+    case Type::SystemError:
+        return raiseSystemError(globalObject, scope, info.message);
+    }
+
+    JSValue message = makeStr(vm, info.message);
+    if (!info.hasLocation)
+        return raiseWithArgs(globalObject, scope, type, { message });
+    JSValue text = info.text.isNull() ? jsUndefined() : JSValue(makeStr(vm, info.text));
+    JSValue file = makeStr(vm, filename);
+    if (info.locationIsNotAnArgument) {
+        PyException* exception = newException(globalObject, type, info.message);
+        auto set = [&](ASCIILiteral name, JSValue value) {
+            setAttr(globalObject, exception, internString(vm, name), value);
+            if (scope.exception())
+                takePendingException(globalObject);
+        };
+        set("lineno"_s, jsNumber(info.lineno));
+        set("offset"_s, jsNumber(info.offset));
+        set("end_lineno"_s, info.hasEnd ? jsNumber(info.endLineno) : jsUndefined());
+        set("end_offset"_s, info.hasEnd ? jsNumber(info.endOffset) : jsUndefined());
+        set("filename"_s, file);
+        if (!info.text.isNull())
+            set("text"_s, text);
+        return raiseException(globalObject, scope, exception);
+    }
+    PyTuple* details = info.hasEnd
+        ? PyTuple::create(globalObject, { file, jsNumber(info.lineno), jsNumber(info.offset), text, jsNumber(info.endLineno), jsNumber(info.endOffset) })
+        : PyTuple::create(globalObject, { file, jsNumber(info.lineno), jsNumber(info.offset), text });
+    return raiseWithArgs(globalObject, scope, type, { message, details });
+}
+
+bool parseSource(JSGlobalObject* globalObject, ParseTree& tree, ParserHost& host, std::span<const uint8_t> source, const String& filename, ASCIILiteral mode, int flags, int featureVersion)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    ParseMode parseMode = mode == "eval"_s ? ParseMode::Eval : mode == "single"_s ? ParseMode::Single : mode == "func_type"_s ? ParseMode::FunctionType : ParseMode::File;
+    OptionSet<ParserFlag> parserFlags;
+    if (flags & CompileTypeComments)
+        parserFlags.add(ParserFlag::TypeComments);
+    if (flags & CompileDontImplyDedent)
+        parserFlags.add(ParserFlag::DontImplyDedent);
+    if (flags & CompileAllowIncompleteInput)
+        parserFlags.add(ParserFlag::AllowIncompleteInput);
+    if (flags & static_cast<int>(CodeFlag::FutureBarryAsBDFL))
+        parserFlags.add(ParserFlag::BarryAsBDFL);
+
+    // Bytes are in the encoding they declare (PEP 263), whatever CompileSourceIsUTF8 says: CPython's parser does not look at it.
+    SyntaxErrorInfo error;
+    String fileToName = flags & CompileSourceIsFile ? filename : String();
+    bool parsed = featureVersion < 0
+        ? parse(vm, tree, host, source, fileToName, parseMode, parserFlags, flags & CompileIgnoreCookie, error)
+        : parse(vm, tree, host, source, fileToName, parseMode, parserFlags, flags & CompileIgnoreCookie, error, featureVersion);
+    if (parsed)
+        return true;
+    scope.release();
+    raiseSyntaxErrorInfo(globalObject, error, filename);
+    return false;
+}
+
+JSValue compileTree(JSGlobalObject* globalObject, ParseTree& tree, ParserHost& host, const String& filename, int flags, int optimize)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // The positions in the tree are offsets in the bytes the lexer read, so those are what the code keeps as its source.
+    String text = String(byteCast<Latin1Character>(tree.source.bytes()));
+    // exec(''): JSC has no function without source.
+    if (text.isEmpty())
+        text = "\n"_s;
+    SourceCode sourceCode(StringSourceProvider::create(text, SourceOrigin(), filename, SourceTaintedOrigin::Untainted));
+    if (flags & CompileSourceIsShown)
+        showSourceInTracebacks(*sourceCode.provider());
+
+    CompilerOptions options;
+    options.optimize = optimize < 0 ? rt.optimizationLevel : optimize;
+    options.allowTopLevelAwait = flags & CompileAllowTopLevelAwait;
+    options.futureAnnotations = flags & static_cast<int>(CodeFlag::FutureAnnotations);
+    options.futureBarryAsBDFL = flags & static_cast<int>(CodeFlag::FutureBarryAsBDFL);
+    Compiler compiler(globalObject, tree, host, sourceCode, filename, options);
+    UnlinkedFunctionExecutable* unlinked = compiler.compile();
+    if (!unlinked)
+        RELEASE_AND_RETURN(scope, raiseSyntaxErrorInfo(globalObject, compiler.error(), filename));
+    return PyCode::of(globalObject, unlinked->link(vm, nullptr, sourceCode));
+}
+
+JSValue compileSource(JSGlobalObject* globalObject, std::span<const uint8_t> source, const String& filename, ASCIILiteral mode, int flags, int optimize, JSValue module)
+{
+    RuntimeParserHost host(globalObject, filename, module);
+    ParseTree tree;
+    if (!parseSource(globalObject, tree, host, source, filename, mode, flags))
+        return { };
+    return compileTree(globalObject, tree, host, filename, flags, optimize);
+}
+
+// ---- Running ----
+
+bool ensureBuiltins(JSGlobalObject* globalObject, PyDict* globals)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (globals->get(rt.names.dBuiltins()))
+        return true;
+    if (isFrozenDict(globals)) {
+        raiseTypeError(globalObject, scope, "cannot assign __builtins__ to frozendict globals"_s);
+        return false;
+    }
+    globals->set(vm, rt.names.dBuiltins(), currentBuiltins(globalObject));
+    return true;
+}
+
+JSValue runCode(JSGlobalObject* globalObject, JSValue codeValue, PyDict* globals, JSValue locals, PyTuple* closure)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto* code = PyCode::from(codeValue);
+    if (!ensureBuiltins(globalObject, globals))
+        return { };
+    PyFunction* function = PyFunction::create(globalObject, code->executable(), globals);
+    if (closure && closure->length())
+        function->setClosure(vm, closure);
+    if (!code->codeInfo().takesNamespace)
+        return call(globalObject, function);
+    return call(globalObject, function, locals ? locals : JSValue(globals));
+}
+
+// ---- Output ----
+
+void writeToFile(JSGlobalObject* globalObject, JSValue file, JSString* text)
+{
+    if (!file || isNone(file))
+        return;
+    callMethod(globalObject, file, runtime(globalObject).names.write(), text);
+}
+
+static void writeRaw(FILE* file, const String& text)
+{
+    auto utf8 = text.utf8(ConversionMode::LenientConversion);
+    fwrite(utf8.data(), 1, utf8.length(), file);
+    fflush(file);
+}
+
+// Never throws: there may be nobody left to tell.
+void writeToStderr(JSGlobalObject* globalObject, const String& text)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSValue file = rt.sysDict()->get(rt.names.stderr_());
+    if (!file || isNone(file)) {
+        writeRaw(stderr, text);
+        return;
+    }
+    writeToFile(globalObject, file, makeStr(vm, text));
+    if (scope.exception()) {
+        scope.clearException();
+        writeRaw(stderr, text);
+    }
+}
+
+static void flushStandardStream(JSGlobalObject* globalObject, JSString* name)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSValue file = rt.sysDict()->get(name);
+    if (file && !isNone(file))
+        callMethod(globalObject, file, rt.names.flush());
+    scope.clearException();
+}
+
+// ---- A program ----
+
+// If the exception is a SystemExit, the status it asks for.
+static std::optional<int> exitStatusOf(JSGlobalObject* globalObject, JSValue exceptionValue)
+{
+    Runtime& rt = runtime(globalObject);
+    auto* exception = PyException::tryFrom(exceptionValue);
+    if (!exception || !exception->type()->isSubtypeOf(rt.SystemExit()))
+        return std::nullopt;
+    // -i: the program is looked into when it has ended, however it ended.
+    if (configuration().inspect)
+        return std::nullopt;
+    JSValue code = exception->field(ExceptionField::systemExitCode);
+    if (!code || isNone(code))
+        return 0;
+    // All that gets out of the process is a byte. (And a negative status means something else: see handleUncaughtException().)
+    if (isInt(code))
+        return static_cast<int>(tryInt64(intValue(code)).value_or(-1) & 0xff);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSString* text = str(globalObject, code);
+    String message = scope.exception() ? String() : text->value(globalObject);
+    scope.clearException();
+    writeToStderr(globalObject, makeString(message, '\n'));
+    return 1;
+}
+
+int handleUncaughtException(JSGlobalObject* globalObject)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSValue exception = takePendingException(globalObject);
+    if (!exception)
+        return 0;
+    if (auto status = exitStatusOf(globalObject, exception))
+        return *status;
+
+    flushStandardStream(globalObject, rt.names.stdout_());
+    JSValue traceback = PyException::from(exception)->traceback();
+    rt.sysDict()->set(vm, internString(vm, "last_exc"_s), exception);
+    rt.sysDict()->set(vm, internString(vm, "last_type"_s), rt.typeOf(exception));
+    rt.sysDict()->set(vm, internString(vm, "last_value"_s), exception);
+    rt.sysDict()->set(vm, internString(vm, "last_traceback"_s), traceback ? traceback : jsUndefined());
+    JSValue hook = rt.sysDict()->get(internString(vm, "excepthook"_s));
+    if (!audit(globalObject, "sys.excepthook"_s, hook, rt.typeOf(exception), exception, traceback)) {
+        // A hook may have the report suppressed.
+        if (clearPendingExceptionIfMatches(globalObject, rt.RuntimeError()))
+            return 1;
+        reportUnraisable(globalObject, "Exception ignored in audit hook"_s, { });
+    }
+    if (!hook) {
+        writeToStderr(globalObject, "sys.excepthook is missing\n"_s);
+        printException(globalObject, exception);
+        return 1;
+    }
+    call(globalObject, hook, rt.typeOf(exception), exception, traceback ? traceback : jsUndefined());
+    if (scope.exception()) {
+        JSValue second = takePendingException(globalObject);
+        if (auto status = exitStatusOf(globalObject, second))
+            return *status;
+        writeToStderr(globalObject, "Error in sys.excepthook:\n"_s);
+        printException(globalObject, second);
+        writeToStderr(globalObject, "\nOriginal exception was:\n"_s);
+        printException(globalObject, exception);
+    }
+    if (rt.typeOf(exception)->isSubtypeOf(rt.KeyboardInterrupt()))
+        return -SIGINT;
+    return 1;
+}
+
+bool endsProgram(JSGlobalObject* globalObject, JSValue exception)
+{
+    if (!PyException::tryFrom(exception))
+        return false;
+    Runtime& rt = runtime(globalObject);
+    PyType* type = rt.typeOf(exception);
+    return type->isSubtypeOf(rt.SystemExit()) || type->isSubtypeOf(rt.KeyboardInterrupt());
+}
+
+void dieIfStatusIsSignal(int status)
+{
+    if (status >= 0)
+        return;
+    fflush(stdout);
+    fflush(stderr);
+    signal(-status, SIG_DFL);
+    kill(getpid(), -status);
+    // It may be blocked.
+    _exit(128 - status);
+}
+
+static ASCIILiteral s_eventLoopModule;
+
+void setEventLoopModule(ASCIILiteral name)
+{
+    s_eventLoopModule = name;
+}
+
+JSValue eventLoopFunction(JSGlobalObject* globalObject, ASCIILiteral name)
+{
+    if (s_eventLoopModule.isNull())
+        return { };
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue module = importModule(globalObject, s_eventLoopModule);
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, getAttr(globalObject, module, internString(vm, name)));
+}
+
+// A module that awaits at the top level is a coroutine. This is for a host without an event loop: what the module awaits can
+// only be what needs none.
+static void runTopLevelCoroutine(JSGlobalObject* globalObject, PyGenerator* coroutine)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    while (true) {
+        JSValue result;
+        JSValue yielded = generatorSend(globalObject, coroutine, jsUndefined(), result);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (!yielded)
+            return;
+        if (!isNone(yielded)) {
+            raiseRuntimeError(globalObject, scope, "await at the top level of a module needs an event loop, which is not there yet"_s);
+            return;
+        }
+    }
+}
+
+// sys.stdout and sys.stderr, unless they are closed. False: one of them could not be flushed, and if it is sys.stdout and
+// `reports`, sys.stderr has been told.
+static bool flushStandardStreamsAtExit(JSGlobalObject* globalObject, bool reports)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    bool succeeded = true;
+    for (JSString* name : { rt.names.stdout_(), rt.names.stderr_() }) {
+        JSValue file = rt.sysDict()->get(name);
+        if (!file || isNone(file))
+            continue;
+        JSValue closed = getAttr(globalObject, file, internString(vm, "closed"_s));
+        bool isClosed = closed && isTrue(globalObject, closed);
+        if (scope.exception()) {
+            scope.clearException();
+            isClosed = false;
+        }
+        if (isClosed)
+            continue;
+        callMethod(globalObject, file, rt.names.flush());
+        if (!scope.exception())
+            continue;
+        succeeded = false;
+        if (reports && name == rt.names.stdout_())
+            reportUnraisable(globalObject, "Exception ignored while flushing sys.stdout"_s, { });
+        scope.clearException();
+    }
+    return succeeded;
+}
+
+bool finalizeInterpreter(JSGlobalObject* globalObject)
+{
+    if (!globalObject->pythonRuntime())
+        return true;
+    Runtime& rt = runtime(globalObject);
+    if (std::exchange(rt.isFinalized, true))
+        return true;
+    VM& vm = rt.vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    // A callback may start a thread, and a thread register a callback.
+    do {
+        if (JSValue threading = rt.modules()->get(internString(vm, "threading"_s)); threading && !isNone(threading)) {
+            callMethod(globalObject, threading, internString(vm, "_shutdown"_s));
+        } else
+            waitForThreadsAtExit(globalObject);
+        if (scope.exception()) [[unlikely]] {
+            stopWaitingForThreadsAtExit(globalObject);
+            reportUnraisable(globalObject, "Exception ignored on threading shutdown"_s, { });
+        }
+        runAtexitCallbacks(globalObject);
+    } while (hasThreadsOrAtexitCallbacks(globalObject));
+    // The threads that are left are daemons. They have run their last.
+    rt.threads().didFinalize();
+    // Before the finalizers, which may close what the standard streams write to, and after them, as they may print.
+    bool flushed = flushStandardStreamsAtExit(globalObject, true);
+    flushAllOpenFiles(globalObject);
+    finalizeSignals(globalObject);
+    rt.finalizeAllAtExit();
+    flushed &= flushStandardStreamsAtExit(globalObject, flushed);
+    flushAllOpenFiles(globalObject);
+    return flushed;
+}
+
+// Code compiled ahead of time was compiled in the belief that an arithmetic operator gives a number or a BigInt, and nothing tells it
+// otherwise, as a watchpoint tells the code of the JITs.
+static bool refuseBesideCompiledCode(JSGlobalObject* globalObject)
+{
+    VM& vm = getVM(globalObject);
+    if (!vm.hasCompiledCode() || globalObject->pythonRuntime()) [[likely]]
+        return false;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    throwTypeError(globalObject, scope, "Python cannot be used in a program that was compiled ahead of time"_s);
+    return true;
+}
+
+JSValue importModuleFromJS(JSGlobalObject* globalObject, const String& name)
+{
+    if (refuseBesideCompiledCode(globalObject))
+        return { };
+    bool isFirstUse = !globalObject->pythonRuntime();
+    Runtime& rt = Runtime::ensure(globalObject);
+    VM& vm = rt.vm();
+    if (isFirstUse) {
+        rt.sysDict()->set(vm, internString(vm, "argv"_s), newList(globalObject, std::initializer_list<JSValue> { rt.names.empty() }));
+        if (auto* searchPath = tryAsList(rt.sysDict()->get(rt.names.path())))
+            listInsert(globalObject, searchPath, 0, rt.names.empty());
+    }
+    if (name == "__python__"_s)
+        return rt.jsViewObject(JSViewObject::Namespace);
+    return importModule(globalObject, internString(vm, name));
+}
+
+// Not FileSystem::realPath(): that frees what the C library allocated, and in Bun the two do not have the same allocator.
+String realPath(const String& path)
+{
+    char resolved[PATH_MAX];
+    return realpath(byteCast<char>(path.utf8().data()), resolved) ? String::fromUTF8(resolved) : String();
+}
+
+String absolutePath(const String& path)
+{
+    Vector<String> parts;
+    if (!path.startsWith('/')) {
+        char buffer[PATH_MAX];
+        if (!getcwd(buffer, sizeof(buffer)))
+            return path;
+        for (auto part : StringView(String::fromUTF8(buffer)).split('/'))
+            parts.append(part.toString());
+    }
+    for (auto part : StringView(path).split('/')) {
+        if (part == "."_s)
+            continue;
+        if (part == ".."_s) {
+            if (!parts.isEmpty())
+                parts.removeLast();
+            continue;
+        }
+        parts.append(part.toString());
+    }
+    StrBuilder result;
+    for (auto& part : parts)
+        result.append('/', part);
+    return parts.isEmpty() ? "/"_str : result.toString();
+}
+
+// A file is the module that `import` finds it as. The directories above it that are packages (they have an __init__.py) are
+// part of its name, and the first that is not is where the search has to start, so it is put on sys.path if it is not there.
+JSValue importFileFromJS(JSGlobalObject* globalObject, const String& givenPath, const String& source)
+{
+    if (refuseBesideCompiledCode(globalObject))
+        return { };
+    bool isFirstUse = !globalObject->pythonRuntime();
+    Runtime& rt = Runtime::ensure(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (isFirstUse)
+        rt.sysDict()->set(vm, internString(vm, "argv"_s), newList(globalObject, std::initializer_list<JSValue> { rt.names.empty() }));
+
+    String path = absolutePath(givenPath);
+    JSValue importFile = importSystemFunction(globalObject, "import_file"_s);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (importFile)
+        RELEASE_AND_RETURN(scope, call(globalObject, importFile, makeStr(vm, path), source.isNull() ? jsUndefined() : JSValue(makeStr(vm, source))));
+    if (!source.isNull())
+        return raise(globalObject, scope, rt.ImportError(), "source that is in no file cannot be imported"_s);
+
+    String directory = FileSystem::parentPath(path);
+    String name = FileSystem::pathFileName(path);
+    if (size_t dot = name.reverseFind('.'); dot != notFound)
+        name = name.left(dot);
+    if (name == "__init__"_s) {
+        name = FileSystem::pathFileName(directory);
+        directory = FileSystem::parentPath(directory);
+    }
+    while (kindOfFile(FileSystem::pathByAppendingComponent(directory, "__init__.py"_s)) == VirtualFileKind::File) {
+        name = makeString(FileSystem::pathFileName(directory), '.', name);
+        directory = FileSystem::parentPath(directory);
+    }
+
+    // The program itself is not run a second time under another name.
+    if (JSValue main = rt.modules()->get(rt.names.dMain()); main && PyModule::is(main)) {
+        JSValue file = PyModule::from(main)->dict()->get(rt.names.dFile());
+        if (file && file.isString() && asString(file)->tryGetValue() == path)
+            return main;
+    }
+
+    if (auto* searchPath = tryAsList(rt.sysDict()->get(rt.names.path()))) {
+        JSString* entry = makeStr(vm, directory);
+        bool isOnPath = contains(globalObject, searchPath, entry);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!isOnPath) {
+            listInsert(globalObject, searchPath, 0, entry);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
+    }
+    RELEASE_AND_RETURN(scope, importModule(globalObject, internString(vm, name)));
+}
+
+int runMainFile(JSGlobalObject* globalObject, const String& path, std::span<const uint8_t> source, const Vector<String>& arguments)
+{
+    int status = runMainModule(globalObject, path, source, arguments).value_or(0);
+    bool flushed = finalizeInterpreter(globalObject);
+    dieIfStatusIsSignal(status);
+    return flushed ? status : statusIfNotFlushed;
+}
+
+// The module traceback has the lines of such source from there.
+void registerSourceWithLinecache(JSGlobalObject* globalObject, JSValue code, std::span<const uint8_t> source, const String& filename)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue linecache = importModule(globalObject, "linecache"_s);
+    RETURN_IF_EXCEPTION(scope, void());
+    scope.release();
+    callMethod(globalObject, linecache, internString(vm, "_register_code"_s), code, makeStr(vm, String::fromUTF8ReplacingInvalidSequences(source)), makeStr(vm, filename));
+}
+
+void runSourceInMain(JSGlobalObject* globalObject, std::span<const uint8_t> source, const String& filename, int flags, JSValue* unfinished)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue code = compileSource(globalObject, source, filename, "exec"_s, flags, -1);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (flags & CompileSourceIsShown) {
+        registerSourceWithLinecache(globalObject, code, source, filename);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+    RELEASE_AND_RETURN(scope, runCodeInMain(globalObject, code, unfinished));
+}
+
+void runCodeInMain(JSGlobalObject* globalObject, JSValue code, JSValue* unfinished)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PyDict* globals = ensureMainModule(globalObject)->dict();
+    JSValue result = runCode(globalObject, code, globals, globals);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (!PyCode::from(code)->flags().contains(CodeFlag::Coroutine))
+        return;
+    JSValue run = unfinished ? eventLoopFunction(globalObject, "run"_s) : JSValue();
+    RETURN_IF_EXCEPTION(scope, void());
+    if (!run)
+        RELEASE_AND_RETURN(scope, runTopLevelCoroutine(globalObject, PyGenerator::from(result)));
+    JSValue promise = call(globalObject, run, result);
+    RETURN_IF_EXCEPTION(scope, void());
+    *unfinished = promise;
+}
+
+std::optional<int> mainModuleEnded(JSGlobalObject* globalObject, JSValue exception)
+{
+    Runtime& rt = runtime(globalObject);
+    std::optional<int> status;
+    if (exception) {
+        {
+            auto scope = DECLARE_THROW_SCOPE(rt.vm());
+            throwPythonException(globalObject, scope, exceptionFromThrownValue(globalObject, exception));
+        }
+        status = handleUncaughtException(globalObject);
+    }
+    flushStandardStream(globalObject, rt.names.stderr_());
+    flushStandardStream(globalObject, rt.names.stdout_());
+    return status;
+}
+
+std::optional<int> runMainModule(JSGlobalObject* globalObject, const String& givenPath, std::span<const uint8_t> source, const Vector<String>& arguments, JSValue* unfinished)
+{
+    Runtime& rt = Runtime::ensure(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    String path = absolutePath(givenPath);
+
+    MarkedArgumentBuffer argv;
+    argv.append(makeStr(vm, givenPath));
+    for (auto& argument : arguments)
+        argv.append(makeStr(vm, argument));
+    rt.sysDict()->set(vm, internString(vm, "argv"_s), newList(globalObject, spanOf(argv)));
+    if (configuration().originalArguments.isEmpty())
+        rt.sysDict()->set(vm, internString(vm, "orig_argv"_s), newList(globalObject, spanOf(argv)));
+
+    // The directory of the script comes first on sys.path.
+    if (auto* searchPath = tryAsList(rt.sysDict()->get(rt.names.path())); searchPath && !configuration().safePath) {
+        String real = realPath(path);
+        listInsert(globalObject, searchPath, 0, makeStr(vm, FileSystem::parentPath(real.isEmpty() ? path : real)));
+    }
+
+    std::optional<int> status;
+    installSignalHandlers(globalObject);
+    if (!scope.exception())
+        runFileInMain(globalObject, path, source, unfinished);
+    if (unfinished && *unfinished)
+        return std::nullopt;
+    if (scope.exception())
+        status = handleUncaughtException(globalObject);
+    flushStandardStream(globalObject, rt.names.stderr_());
+    flushStandardStream(globalObject, rt.names.stdout_());
+    return status;
+}
+
+} // namespace Python
+} // namespace JSC

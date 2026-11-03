@@ -45,6 +45,7 @@ public:
     VM& vm() { return m_vm; }
 
     bool isConstructor() const { return m_codeBlock->isConstructor(); }
+    bool isPython() const { return m_codeBlock->isPython(); }
     ConstructorKind constructorKind() const { return m_codeBlock->constructorKind(); }
     SuperBinding superBinding() const { return m_codeBlock->superBinding(); }
     JSParserScriptMode scriptMode() const { return m_codeBlock->scriptMode(); }
@@ -80,6 +81,17 @@ public:
     void addOpProfileControlFlowBytecodeOffset(JSInstructionStream::Offset offset)
     {
         m_opProfileControlFlowBytecodeOffsets.append(offset);
+    }
+    void addPythonMark(const PythonMark& mark) { m_pythonMarks.append(mark); }
+    void movePythonMarksAfterFirstLine(unsigned from, unsigned to)
+    {
+        size_t first = m_pythonMarks.size();
+        while (first && m_pythonMarks[first - 1].offset == from)
+            --first;
+        while (first < m_pythonMarks.size() && m_pythonMarks[first].kind() != PythonMark::Line)
+            ++first;
+        for (size_t i = first + 1; i < m_pythonMarks.size(); ++i)
+            m_pythonMarks[i].offset = to;
     }
 
     size_t numberOfUnlinkedSwitchJumpTables() const { return m_unlinkedSwitchJumpTables.size(); }
@@ -210,6 +222,7 @@ private:
     Vector<UnlinkedStringJumpTable> m_unlinkedStringSwitchJumpTables;
     UncheckedKeyHashMap<unsigned, UnlinkedCodeBlock::RareData::TypeProfilerExpressionRange> m_typeProfilerInfoMap;
     Vector<JSInstructionStream::Offset> m_opProfileControlFlowBytecodeOffsets;
+    Vector<PythonMark> m_pythonMarks;
     Vector<BitVector> m_bitVectors;
     Vector<IdentifierSet> m_constantIdentifierSets;
     unsigned m_numBinaryArithProfiles { 0 };

@@ -162,6 +162,7 @@ size_t UnlinkedCodeBlock::RareData::sizeInBytes(const AbstractLocker&) const
     size += m_unlinkedStringSwitchJumpTables.byteSize();
     size += m_typeProfilerInfoMap.capacity() * sizeof(decltype(m_typeProfilerInfoMap)::KeyValuePairType);
     size += m_opProfileControlFlowBytecodeOffsets.byteSize();
+    size += m_pythonMarks.byteSize();
     size += m_bitVectors.byteSize();
     // FIXME: account for each bit vector.
     size += m_constantIdentifierSets.byteSize();

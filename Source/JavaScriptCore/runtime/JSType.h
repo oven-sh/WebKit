@@ -166,12 +166,33 @@ namespace JSC {
     macro(DerivedStringObjectType, SpecObjectOther) \
     /* End StringObjectType types. */ \
     macro(InternalFieldTupleType, SpecCellOther) \
+    /* Start Python::PyObject types. What has no type of its own here is a PyObjectType. */ \
+    macro(PyObjectType, SpecObjectOther) \
+    macro(PyInstanceType, SpecObjectOther) \
+    macro(PyTupleType, SpecObjectOther) \
+    macro(PyKwNamesType, SpecObjectOther) \
+    macro(PyDictType, SpecObjectOther) \
+    macro(PySetType, SpecObjectOther) \
+    macro(PyBytesType, SpecObjectOther) \
+    macro(PyByteArrayType, SpecObjectOther) \
+    macro(PyIntType, SpecObjectOther) \
+    macro(PyFloatType, SpecObjectOther) \
+    macro(PyComplexType, SpecObjectOther) \
+    macro(PyStrType, SpecObjectOther) \
+    macro(PyRangeType, SpecObjectOther) \
+    macro(PySliceType, SpecObjectOther) \
+    macro(PyCellType, SpecObjectOther) \
+    macro(PyMethodType, SpecObjectOther) \
+    macro(PyGeneratorType, SpecObjectOther) \
+    macro(PyModuleType, SpecObjectOther) \
+    macro(PyExceptionType, SpecObjectOther) \
+    /* End Python::PyObject types. */ \
 
 enum JSType : uint8_t {
 #define JSC_DEFINE_JS_TYPE(type, speculatedType) type,
     FOR_EACH_JS_TYPE(JSC_DEFINE_JS_TYPE)
 #undef JSC_DEFINE_JS_TYPE
-    LastJSCObjectType = InternalFieldTupleType, // This is the last "JSC" Object type. After this, we have embedder's (e.g., WebCore) extended object types.
+    LastJSCObjectType = PyExceptionType, // This is the last "JSC" Object type. After this, we have embedder's (e.g., WebCore) extended object types.
     MaxJSType = 0b11111111,
 };
 
@@ -207,6 +228,9 @@ constexpr bool hasButterflyField(JSType type) { return type >= ObjectType && !(o
 static_assert(CompiledObjectType == WebAssemblyGCObjectType + 1 && SlimClosureType == WebAssemblyGCObjectType + 2);
 
 static_assert(CompiledEnvironmentType + 1 == ObjectType);
+
+static constexpr JSTypeRange pyObjectTypes { PyObjectType, PyExceptionType };
+constexpr bool isPyObjectType(JSType type) { return pyObjectTypes.first <= type && type <= pyObjectTypes.last; }
 
 static constexpr uint8_t EmbedderArrayLikeType = 0b11101101;
 

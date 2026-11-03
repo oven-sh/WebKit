@@ -1,0 +1,1733 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#include "config.h"
+#include "PyCompilerUnit.h"
+
+#include "JSCInlines.h"
+#include "PyBytes.h"
+#include "PyNumbers.h"
+#include "PyRange.h"
+#include "PyRuntime.h"
+#include "PySet.h"
+#include "PyTuple.h"
+#include <wtf/text/MakeString.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
+namespace JSC {
+namespace Python {
+
+using namespace AST;
+
+// More items than this in a display or a call are added one at a time, rather than held in as many registers.
+static constexpr unsigned maxItemsInRegisters = 64;
+
+// ---- Constants ----
+
+JSValue Unit::constantValue(const ConstantValue& value)
+{
+    switch (value.kind) {
+    case ConstantValue::Kind::None:
+        return jsUndefined();
+    case ConstantValue::Kind::True:
+        return jsBoolean(true);
+    case ConstantValue::Kind::False:
+        return jsBoolean(false);
+    case ConstantValue::Kind::Ellipsis:
+        return runtime().ellipsis();
+    case ConstantValue::Kind::Str:
+        return g.addStringConstant(*c.name(String(value.string)));
+    case ConstantValue::Kind::Bytes:
+        return PyBytes::create(globalObject(), std::span<const uint8_t> { value.bytes.data, value.bytes.size });
+    case ConstantValue::Kind::Int:
+        return makeInt(globalObject(), value.integer);
+    case ConstantValue::Kind::BigInt: {
+        JSValue result = intFromDigits(globalObject(), StringView(std::span<const char> { value.digits.data, value.digits.size }), value.radix);
+        return value.isNegative ? intNegate(globalObject(), result) : result;
+    }
+    case ConstantValue::Kind::Float:
+        return makeFloat(globalObject(), value.number);
+    case ConstantValue::Kind::Complex:
+        return PyComplex::create(globalObject(), value.complex.real, value.complex.imaginary);
+    case ConstantValue::Kind::Tuple: {
+        PyTuple* tuple = PyTuple::create(globalObject(), static_cast<unsigned>(value.items.size));
+        for (size_t i = 0; i < value.items.size; ++i)
+            tuple->initializeAt(vm(), i, constantValue(value.items.data[i]));
+        return tuple;
+    }
+    case ConstantValue::Kind::FrozenSet: {
+        PySet* set = PySet::createFrozen(globalObject());
+        for (size_t i = 0; i < value.items.size; ++i)
+            set->add(globalObject(), constantValue(value.items.data[i]));
+        return set;
+    }
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+// Literals, signed numbers, complex numbers written as a sum, and tuples of those.
+bool Unit::tryConstantValue(Expr* node, JSValue& result)
+{
+    switch (node->kind) {
+    case ExprKind::Constant:
+        result = constantValue(node->as<Constant>()->value);
+        return true;
+    case ExprKind::UnaryOp: {
+        auto* unary = node->as<UnaryOp>();
+        if (unary->op != AST::UnaryKind::USub && unary->op != AST::UnaryKind::UAdd)
+            return false;
+        auto* operand = unary->operand->tryAs<Constant>();
+        if (!operand)
+            return false;
+        bool negate = unary->op == AST::UnaryKind::USub;
+        switch (operand->value.kind) {
+        case ConstantValue::Kind::Int:
+        case ConstantValue::Kind::BigInt:
+            result = constantValue(operand->value);
+            if (negate)
+                result = intNegate(globalObject(), result);
+            return true;
+        case ConstantValue::Kind::Float:
+            result = makeFloat(globalObject(), negate ? -operand->value.number : operand->value.number);
+            return true;
+        case ConstantValue::Kind::Complex:
+            result = negate ? PyComplex::create(globalObject(), -operand->value.complex.real, -operand->value.complex.imaginary) : constantValue(operand->value);
+            return true;
+        default:
+            return false;
+        }
+    }
+    case ExprKind::BinOp: {
+        auto* binary = node->as<BinOp>();
+        if (binary->op != Operator::Add && binary->op != Operator::Sub)
+            return false;
+        auto* right = binary->right->tryAs<Constant>();
+        if (!right || right->value.kind != ConstantValue::Kind::Complex || binary->left->is<BinOp>())
+            return false;
+        JSValue left;
+        if (!tryConstantValue(binary->left, left))
+            return false;
+        double real;
+        if (isSmallInt(left))
+            real = static_cast<double>(smallIntValue(left));
+        else if (isFloat(left))
+            real = floatValue(left);
+        else
+            return false;
+        double sign = binary->op == Operator::Add ? 1 : -1;
+        result = PyComplex::create(globalObject(), real + sign * right->value.complex.real, sign * right->value.complex.imaginary);
+        return true;
+    }
+    case ExprKind::Tuple: {
+        auto* tuple = node->as<Tuple>();
+        if (tuple->ctx != ExprContext::Load)
+            return false;
+        Vector<JSValue, 8> items;
+        for (Expr* item : tuple->elts) {
+            JSValue value;
+            if (!tryConstantValue(item, value))
+                return false;
+            items.append(value);
+        }
+        result = PyTuple::create(globalObject(), items.span());
+        return true;
+    }
+    default:
+        return false;
+    }
+}
+
+std::optional<bool> Unit::constantTruth(Expr* node)
+{
+    if (auto* name = node->tryAs<NameExpr>()) {
+        if (name->id->impl() == names().debug->impl())
+            return !c.m_options.optimize;
+        return std::nullopt;
+    }
+    auto* constant = node->tryAs<Constant>();
+    if (!constant)
+        return std::nullopt;
+    auto& value = constant->value;
+    switch (value.kind) {
+    case ConstantValue::Kind::None:
+    case ConstantValue::Kind::False:
+        return false;
+    case ConstantValue::Kind::True:
+    case ConstantValue::Kind::Ellipsis:
+    case ConstantValue::Kind::BigInt:
+        return true;
+    case ConstantValue::Kind::Str:
+        return !!value.string->length();
+    case ConstantValue::Kind::Bytes:
+        return !!value.bytes.size;
+    case ConstantValue::Kind::Int:
+        return !!value.integer;
+    case ConstantValue::Kind::Float:
+        return !!value.number;
+    case ConstantValue::Kind::Complex:
+        return value.complex.real || value.complex.imaginary;
+    case ConstantValue::Kind::Tuple:
+    case ConstantValue::Kind::FrozenSet:
+        return !!value.items.size;
+    }
+    return std::nullopt;
+}
+
+// ---- Dispatch ----
+
+void Unit::exprForEffect(Expr* node)
+{
+    if (node->is<Constant>())
+        return line(node->range.lineno);
+    Reg ignored = expr(node);
+}
+
+RegisterID* Unit::expr(Expr* node, RegisterID* dst)
+{
+    if (!isSafeToRecurse())
+        return g.finalDestination(dst);
+
+    // Of anything else, what comes first is a part of it.
+    if (node->is<NameExpr>() || node->is<Constant>())
+        line(node->range.lineno);
+    switch (node->kind) {
+    case ExprKind::BoolOp:
+        return boolOp(node->as<BoolOp>(), dst);
+    case ExprKind::NamedExpr:
+        return namedExpr(node->as<NamedExpr>(), dst);
+    case ExprKind::BinOp:
+    case ExprKind::Attribute:
+    case ExprKind::Subscript:
+        return chain(node, dst);
+    case ExprKind::UnaryOp:
+        return unaryOp(node->as<UnaryOp>(), dst);
+    case ExprKind::Lambda:
+        return lambda(node->as<Lambda>(), dst);
+    case ExprKind::IfExp:
+        return ifExp(node->as<IfExp>(), dst);
+    case ExprKind::Dict:
+        return dict(node->as<Dict>(), dst);
+    case ExprKind::Set:
+        return sequence(SequenceKind::Set, node->as<Set>()->elts, dst, node->range);
+    case ExprKind::ListComp:
+        return comprehension(node, ComprehensionKind::List, node->as<ListComp>()->generators, node->as<ListComp>()->elt, nullptr, dst);
+    case ExprKind::SetComp:
+        return comprehension(node, ComprehensionKind::Set, node->as<SetComp>()->generators, node->as<SetComp>()->elt, nullptr, dst);
+    case ExprKind::DictComp:
+        return comprehension(node, ComprehensionKind::Dict, node->as<DictComp>()->generators, node->as<DictComp>()->key, node->as<DictComp>()->value, dst);
+    case ExprKind::GeneratorExp:
+        return comprehension(node, ComprehensionKind::Generator, node->as<GeneratorExp>()->generators, node->as<GeneratorExp>()->elt, nullptr, dst);
+    case ExprKind::Await:
+        return await(node->as<Await>(), dst);
+    case ExprKind::Yield:
+        return yield(node->as<Yield>(), dst);
+    case ExprKind::YieldFrom:
+        return yieldFrom(node->as<YieldFrom>(), dst);
+    case ExprKind::Compare:
+        return compare(node->as<Compare>(), dst);
+    case ExprKind::Call:
+        return call(node->as<Call>(), dst);
+    case ExprKind::FormattedValue:
+        return formattedValue(node->as<FormattedValue>(), dst);
+    case ExprKind::Interpolation:
+        return interpolation(node->as<Interpolation>(), dst);
+    case ExprKind::JoinedStr:
+        return joinedStr(node->as<JoinedStr>(), dst);
+    case ExprKind::TemplateStr:
+        return templateStr(node->as<TemplateStr>(), dst);
+    case ExprKind::Constant: {
+        JSValue value = constantValue(node->as<Constant>()->value);
+        noteConstant(value);
+        return load(dst, value);
+    }
+    case ExprKind::Starred:
+        fail(node->range, node->as<Starred>()->ctx == ExprContext::Store ? "starred assignment target must be in a list or tuple"_s : "can't use starred expression here"_s);
+        return g.finalDestination(dst);
+    case ExprKind::Name: {
+        auto* name = node->as<NameExpr>();
+        if (name->id->impl() == names().debug->impl())
+            return load(dst, jsBoolean(!c.m_options.optimize));
+        return loadName(name->id, dst, name->range);
+    }
+    case ExprKind::List:
+        return sequence(SequenceKind::List, node->as<List>()->elts, dst, node->range);
+    case ExprKind::Tuple: {
+        JSValue value;
+        if (tryConstantValue(node, value)) {
+            noteFoldedConstant(node, value);
+            return load(dst, value);
+        }
+        return sequence(SequenceKind::Tuple, node->as<Tuple>()->elts, dst, node->range);
+    }
+    case ExprKind::Slice:
+        return slice(node->as<Slice>(), dst);
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+// ---- Operators ----
+
+RegisterID* Unit::boolOp(BoolOp* node, RegisterID* dst)
+{
+    // Not in `dst` until the end: the operands may read the variable it is, and may throw.
+    Reg result = g.tempDestination(dst);
+    Ref<Label> end = g.newLabel();
+    unsigned last = node->values.size() - 1;
+    for (unsigned i = 0; i < last; ++i) {
+        expr(node->values[i], result.get());
+        loc(node->range);
+        if (node->op == BoolOperator::And)
+            g.emitPyJumpIfFalse(result.get(), end.get());
+        else
+            g.emitPyJumpIfTrue(result.get(), end.get());
+    }
+    expr(node->values[last], result.get());
+    g.emitLabel(end.get());
+    return dst ? g.move(dst, result.get()) : result.get();
+}
+
+static Range rangeOfAttributeName(Attribute*);
+
+// a + b + c, a.b.c and a[b][c] nest to the left, as deep as they are long. So that is a loop: down to what is evaluated first,
+// and back up.
+RegisterID* Unit::chain(Expr* node, RegisterID* dst)
+{
+    Vector<Expr*, 8> chain;
+    JSValue constant;
+    while (true) {
+        Expr* first = nullptr;
+        switch (node->kind) {
+        case ExprKind::BinOp:
+            if (!tryConstantValue(node, constant))
+                first = node->as<BinOp>()->left;
+            break;
+        case ExprKind::Attribute:
+            first = node->as<Attribute>()->value;
+            break;
+        case ExprKind::Subscript:
+            checkSubscripter(node->as<Subscript>()->value);
+            checkIndex(node->as<Subscript>()->value, node->as<Subscript>()->slice);
+            first = node->as<Subscript>()->value;
+            break;
+        default:
+            break;
+        }
+        if (!first)
+            break;
+        chain.append(node);
+        node = first;
+    }
+    if (node->is<BinOp>())
+        noteFoldedConstant(node, constant);
+    if (chain.isEmpty())
+        return load(dst, constant);
+
+    Reg result = node->is<BinOp>() ? load(nullptr, constant) : expr(node);
+    while (!chain.isEmpty()) {
+        node = chain.takeLast();
+        RegisterID* finalDst = chain.isEmpty() ? dst : nullptr;
+        switch (node->kind) {
+        case ExprKind::BinOp: {
+            Reg right = expr(node->as<BinOp>()->right);
+            loc(node->range);
+            result = g.emitPyBinary(g.finalDestination(finalDst, result.get()), result.get(), right.get(), static_cast<BinaryOperator>(node->as<BinOp>()->op));
+            break;
+        }
+        case ExprKind::Attribute:
+            loc(rangeOfAttributeName(node->as<Attribute>()));
+            result = g.emitPyGetAttr(g.finalDestination(finalDst, result.get()), result.get(), usedName(mangle(node->as<Attribute>()->attr)));
+            break;
+        case ExprKind::Subscript: {
+            Reg key = expr(node->as<Subscript>()->slice);
+            loc(node->range);
+            result = g.emitPyGetItem(g.finalDestination(finalDst, result.get()), result.get(), key.get());
+            break;
+        }
+        default:
+            RELEASE_ASSERT_NOT_REACHED();
+        }
+    }
+    return result.get();
+}
+
+RegisterID* Unit::unaryOp(UnaryOp* node, RegisterID* dst)
+{
+    JSValue value;
+    if (tryConstantValue(node, value)) {
+        noteFoldedConstant(node, value);
+        return load(dst, value);
+    }
+    Reg operand = expr(node->operand);
+    loc(node->range);
+    static_assert(static_cast<unsigned>(AST::UnaryKind::Invert) == static_cast<unsigned>(Python::UnaryOperator::Invert));
+    static_assert(static_cast<unsigned>(AST::UnaryKind::USub) == static_cast<unsigned>(Python::UnaryOperator::Negative));
+    return g.emitPyUnary(g.finalDestination(dst, operand.get()), operand.get(), static_cast<Python::UnaryOperator>(node->op));
+}
+
+RegisterID* Unit::ifExp(IfExp* node, RegisterID* dst)
+{
+    Reg result = g.finalDestination(dst);
+    Ref<Label> orelse = g.newLabel();
+    Ref<Label> end = g.newLabel();
+    jumpIf(node->test, orelse.get(), false);
+    expr(node->body, result.get());
+    g.emitJump(end.get());
+    g.emitLabel(orelse.get());
+    expr(node->orelse, result.get());
+    g.emitLabel(end.get());
+    return result.get();
+}
+
+RegisterID* Unit::namedExpr(NamedExpr* node, RegisterID* dst)
+{
+    Reg value = g.tempDestination(dst);
+    expr(node->value, value.get());
+    store(node->target, value.get());
+    return dst ? g.move(dst, value.get()) : value.get();
+}
+
+ASCIILiteral Unit::inferTypeName(Expr* node)
+{
+    switch (node->kind) {
+    case ExprKind::Tuple:
+        return "tuple"_s;
+    case ExprKind::List:
+    case ExprKind::ListComp:
+        return "list"_s;
+    case ExprKind::Dict:
+    case ExprKind::DictComp:
+        return "dict"_s;
+    case ExprKind::Set:
+    case ExprKind::SetComp:
+        return "set"_s;
+    case ExprKind::GeneratorExp:
+        return "generator"_s;
+    case ExprKind::Lambda:
+        return "function"_s;
+    case ExprKind::TemplateStr:
+    case ExprKind::Interpolation:
+        return "string.templatelib.Template"_s;
+    case ExprKind::JoinedStr:
+    case ExprKind::FormattedValue:
+        return "str"_s;
+    case ExprKind::Constant:
+        switch (node->as<Constant>()->value.kind) {
+        case ConstantValue::Kind::None:
+            return "NoneType"_s;
+        case ConstantValue::Kind::True:
+        case ConstantValue::Kind::False:
+            return "bool"_s;
+        case ConstantValue::Kind::Ellipsis:
+            return "ellipsis"_s;
+        case ConstantValue::Kind::Str:
+            return "str"_s;
+        case ConstantValue::Kind::Bytes:
+            return "bytes"_s;
+        case ConstantValue::Kind::Int:
+        case ConstantValue::Kind::BigInt:
+            return "int"_s;
+        case ConstantValue::Kind::Float:
+            return "float"_s;
+        case ConstantValue::Kind::Complex:
+            return "complex"_s;
+        case ConstantValue::Kind::Tuple:
+            return "tuple"_s;
+        case ConstantValue::Kind::FrozenSet:
+            return "frozenset"_s;
+        }
+        return { };
+    default:
+        return { };
+    }
+}
+
+// `x is 1` is most likely a mistake.
+void Unit::checkCompare(Compare* node)
+{
+    auto isFine = [](Expr* operand) {
+        if (auto* tuple = operand->tryAs<Tuple>()) {
+            for (Expr* item : tuple->elts) {
+                if (!item->is<Constant>())
+                    return true;
+            }
+            return false;
+        }
+        auto* constant = operand->tryAs<Constant>();
+        if (!constant)
+            return true;
+        auto kind = constant->value.kind;
+        return kind == ConstantValue::Kind::None || kind == ConstantValue::Kind::True || kind == ConstantValue::Kind::False || kind == ConstantValue::Kind::Ellipsis;
+    };
+    Expr* leftExpr = node->left;
+    bool left = isFine(leftExpr);
+    for (unsigned i = 0; i < node->ops.size(); ++i) {
+        Expr* rightExpr = node->comparators[i];
+        bool right = isFine(rightExpr);
+        auto op = node->ops[i];
+        if ((op == AST::CompareKind::Is || op == AST::CompareKind::IsNot) && (!left || !right)) {
+            if (c.m_warned.add(node).isNewEntry) {
+                ASCIILiteral type = inferTypeName(!left ? leftExpr : rightExpr);
+                warn(node->range, op == AST::CompareKind::Is ? makeString("\"is\" with '"_s, type, "' literal. Did you mean \"==\"?"_s) : makeString("\"is not\" with '"_s, type, "' literal. Did you mean \"!=\"?"_s));
+            }
+            return;
+        }
+        left = right;
+        leftExpr = rightExpr;
+    }
+}
+
+static bool isNoneLiteral(Expr* node)
+{
+    auto* constant = node->tryAs<Constant>();
+    return constant && constant->value.kind == ConstantValue::Kind::None;
+}
+
+static bool yieldsBoolean(AST::CompareKind op)
+{
+    return op >= AST::CompareKind::Is;
+}
+
+RegisterID* Unit::emitCompare(RegisterID* dst, RegisterID* left, RegisterID* right, AST::CompareKind op, Expr* rightExpr)
+{
+    if (rightExpr && isNoneLiteral(rightExpr) && (op == AST::CompareKind::Is || op == AST::CompareKind::IsNot)) {
+        g.emitPyIsNone(dst, left);
+        if (op == AST::CompareKind::IsNot)
+            g.emitPyBooleanNot(dst, dst);
+        return dst;
+    }
+    return g.emitPyCompare(dst, left, right, static_cast<Python::CompareOperator>(op));
+}
+
+RegisterID* Unit::compare(Compare* node, RegisterID* dst)
+{
+    checkCompare(node);
+    unsigned last = node->ops.size() - 1;
+    Reg left = expr(node->left);
+    if (!last) {
+        Reg right = isNoneLiteral(node->comparators[0]) ? Reg(constant(jsUndefined())) : Reg(expr(node->comparators[0]));
+        loc(node->range);
+        return emitCompare(g.finalDestination(dst, left.get()), left.get(), right.get(), node->ops[0], node->comparators[0]);
+    }
+
+    // a < b < c: b is evaluated once, and c not at all if a < b is false.
+    Reg result = g.tempDestination(dst);
+    Ref<Label> end = g.newLabel();
+    for (unsigned i = 0; i <= last; ++i) {
+        Reg right = expr(node->comparators[i]);
+        loc(node->range);
+        emitCompare(result.get(), left.get(), right.get(), node->ops[i], node->comparators[i]);
+        if (i < last)
+            g.emitPyJumpIfFalse(result.get(), end.get());
+        left = WTF::move(right);
+    }
+    g.emitLabel(end.get());
+    return dst ? g.move(dst, result.get()) : result.get();
+}
+
+void Unit::jumpIf(Expr* node, Label& target, bool condition)
+{
+    if (!isSafeToRecurse())
+        return;
+
+    if (auto truth = constantTruth(node)) {
+        line(node->range.lineno);
+        if (*truth == condition)
+            g.emitJump(target);
+        return;
+    }
+
+    switch (node->kind) {
+    case ExprKind::UnaryOp:
+        if (node->as<UnaryOp>()->op == AST::UnaryKind::Not)
+            return jumpIf(node->as<UnaryOp>()->operand, target, !condition);
+        break;
+    case ExprKind::BoolOp: {
+        auto* boolOp = node->as<BoolOp>();
+        unsigned last = boolOp->values.size() - 1;
+        bool shortCircuitOn = boolOp->op == BoolOperator::Or;
+        if (shortCircuitOn == condition) {
+            for (unsigned i = 0; i <= last; ++i)
+                jumpIf(boolOp->values[i], target, condition);
+            return;
+        }
+        Ref<Label> skip = g.newLabel();
+        for (unsigned i = 0; i < last; ++i)
+            jumpIf(boolOp->values[i], skip.get(), shortCircuitOn);
+        jumpIf(boolOp->values[last], target, condition);
+        g.emitLabel(skip.get());
+        return;
+    }
+    case ExprKind::IfExp: {
+        auto* ifExp = node->as<IfExp>();
+        Ref<Label> orelse = g.newLabel();
+        Ref<Label> end = g.newLabel();
+        jumpIf(ifExp->test, orelse.get(), false);
+        jumpIf(ifExp->body, target, condition);
+        g.emitJump(end.get());
+        g.emitLabel(orelse.get());
+        jumpIf(ifExp->orelse, target, condition);
+        g.emitLabel(end.get());
+        return;
+    }
+    case ExprKind::Compare: {
+        auto* compare = node->as<Compare>();
+        checkCompare(compare);
+        unsigned last = compare->ops.size() - 1;
+        Ref<Label> isFalse = g.newLabel();
+        Reg left = expr(compare->left);
+        Reg result = newTemporary();
+        for (unsigned i = 0; i <= last; ++i) {
+            Expr* rightExpr = compare->comparators[i];
+            auto op = compare->ops[i];
+            bool isLast = i == last;
+            // Where to go, and on what, once this comparison is made.
+            Label& destination = isLast ? target : isFalse.get();
+            bool jumpOn = isLast ? condition : false;
+            if (isNoneLiteral(rightExpr) && (op == AST::CompareKind::Is || op == AST::CompareKind::IsNot)) {
+                g.emitPyIsNone(result.get(), left.get());
+                if ((op == AST::CompareKind::Is) == jumpOn)
+                    g.emitJumpIfTrue(result.get(), destination);
+                else
+                    g.emitJumpIfFalse(result.get(), destination);
+                left = constant(jsUndefined());
+                continue;
+            }
+            Reg right = expr(rightExpr);
+            loc(compare->range);
+            if (yieldsBoolean(op)) {
+                g.emitPyCompare(result.get(), left.get(), right.get(), static_cast<Python::CompareOperator>(op));
+                if (jumpOn)
+                    g.emitJumpIfTrue(result.get(), destination);
+                else
+                    g.emitJumpIfFalse(result.get(), destination);
+            } else
+                g.emitPyCompareAndJump(left.get(), right.get(), static_cast<Python::CompareOperator>(op), jumpOn, destination);
+            left = WTF::move(right);
+        }
+        if (last && !condition) {
+            // A comparison before the last that is false makes the whole false.
+            Ref<Label> end = g.newLabel();
+            g.emitJump(end.get());
+            g.emitLabel(isFalse.get());
+            g.emitJump(target);
+            g.emitLabel(end.get());
+        } else
+            g.emitLabel(isFalse.get());
+        return;
+    }
+    default:
+        break;
+    }
+
+    Reg value = expr(node);
+    loc(node->range);
+    if (condition)
+        g.emitPyJumpIfTrue(value.get(), target);
+    else
+        g.emitPyJumpIfFalse(value.get(), target);
+}
+
+// ---- Attributes and items ----
+
+static Range rangeOfAttributeName(Attribute* node)
+{
+    // For an access that spans lines, where the name is.
+    Range range = node->range;
+    if (range.lineno != range.endLineno) {
+        range.lineno = range.endLineno;
+        int length = static_cast<int>(node->attr->string().length());
+        range.colOffset = length <= range.endColOffset ? range.endColOffset - length : 0;
+    }
+    return range;
+}
+
+void Unit::checkSubscripter(Expr* node)
+{
+    switch (node->kind) {
+    case ExprKind::Constant:
+        switch (node->as<Constant>()->value.kind) {
+        case ConstantValue::Kind::Str:
+        case ConstantValue::Kind::Bytes:
+            return;
+        default:
+            break;
+        }
+        break;
+    case ExprKind::Set:
+    case ExprKind::SetComp:
+    case ExprKind::GeneratorExp:
+    case ExprKind::TemplateStr:
+    case ExprKind::Interpolation:
+    case ExprKind::Lambda:
+        break;
+    default:
+        return;
+    }
+    if (c.m_warned.add(node).isNewEntry)
+        warn(node->range, makeString('\'', inferTypeName(node), "' object is not subscriptable; perhaps you missed a comma?"_s));
+}
+
+void Unit::checkIndex(Expr* value, Expr* index)
+{
+    ASCIILiteral indexType = inferTypeName(index);
+    if (indexType.isNull() || indexType == "int"_s || indexType == "bool"_s)
+        return;
+    switch (value->kind) {
+    case ExprKind::Constant:
+        if (!value->as<Constant>()->value.isString() && !value->as<Constant>()->value.isBytes())
+            return;
+        break;
+    case ExprKind::Tuple:
+    case ExprKind::List:
+    case ExprKind::ListComp:
+    case ExprKind::JoinedStr:
+    case ExprKind::FormattedValue:
+        break;
+    default:
+        return;
+    }
+    if (c.m_warned.add(value).isNewEntry)
+        warn(value->range, makeString(inferTypeName(value), " indices must be integers or slices, not "_s, indexType, "; perhaps you missed a comma?"_s));
+}
+
+RegisterID* Unit::slice(Slice* node, RegisterID* dst)
+{
+    JSValue parts[3];
+    Expr* expressions[3] = { node->lower, node->upper, node->step };
+    bool isConstant = true;
+    for (unsigned i = 0; i < 3 && isConstant; ++i) {
+        if (!expressions[i])
+            parts[i] = jsUndefined();
+        else
+            isConstant = !expressions[i]->is<Tuple>() && tryConstantValue(expressions[i], parts[i]);
+    }
+    if (isConstant)
+        return load(dst, PySlice::create(globalObject(), parts[0], parts[1], parts[2]));
+
+    Reg result = g.finalDestination(dst);
+    Arguments arguments(*this, 3);
+    for (unsigned i = 0; i < 3; ++i) {
+        if (expressions[i])
+            expr(expressions[i], arguments[i]);
+        else
+            load(arguments[i], jsUndefined());
+    }
+    loc(node->range);
+    return callRuntime(result.get(), RuntimeFunction::BuildSlice, arguments);
+}
+
+// ---- Targets ----
+
+void Unit::unpack(Seq<Expr*> targets, RegisterID* value, const Range& range)
+{
+    unsigned count = targets.size();
+    int star = -1;
+    for (unsigned i = 0; i < count; ++i) {
+        if (!targets[i]->is<Starred>())
+            continue;
+        if (star >= 0) {
+            fail(range, "multiple starred expressions in assignment"_s);
+            return;
+        }
+        if (i >= 256 || count - i - 1 >= (std::numeric_limits<int>::max() >> 8)) {
+            fail(range, "too many expressions in star-unpacking assignment"_s);
+            return;
+        }
+        star = i;
+    }
+    Reg held = value;
+    Arguments items(*this, count);
+    loc(range);
+    if (star < 0)
+        g.emitPyUnpack(items.first() ? items.first() : value, value, count, -1);
+    else
+        g.emitPyUnpack(items.first(), value, star, count - star - 1);
+    for (unsigned i = 0; i < count; ++i) {
+        Expr* target = targets[i];
+        store(target->is<Starred>() ? target->as<Starred>()->value : target, items[i]);
+    }
+}
+
+void Unit::store(Expr* target, RegisterID* value)
+{
+    if (!isSafeToRecurse())
+        return;
+    Reg held = value;
+    line(target->range.lineno);
+    switch (target->kind) {
+    case ExprKind::Name:
+        return storeName(target->as<NameExpr>()->id, value, target->range);
+    case ExprKind::Attribute: {
+        auto* attribute = target->as<Attribute>();
+        // `self.x = ...` in a method: the class lists x in __static_attributes__.
+        if (auto* name = attribute->value->tryAs<NameExpr>(); name && name->id->string() == "self"_s) {
+            for (Unit* unit = m_parent; unit; unit = unit->m_parent) {
+                if (unit->m_kind != UnitKind::Class)
+                    continue;
+                if (!unit->m_staticAttributes.containsIf([&](Name existing) { return existing->impl() == attribute->attr->impl(); }))
+                    unit->m_staticAttributes.append(attribute->attr);
+                break;
+            }
+        }
+        Reg base = expr(attribute->value);
+        loc(rangeOfAttributeName(attribute));
+        g.emitPySetAttr(base.get(), usedName(mangle(attribute->attr)), value);
+        return;
+    }
+    case ExprKind::Subscript: {
+        auto* subscript = target->as<Subscript>();
+        Reg base = expr(subscript->value);
+        Reg key = expr(subscript->slice);
+        loc(subscript->range);
+        g.emitPySetItem(base.get(), key.get(), value);
+        return;
+    }
+    case ExprKind::List:
+        return unpack(target->as<List>()->elts, value, target->range);
+    case ExprKind::Tuple:
+        return unpack(target->as<Tuple>()->elts, value, target->range);
+    case ExprKind::Starred:
+        fail(target->range, "starred assignment target must be in a list or tuple"_s);
+        return;
+    default:
+        c.failWithoutLocation(SyntaxErrorInfo::Type::SystemError, "invalid node type for an assignment target"_s);
+    }
+}
+
+void Unit::deleteTarget(Expr* target)
+{
+    switch (target->kind) {
+    case ExprKind::Name:
+        return deleteName(target->as<NameExpr>()->id, target->range);
+    case ExprKind::Attribute: {
+        auto* attribute = target->as<Attribute>();
+        Reg base = expr(attribute->value);
+        loc(rangeOfAttributeName(attribute));
+        callRuntimeForEffect(RuntimeFunction::DeleteAttr, { base.get(), usedName(mangle(attribute->attr)) });
+        return;
+    }
+    case ExprKind::Subscript: {
+        auto* subscript = target->as<Subscript>();
+        Reg base = expr(subscript->value);
+        Reg key = expr(subscript->slice);
+        loc(subscript->range);
+        callRuntimeForEffect(RuntimeFunction::DeleteItem, { base.get(), key.get() });
+        return;
+    }
+    case ExprKind::List:
+        for (Expr* item : target->as<List>()->elts)
+            deleteTarget(item);
+        return;
+    case ExprKind::Tuple:
+        for (Expr* item : target->as<Tuple>()->elts)
+            deleteTarget(item);
+        return;
+    case ExprKind::Starred:
+        fail(target->range, "can't use starred expression here"_s);
+        return;
+    default:
+        c.failWithoutLocation(SyntaxErrorInfo::Type::SystemError, "invalid node type for a deletion target"_s);
+    }
+}
+
+// ---- Displays ----
+
+RegisterID* Unit::sequence(SequenceKind kind, Seq<Expr*> items, RegisterID* dst, const Range& range, std::span<RegisterID* const> pushed, Name injected)
+{
+    unsigned count = items.size();
+    bool hasStar = false;
+    for (Expr* item : items)
+        hasStar |= item->is<Starred>();
+    unsigned total = pushed.size() + count + (injected ? 1 : 0);
+
+    Reg result = g.tempDestination(dst);
+    if (!hasStar && total <= maxItemsInRegisters) {
+        Arguments values(*this, total);
+        unsigned next = 0;
+        for (RegisterID* value : pushed)
+            g.move(values[next++], value);
+        for (Expr* item : items)
+            expr(item, values[next++]);
+        if (injected)
+            loadName(injected, values[next++], range);
+        loc(range);
+        switch (kind) {
+        case SequenceKind::List:
+            g.emitPyNewList(result.get(), values.first(), total);
+            break;
+        case SequenceKind::Tuple:
+            callRuntime(result.get(), RuntimeFunction::BuildTuple, values);
+            break;
+        case SequenceKind::Set:
+            callRuntime(result.get(), RuntimeFunction::BuildSet, values);
+            break;
+        }
+        return dst ? g.move(dst, result.get()) : result.get();
+    }
+
+    // A tuple is built as a list.
+    bool isSet = kind == SequenceKind::Set;
+    if (isSet)
+        callRuntime(result.get(), RuntimeFunction::BuildSet);
+    else
+        g.emitPyNewList(result.get(), nullptr, 0);
+    auto add = [&](RegisterID* value) {
+        callRuntimeForEffect(isSet ? RuntimeFunction::SetAdd : RuntimeFunction::ListAppend, { result.get(), value });
+    };
+    for (RegisterID* value : pushed)
+        add(value);
+    for (Expr* item : items) {
+        if (auto* starred = item->tryAs<Starred>()) {
+            Reg value = expr(starred->value);
+            loc(range);
+            callRuntimeForEffect(isSet ? RuntimeFunction::SetUpdate : RuntimeFunction::ListExtend, { result.get(), value.get() });
+        } else {
+            Reg value = expr(item);
+            loc(range);
+            add(value.get());
+        }
+    }
+    if (injected) {
+        Reg value = loadName(injected, nullptr, range);
+        add(value.get());
+    }
+    if (kind == SequenceKind::Tuple)
+        callRuntime(result.get(), RuntimeFunction::ListToTuple, { result.get() });
+    return dst ? g.move(dst, result.get()) : result.get();
+}
+
+RegisterID* Unit::dict(Dict* node, RegisterID* dst)
+{
+    unsigned count = node->values.size();
+    bool hasUnpacking = false;
+    for (Expr* key : node->keys)
+        hasUnpacking |= !key;
+
+    Reg result = g.tempDestination(dst);
+    if (!hasUnpacking && count * 2 <= maxItemsInRegisters) {
+        Arguments items(*this, count * 2);
+        for (unsigned i = 0; i < count; ++i) {
+            expr(node->keys[i], items[i * 2]);
+            expr(node->values[i], items[i * 2 + 1]);
+        }
+        loc(node->range);
+        callRuntime(result.get(), RuntimeFunction::BuildMap, items);
+        return dst ? g.move(dst, result.get()) : result.get();
+    }
+
+    callRuntime(result.get(), RuntimeFunction::BuildMap);
+    for (unsigned i = 0; i < count; ++i) {
+        if (!node->keys[i]) {
+            Reg mapping = expr(node->values[i]);
+            loc(node->range);
+            callRuntimeForEffect(RuntimeFunction::DictUpdate, { result.get(), mapping.get() });
+            continue;
+        }
+        Arguments arguments(*this, 3);
+        g.move(arguments[0], result.get());
+        expr(node->keys[i], arguments[1]);
+        expr(node->values[i], arguments[2]);
+        loc(node->range);
+        callRuntime(arguments[1], RuntimeFunction::MapAdd, arguments);
+    }
+    return dst ? g.move(dst, result.get()) : result.get();
+}
+
+// ---- Strings ----
+
+// Only a tree that a program has made can have another.
+bool Unit::checkConversion(int conversion)
+{
+    if (conversion == -1 || conversion == 's' || conversion == 'r' || conversion == 'a')
+        return true;
+    c.failWithoutLocation(SyntaxErrorInfo::Type::SystemError, makeString("Unrecognized conversion character "_s, conversion));
+    return false;
+}
+
+RegisterID* Unit::formattedValue(FormattedValue* node, RegisterID* dst)
+{
+    if (!checkConversion(node->conversion))
+        return emptyValue();
+    Reg result = g.finalDestination(dst);
+    Arguments arguments(*this, 3);
+    expr(node->value, arguments[0]);
+    load(arguments[1], jsNumber(node->conversion < 0 ? 0 : node->conversion));
+    if (node->formatSpec)
+        expr(node->formatSpec, arguments[2]);
+    else
+        g.move(arguments[2], emptyValue());
+    loc(node->range);
+    return callRuntime(result.get(), RuntimeFunction::FormatValue, arguments);
+}
+
+RegisterID* Unit::joinedStr(JoinedStr* node, RegisterID* dst)
+{
+    unsigned count = node->values.size();
+    if (!count)
+        return load(dst, g.addStringConstant(vm().propertyNames->emptyIdentifier));
+    if (count == 1)
+        return expr(node->values[0], dst);
+
+    Reg result = g.tempDestination(dst);
+    if (count <= maxItemsInRegisters) {
+        Arguments parts(*this, count);
+        for (unsigned i = 0; i < count; ++i)
+            expr(node->values[i], parts[i]);
+        loc(node->range);
+        callRuntime(result.get(), RuntimeFunction::BuildString, parts);
+        return dst ? g.move(dst, result.get()) : result.get();
+    }
+    // In runs.
+    load(result.get(), g.addStringConstant(vm().propertyNames->emptyIdentifier));
+    for (unsigned start = 0; start < count; start += maxItemsInRegisters - 1) {
+        unsigned runLength = std::min(count - start, maxItemsInRegisters - 1);
+        Arguments parts(*this, runLength + 1);
+        g.move(parts[0], result.get());
+        for (unsigned i = 0; i < runLength; ++i)
+            expr(node->values[start + i], parts[i + 1]);
+        loc(node->range);
+        callRuntime(result.get(), RuntimeFunction::BuildString, parts);
+    }
+    return dst ? g.move(dst, result.get()) : result.get();
+}
+
+RegisterID* Unit::interpolation(Interpolation* node, RegisterID* dst)
+{
+    if (!checkConversion(node->conversion))
+        return emptyValue();
+    Reg result = g.finalDestination(dst);
+    Arguments arguments(*this, 4);
+    expr(node->value, arguments[0]);
+    load(arguments[1], constantValue(node->str));
+    load(arguments[2], jsNumber(node->conversion < 0 ? 0 : node->conversion));
+    if (node->formatSpec)
+        expr(node->formatSpec, arguments[3]);
+    else
+        g.move(arguments[3], emptyValue());
+    loc(node->range);
+    return callRuntime(result.get(), RuntimeFunction::BuildInterpolation, arguments);
+}
+
+RegisterID* Unit::templateStr(TemplateStr* node, RegisterID* dst)
+{
+    // The strings around the interpolations, one more than there are of those; then the interpolations.
+    Reg result = g.finalDestination(dst);
+    Arguments arguments(*this, 2);
+    JSValue emptyString = g.addStringConstant(vm().propertyNames->emptyIdentifier);
+
+    g.emitPyNewList(arguments[0], nullptr, 0);
+    auto addString = [&](RegisterID* value) {
+        callRuntimeForEffect(RuntimeFunction::ListAppend, { arguments[0], value });
+    };
+    bool lastWasInterpolation = true;
+    for (Expr* value : node->values) {
+        if (value->is<Interpolation>()) {
+            if (lastWasInterpolation)
+                addString(constant(emptyString));
+            lastWasInterpolation = true;
+        } else {
+            Reg string = expr(value);
+            addString(string.get());
+            lastWasInterpolation = false;
+        }
+    }
+    if (lastWasInterpolation)
+        addString(constant(emptyString));
+    callRuntime(arguments[0], RuntimeFunction::ListToTuple, { arguments[0] });
+
+    g.emitPyNewList(arguments[1], nullptr, 0);
+    for (Expr* value : node->values) {
+        if (!value->is<Interpolation>())
+            continue;
+        Reg item = expr(value);
+        callRuntimeForEffect(RuntimeFunction::ListAppend, { arguments[1], item.get() });
+    }
+    callRuntime(arguments[1], RuntimeFunction::ListToTuple, { arguments[1] });
+
+    loc(node->range);
+    return callRuntime(result.get(), RuntimeFunction::BuildTemplate, arguments);
+}
+
+// ---- Calls ----
+
+void Unit::validateKeywords(Seq<Keyword*> keywords)
+{
+    for (unsigned i = 0; i < keywords.size(); ++i) {
+        if (!keywords[i]->arg)
+            continue;
+        for (unsigned j = i + 1; j < keywords.size(); ++j) {
+            if (keywords[j]->arg && keywords[j]->arg->impl() == keywords[i]->arg->impl()) {
+                fail(keywords[j]->range, makeString("keyword argument repeated: "_s, keywords[i]->arg->string()));
+                return;
+            }
+        }
+    }
+}
+
+void Unit::checkCaller(Expr* node)
+{
+    switch (node->kind) {
+    case ExprKind::Constant:
+    case ExprKind::Tuple:
+    case ExprKind::List:
+    case ExprKind::ListComp:
+    case ExprKind::Dict:
+    case ExprKind::DictComp:
+    case ExprKind::Set:
+    case ExprKind::SetComp:
+    case ExprKind::GeneratorExp:
+    case ExprKind::JoinedStr:
+    case ExprKind::TemplateStr:
+    case ExprKind::FormattedValue:
+    case ExprKind::Interpolation:
+        if (c.m_warned.add(node).isNewEntry)
+            warn(node->range, makeString('\'', inferTypeName(node), "' object is not callable; perhaps you missed a comma?"_s));
+        return;
+    default:
+        return;
+    }
+}
+
+// Whether the name is bound by an import at the top of the module: what is called through it is a function, not a method.
+bool Unit::looksLikeModule(Expr* node)
+{
+    auto* name = node->tryAs<NameExpr>();
+    return name && (c.m_symbols->top()->flagsOf(name->id) & DefImport);
+}
+
+// Point, _Node, collections.OrderedDict
+bool Unit::looksLikeClass(Expr* node)
+{
+    Name name = nullptr;
+    if (auto* variable = node->tryAs<NameExpr>())
+        name = variable->id;
+    else if (auto* attribute = node->tryAs<Attribute>(); attribute && looksLikeModule(attribute->value))
+        name = attribute->attr;
+    if (!name)
+        return false;
+    StringView text = name->string();
+    unsigned i = 0;
+    while (i < text.length() && text[i] == '_')
+        ++i;
+    return i < text.length() && isASCIIUpper(text[i]);
+}
+
+RegisterID* Unit::emitSimpleCall(RegisterID* dst, RegisterID* callee, std::initializer_list<RegisterID*> args, const Range& range)
+{
+    Reg heldCallee = callee;
+    Vector<Reg, 4> held;
+    for (RegisterID* argument : args)
+        held.append(argument);
+    CallArguments arguments(g, nullptr, args.size());
+    load(arguments.thisRegister(), jsUndefined());
+    unsigned i = 0;
+    for (RegisterID* argument : args)
+        g.move(arguments.argumentRegister(i++), argument);
+    loc(range);
+    return g.emitPyCall(dst, callee, arguments, args.size());
+}
+
+static bool isSimpleCall(Seq<Expr*> args, Seq<Keyword*> keywords, unsigned extra)
+{
+    if (args.size() + keywords.size() + extra > maxItemsInRegisters)
+        return false;
+    for (Expr* argument : args) {
+        if (argument->is<Starred>())
+            return false;
+    }
+    for (Keyword* keyword : keywords) {
+        if (!keyword->arg)
+            return false;
+    }
+    return true;
+}
+
+RegisterID* Unit::emitCall(RegisterID* dst, RegisterID* callee, std::span<RegisterID* const> pushed, Seq<Expr*> args, Seq<Keyword*> keywords, Name injected, const Range& range)
+{
+    validateKeywords(keywords);
+    Reg heldCallee = callee;
+    Reg result = g.finalDestination(dst);
+
+    if (isSimpleCall(args, keywords, pushed.size() + 1)) {
+        unsigned count = pushed.size() + args.size() + (injected ? 1 : 0) + keywords.size();
+        CallArguments arguments(g, nullptr, count);
+        unsigned next = 0;
+        for (RegisterID* value : pushed)
+            g.move(arguments.argumentRegister(next++), value);
+        for (Expr* argument : args)
+            expr(argument, arguments.argumentRegister(next++));
+        if (injected)
+            loadName(injected, arguments.argumentRegister(next++), range);
+        for (Keyword* keyword : keywords)
+            expr(keyword->value, arguments.argumentRegister(next++));
+        load(arguments.thisRegister(), keywordNames(keywords));
+        loc(range);
+        return g.emitPyCall(result.get(), callee, arguments, count);
+    }
+
+    // callee(*positional, **named)
+    Arguments operands(*this, 3);
+    g.move(operands[0], callee);
+    if (pushed.empty() && !injected && args.size() == 1 && args[0]->is<Starred>())
+        expr(args[0]->as<Starred>()->value, operands[1]);
+    else
+        sequence(SequenceKind::List, args, operands[1], range, pushed, injected);
+
+    if (keywords.isEmpty())
+        g.move(operands[2], emptyValue());
+    else {
+        RegisterID* named = operands[2];
+        bool haveDict = false;
+        for (unsigned i = 0; i < keywords.size();) {
+            if (!keywords[i]->arg) {
+                if (!haveDict) {
+                    callRuntime(named, RuntimeFunction::BuildMap);
+                    haveDict = true;
+                }
+                Reg mapping = expr(keywords[i]->value);
+                loc(range);
+                callRuntimeForEffect(RuntimeFunction::DictMerge, { named, mapping.get(), callee });
+                ++i;
+                continue;
+            }
+            unsigned end = i;
+            while (end < keywords.size() && keywords[end]->arg && end - i < maxItemsInRegisters / 2)
+                ++end;
+            Arguments items(*this, (end - i) * 2);
+            for (unsigned j = i; j < end; ++j) {
+                g.move(items[(j - i) * 2], nameConstant(keywords[j]->arg));
+                expr(keywords[j]->value, items[(j - i) * 2 + 1]);
+            }
+            if (!haveDict) {
+                callRuntime(named, RuntimeFunction::BuildMap, items);
+                haveDict = true;
+            } else {
+                // A name that a mapping also gave is for DictMerge to find.
+                callRuntime(items[0], RuntimeFunction::BuildMap, items);
+                loc(range);
+                callRuntimeForEffect(RuntimeFunction::DictMerge, { named, items[0], callee });
+            }
+            i = end;
+        }
+    }
+    loc(range);
+    Reg array = newTemporary();
+    callRuntime(array.get(), RuntimeFunction::CallArguments, operands);
+    Reg thisValue = newTemporary();
+    callRuntime(thisValue.get(), RuntimeFunction::TakeKeywordNames);
+    return g.emitPyCallVarargs(result.get(), callee, thisValue.get(), array.get());
+}
+
+// What a call passes as `this`.
+JSValue Unit::keywordNames(Seq<Keyword*> keywords)
+{
+    if (keywords.isEmpty())
+        return jsUndefined();
+    auto* names = PyTuple::createUninitialized(vm(), runtime().keywordNamesStructure(), runtime().tupleType(), keywords.size());
+    for (unsigned i = 0; i < keywords.size(); ++i)
+        names->initializeAt(vm(), i, g.addStringConstant(*keywords[i]->arg));
+    return names;
+}
+
+RegisterID* Unit::call(Call* node, RegisterID* dst)
+{
+    validateKeywords(node->keywords);
+
+    // object.name(...): if name turns out to be a function of the class, it is called with the object as its first argument,
+    // and no bound method is made.
+    auto* method = node->func->tryAs<Attribute>();
+    if (method && !looksLikeModule(method->value) && isSimpleCall(node->args, node->keywords, 2)) {
+        Reg result = g.finalDestination(dst);
+        Reg callee = newTemporary();
+        unsigned count = node->args.size() + node->keywords.size();
+        CallArguments arguments(g, nullptr, count + 1);
+        {
+            Reg base = expr(method->value);
+            loc(rangeOfAttributeName(method));
+            g.emitPyGetMethod(callee.get(), arguments.argumentRegister(0), base.get(), usedName(mangle(method->attr)));
+        }
+        unsigned next = 1;
+        for (Expr* argument : node->args)
+            expr(argument, arguments.argumentRegister(next++));
+        for (Keyword* keyword : node->keywords)
+            expr(keyword->value, arguments.argumentRegister(next++));
+        load(arguments.thisRegister(), keywordNames(node->keywords));
+
+        Range range = node->range;
+        if (range.lineno != method->range.endLineno) {
+            Range nameRange = rangeOfAttributeName(method);
+            range.lineno = nameRange.lineno;
+            range.colOffset = nameRange.colOffset;
+        }
+        loc(range);
+
+        Ref<Label> notMethod = g.newLabel();
+        Ref<Label> done = g.newLabel();
+        {
+            Reg isEmpty = newTemporary();
+            g.emitIsEmpty(isEmpty.get(), arguments.argumentRegister(0));
+            g.emitJumpIfTrue(isEmpty.get(), notMethod.get());
+        }
+        loc(range);
+        g.emitPyCall(result.get(), callee.get(), arguments, count + 1);
+        g.emitJump(done.get());
+        g.emitLabel(notMethod.get());
+        for (unsigned i = 0; i < count; ++i)
+            g.move(arguments.argumentRegister(i), arguments.argumentRegister(i + 1));
+        loc(range);
+        g.emitPyCall(result.get(), callee.get(), arguments, count);
+        g.emitLabel(done.get());
+        return result.get();
+    }
+
+    // Name(...): by its name, a class. If it turns out to be one whose instances are made in the common way, the code makes the
+    // instance and calls __init__ as it calls any function, and the call does not leave the interpreter.
+    if (looksLikeClass(node->func) && isSimpleCall(node->args, node->keywords, 2)) {
+        Reg result = g.finalDestination(dst);
+        Reg callee = newTemporary();
+        expr(node->func, callee.get());
+        // The frame of the callee begins right after the arguments: what outlives the call comes before them.
+        Reg init = newTemporary();
+        Reg self = newTemporary();
+        unsigned count = node->args.size() + node->keywords.size();
+        CallArguments arguments(g, nullptr, count + 1);
+        unsigned next = 0;
+        for (Expr* argument : node->args)
+            expr(argument, arguments.argumentRegister(next++));
+        for (Keyword* keyword : node->keywords)
+            expr(keyword->value, arguments.argumentRegister(next++));
+        load(arguments.thisRegister(), keywordNames(node->keywords));
+
+        Ref<Label> notSuchAClass = g.newLabel();
+        Ref<Label> done = g.newLabel();
+        loc(node->range);
+        g.emitPyPrepareConstruct(init.get(), self.get(), callee.get());
+        {
+            Reg isEmpty = newTemporary();
+            g.emitIsEmpty(isEmpty.get(), self.get());
+            g.emitJumpIfTrue(isEmpty.get(), notSuchAClass.get());
+        }
+        for (unsigned i = count; i--;)
+            g.move(arguments.argumentRegister(i + 1), arguments.argumentRegister(i));
+        g.move(arguments.argumentRegister(0), self.get());
+        loc(node->range);
+        g.emitPyCall(init.get(), init.get(), arguments, count + 1);
+        g.emitPyFinishConstruct(result.get(), self.get(), init.get());
+        g.emitJump(done.get());
+        g.emitLabel(notSuchAClass.get());
+        loc(node->range);
+        g.emitPyCall(result.get(), callee.get(), arguments, count);
+        g.emitLabel(done.get());
+        return result.get();
+    }
+
+    checkCaller(node->func);
+    Reg callee = newTemporary();
+    expr(node->func, callee.get());
+    return emitCall(dst, callee.get(), { }, node->args, node->keywords, nullptr, node->range);
+}
+
+// ---- Generators and coroutines ----
+
+// A suspended generator keeps the registers that are still needed, which is worked out from the code that can follow. But
+// gi_frame.f_locals shows all the variables, needed or not. So on a path out of every yield that is seldom taken, this is
+// emitted: an instruction that reads them all.
+void Unit::keepVariablesAcrossYield()
+{
+    int first = g.firstPythonVariable();
+    int end = first;
+    for (auto& variable : m_info.variables) {
+        if (variable.reg.isLocal())
+            end = std::max(end, variable.reg.toLocal() + 1);
+    }
+    if (end > first)
+        g.emitPyRuntime(newTemporary().get(), RuntimeFunction::KeepVariables, g.pythonRegister(virtualRegisterForLocal(first)), end - first);
+}
+
+RegisterID* Unit::emitYield(RegisterID* dst, RegisterID* value)
+{
+    Reg held = value;
+    g.emitPythonYieldPoint(value);
+    // Resumed: by send(), or by throw().
+    Ref<Label> normal = g.newLabel();
+    g.emitPyJumpIfFalse(g.generatorResumeModeRegister(), normal.get());
+    keepVariablesAcrossYield();
+    callRuntimeForEffect(RuntimeFunction::ThrowIntoGenerator, { g.generatorValueRegister() });
+    g.emitLabel(normal.get());
+    return g.move(dst, g.generatorValueRegister());
+}
+
+RegisterID* Unit::yield(Yield* node, RegisterID* dst)
+{
+    if (!isFunctionLike()) {
+        fail(node->range, "'yield' outside function"_s);
+        return g.finalDestination(dst);
+    }
+    Reg result = g.tempDestination(dst);
+    if (node->value)
+        expr(node->value, result.get());
+    else
+        load(result.get(), jsUndefined());
+    loc(node->range);
+    if (isAsyncGenerator())
+        callRuntime(result.get(), RuntimeFunction::AsyncGenWrap, { result.get() });
+    emitYield(result.get(), result.get());
+    return dst ? g.move(dst, result.get()) : result.get();
+}
+
+RegisterID* Unit::emitDelegate(RegisterID* dst, RegisterID* iterator)
+{
+    Reg heldResult = dst;
+    Arguments arguments(*this, 3);
+    g.move(arguments[0], iterator);
+    load(arguments[1], jsUndefined());
+    load(arguments[2], jsNumber(static_cast<int>(JSGenerator::ResumeMode::NormalMode)));
+
+    Ref<Label> loop = g.newLabel();
+    Ref<Label> done = g.newLabel();
+    Reg yielded = newTemporary();
+    Reg isDone = newTemporary();
+    g.emitLabel(loop.get());
+    callRuntime(yielded.get(), RuntimeFunction::Send, arguments);
+    g.emitIsEmpty(isDone.get(), yielded.get());
+    g.emitJumpIfTrue(isDone.get(), done.get());
+    g.emitPythonYieldPoint(yielded.get());
+    Ref<Label> normal = g.newLabel();
+    g.emitPyJumpIfFalse(g.generatorResumeModeRegister(), normal.get());
+    keepVariablesAcrossYield();
+    g.emitLabel(normal.get());
+    // Whatever comes in goes on to the iterator.
+    g.move(arguments[1], g.generatorValueRegister());
+    g.move(arguments[2], g.generatorResumeModeRegister());
+    g.addPythonMark(PythonMark::NoLine, hiddenJumpMark);
+    g.emitJump(loop.get());
+    g.emitLabel(done.get());
+    return callRuntime(dst, RuntimeFunction::TakeSendResult, { arguments[0] });
+}
+
+RegisterID* Unit::yieldFrom(YieldFrom* node, RegisterID* dst)
+{
+    if (!isFunctionLike()) {
+        fail(node->range, "'yield from' outside function"_s);
+        return g.finalDestination(dst);
+    }
+    if (m_kind == UnitKind::AsyncFunction) {
+        fail(node->range, "'yield from' inside async function"_s);
+        return g.finalDestination(dst);
+    }
+    Reg result = g.tempDestination(dst);
+    // As CPython's optimizer has it, a list that is only there to be gone through is a tuple, which gi_yieldfrom shows.
+    auto* list = node->value->tryAs<List>();
+    bool isPlainList = list && list->elts.size() <= 30;
+    if (isPlainList) {
+        for (Expr* item : list->elts)
+            isPlainList &= !item->is<Starred>();
+    }
+    if (isPlainList)
+        sequence(SequenceKind::Tuple, list->elts, result.get(), list->range);
+    else
+        expr(node->value, result.get());
+    loc(node->range);
+    callRuntime(result.get(), RuntimeFunction::GetYieldFromIter, { result.get() });
+    emitDelegate(result.get(), result.get());
+    return dst ? g.move(dst, result.get()) : result.get();
+}
+
+RegisterID* Unit::emitAwait(RegisterID* dst, RegisterID* awaitable, int where)
+{
+    Reg iterator = newTemporary();
+    callRuntime(iterator.get(), RuntimeFunction::GetAwaitable, { awaitable, constant(jsNumber(where)) });
+    return emitDelegate(dst, iterator.get());
+}
+
+RegisterID* Unit::await(Await* node, RegisterID* dst)
+{
+    Reg result = g.tempDestination(dst);
+    expr(node->value, result.get());
+    loc(node->range);
+    emitAwait(result.get(), result.get(), 0);
+    return dst ? g.move(dst, result.get()) : result.get();
+}
+
+// ---- Comprehensions ----
+
+void Unit::comprehensionElement(ComprehensionKind kind, Expr* element, Expr* value, RegisterID* result)
+{
+    auto* starred = element->tryAs<Starred>();
+    switch (kind) {
+    case ComprehensionKind::Generator: {
+        if (starred) {
+            // (*x for x in y) yields the items of each x.
+            Ref<Label> start = g.newLabel();
+            Ref<Label> end = g.newLabel();
+            Reg iterator = newTemporary();
+            expr(starred->value, iterator.get());
+            loc(element->range);
+            g.emitPyGetIter(iterator.get(), iterator.get());
+            Reg item = newTemporary();
+            g.emitLabel(start.get());
+            g.emitLoopHint();
+            g.emitPyForIter(item.get(), iterator.get(), end.get());
+            if (isAsyncGenerator())
+                callRuntime(item.get(), RuntimeFunction::AsyncGenWrap, { item.get() });
+            emitYield(item.get(), item.get());
+            g.emitJump(start.get());
+            g.emitLabel(end.get());
+            return;
+        }
+        Reg item = newTemporary();
+        expr(element, item.get());
+        loc(element->range);
+        if (isAsyncGenerator())
+            callRuntime(item.get(), RuntimeFunction::AsyncGenWrap, { item.get() });
+        emitYield(item.get(), item.get());
+        return;
+    }
+    case ComprehensionKind::List:
+    case ComprehensionKind::Set: {
+        bool isList = kind == ComprehensionKind::List;
+        Arguments arguments(*this, 2);
+        g.move(arguments[0], result);
+        expr(starred ? starred->value : element, arguments[1]);
+        loc(element->range);
+        callRuntime(arguments[1], starred ? (isList ? RuntimeFunction::ListExtend : RuntimeFunction::SetUpdate) : (isList ? RuntimeFunction::ListAppend : RuntimeFunction::SetAdd), arguments);
+        return;
+    }
+    case ComprehensionKind::Dict: {
+        if (!value) {
+            // {**x for x in y}
+            Arguments arguments(*this, 2);
+            g.move(arguments[0], result);
+            expr(element, arguments[1]);
+            loc(element->range);
+            callRuntime(arguments[1], RuntimeFunction::DictUpdate, arguments);
+            return;
+        }
+        Arguments arguments(*this, 3);
+        g.move(arguments[0], result);
+        expr(element, arguments[1]);
+        expr(value, arguments[2]);
+        loc({ element->range.lineno, element->range.colOffset, value->range.endLineno, value->range.endColOffset });
+        callRuntime(arguments[1], RuntimeFunction::MapAdd, arguments);
+        return;
+    }
+    case ComprehensionKind::None:
+        break;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+// `firstIterator`: for the first clause, the iterator of its iterable.
+void Unit::comprehensionGenerator(ComprehensionKind kind, Seq<Comprehension*> generators, unsigned index, Expr* element, Expr* value, RegisterID* result, RegisterID* firstIterator, const Range& range)
+{
+    if (!isSafeToRecurse())
+        return;
+    Comprehension* generator = generators[index];
+    Ref<Label> start = g.newLabel();
+    Ref<Label> next = g.newLabel();
+    Ref<Label> end = g.newLabel();
+
+    auto emitInner = [&] {
+        for (Expr* condition : generator->ifs)
+            jumpIf(condition, next.get(), false);
+        if (index + 1 < generators.size())
+            comprehensionGenerator(kind, generators, index + 1, element, value, result, nullptr, range);
+        else
+            comprehensionElement(kind, element, value, result);
+    };
+
+    if (generator->isAsync) {
+        Reg iterator = firstIterator;
+        if (!iterator) {
+            iterator = newTemporary();
+            expr(generator->iter, iterator.get());
+            loc(generator->iter->range);
+            callRuntime(iterator.get(), RuntimeFunction::GetAIter, { iterator.get() });
+        }
+        g.settlePythonLineMark();
+        g.emitLabel(start.get());
+        line(range.lineno);
+        g.emitLoopHint();
+        Try guard = beginTry();
+        Reg item = newTemporary();
+        loc(range);
+        callRuntime(item.get(), RuntimeFunction::GetANext, { iterator.get() });
+        emitDelegate(item.get(), item.get());
+        endTry(guard);
+        store(generator->target, item.get());
+        item = nullptr;
+        emitInner();
+        g.emitLabel(next.get());
+        line(element->range.lineno);
+        g.emitJump(start.get());
+
+        Reg thrown = beginHandler(guard);
+        silentLine(range.lineno);
+        loc(range);
+        callRuntimeForEffect(RuntimeFunction::EndAsyncFor, { thrown.get() });
+        return;
+    }
+
+    if (!firstIterator) {
+        // `for y in [f(x)]` is an assignment.
+        Seq<Expr*> single;
+        if (auto* list = generator->iter->tryAs<List>())
+            single = list->elts;
+        else if (auto* tuple = generator->iter->tryAs<Tuple>())
+            single = tuple->elts;
+        if (single.size() == 1 && !single[0]->is<Starred>()) {
+            Reg item = expr(single[0]);
+            store(generator->target, item.get());
+            item = nullptr;
+            emitInner();
+            g.emitLabel(next.get());
+            return;
+        }
+    }
+
+    Reg iterator = firstIterator;
+    if (!iterator) {
+        iterator = newTemporary();
+        expr(generator->iter, iterator.get());
+        loc(generator->iter->range);
+        g.emitPyGetIter(iterator.get(), iterator.get());
+    }
+    g.settlePythonLineMark();
+    g.emitLabel(start.get());
+    line(generator->iter->range.lineno);
+    g.emitLoopHint();
+    loc(generator->iter->range);
+    bool stored = false;
+    if (auto* target = generator->target->tryAs<NameExpr>()) {
+        Access access = resolve(mangle(target->id));
+        if (access.kind == Access::Kind::Fast) {
+            g.emitPyForIter(access.variable->reg, iterator.get(), end.get());
+            noteBound(*access.variable);
+            stored = true;
+        }
+    }
+    if (!stored) {
+        Reg item = newTemporary();
+        g.emitPyForIter(item.get(), iterator.get(), end.get());
+        store(generator->target, item.get());
+    }
+    emitInner();
+    g.emitLabel(next.get());
+    line(element->range.lineno);
+    g.emitJump(start.get());
+    g.emitLabel(end.get());
+}
+
+RegisterID* Unit::comprehension(Expr* node, ComprehensionKind kind, Seq<Comprehension*> generators, Expr* element, Expr* value, RegisterID* dst)
+{
+    Scope* scope = c.m_symbols->scopeFor(node);
+    Comprehension* outermost = generators[0];
+    const Range& range = node->range;
+
+    auto emitContainer = [&](Unit& unit, RegisterID* result) {
+        if (kind != ComprehensionKind::Generator)
+            unit.line(range.lineno);
+        switch (kind) {
+        case ComprehensionKind::List:
+            unit.g.emitPyNewList(result, nullptr, 0);
+            break;
+        case ComprehensionKind::Set:
+            unit.callRuntime(result, RuntimeFunction::BuildSet);
+            break;
+        case ComprehensionKind::Dict:
+            unit.callRuntime(result, RuntimeFunction::BuildMap);
+            break;
+        default:
+            break;
+        }
+    };
+
+    if (scope->isInlinedComprehension) {
+        Reg result = g.tempDestination(dst);
+        // The first iterable is evaluated where the comprehension is.
+        Reg iterator = newTemporary();
+        expr(outermost->iter, iterator.get());
+        loc(outermost->iter->range);
+        if (outermost->isAsync)
+            callRuntime(iterator.get(), RuntimeFunction::GetAIter, { iterator.get() });
+        else
+            g.emitPyGetIter(iterator.get(), iterator.get());
+
+        VariableMap& variables = *m_variables.get(scope);
+        auto resetVariables = [&] {
+            for (auto& variable : variables.values()) {
+                g.move(variable.reg, emptyValue());
+                noteUnbound(variable);
+            }
+        };
+        for (auto& variable : variables.values()) {
+            if (variable.kind == Variable::Kind::Cell)
+                callRuntime(variable.reg, RuntimeFunction::MakeCell, { emptyValue() });
+        }
+
+        // Its variables have no value once it is over, however it ends.
+        std::optional<Try> guard;
+        if (!variables.isEmpty())
+            guard = beginTry();
+        m_overlays.append(scope);
+        pushBlock({ .kind = BlockKind::InlinedComprehension, .tryDepth = guard ? guard->depthBefore : g.tryDepth(), .comprehension = scope });
+        emitContainer(*this, result.get());
+        comprehensionGenerator(kind, generators, 0, element, value, result.get(), iterator.get(), range);
+        line(range.lineno);
+        popBlock();
+        m_overlays.removeLast();
+        if (guard) {
+            endTry(*guard);
+            resetVariables();
+            Ref<Label> end = g.newLabel();
+            g.emitJump(end.get());
+            Reg thrown = beginHandler(*guard);
+            resetVariables();
+            reraise(thrown.get());
+            g.emitLabel(end.get());
+        }
+        return dst ? g.move(dst, result.get()) : result.get();
+    }
+
+    // A function of its own, called on the spot with the first iterable.
+    Name name = kind == ComprehensionKind::Generator ? names().genexpr : kind == ComprehensionKind::List ? names().listcomp : kind == ComprehensionKind::Set ? names().setcomp : names().dictcomp;
+    CodeSpec spec { UnitKind::Comprehension, scope, name, range, range.lineno };
+    bool isGenerator = kind == ComprehensionKind::Generator;
+    if (isGenerator)
+        spec.iterateFirstParameter = outermost->isAsync ? CodeSpec::IterateFirstParameter::Async : CodeSpec::IterateFirstParameter::Sync;
+    auto* executable = c.compileCode(this, spec, m_source, [&](Unit& unit) {
+        Reg iterator = isGenerator ? unit.m_firstIterator : unit.loadName(names().dotZero, unit.newTemporary().get(), range);
+        if (!isGenerator) {
+            unit.loc(outermost->iter->range);
+            if (outermost->isAsync)
+                unit.callRuntime(iterator.get(), RuntimeFunction::GetAIter, { iterator.get() });
+            else
+                unit.g.emitPyGetIter(iterator.get(), iterator.get());
+        }
+        Reg result = unit.newTemporary();
+        emitContainer(unit, result.get());
+        unit.comprehensionGenerator(kind, generators, 0, element, value, result.get(), iterator.get(), range);
+        if (isGenerator)
+            unit.emitReturnNone();
+        else
+            unit.g.emitReturn(result.get());
+    });
+
+    Reg result = g.finalDestination(dst);
+    Reg function = newTemporary();
+    loc(range);
+    emitMakeFunction(function.get(), executable, scope, { });
+    Reg iterable = expr(outermost->iter);
+    emitSimpleCall(result.get(), function.get(), { iterable.get() }, range);
+    if (scope->isCoroutine && !isGenerator)
+        emitAwait(result.get(), result.get(), 0);
+    return result.get();
+}
+
+} // namespace Python
+} // namespace JSC
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

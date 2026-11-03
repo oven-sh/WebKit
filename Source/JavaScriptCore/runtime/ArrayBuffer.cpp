@@ -589,6 +589,10 @@ std::expected<int64_t, GrowFailReason> ArrayBuffer::resize(VM& vm, size_t newByt
     if (!deltaByteLength)
         return 0;
 
+    // Whoever has pinned it counts on all of the memory.
+    if (deltaByteLength < 0 && m_pinCount)
+        return makeUnexpected(GrowFailReason::InvalidGrowSize);
+
     // A buffer's maxByteLength may exceed the region actually mapped for it, so growth is bounded by
     // the mapping.
     if (newByteLength > memoryHandle->mappedCapacity())

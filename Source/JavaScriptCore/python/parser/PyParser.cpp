@@ -145,6 +145,14 @@ void Parser::rewind(const Checkpoint& checkpoint)
     m_lastEnd = checkpoint.lastEnd;
 }
 
+bool Parser::endsBeforeOperator(const Checkpoint& beforeOperator)
+{
+    if (!m_acceptsPrefix || m_errorIsFatal || !m_errorIsGeneric)
+        return false;
+    rewind(beforeOperator);
+    return true;
+}
+
 // ---- Errors ----
 
 // Columns are in bytes, from 0.
@@ -476,15 +484,21 @@ Mod* Parser::parseFunctionType()
     if (!expect(TokenKind::LPar))
         return nullptr;
     ExprVector argumentTypes;
-    while (!at(TokenKind::RPar)) {
-        // The stars are allowed and mean nothing.
-        if (!accept(TokenKind::Star))
-            accept(TokenKind::DoubleStar);
+    // The stars leave no trace, but only `**type` may follow `*type`, and nothing `**type`.
+    bool sawStar = false;
+    bool sawDoubleStar = false;
+    while (!at(TokenKind::RPar) || !argumentTypes.isEmpty()) {
+        if (accept(TokenKind::DoubleStar))
+            sawDoubleStar = true;
+        else if (sawStar)
+            return invalidSyntax();
+        else if (accept(TokenKind::Star))
+            sawStar = true;
         Expr* type = parseExpression();
         if (!type)
             return nullptr;
         argumentTypes.append(type);
-        if (!accept(TokenKind::Comma))
+        if (sawDoubleStar || !accept(TokenKind::Comma))
             break;
     }
     if (!expect(TokenKind::RPar) || !expect(TokenKind::RArrow))
@@ -542,10 +556,20 @@ bool Parser::parseStatement(StmtVector& out)
         }
         if (m_errorIsFatal)
             return false;
+        SyntaxErrorInfo matchError = m_error;
+        bool matchErrorIsSpecific = failed() && !m_errorIsGeneric;
+        bool matchErrorIsFinal = m_errorIsFinal;
         rewind(saved);
         if (parseSimpleStatements(out))
             return true;
-        if (newlineInsteadOfColon && !m_errorIsFatal) {
+        if (m_errorIsFatal)
+            return false;
+        // It is nothing else either, and what was found wrong with it as a match statement was found first.
+        if (matchErrorIsSpecific) {
+            m_error = matchError;
+            m_errorIsGeneric = false;
+            m_errorIsFinal = matchErrorIsFinal;
+        } else if (newlineInsteadOfColon) {
             rewind(saved);
             syntaxErrorAt(*newlineInsteadOfColon, "expected ':'"_s);
         }
@@ -732,6 +756,7 @@ Stmt* Parser::parseExpressionStatement()
 {
     Position start = startPosition();
     TokenKind firstKind = kind();
+    Checkpoint statementStart = checkpoint();
 
     Expr* first = parseAnnotatedRHS();
     if (!first)
@@ -747,7 +772,7 @@ Stmt* Parser::parseExpressionStatement()
             if ((value->is<Yield>() || value->is<YieldFrom>()) && !value->parenthesized)
                 return syntaxErrorAt(value->range, "assignment to yield expression not possible"_s);
             if (findInvalidTarget(value, TargetKind::Star))
-                return diagnoseInvalidAssignment(value, firstKind, targets.isEmpty());
+                return diagnoseInvalidAssignment(value, firstKind, targets.isEmpty(), statementStart);
             advance();
             targets.append(value);
             value = parseAnnotatedRHS();
@@ -756,10 +781,12 @@ Stmt* Parser::parseExpressionStatement()
         }
         for (Expr* target : targets)
             setContext(target, ExprContext::Store);
+        // The statement reaches to the end of its type comment.
+        StringImpl* typeComment = acceptTypeComment();
         auto* assign = make<Assign>(rangeFrom(start));
         assign->targets = m_arena.copy(targets);
         assign->value = value;
-        assign->typeComment = acceptTypeComment();
+        assign->typeComment = typeComment;
         return assign;
     }
 
@@ -770,9 +797,14 @@ Stmt* Parser::parseExpressionStatement()
         case ExprKind::Subscript:
             break;
         default:
+            // A `yield` that is not in parentheses is a statement on its own.
+            if ((first->is<Yield>() || first->is<YieldFrom>()) && !first->parenthesized)
+                return invalidSyntax();
             return syntaxErrorAt(first->range, makeString('\'', describe(first), "' is an illegal expression for augmented assignment"_s));
         }
         advance();
+        if (*op == Operator::MatMult && !checkVersion(5, "The '@' operator is"_s))
+            return nullptr;
         Expr* value = parseAnnotatedRHS();
         if (!value)
             return nullptr;
@@ -784,13 +816,34 @@ Stmt* Parser::parseExpressionStatement()
         return assign;
     }
 
+    if (at(TokenKind::ColonEqual)) {
+        if (!diagnoseNamedExpressions(statementStart))
+            return nullptr;
+        return invalidSyntax();
+    }
+
     auto* statement = make<ExprStmt>(rangeFrom(start));
     statement->value = first;
     return statement;
 }
 
+// Before anything else is said about a statement that looked like an assignment and is none, it is tried as the start of
+// `a, b: annotation` (see invalid_assignment in the grammar). Nothing comes of that, but for each element being looked at as
+// a named_expression, which takes `a = b` and `a.b := c` for mistakes. False: it did.
+bool Parser::diagnoseNamedExpressions(const Checkpoint& statementStart)
+{
+    SetForScope diagnosing(m_diagnosing, true);
+    Checkpoint here = checkpoint();
+    rewind(statementStart);
+    while (parseStarNamedExpression() && accept(TokenKind::Comma) && atStartOfExpression()) { }
+    if (failed() && (m_errorIsFatal || !m_errorIsGeneric))
+        return false;
+    rewind(here);
+    return true;
+}
+
 // `target`, which cannot be assigned to, is followed by '='. `firstKind`: the token the statement starts with.
-std::nullptr_t Parser::diagnoseInvalidAssignment(Expr* target, TokenKind firstKind, bool isFirstTarget)
+std::nullptr_t Parser::diagnoseInvalidAssignment(Expr* target, TokenKind firstKind, bool isFirstTarget, const Checkpoint& statementStart)
 {
     SetForScope diagnosing(m_diagnosing, true);
     // A lone '=' after something that can be compared was probably meant as '=='.
@@ -810,6 +863,8 @@ std::nullptr_t Parser::diagnoseInvalidAssignment(Expr* target, TokenKind firstKi
                 return syntaxErrorAt(target->range, makeString("cannot assign to "_s, describe(target), " here. Maybe you meant '==' instead of '='?"_s));
         }
     }
+    if (!diagnoseNamedExpressions(statementStart))
+        return nullptr;
     return raiseInvalidTarget(target, TargetKind::Star);
 }
 
@@ -820,6 +875,8 @@ Stmt* Parser::parseAnnotatedAssignment(Position start, Expr* target, bool starts
     case ExprKind::Attribute:
     case ExprKind::Subscript:
         break;
+    case ExprKind::Starred:
+        return invalidSyntax();
     default: {
         SetForScope diagnosing(m_diagnosing, true);
         advance();
@@ -844,6 +901,8 @@ Stmt* Parser::parseAnnotatedAssignment(Position start, Expr* target, bool starts
         if (!value)
             return nullptr;
     }
+    if (!checkVersion(6, target->is<NameExpr>() && startsWithName ? "Variable annotation syntax is"_s : "Variable annotations syntax is"_s))
+        return nullptr;
     setContext(target, ExprContext::Store);
     auto* assign = make<AnnAssign>(rangeFrom(start));
     assign->target = target;
@@ -1195,6 +1254,8 @@ Stmt* Parser::parseTypeAlias()
     Expr* value = parseExpression();
     if (!value)
         return nullptr;
+    if (!checkVersion(12, "Type statement is"_s))
+        return nullptr;
     auto* statement = make<TypeAlias>(rangeFrom(start));
     statement->name = name;
     statement->typeParams = typeParams;
@@ -1240,7 +1301,7 @@ bool Parser::parseTypeParams(Seq<TypeParam*>& result)
         }
         if (accept(TokenKind::Equal)) {
             param->defaultValue = param->kind == TypeParamKind::TypeVarTuple ? parseStarExpression() : parseExpression();
-            if (!param->defaultValue)
+            if (!param->defaultValue || !checkVersion(13, "Type parameter defaults are"_s))
                 return false;
         }
         param->range = rangeFrom(start);
@@ -1248,7 +1309,7 @@ bool Parser::parseTypeParams(Seq<TypeParam*>& result)
         if (!accept(TokenKind::Comma) || at(TokenKind::RSqb))
             break;
     }
-    if (!expect(TokenKind::RSqb))
+    if (!expect(TokenKind::RSqb) || !checkVersion(12, "Type parameter lists are"_s))
         return false;
     result = m_arena.copy(params);
     return true;
@@ -1370,6 +1431,8 @@ Stmt* Parser::parseFor(bool isAsync, Position start)
     Seq<Stmt*> orelse;
     if (at(TokenKind::KwElse) && !parseElse(orelse))
         return nullptr;
+    if (isAsync && !checkVersion(5, "Async for loops are"_s))
+        return nullptr;
     auto* statement = make<For>(isAsync, rangeFrom(start));
     statement->target = target;
     statement->iter = iter;
@@ -1464,6 +1527,8 @@ Stmt* Parser::parseWith(bool isAsync, Position start)
     Seq<Stmt*> body;
     if (!parseBlock(body, "'with' statement"_s, withToken))
         return nullptr;
+    if (isAsync && !checkVersion(5, "Async with statements are"_s))
+        return nullptr;
     auto* statement = make<With>(isAsync, rangeFrom(start));
     statement->items = m_arena.copy(items);
     statement->body = body;
@@ -1500,6 +1565,7 @@ Stmt* Parser::parseTry()
 
         Expr* type = nullptr;
         Name name = nullptr;
+        bool hasBareTuple = false;
         if (!at(TokenKind::Colon)) {
             if (at(TokenKind::Newline))
                 return syntaxError("expected ':'"_s);
@@ -1526,6 +1592,7 @@ Stmt* Parser::parseTry()
                     return syntaxErrorStartingFrom(typeStart, "multiple exception types must be parenthesized when using 'as'"_s);
                 }
                 type = makeTuple(types, rangeFrom(typeStart));
+                hasBareTuple = true;
             } else if (accept(TokenKind::KwAs)) {
                 if (at(TokenKind::Name) && (peek(1).kind == TokenKind::Colon || peek(1).kind == TokenKind::Newline))
                     name = advance().identifier;
@@ -1543,6 +1610,8 @@ Stmt* Parser::parseTry()
         EXPECT_COLON();
         auto* handler = make<ExceptHandler>();
         if (!parseBlock(handler->body, handlerIsStar ? "'except*' statement"_s : "'except' statement"_s, exceptToken))
+            return nullptr;
+        if (hasBareTuple && !checkVersion(14, "except expressions without parentheses are"_s))
             return nullptr;
         handler->type = type;
         handler->name = name;
@@ -1564,6 +1633,8 @@ Stmt* Parser::parseTry()
     } else if (handlers.isEmpty())
         return syntaxError("expected 'except' or 'finally' block"_s);
 
+    if (isStar && !checkVersion(11, "Exception groups are"_s))
+        return nullptr;
     auto* statement = make<Try>(isStar, rangeFrom(start));
     statement->body = body;
     statement->handlers = m_arena.copy(handlers);
@@ -1607,9 +1678,21 @@ Stmt* Parser::parseFunctionDef(bool isAsync, Position start, Seq<Expr*> decorato
     Name name = expectName();
     if (!name)
         return nullptr;
+    // What is optional and does not parse is not there, and then the token that has to come next is missing.
+    auto missingAfterOptionalPart = [&](const Token& startOfPart, ASCIILiteral message) -> std::nullptr_t {
+        if (m_errorIsFatal || !m_errorIsGeneric)
+            return nullptr;
+        m_error = { };
+        m_errorIsGeneric = false;
+        m_errorIsFinal = false;
+        return syntaxErrorAt(startOfPart, message);
+    };
     Seq<TypeParam*> typeParams;
-    if (at(TokenKind::LSqb) && !parseTypeParams(typeParams))
-        return nullptr;
+    if (at(TokenKind::LSqb)) {
+        const Token open = peek();
+        if (!parseTypeParams(typeParams))
+            return missingAfterOptionalPart(open, "expected '('"_s);
+    }
     if (!expectForced(TokenKind::LPar, "("_s))
         return nullptr;
     Arguments* arguments = parseParameters(false);
@@ -1618,25 +1701,32 @@ Stmt* Parser::parseFunctionDef(bool isAsync, Position start, Seq<Expr*> decorato
     if (!expect(TokenKind::RPar))
         return nullptr;
     Expr* returns = nullptr;
-    if (accept(TokenKind::RArrow)) {
+    if (at(TokenKind::RArrow)) {
+        const Token arrow = advance();
         returns = parseExpression();
         if (!returns)
-            return nullptr;
+            return missingAfterOptionalPart(arrow, "expected ':'"_s);
     }
     if (!expectForced(TokenKind::Colon, ":"_s))
         return nullptr;
 
     // func_type_comment: on the line of the ':', or alone on the next one, before the indented block.
     StringImpl* typeComment = nullptr;
-    if (at(TokenKind::TypeComment))
+    if (at(TokenKind::TypeComment)) {
+        if (peek(1).kind == TokenKind::Newline && peek(2).kind == TokenKind::TypeComment && peek(3).kind == TokenKind::Newline && peek(4).kind == TokenKind::Indent) {
+            syntaxError("Cannot have two type comments on def"_s);
+            return nullptr;
+        }
         typeComment = acceptTypeComment();
-    else if (at(TokenKind::Newline) && peek(1).kind == TokenKind::TypeComment && peek(2).kind == TokenKind::Newline && peek(3).kind == TokenKind::Indent) {
+    } else if (at(TokenKind::Newline) && peek(1).kind == TokenKind::TypeComment && peek(2).kind == TokenKind::Newline && peek(3).kind == TokenKind::Indent) {
         advance();
         typeComment = acceptTypeComment();
     }
 
     Seq<Stmt*> body;
     if (!parseBlock(body, "function definition"_s, defToken))
+        return nullptr;
+    if (isAsync && !checkVersion(5, "Async functions are"_s))
         return nullptr;
     auto* statement = make<FunctionDef>(isAsync, rangeFrom(start));
     statement->name = name;
@@ -1745,7 +1835,7 @@ Arguments* Parser::parseParameters(bool isLambda)
 
     auto parseDefault = [&]() -> Expr* {
         const Token equal = advance();
-        if (at(close) || at(TokenKind::Comma))
+        if (at(TokenKind::RPar) || at(TokenKind::Comma))
             return syntaxErrorAt(equal, "expected default value expression"_s);
         return parseExpression();
     };
@@ -1775,8 +1865,18 @@ Arguments* Parser::parseParameters(bool isLambda)
 
         if (at(TokenKind::Star)) {
             const Token star = advance();
-            if (sawStar)
-                return syntaxErrorAt(star, "* may appear only once"_s);
+            if (sawStar) {
+                // Said of a star that would do as the first.
+                SetForScope diagnosing(m_diagnosing, true);
+                bool isWellFormed = at(TokenKind::Comma);
+                if (at(TokenKind::Name)) {
+                    TokenKind next = peek(1).kind;
+                    isWellFormed = next == TokenKind::Comma || next == close || (!isLambda && next == TokenKind::Colon);
+                }
+                if (isWellFormed)
+                    return syntaxErrorAt(star, "* may appear only once"_s);
+                return invalidSyntax();
+            }
             sawStar = true;
             if (at(TokenKind::Comma)) {
                 // A bare star: only keyword parameters follow, and at least one has to.
@@ -1876,6 +1976,8 @@ Arguments* Parser::parseParameters(bool isLambda)
             return nullptr;
     }
 
+    if (!positionalOnly.isEmpty() && !checkVersion(8, "Positional-only parameters are"_s))
+        return nullptr;
     arguments->posonlyargs = m_arena.copy(positionalOnly);
     arguments->args = m_arena.copy(positional);
     arguments->defaults = m_arena.copy(defaults);
@@ -1959,6 +2061,8 @@ Stmt* Parser::parseMatch(std::optional<Token>& newlineInsteadOfColon)
     if (!accept(TokenKind::Dedent))
         return fatal();
 
+    if (!checkVersion(10, "Pattern matching is"_s))
+        return fatal();
     auto* statement = make<Match>(rangeFrom(start));
     statement->subject = subject;
     statement->cases = m_arena.copy(cases);
@@ -2056,7 +2160,7 @@ bool Parser::isAtBitwiseOrLevel(Expr* expression)
     case ExprKind::Starred:
         return false;
     case ExprKind::UnaryOp:
-        return expression->as<UnaryOp>()->op != UnaryOperator::Not;
+        return expression->as<UnaryOp>()->op != UnaryKind::Not;
     case ExprKind::Tuple:
         return false;
     default:
@@ -2088,7 +2192,7 @@ Expr* Parser::findInvalidTarget(Expr* expression, TargetKind kind)
         // `for a in b` read as an expression is a comparison.
         if (kind == TargetKind::For) {
             auto* compare = expression->as<Compare>();
-            if (compare->ops.first() == CompareOperator::In)
+            if (compare->ops.first() == CompareKind::In)
                 return findInvalidTarget(compare->left, kind);
             return nullptr;
         }

@@ -68,6 +68,12 @@ uint32_t computeJSCBytecodeCacheVersion()
     byteCodeCacheVersion = precomputedCacheVersion;
     return precomputedCacheVersion;
 #else
+    return computeJSCBinaryVersion();
+#endif
+}
+
+uint32_t computeJSCBinaryVersion()
+{
     UNUSED_VARIABLE(JSCBytecodeCacheVersionInternal::verbose);
     static LazyNeverDestroyed<uint32_t> cacheVersion;
     static std::once_flag onceFlag;
@@ -175,7 +181,6 @@ uint32_t computeJSCBytecodeCacheVersion()
 #endif
     });
     return cacheVersion.get();
-#endif
 }
 
 } // namespace JSC

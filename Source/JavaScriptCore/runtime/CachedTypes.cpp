@@ -38,6 +38,7 @@
 #include "JSCInlines.h"
 #include "JSCellButterfly.h"
 #include "JSTemplateObjectDescriptor.h"
+#include "PyHooks.h"
 #include "ScopedArgumentsTable.h"
 #include "SourceCodeKey.h"
 #include "StrongInlines.h"
@@ -887,6 +888,13 @@ public:
 
     bool updatable() const { return m_updatable; }
 
+    // The code is Python's (encodePythonCode).
+    bool isPython() const { return m_isPython; }
+    void setIsPython() { m_isPython = true; }
+    // There is something in it that no file can hold. What is written from then on is thrown away.
+    bool cannotBeEncoded() const { return m_cannotBeEncoded; }
+    void setCannotBeEncoded() { m_cannotBeEncoded = true; }
+
     VM& vm() { return m_vm; }
 
     Allocation malloc(unsigned size, size_t alignment)
@@ -1449,6 +1457,8 @@ private:
     EncoderStringTable* m_externalStrings;
     bool m_numberStrings;
     bool m_updatable;
+    bool m_isPython { false };
+    bool m_cannotBeEncoded { false };
     Vector<SharedPrivateNameEnvironment> m_sharedPrivateNameEnvironments;
     bool m_arraySharingEnabled { false };
     UncheckedKeyHashMap<unsigned, Vector<std::pair<ptrdiff_t, size_t>, 1>, IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_arraysByHash;
@@ -1545,6 +1555,12 @@ void Decoder::addFinalizer(const Functor& fn)
 RefPtr<SourceProvider> Decoder::provider() const
 {
     return m_provider;
+}
+
+void Decoder::setPythonContext(JSGlobalObject* globalObject, RefPtr<SourceProvider>&& provider)
+{
+    m_pythonGlobalObject = globalObject;
+    m_provider = WTF::move(provider);
 }
 
 template<typename T>
@@ -2658,6 +2674,7 @@ public:
         m_unlinkedStringSwitchJumpTables.encode(encoder, rareData.m_unlinkedStringSwitchJumpTables);
         m_typeProfilerInfoMap.encode(encoder, rareData.m_typeProfilerInfoMap);
         m_opProfileControlFlowBytecodeOffsets.encode(encoder, rareData.m_opProfileControlFlowBytecodeOffsets);
+        m_pythonMarks.encode(encoder, rareData.m_pythonMarks);
         m_bitVectors.encode(encoder, rareData.m_bitVectors);
         m_constantIdentifierSets.encode(encoder, rareData.m_constantIdentifierSets);
         m_needsClassFieldInitializer = rareData.m_needsClassFieldInitializer;
@@ -2673,6 +2690,7 @@ public:
         m_unlinkedStringSwitchJumpTables.decode(decoder, rareData->m_unlinkedStringSwitchJumpTables);
         m_typeProfilerInfoMap.decode(decoder, rareData->m_typeProfilerInfoMap);
         m_opProfileControlFlowBytecodeOffsets.decode(decoder, rareData->m_opProfileControlFlowBytecodeOffsets);
+        m_pythonMarks.decode(decoder, rareData->m_pythonMarks);
         m_bitVectors.decode(decoder, rareData->m_bitVectors);
         m_constantIdentifierSets.decode(decoder, rareData->m_constantIdentifierSets);
         rareData->m_needsClassFieldInitializer = m_needsClassFieldInitializer;
@@ -2687,6 +2705,7 @@ private:
     CachedVector<CachedStringJumpTable> m_unlinkedStringSwitchJumpTables;
     CachedHashMap<unsigned, UnlinkedCodeBlock::RareData::TypeProfilerExpressionRange> m_typeProfilerInfoMap;
     CachedVector<JSInstructionStream::Offset> m_opProfileControlFlowBytecodeOffsets;
+    CachedVector<PythonMark> m_pythonMarks;
     CachedVector<CachedBitVector> m_bitVectors;
     CachedVector<CachedHashSet<CachedRefPtr<CachedUniquedStringImpl>, IdentifierRepHash>> m_constantIdentifierSets;
     unsigned m_needsClassFieldInitializer : 1;
@@ -3029,6 +3048,8 @@ class CachedJSValuePoolRef : public VariableLengthObject<WriteBarrier<Unknown>*>
 public:
     void encode(Encoder&, std::span<const WriteBarrier<Unknown>>);
     void decode(Decoder&, WriteBarrier<Unknown>* out, unsigned count, const JSCell* owner) const;
+    // With collections deferred.
+    void decode(Decoder&, Vector<JSValue, 8>& out, unsigned count) const;
 };
 
 class CachedJSValue;
@@ -3159,6 +3180,44 @@ private:
     uint8_t m_unused[3] { };
 };
 
+// A constant of Python code that is an object of Python's: a tuple, a float that is a whole number, bytes...
+class CachedPythonConstant : public CachedObject<JSCell> {
+public:
+    void encode(Encoder& encoder, const Python::ConstantParts& parts)
+    {
+        m_kind = static_cast<uint8_t>(parts.kind);
+        m_numbers[0] = std::bit_cast<uint64_t>(parts.numbers[0]);
+        m_numbers[1] = std::bit_cast<uint64_t>(parts.numbers[1]);
+        m_byteCount = safeCast<uint32_t>(parts.bytes.size());
+        m_bytes.encode(encoder, parts.bytes.data(), m_byteCount);
+        m_itemCount = parts.items.size();
+        Vector<WriteBarrier<Unknown>, 8> items(m_itemCount);
+        for (unsigned i = 0; i < m_itemCount; ++i)
+            items[i].setWithoutWriteBarrier(parts.items[i]);
+        m_items.encode(encoder, items.span());
+    }
+
+    JSValue decode(Decoder& decoder) const
+    {
+        Python::ConstantParts parts;
+        parts.kind = static_cast<Python::ConstantParts::Kind>(m_kind);
+        parts.numbers[0] = std::bit_cast<double>(m_numbers[0]);
+        parts.numbers[1] = std::bit_cast<double>(m_numbers[1]);
+        parts.bytes = { m_bytes.borrow(), m_byteCount };
+        m_items.decode(decoder, parts.items, m_itemCount);
+        return Python::constantFromParts(decoder.pythonGlobalObject(), parts);
+    }
+
+private:
+    uint64_t m_numbers[2];
+    CachedArray<uint8_t> m_bytes;
+    uint32_t m_byteCount;
+    CachedJSValuePoolRef m_items;
+    uint32_t m_itemCount;
+    uint8_t m_kind;
+    uint8_t m_unused[7] { };
+};
+
 // A constant is a kind byte and a 4-byte slot; the owner keeps the kinds in a parallel array (CachedJSValuePool). Small
 // values live in the slot itself. Everything else is what VariableLengthObject already does: an inline/external string,
 // or the slot-relative offset of a record.
@@ -3178,6 +3237,8 @@ public:
         RegExp,
         TemplateObjectDescriptor,
         BigInt,
+        AtomString, // As String. In Python code, where the names of attributes and variables are constants, and are looked up as atoms.
+        PythonConstant,
     };
 
     Kind encode(Encoder& encoder, JSValue v)
@@ -3213,18 +3274,19 @@ public:
             auto str = string->tryGetValue();
             RELEASE_ASSERT(str.data.impl()); // constants are never unresolved ropes; a failed resolution must not be encoded as garbage
             StringImpl& impl = *str.data.impl();
+            Kind kind = encoder.isPython() && impl.isAtom() ? Kind::AtomString : Kind::String;
             if (!encoder.externalStrings() && this->tryEncodeInlineString(impl))
-                return Kind::String;
+                return kind;
             if (this->tryEncodeExternalString(encoder, impl))
-                return Kind::String;
+                return kind;
             if (auto existing = encoder.cachedOffsetForStringContents(impl)) {
                 this->pointAtPayloadOffset(encoder, *existing);
-                return Kind::String;
+                return kind;
             }
             auto* record = this->allocateFor<CachedUniquedStringImpl>(encoder, impl);
             record->encode(encoder, impl);
             encoder.cacheStringContents(impl, encoder.offsetOf(record));
-            return Kind::String;
+            return kind;
         }
 
         if (auto* immutableButterfly = dynamicDowncast<JSCellButterfly>(cell)) {
@@ -3245,6 +3307,16 @@ public:
         if (auto* bigInt = dynamicDowncast<JSBigInt>(cell)) {
             this->allocate<CachedBigInt>(encoder)->encode(encoder, *bigInt);
             return Kind::BigInt;
+        }
+
+        if (encoder.isPython()) {
+            Python::ConstantParts parts;
+            if (Python::constantParts(cell, parts)) {
+                this->allocate<CachedPythonConstant>(encoder)->encode(encoder, parts);
+                return Kind::PythonConstant;
+            }
+            encoder.setCannotBeEncoded();
+            return Kind::Undefined;
         }
 
         RELEASE_ASSERT_NOT_REACHED();
@@ -3284,6 +3356,14 @@ public:
             return this->buffer<CachedTemplateObjectDescriptor>()->decode(decoder);
         case Kind::BigInt:
             return this->buffer<CachedBigInt>()->decode(decoder);
+        case Kind::AtomString:
+            if (this->hasInlineString())
+                return jsOwnedString(decoder.vm(), String { this->inlineString(decoder) });
+            if (this->hasExternalString())
+                return jsString(decoder.vm(), String { decoder.atomForExternalString(this->externalStringOrdinal()) });
+            return jsString(decoder.vm(), String { adoptRef(*static_cast<StringImpl*>(this->buffer<CachedUniquedStringImpl>()->decode(decoder))) });
+        case Kind::PythonConstant:
+            return this->buffer<CachedPythonConstant>()->decode(decoder);
         }
         RELEASE_ASSERT_NOT_REACHED();
     }
@@ -3361,6 +3441,18 @@ inline void CachedJSValuePoolRef::decode(Decoder& decoder, WriteBarrier<Unknown>
     if (!count)
         return;
     CachedJSValuePool::decode(decoder, this->buffer(), count, out, owner);
+}
+
+inline void CachedJSValuePoolRef::decode(Decoder& decoder, Vector<JSValue, 8>& out, unsigned count) const
+{
+    if (!count)
+        return;
+    ASSERT(decoder.vm().heap.isDeferred());
+    const uint8_t* pool = this->buffer();
+    const CachedJSValue* slot = CachedJSValuePool::slots(pool, count);
+    out.reserveInitialCapacity(count);
+    for (unsigned i = 0; i < count; ++i)
+        out.append(slot[i].decode(decoder, static_cast<CachedJSValue::Kind>(pool[i])));
 }
 
 // UnlinkedMetadataTable's offset table is cumulative and most opcodes have no metadata in a given function, so a code
@@ -3799,6 +3891,122 @@ private:
     uint8_t m_unused[3] { };
 };
 
+class CachedPythonVariable : public CachedObject<Python::CodeInfo::Variable> {
+public:
+    void encode(Encoder& encoder, const Python::CodeInfo::Variable& variable)
+    {
+        m_name.encode(encoder, variable.name);
+        m_register = variable.reg.offset();
+        m_kind = static_cast<uint8_t>(variable.kind);
+        m_isHidden = variable.isHidden;
+    }
+
+    void decode(Decoder& decoder, Python::CodeInfo::Variable& variable) const
+    {
+        variable.name = m_name.decode(decoder);
+        variable.reg = VirtualRegister(m_register);
+        variable.kind = static_cast<Python::CodeInfo::VariableKind>(m_kind);
+        variable.isHidden = m_isHidden;
+    }
+
+private:
+    CachedIdentifier m_name;
+    int32_t m_register;
+    uint8_t m_kind;
+    uint8_t m_isHidden;
+    uint8_t m_unused[2] { };
+};
+
+class CachedPythonCodeConstant : public CachedObject<Python::CodeInfo::Constant> {
+public:
+    void encode(Encoder&, const Python::CodeInfo::Constant& constant)
+    {
+        m_register = constant.reg.offset();
+        m_functionIndex = constant.functionIndex;
+        m_isUsed = constant.isUsed;
+    }
+
+    void decode(Decoder&, Python::CodeInfo::Constant& constant) const
+    {
+        constant.reg = VirtualRegister(m_register);
+        constant.functionIndex = m_functionIndex;
+        constant.isUsed = m_isUsed;
+    }
+
+private:
+    int32_t m_register;
+    uint32_t m_functionIndex;
+    uint32_t m_isUsed;
+};
+
+class CachedPythonCodeInfo : public CachedObject<Python::CodeInfo> {
+public:
+#if USE(BUN_JSC_ADDITIONS)
+    static constexpr bool isSingleOwner = true;
+#endif
+
+    void encode(Encoder& encoder, const Python::CodeInfo& info)
+    {
+        m_name.encode(encoder, info.name);
+        m_qualname.encode(encoder, info.qualname);
+        m_filename.encode(encoder, info.filename);
+        m_docstring.encode(encoder, info.docstring);
+        m_flags = info.flags.toRaw();
+        m_firstLineNumber = info.firstLineNumber;
+        m_argCount = info.argCount;
+        m_posOnlyCount = info.posOnlyCount;
+        m_kwOnlyCount = info.kwOnlyCount;
+        m_takesNamespace = info.takesNamespace;
+        m_namespaceRegister = info.namespaceRegister.offset();
+        m_parameterNames.encode(encoder, info.parameterNames);
+        m_variables.encode(encoder, info.variables);
+        m_freeVariables.encode(encoder, info.freeVariables);
+        m_names.encode(encoder, info.names);
+        m_constants.encode(encoder, info.constants);
+    }
+
+    // With a reference for the caller.
+    Python::CodeInfo* decode(Decoder& decoder) const
+    {
+        Ref info = Python::CodeInfo::create();
+        info->name = m_name.decode(decoder);
+        info->qualname = m_qualname.decodePlainString(decoder);
+        info->filename = m_filename.decode(decoder);
+        info->docstring = m_docstring.decodePlainString(decoder);
+        info->flags = OptionSet<Python::CodeFlag>::fromRaw(m_flags);
+        info->firstLineNumber = m_firstLineNumber;
+        info->argCount = m_argCount;
+        info->posOnlyCount = m_posOnlyCount;
+        info->kwOnlyCount = m_kwOnlyCount;
+        info->takesNamespace = m_takesNamespace;
+        info->namespaceRegister = VirtualRegister(m_namespaceRegister);
+        m_parameterNames.decode(decoder, info->parameterNames);
+        m_variables.decode(decoder, info->variables);
+        m_freeVariables.decode(decoder, info->freeVariables);
+        m_names.decode(decoder, info->names);
+        m_constants.decode(decoder, info->constants);
+        return &info.leakRef();
+    }
+
+private:
+    CachedIdentifier m_name;
+    CachedString m_qualname;
+    CachedString m_filename;
+    CachedString m_docstring;
+    uint32_t m_flags;
+    int32_t m_firstLineNumber;
+    uint32_t m_argCount;
+    uint32_t m_posOnlyCount;
+    uint32_t m_kwOnlyCount;
+    uint32_t m_takesNamespace;
+    int32_t m_namespaceRegister;
+    CachedVector<CachedIdentifier> m_parameterNames;
+    CachedVector<CachedPythonVariable> m_variables;
+    CachedVector<CachedIdentifier> m_freeVariables;
+    CachedVector<CachedIdentifier> m_names;
+    CachedVector<CachedPythonCodeConstant> m_constants;
+};
+
 // A header word of presence bits, then only the members that are set: the three vectors (4-byte aligned), then the
 // class source's four numbers as varints. Most rare data is an async function's (empty) wrapper parameter names.
 class CachedFunctionExecutableRareData : public CachedObject<UnlinkedFunctionExecutable::RareData> {
@@ -3811,6 +4019,7 @@ public:
         HasWrapperParameterNames = 1 << 1,
         HasClassElementDefinitions = 1 << 2,
         HasParentPrivateNameEnvironment = 1 << 3,
+        HasPythonCodeInfo = 1 << 4,
     };
 
     static uint32_t headerFor(const UnlinkedFunctionExecutable::RareData& rareData)
@@ -3824,6 +4033,8 @@ public:
             header |= HasClassElementDefinitions;
         if (!rareData.m_parentPrivateNameEnvironment.isEmpty())
             header |= HasParentPrivateNameEnvironment;
+        if (rareData.m_pythonCodeInfo)
+            header |= HasPythonCodeInfo;
         return header;
     }
 
@@ -3837,6 +4048,8 @@ public:
             size += sizeof(CachedVector<CachedClassElementDefinition>);
         if (header & HasParentPrivateNameEnvironment)
             size += sizeof(CachedPrivateNameEnvironment);
+        if (header & HasPythonCodeInfo)
+            size += sizeof(CachedPtr<CachedPythonCodeInfo>);
         if (header & HasClassSource)
             size += packClassSource(rareData.m_classSource).size();
         return size;
@@ -3861,6 +4074,11 @@ public:
             p += sizeof(*environment);
             environment->encodeShared(encoder, rareData.m_parentPrivateNameEnvironment);
         }
+        if (m_header & HasPythonCodeInfo) {
+            auto* info = new (p) CachedPtr<CachedPythonCodeInfo>();
+            p += sizeof(*info);
+            info->encode(encoder, rareData.m_pythonCodeInfo.get());
+        }
         if (m_header & HasClassSource) {
             VarintWriter writer = packClassSource(rareData.m_classSource);
             writer.copyTo(p);
@@ -3876,6 +4094,8 @@ public:
             reinterpret_cast<const CachedVector<CachedClassElementDefinition>*>(p)->decode(decoder, rareData->m_classElementDefinitions);
         if (auto* p = tailField(HasParentPrivateNameEnvironment))
             reinterpret_cast<const CachedPrivateNameEnvironment*>(p)->decode(decoder, rareData->m_parentPrivateNameEnvironment);
+        if (auto* p = tailField(HasPythonCodeInfo))
+            rareData->m_pythonCodeInfo = adoptRef(reinterpret_cast<const CachedPtr<CachedPythonCodeInfo>*>(p)->decode(decoder));
         if (auto* p = tailField(HasClassSource)) {
             VarintReader reader(p);
             SourceCode& source = rareData->m_classSource;
@@ -3908,7 +4128,7 @@ private:
         if (!(m_header & which))
             return nullptr;
         const uint8_t* p = std::bit_cast<const uint8_t*>(this) + sizeof(uint32_t);
-        for (auto [member, size] : { std::pair { HasWrapperParameterNames, sizeof(CachedVector<CachedIdentifier>) }, std::pair { HasClassElementDefinitions, sizeof(CachedVector<CachedClassElementDefinition>) }, std::pair { HasParentPrivateNameEnvironment, sizeof(CachedPrivateNameEnvironment) }, std::pair { HasClassSource, size_t { 0 } } }) {
+        for (auto [member, size] : { std::pair { HasWrapperParameterNames, sizeof(CachedVector<CachedIdentifier>) }, std::pair { HasClassElementDefinitions, sizeof(CachedVector<CachedClassElementDefinition>) }, std::pair { HasParentPrivateNameEnvironment, sizeof(CachedPrivateNameEnvironment) }, std::pair { HasPythonCodeInfo, sizeof(CachedPtr<CachedPythonCodeInfo>) }, std::pair { HasClassSource, size_t { 0 } } }) {
             if (member == which)
                 return p;
             if (m_header & member)
@@ -3979,6 +4199,7 @@ public:
         bool needsClassFieldInitializer;
         unsigned privateBrandRequirement;
         bool hasName;
+        bool isPython;
         CodeFeatures features;
         LexicallyScopedFeatures lexicallyScopedFeatures;
         bool hasCapturedVariables;
@@ -4107,6 +4328,7 @@ public:
         unsigned hasTailCalls : 1;
         unsigned codeType : 2;
         unsigned hasCheckpoints : 1;
+        unsigned isPython : 1;
         SourceParseMode parseMode;
         OptionSet<CodeGenerationMode> codeGenerationMode;
         int numVars;
@@ -4400,6 +4622,7 @@ enum class CachedCodeBlockTag {
     CachedModuleCodeBlockTag,
     CachedEvalCodeBlockTag,
     CachedBuiltinFunctionTag, // a root UnlinkedFunctionExecutable created by BuiltinExecutables (an embedder's JS builtins)
+    CachedPythonCodeTag, // a code object of Python: an UnlinkedFunctionExecutable with all the code in it, and its source
 };
 
 static CachedCodeBlockTag LEGACY_NODELETE tagFromSourceCodeType(SourceCodeType type)
@@ -4466,6 +4689,7 @@ ALWAYS_INLINE UnlinkedCodeBlock::UnlinkedCodeBlock(Decoder& decoder, Structure* 
     m_evalContextType = scalars.evalContextType;
     m_codeType = scalars.codeType;
     m_hasCheckpoints = scalars.hasCheckpoints;
+    m_isPython = scalars.isPython;
     m_parseMode = scalars.parseMode;
     m_codeGenerationMode = scalars.codeGenerationMode;
     m_numberOfArrayProfiles = scalars.numArrayProfiles;
@@ -4668,6 +4892,7 @@ enum CachedFunctionExecutableFlag : uint32_t {
     ExecutableNeedsClassFieldInitializerShift = 16,
     ExecutableIsBuiltinFunctionShift = 17,
     ExecutableIsBuiltinDefaultClassConstructorShift = 18,
+    ExecutableIsPythonShift = 19,
 };
 static_assert(bitWidthOfImplementationVisibility <= 2);
 
@@ -4686,7 +4911,8 @@ void CachedFunctionExecutable::packScalars(const UnlinkedFunctionExecutable& exe
         | static_cast<uint32_t>(executable.m_inlineAttribute) << ExecutableInlineAttributeShift
         | static_cast<uint32_t>(executable.m_needsClassFieldInitializer) << ExecutableNeedsClassFieldInitializerShift
         | static_cast<uint32_t>(executable.m_isBuiltinFunction) << ExecutableIsBuiltinFunctionShift
-        | static_cast<uint32_t>(executable.m_isBuiltinDefaultClassConstructor) << ExecutableIsBuiltinDefaultClassConstructorShift;
+        | static_cast<uint32_t>(executable.m_isBuiltinDefaultClassConstructor) << ExecutableIsBuiltinDefaultClassConstructorShift
+        | static_cast<uint32_t>(executable.m_isPython) << ExecutableIsPythonShift;
     executable.materializeDeferredScalarsIfNeeded();
     // Hot part: what link() (the FunctionExecutable's SourceCode), JSFunction structure selection, the first call
     // (features, ScriptExecutable::newCodeBlockFor) and compiler threads (parameterCount) need. Source positions cluster
@@ -4786,6 +5012,7 @@ auto CachedFunctionExecutable::view(ScalarsToView scalarsToView) const -> View
     s.needsClassFieldInitializer = bits(ExecutableNeedsClassFieldInitializerShift);
     s.isBuiltinFunction = bits(ExecutableIsBuiltinFunctionShift);
     s.isBuiltinDefaultClassConstructor = bits(ExecutableIsBuiltinDefaultClassConstructorShift);
+    s.isPython = bits(ExecutableIsPythonShift);
     s.lexicallyScopedFeatures = static_cast<LexicallyScopedFeatures>(reader.u8());
     s.hasCapturedVariables = v.header & HasCapturedVariables;
     s.sourceParseMode = static_cast<SourceParseMode>((v.header >> ParseModeShift) & 0xff);
@@ -5048,6 +5275,7 @@ ALWAYS_INLINE UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(Decoder& de
     m_inlineAttribute = scalars.inlineAttribute;
     m_evalContextType = scalars.evalContextType;
     m_hasName = scalars.hasName;
+    m_isPython = scalars.isPython;
 
     uint32_t leafExecutables = 2;
     auto slotOffset = [&](const CachedFunctionExecutable::CodeBlockSlot* slot) -> int32_t {
@@ -5081,6 +5309,7 @@ enum CachedCodeBlockFlag : uint32_t {
     CodeBlockCodeTypeShift = 13, // 2
     CodeBlockIsBuiltinFunctionShift = 15,
     CodeBlockIsBuiltinDefaultClassConstructorShift = 16,
+    CodeBlockIsPythonShift = 17,
 };
 
 template<typename CodeBlockType>
@@ -5098,7 +5327,8 @@ void CachedCodeBlock<CodeBlockType>::packScalars(const UnlinkedCodeBlock& codeBl
         | static_cast<uint32_t>(codeBlock.m_evalContextType) << CodeBlockEvalContextTypeShift
         | static_cast<uint32_t>(codeBlock.m_codeType) << CodeBlockCodeTypeShift
         | static_cast<uint32_t>(codeBlock.m_isBuiltinFunction) << CodeBlockIsBuiltinFunctionShift
-        | static_cast<uint32_t>(codeBlock.m_isBuiltinDefaultClassConstructor) << CodeBlockIsBuiltinDefaultClassConstructorShift;
+        | static_cast<uint32_t>(codeBlock.m_isBuiltinDefaultClassConstructor) << CodeBlockIsBuiltinDefaultClassConstructorShift
+        | static_cast<uint32_t>(codeBlock.m_isPython) << CodeBlockIsPythonShift;
     writer.u32(flags);
     writer.u8(static_cast<uint8_t>(codeBlock.m_parseMode));
     writer.u8(codeBlock.m_codeGenerationMode.toRaw());
@@ -5176,6 +5406,7 @@ auto CachedCodeBlock<CodeBlockType>::readTail() const -> Tail
     s.codeType = bits(CodeBlockCodeTypeShift, 2);
     s.isBuiltinFunction = bits(CodeBlockIsBuiltinFunctionShift);
     s.isBuiltinDefaultClassConstructor = bits(CodeBlockIsBuiltinDefaultClassConstructorShift);
+    s.isPython = bits(CodeBlockIsPythonShift);
     s.parseMode = static_cast<SourceParseMode>(reader.u8());
     s.codeGenerationMode = OptionSet<CodeGenerationMode>::fromRaw(reader.u8());
     s.thisRegister = VirtualRegister(reader.i32());
@@ -5328,7 +5559,8 @@ protected:
     // 13: upstream's op_iterator_close_check (with metadata) replaces the fork's, and op_iterator_open / op_iterator_next
     // keep a String's iteration state in their registers too (321765@main, 322172@main; opcode numbering).
     // 14: op_profile_control_flow says whether its basic block is in a loop header.
-    static constexpr uint32_t cachedTypesFormatRevision = 14;
+    // 15: Python (opcode numbering; a function executable and a code block say whether they are Python's).
+    static constexpr uint32_t cachedTypesFormatRevision = 15;
     static uint32_t currentCacheVersion() { return computeJSCBytecodeCacheVersion() ^ (cachedTypesFormatRevision * 0x9E3779B9u); }
 
     GenericCacheEntry(Encoder& encoder, CachedCodeBlockTag tag)
@@ -5420,6 +5652,7 @@ bool GenericCacheEntry::decode(Decoder& decoder, std::pair<SourceCodeKey, Unlink
     case CachedCodeBlockTag::CachedModuleCodeBlockTag:
         return std::bit_cast<const CacheEntry<UnlinkedModuleProgramCodeBlock>*>(this)->decode(decoder, reinterpret_cast<std::pair<SourceCodeKey, UnlinkedModuleProgramCodeBlock*>&>(result));
     case CachedCodeBlockTag::CachedBuiltinFunctionTag:
+    case CachedCodeBlockTag::CachedPythonCodeTag:
     case CachedCodeBlockTag::CachedEvalCodeBlockTag:
         // We do not cache eval code blocks
         RELEASE_ASSERT_NOT_REACHED();
@@ -5439,6 +5672,7 @@ bool GenericCacheEntry::decode(Decoder& decoder, SourceCodeKey& key) const
     case CachedCodeBlockTag::CachedModuleCodeBlockTag:
         return std::bit_cast<const CacheEntry<UnlinkedModuleProgramCodeBlock>*>(this)->decode(decoder, key);
     case CachedCodeBlockTag::CachedBuiltinFunctionTag:
+    case CachedCodeBlockTag::CachedPythonCodeTag:
     case CachedCodeBlockTag::CachedEvalCodeBlockTag:
         // We do not cache eval code blocks
         return false;
@@ -5458,6 +5692,7 @@ bool GenericCacheEntry::isStillValid(Decoder& decoder, const SourceCodeKey& key,
     case CachedCodeBlockTag::CachedModuleCodeBlockTag:
         return std::bit_cast<const CacheEntry<UnlinkedModuleProgramCodeBlock>*>(this)->isStillValid(decoder, key);
     case CachedCodeBlockTag::CachedBuiltinFunctionTag:
+    case CachedCodeBlockTag::CachedPythonCodeTag:
     case CachedCodeBlockTag::CachedEvalCodeBlockTag:
         // We do not cache eval code blocks
         RELEASE_ASSERT_NOT_REACHED();
@@ -5520,6 +5755,115 @@ RefPtr<CachedBytecode> encodeBuiltinFunction(VM& vm, const UnlinkedFunctionExecu
     return encoder.release(error, entry->payloadSizeSlot());
 }
 
+// The source of Python code that came out of a cache, which has the text with the code: nothing else need be read to run
+// the code, or to say where something went wrong in it.
+class CachedPythonSourceProvider final : public SourceProvider {
+public:
+    static Ref<CachedPythonSourceProvider> create(Ref<ThreadSafeRefCountedFixedVector<uint8_t>>&& payload, std::span<const Latin1Character> text, String&& url)
+    {
+        return adoptRef(*new CachedPythonSourceProvider(WTF::move(payload), text, WTF::move(url)));
+    }
+
+    unsigned hash() const final { return StringHasher::computeHashAndMaskTop8Bits(m_text); }
+    StringView source() const final { return m_text; }
+#if USE(BUN_JSC_ADDITIONS)
+    size_t memoryCost() const final { return m_payload->size(); }
+#endif
+
+private:
+    CachedPythonSourceProvider(Ref<ThreadSafeRefCountedFixedVector<uint8_t>>&& payload, std::span<const Latin1Character> text, String&& url)
+        : SourceProvider(SourceOrigin(), WTF::move(url), String(), SourceTaintedOrigin::Untainted, TextPosition(), SourceProviderSourceType::Program)
+        , m_payload(WTF::move(payload))
+        , m_text(text)
+    {
+    }
+
+    const Ref<ThreadSafeRefCountedFixedVector<uint8_t>> m_payload;
+    std::span<const Latin1Character> m_text; // In the payload.
+};
+
+class PythonCodeCacheEntry : public GenericCacheEntry {
+public:
+    PythonCodeCacheEntry(Encoder& encoder)
+        : GenericCacheEntry(encoder, CachedCodeBlockTag::CachedPythonCodeTag)
+    {
+    }
+
+    // The SourceCode is the executable's own.
+    void encode(Encoder& encoder, const UnlinkedFunctionExecutable& executable, const SourceCode& source)
+    {
+        SourceProvider& provider = *source.provider();
+        m_parentStartOffset = source.startOffset() - executable.startOffset();
+        m_url.encode(encoder, provider.sourceURL());
+        m_executable.encode(encoder, &executable);
+        m_lineStarts.encode(encoder, provider.lineStartsForBytecode());
+        m_text.shareElements(encoder, 0, 0);
+        encoder.deferCold([this, &encoder, text = provider.source().span8()] {
+            if (text.empty())
+                return;
+            auto allocation = encoder.malloc(text.size(), 1);
+            memcpySpan(std::span { allocation.buffer(), text.size() }, byteCast<uint8_t>(text));
+            m_text.shareElements(encoder, allocation.offset(), safeCast<unsigned>(text.size()));
+        });
+    }
+
+    bool isValid(Decoder& decoder) const
+    {
+        if (tag() != CachedCodeBlockTag::CachedPythonCodeTag || !isUpToDate(decoder))
+            return false;
+        auto text = m_text.rawBytes();
+        auto* begin = static_cast<const uint8_t*>(decoder.ptrForOffsetFromBase(0));
+        return text.empty() || (text.data() >= begin && text.size() <= decoder.size() && text.data() <= begin + (decoder.size() - text.size()));
+    }
+
+    Ref<SourceProvider> provider(Decoder& decoder, Ref<ThreadSafeRefCountedFixedVector<uint8_t>>&& payload) const
+    {
+        Ref provider = CachedPythonSourceProvider::create(WTF::move(payload), byteCast<Latin1Character>(m_text.borrow()), m_url.decodePlainString(decoder));
+        if (auto lineStarts = m_lineStarts.decode(decoder))
+            provider->setLineStarts(WTF::move(lineStarts));
+        return provider;
+    }
+
+    UnlinkedFunctionExecutable* decode(Decoder& decoder) const { return m_executable.decode(decoder); }
+    unsigned parentStartOffset() const { return m_parentStartOffset; }
+
+private:
+    unsigned m_parentStartOffset { 0 };
+    CachedString m_url;
+    CachedPtr<CachedFunctionExecutable> m_executable;
+    CachedLineStarts m_lineStarts;
+    CachedVector<uint8_t> m_text;
+};
+
+// Code that itself came out of a cache is only there as far as it has been needed.
+static void decodeAllCodeOf(VM& vm, UnlinkedFunctionExecutable& executable)
+{
+    UnlinkedFunctionCodeBlock* codeBlock = executable.codeBlocksDecodingCached(vm).first;
+    if (!codeBlock)
+        return;
+    for (unsigned i = 0; i < codeBlock->numberOfFunctionDecls(); ++i)
+        decodeAllCodeOf(vm, *codeBlock->functionDecl(i));
+    for (unsigned i = 0; i < codeBlock->numberOfFunctionExprs(); ++i)
+        decodeAllCodeOf(vm, *codeBlock->functionExpr(i));
+}
+
+RefPtr<CachedBytecode> encodePythonCode(VM& vm, UnlinkedFunctionExecutable* executable, const SourceCode& source)
+{
+    if (!source.provider()->source().is8Bit())
+        return nullptr;
+    decodeAllCodeOf(vm, *executable);
+    BytecodeCacheError error;
+    FileSystem::FileHandle invalidFileHandle;
+    Encoder encoder(vm, invalidFileHandle, Encoder::NumberStrings::Yes, nullptr, BytecodeCacheUpdatable::No);
+    encoder.setIsPython();
+    auto* entry = encoder.template malloc<PythonCodeCacheEntry>(encoder);
+    entry->encode(encoder, *executable, source);
+    encoder.encodeDeferred();
+    if (encoder.cannotBeEncoded())
+        return nullptr;
+    return encoder.release(error, entry->payloadSizeSlot());
+}
+
 // Null if the payload cannot hold one where its entry is said to be.
 template<typename Entry>
 static const Entry* cacheEntryOf(const CachedBytecode& cachedBytecode)
@@ -5553,6 +5897,27 @@ UnlinkedFunctionExecutable* decodeBuiltinFunction(VM& vm, Ref<CachedBytecode> ca
         recorder->didDecodeModule(decoder->orderSource());
 #endif
     return executable;
+}
+
+UnlinkedFunctionExecutable* decodePythonCode(JSGlobalObject* globalObject, Ref<ThreadSafeRefCountedFixedVector<uint8_t>>&& payload, SourceCode& parentSource)
+{
+    VM& vm = globalObject->vm();
+    RELEASE_ASSERT(!(std::bit_cast<uintptr_t>(payload->span().data()) % encoderMaxAlignment));
+    Ref cachedBytecode = CachedBytecode::create(payload->span(), [payload = payload.copyRef()](const void*) { }, { });
+    auto* entry = cacheEntryOf<PythonCodeCacheEntry>(cachedBytecode.get());
+    if (!entry)
+        return nullptr;
+    Ref decoder = Decoder::create(vm, WTF::move(cachedBytecode), nullptr, Decoder::RecoverableCode::No);
+    if (!entry->isValid(decoder.get()))
+        return nullptr;
+    DeferGC deferGC(vm);
+    Ref provider = entry->provider(decoder.get(), WTF::move(payload));
+    decoder->setPythonContext(globalObject, provider.copyRef());
+    unsigned length = provider->source().length();
+    if (entry->parentStartOffset() > length)
+        return nullptr;
+    parentSource = SourceCode(WTF::move(provider), entry->parentStartOffset(), length);
+    return entry->decode(decoder.get());
 }
 
 NEVER_INLINE RefPtr<CachedBytecode> encodeCodeBlock(VM& vm, const SourceCodeKey& key, const UnlinkedCodeBlock* codeBlock, FileSystem::FileHandle& fileHandle, BytecodeCacheError& error, EncoderStringTable* externalStrings, BytecodeCacheUpdatable updatable)
@@ -5958,7 +6323,7 @@ static_assert(sizeof(CachedBigInt) == 12);
 static_assert(sizeof(CachedBitVector) == 8);
 static_assert(sizeof(CachedClassElementDefinition) == 16);
 static_assert(sizeof(CachedCodeBlockExtras) == 4);
-static_assert(sizeof(CachedCodeBlockRareData) == 68);
+static_assert(sizeof(CachedCodeBlockRareData) == 76);
 static_assert(sizeof(CachedCompactTDZEnvironment) == 12);
 static_assert(sizeof(CachedCompactTDZEnvironmentMapHandle) == 4);
 static_assert(sizeof(CachedEvalCodeBlock) == 40);
