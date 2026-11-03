@@ -65,7 +65,10 @@ static bool reduceHasNativeState(JSGlobalObject* globalObject, PyType* type)
         if (def.signature.isVariadic && def.signature.hasSelf && def.pointer.variadicWithSelf == objectNew)
             return false;
     }
-    return type != rt.objectType() && type != rt.noneType() && type != rt.notImplementedType() && type != rt.ellipsisType();
+    // Nor does one whose instances are laid out as those of object are: datetime.tzinfo.
+    if (type->solidBase() == rt.objectType())
+        return false;
+    return type != rt.noneType() && type != rt.notImplementedType() && type != rt.ellipsisType();
 }
 
 // `required`: the state is all there will be to make the copy from, so what it cannot hold is an error.
