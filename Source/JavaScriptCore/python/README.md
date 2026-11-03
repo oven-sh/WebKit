@@ -84,7 +84,7 @@ Python code runs in the LLInt only; it never tiers up (`shouldJIT`).
 
 **Fast paths.** Each `op_py_*` instruction has a slow path in C++ that does all of it (`runtime/PySlowPaths.cpp`), and most have the
 common cases in assembly (`llint/LowLevelInterpreter64.asm`, "Python"): arithmetic and comparisons of numbers, comparisons fused
-with the jump that follows, truth of the usual values, items of lists and tuples, iteration over ranges, lists and tuples,
+with the jump that follows, truth of the usual values, items of lists, tuples and strs, iteration over ranges, lists and tuples,
 unpacking, cells, the binding of arguments when they are simply the parameters.
 
 **Inline caches**, in the metadata of the instruction, as for JS:

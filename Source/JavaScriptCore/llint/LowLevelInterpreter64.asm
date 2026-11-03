@@ -3605,7 +3605,7 @@ macro loadListItem(indexingType, butterfly, index, result, slow)
 .done:
 end
 
-# list[int32], tuple[int32]
+# list[int32], tuple[int32], str[int32]
 llintOpWithReturn(op_py_get_item, OpPyGetItem, macro (size, get, dispatch, return)
     get(m_base, t0)
     loadConstantOrVariableCell(size, t0, t1, .slow)
@@ -3614,6 +3614,7 @@ llintOpWithReturn(op_py_get_item, OpPyGetItem, macro (size, get, dispatch, retur
     sxi2q t2, t2
     loadb JSCell::m_type[t1], t0
     bbeq t0, ArrayType, .list
+    bbeq t0, StringType, .string
     bbneq t0, PyTupleType, .slow
     # A class derived from tuple may have a __getitem__ of its own.
     loadPythonRuntime(t0)
@@ -3632,6 +3633,20 @@ llintOpWithReturn(op_py_get_item, OpPyGetItem, macro (size, get, dispatch, retur
     normalizePythonIndex(t2, t3, .slow)
     loadListItem(t0, t1, t2, t3, .slow)
     return(t3)
+
+.string:
+    # In 8-bit units every unit is a character, and there is one str for each.
+    loadp JSString::m_fiber[t1], t1
+    btpnz t1, isRopeInPointer, .slow
+    btiz StringImpl::m_hashAndFlags[t1], HashFlags8BitBuffer, .slow
+    loadi StringImpl::m_length[t1], t3
+    normalizePythonIndex(t2, t3, .slow)
+    loadp StringImpl::m_data8[t1], t1
+    loadb [t1, t2], t0
+    loadp CodeBlock[cfr], t1
+    loadp CodeBlock::m_vm[t1], t1
+    loadp VM::smallStrings + SmallStrings::m_singleCharacterStrings[t1, t0, 8], t0
+    return(t0)
 
 .slow:
     callSlowPath(_slow_path_py_get_item)
