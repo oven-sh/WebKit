@@ -11,6 +11,7 @@
 #include "PyObject.h"
 #include "PyStr.h"
 #include "PyType.h"
+#include <ctime>
 #include <wtf/Int128.h>
 
 namespace JSC {
@@ -383,6 +384,18 @@ struct Parameters {
 };
 // `values` has room for one of each, and they are empty. False: a TypeError, worded as for any native.
 bool bindArguments(JSGlobalObject*, const Parameters&, const CallArgs&, JSValue* values);
+
+// What a pickle gives the constructor: that many bytes, or the str that pickle.loads(encoding='latin1') made of the bytes of a
+// pickle of Python 2. It is told from other arguments by its length and by whether the byte at `checkedIndex`, without its first
+// bit if that may be the fold, is at least `least` and less than `limit`.
+enum class PickledState : uint8_t { No, Yes, Raised };
+PickledState pickledStateArgument(JSGlobalObject*, JSValue, ASCIILiteral what, unsigned length, unsigned checkedIndex, unsigned mask, unsigned least, unsigned limit, uint8_t* bytes);
+
+// A number of seconds since the epoch, rounded down. False: an exception.
+bool secondsArgument(JSGlobalObject*, JSValue, time_t&);
+// False: an OSError.
+bool toLocalTime(JSGlobalObject*, time_t, struct tm&);
+bool toUniversalTime(JSGlobalObject*, time_t, struct tm&);
 
 // ---- Making the objects ----
 

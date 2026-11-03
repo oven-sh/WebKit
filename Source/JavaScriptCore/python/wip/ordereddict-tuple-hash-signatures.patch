@@ -1,0 +1,1590 @@
+diff --git a/Source/JavaScriptCore/Sources.txt b/Source/JavaScriptCore/Sources.txt
+index 2bd383f9..75e78e93 100644
+--- a/Source/JavaScriptCore/Sources.txt
++++ b/Source/JavaScriptCore/Sources.txt
+@@ -887,6 +887,7 @@ python/runtime/PyObject.cpp
+ python/runtime/PyOpcodeModule.cpp
+ python/runtime/PyOperator.cpp
+ python/runtime/PyOperators.cpp
++python/runtime/PyOrderedDict.cpp
+ python/runtime/PyPickle.cpp
+ python/runtime/PyPosix.cpp
+ python/runtime/PyPosixConstants.cpp
+diff --git a/Source/JavaScriptCore/python/DEFERRED.md b/Source/JavaScriptCore/python/DEFERRED.md
+index 1c907e71..1c75b970 100644
+--- a/Source/JavaScriptCore/python/DEFERRED.md
++++ b/Source/JavaScriptCore/python/DEFERRED.md
+@@ -8,7 +8,7 @@ stays), **experiment** (needs trying out before it can be decided), **deferred**
+ | What                                         | Why, and what happens instead                                                                                                                                                                                                    |
+ | -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+ | Objects are not freed at the last `del`      | There are no reference counts. Finalizers and weak reference callbacks run at the first safe point after the collection that finds the object dead; `gc.collect()` forces it; everything left is finalized at exit. See README.   |
+-| Buffered output reaches files earlier        | `open(path, "w").write(text)` counts on the file being closed when it is dropped. Here the streams over files that hold output are kept in a list, and are written out before the program, or anything it starts, can look at a file: `open`, `stat`, starting a process, `gc.collect()`, a call of the host. So `f.write("abc"); os.stat(path).st_size` is 3, not 0. The descriptor itself stays open until a collection finds the file. |
++| Buffered output reaches files earlier        | `open(path, "w").write(text)` counts on the file being closed when it is dropped. Here the streams over files that hold output are kept in a list, and are written out before the program, or anything it starts, can look at a file or do to a file or a descriptor what would come out differently afterwards: `open`, the `stat` family and `DirEntry.stat`, reading, writing, seeking, truncating and closing through `os` or a `FileIO`, `dup2`, `utime`, `rename`, `link`, starting a process, `gc.collect()`, a call of the host. So `f.write("abc"); os.stat(path).st_size` is 3, not 0. Only streams that are exactly what `open()` makes (`TextIOWrapper`, `BufferedWriter`, `BufferedRandom` over a `FileIO`, none of a derived class, whose `write` and `flush` would be seen to run), and not `sys.stdout` and `sys.stderr`. What tells another process by other means that a file is ready (a socket, a signal) does not write them out. The descriptor itself stays open until a collection finds the file: the reader of a pipe whose writer was dropped gets the data, but no end of file until then. |
+ | `sys.getrefcount`, `gc.collect()`'s result   | There are no counts: `getrefcount` returns a constant, `gc.collect()` returns 0. `gc.get_objects()`, `get_referrers()` and `get_referents()` are real, and each costs a full collection that is listened to. |
+ | `__del__` given to a class after instances exist | Instances register for finalization when they are made.                                                                                                                                                                       |
+ | All NaNs are one object                      | A NaN is an immediate value: `float('nan') is float('nan')`, so `x in [x]`-style identity shortcuts see any NaN as the same. The sign and payload of a NaN are not kept.                                                          |
+@@ -50,7 +50,8 @@ stays), **experiment** (needs trying out before it can be decided), **deferred**
+ | Python importing JS                       | Done, see README. Missing: `import a.b` for a subpath of a JS package (use `importlib.import_module("a/b")`), modules with top-level await (`require()` refuses them), the name of the module in `ImportError` messages. |
+ | Output of two languages                   | `console.*` first writes what `print()` has left in the buffers of `sys.stdout` and `sys.stderr`, so the order is kept when they are pipes or files. `process.stdout.write()` and `Bun.write(Bun.stdout, ...)` do not. |
+ | Iterators of JS                           | `for` and `async for` in Python take items from a JS iterator as they go. Leaving the loop early does not call the iterator's `return()`. |
+-| Too many open files                       | A system call that fails with `EMFILE` collects, finalizes and tries again (`socket`, `accept`, `socketpair`, `pipe`, `dup`, `os.open`, `opendir`). Other limits that dropped objects hold on to (memory maps, locks on files, child processes) are not treated so. |
++| `OrderedDict` behind its back             | `collections.OrderedDict` is native and has no list beside the dict: its order is the order of the dict's entries, which can be taken from and added to at both ends. `dict.__delitem__(od, key)`, `dict.pop(od, key)` and `dict.popitem(od)`, after which CPython's raises `KeyError` from `repr` and iteration, do here what the methods of `od` do. |
++| Too many open files                       | A system call that fails with `EMFILE` collects, finalizes and tries again (`open`, `os.open`, `socket`, `accept`, `socketpair`, `pipe`, `dup`, `opendir`). Other limits that dropped objects hold on to (memory maps, locks on files, child processes) are not treated so. |
+ | Exception scope verification              | `BUN_JSC_validateExceptionChecks=1` (Bun's ASAN CI sets it) fails as soon as the runtime starts. The C++ of the runtime has to be gone through.                            |
+ | Signals                                   | Handlers run at safe points (`VMTraps::NeedPythonCalls`), where a system call is interrupted, and between turns of the host's event loop. Not while JS code runs. `SIGPWR` is the engine's. No Windows. |
+ | Tracing and profiling                     | `sys.settrace`, `sys.setprofile`: stored, never called. `sys.monitoring` has its whole API and takes registrations, but no event ever fires. So no `pdb` (`python3 -m pdb x.py` never stops, and runs the program again and again), no `bdb`, no `coverage`, no `trace`. `cProfile` loads and reports nothing. |
+diff --git a/Source/JavaScriptCore/python/README.md b/Source/JavaScriptCore/python/README.md
+index a9cfbdbd..699785ad 100644
+--- a/Source/JavaScriptCore/python/README.md
++++ b/Source/JavaScriptCore/python/README.md
+@@ -49,6 +49,15 @@ handed to JS (the result of a call, an argument, an attribute, an operator's res
+ (`valueForJS`), so that floatness is lost in JS and nothing else is. Inside a list, which is shared storage, JS can see the cell;
+ it behaves as a `Number` object does.
+ 
++**str.** A `JSString`, so UTF-16 where it is not Latin-1, while Python counts code points. A text without surrogate pairs is indexed
++directly. For one with pairs, `StrIndexCache` (16 entries for each runtime, emptied after each collection, nothing for texts shorter
++than 48 units) remembers the number of pairs and the offset of every 64th code point, so that `s[i]` in a loop does not scan from
++the start each time.
++
++**tuple, dict.** A tuple remembers its hash once it has been asked for. A dict keeps its entries in an array in insertion order, with
++an index beside it; it knows where its first entry is, and can leave room before it, so that taking and adding entries is as cheap at
++the front as at the back. `collections.OrderedDict` (`PyOrderedDict.cpp`) is that and nothing more.
++
+ ## Code
+ 
+ The compiler emits ordinary JSC bytecode where the semantics agree (moves, jumps, calls, exception handlers, generators through
+@@ -113,6 +122,12 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
+ - **`gc.collect()`** collects, serves the queue, and repeats until nothing is left to do, so `del x; gc.collect()` does what it does in
+   CPython. For that to be true the stack scan must not see stale values: before it, the temporaries of Python frames that liveness
+   analysis says are dead are emptied (`clearDeadTemporaries`). Variables are not: an object lives while a variable names it.
++- **Files that are dropped** without being closed are closed by a finalizer, some time later, where CPython closes them at once.
++  Two things make up for most of that. Streams as `open()` makes them that hold output are in a list
++  (`ioNotePendingOutput`), and `writeOutPendingOutput()`, one load and a branch when the list is empty, writes them out before
++  anything that could tell the difference: see its comment in `PyInternals.h`, and call it first in any new function that looks at a
++  file or changes one. And a system call that fails for want of descriptors (`EMFILE`) collects, finalizes and is tried again
++  (`posixFreeDescriptors`).
+ 
+ ## Imports
+ 
+diff --git a/Source/JavaScriptCore/python/runtime/PyBuiltins.cpp b/Source/JavaScriptCore/python/runtime/PyBuiltins.cpp
+index 2dca723f..a14ae36e 100644
+--- a/Source/JavaScriptCore/python/runtime/PyBuiltins.cpp
++++ b/Source/JavaScriptCore/python/runtime/PyBuiltins.cpp
+@@ -1037,7 +1037,7 @@ static constexpr NativeDef builtinFunctions[] = {
+     PY_FUNCTION("repr", builtinRepr, "(obj, /)"),
+     PY_FUNCTION("round", builtinRound, "(number, ndigits=None)"),
+     PY_FUNCTION("setattr", builtinSetAttr, "(obj, name, value, /)"),
+-    PY_FUNCTION("sorted", builtinSorted, "(*args, **kwargs)"),
++    PY_FUNCTION("sorted", builtinSorted, "!(iterable, /, *, key=None, reverse=False)"),
+     PY_FUNCTION("sum", builtinSum, "(iterable, /, start=0)"),
+     PY_FUNCTION("vars", builtinVars, "(*args)"),
+ };
+diff --git a/Source/JavaScriptCore/python/runtime/PyCollections.cpp b/Source/JavaScriptCore/python/runtime/PyCollections.cpp
+index 300574d6..37340317 100644
+--- a/Source/JavaScriptCore/python/runtime/PyCollections.cpp
++++ b/Source/JavaScriptCore/python/runtime/PyCollections.cpp
+@@ -1216,6 +1216,7 @@ void initializeCollectionsModule(JSGlobalObject* globalObject, PyModule* module)
+     }
+     module->add(globalObject, "deque"_s, deque);
+     module->add(globalObject, "defaultdict"_s, defaultDictType(globalObject));
++    module->add(globalObject, "OrderedDict"_s, orderedDictType(globalObject));
+     module->add(globalObject, "_deque_iterator"_s, rt.typeFor(dequeIteratorTypeDef));
+     module->add(globalObject, "_deque_reverse_iterator"_s, rt.typeFor(dequeReverseIteratorTypeDef));
+     module->add(globalObject, "_tuplegetter"_s, rt.typeFor(tupleGetterTypeDef));
+diff --git a/Source/JavaScriptCore/python/runtime/PyCsv.cpp b/Source/JavaScriptCore/python/runtime/PyCsv.cpp
+index 692b7956..b93843f3 100644
+--- a/Source/JavaScriptCore/python/runtime/PyCsv.cpp
++++ b/Source/JavaScriptCore/python/runtime/PyCsv.cpp
+@@ -934,10 +934,10 @@ static JSValue csvFieldSizeLimit(JSGlobalObject* globalObject, JSValue newLimit)
+ }
+ 
+ static constexpr NativeDef csvFunctions[] = {
+-    PY_FUNCTION("reader", csvReader, "(*args, **kwargs)"),
+-    PY_FUNCTION("writer", csvWriter, "(*args, **kwargs)"),
++    PY_FUNCTION("reader", csvReader, "!(iterable, /, dialect='excel', **fmtparams)"),
++    PY_FUNCTION("writer", csvWriter, "!(fileobj, /, dialect='excel', **fmtparams)"),
+     PY_FUNCTION("list_dialects", csvListDialects, "()"),
+-    PY_FUNCTION("register_dialect", csvRegisterDialect, "(*args, **kwargs)"),
++    PY_FUNCTION("register_dialect", csvRegisterDialect, "!(name, /, dialect='excel', **fmtparams)"),
+     PY_FUNCTION("unregister_dialect", csvUnregisterDialect, "(name)"),
+     PY_FUNCTION("get_dialect", csvGetDialect, "(name)"),
+     PY_FUNCTION("field_size_limit", csvFieldSizeLimit, "(new_limit=<unrepresentable>)"),
+diff --git a/Source/JavaScriptCore/python/runtime/PyDict.cpp b/Source/JavaScriptCore/python/runtime/PyDict.cpp
+index 472ce474..8ea75824 100644
+--- a/Source/JavaScriptCore/python/runtime/PyDict.cpp
++++ b/Source/JavaScriptCore/python/runtime/PyDict.cpp
+@@ -200,7 +200,7 @@ restart:
+     }
+ }
+ 
+-void PyDict::resize(VM& vm, unsigned minimumCapacity)
++void PyDict::resize(VM& vm, unsigned minimumCapacity, unsigned unusedAtFront)
+ {
+     unsigned log2Size = PyDictStorage::minLog2Size;
+     while (PyDictStorage::capacityFor(log2Size) < minimumCapacity)
+@@ -215,7 +215,7 @@ void PyDict::resize(VM& vm, unsigned minimumCapacity)
+         Entry* entries = newStorage->entries();
+         uint32_t* hashes = newStorage->hashes();
+         uint32_t mask = newStorage->mask();
+-        unsigned count = 0;
++        unsigned count = unusedAtFront;
+         for (unsigned i = 0; i < old->entryCount(); ++i) {
+             if (!oldEntries[i].key)
+                 continue;
+@@ -234,9 +234,10 @@ void PyDict::resize(VM& vm, unsigned minimumCapacity)
+             ++count;
+         }
+         newStorage->setEntryCount(count);
+-        newStorage->setFilledSlotCount(count);
+-        ASSERT(count == m_used);
++        newStorage->setFilledSlotCount(m_used);
++        ASSERT(count == m_used + unusedAtFront);
+     }
++    m_firstEntry = unusedAtFront;
+     m_storage.set(vm, this, newStorage);
+     keysChanged();
+ }
+@@ -275,6 +276,42 @@ void PyDict::insertNew(VM& vm, JSValue key, uint32_t hash, JSValue value)
+     storage->hashes()[index] = hash;
+     storage->setIndexAt(slot, index);
+     storage->setEntryCount(index + 1);
++    if (!m_used)
++        m_firstEntry = index;
++    ++m_used;
++    keysChanged();
++    if (!key.isString())
++        m_hasOnlyStringKeys = false;
++}
++
++void PyDict::insertFirst(VM& vm, JSValue key, uint32_t hash, JSValue value)
++{
++    if (!m_used)
++        return insertNew(vm, key, hash, value);
++    PyDictStorage* storage = m_storage.get();
++    if (!m_firstEntry || storage->filledSlotCount() >= storage->capacity()) {
++        // As insertNew() grows it, with half of what is free at either end.
++        unsigned log2Size = PyDictStorage::minLog2Size;
++        while ((static_cast<uint64_t>(1) << log2Size) < static_cast<uint64_t>(m_used) * 3)
++            ++log2Size;
++        unsigned capacity = PyDictStorage::capacityFor(log2Size);
++        resize(vm, capacity, (capacity - m_used + 1) / 2);
++        storage = m_storage.get();
++    }
++    uint32_t mask = storage->mask();
++    uint32_t perturb = hash;
++    uint32_t slot = hash & mask;
++    while (storage->indexAt(slot) >= 0) {
++        perturb >>= perturbShift;
++        slot = (slot * 5 + perturb + 1) & mask;
++    }
++    if (storage->indexAt(slot) == PyDictStorage::emptyIndex)
++        storage->setFilledSlotCount(storage->filledSlotCount() + 1);
++    unsigned index = --m_firstEntry;
++    storage->entries()[index].key.set(vm, storage, key);
++    storage->entries()[index].value.set(vm, storage, value);
++    storage->hashes()[index] = hash;
++    storage->setIndexAt(slot, index);
+     ++m_used;
+     keysChanged();
+     if (!key.isString())
+@@ -288,9 +325,29 @@ void PyDict::removeAt(VM&, int32_t index, uint32_t slot)
+     storage->entries()[index].key.clear();
+     storage->entries()[index].value.clear();
+     --m_used;
++    if (static_cast<unsigned>(index) == m_firstEntry) {
++        unsigned count = storage->entryCount();
++        while (m_firstEntry < count && !storage->entries()[m_firstEntry].key)
++            ++m_firstEntry;
++    }
+     keysChanged();
+ }
+ 
++// Where in the index an entry that is in use is.
++uint32_t PyDict::slotOfEntry(int32_t index)
++{
++    PyDictStorage* storage = m_storage.get();
++    uint32_t hash = storage->hashes()[index];
++    uint32_t mask = storage->mask();
++    uint32_t perturb = hash;
++    uint32_t slot = hash & mask;
++    while (storage->indexAt(slot) != index) {
++        perturb >>= perturbShift;
++        slot = (slot * 5 + perturb + 1) & mask;
++    }
++    return slot;
++}
++
+ JSValue PyDict::get(JSGlobalObject* globalObject, JSValue key, int64_t hash)
+ {
+     int32_t index = find(globalObject, key, fold(hash));
+@@ -448,6 +505,8 @@ bool PyDict::next(unsigned& position, JSValue& key, JSValue& value) const
+     if (!storage)
+         return false;
+     unsigned count = storage->entryCount();
++    if (position < m_firstEntry && m_used)
++        position = m_firstEntry;
+     while (position < count) {
+         Entry& entry = storage->entries()[position++];
+         if (entry.key) {
+@@ -473,7 +532,8 @@ bool PyDict::previous(unsigned& position, JSValue& key, JSValue& value) const
+     if (!storage)
+         return false;
+     position = std::min(position, storage->entryCount());
+-    while (position) {
++    unsigned first = m_used ? m_firstEntry : 0;
++    while (position > first) {
+         Entry& entry = storage->entries()[--position];
+         if (entry.key) {
+             key = entry.key.get();
+@@ -495,21 +555,60 @@ bool PyDict::takeLast(VM& vm, JSValue& key, JSValue& value)
+     --index;
+     key = storage->entries()[index].key.get();
+     value = storage->entries()[index].value.get();
+-
+-    uint32_t hash = storage->hashes()[index];
+-    uint32_t mask = storage->mask();
+-    uint32_t perturb = hash;
+-    uint32_t slot = hash & mask;
+-    while (storage->indexAt(slot) != static_cast<int32_t>(index)) {
+-        perturb >>= perturbShift;
+-        slot = (slot * 5 + perturb + 1) & mask;
+-    }
+-    removeAt(vm, index, slot);
++    removeAt(vm, index, slotOfEntry(index));
+     // What follows it is all deleted.
+     storage->setEntryCount(index);
+     return true;
+ }
+ 
++bool PyDict::takeFirst(VM& vm, JSValue& key, JSValue& value)
++{
++    if (!m_used)
++        return false;
++    PyDictStorage* storage = m_storage.get();
++    unsigned index = m_firstEntry;
++    ASSERT(storage->entries()[index].key);
++    key = storage->entries()[index].key.get();
++    value = storage->entries()[index].value.get();
++    removeAt(vm, index, slotOfEntry(index));
++    return true;
++}
++
++bool PyDict::moveToEnd(JSGlobalObject* globalObject, JSValue key, bool last)
++{
++    VM& vm = getVM(globalObject);
++    auto scope = DECLARE_THROW_SCOPE(vm);
++    if (!m_used)
++        return false;
++    int64_t hash = hashKey(globalObject, key);
++    RETURN_IF_EXCEPTION(scope, false);
++    uint32_t slot;
++    int32_t index = find(globalObject, key, fold(hash), &slot);
++    RETURN_IF_EXCEPTION(scope, false);
++    if (index < 0)
++        return false;
++    PyDictStorage* storage = m_storage.get();
++    if (last) {
++        unsigned end = storage->entryCount();
++        while (!storage->entries()[end - 1].key)
++            --end;
++        storage->setEntryCount(end);
++        if (static_cast<unsigned>(index) == end - 1)
++            return true;
++    } else if (static_cast<unsigned>(index) == m_firstEntry)
++        return true;
++    // The key that is in the dict stays, not the one that is equal to it.
++    JSValue ownKey = storage->entries()[index].key.get();
++    JSValue value = storage->entries()[index].value.get();
++    uint32_t folded = storage->hashes()[index];
++    removeAt(vm, index, slot);
++    if (last)
++        insertNew(vm, ownKey, folded, value);
++    else
++        insertFirst(vm, ownKey, folded, value);
++    return true;
++}
++
+ } // namespace Python
+ } // namespace JSC
+ 
+diff --git a/Source/JavaScriptCore/python/runtime/PyDict.h b/Source/JavaScriptCore/python/runtime/PyDict.h
+index 1711dc85..63bb517d 100644
+--- a/Source/JavaScriptCore/python/runtime/PyDict.h
++++ b/Source/JavaScriptCore/python/runtime/PyDict.h
+@@ -142,6 +142,10 @@ public:
+     const void* storageIdentity() const { return m_storage.get(); }
+     // Removes the last entry. False: the dict is empty.
+     bool takeLast(VM&, JSValue& key, JSValue& value);
++    // The same for the first. Neither takes longer the more entries have been removed: a dict will do as a queue.
++    bool takeFirst(VM&, JSValue& key, JSValue& value);
++    // Makes the entry of the key the last, or the first. False: there is none, or an exception.
++    bool moveToEnd(JSGlobalObject*, JSValue key, bool last);
+ 
+     // Changes whenever a key is added or removed, or entries move.
+     uint32_t keysVersion() const { return m_keysVersion; }
+@@ -177,8 +181,11 @@ private:
+     int32_t find(JSGlobalObject*, JSValue key, uint32_t hash, uint32_t* slot = nullptr);
+     int32_t findString(JSString* key, uint32_t hash, uint32_t* slot = nullptr);
+     void insertNew(VM&, JSValue key, uint32_t hash, JSValue value);
++    void insertFirst(VM&, JSValue key, uint32_t hash, JSValue value);
+     void removeAt(VM&, int32_t index, uint32_t slot);
+-    void resize(VM&, unsigned minimumCapacity);
++    uint32_t slotOfEntry(int32_t index);
++    // `unusedAtFront`: how many entries to leave free before the first.
++    void resize(VM&, unsigned minimumCapacity, unsigned unusedAtFront = 0);
+     static uint64_t newWatchedVersion();
+     void keysChanged()
+     {
+@@ -192,6 +199,7 @@ private:
+     unsigned m_used { 0 };
+     uint32_t m_keysVersion { 0 };
+     bool m_hasOnlyStringKeys { true };
++    unsigned m_firstEntry { 0 }; // The entries before this one are deleted, or were never used. Means nothing while the dict is empty.
+ };
+ 
+ // hash(str)
+diff --git a/Source/JavaScriptCore/python/runtime/PyExpat.cpp b/Source/JavaScriptCore/python/runtime/PyExpat.cpp
+index 5b5fef76..fd5c9130 100644
+--- a/Source/JavaScriptCore/python/runtime/PyExpat.cpp
++++ b/Source/JavaScriptCore/python/runtime/PyExpat.cpp
+@@ -4861,18 +4861,18 @@ static void expatSetSpecifiedAttributes(JSGlobalObject* globalObject, JSValue se
+ }
+ 
+ static constexpr NativeDef expatParserMethods[] = {
+-    PY_METHOD("Parse", expatParse, "($self, *args, **kwargs)"),
+-    PY_METHOD("ParseFile", expatParseFile, "($self, *args, **kwargs)"),
++    PY_METHOD("Parse", expatParse, "!($self, data, isfinal=False, /)"),
++    PY_METHOD("ParseFile", expatParseFile, "!($self, file, /)"),
+     PY_METHOD("SetBase", expatSetBase, "($self, base, /)"),
+     PY_METHOD("GetBase", expatGetBase, "($self, /)"),
+     PY_METHOD("GetInputContext", expatGetInputContext, "($self, /)"),
+     PY_METHOD("ExternalEntityParserCreate", expatExternalEntityParserCreate, "($self, *args, **kwargs)"),
+     PY_METHOD("SetParamEntityParsing", expatSetParamEntityParsing, "($self, flag, /)"),
+-    PY_METHOD("UseForeignDTD", expatUseForeignDTD, "($self, *args, **kwargs)"),
+-    PY_METHOD("SetBillionLaughsAttackProtectionActivationThreshold", expatSetExpansionThreshold, "($self, *args, **kwargs)"),
+-    PY_METHOD("SetBillionLaughsAttackProtectionMaximumAmplification", expatSetExpansionFactor, "($self, *args, **kwargs)"),
+-    PY_METHOD("SetAllocTrackerActivationThreshold", expatSetAllocationThreshold, "($self, *args, **kwargs)"),
+-    PY_METHOD("SetAllocTrackerMaximumAmplification", expatSetAllocationFactor, "($self, *args, **kwargs)"),
++    PY_METHOD("UseForeignDTD", expatUseForeignDTD, "!($self, flag=True, /)"),
++    PY_METHOD("SetBillionLaughsAttackProtectionActivationThreshold", expatSetExpansionThreshold, "!($self, threshold, /)"),
++    PY_METHOD("SetBillionLaughsAttackProtectionMaximumAmplification", expatSetExpansionFactor, "!($self, max_factor, /)"),
++    PY_METHOD("SetAllocTrackerActivationThreshold", expatSetAllocationThreshold, "!($self, threshold, /)"),
++    PY_METHOD("SetAllocTrackerMaximumAmplification", expatSetAllocationFactor, "!($self, max_factor, /)"),
+     PY_METHOD("SetReparseDeferralEnabled", expatSetReparseDeferralEnabled, "($self, enabled, /)"),
+     PY_METHOD("GetReparseDeferralEnabled", expatGetReparseDeferralEnabled, "($self, /)"),
+ };
+diff --git a/Source/JavaScriptCore/python/runtime/PyFileIO.cpp b/Source/JavaScriptCore/python/runtime/PyFileIO.cpp
+index 85799b99..dd002cf1 100644
+--- a/Source/JavaScriptCore/python/runtime/PyFileIO.cpp
++++ b/Source/JavaScriptCore/python/runtime/PyFileIO.cpp
+@@ -83,6 +83,7 @@ bool fileIOIsClosed(PyRecord* file) { return ioStateOf<FileIOState>(file).fd < 0
+ 
+ static int64_t fileIOSystemRead(JSGlobalObject* globalObject, int fd, uint8_t* buffer, size_t count)
+ {
++    writeOutPendingOutput(globalObject);
+     ssize_t result;
+     do {
+         AllowThreads allow(globalObject);
+@@ -100,6 +101,7 @@ static int64_t fileIOSystemRead(JSGlobalObject* globalObject, int fd, uint8_t* b
+ 
+ static int64_t fileIOSystemWrite(JSGlobalObject* globalObject, int fd, const uint8_t* buffer, size_t count)
+ {
++    writeOutPendingOutput(globalObject);
+     ssize_t result;
+     do {
+         AllowThreads allow(globalObject);
+@@ -118,6 +120,7 @@ static int64_t fileIOSystemWrite(JSGlobalObject* globalObject, int fd, const uin
+ // -1: an exception.
+ static int64_t fileIOSystemSeek(JSGlobalObject* globalObject, FileIOState& state, int64_t position, int whence, bool pipeIsFine = false)
+ {
++    writeOutPendingOutput(globalObject);
+     off_t result = lseek(state.fd, position, whence);
+     if (state.seekable < 0)
+         state.seekable = result >= 0;
+@@ -132,6 +135,7 @@ static int64_t fileIOSystemSeek(JSGlobalObject* globalObject, FileIOState& state
+ // False: an exception.
+ static bool fileIOSystemClose(JSGlobalObject* globalObject, FileIOState& state)
+ {
++    writeOutPendingOutput(globalObject);
+     int fd = std::exchange(state.fd, -1);
+     state.hasStat = false;
+     if (fd < 0)
+@@ -533,6 +537,7 @@ static JSValue fileIOReadIntoMethod(JSGlobalObject* globalObject, JSValue self,
+ 
+ static JSValue fileIOReadall(JSGlobalObject* globalObject, JSValue self)
+ {
++    writeOutPendingOutput(globalObject);
+     VM& vm = getVM(globalObject);
+     auto scope = DECLARE_THROW_SCOPE(vm);
+     auto& state = fileIOStateOf(self);
+@@ -667,6 +672,7 @@ static JSValue fileIOTell(JSGlobalObject* globalObject, JSValue self)
+ 
+ static JSValue fileIOTruncate(JSGlobalObject* globalObject, JSValue self, JSValue sizeValue)
+ {
++    writeOutPendingOutput(globalObject);
+     VM& vm = getVM(globalObject);
+     auto scope = DECLARE_THROW_SCOPE(vm);
+     auto& state = fileIOStateOf(self);
+diff --git a/Source/JavaScriptCore/python/runtime/PyFunction.cpp b/Source/JavaScriptCore/python/runtime/PyFunction.cpp
+index 7fbc5cf3..75eef4a1 100644
+--- a/Source/JavaScriptCore/python/runtime/PyFunction.cpp
++++ b/Source/JavaScriptCore/python/runtime/PyFunction.cpp
+@@ -1885,10 +1885,13 @@ static JSValue nativeGetTextSignature(JSGlobalObject* globalObject, JSValue self
+ {
+     auto* native = asNative(self);
+     auto& def = native->def();
+-    if (def.signature.isVariadic) {
++    StringView signatureText = def.signatureText;
++    if (signatureText.startsWith('!'))
++        signatureText = signatureText.substring(1);
++    else if (def.signature.isVariadic) {
+         // "(*args, **kwargs)" in a table only says that the function looks at its arguments itself. CPython has no signature for most
+         // of those. Anything more than that is meant.
+-        StringView text = def.signatureText;
++        StringView text = signatureText;
+         for (ASCIILiteral part : { "("_s, "$self"_s, "$type"_s, ", "_s, "*args"_s, ", "_s, "**kwargs"_s, ")"_s }) {
+             if (text.startsWith(part))
+                 text = text.substring(part.length());
+@@ -1903,9 +1906,9 @@ static JSValue nativeGetTextSignature(JSGlobalObject* globalObject, JSValue self
+         }
+     }
+     if (def.kind != NativeKind::Function || native->ownerType())
+-        return makeStr(getVM(globalObject), def.signatureText);
++        return makeStr(globalObject, signatureText.toString());
+     // A function of a module is bound to it, which the tables leave out: "(obj, /)" is "($module, obj, /)".
+-    StringView parameters = StringView(def.signatureText).substring(1, def.signatureText.length() - 2);
++    StringView parameters = signatureText.substring(1, signatureText.length() - 2);
+     if (parameters.isEmpty())
+         return makeStr(getVM(globalObject), "($module, /)"_s);
+     bool hasPositionalOnly = parameters == "/"_s || parameters.endsWith(", /"_s) || parameters.contains(", /, "_s);
+diff --git a/Source/JavaScriptCore/python/runtime/PyIOBase.cpp b/Source/JavaScriptCore/python/runtime/PyIOBase.cpp
+index 478131dd..fff9059e 100644
+--- a/Source/JavaScriptCore/python/runtime/PyIOBase.cpp
++++ b/Source/JavaScriptCore/python/runtime/PyIOBase.cpp
+@@ -636,23 +636,24 @@ static JSArray* ioStreamsWithPendingOutput(JSGlobalObject* globalObject)
+ 
+ void ioNotePendingOutput(JSGlobalObject* globalObject, PyRecord* stream)
+ {
++    JSArray* standardStreams = ioStandardStreams(globalObject);
++    for (unsigned i = 0; i < listLength(standardStreams); ++i) {
++        if (listGet(standardStreams, i) == JSValue(stream))
++            return;
++    }
+     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(globalObject));
+     listAppend(globalObject, ioStreamsWithPendingOutput(globalObject), stream);
+     scope.clearException();
++    runtime(globalObject).setMayHavePendingOutput(true);
+ }
+ 
+-void writeOutPendingOutput(JSGlobalObject* globalObject)
++void writeOutPendingOutputSlow(JSGlobalObject* globalObject)
+ {
+     Runtime& rt = runtime(globalObject);
+-    // Before _io is there, there is nothing.
+-    JSValue state = hiddenField(globalObject, rt.typeFor(ioIOBaseTypeDef), 0);
+-    if (!state)
+-        return;
+-    JSArray* list = ioStreamsWithPendingOutput(globalObject);
+-    if (!listLength(list)) [[likely]]
+-        return;
+     if (rt.vm().exceptionForInspection())
+         return;
++    rt.setMayHavePendingOutput(false);
++    JSArray* list = ioStreamsWithPendingOutput(globalObject);
+     PyType* textIOWrapper = ioType(globalObject, IOType::TextIOWrapper);
+     // What a TextIOWrapper holds goes to its buffer, which then is in the list.
+     for (unsigned round = 0; round < 2 && listLength(list); ++round) {
+diff --git a/Source/JavaScriptCore/python/runtime/PyImp.cpp b/Source/JavaScriptCore/python/runtime/PyImp.cpp
+index eee0f9c0..677e98c1 100644
+--- a/Source/JavaScriptCore/python/runtime/PyImp.cpp
++++ b/Source/JavaScriptCore/python/runtime/PyImp.cpp
+@@ -159,13 +159,13 @@ static constexpr NativeDef impFunctions[] = {
+     PY_FUNCTION("create_builtin", impCreateBuiltin, "(spec, /)"),
+     PY_FUNCTION("exec_builtin", impExecBuiltin, "(mod, /)"),
+     PY_FUNCTION("is_frozen", impFalse, "(name, /)"),
+-    PY_FUNCTION("is_frozen_package", impNoFrozen, "(*args)"),
+-    PY_FUNCTION("get_frozen_object", impNoFrozen, "(*args)"),
+-    PY_FUNCTION("init_frozen", impNoFrozen, "(*args)"),
++    PY_FUNCTION("is_frozen_package", impNoFrozen, "!(name, /)"),
++    PY_FUNCTION("get_frozen_object", impNoFrozen, "!(name, data=None, /)"),
++    PY_FUNCTION("init_frozen", impNoFrozen, "!(name, /)"),
+     PY_FUNCTION("find_frozen", impFindFrozen, "(name, /, *, withdata=False)"),
+     PY_FUNCTION("_frozen_module_names", impEmptyList, "()"),
+     PY_FUNCTION("create_dynamic", impNoDynamic, "(*args)"),
+-    PY_FUNCTION("exec_dynamic", impNoDynamic, "(*args)"),
++    PY_FUNCTION("exec_dynamic", impNoDynamic, "!(mod, /)"),
+     PY_FUNCTION("extension_suffixes", impEmptyList, "()"),
+     PY_FUNCTION("source_hash", impSourceHash, "(key, source)"),
+     PY_FUNCTION("_fix_co_filename", impFixCoFilename, "(code, path, /)"),
+diff --git a/Source/JavaScriptCore/python/runtime/PyInternals.h b/Source/JavaScriptCore/python/runtime/PyInternals.h
+index 028474db..38f6d583 100644
+--- a/Source/JavaScriptCore/python/runtime/PyInternals.h
++++ b/Source/JavaScriptCore/python/runtime/PyInternals.h
+@@ -60,9 +60,15 @@ JSValue allocateInstance(JSGlobalObject*, PyType*);
+ void collectAndFinalize(JSGlobalObject*);
+ // In CPython a file that is dropped is closed at once, and programs count on it: open(path, "w").write(text), and whoever opens the
+ // file next finds the text. Here it would be closed after some collection. So the streams over files that hold output are kept in
+-// a list, and what they hold is written before the program, or anyone it starts, can look at a file. (When a buffer is written is
+-// up to the implementation, so this is never wrong.) Does not raise.
+-void writeOutPendingOutput(JSGlobalObject*);
++// a list, and what they hold is written before the program, or anyone it starts, can look at a file, and before it does anything
++// to a file or a descriptor that would come out differently afterwards (truncating, closing, writing). (When a buffer is written
++// is up to the implementation, so this is never wrong.) Not sys.stdout and sys.stderr, which nobody drops. Does not raise.
++void writeOutPendingOutputSlow(JSGlobalObject*);
++ALWAYS_INLINE void writeOutPendingOutput(JSGlobalObject* globalObject)
++{
++    if (runtime(globalObject).mayHavePendingOutput()) [[unlikely]]
++        writeOutPendingOutputSlow(globalObject);
++}
+ void wipeStackBelow(VM&);
+ // If all that callee(...) does is self = object.__new__(callee), then callee.__init__(self, ...), and that is a function written
+ // in Python: the function, and a new `self`. Otherwise the empty value.
+@@ -247,6 +253,7 @@ JSValue dictSubscript(JSGlobalObject*, PyDict*, JSValue key);
+ JSValue makeMappingProxy(JSGlobalObject*, JSValue mapping);
+ void setUpdate(JSGlobalObject*, JSValue set, JSValue iterable);
+ int64_t hashOfTuple(JSGlobalObject*, PyTuple*);
++PyType* orderedDictType(JSGlobalObject*); // collections.OrderedDict (PyOrderedDict.cpp)
+ JSValue makeRangeIterator(JSGlobalObject*, JSValue range);
+ 
+ // ---- Signals, the thread (PySignal.cpp, PyThread.cpp) ----
+diff --git a/Source/JavaScriptCore/python/runtime/PyJson.cpp b/Source/JavaScriptCore/python/runtime/PyJson.cpp
+index 94cd8acc..2e3a65c8 100644
+--- a/Source/JavaScriptCore/python/runtime/PyJson.cpp
++++ b/Source/JavaScriptCore/python/runtime/PyJson.cpp
+@@ -1122,7 +1122,7 @@ static constexpr TypeDef jsonEncoderTypeDef { "_json.Encoder"_s, { }, jsonEncode
+ static constexpr NativeDef jsonFunctions[] = {
+     PY_FUNCTION("encode_basestring_ascii", jsonEncodeBaseString<true>, "(pystr, /)"),
+     PY_FUNCTION("encode_basestring", jsonEncodeBaseString<false>, "(pystr, /)"),
+-    PY_FUNCTION("scanstring", jsonScanString, "(*args, **kwargs)"),
++    PY_FUNCTION("scanstring", jsonScanString, "!(pystr, end, strict=True, /)"),
+ };
+ 
+ static JSValue jsonEncoderNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs& args)
+diff --git a/Source/JavaScriptCore/python/runtime/PyList.cpp b/Source/JavaScriptCore/python/runtime/PyList.cpp
+index 453c83fa..df62cfdd 100644
+--- a/Source/JavaScriptCore/python/runtime/PyList.cpp
++++ b/Source/JavaScriptCore/python/runtime/PyList.cpp
+@@ -1741,6 +1741,8 @@ void initializeListTypes(JSGlobalObject* globalObject)
+ 
+ int64_t hashOfTuple(JSGlobalObject* globalObject, PyTuple* tuple)
+ {
++    if (int64_t cached = tuple->cachedHash(); cached != -1)
++        return cached;
+     VM& vm = getVM(globalObject);
+     auto scope = DECLARE_THROW_SCOPE(vm);
+     if (!isSafeToRecurseWithMargin(vm, 64 * KB)) [[unlikely]] {
+@@ -1762,7 +1764,8 @@ int64_t hashOfTuple(JSGlobalObject* globalObject, PyTuple* tuple)
+     }
+     accumulator += length ^ (prime5 ^ 3527539UL);
+     if (accumulator == static_cast<uint64_t>(-1))
+-        return 1546275796;
++        accumulator = 1546275796;
++    tuple->setCachedHash(static_cast<int64_t>(accumulator));
+     return static_cast<int64_t>(accumulator);
+ }
+ 
+diff --git a/Source/JavaScriptCore/python/runtime/PyNative.h b/Source/JavaScriptCore/python/runtime/PyNative.h
+index 87dda572..6d2d55c4 100644
+--- a/Source/JavaScriptCore/python/runtime/PyNative.h
++++ b/Source/JavaScriptCore/python/runtime/PyNative.h
+@@ -92,6 +92,7 @@ private:
+ // the function is JSValue f(JSGlobalObject*, JSValue self, JSValue sep, JSValue maxsplit): one parameter for each in the
+ // signature, which is empty if the caller left it out. The caller's arguments are checked against the signature.
+ // With *args or **kwargs in the signature, it is JSValue f(JSGlobalObject*, JSValue self, const CallArgs&), and nothing is checked.
++// The same with a ! before the signature, which then is only what __text_signature__ shows: "!(iterable, /, *, key=None)".
+ // (`self` is there only if the signature starts with a $ parameter.)
+ // What throws returns an empty value.
+ 
+@@ -110,6 +111,11 @@ struct NativeSignature {
+ constexpr NativeSignature parseNativeSignature(const char* text, size_t length)
+ {
+     NativeSignature result;
++    if (length && text[0] == '!') {
++        result.isVariadic = true;
++        ++text;
++        --length;
++    }
+     if (length < 2 || text[0] != '(' || text[length - 1] != ')') {
+         result.isValid = false;
+         return result;
+diff --git a/Source/JavaScriptCore/python/runtime/PyOrderedDict.cpp b/Source/JavaScriptCore/python/runtime/PyOrderedDict.cpp
+new file mode 100644
+index 00000000..4c49473a
+--- /dev/null
++++ b/Source/JavaScriptCore/python/runtime/PyOrderedDict.cpp
+@@ -0,0 +1,634 @@
++/*
++ * Copyright (C) 2026 Oven, Inc. All rights reserved.
++ * SPDX-License-Identifier: BSD-2-Clause
++ */
++
++#include "config.h"
++
++#include "JSCInlines.h"
++#include "PyAbstract.h"
++#include "PyDict.h"
++#include "PyErrors.h"
++#include "PyInternals.h"
++#include "PyIterators.h"
++#include "PyList.h"
++#include "PyModuleHelpers.h"
++#include "PyNumbers.h"
++#include "PyRuntime.h"
++#include "PyStr.h"
++#include "PyTuple.h"
++#include "PyType.h"
++
++namespace JSC {
++namespace Python {
++
++// collections.OrderedDict. (Objects/odictobject.c in CPython is the reference for what it does.)
++//
++// A dict keeps its entries in the order they were inserted, can give up an entry at either end and can take one at either end
++// (PyDict::takeFirst(), moveToEnd()), so the order of an OrderedDict is that of the dict it is, and there is no list on the side
++// as in CPython. What shows: dict.__delitem__(od, key) and the like, which go behind the back of CPython's and leave it
++// unusable, do here what od.__delitem__(key) does.
++//
++// Where CPython's looks a key up again although it has just come from the OrderedDict itself (iterators, copy(), repr()), so that
++// keys whose hash changes are a KeyError, this one does the same for keys of classes that could do that.
++
++extern const TypeDef orderedDictTypeDef;
++
++PyType* orderedDictType(JSGlobalObject* globalObject)
++{
++    Runtime& rt = runtime(globalObject);
++    return rt.typeFor(orderedDictTypeDef, rt.dictType());
++}
++
++static bool isOrderedDict(JSGlobalObject* globalObject, JSValue value)
++{
++    auto* dict = PyDict::tryFrom(value);
++    return dict && dict->type()->isSubtypeOf(orderedDictType(globalObject));
++}
++
++static bool isExactOrderedDict(JSGlobalObject* globalObject, PyDict* dict) { return dict->type() == orderedDictType(globalObject); }
++
++// Whether the key is sure to be found where it was put.
++static ALWAYS_INLINE bool hashCannotChange(JSValue key) { return key.isString() || key.isNumber() || key.isUndefinedOrNull() || key.isBoolean(); }
++
++static JSValue raiseMutated(JSGlobalObject* globalObject, ThrowScope& scope)
++{
++    return raiseRuntimeError(globalObject, scope, "OrderedDict mutated during iteration"_s);
++}
++
++// The value of a key that iteration has come to.
++static JSValue valueOfOwnKey(JSGlobalObject* globalObject, PyDict* dict, JSValue key, JSValue valueInEntry)
++{
++    if (hashCannotChange(key)) [[likely]]
++        return valueInEntry;
++    VM& vm = getVM(globalObject);
++    auto scope = DECLARE_THROW_SCOPE(vm);
++    JSValue value = dict->get(globalObject, key);
++    RETURN_IF_EXCEPTION(scope, { });
++    if (!value)
++        return raiseKeyError(globalObject, scope, key);
++    return value;
++}
++
++// ---- Iterators ----
++
++enum ODictIteratorField : unsigned {
++    ODictIteratorDict, // Empty: exhausted.
++    ODictIteratorState, // A tuple of numbers would do; these are three fields for three numbers.
++    ODictIteratorSize,
++    ODictIteratorKind,
++    ODictIteratorFieldCount,
++};
++// PyRecord::number is the position.
++
++enum ODictIteratorKindBits : int { ODictReversed = 1, ODictKeys = 2, ODictValues = 4, ODictItems = ODictKeys | ODictValues };
++
++extern const TypeDef odictIteratorTypeDef;
++
++static JSValue makeODictIterator(JSGlobalObject* globalObject, PyDict* dict, int kind)
++{
++    Runtime& rt = runtime(globalObject);
++    VM& vm = rt.vm();
++    PyRecord* iterator = PyRecord::create(globalObject, rt.typeFor(odictIteratorTypeDef), ODictIteratorFieldCount);
++    // One over an empty OrderedDict is exhausted from the start, whatever is added later.
++    if (dict->size())
++        iterator->set(vm, ODictIteratorDict, dict);
++    iterator->set(vm, ODictIteratorState, jsNumber(dict->keysVersion()));
++    iterator->set(vm, ODictIteratorSize, jsNumber(dict->size()));
++    iterator->set(vm, ODictIteratorKind, jsNumber(kind));
++    iterator->number = kind & ODictReversed ? dict->endPosition() : 0;
++    return iterator;
++}
++
++// Empty, without an exception: exhausted.
++static JSValue odictIteratorStep(JSGlobalObject* globalObject, PyRecord* iterator)
++{
++    VM& vm = getVM(globalObject);
++    auto scope = DECLARE_THROW_SCOPE(vm);
++    JSValue dictValue = iterator->get(ODictIteratorDict);
++    if (!dictValue)
++        return { };
++    PyDict* dict = PyDict::from(dictValue);
++    int kind = iterator->get(ODictIteratorKind).asInt32();
++
++    if (iterator->number < 0) {
++        // It came to the end last time.
++        iterator->set(vm, ODictIteratorDict, { });
++        return { };
++    }
++    if (dict->keysVersion() != iterator->get(ODictIteratorState).asNumber()) {
++        iterator->set(vm, ODictIteratorDict, { });
++        return raiseMutated(globalObject, scope);
++    }
++    if (dict->size() != iterator->get(ODictIteratorSize).asNumber()) {
++        iterator->set(vm, ODictIteratorSize, jsNumber(-1)); // For good.
++        return raiseRuntimeError(globalObject, scope, "OrderedDict changed size during iteration"_s);
++    }
++
++    unsigned position = static_cast<unsigned>(iterator->number);
++    JSValue key, value;
++    bool found = kind & ODictReversed ? dict->previous(position, key, value) : dict->next(position, key, value);
++    if (!found) {
++        iterator->set(vm, ODictIteratorDict, { });
++        return { };
++    }
++    iterator->number = position;
++    // CPython's lets go of the OrderedDict when it is asked for more than there is, but knows that it is at the end one step before.
++    {
++        unsigned ahead = position;
++        JSValue ignoredKey, ignoredValue;
++        if (!(kind & ODictReversed ? dict->previous(ahead, ignoredKey, ignoredValue) : dict->next(ahead, ignoredKey, ignoredValue)))
++            iterator->number = -1;
++    }
++
++    if (!hashCannotChange(key)) [[unlikely]] {
++        value = dict->get(globalObject, key);
++        if (!value && !scope.exception())
++            raiseKeyError(globalObject, scope, key);
++        if (scope.exception()) {
++            if (kind & ODictValues)
++                iterator->set(vm, ODictIteratorDict, { });
++            iterator->number = -1;
++            return { };
++        }
++    }
++    if (!(kind & ODictValues))
++        return key;
++    if (!(kind & ODictKeys))
++        return value;
++    return PyTuple::create(globalObject, { key, value });
++}
++
++static JSValue odictIteratorIter(JSGlobalObject*, JSValue self) { return self; }
++
++static JSValue odictIteratorNext(JSGlobalObject* globalObject, JSValue self)
++{
++    VM& vm = getVM(globalObject);
++    auto scope = DECLARE_THROW_SCOPE(vm);
++    JSValue item = odictIteratorStep(globalObject, PyRecord::from(self));
++    RETURN_IF_EXCEPTION(scope, { });
++    return item ? item : raiseStopIteration(globalObject, scope);
++}
++
++// (iter, (what is left,)), found with a copy: this one stays where it is.
++static JSValue odictIteratorReduce(JSGlobalObject* globalObject, JSValue self)
++{
++    Runtime& rt = runtime(globalObject);
++    VM& vm = rt.vm();
++    auto scope = DECLARE_THROW_SCOPE(vm);
++    PyRecord* iterator = PyRecord::from(self);
++    PyRecord* copy = PyRecord::create(globalObject, iterator->type(), ODictIteratorFieldCount);
++    for (unsigned i = 0; i < ODictIteratorFieldCount; ++i)
++        copy->set(vm, i, iterator->get(i));
++    copy->number = iterator->number;
++    JSArray* rest = newList(globalObject);
++    RETURN_IF_EXCEPTION(scope, { });
++    while (true) {
++        JSValue item = odictIteratorStep(globalObject, copy);
++        RETURN_IF_EXCEPTION(scope, { });
++        if (!item)
++            break;
++        listAppend(globalObject, rest, item);
++        RETURN_IF_EXCEPTION(scope, { });
++    }
++    JSValue iter = currentBuiltin(globalObject, internString(vm, "iter"_s));
++    RETURN_IF_EXCEPTION(scope, { });
++    return PyTuple::create(globalObject, { iter, PyTuple::create(globalObject, { rest }) });
++}
++
++static constexpr NativeDef odictIteratorMethods[] = {
++    PY_SLOT("__iter__", odictIteratorIter, "($self, /)"),
++    PY_SLOT("__next__", odictIteratorNext, "($self, /)"),
++    PY_METHOD("__reduce__", odictIteratorReduce, "($self, /)"),
++};
++constexpr TypeDef odictIteratorTypeDef { "odict_iterator"_s, { TypeFlag::DisallowInstantiation }, odictIteratorMethods, { }, { } };
++
++// ---- Views ----
++
++template<int kind>
++static JSValue odictViewIter(JSGlobalObject* globalObject, JSValue self) { return makeODictIterator(globalObject, PyDictView::from(self)->dict(), kind); }
++
++static constexpr NativeDef odictKeysMethods[] = {
++    PY_SLOT("__iter__", odictViewIter<ODictKeys>, "($self, /)"),
++    PY_METHOD("__reversed__", odictViewIter<ODictKeys | ODictReversed>, "($self, /)"),
++};
++static constexpr NativeDef odictValuesMethods[] = {
++    PY_SLOT("__iter__", odictViewIter<ODictValues>, "($self, /)"),
++    PY_METHOD("__reversed__", odictViewIter<ODictValues | ODictReversed>, "($self, /)"),
++};
++static constexpr NativeDef odictItemsMethods[] = {
++    PY_SLOT("__iter__", odictViewIter<ODictItems>, "($self, /)"),
++    PY_METHOD("__reversed__", odictViewIter<ODictItems | ODictReversed>, "($self, /)"),
++};
++static constexpr TypeDef odictKeysTypeDef { "odict_keys"_s, { }, odictKeysMethods, { }, { } };
++static constexpr TypeDef odictValuesTypeDef { "odict_values"_s, { }, odictValuesMethods, { }, { } };
++static constexpr TypeDef odictItemsTypeDef { "odict_items"_s, { }, odictItemsMethods, { }, { } };
++
++static JSValue makeODictView(JSGlobalObject* globalObject, JSValue self, PyDictView::Kind kind)
++{
++    Runtime& rt = runtime(globalObject);
++    PyDictView* view = PyDictView::create(globalObject, kind, PyDict::from(self));
++    PyType* type = kind == PyDictView::Kind::Keys ? rt.typeFor(odictKeysTypeDef, rt.dictKeysType())
++        : kind == PyDictView::Kind::Values ? rt.typeFor(odictValuesTypeDef, rt.dictValuesType()) : rt.typeFor(odictItemsTypeDef, rt.dictItemsType());
++    view->setType(rt.vm(), type);
++    return view;
++}
++
++static JSValue odictKeys(JSGlobalObject* globalObject, JSValue self) { return makeODictView(globalObject, self, PyDictView::Kind::Keys); }
++static JSValue odictValues(JSGlobalObject* globalObject, JSValue self) { return makeODictView(globalObject, self, PyDictView::Kind::Values); }
++static JSValue odictItems(JSGlobalObject* globalObject, JSValue self) { return makeODictView(globalObject, self, PyDictView::Kind::Items); }
++static JSValue odictIter(JSGlobalObject* globalObject, JSValue self) { return makeODictIterator(globalObject, PyDict::from(self), ODictKeys); }
++static JSValue odictReversed(JSGlobalObject* globalObject, JSValue self) { return makeODictIterator(globalObject, PyDict::from(self), ODictKeys | ODictReversed); }
++
++// ---- update(), as collections.abc.MutableMapping has it: through __setitem__ ----
++
++static bool addPairs(JSGlobalObject* globalObject, JSValue self, JSValue pairs)
++{
++    VM& vm = getVM(globalObject);
++    auto scope = DECLARE_THROW_SCOPE(vm);
++    forEach(globalObject, pairs, [&](JSValue pair) {
++        JSValue iterator = getIter(globalObject, pair);
++        RETURN_IF_EXCEPTION(scope, false);
++        JSValue key = iterNext(globalObject, iterator);
++        RETURN_IF_EXCEPTION(scope, false);
++        if (!key) {
++            raiseValueError(globalObject, scope, "need more than 0 values to unpack"_s);
++            return false;
++        }
++        JSValue value = iterNext(globalObject, iterator);
++        RETURN_IF_EXCEPTION(scope, false);
++        if (!value) {
++            raiseValueError(globalObject, scope, "need more than 1 value to unpack"_s);
++            return false;
++        }
++        JSValue unexpected = iterNext(globalObject, iterator);
++        RETURN_IF_EXCEPTION(scope, false);
++        if (unexpected) {
++            raiseValueError(globalObject, scope, "too many values to unpack (expected 2)"_s);
++            return false;
++        }
++        setItem(globalObject, self, key, value);
++        return !scope.exception();
++    });
++    return !scope.exception();
++}
++
++static bool updateFrom(JSGlobalObject* globalObject, JSValue self, JSValue other)
++{
++    Runtime& rt = runtime(globalObject);
++    VM& vm = rt.vm();
++    auto scope = DECLARE_THROW_SCOPE(vm);
++    if (auto* dict = PyDict::tryFrom(other); dict && (dict->type() == rt.dictType() || dict->type() == rt.frozendictType())) {
++        // Into an OrderedDict itself nothing of the program's runs but the methods of the keys.
++        if (auto* target = PyDict::tryFrom(self); target && isExactOrderedDict(globalObject, target))
++            RELEASE_AND_RETURN(scope, (dictUpdate(globalObject, target, dict), !scope.exception()));
++        RELEASE_AND_RETURN(scope, addPairs(globalObject, self, PyDictView::create(globalObject, PyDictView::Kind::Items, dict)));
++    }
++    JSValue keysMethod = getAttrIfPresent(globalObject, other, rt.names.keys());
++    RETURN_IF_EXCEPTION(scope, false);
++    if (keysMethod) {
++        JSValue keys = call(globalObject, keysMethod);
++        RETURN_IF_EXCEPTION(scope, false);
++        forEach(globalObject, keys, [&](JSValue key) {
++            JSValue value = getItem(globalObject, other, key);
++            RETURN_IF_EXCEPTION(scope, false);
++            setItem(globalObject, self, key, value);
++            return !scope.exception();
++        });
++        return !scope.exception();
++    }
++    JSValue itemsMethod = getAttrIfPresent(globalObject, other, rt.names.items());
++    RETURN_IF_EXCEPTION(scope, false);
++    if (itemsMethod) {
++        JSValue items = call(globalObject, itemsMethod);
++        RETURN_IF_EXCEPTION(scope, false);
++        RELEASE_AND_RETURN(scope, addPairs(globalObject, self, items));
++    }
++    RELEASE_AND_RETURN(scope, addPairs(globalObject, self, other));
++}
++
++static JSValue odictUpdate(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
++{
++    VM& vm = getVM(globalObject);
++    auto scope = DECLARE_THROW_SCOPE(vm);
++    if (args.size() > 1)
++        return raiseTypeError(globalObject, scope, "update() takes at most 1 positional argument ("_s, args.size(), " given)"_s);
++    if (args.size()) {
++        bool ok = updateFrom(globalObject, self, args[0]);
++        EXCEPTION_ASSERT(!scope.exception() == ok);
++        if (!ok)
++            return { };
++    }
++    for (unsigned i = 0; i < args.keywordCount(); ++i) {
++        setItem(globalObject, self, args.keywordName(i), args.keywordValue(i));
++        RETURN_IF_EXCEPTION(scope, { });
++    }
++    return jsUndefined();
++}
++
++static JSValue odictInit(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
++{
++    VM& vm = getVM(globalObject);
++    auto scope = DECLARE_THROW_SCOPE(vm);
++    if (args.size() > 1)
++        return raiseTypeError(globalObject, scope, "expected at most 1 argument, got "_s, args.size());
++    RELEASE_AND_RETURN(scope, odictUpdate(globalObject, self, args));
++}
++
++// ---- Items ----
++
++static JSValue odictSetItem(JSGlobalObject* globalObject, JSValue self, JSValue key, JSValue value)
++{
++    VM& vm = getVM(globalObject);
++    auto scope = DECLARE_THROW_SCOPE(vm);
++    PyDict::from(self)->set(globalObject, key, value);
++    RETURN_IF_EXCEPTION(scope, { });
++    return jsUndefined();
++}
++
++static JSValue odictDelItem(JSGlobalObject* globalObject, JSValue self, JSValue key)
++{
++    VM& vm = getVM(globalObject);
++    auto scope = DECLARE_THROW_SCOPE(vm);
++    bool removed = PyDict::from(self)->remove(globalObject, key);
++    RETURN_IF_EXCEPTION(scope, { });
++    if (!removed)
++        return raiseKeyError(globalObject, scope, key);
++    return jsUndefined();
++}
++
++static JSValue odictSetDefault(JSGlobalObject* globalObject, JSValue self, JSValue key, JSValue defaultValue)
++{
++    VM& vm = getVM(globalObject);
++    auto scope = DECLARE_THROW_SCOPE(vm);
++    PyDict* dict = PyDict::from(self);
++    if (!defaultValue)
++        defaultValue = jsUndefined();
++    if (isExactOrderedDict(globalObject, dict))
++        RELEASE_AND_RETURN(scope, dict->setDefault(globalObject, key, defaultValue));
++    bool exists = contains(globalObject, self, key);
++    RETURN_IF_EXCEPTION(scope, { });
++    if (exists)
++        RELEASE_AND_RETURN(scope, getItem(globalObject, self, key));
++    setItem(globalObject, self, key, defaultValue);
++    RETURN_IF_EXCEPTION(scope, { });
++    return defaultValue;
++}
++
++static JSValue odictPop(JSGlobalObject* globalObject, JSValue self, JSValue key, JSValue defaultValue)
++{
++    VM& vm = getVM(globalObject);
++    auto scope = DECLARE_THROW_SCOPE(vm);
++    JSValue value = PyDict::from(self)->take(globalObject, key);
++    RETURN_IF_EXCEPTION(scope, { });
++    if (value)
++        return value;
++    if (defaultValue)
++        return defaultValue;
++    return raiseKeyError(globalObject, scope, key);
++}
++
++static JSValue odictPopItem(JSGlobalObject* globalObject, JSValue self, JSValue lastValue)
++{
++    VM& vm = getVM(globalObject);
++    auto scope = DECLARE_THROW_SCOPE(vm);
++    bool last = true;
++    if (lastValue) {
++        last = isTrue(globalObject, lastValue);
++        RETURN_IF_EXCEPTION(scope, { });
++    }
++    PyDict* dict = PyDict::from(self);
++    JSValue key, value;
++    if (!(last ? dict->takeLast(vm, key, value) : dict->takeFirst(vm, key, value)))
++        return raiseKeyError(globalObject, scope, makeStr(vm, "dictionary is empty"_s));
++    return PyTuple::create(globalObject, { key, value });
++}
++
++static JSValue odictMoveToEnd(JSGlobalObject* globalObject, JSValue self, JSValue key, JSValue lastValue)
++{
++    VM& vm = getVM(globalObject);
++    auto scope = DECLARE_THROW_SCOPE(vm);
++    bool last = true;
++    if (lastValue) {
++        last = isTrue(globalObject, lastValue);
++        RETURN_IF_EXCEPTION(scope, { });
++    }
++    bool found = PyDict::from(self)->moveToEnd(globalObject, key, last);
++    RETURN_IF_EXCEPTION(scope, { });
++    if (!found)
++        return raiseKeyError(globalObject, scope, key);
++    return jsUndefined();
++}
++
++static JSValue odictClear(JSGlobalObject* globalObject, JSValue self)
++{
++    PyDict::from(self)->clear(getVM(globalObject));
++    return jsUndefined();
++}
++
++static JSValue odictCopy(JSGlobalObject* globalObject, JSValue self)
++{
++    Runtime& rt = runtime(globalObject);
++    VM& vm = rt.vm();
++    auto scope = DECLARE_THROW_SCOPE(vm);
++    PyDict* dict = PyDict::from(self);
++    bool isExact = isExactOrderedDict(globalObject, dict);
++    JSValue result = isExact ? JSValue(PyDict::create(vm, rt.structure<PyDict>(), dict->type())) : call(globalObject, dict->type());
++    RETURN_IF_EXCEPTION(scope, { });
++
++    uint32_t state = dict->keysVersion();
++    JSValue key, value;
++    int64_t hash;
++    for (unsigned position = 0; dict->next(position, key, value, hash);) {
++        if (isExact) {
++            value = valueOfOwnKey(globalObject, dict, key, value);
++            RETURN_IF_EXCEPTION(scope, { });
++            PyDict::from(result)->set(globalObject, key, hash, value);
++        } else {
++            value = getItem(globalObject, self, key);
++            RETURN_IF_EXCEPTION(scope, { });
++            setItem(globalObject, result, key, value);
++        }
++        RETURN_IF_EXCEPTION(scope, { });
++        if (dict->keysVersion() != state)
++            return raiseMutated(globalObject, scope);
++    }
++    return result;
++}
++
++static JSValue odictFromKeys(JSGlobalObject* globalObject, JSValue cls, JSValue iterable, JSValue value)
++{
++    VM& vm = getVM(globalObject);
++    auto scope = DECLARE_THROW_SCOPE(vm);
++    if (!value)
++        value = jsUndefined();
++    JSValue result = call(globalObject, cls);
++    RETURN_IF_EXCEPTION(scope, { });
++    forEach(globalObject, iterable, [&](JSValue key) {
++        setItem(globalObject, result, key, value);
++        return !scope.exception();
++    });
++    RETURN_IF_EXCEPTION(scope, { });
++    return result;
++}
++
++// ---- The rest ----
++
++static JSValue odictRepr(JSGlobalObject* globalObject, JSValue self)
++{
++    Runtime& rt = runtime(globalObject);
++    VM& vm = rt.vm();
++    auto scope = DECLARE_THROW_SCOPE(vm);
++    PyDict* dict = PyDict::from(self);
++    if (dict->isEmpty())
++        return makeStr(globalObject, makeString(dict->type()->name(), "()"_s));
++    ReprGuard guard(globalObject, self);
++    if (guard.isRecursive())
++        return makeStr(vm, "..."_s);
++    // dict(self), which asks for the keys and then for the item of each.
++    PyDict* copy = PyDict::create(globalObject);
++    dictUpdate(globalObject, copy, self);
++    RETURN_IF_EXCEPTION(scope, { });
++    JSString* text = repr(globalObject, copy);
++    RETURN_IF_EXCEPTION(scope, { });
++    String items = text->value(globalObject);
++    RETURN_IF_EXCEPTION(scope, { });
++    return makeStr(globalObject, makeString(dict->type()->name(), '(', items, ')'));
++}
++
++// 1, 0, or -1 for an exception.
++static int keysAreEqualInOrder(JSGlobalObject* globalObject, PyDict* a, PyDict* b)
++{
++    VM& vm = getVM(globalObject);
++    auto scope = DECLARE_THROW_SCOPE(vm);
++    uint32_t stateA = a->keysVersion();
++    uint32_t stateB = b->keysVersion();
++    unsigned positionA = 0;
++    unsigned positionB = 0;
++    while (true) {
++        JSValue keyA, keyB, ignored;
++        bool hasA = a->next(positionA, keyA, ignored);
++        bool hasB = b->next(positionB, keyB, ignored);
++        if (!hasA && !hasB)
++            return 1;
++        if (!hasA || !hasB)
++            return 0;
++        bool equal = richCompareBool(globalObject, keyA, keyB, CompareOperator::Eq);
++        RETURN_IF_EXCEPTION(scope, -1);
++        if (a->keysVersion() != stateA || b->keysVersion() != stateB) {
++            raiseMutated(globalObject, scope);
++            return -1;
++        }
++        if (!equal)
++            return 0;
++    }
++}
++
++template<bool wantEqual>
++static JSValue odictEquality(JSGlobalObject* globalObject, JSValue self, JSValue other)
++{
++    Runtime& rt = runtime(globalObject);
++    VM& vm = rt.vm();
++    auto scope = DECLARE_THROW_SCOPE(vm);
++    if (!PyDict::is(other))
++        return rt.notImplemented();
++    JSValue asDicts = callSpecial(globalObject, rt.dictType()->lookup(wantEqual ? Special::Eq : Special::Ne), self, other);
++    RETURN_IF_EXCEPTION(scope, { });
++    if (!isOrderedDict(globalObject, other) || asDicts == jsBoolean(!wantEqual))
++        return asDicts;
++    int equal = keysAreEqualInOrder(globalObject, PyDict::from(self), PyDict::from(other));
++    if (equal < 0)
++        return { };
++    return jsBoolean(!!equal == wantEqual);
++}
++
++static JSValue odictNotOrdered(JSGlobalObject* globalObject, JSValue, JSValue) { return runtime(globalObject).notImplemented(); }
++
++static JSValue odictUnion(JSGlobalObject* globalObject, JSValue left, JSValue right)
++{
++    VM& vm = getVM(globalObject);
++    auto scope = DECLARE_THROW_SCOPE(vm);
++    bool leftIsOrdered = isOrderedDict(globalObject, left);
++    JSValue other = leftIsOrdered ? right : left;
++    if (!PyDict::is(other))
++        return runtime(globalObject).notImplemented();
++    JSValue result = call(globalObject, PyDict::from(leftIsOrdered ? left : right)->type(), left);
++    RETURN_IF_EXCEPTION(scope, { });
++    updateFrom(globalObject, result, right);
++    RETURN_IF_EXCEPTION(scope, { });
++    return result;
++}
++
++static JSValue odictOr(JSGlobalObject* globalObject, JSValue self, JSValue other) { return odictUnion(globalObject, self, other); }
++static JSValue odictROr(JSGlobalObject* globalObject, JSValue self, JSValue other) { return odictUnion(globalObject, other, self); }
++
++static JSValue odictIOr(JSGlobalObject* globalObject, JSValue self, JSValue other)
++{
++    VM& vm = getVM(globalObject);
++    auto scope = DECLARE_THROW_SCOPE(vm);
++    updateFrom(globalObject, self, other);
++    RETURN_IF_EXCEPTION(scope, { });
++    return self;
++}
++
++static JSValue odictReduce(JSGlobalObject* globalObject, JSValue self)
++{
++    Runtime& rt = runtime(globalObject);
++    VM& vm = rt.vm();
++    auto scope = DECLARE_THROW_SCOPE(vm);
++    JSValue state = getObjectState(globalObject, self);
++    RETURN_IF_EXCEPTION(scope, { });
++    JSValue items = callMethod(globalObject, self, rt.names.items());
++    RETURN_IF_EXCEPTION(scope, { });
++    JSValue iterator = getIter(globalObject, items);
++    RETURN_IF_EXCEPTION(scope, { });
++    return PyTuple::create(globalObject, { JSValue(PyDict::from(self)->type()), rt.emptyTuple(), state, jsUndefined(), iterator });
++}
++
++// More than the dict it is, as in CPython, where it has a list besides.
++static JSValue odictSizeOf(JSGlobalObject* globalObject, JSValue self)
++{
++    Runtime& rt = runtime(globalObject);
++    VM& vm = rt.vm();
++    auto scope = DECLARE_THROW_SCOPE(vm);
++    JSValue base = call(globalObject, rt.dictType()->lookup(internString(vm, "__sizeof__"_s)), self);
++    RETURN_IF_EXCEPTION(scope, { });
++    return jsNumber(base.asNumber() + 2 * sizeof(void*));
++}
++
++static constexpr NativeDef orderedDictMethods[] = {
++    PY_SLOT("__init__", odictInit, "($self, /, *args, **kwargs)"),
++    PY_SLOT("__setitem__", odictSetItem, "($self, key, value, /)"),
++    PY_SLOT("__delitem__", odictDelItem, "($self, key, /)"),
++    PY_SLOT("__iter__", odictIter, "($self, /)"),
++    PY_SLOT("__repr__", odictRepr, "($self, /)"),
++    PY_SLOT("__eq__", odictEquality<true>, "($self, value, /)"),
++    PY_SLOT("__ne__", odictEquality<false>, "($self, value, /)"),
++    PY_SLOT("__lt__", odictNotOrdered, "($self, value, /)"),
++    PY_SLOT("__le__", odictNotOrdered, "($self, value, /)"),
++    PY_SLOT("__gt__", odictNotOrdered, "($self, value, /)"),
++    PY_SLOT("__ge__", odictNotOrdered, "($self, value, /)"),
++    PY_SLOT("__or__", odictOr, "($self, value, /)"),
++    PY_SLOT("__ror__", odictROr, "($self, value, /)"),
++    PY_SLOT("__ior__", odictIOr, "($self, value, /)"),
++    PY_METHOD("__reversed__", odictReversed, "($self, /)"),
++    PY_METHOD("__reduce__", odictReduce, "($self, /)"),
++    PY_METHOD("__sizeof__", odictSizeOf, "($self, /)"),
++    PY_CLASSMETHOD("fromkeys", odictFromKeys, "($type, /, iterable, value=None)"),
++    PY_METHOD("setdefault", odictSetDefault, "($self, /, key, default=None)"),
++    PY_METHOD("pop", odictPop, "($self, /, key, default=<unrepresentable>)"),
++    PY_METHOD("popitem", odictPopItem, "($self, /, last=True)"),
++    PY_METHOD("keys", odictKeys, "($self, /)"),
++    PY_METHOD("values", odictValues, "($self, /)"),
++    PY_METHOD("items", odictItems, "($self, /)"),
++    PY_METHOD("update", odictUpdate, "($self, /, *args, **kwargs)"),
++    PY_METHOD("clear", odictClear, "($self, /)"),
++    PY_METHOD("copy", odictCopy, "($self, /)"),
++    PY_METHOD("move_to_end", odictMoveToEnd, "($self, /, key, last=True)"),
++};
++
++constexpr TypeDef orderedDictTypeDef { "collections.OrderedDict"_s, { TypeFlag::Base, TypeFlag::HasDict, TypeFlag::HasWeakref, TypeFlag::OwnLayout }, orderedDictMethods, { },
++    "Dictionary that remembers insertion order"_s };
++
++} // namespace Python
++} // namespace JSC
+diff --git a/Source/JavaScriptCore/python/runtime/PyPickle.cpp b/Source/JavaScriptCore/python/runtime/PyPickle.cpp
+index 39ee4ebd..6452dc8d 100644
+--- a/Source/JavaScriptCore/python/runtime/PyPickle.cpp
++++ b/Source/JavaScriptCore/python/runtime/PyPickle.cpp
+@@ -2118,7 +2118,7 @@ static constexpr NativeDef picklerMethods[] = {
+     PY_SLOT("__getattribute__", picklerGetAttribute, "($self, name, /)"),
+     PY_SLOT("__setattr__", picklerSetAttr, "($self, name, value, /)"),
+     PY_SLOT("__delattr__", picklerDelAttr, "($self, name, /)"),
+-    PY_METHOD("dump", picklerDump, "($self, *args, **kwargs)"),
++    PY_METHOD("dump", picklerDump, "!($self, obj, /)"),
+     PY_METHOD("clear_memo", picklerClearMemoMethod, "($self, /)"),
+     PY_METHOD("__sizeof__", picklerSizeOf, "($self, /)"),
+ };
+@@ -3902,9 +3902,9 @@ static constexpr NativeDef unpicklerMethods[] = {
+     PY_SLOT("__getattribute__", unpicklerGetAttribute, "($self, name, /)"),
+     PY_SLOT("__setattr__", unpicklerSetAttr, "($self, name, value, /)"),
+     PY_SLOT("__delattr__", unpicklerDelAttr, "($self, name, /)"),
+-    PY_METHOD("persistent_load", unpicklerPersistentLoad, "($self, *args, **kwargs)"),
+-    PY_METHOD("load", unpicklerLoad, "($self, *args, **kwargs)"),
+-    PY_METHOD("find_class", unpicklerFindClassMethod, "($self, *args, **kwargs)"),
++    PY_METHOD("persistent_load", unpicklerPersistentLoad, "!($self, pid, /)"),
++    PY_METHOD("load", unpicklerLoad, "!($self, /)"),
++    PY_METHOD("find_class", unpicklerFindClassMethod, "!($self, module_name, global_name, /)"),
+     PY_METHOD("__sizeof__", unpicklerSizeOf, "($self, /)"),
+ };
+ 
+diff --git a/Source/JavaScriptCore/python/runtime/PyPosixFiles.cpp b/Source/JavaScriptCore/python/runtime/PyPosixFiles.cpp
+index ef4004c0..aaa48c7e 100644
+--- a/Source/JavaScriptCore/python/runtime/PyPosixFiles.cpp
++++ b/Source/JavaScriptCore/python/runtime/PyPosixFiles.cpp
+@@ -381,6 +381,7 @@ static JSValue posixLchown(JSGlobalObject* globalObject, JSValue pathValue, JSVa
+ 
+ static JSValue posixLink(JSGlobalObject* globalObject, JSValue sourceValue, JSValue destinationValue, JSValue sourceDirFdValue, JSValue destinationDirFdValue, JSValue followSymlinksValue)
+ {
++    writeOutPendingOutput(globalObject);
+     PosixPath source("link"_s, "src"_s);
+     PosixPath destination("link"_s, "dst"_s, PosixPath::MakesNew);
+     int sourceDirFd;
+@@ -478,6 +479,7 @@ static JSValue posixRemove(JSGlobalObject* globalObject, JSValue path, JSValue d
+ 
+ static JSValue posixRenameNamed(JSGlobalObject* globalObject, ASCIILiteral function, JSValue sourceValue, JSValue destinationValue, JSValue sourceDirFdValue, JSValue destinationDirFdValue)
+ {
++    writeOutPendingOutput(globalObject);
+     PosixPath source(function, "src"_s);
+     PosixPath destination(function, "dst"_s, PosixPath::MakesOrReplaces);
+     int sourceDirFd;
+@@ -720,6 +722,7 @@ static constexpr TypeDef posixStatxResultTypeDef { "os.statx_result"_s, { }, pos
+ 
+ static JSValue posixStatxFunction(JSGlobalObject* globalObject, JSValue pathValue, JSValue maskValue, JSValue flagsValue, JSValue dirFdValue, JSValue followSymlinksValue)
+ {
++    writeOutPendingOutput(globalObject);
+     Runtime& rt = runtime(globalObject);
+     VM& vm = rt.vm();
+     auto scope = DECLARE_THROW_SCOPE(vm);
+@@ -813,6 +816,7 @@ static JSValue posixStatxFunction(JSGlobalObject* globalObject, JSValue pathValu
+ 
+ static JSValue posixTruncate(JSGlobalObject* globalObject, JSValue pathValue, JSValue lengthValue)
+ {
++    writeOutPendingOutput(globalObject);
+     PosixPath path("truncate"_s, PosixPath::AllowFd);
+     off_t length;
+     if (!path.convert(globalObject, pathValue) || !posixToOffset(globalObject, lengthValue, length))
+@@ -862,6 +866,7 @@ static bool posixSplitNanoseconds(JSGlobalObject* globalObject, JSValue value, s
+ 
+ static JSValue posixUtime(JSGlobalObject* globalObject, JSValue pathValue, JSValue times, JSValue ns, JSValue dirFdValue, JSValue followSymlinksValue)
+ {
++    writeOutPendingOutput(globalObject);
+     VM& vm = getVM(globalObject);
+     auto scope = DECLARE_THROW_SCOPE(vm);
+     PosixPath path("utime"_s, PosixPath::AllowFd);
+@@ -1092,6 +1097,7 @@ static unsigned char posixDirEntryType(PyRecord* entry) { return static_cast<uns
+ 
+ static JSValue posixDirEntryFetchStat(JSGlobalObject* globalObject, PyRecord* entry, bool followSymlinks)
+ {
++    writeOutPendingOutput(globalObject);
+     JSValue pathObject = entry->get(PosixDirEntryPath);
+     PosixBytes path;
+     if (!posixToFSBytes(globalObject, pathObject, path))
+diff --git a/Source/JavaScriptCore/python/runtime/PyPosixIO.cpp b/Source/JavaScriptCore/python/runtime/PyPosixIO.cpp
+index 07ba6e4c..3a03654a 100644
+--- a/Source/JavaScriptCore/python/runtime/PyPosixIO.cpp
++++ b/Source/JavaScriptCore/python/runtime/PyPosixIO.cpp
+@@ -81,6 +81,7 @@ static JSValue posixOpen(JSGlobalObject* globalObject, JSValue pathValue, JSValu
+ 
+ static JSValue posixClose(JSGlobalObject* globalObject, JSValue fdValue)
+ {
++    writeOutPendingOutput(globalObject);
+     int fd;
+     if (!posixToInt(globalObject, fdValue, fd))
+         return { };
+@@ -97,6 +98,7 @@ static JSValue posixClose(JSGlobalObject* globalObject, JSValue fdValue)
+ 
+ static JSValue posixCloserange(JSGlobalObject* globalObject, JSValue lowValue, JSValue highValue)
+ {
++    writeOutPendingOutput(globalObject);
+     int low;
+     int high;
+     if (!posixToInt(globalObject, lowValue, low) || !posixToInt(globalObject, highValue, high))
+@@ -131,6 +133,7 @@ static JSValue posixDup(JSGlobalObject* globalObject, JSValue fdValue)
+ 
+ static JSValue posixDup2(JSGlobalObject* globalObject, JSValue fdValue, JSValue fd2Value, JSValue inheritableValue)
+ {
++    writeOutPendingOutput(globalObject);
+     int fd;
+     int fd2;
+     bool inheritable;
+@@ -189,6 +192,7 @@ static JSValue posixPipe2(JSGlobalObject* globalObject, JSValue flagsValue)
+ 
+ static JSValue posixLseek(JSGlobalObject* globalObject, JSValue fdValue, JSValue positionValue, JSValue whenceValue)
+ {
++    writeOutPendingOutput(globalObject);
+     int fd;
+     off_t position;
+     int whence;
+@@ -215,6 +219,7 @@ static JSValue posixLseek(JSGlobalObject* globalObject, JSValue fdValue, JSValue
+ template<typename Function>
+ static JSValue posixReadBytes(JSGlobalObject* globalObject, int64_t length, const Function& function)
+ {
++    writeOutPendingOutput(globalObject);
+     if (length < 0)
+         return posixError(globalObject, EINVAL);
+     Vector<uint8_t, 8192> buffer;
+@@ -253,6 +258,7 @@ static JSValue posixPread(JSGlobalObject* globalObject, JSValue fdValue, JSValue
+ 
+ static JSValue posixReadinto(JSGlobalObject* globalObject, JSValue fdValue, JSValue bufferValue)
+ {
++    writeOutPendingOutput(globalObject);
+     int fd;
+     BufferHolder holder(globalObject);
+     if (!posixToInt(globalObject, fdValue, fd) || !posixGetWritableBuffer(globalObject, bufferValue, "readinto"_s, 2, holder))
+@@ -270,6 +276,7 @@ static JSValue posixReadinto(JSGlobalObject* globalObject, JSValue fdValue, JSVa
+ 
+ static JSValue posixWrite(JSGlobalObject* globalObject, JSValue fdValue, JSValue data)
+ {
++    writeOutPendingOutput(globalObject);
+     int fd;
+     BufferHolder holder(globalObject);
+     if (!posixToInt(globalObject, fdValue, fd) || !holder.get(data))
+@@ -287,6 +294,7 @@ static JSValue posixWrite(JSGlobalObject* globalObject, JSValue fdValue, JSValue
+ 
+ static JSValue posixPwrite(JSGlobalObject* globalObject, JSValue fdValue, JSValue data, JSValue offsetValue)
+ {
++    writeOutPendingOutput(globalObject);
+     int fd;
+     BufferHolder holder(globalObject);
+     off_t offset;
+@@ -372,6 +380,7 @@ private:
+ template<typename Function>
+ static JSValue posixTransfer(JSGlobalObject* globalObject, const Function& function)
+ {
++    writeOutPendingOutput(globalObject);
+     ssize_t count;
+     do {
+         AllowThreads allow(globalObject);
+@@ -520,6 +529,7 @@ static JSValue posixSplice(JSGlobalObject* globalObject, JSValue sourceValue, JS
+ #if OS(DARWIN)
+ static JSValue posixSendfile(JSGlobalObject* globalObject, JSValue outValue, JSValue inValue, JSValue offsetValue, JSValue countValue, JSValue headersValue, JSValue trailersValue, JSValue flagsValue)
+ {
++    writeOutPendingOutput(globalObject);
+     VM& vm = getVM(globalObject);
+     auto scope = DECLARE_THROW_SCOPE(vm);
+     int out;
+@@ -565,6 +575,7 @@ static JSValue posixSendfile(JSGlobalObject* globalObject, JSValue outValue, JSV
+ 
+ static JSValue posixFcopyfile(JSGlobalObject* globalObject, JSValue inValue, JSValue outValue, JSValue flagsValue)
+ {
++    writeOutPendingOutput(globalObject);
+     int in;
+     int out;
+     int flags;
+@@ -580,6 +591,7 @@ static JSValue posixFcopyfile(JSGlobalObject* globalObject, JSValue inValue, JSV
+ 
+ static JSValue posixFstat(JSGlobalObject* globalObject, JSValue fdValue)
+ {
++    writeOutPendingOutput(globalObject);
+     int fd;
+     if (!posixToInt(globalObject, fdValue, fd))
+         return { };
+@@ -597,6 +609,7 @@ static JSValue posixFstat(JSGlobalObject* globalObject, JSValue fdValue)
+ template<typename Function>
+ static JSValue posixCallWithDescriptor(JSGlobalObject* globalObject, const Function& function)
+ {
++    writeOutPendingOutput(globalObject);
+     int result;
+     do {
+         AllowThreads allow(globalObject);
+@@ -660,6 +673,7 @@ static JSValue posixFchown(JSGlobalObject* globalObject, JSValue fdValue, JSValu
+ 
+ static JSValue posixFtruncate(JSGlobalObject* globalObject, JSValue fdValue, JSValue lengthValue)
+ {
++    writeOutPendingOutput(globalObject);
+     int fd;
+     off_t length;
+     if (!posixToInt(globalObject, fdValue, fd) || !posixToOffset(globalObject, lengthValue, length))
+@@ -693,6 +707,7 @@ static JSValue posixLockf(JSGlobalObject* globalObject, JSValue fdValue, JSValue
+ template<typename Function>
+ static JSValue posixCallReturningError(JSGlobalObject* globalObject, const Function& function)
+ {
++    writeOutPendingOutput(globalObject);
+     int result;
+     do {
+         AllowThreads allow(globalObject);
+diff --git a/Source/JavaScriptCore/python/runtime/PyPosixSubprocess.cpp b/Source/JavaScriptCore/python/runtime/PyPosixSubprocess.cpp
+index 4ed91555..d241b3a7 100644
+--- a/Source/JavaScriptCore/python/runtime/PyPosixSubprocess.cpp
++++ b/Source/JavaScriptCore/python/runtime/PyPosixSubprocess.cpp
+@@ -596,7 +596,7 @@ pid_t posixSpawnChild(char* const* executables, char* const* arguments, char* co
+ }
+ 
+ static constexpr NativeDef subprocessFunctions[] = {
+-    PY_FUNCTION("fork_exec", subprocessForkExec, "(*args)"),
++    PY_FUNCTION("fork_exec", subprocessForkExec, "!(args, executable_list, close_fds, pass_fds, cwd, env, p2cread, p2cwrite, c2pread, c2pwrite, errread, errwrite, errpipe_read, errpipe_write, restore_signals, call_setsid, pgid_to_set, gid, extra_groups, uid, child_umask, preexec_fn, /)"),
+ };
+ 
+ void initializePosixSubprocessModule(JSGlobalObject* globalObject, PyModule* module)
+diff --git a/Source/JavaScriptCore/python/runtime/PyProfilers.cpp b/Source/JavaScriptCore/python/runtime/PyProfilers.cpp
+index d0236c99..c40976d1 100644
+--- a/Source/JavaScriptCore/python/runtime/PyProfilers.cpp
++++ b/Source/JavaScriptCore/python/runtime/PyProfilers.cpp
+@@ -464,7 +464,7 @@ static constexpr NativeDef profilerMethods[] = {
+     PY_METHOD("enable", profilerEnable, "($self, /, subcalls=True, builtins=True)"),
+     PY_METHOD("disable", profilerDisable, "($self, /)"),
+     PY_METHOD("clear", profilerClear, "($self, /)"),
+-    PY_METHOD("getstats", profilerGetStats, "($self, *args, **kwargs)"),
++    PY_METHOD("getstats", profilerGetStats, "!($self, /)"),
+     PY_METHOD("_pystart_callback", profilerPyStart, "($self, code, instruction_offset, /)"),
+     PY_METHOD("_pythrow_callback", profilerPyThrow, "($self, code, instruction_offset, exception, /)"),
+     PY_METHOD("_pyreturn_callback", profilerPyReturn, "($self, code, instruction_offset, retval, /)"),
+diff --git a/Source/JavaScriptCore/python/runtime/PyQueue.cpp b/Source/JavaScriptCore/python/runtime/PyQueue.cpp
+index a41382f1..70495e0e 100644
+--- a/Source/JavaScriptCore/python/runtime/PyQueue.cpp
++++ b/Source/JavaScriptCore/python/runtime/PyQueue.cpp
+@@ -122,7 +122,7 @@ static constexpr NativeDef simpleQueueMethods[] = {
+     PY_NEW(simpleQueueNew, "($type, *args, **kwargs)"),
+     PY_METHOD("empty", simpleQueueEmpty, "($self, /)"),
+     PY_METHOD("get", simpleQueueGet, "($self, /, block=True, timeout=None)"),
+-    PY_METHOD("get_nowait", simpleQueueGetNoWait, "($self, *args, **kwargs)"),
++    PY_METHOD("get_nowait", simpleQueueGetNoWait, "!($self, /)"),
+     PY_METHOD("put", simpleQueuePut, "($self, /, item, block=True, timeout=None)"),
+     PY_METHOD("put_nowait", simpleQueuePutNoWait, "($self, /, item)"),
+     PY_METHOD("qsize", simpleQueueQSize, "($self, /)"),
+diff --git a/Source/JavaScriptCore/python/runtime/PyRuntime.h b/Source/JavaScriptCore/python/runtime/PyRuntime.h
+index 41d2e5b0..bea66d18 100644
+--- a/Source/JavaScriptCore/python/runtime/PyRuntime.h
++++ b/Source/JavaScriptCore/python/runtime/PyRuntime.h
+@@ -508,6 +508,10 @@ public:
+     bool isRunningPendingCalls() const { return m_isRunningPendingCalls; }
+     // gc.collect() in one of those calls: there is a collection when all that are queued have been made.
+     void collectAfterPendingCalls() { m_shouldCollectAfterPendingCalls = true; }
++
++    // See writeOutPendingOutput().
++    ALWAYS_INLINE bool mayHavePendingOutput() const { return m_mayHavePendingOutput; }
++    void setMayHavePendingOutput(bool value) { m_mayHavePendingOutput = value; }
+     void didQueueCalls();
+     // When the interpreter exits: whatever is still registered is finalized, reachable or not.
+     void finalizeAllAtExit();
+@@ -636,6 +640,7 @@ private:
+     bool m_hasPendingCalls { false };
+     bool m_isRunningPendingCalls { false };
+     bool m_shouldCollectAfterPendingCalls { false };
++    bool m_mayHavePendingOutput { false };
+     MarkingObserver* m_markingObserver { nullptr };
+ 
+     Lock m_moduleTypesLock;
+diff --git a/Source/JavaScriptCore/python/runtime/PySys.cpp b/Source/JavaScriptCore/python/runtime/PySys.cpp
+index bccbcf4a..9917a5fb 100644
+--- a/Source/JavaScriptCore/python/runtime/PySys.cpp
++++ b/Source/JavaScriptCore/python/runtime/PySys.cpp
+@@ -578,7 +578,7 @@ static constexpr NativeDef sysFunctions[] = {
+     PY_FUNCTION("_is_gil_enabled", sysIsGILEnabled, "()"),
+     PY_FUNCTION("_is_interned", sysIsInterned, "(string, /)"),
+     PY_FUNCTION("addaudithook", sysAddAuditHook, "(hook)"),
+-    PY_FUNCTION("audit", sysAudit, "(*args)"),
++    PY_FUNCTION("audit", sysAudit, "(event, /, *args)"),
+     PY_FUNCTION("breakpointhook", sysBreakpointHook, "(*args, **kws)"),
+     PY_FUNCTION("call_tracing", sysCallTracing, "(func, args, /)"),
+     PY_FUNCTION("displayhook", sysDisplayHook, "(object, /)"),
+diff --git a/Source/JavaScriptCore/python/runtime/PyThread.cpp b/Source/JavaScriptCore/python/runtime/PyThread.cpp
+index 95f252fc..7697fc96 100644
+--- a/Source/JavaScriptCore/python/runtime/PyThread.cpp
++++ b/Source/JavaScriptCore/python/runtime/PyThread.cpp
+@@ -922,9 +922,9 @@ static constexpr NativeDef threadFunctions[] = {
+     PY_FUNCTION("_get_name", threadGetName, "()"),
+     PY_FUNCTION("set_name", threadSetName, "(name)"),
+ #endif
+-    PY_FUNCTION("stack_size", threadStackSize, "(*args, **kwargs)"),
+-    PY_FUNCTION("start_new_thread", threadStartNew, "(*args, **kwargs)"),
+-    PY_FUNCTION("start_new", threadStartNew, "(*args, **kwargs)"),
++    PY_FUNCTION("stack_size", threadStackSize, "!(size=0, /)"),
++    PY_FUNCTION("start_new_thread", threadStartNew, "!(function, args, kwargs={}, /)"),
++    PY_FUNCTION("start_new", threadStartNew, "!(function, args, kwargs={}, /)"),
+     PY_FUNCTION("start_joinable_thread", threadStartJoinable, "(function, handle=None, daemon=True)"),
+     PY_FUNCTION("exit", threadExit, "()"),
+     PY_FUNCTION("exit_thread", threadExit, "()"),
+@@ -1048,7 +1048,7 @@ static JSValue atexitClear(JSGlobalObject* globalObject)
+ static JSValue atexitNCallbacks(JSGlobalObject* globalObject) { return jsNumber(listLength(atexitCallbacks(globalObject))); }
+ 
+ static constexpr NativeDef atexitFunctions[] = {
+-    PY_FUNCTION("register", atexitRegister, "(*args, **kwargs)"),
++    PY_FUNCTION("register", atexitRegister, "(func, /, *args, **kwargs)"),
+     PY_FUNCTION("unregister", atexitUnregister, "(func, /)"),
+     PY_FUNCTION("_run_exitfuncs", atexitRunExitFuncs, "()"),
+     PY_FUNCTION("_clear", atexitClear, "()"),
+diff --git a/Source/JavaScriptCore/python/runtime/PyTuple.h b/Source/JavaScriptCore/python/runtime/PyTuple.h
+index 251c6886..dda46229 100644
+--- a/Source/JavaScriptCore/python/runtime/PyTuple.h
++++ b/Source/JavaScriptCore/python/runtime/PyTuple.h
+@@ -48,6 +48,10 @@ public:
+     }
+     std::span<const JSValue> span() const { return { reinterpret_cast<const JSValue*>(items()), m_length }; }
+ 
++    // hash(tuple), once it has been worked out; -1 until then. (The items do not change, and what is hashable keeps its hash.)
++    int64_t cachedHash() const { return m_hash; }
++    void setCachedHash(int64_t hash) { m_hash = hash; }
++
+     static constexpr ptrdiff_t offsetOfLength() { return OBJECT_OFFSETOF(PyTuple, m_length); }
+     static constexpr ptrdiff_t offsetOfItems() { return sizeof(PyTuple); }
+ 
+@@ -58,6 +62,7 @@ protected:
+     const WriteBarrier<Unknown>* items() const { return reinterpret_cast<const WriteBarrier<Unknown>*>(this + 1); }
+ 
+     unsigned m_length;
++    int64_t m_hash { -1 };
+ };
+ 
+ } // namespace Python
+diff --git a/Source/JavaScriptCore/python/runtime/PyTypeObject.cpp b/Source/JavaScriptCore/python/runtime/PyTypeObject.cpp
+index 0b26a965..7635aa27 100644
+--- a/Source/JavaScriptCore/python/runtime/PyTypeObject.cpp
++++ b/Source/JavaScriptCore/python/runtime/PyTypeObject.cpp
+@@ -503,8 +503,8 @@ static constexpr NativeDef objectMethods[] = {
+     PY_METHOD("__reduce__", objectReduce, "($self, /)"),
+     PY_METHOD("__reduce_ex__", objectReduceEx, "($self, protocol, /)"),
+     PY_METHOD("__getstate__", objectGetState, "($self, /)"),
+-    PY_CLASSMETHOD("__subclasshook__", objectSubclassHook, "($type, *args, **kwargs)"),
+-    PY_CLASSMETHOD("__init_subclass__", objectInitSubclass, "($type, *args, **kwargs)"),
++    PY_CLASSMETHOD("__subclasshook__", objectSubclassHook, "!($type, object, /)"),
++    PY_CLASSMETHOD("__init_subclass__", objectInitSubclass, "!($type, /)"),
+ };
+ 
+ static constexpr NativeGetSet objectGetSets[] = {
