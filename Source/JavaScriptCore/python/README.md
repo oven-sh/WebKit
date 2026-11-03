@@ -662,6 +662,9 @@ What code outside `python/` asks is one of these, and the answer is the same in 
   marking has converged (Python objects to finalize are kept), and by the host before `console.log` writes (Python's `stdout` is flushed).
 - **Is this the embedder's thread?** `Heap::mayRunEmbedderFinalizers()`: false only while a thread that Python started has the VM.
   See Threads. A program without such threads runs on one thread, and the answer is yes.
+- **Is a thread parked in the middle of a call?** `JSLock::hasParkedThreads()`: then code is running although the VM has no entry scope,
+  and the texts that strings had before they were made atoms are kept (`Heap::clearConcurrentRetainedDataIfPossible()`): a
+  `GCOwnedDataScope` on the stack of that thread may refer to one.
 
 One change to the collector was made for Python and is everybody's gain. The helper threads that mark in parallel used to be woken at
 the beginning of every collection and waited for at its end, which takes 0.4 ms and 0.9 ms of processor time with seven of
@@ -697,6 +700,7 @@ What every program pays, with the sizes of a release build for x86-64:
 | `x * 1`, `1 * x` | a multiplication: the parser no longer makes it `+x` |
 | A class definition with `extends` | a move, and a test of the type of the superclass; if that is an `InternalFunction` (`Map`, `Error`, `Promise`), a call of a function that finds it is not Python's |
 | A block or large allocation is swept | one load and branch (`mayRunEmbedderFinalizers()`) |
+| The incremental sweeper runs | one load and branch (`hasParkedThreads()`) |
 | A call is linked, or is virtual and not to compiled JS | is the caller Python code: three loads and a branch |
 | An exception passes a frame | the same, twice |
 | Bytecode is generated, a code block is linked or asks to be compiled | a look at `isPython()`: for each loop and jump, each call site, each code block |

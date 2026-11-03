@@ -1450,6 +1450,10 @@ void Heap::clearConcurrentRetainedDataIfPossible()
     if (vm().entryScope) [[unlikely]]
         return;
 
+    // A parked thread took its entry scope with it (JSLock::park()), and may have a GCOwnedDataScope on its stack.
+    if (vm().apiLock().hasParkedThreads()) [[unlikely]]
+        return;
+
     // It wouldn't be safe to clear the list if it's possible to have a GCOwnedDataScope on the stack since
     // m_possiblyAccessedStringsFromConcurrentThreadsOrGCOwnedDataScope
     // is what's keeping the backing bytes alive.
