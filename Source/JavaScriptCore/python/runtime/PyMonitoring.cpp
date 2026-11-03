@@ -31,6 +31,7 @@
 #include "PyStr.h"
 #include "PyThreads.h"
 #include "PyTuple.h"
+#include <map>
 #include <wtf/HexNumber.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/SetForScope.h>
@@ -43,15 +44,11 @@ using namespace Python;
 
 // ---- The opcodes that have been replaced ----
 
-// By the address of the instruction, for all VMs.
-struct ReplacedOpcode {
-    uint8_t opcode;
-    const CodeMonitor* owner;
-};
-static Lock replacedOpcodesLock;
-static UncheckedKeyHashMap<const void*, ReplacedOpcode>& replacedOpcodes() WTF_REQUIRES_LOCK(replacedOpcodesLock)
+// The code that has a monitor, of all VMs, by the address at which its instructions end. The monitor knows what it has replaced.
+static Lock monitoredCodeLock;
+static std::map<const uint8_t*, CodeMonitor*>& monitoredCode() WTF_REQUIRES_LOCK(monitoredCodeLock)
 {
-    static NeverDestroyed<UncheckedKeyHashMap<const void*, ReplacedOpcode>> map;
+    static NeverDestroyed<std::map<const uint8_t*, CodeMonitor*>> map;
     return map;
 }
 
@@ -66,10 +63,13 @@ static ALWAYS_INLINE const uint8_t* addressOfOpcode(const void* instruction)
 // The collector asks too (liveness of registers), from its own threads.
 OpcodeID originalOpcodeOfInstrumentedInstruction(const void* instruction)
 {
-    Locker locker { replacedOpcodesLock };
-    auto it = replacedOpcodes().find(instruction);
-    if (it != replacedOpcodes().end())
-        return static_cast<OpcodeID>(it->value.opcode);
+    auto* address = static_cast<const uint8_t*>(instruction);
+    Locker locker { monitoredCodeLock };
+    auto it = monitoredCode().upper_bound(address);
+    if (it != monitoredCode().end() && it->second->m_instructions <= address) {
+        if (auto opcode = it->second->opcodeThatMayBeReplacedAt(address - it->second->m_instructions))
+            return static_cast<OpcodeID>(*opcode);
+    }
     // It has been put back since the caller looked.
     auto opcode = static_cast<OpcodeID>(*addressOfOpcode(instruction));
     RELEASE_ASSERT(opcode != op_py_instrumented);
@@ -147,33 +147,53 @@ CodeMonitor::CodeMonitor(Monitoring& monitoring, UnlinkedCodeBlock* code)
     : m_monitoring(&monitoring)
     , m_code(monitoring.runtime().vm(), code)
     , m_instructions(bytesOf(code))
+    , m_instructionsSize(code->instructions().sizeInBytes())
+    , m_index(monitoring.m_monitors.size())
 {
-    Locker locker { monitoring.m_monitorsLock };
-    monitoring.m_monitors.add(this);
+    monitoring.m_monitors.append(this);
+    findEntrances();
+    Locker locker { monitoredCodeLock };
+    // When a VM ends, things go in no particular order: the instructions of some code of its may be gone, the monitor still be there,
+    // and these be where those were.
+    auto& map = monitoredCode();
+    for (auto it = map.upper_bound(m_instructions); it != map.end() && it->second->m_instructions < m_instructions + m_instructionsSize;)
+        it = map.erase(it);
+    map.emplace(m_instructions + m_instructionsSize, this);
 }
 
 CodeMonitor::~CodeMonitor()
 {
     if (m_monitoring) {
-        Locker locker { m_monitoring->m_monitorsLock };
-        m_monitoring->m_monitors.remove(this);
+        auto& monitors = m_monitoring->m_monitors;
+        monitors.last()->m_index = m_index;
+        monitors[m_index] = monitors.last();
+        monitors.removeLast();
+        m_monitoring->m_monitorsWhoseLocalToolsWantExceptions -= m_localToolsWantExceptions;
+        m_monitoring->m_monitorsWithLocalTools -= m_hasLocalTools;
     }
-    // The instructions go away with the code, as they are. When the VM ends they may be gone already, and another VM may have
-    // instructions of its own there.
-    Locker locker { replacedOpcodesLock };
-    for (auto& point : m_points) {
-        if (!point.isPatched)
-            continue;
-        auto it = replacedOpcodes().find(m_instructions + point.offset);
-        if (it != replacedOpcodes().end() && it->value.owner == this)
-            replacedOpcodes().remove(it);
-    }
+    // The instructions go away with the code, as they are.
+    Locker locker { monitoredCodeLock };
+    auto it = monitoredCode().find(m_instructions + m_instructionsSize);
+    if (it != monitoredCode().end() && it->second == this)
+        monitoredCode().erase(it);
 }
 
 CodeMonitor::Point* CodeMonitor::pointAt(unsigned offset)
 {
     auto it = std::ranges::lower_bound(m_points, offset, { }, &Point::offset);
     return it != m_points.end() && it->offset == offset ? &*it : nullptr;
+}
+
+std::optional<uint8_t> CodeMonitor::opcodeThatMayBeReplacedAt(unsigned offset) const
+{
+    for (auto& entrance : m_entrances) {
+        if (entrance.offset == offset)
+            return entrance.opcode;
+    }
+    auto it = std::ranges::lower_bound(m_points, offset, { }, &Point::offset);
+    if (it != m_points.end() && it->offset == offset)
+        return it->opcode;
+    return std::nullopt;
 }
 
 int CodeMonitor::lineAt(unsigned offset) const
@@ -191,6 +211,34 @@ uint32_t CodeMonitor::localEvents(unsigned tool) const
     return events;
 }
 
+// Whether any tool wants to be told of something for which instructions have to be replaced,
+template<typename Tools>
+static bool toolsWantPlaces(const Tools& tools)
+{
+    uint8_t wanted = tools[Event::PyThrow] | tools[Event::Raise];
+    for (unsigned event = 0; event < Event::instrumentedCount; ++event)
+        wanted |= tools[event];
+    return wanted;
+}
+
+// or of something the unwinder tells of.
+template<typename Tools>
+static bool toolsWantExceptions(const Tools& tools)
+{
+    return tools[Event::Raise] | tools[Event::Reraise] | tools[Event::ExceptionHandled] | tools[Event::PyUnwind];
+}
+
+void CodeMonitor::noteLocalTools()
+{
+    m_localToolsWantPlaces = toolsWantPlaces(m_localTools);
+    bool hasLocalTools = std::ranges::any_of(m_localTools, [](uint8_t tools) { return tools; });
+    m_monitoring->m_monitorsWithLocalTools += hasLocalTools - m_hasLocalTools;
+    m_hasLocalTools = hasLocalTools;
+    bool wantExceptions = toolsWantExceptions(m_localTools);
+    m_monitoring->m_monitorsWhoseLocalToolsWantExceptions += wantExceptions - m_localToolsWantExceptions;
+    m_localToolsWantExceptions = wantExceptions;
+}
+
 void CodeMonitor::setLocalEvents(unsigned tool, uint32_t events)
 {
     for (unsigned event = 0; event < Event::ungroupedCount; ++event) {
@@ -199,6 +247,13 @@ void CodeMonitor::setLocalEvents(unsigned tool, uint32_t events)
         else
             m_localTools[event] &= ~(1 << tool);
     }
+    noteLocalTools();
+}
+
+void CodeMonitor::removeLocalTool(unsigned event, unsigned tool)
+{
+    m_localTools[event] &= ~(1 << tool);
+    noteLocalTools();
 }
 
 uint8_t CodeMonitor::tools(unsigned event) const
@@ -206,9 +261,37 @@ uint8_t CodeMonitor::tools(unsigned event) const
     return m_monitoring->m_globalTools[event] | m_localTools[event];
 }
 
-uint8_t* CodeMonitor::opcodeAddress(const Point& point) const
+bool CodeMonitor::isWanted() const
 {
-    return const_cast<uint8_t*>(addressOfOpcode(m_instructions + point.offset));
+    return m_monitoring->m_globalToolsWantPlaces || m_localToolsWantPlaces;
+}
+
+uint8_t* CodeMonitor::opcodeAddress(unsigned offset) const
+{
+    return const_cast<uint8_t*>(addressOfOpcode(m_instructions + offset));
+}
+
+void CodeMonitor::findEntrances()
+{
+    const JSInstructionStream& instructions = m_code->instructions();
+    m_entrances.append({ 0, static_cast<uint8_t>(instructions.at(0)->opcodeID()) });
+    if (m_code->parseMode() != SourceParseMode::GeneratorBodyMode)
+        return;
+    bool hasYielded = false;
+    for (const auto& instruction : instructions) {
+        OpcodeID opcode = instruction->opcodeID();
+        if (std::exchange(hasYielded, opcode == op_py_generator_suspend))
+            m_entrances.append({ instruction.offset(), static_cast<uint8_t>(opcode) });
+    }
+}
+
+void CodeMonitor::setEntrancesAreReplaced(bool replace)
+{
+    if (m_entrancesAreReplaced == replace)
+        return;
+    m_entrancesAreReplaced = replace;
+    for (auto& entrance : m_entrances)
+        *opcodeAddress(entrance.offset) = replace ? static_cast<uint8_t>(op_py_instrumented) : entrance.opcode;
 }
 
 static bool fallsThrough(OpcodeID opcode)
@@ -258,13 +341,11 @@ static bool isPythonBranch(OpcodeID opcode)
 // run before it in the frame was of another line. Whether it was is nearly always plain from the code.
 void CodeMonitor::putBackInstructions()
 {
+    setEntrancesAreReplaced(false);
     for (auto& point : m_points) {
         if (!point.isPatched)
             continue;
-        *opcodeAddress(point) = point.opcode;
-        WTF::storeStoreFence();
-        Locker locker { replacedOpcodesLock };
-        replacedOpcodes().remove(m_instructions + point.offset);
+        *opcodeAddress(point.offset) = point.opcode;
         point.isPatched = false;
     }
 }
@@ -272,6 +353,7 @@ void CodeMonitor::putBackInstructions()
 void CodeMonitor::findPoints(bool everyInstruction)
 {
     putBackInstructions();
+    Locker locker { monitoredCodeLock };
     m_points.clear();
     m_lineStarts.clear();
     m_needsLastLine = false;
@@ -571,41 +653,64 @@ uint8_t CodeMonitor::toolsWantedAt(Point& point)
 
 void CodeMonitor::update(Point& point)
 {
-    bool isWanted = toolsWantedAt(point);
+    bool isWanted = m_isAwake && toolsWantedAt(point);
     if (isWanted == point.isPatched)
         return;
-    const void* instruction = m_instructions + point.offset;
-    uint8_t* opcode = opcodeAddress(point);
-    if (isWanted) {
-        {
-            Locker locker { replacedOpcodesLock };
-            replacedOpcodes().set(instruction, ReplacedOpcode { point.opcode, this });
-        }
-        WTF::storeStoreFence();
-        *opcode = op_py_instrumented;
-    } else {
-        *opcode = point.opcode;
-        WTF::storeStoreFence();
-        Locker locker { replacedOpcodesLock };
-        replacedOpcodes().remove(instruction);
-    }
+    *opcodeAddress(point.offset) = isWanted ? static_cast<uint8_t>(op_py_instrumented) : point.opcode;
     point.isPatched = isWanted;
 }
 
 void CodeMonitor::update()
 {
-    uint8_t anything = 0;
-    for (unsigned event = 0; event < Event::instrumentedCount; ++event)
-        anything |= tools(event);
-    anything |= tools(Event::PyThrow) | tools(Event::Raise);
-    if (!anything && !m_hasPoints)
+    if (!m_isAwake) {
+        setEntrancesAreReplaced(isWanted() || m_hasToForget);
         return;
+    }
     bool everyInstruction = tools(Event::Instruction);
     if (!m_hasPoints || (everyInstruction && !m_hasEveryInstruction))
         findPoints(everyInstruction);
     noteLineTools();
     for (auto& point : m_points)
         update(point);
+}
+
+void CodeMonitor::sleep()
+{
+    if (m_isAwake) {
+        putBackInstructions();
+        m_isAwake = false;
+    }
+    m_hasToForget = m_hasSomethingDisabled;
+    update();
+}
+
+void CodeMonitor::wake()
+{
+    if (m_hasToForget)
+        forget();
+    if (m_isAwake)
+        return;
+    m_isAwake = isWanted();
+    setEntrancesAreReplaced(false);
+    update();
+}
+
+// What DISABLE switched off stays off until restart_events(), or until the tool no longer wants the event at a time when the code is
+// running or is entered: that is when CPython changes code, and it takes what it knows of the tool out of it then.
+void CodeMonitor::forget()
+{
+    m_hasToForget = false;
+    uint8_t stillDisabled = 0;
+    std::array<uint8_t, Event::instrumentedCount> wanted;
+    for (unsigned event = 0; event < Event::instrumentedCount; ++event)
+        wanted[event] = tools(event);
+    for (auto& point : m_points) {
+        for (unsigned event = 0; event < Event::instrumentedCount; ++event)
+            stillDisabled |= point.disabledTools[event] &= wanted[event];
+    }
+    for (auto& start : m_lineStarts)
+        stillDisabled |= start.disabledTools &= wanted[Event::Line];
+    m_hasSomethingDisabled = stillDisabled;
 }
 
 void CodeMonitor::noteLineTools()
@@ -633,10 +738,14 @@ void CodeMonitor::didDisableLine(unsigned offset, const LineStart& start)
 
 void CodeMonitor::restart()
 {
+    if (!std::exchange(m_hasSomethingDisabled, false))
+        return;
     for (auto& point : m_points)
         point.disabledTools.fill(0);
     for (auto& start : m_lineStarts)
         start.disabledTools = 0;
+    m_hasToForget = false;
+    update();
 }
 
 // ---- What is wanted ----
@@ -727,15 +836,17 @@ void Monitoring::noteWhatIsWanted()
                 m_globalTools[event] |= 1 << tool;
         }
     }
-    uint8_t wanted = 0;
-    auto consider = [&](auto& tools) {
-        wanted |= tools[Event::Raise] | tools[Event::Reraise] | tools[Event::ExceptionHandled] | tools[Event::PyUnwind];
-    };
-    consider(m_globalTools);
-    Locker locker { m_monitorsLock };
+    m_globalToolsWantPlaces = toolsWantPlaces(m_globalTools);
+    m_wantsExceptions = toolsWantExceptions(m_globalTools) || m_monitorsWhoseLocalToolsWantExceptions;
+}
+
+// A monitor goes away when its code is swept, so nothing may be allocated meanwhile.
+template<typename Functor>
+void Monitoring::forEachMonitor(const Functor& functor)
+{
+    AssertNoGC assertNoGC;
     for (CodeMonitor* monitor : m_monitors)
-        consider(monitor->m_localTools);
-    m_wantsExceptions = wanted;
+        functor(*monitor);
 }
 
 CodeMonitor* Monitoring::monitorFor(CodeBlock* codeBlock)
@@ -765,75 +876,101 @@ CodeMonitor* Monitoring::monitorFor(JSGlobalObject* globalObject, PyCode* code)
 
 void Monitoring::didCreateCodeBlock(CodeBlock* codeBlock)
 {
-    uint8_t anything = m_globalTools[Event::PyThrow];
-    for (unsigned event = 0; event < Event::instrumentedCount; ++event)
-        anything |= m_globalTools[event];
-    if (!anything)
+    if (!m_knowsAllCode)
         return;
     if (CodeMonitor* monitor = monitorFor(codeBlock))
         monitor->update();
 }
 
+void Monitoring::findAllCode()
+{
+    if (std::exchange(m_knowsAllCode, true))
+        return;
+    Vector<CodeBlock*> codeBlocks;
+    m_runtime.vm().heap.forEachCodeBlock([&](CodeBlock* codeBlock) {
+        if (codeBlock->unlinkedCodeBlock()->isPython() && codeBlock->globalObject() == m_runtime.globalObject())
+            codeBlocks.append(codeBlock);
+    });
+    for (CodeBlock* codeBlock : codeBlocks)
+        monitorFor(codeBlock);
+}
+
 void Monitoring::updateAll()
 {
     noteWhatIsWanted();
-    VM& vm = m_runtime.vm();
-    uint8_t anything = m_globalTools[Event::PyThrow];
-    for (unsigned event = 0; event < Event::instrumentedCount; ++event)
-        anything |= m_globalTools[event];
-    if (anything) {
-        Vector<CodeBlock*> codeBlocks;
-        vm.heap.forEachCodeBlock([&](CodeBlock* codeBlock) {
-            if (codeBlock->unlinkedCodeBlock()->isPython() && codeBlock->globalObject() == m_runtime.globalObject())
-                codeBlocks.append(codeBlock);
-        });
-        for (CodeBlock* codeBlock : codeBlocks)
-            monitorFor(codeBlock);
-    }
-    Vector<CodeMonitor*> monitors;
-    {
-        Locker locker { m_monitorsLock };
-        monitors = copyToVector(m_monitors);
-    }
-    for (CodeMonitor* monitor : monitors)
-        monitor->update();
-    noteWhereFramesAre();
+    if (m_globalToolsWantPlaces)
+        findAllCode();
+    forEachMonitor([](CodeMonitor& monitor) {
+        monitor.sleep();
+    });
+    wakeCodeOfCallsInProgress();
 }
 
-// A frame that is under way when lines begin to be told of has been on its line for a while.
-void Monitoring::noteWhereFramesAre()
+void Monitoring::wakeCodeOfCallsInProgress()
 {
-    if (!m_globalTools[Event::Line])
-        return;
     VM& vm = m_runtime.vm();
-    EntryFrame* entryFrame = vm.topEntryFrame;
-    for (CallFrame* callFrame = vm.topCallFrame; callFrame; callFrame = callFrame->callerFrame(entryFrame)) {
-        if (callFrame->isNativeCalleeFrame() || !callFrame->codeBlock() || !callFrame->codeBlock()->unlinkedCodeBlock()->isPython() || callFrame->isZombieFrame())
-            continue;
-        if (!monitorFor(callFrame->codeBlock()))
-            continue;
-        PyFrame* frame = PyFrame::of(m_runtime.globalObject(), callFrame);
-        if (frame->lastLine < 0) {
-            auto marks = callFrame->codeBlock()->unlinkedCodeBlock()->pythonMarks();
-            frame->lastLine = lineOfMarks(marks, callFrame->bytecodeIndex().offset());
-            frame->lastLineOffset = visibleOffset(marks, callFrame->bytecodeIndex().offset());
+    JSGlobalObject* globalObject = m_runtime.globalObject();
+    auto walk = [&](CallFrame* callFrame, EntryFrame* entryFrame) {
+        for (; callFrame; callFrame = callFrame->callerFrame(entryFrame)) {
+            if (callFrame->isNativeCalleeFrame() || !callFrame->codeBlock() || !callFrame->codeBlock()->unlinkedCodeBlock()->isPython() || callFrame->isZombieFrame())
+                continue;
+            if (callFrame->codeBlock()->globalObject() != globalObject)
+                continue;
+            CodeMonitor* monitor = m_knowsAllCode ? monitorFor(callFrame->codeBlock()) : functionOf(callFrame)->codeInfo().monitor.get();
+            if (!monitor)
+                continue;
+            monitor->wake();
+            if (!monitor->isAwake())
+                continue;
+            // A frame that is under way when lines begin to be told of has been on its line for a while.
+            if (!monitor->m_needsLastLine && !(m_globalTools[Event::Line] >> traceTool & 1))
+                continue;
+            PyFrame* frame = PyFrame::of(globalObject, callFrame);
+            if (frame->lastLine < 0) {
+                auto marks = callFrame->codeBlock()->unlinkedCodeBlock()->pythonMarks();
+                frame->lastLine = lineOfMarks(marks, callFrame->bytecodeIndex().offset());
+                frame->lastLineOffset = visibleOffset(marks, callFrame->bytecodeIndex().offset());
+            }
         }
+    };
+    walk(vm.topCallFrame, vm.topEntryFrame);
+    if (vm.apiLock().hasParkedThreads()) {
+        Vector<std::pair<CallFrame*, EntryFrame*>, 8> others;
+        vm.apiLock().forEachParkedThread([&](JSLock::ParkedThread& parked) {
+            others.append({ parked.topCallFrame(), parked.topEntryFrame() });
+        });
+        for (auto [callFrame, entryFrame] : others)
+            walk(callFrame, entryFrame);
     }
 }
 
 Monitoring::OriginalInstructions::OriginalInstructions(Monitoring& monitoring)
     : m_monitoring(monitoring)
+    , m_isForAll(true)
 {
-    Locker locker { monitoring.m_monitorsLock };
-    for (CodeMonitor* monitor : monitoring.m_monitors)
-        monitor->putBackInstructions();
+    monitoring.forEachMonitor([](CodeMonitor& monitor) {
+        monitor.putBackInstructions();
+    });
+}
+
+Monitoring::OriginalInstructions::OriginalInstructions(Monitoring& monitoring, PyCode* code)
+    : m_monitoring(monitoring)
+    , m_only(code->codeInfo().monitor.get())
+    , m_isForAll(false)
+{
+    if (m_only)
+        m_only->putBackInstructions();
 }
 
 Monitoring::OriginalInstructions::~OriginalInstructions()
 {
-    Locker locker { m_monitoring.m_monitorsLock };
-    for (CodeMonitor* monitor : m_monitoring.m_monitors)
-        monitor->update();
+    if (m_only)
+        m_only->update();
+    if (!m_isForAll)
+        return;
+    m_monitoring.forEachMonitor([](CodeMonitor& monitor) {
+        monitor.update();
+    });
 }
 
 void Monitoring::setEvents(unsigned tool, uint32_t events)
@@ -848,23 +985,27 @@ void Monitoring::clearTool(unsigned tool)
 {
     for (unsigned event = 0; event < Event::count; ++event)
         setCallback(tool, event, { });
-    m_events[tool] = 0;
-    {
-        Locker locker { m_monitorsLock };
-        for (CodeMonitor* monitor : m_monitors)
-            monitor->setLocalEvents(tool, 0);
+    bool wantedSomethingEverywhere = std::exchange(m_events[tool], 0);
+    if (m_monitorsWithLocalTools) {
+        forEachMonitor([&](CodeMonitor& monitor) {
+            if (!monitor.m_hasLocalTools || !monitor.localEvents(tool))
+                return;
+            monitor.setLocalEvents(tool, 0);
+            if (!wantedSomethingEverywhere)
+                monitor.sleepAndWake();
+        });
     }
-    updateAll();
+    if (wantedSomethingEverywhere)
+        updateAll();
+    else
+        noteWhatIsWanted();
 }
 
 void Monitoring::restartEvents()
 {
-    {
-        Locker locker { m_monitorsLock };
-        for (CodeMonitor* monitor : m_monitors)
-            monitor->restart();
-    }
-    updateAll();
+    forEachMonitor([](CodeMonitor& monitor) {
+        monitor.restart();
+    });
 }
 
 // ---- sys.settrace(), sys.setprofile() ----
@@ -911,7 +1052,7 @@ void Monitoring::setTracesOpcodes(JSGlobalObject* globalObject, PyFrame* frame, 
     if (events == wanted)
         return;
     monitor->setLocalEvents(traceTool, wanted);
-    monitor->update();
+    monitor->sleepAndWake();
 }
 
 // Nothing that happens meanwhile is told of.
@@ -1145,6 +1286,7 @@ bool Monitoring::fire(JSGlobalObject* globalObject, CallFrame* callFrame, CodeMo
         if (event < Event::instrumentedCount) {
             if (auto* point = monitor.pointAt(offset)) {
                 point->disabledTools[event] |= 1 << tool;
+                monitor.m_hasSomethingDisabled = true;
                 // BRANCH, the event of old, is either way a branch goes.
                 if ((event == Event::BranchLeft || event == Event::BranchRight) && callback(tool, Event::Branch))
                     point->disabledTools[Event::BranchLeft] = point->disabledTools[Event::BranchRight] |= 1 << tool;
@@ -1193,6 +1335,7 @@ bool Monitoring::fireLineStart(JSGlobalObject* globalObject, CallFrame* callFram
             continue;
         auto& start = monitor.m_lineStarts[index];
         start.disabledTools |= 1 << tool;
+        monitor.m_hasSomethingDisabled = true;
         monitor.didDisableLine(offset, start);
     }
     return true;
@@ -1288,6 +1431,13 @@ Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject, CallFrame* 
     RELEASE_ASSERT(monitorPointer);
     CodeMonitor& monitor = *monitorPointer;
     unsigned offset = codeBlock->bytecodeOffset(pc);
+    if (!monitor.isAwake()) [[unlikely]] {
+        // What a tool does is not told of, so there is nothing to look for in what it calls.
+        if (m_runtime.tracingDepth && !monitor.m_hasToForget)
+            return { pc, *monitor.opcodeThatMayBeReplacedAt(offset) };
+        monitor.wake();
+        return { pc, goOn };
+    }
     auto* point = monitor.pointAt(offset);
     RELEASE_ASSERT(point);
     // A tool may change what there is to know about the places in the code. These stay.
@@ -2066,7 +2216,7 @@ void Monitoring::setLocalEvents(CodeMonitor& monitor, unsigned tool, uint32_t ev
         return;
     monitor.setLocalEvents(tool, events);
     noteWhatIsWanted();
-    monitor.update();
+    monitor.sleepAndWake();
 }
 
 static JSValue monitoringRestartEvents(JSGlobalObject* globalObject)
@@ -2106,6 +2256,7 @@ JSValue Monitoring::places(JSGlobalObject* globalObject, PyCode* code)
     CodeMonitor* monitor = code->codeInfo().monitor.get();
     if (!monitor)
         return result;
+    monitor->wake();
     for (auto& point : monitor->m_points) {
         JSArray* lines = newList(globalObject);
         for (auto& start : monitor->lineStartsOf(point))
@@ -2122,8 +2273,10 @@ JSArray* Monitoring::branches(JSGlobalObject* globalObject, PyCode* code)
     CodeMonitor* monitor = monitorFor(globalObject, code);
     if (!monitor)
         return result;
-    if (!monitor->m_hasPoints)
+    if (!monitor->m_hasPoints) {
         monitor->findPoints(false);
+        monitor->update();
+    }
     const JSInstructionStream& instructions = monitor->code()->instructions();
     for (auto& point : monitor->m_points) {
         if (!(point.kinds & bit(Event::BranchLeft)))

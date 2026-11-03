@@ -1402,7 +1402,8 @@ static bool codesAreEqual(JSGlobalObject* globalObject, PyCode* a, PyCode* b)
     if (firstInstructions.sizeInBytes() != secondInstructions.sizeInBytes())
         return false;
     {
-        Monitoring::OriginalInstructions originalInstructions(runtime(globalObject).monitoring());
+        Monitoring::OriginalInstructions originalInstructionsOfFirst(runtime(globalObject).monitoring(), a);
+        Monitoring::OriginalInstructions originalInstructionsOfSecond(runtime(globalObject).monitoring(), b);
         if (memcmp(firstInstructions.rawPointer(), secondInstructions.rawPointer(), firstInstructions.sizeInBytes()))
             return false;
     }
@@ -1856,7 +1857,7 @@ static JSValue codeGetCode(JSGlobalObject* globalObject, JSValue self)
     {
         // The argument of a NOP means nothing. It is the byte the unit stands for, because programs take functions whose co_code is
         // the same to do the same (hypothesis drops a map(f) if f has the co_code of `lambda x: x`).
-        Monitoring::OriginalInstructions originalInstructions(runtime(globalObject).monitoring());
+        Monitoring::OriginalInstructions originalInstructions(runtime(globalObject).monitoring(), PyCode::from(self));
         auto* bytes = static_cast<const uint8_t*>(codeBlock->instructions().rawPointer());
         for (unsigned i = 0; i < code.size(); i += 2) {
             code[i] = nop;

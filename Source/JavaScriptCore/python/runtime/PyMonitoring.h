@@ -9,8 +9,6 @@
 #include "PyRuntime.h"
 #include "Strong.h"
 #include "UnlinkedCodeBlock.h"
-#include <wtf/HashSet.h>
-#include <wtf/Lock.h>
 
 namespace JSC {
 namespace Python {
@@ -34,8 +32,10 @@ class PyFrame;
 // hangs off the CodeInfo. It is made when the code is first to be changed. Which places there are is found by looking at
 // the instructions, and at the marks the compiler left (PythonMark), which say where lines begin.
 //
-// When the events that are wanted everywhere change, all the code that has a CodeBlock is changed at once, and code that gets one
-// later is changed then (didCreateCodeBlock()). So there is nothing to check when a function is entered either.
+// There is nothing to check when a function is entered either. When the events that are wanted everywhere change, the code of the
+// calls in progress is changed at once. All other code that has a CodeBlock is changed only where it can be entered
+// (CodeMonitor::Entrance), which is one byte for a function; the places in it are looked for, and changed, if and when it is
+// entered (CodeMonitor::wake()). Code that gets a CodeBlock later is treated the same way then (didCreateCodeBlock()).
 //
 // The other events have to do with exceptions, and are told of by the unwinder: addTracebackEntry(), exceptionStaysOrLeaves().
 
@@ -112,6 +112,12 @@ public:
         std::array<uint8_t, Event::instrumentedCount> disabledTools { }; // By event; not for Line.
     };
 
+    // Where the code can be entered: its first instruction and, in the body of a generator, wherever it goes on after it has yielded.
+    struct Entrance {
+        unsigned offset;
+        uint8_t opcode;
+    };
+
     UnlinkedCodeBlock* code() const { return m_code.get(); }
     Point* pointAt(unsigned offset);
     std::span<LineStart> lineStartsOf(Point& point) { return m_lineStarts.mutableSpan().subspan(point.firstLineStart, point.lineStartCount); }
@@ -121,11 +127,22 @@ public:
     uint32_t localEvents(unsigned tool) const;
     void setLocalEvents(unsigned tool, uint32_t events);
     uint8_t localTools(unsigned event) const { return m_localTools[event]; }
-    void removeLocalTool(unsigned event, unsigned tool) { m_localTools[event] &= ~(1 << tool); }
+    void removeLocalTool(unsigned event, unsigned tool);
     // The tools that want to be told of the event in this code.
     uint8_t tools(unsigned event) const;
 
-    // Makes the instructions what the tools now want them to be.
+    // What the tools want has changed. If they want anything here, the code says so when it is next entered.
+    void sleep();
+    // The code is running, or about to: from now on each place in it is what the tools want it to be.
+    void wake();
+    // For a change that is about this code alone: a call of it may be in progress.
+    void sleepAndWake()
+    {
+        sleep();
+        wake();
+    }
+    bool isAwake() const { return m_isAwake; }
+    // Makes the instructions what they are to be: the entrances of code that is asleep, the places in code that is awake.
     void update();
     void update(Point&);
     // After a tool has been added to LineStart::disabledTools.
@@ -138,17 +155,36 @@ public:
 private:
     friend class Monitoring;
 
+    friend OpcodeID JSC::originalOpcodeOfInstrumentedInstruction(const void*);
+
+    void findEntrances();
     void findPoints(bool everyInstruction);
     void noteLineTools();
+    void noteLocalTools();
+    void forget();
+    bool isWanted() const;
+    void setEntrancesAreReplaced(bool);
     uint8_t toolsWantedAt(Point&);
-    uint8_t* opcodeAddress(const Point&) const;
+    uint8_t* opcodeAddress(unsigned offset) const;
+    std::optional<uint8_t> opcodeThatMayBeReplacedAt(unsigned offset) const;
 
     Monitoring* m_monitoring; // Null once it is gone: when the VM ends, things go in no particular order.
     Strong<UnlinkedCodeBlock> m_code;
     const uint8_t* m_instructions; // Of the code.
+    unsigned m_instructionsSize;
+    unsigned m_index; // In Monitoring::m_monitors.
+    // These three change with monitoredCodeLock held: the threads of the collector look things up in them.
+    Vector<Entrance, 1> m_entrances;
     Vector<Point> m_points; // By offset.
     Vector<LineStart> m_lineStarts;
     std::array<uint8_t, Event::ungroupedCount> m_localTools { };
+    bool m_isAwake { false };
+    bool m_entrancesAreReplaced { false };
+    bool m_hasLocalTools { false };
+    bool m_localToolsWantPlaces { false };
+    bool m_localToolsWantExceptions { false };
+    bool m_hasSomethingDisabled { false };
+    bool m_hasToForget { false }; // See forget().
     bool m_hasPoints { false };
     bool m_hasEveryInstruction { false };
     // There is a place where a line is in doubt. Then the frame has to know which line it was last on (PyFrame::lastLine), so every
@@ -187,14 +223,17 @@ public:
     JSValue disable();
     JSValue missing();
 
-    // While there is one, all instructions are as the compiler left them: for whatever copies them.
+    // While there is one, all instructions, or those of one code object, are as the compiler left them: for whatever reads the bytes.
     class OriginalInstructions {
         WTF_MAKE_NONCOPYABLE(OriginalInstructions);
     public:
         explicit OriginalInstructions(Monitoring&);
+        OriginalInstructions(Monitoring&, PyCode*);
         ~OriginalInstructions();
     private:
         Monitoring& m_monitoring;
+        CodeMonitor* m_only { nullptr };
+        bool m_isForAll;
     };
 
     // ---- sys.settrace(), sys.setprofile(): for the current thread ----
@@ -237,7 +276,9 @@ private:
     JSArray* state();
     void updateAll();
     void noteWhatIsWanted();
-    void noteWhereFramesAre();
+    void findAllCode();
+    void wakeCodeOfCallsInProgress();
+    template<typename Functor> void forEachMonitor(const Functor&);
 
     // 0: go on. 1: DISABLE. -1: an exception.
     int callTool(JSGlobalObject*, CallFrame*, unsigned tool, unsigned event, Shown, std::span<const JSValue> arguments);
@@ -255,7 +296,12 @@ private:
     Runtime& m_runtime;
     std::array<uint32_t, numberOfMonitoringTools> m_events { };
     std::array<uint8_t, Event::ungroupedCount> m_globalTools { };
+    bool m_globalToolsWantPlaces { false };
     bool m_wantsExceptions { false };
+    // All code that has a CodeBlock has a monitor: so it is from the first time that something is wanted everywhere.
+    bool m_knowsAllCode { false };
+    unsigned m_monitorsWithLocalTools { 0 };
+    unsigned m_monitorsWhoseLocalToolsWantExceptions { 0 };
     // The frame is about to run the op_jmp at the offset, having jumped to it: see handle().
     struct {
         CallFrame* callFrame { nullptr };
@@ -269,8 +315,7 @@ private:
     unsigned m_tracingThreads { 0 };
     unsigned m_profilingThreads { 0 };
 
-    Lock m_monitorsLock; // A monitor may go away in a sweep.
-    HashSet<CodeMonitor*> m_monitors;
+    Vector<CodeMonitor*> m_monitors;
 };
 
 } // namespace Python

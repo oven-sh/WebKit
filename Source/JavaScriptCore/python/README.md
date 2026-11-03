@@ -393,11 +393,16 @@ coverage tools are CPython's own code on top. It is all in `runtime/PyMonitoring
   there, and the interpreter goes on to the code for it with the same PC. Python is only ever interpreted, so there is no other
   copy of the code. Whoever else reads instructions sees what was there (`Instruction::opcodeID()`), and `marshal` is given the
   instructions as the compiler left them.
-- The instructions belong to the `UnlinkedCodeBlock`, and so does what is known about the places in them: a `CodeMonitor`, made when the code is
-  first changed. When the events wanted everywhere change, all code that has a `CodeBlock` is changed at once, running code included,
-  and code that gets one later is changed then. So nothing is checked when a function is entered. (The price: switching a tool on or
-  off takes time in proportion to the code that is loaded. See DEFERRED.)
-- `DISABLE` puts the opcode back, if no other tool wants the place.
+- The instructions belong to the `UnlinkedCodeBlock`, and so does what is known about the places in them: a `CodeMonitor`.
+- Nothing is checked when a function is entered. When the events wanted everywhere change, the code of the calls in progress, of all threads, is
+  changed at once. All other code that has a `CodeBlock` goes to sleep: only its entrances are replaced, which are its first instruction and, in the body of a generator,
+  the instructions it goes on with after a `yield`. When it is entered it wakes: the places in it are looked for, if they never were, and changed. Code that gets a
+  `CodeBlock` later begins asleep. So switching a tool on or off costs one byte for each function that is loaded, and only code that runs is ever analysed.
+  What a tool itself calls does not wake.
+- Whoever else reads a replaced instruction finds the monitor by the address (a table of the ranges of monitored instructions, for all VMs, with a lock: the
+  collector's threads ask too), and the monitor knows the opcode.
+- `DISABLE` puts the opcode back, if no other tool wants the place. It holds until `restart_events()`, or until the code is entered, or found running, at a time when the tool
+  does not want the event: that is when CPython, which changes code as it is entered, forgets. So code with something disabled has its entrances replaced once more after a change.
 - Some instructions have to be carried out by the runtime to be told of: a branch (which way it went is known afterwards), a call of
   something that is not a Python function (`C_RETURN`, `C_RAISE`), the end of a `yield from` (`STOP_ITERATION`). `Name(...)` is an ordinary call while calls are told of.
 - _Events to do with exceptions_ (`RAISE`, `RERAISE`, `EXCEPTION_HANDLED`, `PY_UNWIND`) come from the unwinder, which looks at one flag for each
@@ -433,7 +438,7 @@ frame is in already, or can take over (a `for` loop's iterator serves another `f
 may have been compiled knowing that they have one.
 
 **Threads.** Trace and profile functions, and whether a callback is running, are the thread's (`Runtime::ThreadLocalState`). Tools 6 and 7 want their events
-while any thread has a function. The side tables are only touched with the GIL; the table of replaced opcodes, which the collector's threads read and all VMs of the process share, has a lock.
+while any thread has a function. The side tables are only changed with the GIL, and those the collector's threads read, with the lock of the table of monitored code as well.
 
 `sys.monitoring._places(code)` shows the places of a code object, and which are replaced right now (offsets as JSC has them).
 
