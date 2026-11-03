@@ -136,6 +136,7 @@ JSValue posixStatResult(JSGlobalObject* globalObject, const struct stat& status)
 
 static JSValue posixDoStat(JSGlobalObject* globalObject, const PosixPath& path, int dirFd, bool followSymlinks)
 {
+    writeOutPendingOutput(globalObject);
     if (posixPathAndDirFdInvalid(globalObject, "stat"_s, path, dirFd)
         || posixDirFdAndFdInvalid(globalObject, "stat"_s, dirFd, path.fd())
         || posixFdAndFollowSymlinksInvalid(globalObject, "stat"_s, path.isFd(), followSymlinks))
@@ -1022,6 +1023,8 @@ static bool posixForEachDirectoryEntry(JSGlobalObject* globalObject, const Posix
         }
     } else {
         directory = opendir(path.narrow() ? path.narrow() : ".");
+        if (!directory && posixFreeDescriptors(globalObject))
+            directory = opendir(path.narrow() ? path.narrow() : ".");
         if (!directory) {
             path.error(globalObject);
             return false;

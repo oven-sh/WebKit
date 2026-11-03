@@ -1269,7 +1269,7 @@ PersistentBytecodePayloads& VM::persistentBytecodePayloads()
 
 void VM::whenIdle(Function<void()>&& callback)
 {
-    if (!entryScope) {
+    if (isIdle()) {
         callback();
         return;
     }
@@ -1322,7 +1322,7 @@ bool VM::shrinkFootprintNow(OptionSet<ShrinkFootprint> mode)
 {
     // Not under JS, and not from inside the collector (a finalizer, a heap observer): deleting code waits for a
     // collection that is under way to finish.
-    if (entryScope || heap.currentThreadIsDoingGCWork())
+    if (!isIdle() || heap.currentThreadIsDoingGCWork())
         return false;
 
     MonotonicTime before;
@@ -2288,8 +2288,8 @@ void VM::executeEntryScopeServicesOnExit()
     if (watchdog) [[unlikely]]
         watchdog->exitedVM();
 
-    // They wait for nothing to be running in the VM. A parked thread may be in the middle of something.
-    if (hasEntryScopeServiceRequest(EntryScopeService::PopListeners) && !m_apiLock->hasParkedThreads()) {
+    // See isIdle().
+    if (hasEntryScopeServiceRequest(EntryScopeService::PopListeners) && heap.mayRunEmbedderFinalizers()) {
         auto listeners = WTF::move(m_didPopListeners);
         for (auto& listener : listeners)
             listener();
@@ -2308,7 +2308,8 @@ void VM::executeEntryScopeServicesOnExit()
     // requested (after all, the request came from the client). However, this is how the
     // client code currently works. Changing that will take some significant effort to hunt
     // down all the places in client code that currently rely on this behavior.
-    if (!traps().needHandling(VMTraps::NeedTermination))
+    // (And it is the request of the embedder's thread, which may be parked while it unwinds.)
+    if (!traps().needHandling(VMTraps::NeedTermination) && heap.mayRunEmbedderFinalizers())
         clearHasTerminationRequest();
 
     clearScratchBuffers();

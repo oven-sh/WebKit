@@ -322,8 +322,10 @@ ALWAYS_INLINE void* virtualForWithFunction(VM& vm, JSCell* owner, CallFrame* cal
 
     JSValue calleeAsValue = calleeFrame->guaranteedJSValueCallee();
     if (isPythonCode(owner) && Python::isForeignCallee(calleeAsValue)) [[unlikely]] {
-        Python::prepareForeignCall(callLinkInfo->globalObjectForSlowPath(owner), calleeFrame);
+        bool isConstruction = Python::prepareForeignCall(callLinkInfo->globalObjectForSlowPath(owner), calleeFrame);
         RETURN_IF_EXCEPTION(throwScope, nullptr);
+        if (isConstruction)
+            kind = CodeSpecializationKind::CodeForConstruct;
     }
     calleeAsFunctionCell = getJSFunction(calleeAsValue);
     // The call site sees the proxy as its callee, so a forwarded call must not report the target for linking.

@@ -329,8 +329,7 @@ String formatDouble(double value, char formatCode, int precision, unsigned flags
     else if (flags & FloatAlwaysSign)
         builder.append('+');
     auto zeros = [&](int64_t count) {
-        for (int64_t i = 0; i < count; ++i)
-            builder.append('0');
+        appendRepeated(builder, '0', count);
     };
     auto appendDigits = [&](int64_t from, int64_t to) {
         builder.append(std::span<const char> { digits.span().data() + from, static_cast<size_t>(to - from) });

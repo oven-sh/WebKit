@@ -238,6 +238,11 @@ static bool parseFormatSpec(JSGlobalObject* globalObject, const CodePoints& text
         raiseValueError(globalObject, scope, "Cannot specify '"_s, spec.fractionThousands, "' with 'n'."_s);
         return false;
     }
+    // The result would be as long as that at least, and no str is.
+    if (spec.width > String::MaxLength) {
+        raiseMemoryError(globalObject, scope, String());
+        return false;
+    }
     return true;
 }
 
@@ -249,11 +254,7 @@ static JSString* raiseUnknownFormatCode(JSGlobalObject* globalObject, char32_t t
     return nullptr;
 }
 
-static void appendFill(StringBuilder& builder, char32_t fill, int64_t count)
-{
-    for (int64_t i = 0; i < count; ++i)
-        appendCodePoint(builder, fill);
-}
+static void appendFill(StringBuilder& builder, char32_t fill, int64_t count) { appendRepeated(builder, fill, count); }
 
 // The digits in groups, with zeros on the left up to the width. Both grow from the right.
 static Vector<char, 64> groupDigits(std::span<const Latin1Character> digits, int64_t minWidth, unsigned groupSize, char separator)
@@ -724,7 +725,7 @@ JSString* formatComplex(JSGlobalObject* globalObject, JSValue self, JSString* sp
     paddingFor(number.length(), spec.width, spec.align, left, right);
     StrBuilder builder;
     appendFill(builder, spec.fill, left);
-    builder.append(number);
+    builder.append(static_cast<StringBuilder&>(number));
     appendFill(builder, spec.fill, right);
     return makeStr(globalObject, builder);
 }
@@ -1235,8 +1236,7 @@ static String formatIntForPercent(JSGlobalObject* globalObject, JSValue value, b
         builder.append('-');
     if (alternate && base != 10)
         builder.append('0', static_cast<char>(code));
-    for (int64_t i = magnitude.length(); i < precision; ++i)
-        builder.append('0');
+    appendRepeated(builder, '0', precision - static_cast<int64_t>(magnitude.length()));
     if (code == 'X')
         builder.append(magnitude.convertToASCIIUppercase());
     else
@@ -1563,8 +1563,7 @@ static void appendPercentArgument(PercentFormatter& f, PercentArgument& argument
         length -= 2;
     }
     if (width > length && !(argument.flags & LeftJustify)) {
-        for (int64_t i = 0; i < width - length; ++i)
-            builder.append(fill);
+        appendRepeated(builder, fill, width - length);
         width = length;
     }
     if (fill == ' ') {
@@ -1576,8 +1575,7 @@ static void appendPercentArgument(PercentFormatter& f, PercentArgument& argument
         }
     }
     text.appendTo(builder, index, index + static_cast<unsigned>(length));
-    for (int64_t i = 0; i < width - length; ++i)
-        builder.append(' ');
+    appendRepeated(builder, ' ', width - length);
 }
 
 JSValue strFormatPercent(JSGlobalObject* globalObject, JSString* formatString, JSValue arguments)

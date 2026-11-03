@@ -490,6 +490,9 @@ static bool structureTellsAttributes(Runtime& rt, JSCell* cell, PyType* type, St
         return false;
     if (!type->has(TypeFlag::HasDict))
         return true;
+    // The __dict__ of a record, once it has one, is a property of it: see instanceDict().
+    if (cell->type() == PyObjectType && cell->classInfo() == PyRecord::info())
+        return !isValidOffset(structure->get(rt.vm(), rt.dictKey()));
     return cell->type() == PyInstanceType && !uncheckedDowncast<PyInstance>(cell)->dict() && !isValidOffset(structure->get(rt.vm(), rt.instanceHasDictKey()));
 }
 

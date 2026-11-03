@@ -208,6 +208,8 @@ private:
     [[noreturn]] void sleepForEver();
     void didTakeGIL(ThreadState&);
     void tellMainThreadOfFinalizers();
+    void wakeMainThread();
+    friend void mainThreadHasTrapsToHandle(VM&);
 
     VM& m_vm; // Not to be touched without the GIL, except for its traps.
     bool m_isEnabled { false };

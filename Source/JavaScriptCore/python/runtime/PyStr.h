@@ -69,12 +69,25 @@ JSString* makeStr(JSGlobalObject*, StrBuilder&);
 JSString* makeStrUnlessTooLong(JSGlobalObject*, const String&);
 inline JSString* makeStr(JSGlobalObject* globalObject, const String& string) { return makeStr(getVM(globalObject), string); }
 
+// For a str that has surrogate pairs: where, in code units, every 64th code point is.
+class StrCheckpoints : public RefCounted<StrCheckpoints> {
+public:
+    static constexpr unsigned interval = 64;
+    static Ref<StrCheckpoints> create() { return adoptRef(*new StrCheckpoints); }
+    Vector<unsigned> offsets;
+};
+
 // The text of a str, with what it takes to index it by code point.
+//
+// Whether text in 16-bit units has surrogate pairs, and where, is found by going through it. A program that goes through a text
+// character by character, text[i] after text[i], would do that once for each. So it is remembered for the texts last asked about
+// (StrIndexCache, of the Runtime): the constructors that are given a global object do.
 class StrView {
 public:
     StrView() = default;
     // Check for an exception afterwards: flattening a rope may run out of memory.
     StrView(JSGlobalObject*, JSString*);
+    StrView(JSGlobalObject*, const String&);
     explicit StrView(const String&);
 
     const String& string() const { return m_string; }
@@ -93,13 +106,18 @@ public:
     String substring(unsigned start, unsigned end) const;
 
 private:
+    void lookThrough();
+
     String m_string;
     unsigned m_length { 0 };
     bool m_isSimple { true };
+    RefPtr<StrCheckpoints> m_checkpoints; // Only if it is long and not simple.
 };
 
 unsigned strLength(JSGlobalObject*, JSString*);
 void appendCodePoint(StringBuilder&, char32_t);
+// The count may be anything a program asked for.
+void appendRepeated(StringBuilder&, char32_t, int64_t count);
 String stringFromCodePoint(char32_t);
 
 // repr(str)

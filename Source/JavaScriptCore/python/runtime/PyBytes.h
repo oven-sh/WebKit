@@ -73,13 +73,16 @@ public:
     static PyByteArray* create(JSGlobalObject*, std::span<const uint8_t>);
 
     size_t length() const { return m_length; }
-    std::span<const uint8_t> span() const { return { m_storage ? m_storage->data() : nullptr, m_length }; }
-    std::span<uint8_t> mutableSpan() { return { m_storage ? m_storage->data() : nullptr, m_length }; }
+    std::span<const uint8_t> span() const { return { m_storage ? m_storage->data() + m_start : nullptr, m_length }; }
+    std::span<uint8_t> mutableSpan() { return { m_storage ? m_storage->data() + m_start : nullptr, m_length }; }
     // New bytes are zero. False, with a BufferError, if a memoryview is looking, or a MemoryError.
     bool resize(JSGlobalObject*, size_t length);
+    // del array[:count]. The rest stays where it is: what reads a stream takes bytes off the front of its buffer again and again.
+    // Fails as resize() does.
+    bool removeFront(JSGlobalObject*, size_t count);
     void append(JSGlobalObject*, std::span<const uint8_t>);
     // How many bytes there is room for, counting the NUL that is kept after the last. 0: nothing is allocated.
-    size_t capacity() const { return m_storage ? m_storage->capacity() : 0; }
+    size_t capacity() const { return m_storage ? m_storage->capacity() - m_start : 0; }
     PyByteStorage* storage() const { return m_storage.get(); }
 
     unsigned exportCount() const { return m_exports; }
@@ -90,6 +93,7 @@ private:
     PyByteArray(VM&, Structure*, PyType*);
 
     WriteBarrier<PyByteStorage> m_storage;
+    size_t m_start { 0 }; // Where in the storage the first byte is.
     size_t m_length { 0 };
     unsigned m_exports { 0 };
 };
@@ -104,6 +108,44 @@ bool isBytesLike(JSValue);
 bool getBytesLike(JSGlobalObject*, JSValue, std::span<const uint8_t>&);
 // bytes.hex()
 JSValue hexOfBytes(JSGlobalObject*, JSValue bytesOrByteArray, JSValue separator, JSValue bytesPerSeparator);
+
+// Bytes that are put together piece by piece. What a program asks for may be more than there is room for: the builder then takes
+// no more, and makeBytes() raises a MemoryError. (A Vector ends the process.)
+class ByteBuilder {
+    WTF_MAKE_NONCOPYABLE(ByteBuilder);
+public:
+    ByteBuilder() = default;
+
+    void reserveInitialCapacity(size_t capacity) { makeRoomFor(capacity); }
+    void append(uint8_t byte)
+    {
+        if (makeRoomFor(1)) [[likely]]
+            m_bytes.append(byte);
+    }
+    void append(std::span<const uint8_t> bytes)
+    {
+        if (makeRoomFor(bytes.size())) [[likely]]
+            m_bytes.append(bytes);
+    }
+    size_t size() const { return m_bytes.size(); }
+    bool hasOverflowed() const { return m_hasOverflowed; }
+    std::span<const uint8_t> span() const { return m_bytes.span(); }
+
+private:
+    bool makeRoomFor(size_t count)
+    {
+        size_t capacity = m_bytes.capacity();
+        if (count <= capacity - m_bytes.size()) [[likely]]
+            return !m_hasOverflowed;
+        return makeRoomSlow(count);
+    }
+    bool makeRoomSlow(size_t count);
+
+    Vector<uint8_t> m_bytes;
+    bool m_hasOverflowed { false };
+};
+// Null, with a MemoryError: there are too many.
+PyBytes* makeBytes(JSGlobalObject*, const ByteBuilder&);
 
 String bytesRepr(std::span<const uint8_t>);
 int64_t hashOfBytes(std::span<const uint8_t>);

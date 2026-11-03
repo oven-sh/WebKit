@@ -692,6 +692,7 @@ static JSValue posixUmask(JSGlobalObject* globalObject, JSValue maskValue)
 
 static JSValue posixSystem(JSGlobalObject* globalObject, JSValue commandValue)
 {
+    writeOutPendingOutput(globalObject);
     PosixBytes command;
     if (!posixToFSBytes(globalObject, commandValue, command))
         return { };
@@ -818,6 +819,7 @@ static bool posixIsMapping(JSGlobalObject* globalObject, JSValue value)
 
 static JSValue posixExecv(JSGlobalObject* globalObject, JSValue pathValue, JSValue argv)
 {
+    writeOutPendingOutput(globalObject);
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     PosixPath path("execv"_s, PosixPath::VirtualUnsupported);
@@ -842,6 +844,7 @@ static JSValue posixExecv(JSGlobalObject* globalObject, JSValue pathValue, JSVal
 
 static JSValue posixExecve(JSGlobalObject* globalObject, JSValue pathValue, JSValue argv, JSValue env)
 {
+    writeOutPendingOutput(globalObject);
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 #if OS(LINUX)
@@ -1100,6 +1103,7 @@ private:
 
 static JSValue posixSpawnNamed(JSGlobalObject* globalObject, ASCIILiteral function, bool searchPath, const CallArgs& args)
 {
+    writeOutPendingOutput(globalObject);
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (args.size() != 3)
@@ -1170,6 +1174,7 @@ enum : int { PosixSpawnWait = 0, PosixSpawnNoWait = 1 };
 
 static JSValue posixSpawnFamily(JSGlobalObject* globalObject, JSValue modeValue, JSValue file, JSValue argv, JSValue env, bool searchPath)
 {
+    writeOutPendingOutput(globalObject);
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     int mode;

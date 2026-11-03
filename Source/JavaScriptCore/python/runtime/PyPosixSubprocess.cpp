@@ -450,6 +450,7 @@ enum SubprocessArgument : unsigned {
 
 static JSValue subprocessForkExec(JSGlobalObject* globalObject, const CallArgs& args)
 {
+    writeOutPendingOutput(globalObject);
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);

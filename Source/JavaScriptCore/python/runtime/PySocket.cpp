@@ -11,6 +11,7 @@
 #include "JSCInlines.h"
 #include "PyBuffer.h"
 #include "PyPosix.h"
+#include "PySocket.h"
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -37,20 +38,9 @@ namespace Python {
 
 void addSocketConstants(JSGlobalObject*, PyModule*); // PySocketConstants.cpp
 
-// A socket is a record. Its number is the descriptor, or -1.
-enum SocketField : unsigned {
-    SocketFamily,
-    SocketKind,
-    SocketProtocol,
-    SocketTimeout, // In nanoseconds. Negative: it blocks. 0: it does not. Otherwise the descriptor does not, and is polled.
-    SocketFieldCount
-};
-
 static constexpr int64_t socketNanosecondsPerSecond = 1000000000;
 
-static int socketDescriptor(PyRecord* socket) { return static_cast<int>(socket->number); }
 static int socketFamilyOf(PyRecord* socket) { return socket->get(SocketFamily).asInt32(); }
-static int64_t socketTimeoutOf(PyRecord* socket) { return tryInt64(socket->get(SocketTimeout)).value_or(-1); }
 
 // ---- Errors ----
 
@@ -811,7 +801,6 @@ static bool socketCall(JSGlobalObject* globalObject, PyRecord* socket, bool isWr
 
 // ---- The type ----
 
-static PyType* socketType(JSGlobalObject*);
 static JSValue socketFinalize(JSGlobalObject*, JSValue self);
 
 static JSString* socketDefaultTimeoutKey(VM& vm) { return internString(vm, "socket.defaulttimeout"_s); }
@@ -943,6 +932,8 @@ static JSValue socketInit(JSGlobalObject* globalObject, JSValue self, JSValue fa
         if (protocol == -1)
             protocol = 0;
         fd = socketCreateDescriptor(family, type, protocol);
+        if (fd < 0 && posixFreeDescriptors(globalObject))
+            fd = socketCreateDescriptor(family, type, protocol);
         if (fd < 0)
             return posixError(globalObject);
     }
@@ -1148,13 +1139,19 @@ static JSValue socketAccept(JSGlobalObject* globalObject, JSValue self)
         return { };
     int fd = -1;
     bool succeeded = socketCall(globalObject, socket, false, socketTimeoutOf(socket), [&] {
-        address.length = capacity;
-        AllowThreads allow(globalObject);
+        for (bool isSecondTry : { false, true }) {
+            address.length = capacity;
+            {
+                AllowThreads allow(globalObject);
 #if defined(SOCK_CLOEXEC) && !OS(DARWIN)
-        fd = accept4(socketDescriptor(socket), &address.generic, &address.length, SOCK_CLOEXEC);
+                fd = accept4(socketDescriptor(socket), &address.generic, &address.length, SOCK_CLOEXEC);
 #else
-        fd = accept(socketDescriptor(socket), &address.generic, &address.length);
+                fd = accept(socketDescriptor(socket), &address.generic, &address.length);
 #endif
+            }
+            if (fd >= 0 || isSecondTry || !posixFreeDescriptors(globalObject))
+                break;
+        }
         return fd >= 0;
     });
     if (!succeeded)
@@ -1852,7 +1849,7 @@ static constexpr NativeGetSet socketGetSets[] = {
 
 static constexpr TypeDef socketTypeDef { "_socket.socket"_s, { TypeFlag::Base, TypeFlag::OwnLayout }, socketMethods, socketGetSets, { } };
 
-static PyType* socketType(JSGlobalObject* globalObject) { return runtime(globalObject).typeFor(socketTypeDef); }
+PyType* socketType(JSGlobalObject* globalObject) { return runtime(globalObject).typeFor(socketTypeDef); }
 
 // ---- Functions: descriptors ----
 
@@ -1892,7 +1889,7 @@ static JSValue socketPair(JSGlobalObject* globalObject, const CallArgs& args)
         return { };
     int descriptors[2];
 #ifdef SOCK_CLOEXEC
-    if (socketpair(family, type | SOCK_CLOEXEC, protocol, descriptors) < 0)
+    if (socketpair(family, type | SOCK_CLOEXEC, protocol, descriptors) < 0 && (!posixFreeDescriptors(globalObject) || socketpair(family, type | SOCK_CLOEXEC, protocol, descriptors) < 0))
         return posixError(globalObject);
 #else
     if (socketpair(family, type, protocol, descriptors) < 0)

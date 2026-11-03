@@ -97,6 +97,8 @@ static JSValue profilerInit(JSGlobalObject* globalObject, JSValue self, JSValue 
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     ProfilerState& state = profilerState(self);
+    if (state.activeTimers)
+        return raise(globalObject, scope, runtime(globalObject).RuntimeError(), "cannot initialize profiler in external timer"_s);
     double unit = 0;
     if (timeUnit) {
         unit = toDouble(globalObject, timeUnit);

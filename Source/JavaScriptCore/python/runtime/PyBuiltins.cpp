@@ -1033,7 +1033,7 @@ static constexpr NativeDef builtinFunctions[] = {
     PY_FUNCTION("oct", builtinOct, "(integer, /)"),
     PY_FUNCTION("ord", builtinOrd, "(character, /)"),
     PY_FUNCTION("pow", builtinPow, "(base, exp, mod=None)"),
-    PY_FUNCTION("print", builtinPrint, "(*args, **kwargs)"),
+    PY_FUNCTION("print", builtinPrint, "(*objects, sep=' ', end='\\n', file=None, flush=False)"),
     PY_FUNCTION("repr", builtinRepr, "(obj, /)"),
     PY_FUNCTION("round", builtinRound, "(number, ndigits=None)"),
     PY_FUNCTION("setattr", builtinSetAttr, "(obj, name, value, /)"),

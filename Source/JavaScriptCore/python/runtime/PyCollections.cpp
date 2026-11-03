@@ -599,15 +599,12 @@ static JSValue dequeRemove(JSGlobalObject* globalObject, JSValue self, JSValue v
 }
 
 // The index of an item, from what is between the brackets. False: an exception.
-static bool dequeSubscript(JSGlobalObject* globalObject, PyRecord* deque, JSValue key, unsigned& index, bool isForReading)
+static bool dequeSubscript(JSGlobalObject* globalObject, PyRecord* deque, JSValue key, unsigned& index)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!hasIndex(globalObject, key)) {
-        if (isForReading)
-            raiseTypeError(globalObject, scope, "sequence index must be integer, not '"_s, typeName(globalObject, key), '\'');
-        else
-            raiseTypeError(globalObject, scope, '\'', typeName(globalObject, key), "' object cannot be interpreted as an integer"_s);
+        raiseTypeError(globalObject, scope, "sequence index must be integer, not '"_s, typeName(globalObject, key), '\'');
         return false;
     }
     int64_t result = toSsize(globalObject, key, runtime(globalObject).IndexError());
@@ -627,7 +624,7 @@ static bool dequeSubscript(JSGlobalObject* globalObject, PyRecord* deque, JSValu
 static JSValue dequeGetItem(JSGlobalObject* globalObject, JSValue self, JSValue key)
 {
     unsigned index;
-    if (!dequeSubscript(globalObject, dequeOf(self), key, index, true))
+    if (!dequeSubscript(globalObject, dequeOf(self), key, index))
         return { };
     return dequeAt(dequeOf(self), index);
 }
@@ -635,7 +632,7 @@ static JSValue dequeGetItem(JSGlobalObject* globalObject, JSValue self, JSValue 
 static JSValue dequeSetItem(JSGlobalObject* globalObject, JSValue self, JSValue key, JSValue value)
 {
     unsigned index;
-    if (!dequeSubscript(globalObject, dequeOf(self), key, index, false))
+    if (!dequeSubscript(globalObject, dequeOf(self), key, index))
         return { };
     dequePut(getVM(globalObject), dequeOf(self), index, value);
     return jsUndefined();
@@ -644,7 +641,7 @@ static JSValue dequeSetItem(JSGlobalObject* globalObject, JSValue self, JSValue 
 static JSValue dequeDelItem(JSGlobalObject* globalObject, JSValue self, JSValue key)
 {
     unsigned index;
-    if (!dequeSubscript(globalObject, dequeOf(self), key, index, false))
+    if (!dequeSubscript(globalObject, dequeOf(self), key, index))
         return { };
     dequeRemoveAt(globalObject, dequeOf(self), index);
     return jsUndefined();

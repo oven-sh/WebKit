@@ -896,6 +896,17 @@ JSValue callWithKeywordMarker(JSGlobalObject* globalObject, CallFrame* callFrame
     return call(globalObject, callFrame->jsCallee(), CallArgs(valuesOf(buffer), positional, names->length() ? names : nullptr));
 }
 
+bool isCalledByPython(JSGlobalObject* globalObject, CallFrame* callFrame)
+{
+    VM& vm = getVM(globalObject);
+    if (callFrame->callerFrameOrEntryFrame() == vm.topEntryFrame) {
+        auto* call = runtime(globalObject).runtimeCall;
+        return call && (!call->entryFrame || call->entryFrame == vm.topEntryFrame);
+    }
+    CallFrame* caller = callFrame->callerFrame();
+    return !caller->isNativeCalleeFrame() && caller->codeBlock() && caller->codeBlock()->unlinkedCodeBlock()->isPython();
+}
+
 JSValue resultForCaller(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue result)
 {
     if (!result || !result.isCell()) [[likely]]
@@ -905,15 +916,8 @@ JSValue resultForCaller(JSGlobalObject* globalObject, CallFrame* callFrame, JSVa
         return result;
 
     VM& vm = getVM(globalObject);
-    if (callFrame->callerFrameOrEntryFrame() == vm.topEntryFrame) {
-        auto* call = runtime(globalObject).runtimeCall;
-        if (call && call->entryFrame == vm.topEntryFrame)
-            return result;
-    } else {
-        CallFrame* caller = callFrame->callerFrame();
-        if (!caller->isNativeCalleeFrame() && caller->codeBlock() && caller->codeBlock()->unlinkedCodeBlock()->isPython())
-            return result;
-    }
+    if (isCalledByPython(globalObject, callFrame))
+        return result;
     if (type == PyFloatType)
         return valueForJS(result);
     auto scope = DECLARE_THROW_SCOPE(vm);

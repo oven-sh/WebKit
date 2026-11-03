@@ -313,6 +313,8 @@ void Unit::line(int lineno)
 
 void Unit::silentLine(int lineno)
 {
+    if (m_sameLineDepth)
+        return;
     m_markedLine = lineno;
     m_markedPosition = g.instructions().size();
     g.addPythonMark(PythonMark::Line, lineMarkValue(lineno, false, true));
@@ -322,6 +324,12 @@ void Unit::noLine()
 {
     m_markedLine = -1;
     g.addPythonMark(PythonMark::NoLine, 0);
+}
+
+void Unit::hiddenJump(Label& target)
+{
+    g.addPythonMark(PythonMark::NoLine, hiddenJumpMark);
+    g.emitJump(target);
 }
 
 void Unit::loc(const Range& range)
@@ -459,6 +467,8 @@ Vector<AST::Name> Unit::freeVariablesOf(Scope* scope)
         if (symbol.binding == Binding::Free || (symbol.flags & DefFreeClass))
             result.append(symbol.name);
     }
+    if (scope->readsConditionalAnnotationsCell && !result.contains(names().conditionalAnnotations))
+        result.append(names().conditionalAnnotations);
     std::ranges::sort(result, [](Name a, Name b) { return codePointCompareLessThan(a->string(), b->string()); });
     return result;
 }
@@ -957,13 +967,13 @@ void Unit::markBlock(const Block& block, bool begins)
     case BlockKind::AsyncWith:
         kind = TracedBlock::With;
         break;
-    case BlockKind::FinallyEnd:
     case BlockKind::HandlerCleanup:
     case BlockKind::ExceptionHandler:
         kind = TracedBlock::ExceptionHandler;
         break;
+    case BlockKind::FinallyEnd:
     case BlockKind::ExceptionGroupHandler:
-        kind = TracedBlock::ExceptionGroupHandler;
+        kind = TracedBlock::ExceptionHandlerWithMore;
         break;
     case BlockKind::InlinedComprehension:
     case BlockKind::MatchSubject:
@@ -1040,10 +1050,107 @@ std::optional<Unit::Block> Unit::unwindBlocks(const Range& range, bool stopAtLoo
 
 // ---- Statements ----
 
+// There is a `break` in them that leaves the loop they are the body of.
+static bool leaveLoop(Seq<Stmt*> body)
+{
+    for (Stmt* node : body) {
+        switch (node->kind) {
+        case StmtKind::Break:
+            return true;
+        case StmtKind::If:
+            if (leaveLoop(node->as<If>()->body) || leaveLoop(node->as<If>()->orelse))
+                return true;
+            break;
+        case StmtKind::With:
+        case StmtKind::AsyncWith:
+            if (leaveLoop(node->as<With>()->body))
+                return true;
+            break;
+        case StmtKind::For:
+        case StmtKind::AsyncFor:
+            if (leaveLoop(node->as<For>()->orelse))
+                return true;
+            break;
+        case StmtKind::While:
+            if (leaveLoop(node->as<While>()->orelse))
+                return true;
+            break;
+        case StmtKind::Try:
+        case StmtKind::TryStar: {
+            auto* statement = node->as<AST::Try>();
+            if (leaveLoop(statement->body) || leaveLoop(statement->orelse) || leaveLoop(statement->finalbody))
+                return true;
+            for (ExceptHandler* handler : statement->handlers) {
+                if (leaveLoop(handler->body))
+                    return true;
+            }
+            break;
+        }
+        case StmtKind::Match:
+            for (MatchCase* matchCase : node->as<Match>()->cases) {
+                if (leaveLoop(matchCase->body))
+                    return true;
+            }
+            break;
+        default:
+            break;
+        }
+    }
+    return false;
+}
+
+bool Unit::neverGetsPast(Seq<Stmt*> body)
+{
+    for (Stmt* node : body) {
+        if (neverGetsPast(node))
+            return true;
+    }
+    return false;
+}
+
+bool Unit::neverGetsPast(Stmt* node)
+{
+    switch (node->kind) {
+    case StmtKind::Return:
+    case StmtKind::Raise:
+    case StmtKind::Break:
+    case StmtKind::Continue:
+        return true;
+    case StmtKind::If:
+        return neverGetsPast(node->as<If>()->body) && neverGetsPast(node->as<If>()->orelse);
+    case StmtKind::While:
+        return constantTruth(node->as<While>()->test) == true && !leaveLoop(node->as<While>()->body);
+    case StmtKind::Try:
+    case StmtKind::TryStar: {
+        auto* statement = node->as<AST::Try>();
+        if (neverGetsPast(statement->finalbody))
+            return true;
+        if (!neverGetsPast(statement->orelse.isEmpty() ? statement->body : statement->orelse))
+            return false;
+        for (ExceptHandler* handler : statement->handlers) {
+            if (!neverGetsPast(handler->body))
+                return false;
+        }
+        return true;
+    }
+    default:
+        return false;
+    }
+}
+
 void Unit::statements(Seq<Stmt*> body)
 {
-    for (Stmt* item : body)
-        statement(item);
+    for (unsigned i = 0; i < body.size(); ++i) {
+        statement(body[i]);
+        // CPython's compiler drops what cannot be reached, so that the code has no such lines: nobody can jump to them or find that
+        // they were never run. Here it stays, and is of no line.
+        if (i + 1 < body.size() && !m_sameLineDepth && neverGetsPast(body[i])) {
+            noLine();
+            SameLine sameLine(*this);
+            while (++i < body.size())
+                statement(body[i]);
+        }
+    }
 }
 
 void Unit::statement(Stmt* node)
@@ -1498,7 +1605,7 @@ void Unit::tryFinally(AST::Try* node)
 
     m_finallyContexts.append({ true, false });
     statements(node->finalbody);
-    g.emitJump(exit.get());
+    hiddenJump(exit.get());
 
     // An exception: it goes on after the clause has run.
     Reg previous;
@@ -1529,7 +1636,7 @@ void Unit::tryExcept(AST::Try* node)
     popBlock();
     endTry(body);
     statements(node->orelse);
-    g.emitJump(end.get());
+    hiddenJump(end.get());
 
     Reg previous;
     Reg exception = beginExceptionHandler(body, previous);
@@ -1551,7 +1658,7 @@ void Unit::tryExcept(AST::Try* node)
             Reg matches = newTemporary();
             loc(handler->range);
             g.emitPyCompare(matches.get(), exception.get(), type.get(), CompareOperator::ExceptionMatch);
-            g.emitJumpIfFalse(matches.get(), next.get());
+            g.emitPyJumpIfFalse(matches.get(), next.get());
         }
         if (handler->name) {
             // try:
@@ -1570,7 +1677,7 @@ void Unit::tryExcept(AST::Try* node)
                 restoreHandledException(previous.get());
                 storeName(handler->name, constant(jsUndefined()), handler->range);
                 deleteName(handler->name, handler->range);
-                g.emitJump(end.get());
+                hiddenJump(end.get());
             });
 
             Reg thrown = beginHandler(nameCleanup);
@@ -1584,7 +1691,7 @@ void Unit::tryExcept(AST::Try* node)
             popBlock();
             outsideTry(cleanup.depthBefore, [&] {
                 restoreHandledException(previous.get());
-                g.emitJump(end.get());
+                hiddenJump(end.get());
             });
         }
         g.emitLabel(next.get());
@@ -1615,7 +1722,7 @@ void Unit::tryStarExcept(AST::Try* node)
     statements(node->body);
     popBlock();
     endTry(body);
-    g.emitJump(orelse.get());
+    hiddenJump(orelse.get());
 
     Reg previous;
     Reg original = beginExceptionHandler(body, previous);
@@ -1737,7 +1844,7 @@ void Unit::withStatement(With* node, unsigned index)
         if (isAsync)
             emitAwait(result.get(), result.get(), 2);
     }
-    g.emitJump(end.get());
+    hiddenJump(end.get());
 
     // An exception: __exit__ says whether it goes on.
     Reg previous;
@@ -1758,7 +1865,7 @@ void Unit::withStatement(With* node, unsigned index)
     g.emitLabel(suppress.get());
     line(range.lineno);
     restoreHandledException(previous.get());
-    g.emitJump(end.get());
+    hiddenJump(end.get());
 
     Reg thrown = beginHandler(cleanup);
     restoreHandledException(previous.get());
@@ -2079,6 +2186,9 @@ void Unit::compileModule(Mod* module)
     }
     for (unsigned i = first; i < body.size(); ++i)
         statement(body[i]);
+    // All of a module with nothing in it is of line 0, which whoever traces it is told of: a debugger stops there.
+    if (body.isEmpty())
+        g.addPythonMark(PythonMark::Line, lineMarkValue(0, true));
     emitReturnNone();
 }
 

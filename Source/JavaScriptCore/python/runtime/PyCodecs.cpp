@@ -158,7 +158,7 @@ static void codecWriteCharacterReference(char32_t character, const Put& put)
     put(';');
 }
 
-static void codecAppendUTF8(Vector<uint8_t>& out, char32_t character)
+static void codecAppendUTF8(ByteBuilder& out, char32_t character)
 {
     if (character < 0x80)
         out.append(static_cast<uint8_t>(character));
@@ -689,10 +689,10 @@ public:
         return true;
     }
 
-    JSValue finish() { return PyBytes::create(m_globalObject, out.span()); }
+    JSValue finish() { return makeBytes(m_globalObject, out); }
 
     CodecText text;
-    Vector<uint8_t> out;
+    ByteBuilder out;
 
 private:
     bool prepareException(ASCIILiteral reason, unsigned start, unsigned end)
@@ -1035,7 +1035,7 @@ static JSValue codecSurrogatePassErrors(JSGlobalObject* globalObject, JSValue va
         return { };
 
     if (isEncoding) {
-        Vector<uint8_t> out;
+        ByteBuilder out;
         for (int64_t i = info.start; i < info.end; ++i) {
             char32_t character = info.text[static_cast<unsigned>(i)];
             if (!U_IS_SURROGATE(character))
@@ -1068,7 +1068,10 @@ static JSValue codecSurrogatePassErrors(JSGlobalObject* globalObject, JSValue va
                 break;
             }
         }
-        return codecHandlerResult(globalObject, PyBytes::create(globalObject, out.span()), info.end);
+        PyBytes* replacement = makeBytes(globalObject, out);
+        if (!replacement)
+            return { };
+        return codecHandlerResult(globalObject, replacement, info.end);
     }
 
     // One surrogate. If more follow, the codec will be back.
@@ -1108,14 +1111,17 @@ static JSValue codecSurrogateEscapeErrors(JSGlobalObject* globalObject, JSValue 
     if (auto* exception = codecAsError(value, rt.UnicodeEncodeError())) {
         if (!codecGetErrorInfo(globalObject, exception, false, info))
             return { };
-        Vector<uint8_t> out;
+        ByteBuilder out;
         for (int64_t i = info.start; i < info.end; ++i) {
             char32_t character = info.text[static_cast<unsigned>(i)];
             if (character < 0xdc80 || character > 0xdcff)
                 return codecRaiseAgain(globalObject, exception);
             out.append(static_cast<uint8_t>(character - 0xdc00));
         }
-        return codecHandlerResult(globalObject, PyBytes::create(globalObject, out.span()), info.end);
+        PyBytes* replacement = makeBytes(globalObject, out);
+        if (!replacement)
+            return { };
+        return codecHandlerResult(globalObject, replacement, info.end);
     }
     if (auto* exception = codecAsError(value, rt.UnicodeDecodeError())) {
         if (!codecGetErrorInfo(globalObject, exception, true, info))
@@ -1149,7 +1155,7 @@ JSValue codecEncodeUTF8(JSGlobalObject* globalObject, JSString* string, const St
     if (text.isNarrow() && text.isASCII())
         return PyBytes::create(globalObject, text.narrow());
 
-    Vector<uint8_t>& out = encoder.out;
+    ByteBuilder& out = encoder.out;
     unsigned size = text.length();
     out.reserveInitialCapacity(static_cast<size_t>(size) * (text.isNarrow() ? 2 : 3));
     auto put = [&](char c) { out.append(static_cast<uint8_t>(c)); };
@@ -1365,7 +1371,7 @@ static JSValue codecEncodeNarrow(JSGlobalObject* globalObject, JSString* string,
     if (text.isNarrow() && (limit == 256 || text.isASCII()))
         return PyBytes::create(globalObject, text.narrow());
 
-    Vector<uint8_t>& out = encoder.out;
+    ByteBuilder& out = encoder.out;
     unsigned size = text.length();
     out.reserveInitialCapacity(size);
     auto put = [&](char c) { out.append(static_cast<uint8_t>(c)); };
@@ -1483,7 +1489,7 @@ static JSValue codecEncodeUnits(JSGlobalObject* globalObject, JSString* string, 
     if (!encoder.initialize())
         return { };
     const CodecText& text = encoder.text;
-    Vector<uint8_t>& out = encoder.out;
+    ByteBuilder& out = encoder.out;
     unsigned size = text.length();
     out.reserveInitialCapacity((static_cast<size_t>(size) + 1) * unitSize);
     bool isLittleEndian = byteOrder < 0 || (!byteOrder && codecHostIsLittleEndian);
@@ -1840,7 +1846,7 @@ JSValue codecEncodeUTF7(JSGlobalObject* globalObject, JSString* string, const St
     CodecText text;
     if (!text.initialize(globalObject, string))
         return { };
-    Vector<uint8_t> out;
+    ByteBuilder out;
     out.reserveInitialCapacity(text.length());
     bool inShift = false;
     unsigned base64Bits = 0;
@@ -1891,7 +1897,7 @@ JSValue codecEncodeUTF7(JSGlobalObject* globalObject, JSString* string, const St
         out.append(codecToBase64(base64Buffer << (6 - base64Bits)));
     if (inShift)
         out.append('-');
-    return PyBytes::create(globalObject, out.span());
+    return makeBytes(globalObject, out);
 }
 
 // ---- unicode_escape, raw_unicode_escape ----
@@ -2087,7 +2093,7 @@ JSValue codecEncodeUnicodeEscape(JSGlobalObject* globalObject, JSString* string)
     CodecText text;
     if (!text.initialize(globalObject, string))
         return { };
-    Vector<uint8_t> out;
+    ByteBuilder out;
     out.reserveInitialCapacity(text.length());
     auto put = [&](char c) { out.append(static_cast<uint8_t>(c)); };
     for (unsigned i = 0; i < text.length(); ++i) {
@@ -2108,7 +2114,7 @@ JSValue codecEncodeUnicodeEscape(JSGlobalObject* globalObject, JSString* string)
         } else
             codecWriteBackslashEscape(character, put);
     }
-    return PyBytes::create(globalObject, out.span());
+    return makeBytes(globalObject, out);
 }
 
 JSValue codecDecodeRawUnicodeEscape(JSGlobalObject* globalObject, std::span<const uint8_t> input, const String& errors, size_t* consumed)
@@ -2173,7 +2179,7 @@ JSValue codecEncodeRawUnicodeEscape(JSGlobalObject* globalObject, JSString* stri
         return { };
     if (text.isNarrow())
         return PyBytes::create(globalObject, text.narrow());
-    Vector<uint8_t> out;
+    ByteBuilder out;
     out.reserveInitialCapacity(text.length());
     auto put = [&](char c) { out.append(static_cast<uint8_t>(c)); };
     for (unsigned i = 0; i < text.length(); ++i) {
@@ -2183,7 +2189,7 @@ JSValue codecEncodeRawUnicodeEscape(JSGlobalObject* globalObject, JSString* stri
         else
             codecWriteBackslashEscape(character, put);
     }
-    return PyBytes::create(globalObject, out.span());
+    return makeBytes(globalObject, out);
 }
 
 // ---- charmap ----
@@ -2275,7 +2281,7 @@ enum class CodecCharmapResult : uint8_t {
 } // namespace
 
 // Appends what the character maps to. With no `out`, only looks.
-static CodecCharmapResult codecCharmapOutput(JSGlobalObject* globalObject, char32_t character, JSValue mapping, Vector<uint8_t>* out)
+static CodecCharmapResult codecCharmapOutput(JSGlobalObject* globalObject, char32_t character, JSValue mapping, ByteBuilder* out)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2311,7 +2317,7 @@ JSValue codecEncodeCharmap(JSGlobalObject* globalObject, JSString* string, JSVal
     if (!encoder.initialize())
         return { };
     const CodecText& text = encoder.text;
-    Vector<uint8_t>& out = encoder.out;
+    ByteBuilder& out = encoder.out;
     unsigned size = text.length();
     out.reserveInitialCapacity(size);
 
@@ -2948,7 +2954,7 @@ static JSValue codecModuleEscapeDecode(JSGlobalObject* globalObject, JSValue dat
     return codecRunDecoder(globalObject, "escape_decode"_s, data, errorsValue, { }, true, true, [&](std::span<const uint8_t> in, const String& errors, size_t*) -> JSValue {
         VM& vm = getVM(globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
-        Vector<uint8_t> out;
+        ByteBuilder out;
         out.reserveInitialCapacity(in.size());
         int firstInvalidEscape = -1;
         size_t size = in.size();
@@ -3039,7 +3045,7 @@ static JSValue codecModuleEscapeDecode(JSGlobalObject* globalObject, JSValue dat
             if (!goesOn)
                 return { };
         }
-        return PyBytes::create(globalObject, out.span());
+        return makeBytes(globalObject, out);
     });
 }
 
@@ -3053,7 +3059,7 @@ static JSValue codecModuleEscapeEncode(JSGlobalObject* globalObject, JSValue dat
     String errors;
     if (!codecErrorsArgument(globalObject, "escape_encode"_s, errorsValue, errors))
         return { };
-    Vector<uint8_t> out;
+    ByteBuilder out;
     out.reserveInitialCapacity(bytes->length());
     auto put = [&](char c) { out.append(static_cast<uint8_t>(c)); };
     for (uint8_t c : bytes->span()) {
@@ -3074,7 +3080,10 @@ static JSValue codecModuleEscapeEncode(JSGlobalObject* globalObject, JSValue dat
         else
             out.append(c);
     }
-    return PyTuple::create(globalObject, { PyBytes::create(globalObject, out.span()), jsNumber(bytes->length()) });
+    PyBytes* result = makeBytes(globalObject, out);
+    if (!result)
+        return { };
+    return PyTuple::create(globalObject, { result, jsNumber(bytes->length()) });
 }
 
 static constexpr NativeDef codecModuleFunctions[] = {

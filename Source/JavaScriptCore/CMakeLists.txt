@@ -1193,6 +1193,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     python/runtime/PyRuntime.h
     python/runtime/PySet.h
     python/runtime/PySlowPaths.h
+    python/runtime/PySocket.h
     python/runtime/PyStdlibModuleNames.h
     python/runtime/PyStr.h
     python/runtime/PyStructSeq.h

@@ -494,6 +494,7 @@ struct TextIOState {
     bool encodingStartOfStream { false };
     bool decoderIsNewlineDecoder { false }; // An IncrementalNewlineDecoder itself, no subclass.
     bool decoderIsBuiltin { false };
+    bool isListedForPendingOutput { false }; // See ioNotePendingOutput().
     uint8_t writeNewlineLength { 0 }; // What "\n" is written as. 0: itself. 1: "\r". 2: "\r\n".
     TextIOEncoding encoding { TextIOEncoding::Other };
     int64_t chunkSize { 8192 };
@@ -1157,6 +1158,21 @@ bool TextStream::writeFlush()
     return writeToBuffer(bytes);
 }
 
+void textIOWriteOutPending(JSGlobalObject* globalObject, PyRecord* record)
+{
+    TextStream stream(globalObject, record);
+    stream.s.isListedForPendingOutput = false;
+    if (!stream.s.isInitialized || stream.s.isDetached || !stream.s.pendingCount)
+        return;
+    if (!stream.writeFlush())
+        reportUnraisable(globalObject, makeString("Exception ignored while flushing "_s, reprForMessage(globalObject, record)), { });
+}
+
+bool textIOHasPendingOutput(PyRecord* stream)
+{
+    return ioStateOf<TextIOState>(stream).pendingCount;
+}
+
 static JSValue textIOWrite(JSGlobalObject* globalObject, JSValue self, JSValue textValue)
 {
     VM& vm = getVM(globalObject);
@@ -1225,6 +1241,10 @@ static JSValue textIOWrite(JSGlobalObject* globalObject, JSValue self, JSValue t
         }
         memcpy(storage->data() + s.pendingCount, bytes.data(), byteCount);
         s.pendingCount += byteCount;
+        if (!s.isListedForPendingOutput && s.isExactType && stream.get(TextIORawField)) {
+            s.isListedForPendingOutput = true;
+            ioNotePendingOutput(globalObject, stream.record);
+        }
     }
     ensureStillAliveHere(encoded);
 

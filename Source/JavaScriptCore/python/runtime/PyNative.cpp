@@ -108,8 +108,71 @@ static String describeFunction(JSGlobalObject* globalObject, const NativeDef& de
 
 static ASCIILiteral plural(unsigned count) { return count == 1 ? ""_s : "s"_s; }
 
+// A call that is in order, with keywords or with parameters left out, takes no reading of the signature's text: where the names
+// are in it is remembered for the functions called last. False: the call may not be in order, and `values` are as they were.
+static ALWAYS_INLINE bool tryBindNativeArguments(const NativeDef& def, const CallArgs& args, JSValue* values)
+{
+    struct Entry {
+        const NativeDef* def { nullptr };
+        struct {
+            uint16_t offset;
+            uint8_t length;
+            bool hasDefault;
+        } parameters[NativeDef::maxArity];
+    };
+    static constexpr unsigned cacheSize = 64;
+    static thread_local std::array<Entry, cacheSize> cache;
+
+    auto& signature = def.signature;
+    unsigned total = signature.parameterCount;
+    unsigned count = args.size();
+    unsigned keywordCount = args.keywordCount();
+    if (!signature.takesKeywords || count + keywordCount > total || count > signature.maxPositional)
+        return false;
+
+    auto text = def.signatureText.span8();
+    Entry& entry = cache[(reinterpret_cast<uintptr_t>(&def) / sizeof(NativeDef)) % cacheSize];
+    if (entry.def != &def) [[unlikely]] {
+        Vector<NativeParameter, NativeDef::maxArity> parameters;
+        parseParameters(def, parameters);
+        ASSERT(parameters.size() == total);
+        entry.def = nullptr;
+        for (unsigned i = 0; i < total; ++i) {
+            size_t offset = parameters[i].name.data() - text.data();
+            if (offset > UINT16_MAX || parameters[i].name.size() > UINT8_MAX)
+                return false;
+            entry.parameters[i] = { static_cast<uint16_t>(offset), static_cast<uint8_t>(parameters[i].name.size()), parameters[i].hasDefault };
+        }
+        entry.def = &def;
+    }
+
+    for (unsigned i = 0; i < count; ++i)
+        values[i] = args[i];
+    bool isInOrder = true;
+    for (unsigned k = 0; k < keywordCount && isInOrder; ++k) {
+        StringImpl* name = args.keywordName(k)->tryGetValueImpl();
+        unsigned index = signature.positionalOnlyCount;
+        while (index < total && !WTF::equal(name, text.subspan(entry.parameters[index].offset, entry.parameters[index].length)))
+            ++index;
+        if (index < total && !values[index])
+            values[index] = args.keywordValue(k);
+        else
+            isInOrder = false;
+    }
+    for (unsigned i = 0; i < total && isInOrder; ++i)
+        isInOrder = values[i] || entry.parameters[i].hasDefault;
+    if (isInOrder)
+        return true;
+    for (unsigned i = 0; i < total; ++i)
+        values[i] = JSValue();
+    return false;
+}
+
 static NEVER_INLINE bool bindNativeArgumentsSlow(JSGlobalObject* globalObject, const NativeDef& def, PyNativeFunction* function, const CallArgs& args, JSValue* values)
 {
+    if (tryBindNativeArguments(def, args, values)) [[likely]]
+        return true;
+
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto& signature = def.signature;
@@ -285,7 +348,17 @@ JSValue invokeNative(JSGlobalObject* globalObject, const NativeDef& def, JSValue
 
 const ClassInfo PyNativeFunction::s_info = { "PyNativeFunction"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(PyNativeFunction) };
 
+static JSC_DECLARE_HOST_FUNCTION(callNativeFunctionWithFrame);
+
+// This one has no frame to speak of, so that all the frames of the call come after the wiping.
 JSC_DEFINE_HOST_FUNCTION(callNativeFunction, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    if (uncheckedDowncast<PyNativeFunction>(callFrame->jsCallee())->def().flags & OnWipedStack) [[unlikely]]
+        wipeStackBelow(getVM(globalObject));
+    [[clang::musttail]] return callNativeFunctionWithFrame(globalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(callNativeFunctionWithFrame, static NEVER_INLINE, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     auto* function = uncheckedDowncast<PyNativeFunction>(callFrame->jsCallee());
     CallArgs args(callFrame);

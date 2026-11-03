@@ -308,7 +308,15 @@ static bool callAuditHooks(JSGlobalObject* globalObject, JSValue event, std::spa
     PyTuple* tuple = PyTuple::create(globalObject, arguments);
     // A hook may add another, which then hears of this event too.
     for (unsigned i = 0; i < listLength(hooks); ++i) {
-        call(globalObject, listGet(hooks, i), event, tuple);
+        JSValue hook = listGet(hooks, i);
+        // What a hook does is not traced, unless it says it may be.
+        JSValue canTrace = getAttrIfPresent(globalObject, hook, internString(vm, "__cantrace__"_s));
+        RETURN_IF_EXCEPTION(scope, false);
+        bool isTraced = canTrace && isTrue(globalObject, canTrace);
+        RETURN_IF_EXCEPTION(scope, false);
+        rt.tracingDepth += !isTraced;
+        call(globalObject, hook, event, tuple);
+        rt.tracingDepth -= !isTraced;
         RETURN_IF_EXCEPTION(scope, false);
     }
     return true;
@@ -838,7 +846,8 @@ void initializeSysModule(JSGlobalObject* globalObject, PyModule* module)
 #if !OS(WINDOWS)
 
 // What sysconfig knows, on POSIX, it has from this module, which the build of CPython writes from its Makefile and pyconfig.h.
-// Here it has the variables that mean something without either. There are no extension modules yet, so no EXT_SUFFIX or SOABI.
+// Here it has the variables that mean something without either. There are no extension modules yet. SOABI and EXT_SUFFIX say what
+// they would be called: packaging.tags, and so pip, makes the name of the ABI from them and gives up without.
 void initializeSysconfigDataModule(JSGlobalObject* globalObject, PyModule* module)
 {
     Runtime& rt = runtime(globalObject);
@@ -870,6 +879,16 @@ void initializeSysconfigDataModule(JSGlobalObject* globalObject, PyModule* modul
     set("LDVERSION"_s, text(version));
     set("ABIFLAGS"_s, text(emptyString()));
     set("MULTIARCH"_s, text(emptyString()));
+#if OS(DARWIN)
+    String soabi = makeString(codeCacheTag(), "-darwin"_s);
+#elif CPU(ARM64)
+    String soabi = makeString(codeCacheTag(), "-aarch64-linux-gnu"_s);
+#else
+    String soabi = makeString(codeCacheTag(), "-x86_64-linux-gnu"_s);
+#endif
+    set("SOABI"_s, text(soabi));
+    set("EXT_SUFFIX"_s, text(makeString('.', soabi, ".so"_s)));
+    set("SHLIB_SUFFIX"_s, text(".so"_s));
     set("MACHDEP"_s, text(fromSys("platform"_s)));
     set("EXE"_s, text(emptyString()));
     set("Py_DEBUG"_s, jsNumber(0));

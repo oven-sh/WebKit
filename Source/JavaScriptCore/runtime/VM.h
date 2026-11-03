@@ -1128,6 +1128,10 @@ public:
 #endif
 
     JS_EXPORT_PRIVATE void whenIdle(Function<void()>&&);
+    // Nothing of the embedder's is in the middle of running: its thread has the VM and is not inside. Other threads that take
+    // turns in the VM (see Heap::mayRunEmbedderFinalizers()) may be parked inside, for ever even. They run Python code in the
+    // interpreter only, and their frames keep the code blocks they run, whatever becomes of the code of the VM.
+    bool isIdle() const { return !entryScope && heap.mayRunEmbedderFinalizers(); }
 
     // While > 1, LLInt->Baseline and Baseline->DFG compile thresholds behave as if multiplied by this.
     // Mutator-only (tier-up slow paths). Set from Options::startupJITDeferralScale or by the embedder.

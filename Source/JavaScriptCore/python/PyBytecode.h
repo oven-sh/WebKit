@@ -91,7 +91,7 @@ struct TracedBlock {
         ForLoop, // The register holds the iterator,
         With, // __exit__,
         ExceptionHandler, // the exception that was being handled before the one that is now.
-        ExceptionGroupHandler, // The same, and there is more in other registers.
+        ExceptionHandlerWithMore, // The same, and there is more in other registers: `except*`, `finally` on the way of an exception.
         Other,
     };
     static constexpr uint64_t encode(Kind kind, int registerOffset) { return kind | static_cast<uint64_t>(static_cast<uint32_t>(registerOffset)) << 8; }

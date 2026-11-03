@@ -59,6 +59,7 @@ public:
     static PySet* createFrozen(JSGlobalObject*);
 
     size_t size() const { return m_used; }
+    const void* storageIdentity() const { return m_storage.get(); }
     bool isEmpty() const { return !m_used; }
 
     // These may run __hash__ and __eq__, and so throw.

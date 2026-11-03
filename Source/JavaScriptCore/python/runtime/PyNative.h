@@ -198,6 +198,8 @@ enum NativeFlag : uint8_t {
     SequenceOperation = 1 << 0,
     // __get__, which refuses (None, None). Set by the name.
     DescriptorGet = 1 << 1,
+    // See wipeStackBelow().
+    OnWipedStack = 1 << 2,
 };
 
 class NativeDef {

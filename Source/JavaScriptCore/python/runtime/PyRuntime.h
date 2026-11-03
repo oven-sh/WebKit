@@ -246,6 +246,7 @@ class PyNativeFunction;
 class PyType;
 class PyWeakRef;
 class Threads;
+struct StrIndexCache;
 struct TypeDef;
 
 enum class CellClass : uint8_t {
@@ -533,6 +534,9 @@ public:
 
     // The code object of each piece of code that has been asked for one, for as long as something holds it.
     WeakGCMap<FunctionExecutable*, PyCode> codeObjects;
+
+    // See StrView.
+    std::unique_ptr<StrIndexCache, void (*)(StrIndexCache*)> strIndexCache { nullptr, nullptr };
 
     // The frame in which an exception is being raised again: it is in the traceback already.
     CallFrame* reraisingFrame { nullptr };

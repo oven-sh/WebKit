@@ -56,8 +56,14 @@ JSValue typeCall(JSGlobalObject*, PyType*, const CallArgs&);
 // An instance of the type with nothing set: what object.__new__ makes, given how the type's instances are laid out.
 JSValue allocateInstance(JSGlobalObject*, PyType*);
 // What gc.collect() does: collects, runs the finalizers of what was found, and so on until there is nothing left to do. Not from
-// a finalizer.
+// a finalizer. Throws nothing but the host's termination.
 void collectAndFinalize(JSGlobalObject*);
+// In CPython a file that is dropped is closed at once, and programs count on it: open(path, "w").write(text), and whoever opens the
+// file next finds the text. Here it would be closed after some collection. So the streams over files that hold output are kept in
+// a list, and what they hold is written before the program, or anyone it starts, can look at a file. (When a buffer is written is
+// up to the implementation, so this is never wrong.) Does not raise.
+void writeOutPendingOutput(JSGlobalObject*);
+void wipeStackBelow(VM&);
 // If all that callee(...) does is self = object.__new__(callee), then callee.__init__(self, ...), and that is a function written
 // in Python: the function, and a new `self`. Otherwise the empty value.
 JSValue prepareConstruct(JSGlobalObject*, JSValue callee, JSValue& self);

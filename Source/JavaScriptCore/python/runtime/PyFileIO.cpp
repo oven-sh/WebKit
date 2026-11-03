@@ -5,6 +5,7 @@
 
 #include "config.h"
 #include "PyIO.h"
+#include "PyPosix.h"
 
 #include "JSCInlines.h"
 #include "PyCodecs.h"
@@ -196,6 +197,7 @@ static JSValue fileIONew(JSGlobalObject* globalObject, JSValue cls, const CallAr
 // open(2), for a file that programs started from this one do not inherit.
 static int fileIOSystemOpen(JSGlobalObject* globalObject, const char* name, int flags)
 {
+    writeOutPendingOutput(globalObject);
     // Opening a FIFO waits for its other end, which may be another thread's to open.
     VirtualPath fromRoot;
     bool isVirtual = toVirtualPath(std::span<const char> { name, strlen(name) }, fromRoot);
@@ -212,13 +214,8 @@ static int fileIOSystemOpen(JSGlobalObject* globalObject, const char* name, int 
         return fd;
     };
     int fd = attempt();
-    if (fd < 0 && (errno == EMFILE || errno == ENFILE) && !getVM(globalObject).exceptionForInspection()) {
-        // Files nothing refers to any more are closed only once the collector has noticed.
-        Runtime& rt = runtime(globalObject);
-        rt.vm().heap.collectNow(Synchronousness::Sync, CollectionScope::Full);
-        rt.runPendingCalls();
+    if (fd < 0 && posixFreeDescriptors(globalObject))
         fd = attempt();
-    }
     return fd;
 }
 

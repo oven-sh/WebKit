@@ -36,6 +36,7 @@
 #include "LLIntPCRanges.h"
 #include "MachineContext.h"
 #include "MacroAssemblerCodeRef.h"
+#include "PyHooks.h"
 #include "VMEntryScopeInlines.h"
 #include "VMInlines.h"
 #include "VMManager.h"
@@ -456,6 +457,27 @@ bool VMTraps::handleTraps(VMTraps::BitField mask)
     if (isDeferringTermination())
         mask &= ~NeedTermination;
 
+    if (!vm.heap.mayRunEmbedderFinalizers()) [[unlikely]] {
+        BitField left = 0;
+        {
+            Locker locker { *m_trapSignalingLock };
+            for (Event event : { NeedTermination, NeedWatchdogCheck }) {
+                if (!hasTrapBit(event))
+                    continue;
+                clearTrapWithoutCancellingThreadStop(event);
+                left |= event;
+            }
+        }
+        updateThreadStopRequestIfNeeded();
+        mask &= ~(NeedTermination | NeedWatchdogCheck);
+        if (left) {
+            m_trapsLeftToEmbedderThread |= left;
+            Python::mainThreadHasTrapsToHandle(vm);
+        }
+        if (!mask)
+            RELEASE_AND_RETURN(scope, false);
+    }
+
     {
         Locker codeBlockSetLocker { vm.heap.codeBlockSet().getLock() };
         vm.heap.forEachCodeBlockIgnoringJITPlans(codeBlockSetLocker, [&] (CodeBlock* codeBlock) {
@@ -527,6 +549,15 @@ bool VMTraps::handleTraps(VMTraps::BitField mask)
         }
     }
     RELEASE_AND_RETURN(scope, didHandleTrap);
+}
+
+void VMTraps::fireTrapsLeftToEmbedderThread()
+{
+    BitField left = std::exchange(m_trapsLeftToEmbedderThread, 0);
+    for (Event event : { NeedTermination, NeedWatchdogCheck }) {
+        if (left & event)
+            fireTrap(event);
+    }
 }
 
 bool VMTraps::handleTrapsIfNeeded(VMTraps::BitField mask)

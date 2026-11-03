@@ -467,7 +467,7 @@ static void objectSetClass(JSGlobalObject* globalObject, JSValue self, JSValue v
         return;
     }
     if (!layoutsAreCompatible(oldType, newType)) {
-        raiseTypeError(globalObject, scope, "__class__ assignment: '"_s, newType->name(), "' object layout differs from '"_s, oldType->name(), '\'');
+        raiseTypeError(globalObject, scope, "__class__ assignment: '"_s, newType->nameInMessages(), "' object layout differs from '"_s, oldType->nameInMessages(), '\'');
         return;
     }
     JSCell* cell = self.asCell();
@@ -1354,7 +1354,7 @@ static void typeSetBases(JSGlobalObject* globalObject, JSValue self, JSValue val
     PyType* base = findBestBase(globalObject, bases);
     RETURN_IF_EXCEPTION(scope, void());
     if (!layoutsAreCompatible(type->base(), base, type)) {
-        raiseTypeError(globalObject, scope, "__bases__ assignment: '"_s, base->name(), "' object layout differs from '"_s, type->base()->name(), '\'');
+        raiseTypeError(globalObject, scope, "__bases__ assignment: '"_s, base->nameInMessages(), "' object layout differs from '"_s, type->base()->nameInMessages(), '\'');
         return;
     }
 
@@ -1566,6 +1566,8 @@ static constexpr std::pair<ASCIILiteral, ASCIILiteral> typeSignatures[] = {
     { "FrameLocalsProxy"_s, "($frame)"_s },
     { "NoneType"_s, "()"_s },
     { "NotImplementedType"_s, "()"_s },
+    { "_asyncio.Future"_s, "(*, loop=None)"_s },
+    { "_asyncio.Task"_s, "(coro, *, loop=None, name=None, context=None, eager_start=False)"_s },
     { "_blake2.blake2b"_s, "(data=b'', *, digest_size=_blake2.blake2b.MAX_DIGEST_SIZE,\n        key=b'', salt=b'', person=b'', fanout=1, depth=1, leaf_size=0,\n        node_offset=0, node_depth=0, inner_size=0, last_node=False,\n        usedforsecurity=True, string=None)"_s },
     { "_blake2.blake2s"_s, "(data=b'', *, digest_size=_blake2.blake2s.MAX_DIGEST_SIZE,\n        key=b'', salt=b'', person=b'', fanout=1, depth=1, leaf_size=0,\n        node_offset=0, node_depth=0, inner_size=0, last_node=False,\n        usedforsecurity=True, string=None)"_s },
     { "_hashlib.HASH"_s, "(name, string=b'')"_s },

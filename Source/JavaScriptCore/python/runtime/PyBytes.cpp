@@ -18,6 +18,7 @@
 #include "PyStr.h"
 #include "PyTextSearch.h"
 #include "PyTypes.h"
+#include <wtf/RAMSize.h>
 #include <wtf/Scope.h>
 #include <wtf/text/StringBuilder.h>
 
@@ -37,6 +38,13 @@ const ClassInfo PyByteStorage::s_info = { "PyByteStorage"_s, nullptr, nullptr, n
 
 // Nothing longer is even asked of the allocator.
 static constexpr size_t bytesMaxLength = (static_cast<size_t>(1) << 40) - 64;
+
+// The allocator reserves addresses, which there are plenty of: it is on filling the memory that the system would end the process.
+// So what malloc() would refuse is refused here: more in one piece than the machine has.
+static bool bytesCanBeAllocated(size_t length)
+{
+    return length <= bytesMaxLength && length <= WTF::ramSize();
+}
 static constexpr int64_t bytesMaxSsize = std::numeric_limits<int64_t>::max();
 
 // ---- PyBytes ----
@@ -57,7 +65,7 @@ PyBytes* PyBytes::createUninitialized(VM& vm, Structure* structure, PyType* type
 
 PyBytes* PyBytes::tryCreateUninitialized(VM& vm, Structure* structure, PyType* type, size_t length)
 {
-    if (length > bytesMaxLength)
+    if (!bytesCanBeAllocated(length))
         return nullptr;
     void* cell = tryAllocateCell<PyBytes>(vm, allocationSize(length));
     if (!cell)
@@ -83,6 +91,37 @@ PyBytes* PyBytes::create(JSGlobalObject* globalObject, std::span<const uint8_t> 
     return bytes;
 }
 
+bool ByteBuilder::makeRoomSlow(size_t count)
+{
+    static constexpr size_t limit = std::numeric_limits<unsigned>::max(); // Of a Vector.
+    size_t size = m_bytes.size();
+    if (m_hasOverflowed || count > limit - size) {
+        m_hasOverflowed = true;
+        return false;
+    }
+    size_t wanted = std::min(limit, std::max(size + count, size + size / 2 + 16));
+    if (!m_bytes.tryReserveCapacity(wanted) && !m_bytes.tryReserveCapacity(size + count))
+        m_hasOverflowed = true;
+    return !m_hasOverflowed;
+}
+
+PyBytes* makeBytes(JSGlobalObject* globalObject, const ByteBuilder& builder)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto span = builder.span();
+    if (!builder.hasOverflowed() && span.empty())
+        return rt.emptyBytes();
+    PyBytes* result = builder.hasOverflowed() ? nullptr : PyBytes::tryCreateUninitialized(vm, rt.structure<PyBytes>(), rt.bytesType(), span.size());
+    if (!result) {
+        raiseMemoryError(globalObject, scope, String());
+        return nullptr;
+    }
+    memcpy(result->mutableData(), span.data(), span.size());
+    return result;
+}
+
 // ---- PyByteStorage ----
 
 PyByteStorage::PyByteStorage(VM& vm, Structure* structure, size_t capacity)
@@ -100,6 +139,8 @@ PyByteStorage* PyByteStorage::create(VM& vm, Structure* structure, size_t capaci
 
 PyByteStorage* PyByteStorage::tryCreate(VM& vm, Structure* structure, size_t capacity)
 {
+    if (!bytesCanBeAllocated(capacity))
+        return nullptr;
     void* cell = tryAllocateCell<PyByteStorage>(vm, sizeof(PyByteStorage) + capacity);
     if (!cell)
         return nullptr;
@@ -156,6 +197,7 @@ bool PyByteArray::resize(JSGlobalObject* globalObject, size_t length)
     }
     if (!length) {
         m_storage.clear();
+        m_start = 0;
         m_length = 0;
         return true;
     }
@@ -165,8 +207,8 @@ bool PyByteArray::resize(JSGlobalObject* globalObject, size_t length)
     size_t newCapacity = needed;
     if (needed <= capacity) {
         // Unless it shrinks by more than half, it stays where it is.
-        if (needed >= capacity / 2) {
-            uint8_t* data = m_storage->data();
+        if (needed >= m_storage->capacity() / 2) {
+            uint8_t* data = m_storage->data() + m_start;
             if (length > m_length)
                 memset(data + m_length, 0, length - m_length);
             data[length] = 0;
@@ -185,10 +227,39 @@ bool PyByteArray::resize(JSGlobalObject* globalObject, size_t length)
     }
     size_t kept = std::min(m_length, length);
     if (kept)
-        memcpy(storage->data(), m_storage->data(), kept);
+        memcpy(storage->data(), m_storage->data() + m_start, kept);
     memset(storage->data() + kept, 0, newCapacity - kept);
     m_storage.set(vm, this, storage);
+    m_start = 0;
     m_length = length;
+    return true;
+}
+
+bool PyByteArray::removeFront(JSGlobalObject* globalObject, size_t count)
+{
+    ASSERT(count <= m_length);
+    if (!count)
+        return true;
+    // Once less than half of the storage is in use, resize() moves what is left to a smaller one.
+    if (count == m_length || m_length - count + 1 < m_storage->capacity() / 2) {
+        uint8_t* data = m_storage->data() + m_start;
+        VM& vm = getVM(globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        if (isStillExported(globalObject, this, [&] { return m_exports; })) {
+            raiseBufferError(globalObject, scope, "Existing exports of data: object cannot be re-sized"_s);
+            return false;
+        }
+        memmove(data, data + count, m_length - count);
+        RELEASE_AND_RETURN(scope, resize(globalObject, m_length - count));
+    }
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (isStillExported(globalObject, this, [&] { return m_exports; })) {
+        raiseBufferError(globalObject, scope, "Existing exports of data: object cannot be re-sized"_s);
+        return false;
+    }
+    m_start += count;
+    m_length -= count;
     return true;
 }
 
@@ -198,12 +269,12 @@ void PyByteArray::append(JSGlobalObject* globalObject, std::span<const uint8_t> 
         return;
     size_t oldLength = m_length;
     // They may be bytes of this very array, which is about to move.
-    uintptr_t own = m_storage ? std::bit_cast<uintptr_t>(m_storage->data()) : 0;
+    uintptr_t own = m_storage ? std::bit_cast<uintptr_t>(m_storage->data() + m_start) : 0;
     uintptr_t given = std::bit_cast<uintptr_t>(bytes.data());
     bool isOwn = own && given >= own && given < own + oldLength;
     if (!resize(globalObject, oldLength + bytes.size()))
         return;
-    uint8_t* data = m_storage->data();
+    uint8_t* data = m_storage->data() + m_start;
     memmove(data + oldLength, isOwn ? data + (given - own) : bytes.data(), bytes.size());
 }
 
@@ -2181,8 +2252,7 @@ static String bytesFormatInteger(BytesFormatter& f, JSValue value, bool alternat
         builder.append('-');
     if (alternate && base != 10)
         builder.append('0', code);
-    for (int64_t i = magnitude.length(); i < precision; ++i)
-        builder.append('0');
+    appendRepeated(builder, '0', precision - static_cast<int64_t>(magnitude.length()));
     if (code == 'X')
         builder.append(magnitude.convertToASCIIUppercase());
     else
@@ -2530,7 +2600,10 @@ static bool byteArrayReplaceRange(JSGlobalObject* globalObject, PyByteArray* arr
     size_t size = array->length();
     ASSERT(lo <= hi && hi <= size);
     size_t removed = hi - lo;
-    if (bytes.size() < removed) {
+    if (bytes.size() < removed && !lo) {
+        if (!array->removeFront(globalObject, removed - bytes.size()))
+            return false;
+    } else if (bytes.size() < removed) {
         if (!byteArrayCanResize(globalObject, array))
             return false;
         uint8_t* data = array->mutableSpan().data();

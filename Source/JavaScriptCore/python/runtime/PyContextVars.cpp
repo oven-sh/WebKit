@@ -4,6 +4,7 @@
  */
 
 #include "config.h"
+#include "PyContextVars.h"
 
 #include "JSCInlines.h"
 #include "PyAbstract.h"
@@ -30,9 +31,9 @@ static PyType* contextType(JSGlobalObject*);
 static PyType* contextVarType(JSGlobalObject*);
 static PyType* contextTokenType(JSGlobalObject*);
 
-static PyRecord* newContext(JSGlobalObject* globalObject, PyDict* values)
+static PyRecord* newContext(JSGlobalObject* globalObject, PyDict* values, PyType* type = nullptr)
 {
-    PyRecord* context = PyRecord::create(globalObject, contextType(globalObject), ContextFieldCount);
+    PyRecord* context = PyRecord::create(globalObject, type ? type : contextType(globalObject), ContextFieldCount);
     context->set(getVM(globalObject), ContextValues, values ? values : PyDict::create(globalObject));
     return context;
 }
@@ -60,6 +61,42 @@ static JSValue contextNew(JSGlobalObject* globalObject, JSValue, const CallArgs&
     return newContext(globalObject, nullptr);
 }
 
+bool enterContext(JSGlobalObject* globalObject, JSValue self)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* context = PyRecord::from(self);
+    if (context->number) {
+        raiseRuntimeError(globalObject, scope, "cannot enter context: "_s, reprForMessage(globalObject, self), " is already entered"_s);
+        return false;
+    }
+    context->number = 1;
+    context->set(vm, ContextPrevious, rt.currentContext());
+    rt.setCurrentContext(context);
+    return true;
+}
+
+bool exitContext(JSGlobalObject* globalObject, JSValue self)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* context = PyRecord::from(self);
+    if (!context->number) {
+        raiseRuntimeError(globalObject, scope, "cannot exit context: "_s, reprForMessage(globalObject, self), " has not been entered"_s);
+        return false;
+    }
+    if (rt.currentContext() != self) {
+        raiseRuntimeError(globalObject, scope, "cannot exit context: thread state references a different context object"_s);
+        return false;
+    }
+    rt.setCurrentContext(context->get(ContextPrevious));
+    context->set(vm, ContextPrevious, { });
+    context->number = 0;
+    return true;
+}
+
 static JSValue contextRun(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
 {
     Runtime& rt = runtime(globalObject);
@@ -67,13 +104,9 @@ static JSValue contextRun(JSGlobalObject* globalObject, JSValue self, const Call
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!args.size())
         return raiseTypeError(globalObject, scope, "run() missing 1 required positional argument"_s);
+    if (!enterContext(globalObject, self))
+        return { };
     auto* context = PyRecord::from(self);
-    if (context->number)
-        return raiseRuntimeError(globalObject, scope, "cannot enter context: "_s, reprForMessage(globalObject, self), " is already entered"_s);
-
-    context->number = 1;
-    context->set(vm, ContextPrevious, rt.currentContext());
-    rt.setCurrentContext(context);
     JSValue result = call(globalObject, args[0], args.withoutFirst());
     rt.setCurrentContext(context->get(ContextPrevious));
     context->set(vm, ContextPrevious, { });
@@ -162,6 +195,13 @@ static constexpr NativeDef contextMethods[] = {
 static constexpr TypeDef contextTypeDef { "_contextvars.Context"_s, { TypeFlag::HasWeakref }, contextMethods, { }, { } };
 
 static PyType* contextType(JSGlobalObject* globalObject) { return runtime(globalObject).typeFor(contextTypeDef); }
+
+bool isContext(JSGlobalObject* globalObject, JSValue value) { return isPyObject(value) && uncheckedDowncast<PyObject>(value.asCell())->type() == contextType(globalObject); }
+JSValue copyCurrentContext(JSGlobalObject* globalObject)
+{
+    PyRecord* current = currentContext(globalObject);
+    return newContext(globalObject, contextValues(current), current->type());
+}
 
 // ---- Token ----
 
@@ -349,10 +389,7 @@ static PyType* contextVarType(JSGlobalObject* globalObject) { return runtime(glo
 
 // ---- The module ----
 
-static JSValue contextvarsCopyContext(JSGlobalObject* globalObject)
-{
-    return newContext(globalObject, contextValues(currentContext(globalObject)));
-}
+static JSValue contextvarsCopyContext(JSGlobalObject* globalObject) { return copyCurrentContext(globalObject); }
 
 static constexpr NativeDef contextvarsFunctions[] = {
     PY_FUNCTION("copy_context", contextvarsCopyContext, "()"),

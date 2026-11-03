@@ -11,6 +11,7 @@
 #include "PyErrors.h"
 #include "PyInternals.h"
 #include "PyList.h"
+#include "PyMonitoring.h"
 #include "PyStr.h"
 #include "PyTypes.h"
 #include <wtf/HashSet.h>
@@ -432,7 +433,7 @@ JSValue matchExceptionGroup(JSGlobalObject* globalObject, JSValue exception, JSV
         JSValue wrapped = groupMake(globalObject, rt.names.empty(), PyTuple::create(globalObject, { exception }));
         RETURN_IF_EXCEPTION(scope, { });
         if (PyFrame* frame = currentFrame(globalObject))
-            PyException::from(wrapped)->setTraceback(vm, PyTraceback::create(globalObject, { }, frame, frame->lineNumber(), frame->bytecodeOffset()));
+            PyException::from(wrapped)->setTraceback(vm, PyTraceback::create(globalObject, { }, frame, frame->lineNumber(), shownOffset(frame->bytecodeOffset())));
         return wrapped;
     }
 

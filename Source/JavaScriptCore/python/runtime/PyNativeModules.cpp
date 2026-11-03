@@ -24,9 +24,12 @@ static void initializeStringModule(JSGlobalObject* globalObject, PyModule* modul
     module->addFunctions(globalObject, stringModuleFunctions);
 }
 
+void initializeAsyncioModule(JSGlobalObject*, PyModule*); // PyAsyncio.cpp
+
 static constexpr NativeModuleDef nativeModuleTable[] = {
     { "_abc"_s, initializeAbcModule },
     { "_ast"_s, initializeAstModule },
+    { "_asyncio"_s, initializeAsyncioModule },
     { "_bisect"_s, initializeBisectModule },
     { "_codecs"_s, initializeCodecsModule },
     { "_collections"_s, initializeCollectionsModule },

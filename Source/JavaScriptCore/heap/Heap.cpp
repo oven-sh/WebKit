@@ -1215,7 +1215,7 @@ void Heap::deleteAllCodeBlocks(DeleteAllCodeEffort effort, bool keepWhatNeedsPar
     
     // If JavaScript is running, it's not safe to delete all JavaScript code, since
     // we'll end up returning to deleted code.
-    RELEASE_ASSERT(!vm.entryScope);
+    RELEASE_ASSERT(vm.isIdle());
     RELEASE_ASSERT(!m_collectionScope);
 
     completeAllJITPlans();

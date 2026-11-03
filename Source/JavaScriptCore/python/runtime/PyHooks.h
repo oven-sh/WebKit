@@ -60,6 +60,8 @@ JSValue constantFromParts(JSGlobalObject*, const ConstantParts&);
 
 // VMTraps::NeedPythonCalls, at a place where any code may run. What a signal handler raises is thrown.
 JS_EXPORT_PRIVATE void makeCallsOwed(VM&);
+// For VMTraps::handleTraps() on another thread: see VMTraps::fireTrapsLeftToEmbedderThread().
+void mainThreadHasTrapsToHandle(VM&);
 
 // Python tells 2.0 from 2, which are one number in JS, by keeping floats that are whole numbers in objects. Code that is
 // not Python is given the number where a value is handed to it: the result of a call, an argument, an attribute.
@@ -68,6 +70,8 @@ JS_EXPORT_PRIVATE JSValue valueForJS(JSValue);
 // promise of a coroutine's result, which starts to run, as an async function of JS does. `callFrame` is that of the function.
 // Does not throw.
 JSValue resultForCaller(JSGlobalObject*, CallFrame*, JSValue result);
+// Whether the frame, of something in Python, was called by Python code or by the runtime on its behalf, as opposed to JS code or the host.
+bool isCalledByPython(JSGlobalObject*, CallFrame*);
 
 // The operators of JS on objects of Python (mayOverloadOperators() in JSCJSValueInlines.h says which values those are):
 // a + b is what it is in Python if the class of one of them says what it is (__add__, __radd__). If neither does, the
@@ -86,8 +90,9 @@ JS_EXPORT_PRIVATE std::optional<bool> compareForJS(JSGlobalObject*, JSOperator, 
 JS_EXPORT_PRIVATE std::optional<bool> equalForJS(JSGlobalObject*, JSValue left, JSValue right);
 
 // Python code is calling what is not Python code: whether it is, and the frame made ready for it (or an exception).
+// True: the callee is a class, and the call is `new callee(...)`.
 JS_EXPORT_PRIVATE bool isForeignCallee(JSValue callee);
-JS_EXPORT_PRIVATE void prepareForeignCall(JSGlobalObject*, CallFrame* calleeFrame);
+JS_EXPORT_PRIVATE bool prepareForeignCall(JSGlobalObject*, CallFrame* calleeFrame);
 
 } // namespace Python
 } // namespace JSC

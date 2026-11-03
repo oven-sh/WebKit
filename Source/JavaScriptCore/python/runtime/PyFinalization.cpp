@@ -6,7 +6,12 @@
 #include "config.h"
 #include "PyRuntime.h"
 
+#include "HeapAnalyzer.h"
+#include "HeapIterationScope.h"
+#include "HeapProfiler.h"
 #include "JSCInlines.h"
+#include "MarkedSpaceInlines.h"
+#include "PreventCollectionScope.h"
 #include "PyAbstract.h"
 #include "PyBuffer.h"
 #include "PyErrors.h"
@@ -17,6 +22,7 @@
 #include "PyInternals.h"
 #include "PyList.h"
 #include "PyModule.h"
+#include "PySet.h"
 #include "PyStr.h"
 #include "PyStructSeq.h"
 #include "PyThreads.h"
@@ -239,7 +245,7 @@ static void finalizeObject(JSGlobalObject* globalObject, JSCell* cell)
     if (!method)
         return;
     callSpecial(globalObject, method, cell);
-    if (scope.exception())
+    if (scope.exception() && !getVM(globalObject).hasPendingTerminationException())
         reportUnraisable(globalObject, makeString("Exception ignored while calling deallocator "_s, reprForMessage(globalObject, method)), { });
 }
 
@@ -339,13 +345,19 @@ void Runtime::runPendingCalls()
             weakRef->clearCallback();
             if (callback) {
                 call(globalObject, callback, weakRef);
-                if (scope.exception())
+                if (scope.exception() && !m_vm.hasPendingTerminationException())
                     reportUnraisable(globalObject, makeString("Exception ignored while calling weakref callback "_s, reprForMessage(globalObject, callback)), { });
             }
         } else
             finalizeObject(globalObject, object);
         ensureStillAliveHere(object);
         ensureStillAliveHere(weakRef);
+        // The host is ending what runs here, and that cannot be reported and forgotten. The rest is for another time.
+        if (m_vm.hasPendingTerminationException()) [[unlikely]] {
+            Locker locker { m_finalizationLock };
+            didQueueCalls();
+            return;
+        }
     }
 }
 
@@ -362,6 +374,8 @@ void Runtime::finalizeAllAtExit()
             if (!hasPendingCalls())
                 break;
             runPendingCalls();
+            if (m_vm.hasPendingTerminationException()) [[unlikely]]
+                break;
         }
     };
     // A program that leaves nothing to finalize exits without further ado.
@@ -412,14 +426,16 @@ static JSValue gcCollect(JSGlobalObject* globalObject, JSValue generation)
         return jsNumber(0);
     }
     collectAndFinalize(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
     // FIXME: How many unreachable objects were found is not known.
     return jsNumber(0);
 }
 
 // A program that asks for a collection expects what it has dropped to be gone afterwards. The collector takes every word of the
-// stack that looks like a reference for one, and the frames of C++ between here and there will lie where those of earlier
-// calls were: what they do not write would still refer to what those dealt with. So that is wiped first.
-static NEVER_INLINE void wipeStackBelow(VM& vm)
+// stack that looks like a reference for one, and the frames of C++ between the program's call and the collector lie where those
+// of its earlier calls were: what they do not write would still refer to what those dealt with. So that is wiped first, before
+// the first of those frames (NativeFlag::OnWipedStack).
+NEVER_INLINE void wipeStackBelow(VM& vm)
 {
     constexpr size_t size = 128 * KB;
     char* top = static_cast<char*>(currentStackPointer());
@@ -436,6 +452,7 @@ void collectAndFinalize(JSGlobalObject* globalObject)
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     ASSERT(!rt.isRunningPendingCalls());
+    writeOutPendingOutput(globalObject); // Until then they are not to be collected.
     // An object with a finalizer takes two rounds: one finds it, the next frees it, which may clear weak references in turn
     // and finds what only it referred to. The limit is for finalizers that make new garbage with finalizers for ever.
     for (unsigned round = 0; round < 64; ++round) {
@@ -447,6 +464,8 @@ void collectAndFinalize(JSGlobalObject* globalObject)
         if (!rt.hasPendingCalls())
             break;
         rt.runPendingCalls();
+        if (vm.hasPendingTerminationException()) [[unlikely]]
+            break;
     }
 }
 
@@ -479,18 +498,176 @@ static JSValue gcSetThreshold(JSGlobalObject*, const CallArgs&) { return jsUndef
 static JSValue gcGetCount(JSGlobalObject* globalObject) { return PyTuple::create(globalObject, { jsNumber(0), jsNumber(0), jsNumber(0) }); }
 static JSValue gcGetDebug(JSGlobalObject*) { return jsNumber(0); }
 static JSValue gcSetDebug(JSGlobalObject*, JSValue) { return jsUndefined(); }
+// Whether a program may be given the cell: the heap is full of things that are the engine's own.
+static bool isObjectOfPython(JSCell* cell)
+{
+    JSType type = cell->type();
+    if (isPyObjectType(type) || type == ArrayType || type == DerivedArrayType)
+        return true;
+    if (type == JSFunctionType)
+        return PyFunction::is(cell);
+    return type == InternalFunctionType && (PyType::is(cell) || PyNativeFunction::is(cell));
+}
+
+// Who refers to whom is what the collector finds out as it marks. This listens to a collection (as a heap snapshot does) for the
+// references from or to some objects. What only a running frame refers to has no referrer: the stack is not made of objects.
+class ReferenceListener final : public HeapAnalyzer {
+public:
+    ReferenceListener(std::span<const JSValue> objects, bool findsReferrers)
+        : m_findsReferrers(findsReferrers)
+    {
+        for (JSValue object : objects) {
+            if (!object.isCell())
+                continue;
+            m_objects.add(object.asCell());
+            if (findsReferrers)
+                continue;
+            // See appendFound().
+            if (auto* dict = PyDict::tryFrom(object); dict && dict->storageIdentity())
+                m_objects.add(static_cast<JSCell*>(const_cast<void*>(dict->storageIdentity())));
+            if (auto* set = PySet::tryFrom(object); set && set->storageIdentity())
+                m_objects.add(static_cast<JSCell*>(const_cast<void*>(set->storageIdentity())));
+        }
+    }
+
+    void listen(VM& vm)
+    {
+        if (m_objects.isEmpty())
+            return;
+        HeapProfiler& profiler = vm.ensureHeapProfiler();
+        if (profiler.activeHeapAnalyzer())
+            return;
+        PreventCollectionScope preventCollectionScope(vm.heap);
+        profiler.setActiveHeapAnalyzer(this);
+        vm.heap.collectNow(Synchronousness::Sync, CollectionScope::Full);
+        profiler.setActiveHeapAnalyzer(nullptr);
+    }
+
+    // In no particular order.
+    void appendFound(MarkedArgumentBuffer& result)
+    {
+        UncheckedKeyHashSet<JSCell*> seen;
+        for (JSCell* cell : m_found) {
+            // What a dict or a set holds is in a cell of its own. And the attributes of a class are in a dict that no program gets to
+            // see (it could change the class behind its back).
+            for (unsigned i = 0; i < 2; ++i) {
+                if (auto owner = m_owners.find(cell); owner != m_owners.end())
+                    cell = owner->value;
+            }
+            if (isObjectOfPython(cell) && !m_objects.contains(cell) && seen.add(cell).isNewEntry)
+                result.append(cell);
+        }
+    }
+
+private:
+    void analyzeNode(JSCell*) final { }
+    void analyzeEdge(JSCell* from, JSCell* to, RootMarkReason) final
+    {
+        if (!from || from == to)
+            return;
+        if (m_findsReferrers) {
+            bool isOwner = to->type() == CellType ? isStorage(to) : to->type() == PyDictType && from->type() == InternalFunctionType && PyType::is(from);
+            if (isOwner) [[unlikely]] {
+                Locker locker { m_lock };
+                m_owners.add(to, from);
+            }
+            if (!m_objects.contains(to) || !(isObjectOfPython(from) || isStorage(from))) [[likely]]
+                return;
+            Locker locker { m_lock };
+            m_found.append(from);
+            return;
+        }
+        if (!m_objects.contains(from) || !(isObjectOfPython(to) || to->isString() || to->isHeapBigInt())) [[likely]]
+            return;
+        Locker locker { m_lock };
+        m_found.append(to);
+    }
+    static bool isStorage(JSCell* cell) { return cell->type() == CellType && (cell->classInfo() == PyDictStorage::info() || cell->classInfo() == PySetStorage::info()); }
+    void analyzePropertyNameEdge(JSCell* from, JSCell* to, UniquedStringImpl*) final { analyzeEdge(from, to, RootMarkReason::None); }
+    void analyzeVariableNameEdge(JSCell* from, JSCell* to, UniquedStringImpl*) final { analyzeEdge(from, to, RootMarkReason::None); }
+    void analyzeIndexEdge(JSCell* from, JSCell* to, uint32_t) final { analyzeEdge(from, to, RootMarkReason::None); }
+    void setOpaqueRootReachabilityReasonForCell(JSCell*, ASCIILiteral) final { }
+    void setWrappedObjectForCell(JSCell*, void*) final { }
+    void setLabelForCell(JSCell*, const String&) final { }
+
+    bool m_findsReferrers;
+    UncheckedKeyHashSet<JSCell*> m_objects;
+    Lock m_lock;
+    Vector<JSCell*> m_found;
+    UncheckedKeyHashMap<JSCell*, JSCell*> m_owners;
+};
+
+// What can refer to other objects, as in CPython: not numbers, not strs.
 static JSValue gcGetObjects(JSGlobalObject* globalObject, JSValue generation)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     if (!audit(globalObject, "gc.get_objects"_s, generation && !isNone(generation) ? generation : jsNumber(-1)))
         return { };
-    return newList(globalObject);
+    if (generation && !isNone(generation)) {
+        if (!hasIndex(globalObject, generation))
+            return raiseTypeError(globalObject, scope, "argument should be integer or None, not '"_s, typeName(globalObject, generation), '\'');
+        int number = toCInt(globalObject, generation);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (number < -1)
+            return raiseValueError(globalObject, scope, "generation parameter cannot be negative"_s);
+        if (number > 2)
+            return raiseValueError(globalObject, scope, "generation parameter must be less than the number of available generations ("_s, 3, ')');
+        // There are no such generations here. Everything is as old as can be.
+        if (number >= 0 && number < 2)
+            RELEASE_AND_RETURN(scope, newList(globalObject));
+    }
+    // What is dead but has not been swept yet must not come back.
+    vm.heap.collectNow(Synchronousness::Sync, CollectionScope::Full);
+    MarkedArgumentBuffer objects;
+    {
+        HeapIterationScope iterationScope(vm.heap);
+        vm.heap.objectSpace().forEachLiveCell(iterationScope, [&](HeapCell* heapCell, HeapCell::Kind kind) {
+            if (!isJSCellKind(kind))
+                return IterationStatus::Continue;
+            auto* cell = static_cast<JSCell*>(heapCell);
+            if (isObjectOfPython(cell) && cell->structure()->realm() == globalObject && !PyNativeFunction::is(cell) && cell->type() != PyFloatType && cell->type() != PyKwNamesType)
+                objects.append(cell);
+            return IterationStatus::Continue;
+        });
+    }
+    // The dicts of classes: see ReferenceListener.
+    UncheckedKeyHashSet<JSCell*> hidden;
+    for (unsigned i = 0; i < objects.size(); ++i) {
+        if (auto* type = PyType::tryFrom(objects.at(i)))
+            hidden.add(type->dict());
+    }
+    JSArray* result = newList(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    for (unsigned i = 0; i < objects.size(); ++i) {
+        if (hidden.contains(objects.at(i).asCell()))
+            continue;
+        listAppend(globalObject, result, objects.at(i));
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    return result;
 }
+
 template<bool referrers>
 static JSValue gcGetRelated(JSGlobalObject* globalObject, const CallArgs& args)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     if (isAudited(globalObject) && !audit(globalObject, referrers ? "gc.get_referrers"_s : "gc.get_referents"_s, PyTuple::create(globalObject, args.positional())))
         return { };
-    return newList(globalObject);
+    MarkedArgumentBuffer found;
+    {
+        ReferenceListener listener(args.positional(), referrers);
+        listener.listen(vm);
+        listener.appendFound(found);
+    }
+    JSArray* result = newList(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    for (unsigned i = 0; i < found.size(); ++i) {
+        listAppend(globalObject, result, found.at(i));
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    return result;
 }
 static JSValue gcNothing(JSGlobalObject*) { return jsUndefined(); }
 static JSValue gcZero(JSGlobalObject*) { return jsNumber(0); }
@@ -511,7 +688,7 @@ static JSValue gcGetStats(JSGlobalObject* globalObject)
 }
 
 static constexpr NativeDef gcFunctions[] = {
-    PY_FUNCTION("collect", gcCollect, "(generation=2)"),
+    NativeDef(NativeKind::Function, "collect"_s, gcCollect, "(generation=2)"_s, OnWipedStack),
     PY_FUNCTION("enable", gcEnable, "()"),
     PY_FUNCTION("disable", gcDisable, "()"),
     PY_FUNCTION("isenabled", gcIsEnabled, "()"),

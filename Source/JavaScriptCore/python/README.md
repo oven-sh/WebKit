@@ -81,7 +81,9 @@ When Python calls what is not Python, the frame is adapted on the way (`prepareF
 become a trailing object, whole floats become numbers.
 
 **Generators, coroutines, async generators** are JSC generators: a function that makes the generator object, and a body that the
-generatorification pass turns into a state machine.
+generatorification pass turns into a state machine. What that pass saves at a yield is what its analysis finds live, which may be
+more than is in use: a register above the variables may hold the remains of a callee's frame, which the collector must never see
+in the heap. For Python code the pass gives such registers a value where they lose theirs (`findRegistersWithoutValue()`).
 
 **Exceptions** are JSC exceptions whose value is a `PyException`. The unwinder tells the runtime about each Python frame it
 passes (`addTracebackEntry`), which is how tracebacks are built.
@@ -168,10 +170,20 @@ lock (`runtime/PyThreads.h`). To hold it is to hold the VM's `JSLock`, with what
 - The lock changes hands where a thread is about to wait or to make a long system call (`AllowThreads`: sleep, locks, `join`, queues, `select`
   and its kin, sockets, files, `waitpid`), and where another thread has waited for longer than `sys.getswitchinterval()`: that
   fires `VMTraps::NeedPythonCalls`, and the running thread hands over at its next safe point.
-- Until a program starts its first thread none of this happens.
+- Until a program starts its first thread none of this happens, and while there is no other thread blocking calls keep the lock.
 - **JavaScript stays on the main thread.** Only that thread turns the host's event loop; using a JS object or function from another thread
   raises `RuntimeError`. While the event loop idles, the lock is free.
-- At exit the threads that are not daemons are joined; daemon threads never get the lock again.
+- **So does everything else that is the host's.** `Heap::mayRunEmbedderFinalizers()` is false while another thread has the VM. Then
+  cells with destructors of the host's, or with dead weak handles whose finalizers are not known to run anywhere
+  (`Heap::addFinalizerForAnyThread()`), are not swept: the allocator passes over their blocks, `gc.collect()` does not sweep. The main
+  thread is woken and makes up for it at its next safe point. Requests to end what runs (`node:vm` timeouts, `Worker.terminate()`, the
+  watchdog) are put aside for the main thread too, and the VM counts as idle (`VM::isIdle()`) when the main thread is outside it,
+  whatever Python frames other threads are parked in.
+- While there are other threads, a `Buffer` that C++ holds of memory of JS pins the `ArrayBuffer` (`runtime/PyBuffer.h`): JS, which may run
+  while the thread is in a system call, cannot detach or shrink it.
+- A thread that waits for others for more than 50 ms, having allocated since it last did so, collects and runs finalizers: the
+  others may be waiting for what a dropped object holds open, and in CPython it would have been closed when it was dropped.
+- At exit the threads that are not daemons are joined, unless the wait is interrupted; daemon threads never get the lock again.
 - Signals are handled by the main thread, whichever thread the system delivers them to.
 
 ## JavaScript sees Python objects
@@ -180,6 +192,12 @@ lock (`runtime/PyThreads.h`). To hold it is to hold the VM's `JSLock`, with what
 - A class is called or `new`ed; `instanceof` is `isinstance`.
 - What a Python function returns to code that is not Python is made fit for it (`resultForCaller`): a whole float is a number, and
   a coroutine is a promise, so an `async def` is an async function to JS. An awaitable can be awaited, an async generator iterated over with `for await`.
+- A call follows the rules of the language it is written in. JS may pass a function more than it takes, and callers of
+  callbacks do (`array.map(f)` is `f(item, index, array)`): what a function or bound method written in Python has no parameter
+  for is dropped, if the caller is not Python. Too few arguments are a `TypeError` for every caller.
+- In Python, to call a class is to make an instance, so Python calling a class of JS is `new`: what `class` declares, and the
+  constructors of the engine and the host (`js.Map()`, `js.Date()`, `js.Response("body")`). The constructors of
+  primitive values (`String`, `Number`, `Boolean`, `Symbol`, `BigInt`) make one, as they do when JS calls them. A plain `function` is called; `f.new(...)` is `new f(...)` for anything.
 - Keyword arguments for a JS function are a trailing object. A dict iterates in JS as a `Map` does, by `[key, value]`.
 - **Operators.** `a + b`, `-a`, `a < b`, `a == b` and so on ask the classes of the Python objects among the operands
   (`__add__`, `__radd__`, ...), in the slow paths that all tiers share (`OperationsInlines.h`, `JSValue::equalSlowCaseInline`). If
@@ -212,18 +230,22 @@ first use. A module is `void initializeXModule(JSGlobalObject*, PyModule*)` list
 
 ## Testing
 
-Everything is tested through Bun, against CPython 3.15 as the oracle.
+Everything is tested through Bun, against CPython 3.15 as the oracle. The tests are in Bun's repository, under `test/js/bun/python/`.
 
-- **Differential tests** (`run.py`): `bun main.py` and CPython must give the same stdout, the same exit status, the same last line
-  of stderr. `clicmp.py` does the same for about 130 command lines of `python3`.
-- **Bun's own tests**: `test/js/bun/python/*.test.ts` (`cli.test.ts` is the command line).
+- **Differential tests** (`differential/`, with a README): some 580 scripts, each with what CPython printed beside it. `bun script.py`
+  must give the same stdout, the same exit status, the same last line of stderr. `differential/*.test.ts` run them in Bun's test runner,
+  without a CPython; `differential/tools/run.py` runs them by hand, shows differences legibly, and asks a CPython again
+  (`--update`). `expected-failures.json` lists what is known to differ, and why; a listed script that passes is a failure.
+  `differential/command-line/` does the same for about 130 command lines of `python3`.
+- **Bun's own tests**: `*.test.ts` (`cli.test.ts` is the command line).
 - **CPython's test suite** (`Lib/test`, which is not in the executable: point `BUN_PYTHON_STDLIB` at a checkout's `Lib`).
   `python3 -m test test_x` is regrtest unchanged, `-j N` with worker processes included. Tests that need `_testcapi`,
   `_testinternalcapi` and other extension modules skip themselves.
-- **The scoreboard** (`score.py`) runs each of the 676 test modules in a process of its own, several at a time, with a release build, and
+- **The scoreboard** (`cpython-suite/score.py`) runs each of the 676 test modules in a process of its own, several at a time, with a release build, and
   writes `score.md` and `score.json`: totals, tests that kill the interpreter or hang, failures grouped by cause, what changed since
   the last run, and how many tests CPython itself passes in each module on the same machine. A module in which a test crashes or hangs is run
   again without that test, so each such test is found and the rest of the module counts. A full run takes about ten minutes.
+  `cpython-suite/TRIAGE.md` has every crash and hang found that way; their reproductions are differential tests now.
 - **Builds.** The debug build (ASAN, assertions) takes 2.6 s to start Python and 20 s to import `asyncio`; the test suite needs a release
   build (0.1 s and 0.25 s). A release build with assertions (`--profile=release-local --assertions=on`) is a third tree; it is half as fast as the release build, and finds what only `ASSERT` finds. In a release
   build of Bun `malloc` is mimalloc inside the executable only: memory that the C library allocated (`realpath(p, NULL)`,

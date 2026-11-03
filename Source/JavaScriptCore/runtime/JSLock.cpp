@@ -117,6 +117,8 @@ void JSLock::lock(intptr_t lockCount) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
 
 void JSLock::didAcquireLock()
 {
+    m_isParking = false;
+
     // FIXME: What should happen to the per-thread identifier table if we don't have a VM?
     if (!m_vm)
         return;
@@ -311,8 +313,8 @@ void JSLock::willReleaseLock()
             });
 #endif
 
-            // While threads are parked, the one that lets go is not the last to have something going on in the VM.
-            if ((!m_lockDropDepth && !hasParkedThreads()) || useLegacyDrain)
+            // They are the embedder's, and for when its thread is done, not parked in the middle of something.
+            if ((!m_lockDropDepth && !m_isParking && protectedVM->heap.mayRunEmbedderFinalizers()) || useLegacyDrain)
                 protectedVM->drainMicrotasks();
 
             if (!protectedVM->topCallFrame)
@@ -426,6 +428,7 @@ void JSLock::park(ParkedThread& parked)
 
     // Whoever comes next acquires access to the heap for itself; and if nobody comes, the collector need not wait for anybody.
     m_shouldReleaseHeapAccess = vm.heap.hasAccess();
+    m_isParking = true;
     unlock(m_lockCount);
 }
 

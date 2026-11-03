@@ -72,6 +72,9 @@ JS_EXPORT_PRIVATE JSValue importModuleFromJS(JSGlobalObject*, const String& name
 // Returns the exit status it calls for: that of a SystemExit, which is not reported, or 1; or, negative, the number of the
 // signal the process is to die of: a KeyboardInterrupt nothing caught ends it as the SIGINT would have that it stands for.
 JS_EXPORT_PRIVATE int handleUncaughtException(JSGlobalObject*);
+// For a host that is about to write to standard output or standard error for code that is not Python (console.log): what Python
+// code has printed so far, and is still in buffers, is written first. If vm.heap.pythonRuntimes() is empty there is no need.
+JS_EXPORT_PRIVATE void flushStandardStreams(VM&);
 
 // Whether the value is an exception that is raised to end the program, which a host should let it do wherever it surfaces:
 // SystemExit, KeyboardInterrupt.

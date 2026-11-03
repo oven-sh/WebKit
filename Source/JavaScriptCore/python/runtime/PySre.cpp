@@ -265,7 +265,7 @@ static bool sreGetText(JSGlobalObject* globalObject, JSValue value, SreText& tex
         else if (remembered->get(SreModuleState::WideSubject) == JSValue(subject))
             isSimple = false;
         else {
-            isSimple = StrView(text.string).isSimple();
+            isSimple = StrView(globalObject, text.string).isSimple();
             if (isSimple && remember)
                 remembered->set(vm, SreModuleState::SimpleSubject, subject);
         }
@@ -325,7 +325,7 @@ static JSValue sreSliceOfStr(VM& vm, JSString* subject, const String& string, Py
         appendCodePoint(builder, characters[i]);
     if (builder.length() == string.length())
         return subject;
-    return makeStr(globalObject, builder);
+    return makeStr(vm, builder.toString());
 }
 
 static JSValue sreSliceOfText(JSGlobalObject* globalObject, const SreText& text, JSValue object, ptrdiff_t start, ptrdiff_t end)

@@ -63,7 +63,9 @@ static JSValue posixOpen(JSGlobalObject* globalObject, JSValue pathValue, JSValu
     flags |= O_CLOEXEC;
     if (!audit(globalObject, "open"_s, path.object(), jsUndefined(), jsNumber(flags)))
         return { };
+    writeOutPendingOutput(globalObject);
     int fd;
+    bool hasFreedDescriptors = false;
     do {
         if (path.isVirtual())
             fd = virtualOpen(path.virtualPath(), flags);
@@ -71,7 +73,7 @@ static JSValue posixOpen(JSGlobalObject* globalObject, JSValue pathValue, JSValu
             AllowThreads allow(globalObject);
             fd = dirFd != AT_FDCWD ? openat(dirFd, path.narrow(), flags, mode) : open(path.narrow(), flags, mode);
         }
-    } while (fd < 0 && errno == EINTR && checkSignals(globalObject));
+    } while (fd < 0 && ((errno == EINTR && checkSignals(globalObject)) || (!std::exchange(hasFreedDescriptors, true) && posixFreeDescriptors(globalObject))));
     if (fd < 0)
         return path.error(globalObject);
     return jsNumber(fd);
@@ -120,6 +122,8 @@ static JSValue posixDup(JSGlobalObject* globalObject, JSValue fdValue)
     if (!posixToInt(globalObject, fdValue, fd))
         return { };
     int result = posixDupNotInheritable(fd);
+    if (result < 0 && posixFreeDescriptors(globalObject))
+        result = posixDupNotInheritable(fd);
     if (result < 0)
         return posixError(globalObject);
     return jsNumber(result);
@@ -153,10 +157,10 @@ static JSValue posixPipe(JSGlobalObject* globalObject)
 {
     int fds[2];
 #if OS(LINUX)
-    if (pipe2(fds, O_CLOEXEC))
+    if (pipe2(fds, O_CLOEXEC) && (!posixFreeDescriptors(globalObject) || pipe2(fds, O_CLOEXEC)))
         return posixError(globalObject);
 #else
-    if (pipe(fds))
+    if (pipe(fds) && (!posixFreeDescriptors(globalObject) || pipe(fds)))
         return posixError(globalObject);
     if (!posixSetInheritable(fds[0], false) || !posixSetInheritable(fds[1], false)) {
         JSValue error = posixError(globalObject);

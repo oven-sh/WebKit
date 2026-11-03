@@ -5,9 +5,13 @@
 
 #include "config.h"
 
+#include "BigIntConstructor.h"
+#include "BooleanConstructor.h"
 #include "IteratorOperations.h"
 #include "JSBoundFunction.h"
 #include "JSCInlines.h"
+#include "JSPromise.h"
+#include "NumberConstructor.h"
 #include "ObjectConstructor.h"
 #include "PropertyNameArray.h"
 #include "PyAbstract.h"
@@ -22,6 +26,8 @@
 #include "PyStr.h"
 #include "PyThreads.h"
 #include "PyTypes.h"
+#include "StringConstructor.h"
+#include "SymbolConstructor.h"
 
 namespace JSC {
 namespace Python {
@@ -224,6 +230,82 @@ static JSArray* ownPropertyNames(JSGlobalObject* globalObject, JSObject* object,
     return list;
 }
 
+// ---- Iterators of JS, as iterators of Python ----
+
+// The fields of the records that those are. The iterator is empty once it is exhausted.
+enum JSIteratorField : unsigned { JSIteratorObject, JSIteratorNextMethod, JSIteratorThen, JSIteratorFieldCount };
+
+static JSValue jsIteratorSelf(JSGlobalObject*, JSValue self) { return self; }
+
+static JSValue jsIteratorNext(JSGlobalObject* globalObject, JSValue self)
+{
+    if (!ensureMainThreadForJS(globalObject))
+        return { };
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* record = uncheckedDowncast<PyRecord>(self.asCell());
+    JSValue iterator = record->get(JSIteratorObject);
+    if (!iterator)
+        return raiseStopIteration(globalObject, scope);
+    JSValue result = iteratorStep(globalObject, { iterator, record->get(JSIteratorNextMethod) });
+    RETURN_IF_EXCEPTION(scope, { });
+    if (result.isFalse()) {
+        record->set(vm, JSIteratorObject, { });
+        return raiseStopIteration(globalObject, scope);
+    }
+    RELEASE_AND_RETURN(scope, iteratorValue(globalObject, result));
+}
+
+static constexpr NativeDef jsIteratorMethods[] = {
+    PY_SLOT("__iter__", jsIteratorSelf, "($self, /)"),
+    PY_SLOT("__next__", jsIteratorNext, "($self, /)"),
+};
+static constexpr TypeDef jsIteratorTypeDef { "_js.iterator"_s, { TypeFlag::OwnLayout, TypeFlag::DisallowInstantiation }, jsIteratorMethods, { }, { } };
+
+// What the promise that next() returns is fulfilled with, made what `await iterator.__anext__()` is to give.
+static JSC_DECLARE_HOST_FUNCTION(jsAsyncIteratorResult);
+JSC_DEFINE_HOST_FUNCTION(jsAsyncIteratorResult, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue result = callFrame->argument(0);
+    if (!result.isObject())
+        return throwVMTypeError(globalObject, scope, "Iterator result interface is not an object."_s);
+    bool isDone = iteratorComplete(globalObject, result);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (isDone) {
+        raise(globalObject, scope, runtime(globalObject).StopAsyncIteration(), String());
+        return { };
+    }
+    RELEASE_AND_RETURN(scope, JSValue::encode(iteratorValue(globalObject, result)));
+}
+
+static JSValue jsAsyncIteratorNext(JSGlobalObject* globalObject, JSValue self)
+{
+    if (!ensureMainThreadForJS(globalObject))
+        return { };
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* record = uncheckedDowncast<PyRecord>(self.asCell());
+    MarkedArgumentBuffer noArguments;
+    JSValue nextMethod = record->get(JSIteratorNextMethod);
+    JSValue result = JSC::call(globalObject, nextMethod, JSC::getCallData(nextMethod), record->get(JSIteratorObject), noArguments);
+    RETURN_IF_EXCEPTION(scope, { });
+    JSPromise* promise = JSPromise::resolvedPromise(globalObject, result);
+    RETURN_IF_EXCEPTION(scope, { });
+    JSValue then = promise->get(globalObject, vm.propertyNames->then);
+    RETURN_IF_EXCEPTION(scope, { });
+    MarkedArgumentBuffer arguments;
+    arguments.append(record->get(JSIteratorThen));
+    RELEASE_AND_RETURN(scope, JSC::call(globalObject, then, JSC::getCallData(then), promise, arguments));
+}
+
+static constexpr NativeDef jsAsyncIteratorMethods[] = {
+    PY_SLOT("__aiter__", jsIteratorSelf, "($self, /)"),
+    PY_SLOT("__anext__", jsAsyncIteratorNext, "($self, /)"),
+};
+static constexpr TypeDef jsAsyncIteratorTypeDef { "_js.async_iterator"_s, { TypeFlag::OwnLayout, TypeFlag::DisallowInstantiation }, jsAsyncIteratorMethods, { }, { } };
+
 // What JS iterates, if the object is iterable there; otherwise the names of its properties, as for a dict.
 static JSValue jsObjectIter(JSGlobalObject* globalObject, JSValue self)
 {
@@ -234,19 +316,61 @@ static JSValue jsObjectIter(JSGlobalObject* globalObject, JSValue self)
     JSObject* object = asObject(self);
     bool isIterable = hasIteratorMethod(globalObject, object);
     RETURN_IF_EXCEPTION(scope, { });
-    JSArray* items;
-    if (isIterable) {
-        // FIXME: All at once. An iterator over the JS iterator would take the items as they are asked for.
-        items = newList(globalObject);
+    if (!isIterable) {
+        JSArray* names = ownPropertyNames(globalObject, object, DontEnumPropertiesMode::Exclude);
         RETURN_IF_EXCEPTION(scope, { });
-        forEachInIterable(globalObject, object, [&](VM&, JSGlobalObject*, JSValue item) {
-            listAppend(globalObject, items, item);
-        });
-    } else
-        items = ownPropertyNames(globalObject, object, DontEnumPropertiesMode::Exclude);
+        RELEASE_AND_RETURN(scope, getIter(globalObject, names));
+    }
+    IterationRecord iteration = iteratorForIterable(globalObject, object);
     RETURN_IF_EXCEPTION(scope, { });
-    RELEASE_AND_RETURN(scope, getIter(globalObject, items));
+    PyRecord* record = PyRecord::create(globalObject, runtime(globalObject).typeFor(jsIteratorTypeDef), JSIteratorFieldCount);
+    record->set(vm, JSIteratorObject, iteration.iterator);
+    record->set(vm, JSIteratorNextMethod, iteration.nextMethod);
+    return record;
 }
+
+// `async for` is `for await`.
+static JSValue jsObjectAsyncIter(JSGlobalObject* globalObject, JSValue self)
+{
+    if (!ensureMainThreadForJS(globalObject))
+        return { };
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    IterationRecord iteration = getAsyncIterator(*globalObject, self);
+    RETURN_IF_EXCEPTION(scope, { });
+    PyRecord* record = PyRecord::create(globalObject, runtime(globalObject).typeFor(jsAsyncIteratorTypeDef), JSIteratorFieldCount);
+    record->set(vm, JSIteratorObject, iteration.iterator);
+    record->set(vm, JSIteratorNextMethod, iteration.nextMethod);
+    record->set(vm, JSIteratorThen, JSFunction::create(vm, globalObject, 1, String(), jsAsyncIteratorResult, ImplementationVisibility::Private));
+    return record;
+}
+
+// keys(), values(), items(), for an object that has no properties of these names: it is a mapping of its properties, so dict(object).
+enum class JSObjectPart : uint8_t { Keys, Values, Items };
+static JSValue jsObjectParts(JSGlobalObject* globalObject, JSValue self, JSObjectPart part)
+{
+    if (!ensureMainThreadForJS(globalObject))
+        return { };
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSArray* names = ownPropertyNames(globalObject, asObject(self), DontEnumPropertiesMode::Exclude);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (part == JSObjectPart::Keys)
+        return names;
+    JSArray* result = newList(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    for (unsigned i = 0; i < listLength(names); ++i) {
+        JSValue name = listGet(names, i);
+        JSValue value = getItem(globalObject, self, name);
+        RETURN_IF_EXCEPTION(scope, { });
+        listAppend(globalObject, result, part == JSObjectPart::Values ? value : JSValue(PyTuple::create(globalObject, { name, value })));
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    return result;
+}
+static JSValue jsObjectKeys(JSGlobalObject* globalObject, JSValue self) { return jsObjectParts(globalObject, self, JSObjectPart::Keys); }
+static JSValue jsObjectValues(JSGlobalObject* globalObject, JSValue self) { return jsObjectParts(globalObject, self, JSObjectPart::Values); }
+static JSValue jsObjectItems(JSGlobalObject* globalObject, JSValue self) { return jsObjectParts(globalObject, self, JSObjectPart::Items); }
 
 static JSValue jsObjectLen(JSGlobalObject* globalObject, JSValue self)
 {
@@ -302,6 +426,28 @@ static JSValue jsObjectRepr(JSGlobalObject* globalObject, JSValue self)
     RETURN_IF_EXCEPTION(scope, { });
     return makeStr(vm, makeString("<JavaScript "_s, className.isEmpty() ? "object"_str : className, " at "_s, addressForRepr(globalObject, self), '>'));
 }
+
+// ---- Symbols, which are no objects ----
+
+static JSValue jsSymbolRepr(JSGlobalObject* globalObject, JSValue self)
+{
+    return asSymbol(self)->toString(globalObject);
+}
+
+static JSValue jsSymbolDescription(JSGlobalObject* globalObject, JSValue self)
+{
+    JSString* description = asSymbol(self)->description(getVM(globalObject));
+    return description ? JSValue(description) : jsUndefined();
+}
+
+static constexpr NativeDef jsSymbolMethods[] = {
+    PY_SLOT("__repr__", jsSymbolRepr, "($self, /)"),
+};
+static constexpr NativeGetSet jsSymbolGetSets[] = {
+    { "description"_s, jsSymbolDescription },
+};
+static constexpr TypeDef jsSymbolTypeDef { "_js.JSSymbol"_s, { TypeFlag::DisallowInstantiation }, jsSymbolMethods, jsSymbolGetSets, { } };
+PyType* jsSymbolType(Runtime& rt) { return rt.typeFor(jsSymbolTypeDef); }
 
 static JSValue jsFunctionRepr(JSGlobalObject* globalObject, JSValue self)
 {
@@ -359,10 +505,29 @@ static JSObject* objectOfKeywordArguments(JSGlobalObject* globalObject, unsigned
     return object;
 }
 
-void prepareForeignCall(JSGlobalObject* globalObject, CallFrame* calleeFrame)
+// To call a class is to make an instance, in Python. The classes of JS are what `class` declares and the constructors that the
+// engine and the host implement: Map, Date, Response. Not a plain function, which may be meant either way (for `new`: f.new()),
+// and not the constructors of primitive values, which make one when they are called.
+static bool isClassOfJS(JSCell* callee)
+{
+    while (auto* bound = dynamicDowncast<JSBoundFunction>(callee))
+        callee = bound->targetFunction();
+    if (callee->inherits<StringConstructor>() || callee->inherits<NumberConstructor>() || callee->inherits<BooleanConstructor>()
+        || callee->inherits<SymbolConstructor>() || callee->inherits<BigIntConstructor>())
+        return false;
+    if (auto* function = dynamicDowncast<JSFunction>(callee)) {
+        if (function->isHostFunction())
+            return function->nativeConstructor() != callHostFunctionAsConstructor;
+        return function->jsExecutable()->isClassConstructorFunction();
+    }
+    auto* function = dynamicDowncast<InternalFunction>(callee);
+    return function && function->nativeFunctionFor(CodeSpecializationKind::CodeForConstruct) != callHostFunctionAsConstructor;
+}
+
+bool prepareForeignCall(JSGlobalObject* globalObject, CallFrame* calleeFrame)
 {
     if (!ensureMainThreadForJS(globalObject))
-        return;
+        return false;
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     unsigned count = calleeFrame->argumentCount();
@@ -372,7 +537,7 @@ void prepareForeignCall(JSGlobalObject* globalObject, CallFrame* calleeFrame)
         JSObject* object = objectOfKeywordArguments(globalObject, tuple->length(),
             [&](unsigned i) { return asString(tuple->at(i)); },
             [&](unsigned i) { return calleeFrame->uncheckedArgument(positional + i); });
-        RETURN_IF_EXCEPTION(scope, void());
+        RETURN_IF_EXCEPTION(scope, false);
         calleeFrame->setArgument(positional, object);
         count = positional + 1;
         calleeFrame->setArgumentCountIncludingThis(count + 1);
@@ -383,6 +548,11 @@ void prepareForeignCall(JSGlobalObject* globalObject, CallFrame* calleeFrame)
         if (argument.isCell() && argument.asCell()->type() == PyFloatType)
             calleeFrame->setArgument(i, valueForJS(argument));
     }
+    JSValue callee = calleeFrame->guaranteedJSValueCallee();
+    if (!isClassOfJS(callee.asCell()))
+        return false;
+    calleeFrame->setThisValue(callee); // new.target
+    return true;
 }
 
 static void argumentsForJS(JSGlobalObject* globalObject, const CallArgs& args, MarkedArgumentBuffer& list)
@@ -409,6 +579,8 @@ JSValue callForeignFunction(JSGlobalObject* globalObject, JSValue self, const Ca
     MarkedArgumentBuffer list;
     argumentsForJS(globalObject, args, list);
     RETURN_IF_EXCEPTION(scope, { });
+    if (isClassOfJS(self.asCell()))
+        RELEASE_AND_RETURN(scope, JSC::construct(globalObject, self, list, "not a constructor"_s));
     RELEASE_AND_RETURN(scope, JSC::call(globalObject, self, JSC::getCallData(self), jsUndefined(), list));
 }
 
@@ -428,6 +600,18 @@ static JSValue jsFunctionNew(JSGlobalObject* globalObject, JSValue self, const C
     RELEASE_AND_RETURN(scope, JSC::construct(globalObject, self, constructData, list));
 }
 
+// isinstance(value, function): `value instanceof function`
+static JSValue jsFunctionInstanceCheck(JSGlobalObject* globalObject, JSValue self, JSValue value)
+{
+    if (!ensureMainThreadForJS(globalObject))
+        return { };
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    bool result = asObject(self)->hasInstance(globalObject, valueForJS(value));
+    RETURN_IF_EXCEPTION(scope, { });
+    return jsBoolean(result);
+}
+
 static constexpr NativeDef jsObjectMethods[] = {
     PY_SLOT("__getattribute__", jsObjectGetAttribute, "($self, name, /)"),
     PY_SLOT("__setattr__", jsObjectSetAttr, "($self, name, value, /)"),
@@ -437,16 +621,21 @@ static constexpr NativeDef jsObjectMethods[] = {
     PY_SLOT("__delitem__", jsObjectDelItem, "($self, key, /)"),
     PY_SLOT("__contains__", jsObjectContains, "($self, key, /)"),
     PY_SLOT("__iter__", jsObjectIter, "($self, /)"),
+    PY_SLOT("__aiter__", jsObjectAsyncIter, "($self, /)"),
     PY_SLOT("__len__", jsObjectLen, "($self, /)"),
     PY_SLOT("__repr__", jsObjectRepr, "($self, /)"),
     PY_SLOT("__str__", jsObjectStr, "($self, /)"),
     PY_METHOD("__dir__", jsObjectDir, "($self, /)"),
+    PY_METHOD("keys", jsObjectKeys, "($self, /)"),
+    PY_METHOD("values", jsObjectValues, "($self, /)"),
+    PY_METHOD("items", jsObjectItems, "($self, /)"),
 };
 
 static constexpr NativeDef jsFunctionMethods[] = {
     PY_SLOT("__call__", callForeignFunction, "($self, *args, **kwargs)"),
     PY_SLOT("__repr__", jsFunctionRepr, "($self, /)"),
     PY_METHOD("new", jsFunctionNew, "($self, *args, **kwargs)"),
+    PY_METHOD("__instancecheck__", jsFunctionInstanceCheck, "($self, instance, /)"),
 };
 
 // `await promise`

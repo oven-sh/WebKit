@@ -632,6 +632,9 @@ static JSValue superGet(JSGlobalObject* globalObject, JSValue self, JSValue inst
     auto* object = PySuper::from(self);
     if (isNone(instance) || object->object)
         return self;
+    // super.__new__(super)
+    if (!object->thisClass)
+        return raiseTypeError(globalObject, scope, "super(type, obj): the super object was not initialized"_s);
     if (object->type() != rt.superType())
         RELEASE_AND_RETURN(scope, call(globalObject, object->type(), object->thisClass.get(), instance));
     PyType* objectType = superCheck(globalObject, object->thisClass.get(), instance);

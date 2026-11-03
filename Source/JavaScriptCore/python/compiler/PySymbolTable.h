@@ -130,6 +130,9 @@ public:
     bool isMethod : 1 { false };
     bool usesAnnotations : 1 { false };
     bool hasConditionalAnnotations : 1 { false };
+    // Of the function that evaluates the annotations of a class: it asks which of the statements were reached, which is in a cell
+    // of the class. That is a free variable of the code and no symbol: the name means whatever it means to the program.
+    bool readsConditionalAnnotationsCell : 1 { false };
     bool hasNamedExpression : 1 { false }; // A variable may change while an expression is evaluated.
 
     // While the tree is visited.

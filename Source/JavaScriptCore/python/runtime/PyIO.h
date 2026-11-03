@@ -41,6 +41,16 @@ JSValue makeStandardStream(JSGlobalObject*, int fd, bool writable, ASCIILiteral 
 // For when the interpreter exits. Runtime::finalizeAllAtExit() closes, and so flushes, every other stream that is still open,
 // a stream before the one it wraps. This flushes the standard streams, whatever sys.stdout and sys.stderr are by now.
 void flushAllOpenFiles(JSGlobalObject*);
+// For when something other than Python is about to write to the same descriptors: what print() has left in the buffers of the
+// standard streams is written first, so that the output of a program in two languages is in the order it was made.
+void flushStandardStreamsIfPending(JSGlobalObject*);
+bool textIOHasPendingOutput(PyRecord*);
+bool bufferedHasPendingOutput(PyRecord*);
+// For writeOutPendingOutput(): a TextIOWrapper, BufferedWriter or BufferedRandom, none of a class derived from those, over a FileIO
+// itself, so that nothing of the program's runs when it is written out. The list keeps it alive until then.
+void ioNotePendingOutput(JSGlobalObject*, PyRecord*);
+void textIOWriteOutPending(JSGlobalObject*, PyRecord*);
+void bufferedWriteOutPending(JSGlobalObject*, PyRecord*);
 
 // ---- The types, and the names of the attributes the module looks up ----
 
@@ -111,7 +121,8 @@ enum class IOName : uint8_t {
 FOR_EACH_IO_TYPE(PY_DECLARE_TYPE_DEF)
 #undef PY_DECLARE_TYPE_DEF
 
-// A tuple of the types, then the names, then a list for flushAllOpenFiles(). The type _IOBase holds it.
+// A tuple of the types, then the names, then a list for flushAllOpenFiles(), then one for writeOutPendingOutput(). The type _IOBase
+// holds it.
 PyTuple* ioMakeState(JSGlobalObject*);
 ALWAYS_INLINE PyTuple* ioState(JSGlobalObject* globalObject)
 {

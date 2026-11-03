@@ -106,6 +106,16 @@ void appendCodePoint(StringBuilder& builder, char32_t character)
         builder.append(U16_LEAD(character), U16_TRAIL(character));
 }
 
+void appendRepeated(StringBuilder& builder, char32_t character, int64_t count)
+{
+    if (count > String::MaxLength)
+        builder.didOverflow();
+    if (builder.hasOverflowed())
+        return;
+    for (int64_t i = 0; i < count; ++i)
+        appendCodePoint(builder, character);
+}
+
 String stringFromCodePoint(char32_t character)
 {
     if (character <= 0xff) {
@@ -136,19 +146,81 @@ static unsigned countSurrogatePairs(std::span<const char16_t> units)
     return pairs;
 }
 
+// Texts shorter than this are gone through each time.
+static constexpr unsigned shortestStrRemembered = 48;
+
+void StrView::lookThrough()
+{
+    auto units = m_string.span16();
+    unsigned pairs = countSurrogatePairs(units);
+    m_length = units.size() - pairs;
+    m_isSimple = !pairs;
+    if (!pairs || units.size() < shortestStrRemembered)
+        return;
+    m_checkpoints = StrCheckpoints::create();
+    auto& offsets = m_checkpoints->offsets;
+    offsets.reserveInitialCapacity(m_length / StrCheckpoints::interval + 1);
+    unsigned offset = 0;
+    for (unsigned index = 0; index < m_length; ++index) {
+        if (!(index % StrCheckpoints::interval))
+            offsets.append(offset);
+        offset += (U16_IS_LEAD(units[offset]) && offset + 1 < units.size() && U16_IS_TRAIL(units[offset + 1])) ? 2 : 1;
+    }
+}
+
 StrView::StrView(const String& string)
     : m_string(string)
     , m_length(string.length())
 {
-    if (!m_string.is8Bit()) {
-        unsigned pairs = countSurrogatePairs(m_string.span16());
-        m_length -= pairs;
-        m_isSimple = !pairs;
+    if (!m_string.is8Bit())
+        lookThrough();
+}
+
+struct StrIndexCache {
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(StrIndexCache);
+    struct Entry {
+        RefPtr<StringImpl> impl; // Held, so that no other text can come to be at its address.
+        unsigned length { 0 };
+        RefPtr<StrCheckpoints> checkpoints;
+    };
+    static constexpr unsigned size = 16;
+    std::array<Entry, size> entries;
+    // The texts are let go of when the collector has run: it may have found that nothing else holds them.
+    HeapVersion heapVersion { 0 };
+};
+
+StrView::StrView(JSGlobalObject* globalObject, const String& string)
+    : m_string(string)
+    , m_length(string.length())
+{
+    if (m_string.is8Bit())
+        return;
+    if (m_length < shortestStrRemembered) {
+        lookThrough();
+        return;
     }
+    Runtime& rt = runtime(globalObject);
+    if (!rt.strIndexCache) [[unlikely]]
+        rt.strIndexCache = { new StrIndexCache, [](StrIndexCache* cache) { delete cache; } };
+    StrIndexCache& cache = *rt.strIndexCache;
+    if (HeapVersion version = rt.vm().heap.objectSpace().markingVersion(); version != cache.heapVersion) [[unlikely]] {
+        cache.entries = { };
+        cache.heapVersion = version;
+    }
+    StringImpl* impl = m_string.impl();
+    auto& entry = cache.entries[(std::bit_cast<uintptr_t>(impl) >> 5) % StrIndexCache::size];
+    if (entry.impl == impl) [[likely]] {
+        m_length = entry.length;
+        m_isSimple = m_length == m_string.length();
+        m_checkpoints = entry.checkpoints;
+        return;
+    }
+    lookThrough();
+    entry = { impl, m_length, m_checkpoints };
 }
 
 StrView::StrView(JSGlobalObject* globalObject, JSString* string)
-    : StrView(String(string->value(globalObject)))
+    : StrView(globalObject, String(string->value(globalObject)))
 {
 }
 
@@ -158,6 +230,11 @@ unsigned StrView::unitOffset(unsigned index) const
         return index;
     auto units = m_string.span16();
     unsigned offset = 0;
+    if (m_checkpoints && index < m_length) {
+        offset = m_checkpoints->offsets[index / StrCheckpoints::interval];
+        index %= StrCheckpoints::interval;
+    } else if (index >= m_length)
+        return units.size();
     for (; index && offset < units.size(); --index)
         offset += (U16_IS_LEAD(units[offset]) && offset + 1 < units.size() && U16_IS_TRAIL(units[offset + 1])) ? 2 : 1;
     return offset;
@@ -167,7 +244,13 @@ unsigned StrView::indexOfUnitOffset(unsigned offset) const
 {
     if (m_isSimple)
         return offset;
-    return offset - countSurrogatePairs(m_string.span16().first(offset));
+    auto units = m_string.span16();
+    if (!m_checkpoints)
+        return offset - countSurrogatePairs(units.first(offset));
+    auto& offsets = m_checkpoints->offsets;
+    size_t checkpoint = std::ranges::upper_bound(offsets, offset) - offsets.begin() - 1;
+    unsigned from = offsets[checkpoint];
+    return checkpoint * StrCheckpoints::interval + (offset - from) - countSurrogatePairs(units.subspan(from, offset - from));
 }
 
 char32_t StrView::at(unsigned index) const
@@ -185,7 +268,7 @@ char32_t StrView::at(unsigned index) const
 String StrView::substring(unsigned start, unsigned end) const
 {
     unsigned from = unitOffset(start);
-    unsigned to = m_isSimple ? end : from + StrView(m_string.substring(from)).unitOffset(end - start);
+    unsigned to = unitOffset(end);
     return m_string.substring(from, to - from);
 }
 
@@ -195,11 +278,9 @@ unsigned strLength(JSGlobalObject* globalObject, JSString* string)
         return string->length();
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto view = string->view(globalObject);
+    StrView view(globalObject, string);
     RETURN_IF_EXCEPTION(scope, 0);
-    if (view->is8Bit())
-        return view->length();
-    return view->length() - countSurrogatePairs(view->span16());
+    return view.length();
 }
 
 // ---- repr ----
@@ -1299,8 +1380,7 @@ static JSValue strExpandTabs(JSGlobalObject* globalObject, JSValue self, JSValue
             if (tabSize > 0) {
                 int64_t spaces = tabSize - column % tabSize;
                 column += spaces;
-                for (int64_t i = 0; i < spaces; ++i)
-                    builder.append(' ');
+                appendRepeated(builder, ' ', spaces);
             }
             continue;
         }
@@ -1779,7 +1859,7 @@ static constexpr NativeDef strMethods[] = {
     PY_METHOD("isidentifier", strIsIdentifier, "($self, /)"),
     PY_METHOD("isprintable", strIsPrintable, "($self, /)"),
     PY_METHOD("zfill", strZFill, "($self, width, /)"),
-    PY_METHOD("format", strFormatMethod, "($self, *args, **kwargs)"),
+    PY_METHOD("format", strFormatMethod, "($self, /, *args, **kwargs)"),
     PY_METHOD("format_map", strFormatMap, "($self, mapping, /)"),
     PY_METHOD("__format__", strFormatSpecMethod, "($self, format_spec, /)"),
     PY_STATICMETHOD("maketrans", strMakeTrans, "(x, y=<unrepresentable>, z=<unrepresentable>, /)"),

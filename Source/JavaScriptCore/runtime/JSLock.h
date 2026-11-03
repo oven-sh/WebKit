@@ -226,6 +226,7 @@ private:
     // See https://bugs.webkit.org/show_bug.cgi?id=169042#c6
     std::atomic<bool> m_hasOwnerThread { false };
     bool m_shouldReleaseHeapAccess;
+    bool m_isParking { false }; // For willReleaseLock().
     RefPtr<Thread> m_ownerThread;
     intptr_t m_lockCount;
     unsigned m_lockDropDepth;

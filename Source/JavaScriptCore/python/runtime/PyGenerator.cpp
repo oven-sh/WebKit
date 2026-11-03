@@ -9,6 +9,7 @@
 #include "JSCInlines.h"
 #include "JSInternalFieldObjectImpl.h"
 #include "PyAbstract.h"
+#include "PyAsyncio.h"
 #include "PyErrors.h"
 #include "PyException.h"
 #include "PyInternals.h"
@@ -383,7 +384,7 @@ JSValue sendToDelegate(JSGlobalObject* globalObject, JSValue iterator, JSValue v
             JSValue method = type->lookup(Special::Next);
             if (!method || isNone(method))
                 return raiseTypeError(globalObject, scope, '\'', type->name(), "' object is not an iterator"_s);
-            yielded = callSpecial(globalObject, method, iterator);
+            yielded = isNextOfFutureIter(method) ? stepFutureIter(globalObject, iterator, result) : callSpecial(globalObject, method, iterator);
         } else
             yielded = callMethod(globalObject, iterator, rt.names.send(), value);
     } else {

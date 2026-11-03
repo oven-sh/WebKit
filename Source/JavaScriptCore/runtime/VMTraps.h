@@ -269,6 +269,10 @@ public:
 
     // The following returns true if a trap was handled.
     bool handleTraps(BitField mask = AsyncEvents);
+    // The stack that a termination cuts short is that of the embedder's thread, and its time is what the watchdog measures.
+    // Another thread that has the VM when such a request is due (see Heap::mayRunEmbedderFinalizers()) puts it aside.
+    // Whoever hands the VM back to the embedder's thread calls this.
+    JS_EXPORT_PRIVATE void fireTrapsLeftToEmbedderThread();
     bool handleTrapsIfNeeded(BitField mask = AsyncEvents);
 
 #if ENABLE(SIGNAL_BASED_VM_TRAPS)
@@ -354,6 +358,7 @@ private:
     bool m_suspendedTerminationException { false };
     bool m_threadStopRequested { false };
     bool m_trapsDeferred { false };
+    BitField m_trapsLeftToEmbedderThread { 0 };
 
     // Protects against a race between VMManager::requestResumeAll() and VMManager::notifyVMActivation()
     // to increment their m_numberOfActiveVMs.

@@ -64,7 +64,18 @@ bool liveLocalsOfFrame(CallFrame* callFrame, CodeBlock* codeBlock, bool isCallin
     }
 
     live = codeBlock->livenessAnalysis().getLivenessInfoAtInstruction(codeBlock, index);
-    // That is what is live before the instruction, which may be half done.
+    // That is what is live before the instruction, which may be half done: one that unpacks an iterable has set some of its
+    // targets. A call sets its result when the callee returns, and until then the register has what some earlier expression left.
+    switch (instruction->opcodeID()) {
+    case op_call:
+    case op_call_ignore_result:
+    case op_call_varargs:
+    case op_construct:
+    case op_construct_varargs:
+        return true;
+    default:
+        break;
+    }
     computeDefsForBytecodeIndex(codeBlock, instruction, noCheckpoints, [&](VirtualRegister defined) {
         if (defined.isLocal())
             live[defined.toLocal()] = true;
@@ -168,18 +179,17 @@ static ALWAYS_INLINE PyFunction* functionOf(CallFrame* callFrame)
 int lineNumberForBytecodeIndex(CodeBlock* codeBlock, BytecodeIndex index)
 {
     auto marks = codeBlock->unlinkedCodeBlock()->pythonMarks();
+    auto* executable = dynamicDowncast<FunctionExecutable>(codeBlock->ownerExecutable());
+    CodeInfo* info = executable ? executable->unlinkedExecutable()->pythonCodeInfo() : nullptr;
+    int lineDelta = info ? info->lineDelta : 0;
     int line = lineOfMarks(marks, index.offset());
     if (line >= 0)
-        return line;
+        return line + lineDelta;
     // What sets up the frame is of the line the code begins on.
-    if (!marks.empty() && !isPastStart(marks, index.offset())) {
-        if (auto* executable = dynamicDowncast<FunctionExecutable>(codeBlock->ownerExecutable())) {
-            if (CodeInfo* info = executable->unlinkedExecutable()->pythonCodeInfo())
-                return info->firstLineNumber;
-        }
-    }
+    if (info && !marks.empty() && !isPastStart(marks, index.offset()))
+        return info->firstLineNumber;
     // What else the compiler added comes from no line. It is near one.
-    return static_cast<int>(codeBlock->lineColumnForBytecodeIndex(index).line);
+    return static_cast<int>(codeBlock->lineColumnForBytecodeIndex(index).line) + lineDelta;
 }
 
 // The value of a variable of a call in progress. Empty: it has none.
@@ -721,7 +731,7 @@ static JSValue frameGetLocals(JSGlobalObject* globalObject, JSValue self)
 static JSValue frameGetCode(JSGlobalObject* globalObject, JSValue self) { return codeOf(globalObject, PyFrame::from(self)->function()); }
 static JSValue frameGetGlobals(JSGlobalObject*, JSValue self) { return PyFrame::from(self)->function()->globals(); }
 static JSValue frameGetBuiltins(JSGlobalObject*, JSValue self) { return PyFrame::from(self)->function()->builtinsObject(); }
-static JSValue frameGetLastI(JSGlobalObject*, JSValue self) { return jsNumber(PyFrame::from(self)->bytecodeOffset()); }
+static JSValue frameGetLastI(JSGlobalObject*, JSValue self) { return jsNumber(shownOffset(PyFrame::from(self)->bytecodeOffset())); }
 static JSValue frameGetLineNo(JSGlobalObject*, JSValue self)
 {
     auto* frame = PyFrame::from(self);
@@ -1202,7 +1212,7 @@ PyTraceback::PyTraceback(VM& vm, Structure* structure, PyType* type)
 {
 }
 
-PyTraceback* PyTraceback::create(JSGlobalObject* globalObject, JSValue next, PyFrame* frame, int lineNumber, unsigned bytecodeOffset)
+PyTraceback* PyTraceback::create(JSGlobalObject* globalObject, JSValue next, PyFrame* frame, int lineNumber, unsigned lastI)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
@@ -1211,7 +1221,7 @@ PyTraceback* PyTraceback::create(JSGlobalObject* globalObject, JSValue next, PyF
     traceback->m_next.set(vm, traceback, next);
     traceback->m_frame.set(vm, traceback, frame);
     traceback->m_lineNumber = lineNumber;
-    traceback->m_bytecodeOffset = bytecodeOffset;
+    traceback->m_lastI = lastI;
     return traceback;
 }
 
@@ -1226,6 +1236,8 @@ void PyTraceback::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(PyTraceback);
 
+bool addTracebackEntryToThrownObject(JSGlobalObject*, JSValue thrown, const ScopedLambda<JSValue(JSValue next)>& makeEntry);
+
 JSValue addTracebackEntry(JSGlobalObject* globalObject, JSValue exceptionValue, CallFrame* callFrame, BytecodeIndex index)
 {
     Runtime& rt = runtime(globalObject);
@@ -1236,10 +1248,16 @@ JSValue addTracebackEntry(JSGlobalObject* globalObject, JSValue exceptionValue, 
     CodeBlock* codeBlock = callFrame->codeBlock();
     if (codeBlock->instructionAt(index)->opcodeID() == op_py_bind_args)
         return exceptionValue;
-    // What JS threw has a traceback once Python has caught it.
-    if (auto* exception = isRaisedAgain ? nullptr : exceptionOfThrownValueIfKnown(globalObject, exceptionValue)) {
+    if (!isRaisedAgain) {
         DeferGC deferGC(vm);
-        exception->setTraceback(vm, PyTraceback::create(globalObject, exception->traceback(), PyFrame::of(globalObject, callFrame), lineNumberForBytecodeIndex(codeBlock, index), index.offset()));
+        auto makeEntry = [&](JSValue next) -> JSValue {
+            return PyTraceback::create(globalObject, next, PyFrame::of(globalObject, callFrame), lineNumberForBytecodeIndex(codeBlock, index), shownOffset(visibleOffset(codeBlock->unlinkedCodeBlock()->pythonMarks(), index.offset())));
+        };
+        // What JS threw has a JSError once Python has caught it: making one runs code. Until then the object keeps the traceback.
+        if (auto* exception = exceptionOfThrownValueIfKnown(globalObject, exceptionValue))
+            exception->setTraceback(vm, makeEntry(exception->traceback()));
+        else
+            addTracebackEntryToThrownObject(globalObject, exceptionValue, makeEntry);
     }
     return exceptionIsRaised(globalObject, exceptionValue, callFrame, index, isRaisedAgain);
 }
@@ -1290,7 +1308,7 @@ static void tracebackSetNext(JSGlobalObject* globalObject, JSValue self, JSValue
 
 static JSValue tracebackGetFrame(JSGlobalObject*, JSValue self) { return PyTraceback::from(self)->frame(); }
 static JSValue tracebackGetLineNo(JSGlobalObject*, JSValue self) { return jsNumber(PyTraceback::from(self)->lineNumber()); }
-static JSValue tracebackGetLastI(JSGlobalObject*, JSValue self) { return jsNumber(PyTraceback::from(self)->bytecodeOffset()); }
+static JSValue tracebackGetLastI(JSGlobalObject*, JSValue self) { return jsNumber(PyTraceback::from(self)->lastI()); }
 
 static JSValue tracebackDir(JSGlobalObject* globalObject, JSValue)
 {

@@ -646,6 +646,22 @@ bool posixSetInheritable(int fd, bool inheritable)
     return newFlags == flags || fcntl(fd, F_SETFD, newFlags) >= 0;
 }
 
+bool posixFreeDescriptors(JSGlobalObject* globalObject)
+{
+    int error = errno;
+    if (error != EMFILE && error != ENFILE)
+        return false;
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    if (vm.exceptionForInspection() || rt.isRunningPendingCalls())
+        return false;
+    writeOutPendingOutput(globalObject); // Until then they are not to be collected.
+    vm.heap.collectNow(Synchronousness::Sync, CollectionScope::Full);
+    rt.runPendingCalls();
+    errno = error;
+    return !vm.exceptionForInspection();
+}
+
 int posixDupNotInheritable(int fd)
 {
     return fcntl(fd, F_DUPFD_CLOEXEC, 0);

@@ -267,6 +267,8 @@ PyType* Runtime::typeFor(const TypeDef& def, PyType* base)
     return type;
 }
 
+PyType* jsSymbolType(Runtime&);
+
 PyType* Runtime::typeOf(JSValue value) const
 {
     if (value.isCell()) {
@@ -303,6 +305,8 @@ PyType* Runtime::typeOf(JSValue value) const
         }
         case JSPromiseType:
             return jsPromiseType();
+        case SymbolType:
+            return jsSymbolType(const_cast<Runtime&>(*this));
         case DerivedArrayType:
             if (PyListObject::is(cell))
                 return uncheckedDowncast<PyListObject>(cell)->type();

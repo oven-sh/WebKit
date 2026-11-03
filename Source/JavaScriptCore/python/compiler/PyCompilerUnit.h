@@ -177,6 +177,12 @@ private:
     void noLine();
     // It is of this line, but nobody is told that the line begins.
     void silentLine(int lineno);
+    // A jump that is there because of how the code is laid out here. In CPython there is none, or one that nobody is told of:
+    // what handles exceptions is out of the way, at the end of the code.
+    void hiddenJump(Label&);
+    // Whatever follows it is never run.
+    bool neverGetsPast(Stmt*);
+    bool neverGetsPast(Seq<Stmt*>);
     // What is emitted meanwhile goes with the line before it, whatever loc() and line() are given.
     class SameLine {
         WTF_MAKE_NONCOPYABLE(SameLine);
@@ -208,6 +214,7 @@ private:
     JSValue constantValue(const AST::ConstantValue&);
     Vector<CodeInfo::Constant> m_foldedConstants;
     bool tryConstantValue(Expr*, JSValue&);
+    JSValue valueCPythonsCompilerWorksOut(Expr*);
     std::optional<bool> constantTruth(Expr*);
 
     RegisterID* callRuntime(RegisterID* dst, RuntimeFunction, Arguments&);

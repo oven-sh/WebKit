@@ -12,6 +12,7 @@
 #include "PyCodecs.h"
 #include "PyCommandLine.h"
 #include "PyDict.h"
+#include "PyExec.h"
 #include "PyModuleHelpers.h"
 #include "PyType.h"
 #include "TopExceptionScope.h"
@@ -36,6 +37,7 @@ PyTuple* ioMakeState(JSGlobalObject* globalObject)
     MarkedArgumentBuffer state;
     for (unsigned i = 0; i < static_cast<unsigned>(IOType::Count) + static_cast<unsigned>(IOName::Count); ++i)
         state.append(jsUndefined());
+    state.append(newList(globalObject));
     state.append(newList(globalObject));
 
     auto add = [&](IOType id, const TypeDef& def, PyType* base) {
@@ -627,6 +629,47 @@ static JSArray* ioStandardStreams(JSGlobalObject* globalObject)
     return asArray(ioState(globalObject)->at(static_cast<unsigned>(IOType::Count) + static_cast<unsigned>(IOName::Count)));
 }
 
+static JSArray* ioStreamsWithPendingOutput(JSGlobalObject* globalObject)
+{
+    return asArray(ioState(globalObject)->at(static_cast<unsigned>(IOType::Count) + static_cast<unsigned>(IOName::Count) + 1));
+}
+
+void ioNotePendingOutput(JSGlobalObject* globalObject, PyRecord* stream)
+{
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(globalObject));
+    listAppend(globalObject, ioStreamsWithPendingOutput(globalObject), stream);
+    scope.clearException();
+}
+
+void writeOutPendingOutput(JSGlobalObject* globalObject)
+{
+    Runtime& rt = runtime(globalObject);
+    // Before _io is there, there is nothing.
+    JSValue state = hiddenField(globalObject, rt.typeFor(ioIOBaseTypeDef), 0);
+    if (!state)
+        return;
+    JSArray* list = ioStreamsWithPendingOutput(globalObject);
+    if (!listLength(list)) [[likely]]
+        return;
+    if (rt.vm().exceptionForInspection())
+        return;
+    PyType* textIOWrapper = ioType(globalObject, IOType::TextIOWrapper);
+    // What a TextIOWrapper holds goes to its buffer, which then is in the list.
+    for (unsigned round = 0; round < 2 && listLength(list); ++round) {
+        MarkedArgumentBuffer streams;
+        for (unsigned i = 0; i < listLength(list); ++i)
+            streams.append(listGet(list, i));
+        listTruncate(globalObject, list, 0);
+        for (unsigned i = 0; i < streams.size(); ++i) {
+            auto* stream = PyRecord::from(streams.at(i));
+            if (stream->type() == textIOWrapper)
+                textIOWriteOutPending(globalObject, stream);
+            else
+                bufferedWriteOutPending(globalObject, stream);
+        }
+    }
+}
+
 void ioDidUnwrap(JSGlobalObject* globalObject, JSValue stream)
 {
     if (!isPyObject(stream) || ioHasOwnFinalizer(typeOf(globalObject, stream)))
@@ -1122,6 +1165,28 @@ void flushAllOpenFiles(JSGlobalObject* globalObject)
         // One that the program closed or detached says so.
         callMethod(globalObject, listGet(streams, i), rt.names.flush());
         scope.clearException();
+    }
+}
+
+void flushStandardStreamsIfPending(JSGlobalObject* globalObject)
+{
+    JSArray* streams = ioStandardStreams(globalObject);
+    for (unsigned i = 0; i + 1 < listLength(streams); i += 2) {
+        PyRecord* buffer = ioTryExact(globalObject, listGet(streams, i + 1), IOType::BufferedWriter);
+        if (textIOHasPendingOutput(PyRecord::from(listGet(streams, i))) || (buffer && bufferedHasPendingOutput(buffer))) {
+            flushAllOpenFiles(globalObject);
+            return;
+        }
+    }
+}
+
+void flushStandardStreams(VM& vm)
+{
+    for (Runtime* runtime : Vector<Runtime*, 1>(vm.heap.pythonRuntimes())) {
+        if (runtime->threads().isMainThread()) {
+            flushStandardStreamsIfPending(runtime->globalObject());
+            writeOutPendingOutput(runtime->globalObject());
+        }
     }
 }
 

@@ -65,6 +65,10 @@ int lineOfMarks(std::span<const PythonMark>, unsigned offset);
 // Each of the lines that begin at an instruction has one of its bytes, in order, and the last of them the rest. That is how co_lines() has
 // it, and this is where it has the instruction itself: what the program is given for its offset.
 unsigned visibleOffset(std::span<const PythonMark>, unsigned offset);
+// What the program is given for that (f_lasti, tb_lasti, co_lines(), what tools are told): two for each byte. In CPython instructions
+// are made of units of two bytes, and traceback.py and dis count on it. So each byte here has an item of co_positions() and a unit of
+// co_code to itself.
+constexpr unsigned shownOffset(unsigned visibleOffset) { return visibleOffset * 2; }
 // The instruction is one of the program's own, not one of those that set up the frame.
 bool isPastStart(std::span<const PythonMark>, unsigned offset);
 
@@ -90,6 +94,9 @@ public:
     struct Point {
         static constexpr uint16_t construct = 1 << 15; // op_py_prepare_construct: see Monitoring::handle().
         static constexpr uint16_t forLoop = 1 << 14; // op_py_for_iter
+        // A branch after which, if it does not jump, CPython has something more to do on the same line, which here the instruction has
+        // done: a `for` loop stores the item, `except E:` drops the exception. That is where it is said to go on.
+        static constexpr uint16_t goesOnInItself = 1 << 13;
 
         unsigned offset { 0 };
         uint16_t kinds { 0 }; // 1 << event, for the events that are told of here.
@@ -135,8 +142,9 @@ private:
     uint8_t toolsWantedAt(Point&);
     uint8_t* opcodeAddress(const Point&) const;
 
-    Monitoring& m_monitoring;
+    Monitoring* m_monitoring; // Null once it is gone: when the VM ends, things go in no particular order.
     Strong<UnlinkedCodeBlock> m_code;
+    const uint8_t* m_instructions; // Of the code.
     Vector<Point> m_points; // By offset.
     Vector<LineStart> m_lineStarts;
     std::array<uint8_t, Event::ungroupedCount> m_localTools { };
@@ -154,6 +162,7 @@ class Monitoring {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(Monitoring);
 public:
     explicit Monitoring(Runtime&);
+    ~Monitoring();
 
     Runtime& runtime() { return m_runtime; }
 
@@ -236,8 +245,9 @@ private:
     bool fireLine(JSGlobalObject*, CallFrame*, CodeMonitor&, unsigned offset);
     bool fireLineStart(JSGlobalObject*, CallFrame*, CodeMonitor&, unsigned offset, unsigned lineStart);
     bool legacyEvent(JSGlobalObject*, CallFrame*, CodeMonitor&, unsigned tool, unsigned event, unsigned offset, JSValue third, JSValue fourth, bool& disable);
-    bool callTraceFunction(JSGlobalObject*, PyFrame*, unsigned event, Shown, ASCIILiteral what, JSValue argument);
-    bool callProfileFunction(JSGlobalObject*, PyFrame*, unsigned event, Shown, ASCIILiteral what, JSValue argument);
+    enum class What : uint8_t { Call, Line, Return, Exception, Opcode, CCall, CReturn, CException };
+    bool callTraceFunction(JSGlobalObject*, PyFrame*, unsigned event, Shown, What, JSValue argument);
+    bool callProfileFunction(JSGlobalObject*, PyFrame*, unsigned event, Shown, What, JSValue argument);
     JSValue callWhileTracing(JSGlobalObject*, CallFrame*, unsigned event, Shown, JSValue function, const CallArgs&);
     bool traceLine(JSGlobalObject*, PyFrame*, Shown);
 
@@ -245,6 +255,11 @@ private:
     std::array<uint32_t, numberOfMonitoringTools> m_events { };
     std::array<uint8_t, Event::ungroupedCount> m_globalTools { };
     bool m_wantsExceptions { false };
+    // The frame is about to run the op_jmp at the offset, having jumped to it: see handle().
+    struct {
+        CallFrame* callFrame { nullptr };
+        unsigned offset { 0 };
+    } m_jumpGoesOn;
     unsigned m_tracingThreads { 0 };
     unsigned m_profilingThreads { 0 };
 

@@ -7,11 +7,14 @@
 #include "PyCompilerUnit.h"
 
 #include "JSCInlines.h"
+#include "PyAbstract.h"
 #include "PyBytes.h"
+#include "PyErrors.h"
 #include "PyNumbers.h"
 #include "PyRange.h"
 #include "PyRuntime.h"
 #include "PySet.h"
+#include "PyStr.h"
 #include "PyTuple.h"
 #include <wtf/text/MakeString.h>
 
@@ -176,6 +179,91 @@ std::optional<bool> Unit::constantTruth(Expr* node)
     return std::nullopt;
 }
 
+// What CPython's compiler makes of operations on constants. It then leaves one instruction, of the line the expression begins on,
+// which is all this is for. Empty: it leaves them alone, because one of them fails or has a large result (fold_const_binop() and
+// safe_multiply() and the like, in its flowgraph.c).
+JSValue Unit::valueCPythonsCompilerWorksOut(Expr* node)
+{
+    static constexpr uint64_t maxIntBits = 128;
+    static constexpr uint64_t maxStrSize = 4096;
+
+    Vector<BinOp*, 8> operations;
+    while (auto* operation = node->tryAs<BinOp>()) {
+        operations.append(operation);
+        node = operation->left;
+    }
+    auto finish = [&](JSValue result) {
+        if (!result)
+            takePendingException(globalObject());
+        return result;
+    };
+
+    JSValue value;
+    if (auto* constant = node->tryAs<Constant>())
+        value = constantValue(constant->value);
+    else if (auto* unary = node->tryAs<UnaryOp>(); unary && isSafeToRecurse()) {
+        JSValue operand = valueCPythonsCompilerWorksOut(unary->operand);
+        if (operand && (unary->op != AST::UnaryKind::Invert || !operand.isBoolean()))
+            value = finish(unaryOperation(globalObject(), static_cast<Python::UnaryOperator>(unary->op), operand));
+    }
+
+    while (value && !operations.isEmpty()) {
+        BinOp* operation = operations.takeLast();
+        JSValue right = isSafeToRecurse() ? valueCPythonsCompilerWorksOut(operation->right) : JSValue();
+        if (!right)
+            return { };
+        bool areInts = isInt(value) && isInt(right);
+        auto sizeOf = [&](JSValue sequence) -> std::optional<uint64_t> {
+            if (isStr(sequence))
+                return strLength(globalObject(), strValue(sequence));
+            if (auto* bytes = PyBytes::tryFrom(sequence))
+                return bytes->length();
+            return std::nullopt;
+        };
+        switch (operation->op) {
+        case Operator::MatMult:
+            return { };
+        case Operator::Mult:
+            if (areInts) {
+                if (intBitLength(intValue(value)) + intBitLength(intValue(right)) > maxIntBits)
+                    return { };
+                break;
+            }
+            for (auto [sequence, count] : { std::pair { value, right }, std::pair { right, value } }) {
+                auto size = sizeOf(sequence);
+                if (!size || !isInt(count) || !*size)
+                    continue;
+                auto times = tryInt64(intValue(count));
+                if (!times || *times < 0 || static_cast<uint64_t>(*times) > maxStrSize / *size)
+                    return { };
+            }
+            break;
+        case Operator::Pow:
+            if (areInts && intSign(intValue(value)) && intSign(intValue(right)) > 0) {
+                auto exponent = tryUInt64(intValue(right));
+                if (!exponent || *exponent > maxIntBits / intBitLength(intValue(value)))
+                    return { };
+            }
+            break;
+        case Operator::LShift:
+            if (areInts && intSign(intValue(value)) && intSign(intValue(right))) {
+                auto shift = tryUInt64(intValue(right));
+                if (!shift || *shift > maxIntBits || intBitLength(intValue(value)) > maxIntBits - *shift)
+                    return { };
+            }
+            break;
+        case Operator::Mod:
+            if (sizeOf(value))
+                return { };
+            break;
+        default:
+            break;
+        }
+        value = finish(binaryOperation(globalObject(), static_cast<BinaryOperator>(operation->op), value, right));
+    }
+    return value;
+}
+
 // ---- Dispatch ----
 
 void Unit::exprForEffect(Expr* node)
@@ -193,6 +281,11 @@ RegisterID* Unit::expr(Expr* node, RegisterID* dst)
     // Of anything else, what comes first is a part of it.
     if (node->is<NameExpr>() || node->is<Constant>())
         line(node->range.lineno);
+    if (node->range.lineno != node->range.endLineno && !m_sameLineDepth && (node->is<BinOp>() || node->is<UnaryOp>()) && valueCPythonsCompilerWorksOut(node)) [[unlikely]] {
+        line(node->range.lineno);
+        SameLine sameLine(*this);
+        return expr(node, dst);
+    }
     switch (node->kind) {
     case ExprKind::BoolOp:
         return boolOp(node->as<BoolOp>(), dst);
@@ -1273,7 +1366,7 @@ RegisterID* Unit::call(Call* node, RegisterID* dst)
         }
         loc(range);
         g.emitPyCall(result.get(), callee.get(), arguments, count + 1);
-        g.emitJump(done.get());
+        hiddenJump(done.get());
         g.emitLabel(notMethod.get());
         for (unsigned i = 0; i < count; ++i)
             g.move(arguments.argumentRegister(i), arguments.argumentRegister(i + 1));
@@ -1316,7 +1409,7 @@ RegisterID* Unit::call(Call* node, RegisterID* dst)
         loc(node->range);
         g.emitPyCall(init.get(), init.get(), arguments, count + 1);
         g.emitPyFinishConstruct(result.get(), self.get(), init.get());
-        g.emitJump(done.get());
+        hiddenJump(done.get());
         g.emitLabel(notSuchAClass.get());
         loc(node->range);
         g.emitPyCall(result.get(), callee.get(), arguments, count);
@@ -1402,8 +1495,7 @@ RegisterID* Unit::emitDelegate(RegisterID* dst, RegisterID* iterator)
     // Whatever comes in goes on to the iterator.
     g.move(arguments[1], g.generatorValueRegister());
     g.move(arguments[2], g.generatorResumeModeRegister());
-    g.addPythonMark(PythonMark::NoLine, hiddenJumpMark);
-    g.emitJump(loop.get());
+    hiddenJump(loop.get());
     g.emitLabel(done.get());
     return callRuntime(dst, RuntimeFunction::TakeSendResult, { arguments[0] });
 }
@@ -1683,7 +1775,7 @@ RegisterID* Unit::comprehension(Expr* node, ComprehensionKind kind, Seq<Comprehe
             endTry(*guard);
             resetVariables();
             Ref<Label> end = g.newLabel();
-            g.emitJump(end.get());
+            hiddenJump(end.get());
             Reg thrown = beginHandler(*guard);
             resetVariables();
             reraise(thrown.get());

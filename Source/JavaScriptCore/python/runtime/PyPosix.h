@@ -230,6 +230,9 @@ PyType* posixRusageType(JSGlobalObject*);
 
 // False: errno says why.
 bool posixSetInheritable(int fd, bool inheritable);
+// A system call has failed, and errno says why. If there are too many open files: those that nothing refers to any more (files,
+// sockets, directory iterators) are closed only once the collector has noticed, so it is made to look. True: try the call again.
+bool posixFreeDescriptors(JSGlobalObject*);
 // A copy that children do not inherit. -1: errno says why.
 int posixDupNotInheritable(int fd);
 

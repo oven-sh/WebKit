@@ -11,6 +11,7 @@
 #include "FrameTracers.h"
 #include "HeapAnalyzer.h"
 #include "HeapProfiler.h"
+#include "HeapUtil.h"
 #include "JSArrayBuffer.h"
 #include "JSArrayBufferView.h"
 #include "JSCInlines.h"
@@ -454,9 +455,14 @@ static bool bufferForEachCellInFrames(VM& vm, const Function& function)
     bool isComplete = true;
     // Where the frame that this one called ends. It lies among the registers of this one.
     Register* endOfCallee = nullptr;
+    // A register that the analysis takes to be live need not have been set: what a handler reads counts as live all through the
+    // range the handler covers. It then has what a callee left there, which may be no value at all.
+    if (!vm.heap.objectSpace().preciseAllocationSet())
+        vm.heap.objectSpace().enablePreciseAllocationTracking();
+    auto filter = vm.heap.objectSpace().blocks().filter();
     auto consider = [&](Register& slot) {
         JSValue value = slot.jsValue();
-        if (value && value.isCell())
+        if (value && value.isCell() && HeapUtil::isJSCellStorage(vm.heap, filter, value.asCell()) && !value.asCell()->isZapped())
             function(value.asCell());
     };
     auto visitFrame = [&](StackVisitor& visitor) {

@@ -63,6 +63,8 @@ public:
 
     // code.replace(co_flags=flags)
     static PyCode* createWithFlags(JSGlobalObject*, FunctionExecutable*, OptionSet<CodeFlag>);
+    // The same for code that nobody has seen yet: it is the one code object of the code.
+    static PyCode* ofWithFlags(JSGlobalObject*, FunctionExecutable*, OptionSet<CodeFlag>);
 
     FunctionExecutable* executable() const { return m_executable.get(); }
     CodeInfo& codeInfo() const { return *m_executable->unlinkedExecutable()->pythonCodeInfo(); }
@@ -140,7 +142,8 @@ public:
     void setAnnotations(VM& vm, JSValue value) { m_annotations.set(vm, this, value); }
     void setAnnotate(VM& vm, JSValue value) { m_annotate.set(vm, this, value); }
     void setTypeParams(VM& vm, JSValue value) { m_typeParams.set(vm, this, value); }
-    void setAssignedCode(VM& vm, PyCode* code) { m_code.set(vm, this, code); }
+    // function.__code__ = code
+    void setCode(VM&, PyCode*);
 
     // For a generator function: the function that runs the body of its generators.
     PyFunction* generatorBody(JSGlobalObject*, CodeBlock* ownCodeBlock);

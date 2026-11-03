@@ -155,13 +155,13 @@ public:
     PY_DECLARE_CELL(PyTraceback, PyObject, PyObjectType);
     DECLARE_VISIT_CHILDREN;
 
-    static PyTraceback* create(JSGlobalObject*, JSValue next, PyFrame*, int lineNumber, unsigned bytecodeOffset);
+    static PyTraceback* create(JSGlobalObject*, JSValue next, PyFrame*, int lineNumber, unsigned lastI);
 
     JSValue next() const { return m_next.get(); } // Empty: the last.
     void setNext(VM& vm, JSValue value) { m_next.set(vm, this, value); }
     PyFrame* frame() const { return m_frame.get(); }
     int lineNumber() const { return m_lineNumber; }
-    unsigned bytecodeOffset() const { return m_bytecodeOffset; }
+    unsigned lastI() const { return m_lastI; } // tb_lasti: see shownOffset().
 
 private:
     PyTraceback(VM&, Structure*, PyType*);
@@ -169,7 +169,7 @@ private:
     WriteBarrier<Unknown> m_next;
     WriteBarrier<PyFrame> m_frame;
     int m_lineNumber { 0 };
-    unsigned m_bytecodeOffset { 0 };
+    unsigned m_lastI { 0 };
 };
 
 // type(*args), for a built-in exception type, without running any Python code.

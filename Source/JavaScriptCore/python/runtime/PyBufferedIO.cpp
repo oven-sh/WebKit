@@ -40,6 +40,7 @@ struct BufferedState {
     ThreadLock lock; // Held while an operation that cannot be interleaved with another is under way.
     bool rawIsFileIO { false }; // A FileIO itself, no subclass: there is no need to go through its methods.
     bool fastClosedChecks { false };
+    bool isListedForPendingOutput { false }; // See ioNotePendingOutput().
     int64_t absolutePosition { -1 }; // Of the raw stream. -1: not known.
     int64_t position { 0 };
     int64_t rawPosition { 0 };
@@ -171,6 +172,37 @@ private:
 };
 
 } // namespace
+
+static void bufferedNotePendingOutput(BufferedStream& stream)
+{
+    auto& s = stream.s;
+    if (s.isListedForPendingOutput || !s.rawIsFileIO)
+        return;
+    PyType* type = stream.record->type();
+    if (type != ioType(stream.globalObject, IOType::BufferedWriter) && type != ioType(stream.globalObject, IOType::BufferedRandom))
+        return;
+    s.isListedForPendingOutput = true;
+    ioNotePendingOutput(stream.globalObject, stream.record);
+}
+
+void bufferedWriteOutPending(JSGlobalObject* globalObject, PyRecord* record)
+{
+    BufferedStream stream(globalObject, record);
+    auto& s = stream.s;
+    s.isListedForPendingOutput = false;
+    // Whoever is in the middle of something with it will get to that.
+    if (!s.isInitialized || s.isDetached || s.lock.isHeld() || !bufferedHasPendingOutput(record) || stream.isClosed())
+        return;
+    BufferedLock lock(stream);
+    if (!lock || !stream.flushAndRewind())
+        reportUnraisable(globalObject, makeString("Exception ignored while flushing "_s, reprForMessage(globalObject, record)), { });
+}
+
+bool bufferedHasPendingOutput(PyRecord* buffer)
+{
+    auto& state = ioStateOf<BufferedState>(buffer);
+    return state.writable && state.writeEnd != -1 && state.writePosition < state.writeEnd;
+}
 
 JSValue bufferedWrappedStream(PyRecord* stream) { return stream->get(BufferedRawField); }
 
@@ -1162,6 +1194,7 @@ static JSValue bufferedWrite(JSGlobalObject* globalObject, JSValue self, JSValue
             s.writePosition = s.position;
         stream.adjustPosition(s.position + length);
         s.writeEnd = std::max(s.writeEnd, s.position);
+        bufferedNotePendingOutput(stream);
         return makeInt(globalObject, length);
     }
 
@@ -1251,6 +1284,8 @@ static JSValue bufferedWrite(JSGlobalObject* globalObject, JSValue self, JSValue
     s.writeEnd = remaining;
     stream.adjustPosition(remaining);
     s.rawPosition = 0;
+    if (remaining > 0)
+        bufferedNotePendingOutput(stream);
     return makeInt(globalObject, written);
 }
 

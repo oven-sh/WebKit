@@ -273,8 +273,26 @@ void Threads::didTakeGIL(ThreadState& thread)
     m_vm.traps().fireTrap(VMTraps::NeedPythonCalls);
     // The host's objects belong to the main thread, dead ones too.
     m_vm.heap.setMayRunEmbedderFinalizers(thread.isMain);
-    if (thread.isMain)
+    if (thread.isMain) {
         m_didTellMainThreadOfFinalizers = false;
+        m_vm.traps().fireTrapsLeftToEmbedderThread();
+    }
+}
+
+// Wherever it sleeps: in a wait for other threads, or in the host's event loop.
+void Threads::wakeMainThread()
+{
+    for (auto& thread : m_threads) {
+        if (thread->isMain)
+            thread->sleeper.wake();
+    }
+    noteCallsOwed(m_vm);
+}
+
+void mainThreadHasTrapsToHandle(VM& vm)
+{
+    if (!vm.heap.pythonRuntimes().isEmpty())
+        vm.heap.pythonRuntimes().first()->threads().wakeMainThread();
 }
 
 // This thread has come across dead objects of the host, which only the main thread may sweep. That one does so at its next safe
@@ -282,11 +300,7 @@ void Threads::didTakeGIL(ThreadState& thread)
 void Threads::tellMainThreadOfFinalizers()
 {
     m_didTellMainThreadOfFinalizers = true;
-    for (auto& thread : m_threads) {
-        if (thread->isMain)
-            thread->sleeper.wake();
-    }
-    noteCallsOwed(m_vm);
+    wakeMainThread();
 }
 
 void AllowThreads::release(Threads& threads)
@@ -491,6 +505,15 @@ bool Threads::waitUntil(JSGlobalObject* globalObject, const void* address, int64
         if (thread.isMain) {
             if (m_vm.heap.hasPostponedEmbedderFinalizers()) [[unlikely]]
                 m_vm.heap.runPostponedEmbedderFinalizers();
+            // The host wants whatever runs here ended. Nothing else looks while this waits.
+            constexpr auto endingTraps = VMTraps::NeedTermination | VMTraps::NeedWatchdogCheck;
+            if (vm.traps().needHandling(endingTraps) && vm.entryScope) [[unlikely]] {
+                vm.traps().handleTraps(endingTraps);
+                if (scope.exception()) {
+                    wakeOne(address);
+                    return false;
+                }
+            }
             bool canGoOn = checkSignals(globalObject);
             EXCEPTION_ASSERT(!scope.exception() == canGoOn);
             if (!canGoOn) {
@@ -506,6 +529,10 @@ bool Threads::waitUntil(JSGlobalObject* globalObject, const void* address, int64
             return false;
         if (now >= idleCollectionTime) {
             collectWhileIdle(globalObject);
+            if (scope.exception()) [[unlikely]] {
+                wakeOne(address);
+                return false;
+            }
             if (isOver())
                 return true;
             // Less and less often: the other threads collect as they allocate.

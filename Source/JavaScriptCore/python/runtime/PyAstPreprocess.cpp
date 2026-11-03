@@ -247,7 +247,7 @@ private:
         if (c != 's' && c != 'r' && c != 'a')
             return nullptr;
 
-        StrBuilder spec;
+        StringBuilder spec;
         if (!leftJustified && width > 0)
             spec.append('>');
         if (width >= 0)

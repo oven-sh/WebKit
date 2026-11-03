@@ -372,6 +372,8 @@ bool SymbolTable::visitAnnotation(Expr* annotation, const void* key)
         }
     } else
         enterExisting(parent->annotationBlock, false);
+    if (parent->kind == ScopeKind::Class && parent->hasConditionalAnnotations)
+        m_current->readsConditionalAnnotationsCell = true;
 
     m_current->inUnevaluatedAnnotation = isUnevaluated;
     bool result = visit(annotation);

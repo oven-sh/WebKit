@@ -6,11 +6,13 @@
 #include "config.h"
 #include "PyFunction.h"
 
+#include "BytecodeStructs.h"
 #include "CodeBlock.h"
 #include "FunctionCodeBlock.h"
 #include "JSCInlines.h"
 #include "PyAbstract.h"
 #include "PyBytes.h"
+#include "PyCodeCache.h"
 #include "PyErrors.h"
 #include "PyException.h"
 #include "PyInternals.h"
@@ -251,6 +253,45 @@ void PyFunction::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(PyFunction);
 
+// JSC takes a function to keep the executable it was made with, and there is no setter. Who relies on it:
+// - call sites that are linked to the function jump to its code without looking: they are unlinked;
+// - code from the optimizing compilers that has the function for a constant may call the executable it had then: it is thrown away.
+//   (They never look into code written in Python, so that is all they can know about it.)
+// A call in progress goes on in the old code, which its frame keeps.
+void PyFunction::setCode(VM& vm, PyCode* code)
+{
+    FunctionExecutable* previous = functionExecutable();
+    FunctionExecutable* next = code->executable();
+    m_code.set(vm, this, code);
+    if (next == previous)
+        return;
+
+    next->setNeverInline(true);
+    next->setNeverOptimize(true);
+    if (FunctionRareData* rareData = this->rareData())
+        reinterpret_cast<WriteBarrier<ExecutableBase>*>(reinterpret_cast<char*>(rareData) + FunctionRareData::offsetOfExecutable())->set(vm, rareData, next);
+    else {
+        *reinterpret_cast<uintptr_t*>(reinterpret_cast<char*>(this) + offsetOfExecutableOrRareData()) = std::bit_cast<uintptr_t>(next);
+        vm.writeBarrier(this, next);
+    }
+    ASSERT(functionExecutable() == next);
+    m_info = next->unlinkedExecutable()->pythonCodeInfo();
+    m_generatorBody.clear();
+
+    if (CodeBlock* codeBlock = previous->codeBlockForCall())
+        codeBlock->unlinkOrUpgradeIncomingCalls(vm, nullptr);
+#if ENABLE(DFG_JIT)
+    vm.heap.completeAllJITPlans();
+    Vector<CodeBlock*> optimized;
+    vm.heap.forEachCodeBlock([&](CodeBlock* codeBlock) {
+        if (JITCode::isOptimizingJIT(codeBlock->jitType()))
+            optimized.append(codeBlock);
+    });
+    for (CodeBlock* codeBlock : optimized)
+        codeBlock->jettison(Profiler::JettisonDueToUnprofiledWatchpoint);
+#endif
+}
+
 PyFunction* PyFunction::generatorBody(JSGlobalObject* globalObject, CodeBlock* ownCodeBlock)
 {
     if (PyFunction* body = m_generatorBody.get())
@@ -415,6 +456,10 @@ static NEVER_INLINE bool bindArgumentsSlow(JSGlobalObject* globalObject, CallFra
     unsigned namedCount = argCount + info.kwOnlyCount;
     bool hasVarArgs = info.flags.contains(CodeFlag::VarArgs);
     const JSValue* args = reinterpret_cast<const JSValue*>(callFrame->addressOfArgumentsStart());
+
+    // A call in JS may pass any function more than it takes, and those who call callbacks do: array.map(f) is f(item, index, array).
+    if (positionalCount > argCount && !hasVarArgs && !isCalledByPython(globalObject, callFrame))
+        positionalCount = argCount;
 
     // The parameters are worked out on the side: they go where the arguments are.
     MarkedArgumentBuffer buffer;
@@ -623,6 +668,7 @@ static JSValue functionNew(JSGlobalObject* globalObject, JSValue, JSValue code, 
     }
 
     PyFunction* function = PyFunction::create(globalObject, codeObject->executable(), PyDict::from(globals));
+    function->setCode(vm, codeObject);
     if (name && !isNone(name))
         function->setName(vm, strValue(name));
     if (defaults && !isNone(defaults))
@@ -746,12 +792,20 @@ static void functionSetCode(JSGlobalObject* globalObject, JSValue self, JSValue 
     }
     if (!auditFunctionAttribute(globalObject, "object.__setattr__"_s, self, "__code__"_s, value))
         return;
-    // FIXME: A JSFunction keeps the executable it was made with, so only the flags can differ.
-    if (code->executable() != function->functionExecutable()) {
-        raiseNotImplementedError(globalObject, scope, "the __code__ of a function cannot be replaced by other code"_s);
+    size_t freeCount = code->codeInfo().freeVariables.size();
+    size_t closureCount = function->closure() ? function->closure()->length() : 0;
+    if (freeCount != closureCount) {
+        String name = function->name().isString() ? String(asString(function->name())->value(globalObject)) : String();
+        RETURN_IF_EXCEPTION(scope, void());
+        raiseValueError(globalObject, scope, name, "() requires a code object with "_s, closureCount, " free vars, not "_s, freeCount);
         return;
     }
-    function->setAssignedCode(vm, code);
+    constexpr OptionSet<CodeFlag> kinds { CodeFlag::Generator, CodeFlag::Coroutine, CodeFlag::AsyncGenerator };
+    if ((codeOf(globalObject, function)->flags() & kinds) != (code->flags() & kinds)) {
+        if (!warn(globalObject, runtime(globalObject).DeprecationWarning(), "Assigning a code object of non-matching type is deprecated (e.g., from a generator to a plain function)"_s))
+            return;
+    }
+    function->setCode(vm, code);
 }
 
 static JSValue functionGetAnnotations(JSGlobalObject* globalObject, JSValue self)
@@ -877,6 +931,14 @@ JSC_DEFINE_HOST_FUNCTION(callPythonObject, (JSGlobalObject* globalObject, CallFr
     CallArgs args(callFrame);
     if (!args.hasKeywords() && hasKeywordMarker(globalObject, callFrame)) [[unlikely]]
         return JSValue::encode(resultForCaller(globalObject, callFrame, callWithKeywordMarker(globalObject, callFrame)));
+    // As in bindArgumentsSlow(): what JS passes a bound method beyond what it takes is dropped.
+    if (auto* method = dynamicDowncast<PyMethod>(callFrame->jsCallee()); method && !args.hasKeywords()) {
+        if (auto* function = PyFunction::tryFrom(method->function())) {
+            CodeInfo& info = function->codeInfo();
+            if (args.size() + 1 > info.argCount && info.argCount && !info.flags.contains(CodeFlag::VarArgs) && !isCalledByPython(globalObject, callFrame))
+                args = CallArgs(args.positional().first(info.argCount - 1));
+        }
+    }
     return JSValue::encode(resultForCaller(globalObject, callFrame, call(globalObject, callFrame->jsCallee(), args)));
 }
 
@@ -1050,6 +1112,13 @@ PyCode* PyCode::createWithFlags(JSGlobalObject* globalObject, FunctionExecutable
     return code;
 }
 
+PyCode* PyCode::ofWithFlags(JSGlobalObject* globalObject, FunctionExecutable* executable, OptionSet<CodeFlag> flags)
+{
+    PyCode* code = of(globalObject, executable);
+    code->m_codeFlags = flags;
+    return code;
+}
+
 PyCode* codeOf(JSGlobalObject* globalObject, PyFunction* function)
 {
     function = function->codeOwner();
@@ -1068,9 +1137,10 @@ void PyCode::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(PyCode);
 
-// What replace() gave another value: a dict, the hidden field of the copy. These only describe the code. What runs goes by
-// the CodeInfo: a traceback shows the names that has.
+// What replace() gave another value, if no copy of the code could be made (see codeReplace()): a dict, the hidden field of the
+// result. These only describe the code then. What runs goes by the CodeInfo: a traceback shows the names that has.
 static constexpr unsigned codeReplacedField = 0;
+static constexpr unsigned codePositionsField = 1; // See codePositions().
 
 static JSValue codeReplaced(JSGlobalObject* globalObject, JSValue self, ASCIILiteral name)
 {
@@ -1165,6 +1235,17 @@ static JSValue codeGetStackSize(JSGlobalObject*, JSValue) { return jsNumber(0); 
 static JSValue codeGetNames(JSGlobalObject* globalObject, JSValue self) { return tupleOfNames(globalObject, PyCode::from(self)->codeInfo().names); }
 static JSValue codeGetFreeVars(JSGlobalObject* globalObject, JSValue self) { return tupleOfNames(globalObject, PyCode::from(self)->codeInfo().freeVariables); }
 static JSValue codeGetEmptyBytes(JSGlobalObject* globalObject, JSValue) { return runtime(globalObject).emptyBytes(); }
+
+// Nothing reads a co_linetable but the interpreter it is for (programs have co_lines()). What takes a code object apart and puts it
+// together again with code(...), as cloudpickle does, passes it along. So here it is what code(...) makes the code from: all of
+// it, as marshal writes it.
+static JSValue codeGetLineTable(JSGlobalObject* globalObject, JSValue self)
+{
+    Vector<uint8_t> bytes;
+    if (!writeMarshalledCode(globalObject, PyCode::from(self), bytes))
+        return runtime(globalObject).emptyBytes();
+    return PyBytes::create(globalObject, bytes.span());
+}
 
 // The parameters, then the other variables that are not only cells.
 static JSValue codeGetVarNames(JSGlobalObject* globalObject, JSValue self)
@@ -1294,6 +1375,44 @@ static JSValue codeHash(JSGlobalObject* globalObject, JSValue self)
     return makeInt(globalObject, static_cast<int64_t>(result >> 2));
 }
 
+// `bytes`: what codeGetLineTable() gives. Null without an exception: they are not that, or not this build's.
+static PyCode* codeFromLineTable(JSGlobalObject* globalObject, std::span<const uint8_t> bytes)
+{
+    if (bytes.size() < MarshalledCodeHeader::size)
+        return nullptr;
+    auto header = MarshalledCodeHeader::read(bytes.first<MarshalledCodeHeader::size>());
+    auto payload = bytes.subspan(MarshalledCodeHeader::size);
+    if (header.payloadSize != payload.size())
+        return nullptr;
+    return readMarshalledCode(globalObject, header, payload);
+}
+
+// How code describes itself is in its CodeInfo, which goes with its instructions. `fresh` is code that nobody has seen yet.
+// A null string, no line: as it is.
+static PyCode* describeAnew(JSGlobalObject* globalObject, PyCode* fresh, const String& name, const String& qualname, const String& filename, std::optional<int> firstLine, int lineDelta, OptionSet<CodeFlag> flags)
+{
+    VM& vm = getVM(globalObject);
+    auto change = [&](CodeInfo& info) {
+        info.lineDelta = lineDelta; // marshal does not write it.
+        if (!name.isNull())
+            info.name = Identifier::fromString(vm, name);
+        if (!qualname.isNull())
+            info.qualname = qualname;
+        if (!filename.isNull())
+            info.filename = filename;
+        if (firstLine) {
+            info.lineDelta += *firstLine - info.firstLineNumber;
+            info.firstLineNumber = *firstLine;
+        }
+    };
+    change(fresh->codeInfo());
+    if (fresh->codeInfo().isGeneratorLike()) {
+        UnlinkedFunctionCodeBlock* codeBlock = fresh->executable()->unlinkedExecutable()->codeBlocksDecodingCached(vm).first;
+        change(*codeBlock->functionExpr(CodeInfo::generatorBodyIndex)->pythonCodeInfo());
+    }
+    return PyCode::ofWithFlags(globalObject, fresh->executable(), flags);
+}
+
 static JSValue codeReplace(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
 {
     Runtime& rt = runtime(globalObject);
@@ -1371,6 +1490,25 @@ static JSValue codeReplace(JSGlobalObject* globalObject, JSValue self, const Cal
                 return raiseNotImplementedError(globalObject, scope, "code.replace() cannot change "_s, field.name);
         }
     }
+    if (replaced->size()) {
+        // The result has instructions of its own (see describeAnew()): what marshal would write and read back.
+        Vector<uint8_t> bytes;
+        PyCode* copy = !before && writeMarshalledCode(globalObject, code, bytes) ? codeFromLineTable(globalObject, bytes.span()) : nullptr;
+        if (copy) {
+            auto text = [&](ASCIILiteral name) -> String {
+                JSValue value = replaced->get(internString(vm, name));
+                return value ? String(strValue(value)->value(globalObject)) : String();
+            };
+            String name = text("co_name"_s);
+            RETURN_IF_EXCEPTION(scope, { });
+            String qualname = text("co_qualname"_s);
+            RETURN_IF_EXCEPTION(scope, { });
+            String filename = text("co_filename"_s);
+            RETURN_IF_EXCEPTION(scope, { });
+            JSValue firstLine = replaced->get(internString(vm, "co_firstlineno"_s));
+            return describeAnew(globalObject, copy, name, qualname, filename, firstLine ? std::optional<int>(firstLine.asInt32()) : std::nullopt, code->codeInfo().lineDelta, flags);
+        }
+    }
     PyCode* result = PyCode::createWithFlags(globalObject, code->executable(), flags);
     if (replaced->size())
         setHiddenField(globalObject, result, codeReplacedField, replaced);
@@ -1383,13 +1521,54 @@ static JSValue codeNew(JSGlobalObject* globalObject, JSValue, const CallArgs& ar
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!rejectKeywords(globalObject, "code"_s, args) || !checkPositional(globalObject, "code"_s, args, 16, 18))
         return { };
-    // FIXME: See codeReplace().
-    return raiseNotImplementedError(globalObject, scope, "code objects cannot be made from bytecode"_s);
+    // code(argcount, posonlyargcount, kwonlyargcount, nlocals, stacksize, flags, codestring, constants, names, varnames, filename,
+    // name, qualname, firstlineno, linetable, exceptiontable, freevars=(), cellvars=()). The instructions are not CPython's and cannot
+    // be made from a codestring. What can be done is to put together what another code object was taken apart into.
+    for (unsigned index : { 0, 1, 2, 3, 4, 5, 13 }) {
+        toCInt(globalObject, args[index]);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    auto* lineTable = PyBytes::tryFrom(args[14]);
+    PyCode* code = lineTable ? codeFromLineTable(globalObject, lineTable->span()) : nullptr;
+    if (!code)
+        return raiseNotImplementedError(globalObject, scope, "code objects cannot be made from bytecode, only from the attributes of a code object of the same build"_s);
+    static constexpr std::pair<unsigned, ASCIILiteral> unchangeable[] = {
+        { 0, "co_argcount"_s }, { 1, "co_posonlyargcount"_s }, { 2, "co_kwonlyargcount"_s }, { 7, "co_consts"_s }, { 8, "co_names"_s },
+        { 9, "co_varnames"_s }, { 16, "co_freevars"_s }, { 17, "co_cellvars"_s },
+    };
+    for (auto [index, name] : unchangeable) {
+        if (index >= args.size())
+            continue;
+        JSValue own = getAttr(globalObject, code, internString(vm, name));
+        RETURN_IF_EXCEPTION(scope, { });
+        bool same = isEqual(globalObject, own, args[index]);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!same)
+            return raiseNotImplementedError(globalObject, scope, "code(): "_s, name, " is not that of the code the linetable is from"_s);
+    }
+    int flags = toCInt(globalObject, args[5]);
+    RETURN_IF_EXCEPTION(scope, { });
+    int firstLine = toCInt(globalObject, args[13]);
+    RETURN_IF_EXCEPTION(scope, { });
+    String texts[3];
+    for (unsigned i = 0; i < 3; ++i) {
+        if (!isStr(args[10 + i]))
+            return raiseTypeError(globalObject, scope, "code() argument "_s, 11 + i, " must be str, not "_s, typeNameOfArgument(globalObject, args[10 + i]));
+        texts[i] = strValue(args[10 + i])->value(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    return describeAnew(globalObject, code, texts[1], texts[2], texts[0], firstLine, 0, OptionSet<CodeFlag>::fromRaw(static_cast<uint32_t>(flags)));
 }
 
 // co_lines(), co_positions() and co_branches() return iterators of types of their own. Fields: the iterator of a list.
 static JSValue codeIteratorIter(JSGlobalObject*, JSValue self) { return self; }
-static JSValue codeIteratorNext(JSGlobalObject* globalObject, JSValue self) { return iterNext(globalObject, PyRecord::from(self)->get(0)); }
+static JSValue codeIteratorNext(JSGlobalObject* globalObject, JSValue self)
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    JSValue item = iterNext(globalObject, PyRecord::from(self)->get(0));
+    RETURN_IF_EXCEPTION(scope, { });
+    return item ? item : raiseStopIteration(globalObject, scope);
+}
 
 static constexpr NativeDef codeIteratorMethods[] = {
     PY_SLOT("__iter__", codeIteratorIter, "($self, /)"),
@@ -1409,22 +1588,26 @@ static JSValue makeCodeIterator(JSGlobalObject* globalObject, const TypeDef& def
     return result;
 }
 
-// (start, end, line) for each run of instructions that come from one line. The offsets are those of JSC's instructions.
-static JSValue codeLines(JSGlobalObject* globalObject, JSValue self)
+// The runs of bytes of the instructions that come from one line. -1: from none. Where several lines begin at an instruction, see
+// visibleOffset().
+struct LineRun {
+    unsigned start;
+    unsigned end;
+    int line;
+};
+static Vector<LineRun> lineRunsOf(const CodeInfo& info, CodeBlock* codeBlock)
 {
-    VM& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    CodeBlock* codeBlock = codeBlockOf(globalObject, PyCode::from(self));
-    RETURN_IF_EXCEPTION(scope, { });
-    JSArray* lines = newList(globalObject);
-    RETURN_IF_EXCEPTION(scope, { });
+    Vector<LineRun> runs;
     // What sets up the frame is of the line the code begins on.
-    const CodeInfo& info = PyCode::from(self)->codeInfo();
     unsigned start = 0;
     int line = info.name.string() == "<module>"_s ? 0 : info.firstLineNumber;
     auto finishRun = [&](unsigned end) {
-        if (start < end)
-            listAppend(globalObject, lines, PyTuple::create(globalObject, { jsNumber(start), jsNumber(end), line >= 0 ? jsNumber(line) : jsUndefined() }));
+        if (start < end) {
+            if (!runs.isEmpty() && runs.last().line == line)
+                runs.last().end = end;
+            else
+                runs.append({ start, end, line });
+        }
         start = end;
     };
     unsigned linesAtOffset = 0;
@@ -1432,11 +1615,10 @@ static JSValue codeLines(JSGlobalObject* globalObject, JSValue self)
     for (auto& mark : codeBlock->unlinkedCodeBlock()->pythonMarks()) {
         if (mark.offset != std::exchange(lastOffset, mark.offset))
             linesAtOffset = 0;
-        // See visibleOffset().
         unsigned offset = mark.offset + linesAtOffset;
         int next;
         if (mark.kind() == PythonMark::Line) {
-            next = lineOfMarkValue(mark.value());
+            next = lineOfMarkValue(mark.value()) + info.lineDelta;
             ++linesAtOffset;
         } else if (mark.kind() == PythonMark::Start || (mark.kind() == PythonMark::NoLine && !mark.value()))
             next = -1;
@@ -1447,16 +1629,32 @@ static JSValue codeLines(JSGlobalObject* globalObject, JSValue self)
         finishRun(offset);
         line = next;
     }
-    if (start < codeBlock->instructions().size())
-        finishRun(codeBlock->instructions().size());
+    finishRun(codeBlock->instructions().size());
+    return runs;
+}
+
+// (start, end, line) for each of them.
+static JSValue codeLines(JSGlobalObject* globalObject, JSValue self)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    CodeBlock* codeBlock = codeBlockOf(globalObject, PyCode::from(self));
+    RETURN_IF_EXCEPTION(scope, { });
+    JSArray* lines = newList(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    for (auto& run : lineRunsOf(PyCode::from(self)->codeInfo(), codeBlock))
+        listAppend(globalObject, lines, PyTuple::create(globalObject, { jsNumber(shownOffset(run.start)), jsNumber(shownOffset(run.end)), run.line >= 0 ? jsNumber(run.line) : jsUndefined() }));
     RELEASE_AND_RETURN(scope, makeCodeIterator(globalObject, lineIteratorTypeDef, lines));
 }
 
-// (line, end line, column, end column) for each instruction.
+// (line, end line, column, end column) for each unit of co_code, which is to say for each byte of the instructions.
 static JSValue codePositions(JSGlobalObject* globalObject, JSValue self)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    // traceback.py asks for all of them for each frame of each traceback it formats. They are worked out once.
+    if (JSValue known = hiddenField(globalObject, self, codePositionsField))
+        RELEASE_AND_RETURN(scope, makeCodeIterator(globalObject, positionsIteratorTypeDef, asArray(known)));
     CodeBlock* codeBlock = codeBlockOf(globalObject, PyCode::from(self));
     RETURN_IF_EXCEPTION(scope, { });
     JSArray* positions = newList(globalObject);
@@ -1479,35 +1677,135 @@ static JSValue codePositions(JSGlobalObject* globalObject, JSValue self)
             column += unit < 0x80 ? 1 : unit < 0x800 ? 2 : U16_IS_SURROGATE(unit) ? 2 : 3;
         }
     };
-    // In CPython there is an item for each unit of two bytes, and traceback.py looks up item tb_lasti // 2. So it is here:
-    // an instruction has the items from the one its first byte falls in up to that of the next instruction.
-    JSValue previous;
+    auto runs = lineRunsOf(PyCode::from(self)->codeInfo(), codeBlock);
+    int lineDelta = PyCode::from(self)->codeInfo().lineDelta;
+    unsigned runIndex = 0;
+    int lineOfLast = -2;
+    JSValue last; // For a byte of which only the line is known.
     for (const auto& instruction : codeBlock->instructions()) {
+        // Only what may raise an exception has a place in the source recorded. What has none is given that of whatever comes before.
         auto info = codeBlock->expressionInfoForBytecodeIndex(BytecodeIndex(instruction.offset()));
         int line, column, endLine, endColumn;
         locate(info.divot - info.startOffset, line, column);
         locate(info.divot + info.endOffset, endLine, endColumn);
-        JSValue position = PyTuple::create(globalObject, { jsNumber(line), jsNumber(endLine), jsNumber(column), jsNumber(endColumn) });
-        unsigned index = instruction.offset() / 2;
-        while (listLength(positions) < index) {
-            listAppend(globalObject, positions, previous);
+        line += lineDelta;
+        endLine += lineDelta;
+        JSValue exact;
+        for (unsigned offset = instruction.offset(); offset < instruction.offset() + instruction->size(); ++offset) {
+            while (runIndex + 1 < runs.size() && runs[runIndex].end <= offset)
+                ++runIndex;
+            int lineOfByte = runs[runIndex].line;
+            if (lineOfByte == line) {
+                if (!exact)
+                    exact = PyTuple::create(globalObject, { jsNumber(line), jsNumber(endLine), jsNumber(column), jsNumber(endColumn) });
+                listAppend(globalObject, positions, exact);
+            } else {
+                if (lineOfByte != std::exchange(lineOfLast, lineOfByte)) {
+                    JSValue number = lineOfByte >= 0 ? jsNumber(lineOfByte) : jsUndefined();
+                    last = PyTuple::create(globalObject, { number, number, jsUndefined(), jsUndefined() });
+                }
+                listAppend(globalObject, positions, last);
+            }
             RETURN_IF_EXCEPTION(scope, { });
         }
-        if (listLength(positions) == index)
-            listAppend(globalObject, positions, position);
-        else
-            listSet(globalObject, positions, index, position);
-        RETURN_IF_EXCEPTION(scope, { });
-        previous = position;
     }
-    while (previous && listLength(positions) < (codeBlock->instructions().size() + 1) / 2) {
-        listAppend(globalObject, positions, previous);
-        RETURN_IF_EXCEPTION(scope, { });
-    }
+    setHiddenField(globalObject, self, codePositionsField, positions);
     RELEASE_AND_RETURN(scope, makeCodeIterator(globalObject, positionsIteratorTypeDef, positions));
 }
 
-// FIXME: It is for sys.monitoring, which there is none of: no branches are told of. (In CPython too it is a "line_iterator".)
+// The instructions are JSC's, which nothing written for CPython can read. This is an outline of them in CPython's terms, for what goes
+// through the code to find where things are, as pdb does for the first line of a function: a unit for each byte (see
+// shownOffset()), all NOP but for the RESUME that comes before the program's own code.
+static JSValue codeGetCode(JSGlobalObject* globalObject, JSValue self)
+{
+    // Lib/_opcode_metadata.py. RESUME has a unit of cache.
+    static constexpr uint8_t cache = 0;
+    static constexpr uint8_t nop = 25;
+    static constexpr uint8_t resume = 128;
+    static constexpr uint8_t extendedArg = 67;
+    static constexpr uint8_t loadAttr = 79, loadGlobal = 91, loadName = 92, storeAttr = 109, storeGlobal = 114, storeName = 115;
+    static constexpr unsigned cachesOfLoadAttr = 9, cachesOfLoadGlobal = 4, cachesOfStoreAttr = 4;
+
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    CodeBlock* codeBlock = codeBlockOf(globalObject, PyCode::from(self));
+    RETURN_IF_EXCEPTION(scope, { });
+    Vector<uint8_t> code;
+    code.fill(0, shownOffset(codeBlock->instructions().size()));
+    {
+        // The argument of a NOP means nothing. It is the byte the unit stands for, because programs take functions whose co_code is
+        // the same to do the same (hypothesis drops a map(f) if f has the co_code of `lambda x: x`).
+        Monitoring::OriginalInstructions originalInstructions(runtime(globalObject).monitoring());
+        auto* bytes = static_cast<const uint8_t*>(codeBlock->instructions().rawPointer());
+        for (unsigned i = 0; i < code.size(); i += 2) {
+            code[i] = nop;
+            code[i + 1] = bytes[i / 2];
+        }
+    }
+    for (auto& mark : codeBlock->unlinkedCodeBlock()->pythonMarks()) {
+        if (mark.kind() != PythonMark::Start)
+            continue;
+        if (mark.offset >= 2) {
+            for (unsigned offset : { mark.offset - 2, mark.offset - 1 })
+                code[shownOffset(offset) + 1] = 0;
+            code[shownOffset(mark.offset - 2)] = resume;
+            code[shownOffset(mark.offset - 1)] = cache;
+        }
+        break;
+    }
+
+    // After all that, where no offset of the program's points: which names the code reads and writes, in order, for what goes through
+    // code to find that out (cloudpickle for the globals a function needs, inspect.getclosurevars()). They do not fit in the units
+    // of their instructions: CPython's have caches behind them.
+    auto& names = PyCode::from(self)->codeInfo().names;
+    auto append = [&](uint8_t opcode, VirtualRegister nameRegister, unsigned shift, unsigned caches) {
+        JSValue name = codeBlock->getConstant(nameRegister);
+        if (!name || !name.isString())
+            return;
+        const StringImpl* impl = asString(name)->tryGetValueImpl();
+        size_t index = names.findIf([&](const Identifier& other) { return WTF::equal(other.impl(), impl); });
+        if (index == notFound)
+            return;
+        unsigned argument = static_cast<unsigned>(index) << shift;
+        for (unsigned bits : { 24, 16, 8 }) {
+            if (argument >> bits)
+                code.appendList({ extendedArg, static_cast<uint8_t>(argument >> bits) });
+        }
+        code.appendList({ opcode, static_cast<uint8_t>(argument) });
+        for (unsigned i = 0; i < caches; ++i)
+            code.appendList({ cache, static_cast<uint8_t>(0) });
+    };
+    for (const auto& instruction : codeBlock->instructions()) {
+        switch (instruction->opcodeID()) {
+        case op_py_load_global:
+            append(loadGlobal, instruction->as<OpPyLoadGlobal>().m_name, 1, cachesOfLoadGlobal);
+            break;
+        case op_py_store_global:
+            append(storeGlobal, instruction->as<OpPyStoreGlobal>().m_name, 0, 0);
+            break;
+        case op_py_load_name:
+            append(loadName, instruction->as<OpPyLoadName>().m_name, 0, 0);
+            break;
+        case op_py_store_name:
+            append(storeName, instruction->as<OpPyStoreName>().m_name, 0, 0);
+            break;
+        case op_py_get_attr:
+            append(loadAttr, instruction->as<OpPyGetAttr>().m_name, 1, cachesOfLoadAttr);
+            break;
+        case op_py_get_method:
+            append(loadAttr, instruction->as<OpPyGetMethod>().m_name, 1, cachesOfLoadAttr);
+            break;
+        case op_py_set_attr:
+            append(storeAttr, instruction->as<OpPySetAttr>().m_name, 0, cachesOfStoreAttr);
+            break;
+        default:
+            break;
+        }
+    }
+    RELEASE_AND_RETURN(scope, PyBytes::create(globalObject, code.span()));
+}
+
+// (In CPython too it is a "line_iterator".)
 // (where, where it goes on if it does not jump, where it jumps to) for each branch.
 static JSValue codeBranches(JSGlobalObject* globalObject, JSValue self)
 {
@@ -1568,9 +1866,10 @@ static constexpr NativeGetSet codeGetSets[] = {
     { "co_cellvars"_s, codeGetCellVars },
     { "co_freevars"_s, codeGetFreeVars },
     PY_MEMBER("co_consts", codeGetConsts),
-    { "co_code"_s, codeGetEmptyBytes },
+    { "co_code"_s, codeGetCode },
+    { "_co_code_adaptive"_s, codeGetCode },
     { "co_lnotab"_s, codeGetEmptyBytes },
-    PY_MEMBER("co_linetable", codeGetEmptyBytes),
+    PY_MEMBER("co_linetable", codeGetLineTable),
     PY_MEMBER("co_exceptiontable", codeGetEmptyBytes),
 };
 
@@ -1586,8 +1885,23 @@ static JSValue nativeGetTextSignature(JSGlobalObject* globalObject, JSValue self
 {
     auto* native = asNative(self);
     auto& def = native->def();
-    if (def.signature.isVariadic)
-        return jsUndefined();
+    if (def.signature.isVariadic) {
+        // "(*args, **kwargs)" in a table only says that the function looks at its arguments itself. CPython has no signature for most
+        // of those. Anything more than that is meant.
+        StringView text = def.signatureText;
+        for (ASCIILiteral part : { "("_s, "$self"_s, "$type"_s, ", "_s, "*args"_s, ", "_s, "**kwargs"_s, ")"_s }) {
+            if (text.startsWith(part))
+                text = text.substring(part.length());
+        }
+        if (text.isEmpty()) {
+            // Those that stand for an operation have one all the same: __call__, __init__.
+            if (def.kind == NativeKind::SlotWrapper)
+                return makeStr(getVM(globalObject), "($self, /, *args, **kwargs)"_s);
+            if (def.kind == NativeKind::New)
+                return makeStr(getVM(globalObject), "($type, *args, **kwargs)"_s);
+            return jsUndefined();
+        }
+    }
     if (def.kind != NativeKind::Function || native->ownerType())
         return makeStr(getVM(globalObject), def.signatureText);
     // A function of a module is bound to it, which the tables leave out: "(obj, /)" is "($module, obj, /)".

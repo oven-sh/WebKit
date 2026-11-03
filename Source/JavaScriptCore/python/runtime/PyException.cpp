@@ -80,6 +80,8 @@ PyException* newException(JSGlobalObject* globalObject, PyType* type, const Stri
 
 // Of an object of JS. (0 is taken: see PyJSView.cpp.)
 static constexpr unsigned jsErrorHiddenField = 1;
+// The frames of Python it has passed through before there was a JSError to have the traceback.
+static constexpr unsigned jsErrorTracebackHiddenField = 2;
 
 JSValue exceptionFromThrownValue(JSGlobalObject* globalObject, JSValue thrown)
 {
@@ -109,9 +111,24 @@ JSValue exceptionFromThrownValue(JSGlobalObject* globalObject, JSValue thrown)
     }
     PyException* exception = newException(globalObject, rt.JSError(), message);
     exception->setField(vm, ExceptionField::jsErrorValue, thrown);
-    if (remembers)
+    if (remembers) {
         setHiddenField(globalObject, thrown, jsErrorHiddenField, exception);
+        if (JSValue traceback = hiddenField(globalObject, thrown, jsErrorTracebackHiddenField))
+            exception->setTraceback(vm, traceback);
+    }
     return exception;
+}
+
+bool addTracebackEntryToThrownObject(JSGlobalObject* globalObject, JSValue thrown, const ScopedLambda<JSValue(JSValue next)>& makeEntry)
+{
+    if (!thrown.isObject())
+        return false;
+    Runtime& rt = runtime(globalObject);
+    PyType* thrownType = rt.typeOf(thrown);
+    if (thrownType != rt.jsObjectType() && thrownType != rt.jsFunctionType())
+        return false;
+    setHiddenField(globalObject, thrown, jsErrorTracebackHiddenField, makeEntry(hiddenField(globalObject, thrown, jsErrorTracebackHiddenField)));
+    return true;
 }
 
 PyException* exceptionOfThrownValueIfKnown(JSGlobalObject* globalObject, JSValue thrown)
@@ -1062,8 +1079,8 @@ void initializeExceptionTypes(JSGlobalObject* globalObject)
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
 
-    static constexpr OptionSet<TypeFlag> flags { TypeFlag::Base, TypeFlag::HasDict, TypeFlag::HasWeakref };
-    static constexpr OptionSet<TypeFlag> flagsWithFields { TypeFlag::Base, TypeFlag::HasDict, TypeFlag::HasWeakref, TypeFlag::OwnLayout };
+    static constexpr OptionSet<TypeFlag> flags { TypeFlag::Base, TypeFlag::HasDict };
+    static constexpr OptionSet<TypeFlag> flagsWithFields { TypeFlag::Base, TypeFlag::HasDict, TypeFlag::OwnLayout };
 
     auto define = [&](PyType* type, ASCIILiteral name, PyType* base) {
         TypeDef def { name, flags, { }, { }, { } };

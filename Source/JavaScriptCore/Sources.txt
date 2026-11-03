@@ -821,6 +821,7 @@ python/parser/PyUnicode.cpp
 python/runtime/PyAbc.cpp
 python/runtime/PyAbstract.cpp
 python/runtime/PyArray.cpp
+python/runtime/PyAsyncio.cpp
 python/runtime/PyAstFromObject.cpp
 python/runtime/PyAstModule.cpp
 python/runtime/PyAstPreprocess.cpp

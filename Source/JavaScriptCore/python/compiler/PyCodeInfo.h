@@ -61,6 +61,8 @@ public:
     String docstring; // Null: none.
     OptionSet<CodeFlag> flags;
     int firstLineNumber { 1 };
+    // code.replace(co_firstlineno=n) moves every line of the copy: this is added to the lines that the compiler recorded.
+    int lineDelta { 0 };
 
     // Positional parameters (those that are positional-only first), then keyword-only ones, then *args, then **kwargs.
     // They are the parameters of the JS function, in this order.
