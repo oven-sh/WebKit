@@ -424,16 +424,15 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(callNativeFunctionWithFrame, static NEV
 {
     auto* function = uncheckedDowncast<PyNativeFunction>(callFrame->jsCallee());
     CallArgs args(callFrame);
-    if (!args.hasKeywords() && hasKeywordMarker(globalObject, callFrame)) [[unlikely]]
-        return JSValue::encode(resultForCaller(globalObject, callFrame, callWithKeywordMarker(globalObject, callFrame)));
+    bool hasMarker = !args.hasKeywords() && hasKeywordMarker(globalObject, callFrame);
     // As for a function written in Python: what JS passes beyond what it can take is dropped. array.map(len)
-    if (const NativeSignature& signature = function->def().signature; !signature.isVariadic && function->kind() != NativeKind::New && !args.hasKeywords()) {
+    if (const NativeSignature& signature = function->def().signature; !signature.isVariadic && function->kind() != NativeKind::New && !args.hasKeywords() && !hasMarker) {
         unsigned most = signature.maxPositional + (function->isDescriptor() ? 1 : 0);
         if (args.size() > most && !isBeingCalledByPython(globalObject, callFrame)) [[unlikely]]
             args = CallArgs(args.positional().first(most));
     }
     VM& vm = getVM(globalObject);
-    JSValue result = function->invoke(globalObject, args);
+    JSValue result = hasMarker ? callWithKeywordMarker(globalObject, callFrame) : function->invoke(globalObject, args);
     // The frame of this function is gone when that one runs.
     if (!result && (function->def().flags & MayWait) && runtime(globalObject).threads().takeRequestToCallAgain(globalObject)) [[unlikely]]
         [[clang::musttail]] return callNativeFunctionAgainOnWipedStack(globalObject, callFrame);
