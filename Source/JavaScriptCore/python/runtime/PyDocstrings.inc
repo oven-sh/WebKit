@@ -3778,6 +3778,7 @@
 { "tuple_iterator.__next__", "Implement next(self)." },
 { "tuple_iterator.__reduce__", "Return state information for pickling." },
 { "tuple_iterator.__setstate__", "Set state information for unpickling." },
+{ "type", "type(object) -> the object's type\ntype(name, bases, dict, **kwds) -> a new type" },
 { "type.__call__", "Call self as a function." },
 { "type.__delattr__", "Implement delattr(self, name)." },
 { "type.__dir__", "Specialized __dir__ implementation for types." },

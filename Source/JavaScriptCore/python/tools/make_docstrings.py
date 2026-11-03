@@ -110,7 +110,8 @@ def main():
         if not members and any(isinstance(v, types.FunctionType) for v in vars(cls).values()):
             continue
         name = type_name(cls)
-        add(name, vars(cls).get("__doc__"))
+        # What type has under the name is the descriptor that finds the docstrings of all types.
+        add(name, cls.__doc__ if cls is type else vars(cls).get("__doc__"))
         for attribute, doc in members.items():
             add("%s.%s" % (name, attribute), doc)
 
