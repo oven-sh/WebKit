@@ -928,12 +928,12 @@ static JSValue bufferedFlush(JSGlobalObject* globalObject, JSValue self)
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     BufferedStream stream(globalObject, self);
-    if (failed(scope, stream.checkInitialized()) || !stream.checkClosed("flush of closed file"_s))
+    if (failed(scope, stream.checkInitialized()) || failed(scope, stream.checkClosed("flush of closed file"_s)))
         return { };
     BufferedLock lock(stream);
-    if (!lock)
+    if (failed(scope, !!lock))
         return { };
-    return stream.flushAndRewind() ? jsUndefined() : JSValue();
+    return failed(scope, stream.flushAndRewind()) ? JSValue() : jsUndefined();
 }
 
 static JSValue bufferedPeek(JSGlobalObject* globalObject, JSValue self, JSValue sizeValue)

@@ -657,23 +657,34 @@ enum StateField : unsigned { StateNames, StateCallbacks, StateDisable, StateMiss
 
 JSArray* Monitoring::state()
 {
+    auto scope = DECLARE_THROW_SCOPE(m_runtime.vm());
     if (JSValue state = m_runtime.slot(Runtime::Slot::Monitoring))
         return asArray(state);
     JSGlobalObject* globalObject = m_runtime.globalObject();
     JSArray* state = newList(globalObject);
     JSArray* names = newList(globalObject);
-    for (unsigned i = 0; i < numberOfMonitoringTools; ++i)
+    for (unsigned i = 0; i < numberOfMonitoringTools; ++i) {
         listAppend(globalObject, names, jsUndefined());
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
     JSArray* callbacks = newList(globalObject);
-    for (unsigned i = 0; i < numberOfMonitoringTools * Event::count; ++i)
+    for (unsigned i = 0; i < numberOfMonitoringTools * Event::count; ++i) {
         listAppend(globalObject, callbacks, jsUndefined());
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
     listAppend(globalObject, state, names);
+    RETURN_IF_EXCEPTION(scope, nullptr);
     listAppend(globalObject, state, callbacks);
+    RETURN_IF_EXCEPTION(scope, nullptr);
     listAppend(globalObject, state, PyObject::create(m_runtime.vm(), m_runtime.structure<PyObject>(), m_runtime.objectType()));
+    RETURN_IF_EXCEPTION(scope, nullptr);
     listAppend(globalObject, state, PyObject::create(m_runtime.vm(), m_runtime.structure<PyObject>(), m_runtime.objectType()));
+    RETURN_IF_EXCEPTION(scope, nullptr);
     JSArray* what = newList(globalObject);
-    for (ASCIILiteral name : { "call"_s, "line"_s, "return"_s, "exception"_s, "opcode"_s, "c_call"_s, "c_return"_s, "c_exception"_s })
+    for (ASCIILiteral name : { "call"_s, "line"_s, "return"_s, "exception"_s, "opcode"_s, "c_call"_s, "c_return"_s, "c_exception"_s }) {
         listAppend(globalObject, what, internString(m_runtime.vm(), name));
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
     listAppend(globalObject, state, what);
     m_runtime.setSlot(Runtime::Slot::Monitoring, state);
     return state;

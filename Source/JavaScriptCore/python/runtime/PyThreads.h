@@ -235,6 +235,7 @@ private:
     UncheckedKeyHashMap<const void*, Deque<ThreadState*>> m_waiters;
     uint64_t m_bytesAllocatedAtIdleCollection { 0 };
     int64_t m_timeForIdleCollectionWithoutCause { 0 };
+    int64_t m_durationOfLastIdleCollection { 0 };
     bool m_didTellMainThreadOfFinalizers { false };
 
     Lock m_gilLock;
@@ -295,8 +296,9 @@ public:
     explicit IdleWait(JSGlobalObject*);
     // For how many nanoseconds to wait next, at most, if so many are left to wait (negative: there is no end).
     int64_t nextPiece(int64_t remaining) const;
-    // That is over, and what was waited for has not come. False: there is an exception.
-    bool didWait();
+    // That is over, what was waited for has not come, and so many nanoseconds are left to wait (negative: there is no end).
+    // False: there is an exception.
+    bool didWait(int64_t remaining);
 
 private:
     JSGlobalObject* m_globalObject;

@@ -1928,6 +1928,7 @@ static JSValue pickleGenericGetAttr(JSGlobalObject* globalObject, JSValue self, 
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSString* nameString = attributeName(globalObject, name);
+    RETURN_IF_EXCEPTION(scope, { });
     RELEASE_AND_RETURN(scope, nameString ? genericGetAttr(globalObject, self, nameString) : JSValue());
 }
 
@@ -3454,7 +3455,7 @@ private:
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
         const uint8_t* bytes = read(8);
-        if (!bytes)
+        if (failed(scope, bytes))
             return false;
         if (m_frameEnd >= 0) {
             if (m_next < m_frameEnd)

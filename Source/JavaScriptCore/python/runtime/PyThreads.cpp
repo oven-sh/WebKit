@@ -463,6 +463,7 @@ void Threads::collectWhileIdle(JSGlobalObject* globalObject, bool isLastResort)
     collectAndFinalize(globalObject);
     m_bytesAllocatedAtIdleCollection = m_vm.heap.totalBytesAllocated();
     int64_t end = monotonicNanoseconds();
+    m_durationOfLastIdleCollection = end - start;
     m_timeForIdleCollectionWithoutCause = end + 50 * (end - start);
 }
 
@@ -516,13 +517,19 @@ int64_t IdleWait::nextPiece(int64_t remaining) const
     return remaining < 0 ? piece : std::min(piece, remaining);
 }
 
-bool IdleWait::didWait()
+bool IdleWait::didWait(int64_t remaining)
 {
     if (monotonicNanoseconds() < m_timeToCollect)
         return true;
     VM& vm = getVM(m_globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    runtime(m_globalObject).threads().collectWhileIdle(m_globalObject);
+    Threads& threads = runtime(m_globalObject).threads();
+    // A wait that is nearly over is not made longer by a collection.
+    if (remaining >= 0 && remaining < 2 * threads.m_durationOfLastIdleCollection) {
+        m_timeToCollect = std::numeric_limits<int64_t>::max();
+        return true;
+    }
+    threads.collectWhileIdle(m_globalObject);
     RETURN_IF_EXCEPTION(scope, false);
     // Less and less often: nothing happens while this waits, unless other threads run, and they collect as they allocate.
     m_interval *= 4;

@@ -1110,6 +1110,7 @@ static JSValue strSplit(JSGlobalObject* globalObject, JSValue self, JSValue sepa
         if (position == notFound)
             break;
         listAppend(globalObject, result, sliceOfUnits(vm, nullptr, string, start, position));
+        RETURN_IF_EXCEPTION(scope, { });
         start = position + separator.length();
     }
     listAppend(globalObject, result, sliceOfUnits(vm, selfString, string, start, length));

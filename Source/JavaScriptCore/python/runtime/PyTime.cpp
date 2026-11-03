@@ -405,7 +405,7 @@ static JSValue timeSleep(JSGlobalObject* globalObject, JSValue seconds)
         if (!error && piece == timeout)
             return none();
         if (!error) {
-            if (!idle.didWait())
+            if (!idle.didWait(timeout - piece))
                 return { };
             if (failed(scope, timeReadClock(globalObject, CLOCK_MONOTONIC, now)))
                 return { };

@@ -173,11 +173,13 @@ static JSValue posixStat(JSGlobalObject* globalObject, JSValue pathValue, JSValu
 
 static JSValue posixLstat(JSGlobalObject* globalObject, JSValue pathValue, JSValue dirFdValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PosixPath path("lstat"_s, PosixPath::AllowVirtual);
     int dirFd;
-    if (!path.convert(globalObject, pathValue) || !posixToDirFd(globalObject, dirFdValue, dirFd))
+    if (failed(scope, path.convert(globalObject, pathValue)) || failed(scope, posixToDirFd(globalObject, dirFdValue, dirFd)))
         return { };
-    return posixDoStat(globalObject, path, dirFd, false);
+    RELEASE_AND_RETURN(scope, posixDoStat(globalObject, path, dirFd, false));
 }
 
 static JSValue posixAccess(JSGlobalObject* globalObject, JSValue pathValue, JSValue modeValue, JSValue dirFdValue, JSValue effectiveIdsValue, JSValue followSymlinksValue)

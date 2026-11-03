@@ -1374,6 +1374,7 @@ static JSValue resumeCoroutine(JSGlobalObject* globalObject, JSValue coroutine, 
         yielded = callSpecial(globalObject, next, coroutine);
     else
         yielded = callMethod(globalObject, coroutine, rt.names.send(), jsUndefined());
+    EXCEPTION_ASSERT(!scope.exception() || !yielded);
     if (yielded)
         return yielded;
     scope.release();
@@ -1412,6 +1413,7 @@ static JSValue stepTaskEntered(JSGlobalObject* globalObject, PyRecord* state, Py
 
     JSValue returned;
     JSValue yielded = resumeCoroutine(globalObject, coroutine, exception, returned);
+    EXCEPTION_ASSERT(!scope.exception() || !yielded);
     if (yielded)
         RELEASE_AND_RETURN(scope, handleYielded(globalObject, state, task, yielded));
 
@@ -1569,7 +1571,7 @@ static JSValue stepTask(JSGlobalObject* globalObject, PyRecord* state, PyRecord*
     if (failed(scope, enterTask(globalObject, state, loop, task)))
         return { };
     JSValue result = stepTaskEntered(globalObject, state, task, exception);
-    if (!result) [[unlikely]] {
+    if (failed(scope, result)) [[unlikely]] {
         JSValue raised = takePendingException(globalObject);
         if (!raised)
             return { };
@@ -1807,7 +1809,7 @@ static JSValue taskWakeup(JSGlobalObject* globalObject, JSValue self, JSValue fu
         }
     } else {
         JSValue result = callMethod(globalObject, futureValue, nameIn(state, StateNameResult));
-        if (result)
+        if (!failed(scope, result))
             RELEASE_AND_RETURN(scope, stepTask(globalObject, state, task, { }));
     }
     JSValue raised = takePendingException(globalObject);

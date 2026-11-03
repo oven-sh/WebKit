@@ -158,7 +158,7 @@ private:
             return;
 #if ASSERT_ENABLED
         // What a cell that was alive until now refers to was alive until now.
-        if (!cell->structureID()) [[unlikely]] {
+        if (!cell->structureID().decontaminate()) [[unlikely]] {
             dataLogLn("A cell of class ", m_currentCell->classInfo()->className, m_currentCell->type() == PyObjectType ? makeString(" and type "_s, uncheckedDowncast<PyObject>(m_currentCell)->type()->name()) : String(), " refers to a cell that has been freed");
             RELEASE_ASSERT_NOT_REACHED();
         }
@@ -300,6 +300,11 @@ void DeadGraph::walk()
         m_wholeOfCurrentCell = wholeThatPartRefersTo(cell);
 #if ASSERT_ENABLED
         m_currentCell = cell;
+        if (!cell->structureID().decontaminate()) [[unlikely]] {
+            auto* words = reinterpret_cast<uint64_t*>(cell);
+            dataLogLn("Cell ", i, " of the dead (", m_candidateCount, " candidates, ", m_hasAllThatDied ? "all that died" : "what they reach", ") has been freed: JSType ", static_cast<unsigned>(cell->type()), ", ", RawHex(words[0]), " ", RawHex(words[1]), " ", RawHex(words[2]), " ", RawHex(words[3]), " ", RawHex(words[4]), " ", RawHex(words[5]));
+            RELEASE_ASSERT_NOT_REACHED();
+        }
 #endif
         cell->methodTable()->visitChildren(cell, *this);
         if (cell->type() == PyObjectType && uncheckedDowncast<PyObject>(cell)->type()->has(TypeFlag::OwnsContainers)) {

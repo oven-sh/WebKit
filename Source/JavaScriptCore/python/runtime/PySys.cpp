@@ -838,8 +838,10 @@ void initializeSysModule(JSGlobalObject* globalObject, PyModule* module)
             listAppend(globalObject, path, text(part));
     } else {
         if (!configuration.pythonPath.isNull()) {
-            for (auto& part : configuration.pythonPath.splitAllowingEmptyEntries(':'))
+            for (auto& part : configuration.pythonPath.splitAllowingEmptyEntries(':')) {
                 listAppend(globalObject, path, text(absolutePath(part)));
+                RETURN_IF_EXCEPTION(scope, void());
+            }
         }
         if (!library.isNull()) {
             listAppend(globalObject, path, text(library));

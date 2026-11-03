@@ -167,7 +167,7 @@ int waitForEvents(JSGlobalObject* globalObject, WaitRequest& request)
                         *sets[i] = saved[i];
                 }
             }
-            if (!idle.didWait())
+            if (!idle.didWait(timeout > 0 ? deadline - monotonicNanoseconds() : -1))
                 return waitRaised;
             if (timeout > 0)
                 request.timeout = std::max<int64_t>(deadline - monotonicNanoseconds(), 0);

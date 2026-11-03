@@ -347,8 +347,9 @@ The event loop is the host's, and there are three ways to it (`PyExec.h`, `PyEve
   `wait_for(queue.get(), 1)` from JS, and `ensure_future(queue.get()).cancel()`. An async function of JS cannot be cancelled.
 - **Futures and tasks** are native: the module `_asyncio` (`runtime/PyAsyncio.cpp`), which Lib/asyncio takes in place of its own classes.
   A step of a task resumes the coroutine from C++, outside any handler, and `await future` gets the result without a `StopIteration`
-  (`PyAsyncio.h`). The loop stays asyncio's: callbacks go through its `call_soon()`. `all_tasks()` reads an array that the collector
-  does not look at, so that it keeps no task alive; a task in it is registered for finalization, which takes it out before it is freed.
+  (`PyAsyncio.h`). The loop stays asyncio's: callbacks go through its `call_soon()`. `all_tasks()` reads a table that the collector
+  does not visit, so that it keeps no task alive, and out of which the collector itself takes what it has found dead, when marking
+  is over and before anything is freed (`Runtime::WeakCellTable`, `Runtime::reconcileWeakReferencesAtGCEnd()`).
 - **Calls owed** (finalizers, signal handlers) are also made between turns of the host's loop, which is woken up for them.
   `SystemExit` and `KeyboardInterrupt` end the program wherever they surface, a callback of JS included.
 
@@ -456,7 +457,8 @@ while any thread has a function. The side tables are only touched with the GIL; 
   `===`, `Object.is`, `switch`, `includes`, `indexOf` and the keys of a `Map` or `Set` go by identity.
   To the DFG and FTL a Python object has a type of its own, `SpecPyObject`. An arithmetic operator returns a primitive unless an
   operand may be of that type. `==` on two objects is a comparison of pointers behind a check that neither is of that type
-  (`NotPyObjectUse`, in `DFGFixupPhase.cpp`); a site that has seen a Python object calls the slow path instead.
+  (`DFGFixupPhase.cpp`): `NotPyObjectUse`, or, where a site has seen plain objects only, or arrays, or functions, the check for that
+  kind in place of the check for an object. A site that has seen a Python object calls the slow path instead.
 
 ## Python sees JavaScript objects
 
@@ -500,8 +502,9 @@ What every program pays, with the sizes of a release build for x86-64:
 | `JSGlobalObject` | 8 bytes: the pointer to the runtime |
 | `UnlinkedCodeBlock::RareData`, `UnlinkedFunctionExecutable::RareData` | 8 bytes each, where there is rare data. `CodeBlock`, `UnlinkedCodeBlock`, `UnlinkedFunctionExecutable`, `CallLinkInfo`, `Structure`, `JSString`, `JSArray`, `JSFunction`: nothing |
 | `JSType`, opcodes, `SpeculatedType`, `UseKind`, `VMTraps` | 19 of the 256 cell types, 55 of the 255 opcodes, 1 of 64 bits, 1 of 64 kinds, 1 of 32 bits |
-| `==` on two objects, DFG and FTL | for each operand not known to be something else: load the type, subtract, compare, branch |
+| `==` on two objects, DFG and FTL | nothing where the site has seen only plain objects (instances of classes are), only arrays or only functions. Otherwise, for each operand not known to be something else: subtract, compare, branch |
 | `==`, `<`, `+`, `-`... in the slow paths | for each operand that is a cell: the same test, before the conversion to a primitive |
+| `Bun.deepEquals()`, `expect().toEqual()` | the same test for each pair of values compared |
 | Untyped arithmetic, DFG and FTL | the result is known to be a primitive only if the operands are known not to be Python objects |
 | `x * 1`, `1 * x` | a multiplication: the parser no longer makes it `+x` |
 | A block or large allocation is swept | one load and branch (`mayRunEmbedderFinalizers()`) |

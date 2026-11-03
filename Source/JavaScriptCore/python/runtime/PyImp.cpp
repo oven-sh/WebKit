@@ -422,9 +422,12 @@ static JSValue impFixCoFilename(JSGlobalObject* globalObject, JSValue codeValue,
 
 static JSValue impSetLazyAttributes(JSGlobalObject* globalObject, JSValue, JSValue nameValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSString* name = impName(globalObject, nameValue, "_set_lazy_attributes"_s);
-    if (!name)
+    if (failed(scope, name))
         return { };
+    scope.release();
     didImportLazyModule(globalObject, name);
     return jsUndefined();
 }

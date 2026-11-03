@@ -47,6 +47,7 @@ static JSArray* warningsState(JSGlobalObject* globalObject)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     if (JSValue state = rt.slot(Runtime::Slot::Warnings))
         return asList(state);
 
@@ -55,16 +56,25 @@ static JSArray* warningsState(JSGlobalObject* globalObject)
     };
     JSArray* filters = newList(globalObject);
     listAppend(globalObject, filters, filter(rt.DeprecationWarning(), "default"_s, rt.names.dMain()));
+    RETURN_IF_EXCEPTION(scope, nullptr);
     listAppend(globalObject, filters, filter(rt.DeprecationWarning(), "ignore"_s, jsUndefined()));
+    RETURN_IF_EXCEPTION(scope, nullptr);
     listAppend(globalObject, filters, filter(rt.PendingDeprecationWarning(), "ignore"_s, jsUndefined()));
+    RETURN_IF_EXCEPTION(scope, nullptr);
     listAppend(globalObject, filters, filter(rt.ImportWarning(), "ignore"_s, jsUndefined()));
+    RETURN_IF_EXCEPTION(scope, nullptr);
     listAppend(globalObject, filters, filter(rt.ResourceWarning(), "ignore"_s, jsUndefined()));
+    RETURN_IF_EXCEPTION(scope, nullptr);
 
     JSArray* state = newList(globalObject);
     listAppend(globalObject, state, filters);
+    RETURN_IF_EXCEPTION(scope, nullptr);
     listAppend(globalObject, state, PyDict::create(globalObject));
+    RETURN_IF_EXCEPTION(scope, nullptr);
     listAppend(globalObject, state, internString(vm, "default"_s));
+    RETURN_IF_EXCEPTION(scope, nullptr);
     listAppend(globalObject, state, jsUndefined());
+    RETURN_IF_EXCEPTION(scope, nullptr);
     listAppend(globalObject, state, jsNumber(0));
     rt.setSlot(Runtime::Slot::Warnings, state);
     return state;
