@@ -17,6 +17,7 @@
 #include "PyInternals.h"
 #include "PyList.h"
 #include "PyModule.h"
+#include "PyMonitoring.h"
 #include "PyNamespace.h"
 #include "PyNumbers.h"
 #include "PySet.h"
@@ -552,7 +553,9 @@ static JSValue sysCallTracing(JSGlobalObject* globalObject, JSValue function, JS
     if (!tuple)
         return raiseTypeError(globalObject, scope, "call_tracing() argument 2 must be tuple, not "_s, typeName(globalObject, args));
     // It is for a debugger to call, from its trace function, what is to be traced in its turn.
-    SetForScope tracingDepth(runtime(globalObject).tracingDepth, 0);
+    Runtime& rt = runtime(globalObject);
+    SetForScope tracingDepth(rt.tracingDepth, 0);
+    rt.monitoring().toolIsInterrupted();
     RELEASE_AND_RETURN(scope, call(globalObject, function, CallArgs(tuple->span())));
 }
 

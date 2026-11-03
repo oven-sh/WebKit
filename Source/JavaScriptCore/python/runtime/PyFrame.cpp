@@ -579,7 +579,8 @@ JSValue frameLocals(JSGlobalObject* globalObject, PyFrame* frame)
 VirtualRegister frameObjectRegister()
 {
     // After the scope register, which follows the registers that the interpreter saves.
-    return virtualRegisterForLocal(CodeBlock::llintBaselineCalleeSaveSpaceAsVirtualRegisters() + 1);
+    static const VirtualRegister result = virtualRegisterForLocal(CodeBlock::llintBaselineCalleeSaveSpaceAsVirtualRegisters() + 1);
+    return result;
 }
 
 PyFrame::PyFrame(VM& vm, Structure* structure, PyType* type)
@@ -694,8 +695,13 @@ unsigned PyFrame::bytecodeOffset()
         BytecodeIndex index = callFrame->bytecodeIndex();
         auto marks = callFrame->codeBlock()->unlinkedCodeBlock()->pythonMarks();
         m_bytecodeOffset = visibleOffset(marks, index.offset());
+        if (int line = lineOfMarks(marks, index.offset()); line >= 0) [[likely]] {
+            m_lineNumber = line + function()->codeInfo().lineDelta;
+            m_isOnNoLine = false;
+            return m_bytecodeOffset;
+        }
         m_lineNumber = lineNumberForBytecodeIndex(callFrame->codeBlock(), index);
-        m_isOnNoLine = lineOfMarks(marks, index.offset()) < 0 && isPastStart(marks, index.offset());
+        m_isOnNoLine = isPastStart(marks, index.offset());
         // The end of a cleanup the compiler added: it raises the exception again as if from where the program raised it. (In CPython
         // RERAISE puts f_lasti back.) That is where a frame is found to be that was left that way.
         if (m_isOnNoLine && raisedOnLine >= 0) {

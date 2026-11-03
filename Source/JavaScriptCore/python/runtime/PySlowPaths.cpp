@@ -77,9 +77,17 @@ using namespace Python;
                 ? reinterpret_cast<const JSInstruction*>(reinterpret_cast<const uint8_t*>(pc) + bytecode.m_targetLabel) \
                 : codeBlock->outOfLineJumpTarget(pc); \
         else \
-            pc = reinterpret_cast<const JSInstruction*>(reinterpret_cast<const uint8_t*>(pc) + pc->size()); \
+            pc = reinterpret_cast<const JSInstruction*>(reinterpret_cast<const uint8_t*>(pc) + sizeOfInstruction<decltype(bytecode)>(pc)); \
         END_IMPL(); \
     } while (false)
+
+// pc->size(), without looking at the opcode, which a tool may have replaced.
+template<typename Op>
+static ALWAYS_INLINE size_t sizeOfInstruction(const JSInstruction* pc)
+{
+    int shift = pc->sizeShiftAmount();
+    return pc->opcodeIDBytes() + (static_cast<size_t>(opcodeLengths[Op::opcodeID]) << shift) + !!shift;
+}
 
 static ALWAYS_INLINE PyFunction* calleeOf(CallFrame* callFrame)
 {
@@ -607,7 +615,7 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_generator_suspend)
         generator->setSlot(vm, bytecode.m_offset + i, GET(VirtualRegister(bytecode.m_first.offset() - static_cast<int>(i))).jsValue());
     // For what the op_py_generator_registers before this one have stored, which the interpreter does without.
     vm.writeBarrier(generator);
-    generator->suspendBody(globalObject, codeBlock->bytecodeOffset(pc) + pc->size());
+    generator->suspendBody(globalObject, codeBlock->bytecodeOffset(pc) + sizeOfInstruction<OpPyGeneratorSuspend>(pc));
     END_IMPL();
 }
 

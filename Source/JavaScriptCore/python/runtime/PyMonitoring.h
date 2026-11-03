@@ -14,6 +14,7 @@ namespace JSC {
 namespace Python {
 
 class CallArgs;
+class CodeInfo;
 class PyCode;
 class PyFrame;
 
@@ -78,7 +79,7 @@ class CodeMonitor {
     WTF_MAKE_NONCOPYABLE(CodeMonitor);
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(CodeMonitor);
 public:
-    CodeMonitor(Monitoring&, UnlinkedCodeBlock*);
+    CodeMonitor(Monitoring&, UnlinkedCodeBlock*, const CodeInfo&);
     ~CodeMonitor();
 
     // A line that begins at a place. There may be several, one after the other: of the earlier ones no instruction came.
@@ -102,6 +103,8 @@ public:
         uint16_t kinds { 0 }; // 1 << event, for the events that are told of here.
         uint8_t opcode { 0 }; // The opcode of the instruction.
         bool isPatched { false };
+        unsigned next { 0 }; // The offset of the instruction that follows.
+        unsigned target { 0 }; // A jump, or a branch: where it goes.
         // Whether the first of the lines is news depends on where the frame comes from: see findPoints().
         bool firstLineIsInDoubt { false };
         unsigned firstLineStart { 0 };
@@ -119,7 +122,17 @@ public:
     };
 
     UnlinkedCodeBlock* code() const { return m_code.get(); }
-    Point* pointAt(unsigned offset);
+    const uint8_t* instructions() const { return m_instructions; }
+    int lineBeforeStart() const { return m_lineBeforeStart; } // What f_lineno is before anything has happened.
+    ALWAYS_INLINE Point* pointAt(unsigned offset)
+    {
+        if (offset >= m_indexOfPointAt.size()) [[unlikely]]
+            return searchForPointAt(offset);
+        unsigned index = m_indexOfPointAt[offset];
+        return index ? &m_points[index - 1] : nullptr;
+    }
+    // Changes whenever pointers to the places may have become invalid.
+    unsigned generation() const { return m_generation; }
     std::span<LineStart> lineStartsOf(Point& point) { return m_lineStarts.mutableSpan().subspan(point.firstLineStart, point.lineStartCount); }
     // The line the instruction comes from. -1: none.
     int lineAt(unsigned offset) const;
@@ -157,6 +170,7 @@ private:
 
     friend OpcodeID JSC::originalOpcodeOfInstrumentedInstruction(const void*);
 
+    Point* searchForPointAt(unsigned offset);
     void findEntrances();
     void findPoints(bool everyInstruction);
     void noteLineTools();
@@ -173,9 +187,13 @@ private:
     const uint8_t* m_instructions; // Of the code.
     unsigned m_instructionsSize;
     unsigned m_index; // In Monitoring::m_monitors.
+    int m_lineBeforeStart;
     // These three change with monitoredCodeLock held: the threads of the collector look things up in them.
     Vector<Entrance, 1> m_entrances;
     Vector<Point> m_points; // By offset.
+    // For each byte of the instructions: the index of the place there, plus one, or 0. Empty: there are too many.
+    Vector<uint16_t> m_indexOfPointAt;
+    unsigned m_generation { 0 };
     Vector<LineStart> m_lineStarts;
     std::array<uint8_t, Event::ungroupedCount> m_localTools { };
     bool m_isAwake { false };
@@ -243,6 +261,8 @@ public:
     // A thread has been given, or has lost, a function while it was not running, or has ended.
     void tracingThreadCountChanged(int traceDelta, int profileDelta);
 
+    void toolIsInterrupted();
+
     // ---- What happens ----
 
     // What f_lineno and f_lasti of a frame are while something is told of an event in it. -1: those of the instruction it is at.
@@ -273,10 +293,15 @@ public:
 private:
     friend class CodeMonitor;
 
+    enum class What : uint8_t { Call, Line, Return, Exception, Opcode, CCall, CReturn, CException };
+
+    Outcome handle(JSGlobalObject*, CallFrame*, const JSInstruction*, CodeMonitor&, CodeMonitor::Point*);
     JSArray* state();
+    JSValue nameOf(What what) { return m_namesOfWhat[static_cast<unsigned>(what)]; } // Once there is a state().
     void updateAll();
     void noteWhatIsWanted();
     void findAllCode();
+
     void wakeCodeOfCallsInProgress();
     template<typename Functor> void forEachMonitor(const Functor&);
 
@@ -284,10 +309,9 @@ private:
     int callTool(JSGlobalObject*, CallFrame*, unsigned tool, unsigned event, Shown, std::span<const JSValue> arguments);
     // Tells the tools (bits) of an event at a place. False: an exception.
     bool fire(JSGlobalObject*, CallFrame*, CodeMonitor&, unsigned offset, unsigned event, uint8_t tools, JSValue third = { }, JSValue fourth = { });
-    bool fireLine(JSGlobalObject*, CallFrame*, CodeMonitor&, unsigned offset, bool comesFromSameLine);
+    bool fireLine(JSGlobalObject*, CallFrame*, CodeMonitor&, const CodeMonitor::Point&, bool comesFromSameLine);
     bool fireLineStart(JSGlobalObject*, CallFrame*, CodeMonitor&, unsigned offset, unsigned lineStart);
     bool legacyEvent(JSGlobalObject*, CallFrame*, CodeMonitor&, unsigned tool, unsigned event, unsigned offset, JSValue third, JSValue fourth, bool& disable);
-    enum class What : uint8_t { Call, Line, Return, Exception, Opcode, CCall, CReturn, CException };
     bool callTraceFunction(JSGlobalObject*, PyFrame*, unsigned event, Shown, What, JSValue argument);
     bool callProfileFunction(JSGlobalObject*, PyFrame*, unsigned event, Shown, What, JSValue argument);
     JSValue callWhileTracing(JSGlobalObject*, CallFrame*, unsigned event, Shown, JSValue function, const CallArgs&);
@@ -312,10 +336,12 @@ private:
         CallFrame* callFrame { nullptr };
         unsigned offset { 0 };
     } m_comesFromSameLine;
+    std::array<JSValue, 8> m_namesOfWhat { }; // What trace and profile functions are told has happened. state() keeps them.
     unsigned m_tracingThreads { 0 };
     unsigned m_profilingThreads { 0 };
 
     Vector<CodeMonitor*> m_monitors;
+    CodeMonitor* m_codeLeftAlone { nullptr }; // See callWhileTracing().
 };
 
 } // namespace Python

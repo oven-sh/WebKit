@@ -382,6 +382,7 @@ void Runtime::takeThreadLocalState(ThreadLocalState& state)
     state.traceFunction = take(m_slots[static_cast<unsigned>(Slot::TraceFunction)]);
     state.profileFunction = take(m_slots[static_cast<unsigned>(Slot::ProfileFunction)]);
     state.tracingDepth = std::exchange(tracingDepth, 0);
+    m_monitoring->toolIsInterrupted();
     state.tracedEvent = std::exchange(tracedEvent, -1);
     state.tracedCallFrame = std::exchange(tracedCallFrame, nullptr);
     state.tracedLine = std::exchange(tracedLine, -1);

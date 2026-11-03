@@ -82,7 +82,6 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_instrumented)
     JSGlobalObject* globalObject = codeBlock->globalObject();
     VM& vm = codeBlock->vm();
     SlowPathFrameTracer tracer(vm, callFrame);
-    callFrame->setCurrentVPC(pc);
     auto outcome = runtime(globalObject).monitoring().handle(globalObject, callFrame, pc);
     if (!outcome.pc) [[unlikely]]
         return encodeResult(LLInt::returnToThrow(vm), LLInt::exceptionSignal());
@@ -101,6 +100,21 @@ static constexpr uint16_t bit(unsigned event) { return static_cast<uint16_t>(1 <
 static ALWAYS_INLINE PyFunction* functionOf(CallFrame* callFrame)
 {
     return uncheckedDowncast<PyFunction>(callFrame->jsCallee());
+}
+
+// frameObjectIfAny(), and PyFrame::of(), for where every call counts.
+static ALWAYS_INLINE PyFrame* frameObjectIfThereIsOne(CallFrame* callFrame)
+{
+    static const VirtualRegister reg = frameObjectRegister();
+    JSValue held = callFrame->uncheckedR(reg).jsValue();
+    return held.isCell() ? uncheckedDowncast<PyFrame>(held.asCell()) : nullptr;
+}
+
+static ALWAYS_INLINE PyFrame* frameObjectOf(JSGlobalObject* globalObject, CallFrame* callFrame)
+{
+    if (PyFrame* frame = frameObjectIfThereIsOne(callFrame)) [[likely]]
+        return frame;
+    return PyFrame::of(globalObject, callFrame);
 }
 
 // ---- Lines ----
@@ -143,12 +157,13 @@ bool isPastStart(std::span<const PythonMark> marks, unsigned offset)
 
 // ---- CodeMonitor ----
 
-CodeMonitor::CodeMonitor(Monitoring& monitoring, UnlinkedCodeBlock* code)
+CodeMonitor::CodeMonitor(Monitoring& monitoring, UnlinkedCodeBlock* code, const CodeInfo& info)
     : m_monitoring(&monitoring)
     , m_code(monitoring.runtime().vm(), code)
     , m_instructions(bytesOf(code))
     , m_instructionsSize(code->instructions().sizeInBytes())
     , m_index(monitoring.m_monitors.size())
+    , m_lineBeforeStart(info.name.string() == "<module>"_s ? 0 : info.firstLineNumber)
 {
     monitoring.m_monitors.append(this);
     findEntrances();
@@ -178,7 +193,7 @@ CodeMonitor::~CodeMonitor()
         monitoredCode().erase(it);
 }
 
-CodeMonitor::Point* CodeMonitor::pointAt(unsigned offset)
+CodeMonitor::Point* CodeMonitor::searchForPointAt(unsigned offset)
 {
     auto it = std::ranges::lower_bound(m_points, offset, { }, &Point::offset);
     return it != m_points.end() && it->offset == offset ? &*it : nullptr;
@@ -356,6 +371,8 @@ void CodeMonitor::findPoints(bool everyInstruction)
     Locker locker { monitoredCodeLock };
     m_points.clear();
     m_lineStarts.clear();
+    m_indexOfPointAt.fill(0, m_instructionsSize);
+    ++m_generation;
     m_needsLastLine = false;
     m_hasPoints = true;
     m_hasEveryInstruction = everyInstruction;
@@ -544,6 +561,7 @@ void CodeMonitor::findPoints(bool everyInstruction)
         Point point;
         point.offset = item.offset;
         point.opcode = static_cast<uint8_t>(item.opcode);
+        point.next = item.offset + instructions.at(item.offset)->size();
         if (item.offset == start)
             point.kinds |= bit(Event::PyStart);
         if (everyInstruction)
@@ -578,7 +596,8 @@ void CodeMonitor::findPoints(bool everyInstruction)
         case op_jmp:
             if (!item.isHiddenJump)
                 point.kinds |= bit(Event::Jump);
-            noteTarget(point, item, item.offset + jumpTargetForInstruction<OpJmp>(code, instructions.at(item.offset)));
+            point.target = item.offset + jumpTargetForInstruction<OpJmp>(code, instructions.at(item.offset));
+            noteTarget(point, item, point.target);
             break;
         default:
             // Whether it was resumed to go on, or to raise something, is not a branch of the program's.
@@ -589,7 +608,8 @@ void CodeMonitor::findPoints(bool everyInstruction)
                 else if (previousIsExceptionMatch)
                     point.kinds |= Point::goesOnInItself;
                 extractStoredJumpTargetsForInstruction(code, instructions.at(item.offset), [&](int32_t relative) {
-                    noteTarget(point, item, item.offset + relative);
+                    point.target = item.offset + relative;
+                    noteTarget(point, item, point.target);
                 });
             }
             break;
@@ -612,8 +632,13 @@ void CodeMonitor::findPoints(bool everyInstruction)
                 point.kinds |= bit(Event::Line);
         }
 
-        if (point.kinds || point.lineStartOfTarget != noLineStart || (!jumpsFromSameLine.isEmpty() && jumpsFromSameLine.last().first == item.offset))
+        if (point.kinds || point.lineStartOfTarget != noLineStart || (!jumpsFromSameLine.isEmpty() && jumpsFromSameLine.last().first == item.offset)) {
             m_points.append(point);
+            if (m_points.size() > std::numeric_limits<uint16_t>::max())
+                m_indexOfPointAt.clear();
+            else if (!m_indexOfPointAt.isEmpty())
+                m_indexOfPointAt[point.offset] = m_points.size();
+        }
     }
     for (auto [jump, target] : jumpsFromSameLine) {
         Point* targetPoint = pointAt(target);
@@ -791,7 +816,8 @@ JSArray* Monitoring::state()
     RETURN_IF_EXCEPTION(scope, nullptr);
     JSArray* what = newList(globalObject);
     for (ASCIILiteral name : { "call"_s, "line"_s, "return"_s, "exception"_s, "opcode"_s, "c_call"_s, "c_return"_s, "c_exception"_s }) {
-        listAppend(globalObject, what, internString(m_runtime.vm(), name));
+        m_namesOfWhat[listLength(what)] = internString(m_runtime.vm(), name);
+        listAppend(globalObject, what, m_namesOfWhat[listLength(what)]);
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
     listAppend(globalObject, state, what);
@@ -862,7 +888,7 @@ CodeMonitor* Monitoring::monitorFor(CodeBlock* codeBlock)
     if (info->isGeneratorLike() && code->parseMode() != SourceParseMode::GeneratorBodyMode)
         return nullptr;
     if (!info->monitor)
-        info->monitor = makeUnique<CodeMonitor>(*this, code);
+        info->monitor = makeUnique<CodeMonitor>(*this, code, *info);
     return info->monitor.get();
 }
 
@@ -1025,6 +1051,7 @@ void Monitoring::tracingThreadCountChanged(int traceDelta, int profileDelta)
 
 void Monitoring::setTraceFunction(JSValue function)
 {
+    state();
     int delta = !!function - !!m_runtime.slot(Runtime::Slot::TraceFunction);
     m_runtime.setSlot(Runtime::Slot::TraceFunction, function);
     tracingThreadCountChanged(delta, 0);
@@ -1037,6 +1064,7 @@ void Monitoring::setTraceFunction(JSValue function)
 
 void Monitoring::setProfileFunction(JSValue function)
 {
+    state();
     int delta = !!function - !!m_runtime.slot(Runtime::Slot::ProfileFunction);
     m_runtime.setSlot(Runtime::Slot::ProfileFunction, function);
     tracingThreadCountChanged(0, delta);
@@ -1055,6 +1083,14 @@ void Monitoring::setTracesOpcodes(JSGlobalObject* globalObject, PyFrame* frame, 
     monitor->sleepAndWake();
 }
 
+// Something else is about to run than what a tool called: another thread, or what sys.call_tracing() was given.
+void Monitoring::toolIsInterrupted()
+{
+    CodeMonitor* monitor = std::exchange(m_codeLeftAlone, nullptr);
+    if (monitor && !monitor->isAwake())
+        monitor->update();
+}
+
 // Nothing that happens meanwhile is told of.
 JSValue Monitoring::callWhileTracing(JSGlobalObject* globalObject, CallFrame* callFrame, unsigned event, Shown shown, JSValue function, const CallArgs& arguments)
 {
@@ -1062,9 +1098,28 @@ JSValue Monitoring::callWhileTracing(JSGlobalObject* globalObject, CallFrame* ca
     SetForScope tracedCallFrame(m_runtime.tracedCallFrame, callFrame);
     SetForScope tracedLine(m_runtime.tracedLine, shown.line);
     SetForScope tracedOffset(m_runtime.tracedOffset, shown.offset);
+    // The function would say that it is entered, only to be left asleep (see handle()). So, for as long as it runs, it does not.
+    RefPtr<CodeInfo> info;
+    if (auto* callee = PyFunction::tryFrom(function))
+        info = &callee->codeInfo();
+    else if (auto* method = PyMethod::tryFrom(function)) {
+        if (auto* callee = PyFunction::tryFrom(method->function()))
+            info = &callee->codeInfo();
+    }
+    CodeMonitor* monitor = info ? info->monitor.get() : nullptr;
+    if (monitor && monitor->m_entrancesAreReplaced && !monitor->m_hasToForget) {
+        monitor->setEntrancesAreReplaced(false);
+        m_codeLeftAlone = monitor;
+    } else
+        monitor = nullptr;
     ++m_runtime.tracingDepth;
     JSValue result = call(globalObject, function, arguments);
     --m_runtime.tracingDepth;
+    if (monitor) {
+        m_codeLeftAlone = nullptr;
+        if (!monitor->isAwake())
+            monitor->update();
+    }
     return result;
 }
 
@@ -1078,7 +1133,7 @@ bool Monitoring::callTraceFunction(JSGlobalObject* globalObject, PyFrame* frame,
     JSValue function = event == Event::PyStart || event == Event::PyResume || event == Event::PyThrow ? traceFunction : frame->trace();
     if (!function)
         return true;
-    JSValue arguments[3] = { frame, listGet(asArray(listGet(state(), StateWhat)), static_cast<unsigned>(what)), argument };
+    JSValue arguments[3] = { frame, nameOf(what), argument };
     JSValue result = callWhileTracing(globalObject, frame->callFrame(), event, shown, function, CallArgs(arguments));
     if (!result) {
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -1090,7 +1145,7 @@ bool Monitoring::callTraceFunction(JSGlobalObject* globalObject, PyFrame* frame,
         throwException(globalObject, throwScope, exception);
         return false;
     }
-    if (!isNone(result))
+    if (!isNone(result) && result != frame->trace())
         frame->setTrace(vm, result);
     return true;
 }
@@ -1101,7 +1156,7 @@ bool Monitoring::callProfileFunction(JSGlobalObject* globalObject, PyFrame* fram
     JSValue function = m_runtime.slot(Runtime::Slot::ProfileFunction);
     if (!function)
         return true;
-    JSValue arguments[3] = { frame, listGet(asArray(listGet(state(), StateWhat)), static_cast<unsigned>(what)), argument };
+    JSValue arguments[3] = { frame, nameOf(what), argument };
     if (callWhileTracing(globalObject, frame->callFrame(), event, shown, function, CallArgs(arguments)))
         return true;
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -1147,11 +1202,9 @@ static JSValue builtinFunctionToProfile(JSGlobalObject* globalObject, JSValue ca
 static Monitoring::Shown whatToShow(CallFrame* callFrame, CodeMonitor& monitor, unsigned event, unsigned offset)
 {
     switch (event) {
-    case Event::PyStart: {
+    case Event::PyStart:
         // Nothing has happened yet.
-        const CodeInfo& info = functionOf(callFrame)->codeInfo();
-        return { info.name.string() == "<module>"_s ? 0 : info.firstLineNumber, 0 };
-    }
+        return { monitor.lineBeforeStart(), 0 };
     case Event::PyUnwind:
     case Event::Reraise:
         // What raises an exception again on behalf of the program does so as if from where it was raised.
@@ -1170,7 +1223,7 @@ bool Monitoring::legacyEvent(JSGlobalObject* globalObject, CallFrame* callFrame,
 {
     if (!m_runtime.slot(tool == traceTool ? Runtime::Slot::TraceFunction : Runtime::Slot::ProfileFunction))
         return true;
-    PyFrame* frame = PyFrame::of(globalObject, callFrame);
+    PyFrame* frame = frameObjectOf(globalObject, callFrame);
     Shown shown = whatToShow(callFrame, monitor, event, offset);
 
     if (tool == profileTool) {
@@ -1270,9 +1323,9 @@ bool Monitoring::fire(JSGlobalObject* globalObject, CallFrame* callFrame, CodeMo
         arguments[0] = codeOf(globalObject, functionOf(callFrame));
         arguments[1] = jsNumber(shownOffset(visibleOffset(monitor.code()->pythonMarks(), offset)));
     }
-    for (unsigned tool = numberOfMonitoringTools; tool--;) {
-        if (!(tools >> tool & 1))
-            continue;
+    while (tools) {
+        unsigned tool = 31 - std::countl_zero(static_cast<uint32_t>(tools));
+        tools &= ~(1 << tool);
         int result;
         if (tool >= profileTool) {
             bool disable = false;
@@ -1315,11 +1368,13 @@ bool Monitoring::fireLineStart(JSGlobalObject* globalObject, CallFrame* callFram
     if (!tools)
         return true;
     if (tools >> traceTool & 1) {
-        PyFrame* frame = PyFrame::of(globalObject, callFrame);
-        if (failed(scope, traceLine(globalObject, frame, shown)))
-            return false;
-        if (frame->jumpTarget)
-            return true;
+        PyFrame* frame = frameObjectOf(globalObject, callFrame);
+        if (frame->trace()) {
+            if (failed(scope, traceLine(globalObject, frame, shown)))
+                return false;
+            if (frame->jumpTarget)
+                return true;
+        }
     }
     tools &= (1 << numberOfFreeMonitoringTools) - 1;
     if (!tools)
@@ -1341,13 +1396,13 @@ bool Monitoring::fireLineStart(JSGlobalObject* globalObject, CallFrame* callFram
     return true;
 }
 
-bool Monitoring::fireLine(JSGlobalObject* globalObject, CallFrame* callFrame, CodeMonitor& monitor, unsigned offset, bool comesFromSameLine)
+bool Monitoring::fireLine(JSGlobalObject* globalObject, CallFrame* callFrame, CodeMonitor& monitor, const CodeMonitor::Point& point, bool comesFromSameLine)
 {
-    auto* point = monitor.pointAt(offset);
-    unsigned first = point->firstLineStart;
-    unsigned count = point->lineStartCount;
-    bool firstLineIsInDoubt = point->firstLineIsInDoubt;
-    PyFrame* frame = monitor.m_needsLastLine || monitor.tools(Event::Line) >> traceTool ? PyFrame::of(globalObject, callFrame) : frameObjectIfAny(callFrame);
+    unsigned offset = point.offset;
+    unsigned first = point.firstLineStart;
+    unsigned count = point.lineStartCount;
+    bool firstLineIsInDoubt = point.firstLineIsInDoubt;
+    PyFrame* frame = monitor.m_needsLastLine || monitor.tools(Event::Line) >> traceTool ? frameObjectOf(globalObject, callFrame) : frameObjectIfThereIsOne(callFrame);
     // It got here because a trace function said so.
     if (frame && frame->jumpedTo) {
         if (*std::exchange(frame->jumpedTo, std::nullopt) == offset) {
@@ -1368,7 +1423,7 @@ bool Monitoring::fireLine(JSGlobalObject* globalObject, CallFrame* callFrame, Co
         if (!fireLineStart(globalObject, callFrame, monitor, offset, first + i))
             return false;
         if (!frame)
-            frame = frameObjectIfAny(callFrame);
+            frame = frameObjectIfThereIsOne(callFrame);
         if (frame && frame->jumpTarget)
             return true;
     }
@@ -1425,42 +1480,60 @@ static JSValue nextOfLoop(JSGlobalObject* globalObject, JSValue iterator, JSValu
 
 Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject, CallFrame* callFrame, const JSInstruction* pc)
 {
-    VM& vm = m_runtime.vm();
-    CodeBlock* codeBlock = callFrame->codeBlock();
-    CodeMonitor* monitorPointer = functionOf(callFrame)->codeInfo().monitor.get();
-    RELEASE_ASSERT(monitorPointer);
-    CodeMonitor& monitor = *monitorPointer;
-    unsigned offset = codeBlock->bytecodeOffset(pc);
-    if (!monitor.isAwake()) [[unlikely]] {
+    CodeMonitor* monitor = functionOf(callFrame)->codeInfo().monitor.get();
+    ASSERT(monitor);
+    unsigned offset = reinterpret_cast<const uint8_t*>(pc) - monitor->instructions();
+    if (!monitor->isAwake()) {
         // What a tool does is not told of, so there is nothing to look for in what it calls.
-        if (m_runtime.tracingDepth && !monitor.m_hasToForget)
-            return { pc, *monitor.opcodeThatMayBeReplacedAt(offset) };
-        monitor.wake();
+        if (m_runtime.tracingDepth && !monitor->m_hasToForget)
+            return { pc, *monitor->opcodeThatMayBeReplacedAt(offset) };
+        monitor->wake();
         return { pc, goOn };
     }
-    auto* point = monitor.pointAt(offset);
-    RELEASE_ASSERT(point);
+    auto* point = monitor->pointAt(offset);
+    ASSERT(point);
+    // What a tool does is not told of.
+    if (m_runtime.tracingDepth)
+        return { pc, point->opcode };
+    callFrame->setCallSiteIndex(CallSiteIndex(BytecodeIndex(offset)));
+    return handle(globalObject, callFrame, pc, *monitor, point);
+}
+
+NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject, CallFrame* callFrame, const JSInstruction* pc, CodeMonitor& monitor, CodeMonitor::Point* point)
+{
+    VM& vm = m_runtime.vm();
+    CodeBlock* codeBlock = callFrame->codeBlock();
+    unsigned offset = point->offset;
+    auto at = [&](unsigned where) { return reinterpret_cast<const JSInstruction*>(monitor.instructions() + where); };
+    auto setCurrentOffset = [&](unsigned where) { callFrame->setCallSiteIndex(CallSiteIndex(BytecodeIndex(where))); };
     // A tool may change what there is to know about the places in the code. These stay.
     auto opcode = static_cast<OpcodeID>(point->opcode);
     uint16_t kinds = point->kinds;
+    unsigned offsetOfNext = point->next;
+    unsigned target = point->target;
     Outcome runIt { pc, opcode };
     static constexpr Outcome threw { nullptr, 0 };
-    // What a tool does is not told of.
-    if (m_runtime.tracingDepth)
-        return runIt;
 
-    auto next = [&] { return reinterpret_cast<const JSInstruction*>(reinterpret_cast<const uint8_t*>(pc) + pc->size()); };
+    auto next = [&] { return at(offsetOfNext); };
+    unsigned generation = monitor.generation();
+    auto currentPoint = [&] {
+        if (generation != monitor.generation()) [[unlikely]] {
+            generation = monitor.generation();
+            point = monitor.pointAt(offset);
+        }
+        return point;
+    };
     auto wanted = [&](unsigned event) -> uint8_t {
-        auto* point = monitor.pointAt(offset);
+        auto* point = currentPoint();
         return point ? monitor.tools(event) & ~point->disabledTools[event] : 0;
     };
     // frame.f_lineno = line, in a trace function
     auto jumped = [&](Outcome& outcome) {
-        PyFrame* frame = frameObjectIfAny(callFrame);
+        PyFrame* frame = frameObjectIfThereIsOne(callFrame);
         if (!frame || !frame->jumpTarget)
             return false;
         frame->jumpedTo = std::exchange(frame->jumpTarget, std::nullopt);
-        outcome = { codeBlock->instructions().at(*frame->jumpedTo).ptr(), goOn };
+        outcome = { at(*frame->jumpedTo), goOn };
         return true;
     };
     Outcome elsewhere;
@@ -1469,7 +1542,7 @@ Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject, CallFrame* 
     // What a jump, or a branch that is taken, has to say about the line that begins at its target. False: an exception, or the frame
     // has been sent elsewhere.
     auto tellOfLineAt = [&](unsigned target, Outcome& outcome) {
-        auto* point = monitor.pointAt(offset);
+        auto* point = currentPoint();
         if (!point || point->lineStartOfTarget == CodeMonitor::noLineStart)
             return true;
         if (point->targetLineIsNotNews) {
@@ -1479,7 +1552,7 @@ Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject, CallFrame* 
         }
         unsigned lineStart = point->lineStartOfTarget;
         if (monitor.m_needsLastLine || monitor.tools(Event::Line) >> traceTool) {
-            PyFrame* frame = PyFrame::of(globalObject, callFrame);
+            PyFrame* frame = frameObjectOf(globalObject, callFrame);
             frame->lastLine = monitor.m_lineStarts[lineStart].line;
             frame->lastLineOffset = monitor.m_lineStarts[lineStart].offset;
         }
@@ -1497,7 +1570,7 @@ Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject, CallFrame* 
         else if (!fire(globalObject, callFrame, monitor, offset, Event::PyStart, wanted(Event::PyStart))) {
             // The call has not begun: no `try` of its own catches this. The unwinder takes a frame at offset 0 for one that
             // op_py_bind_args has not counted in yet.
-            callFrame->setCurrentVPC(codeBlock->instructions().at(0).ptr());
+            setCurrentOffset(0);
             if (codeBlock->unlinkedCodeBlock()->parseMode() != SourceParseMode::GeneratorBodyMode)
                 m_runtime.leaveFrame();
             return threw;
@@ -1519,10 +1592,12 @@ Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject, CallFrame* 
             return elsewhere;
     }
     if (kinds & bit(Event::Line)) {
-        if (!fireLine(globalObject, callFrame, monitor, offset, comesFromSameLine))
+        if (!fireLine(globalObject, callFrame, monitor, *currentPoint(), comesFromSameLine))
             return threw;
         if (jumped(elsewhere))
             return elsewhere;
+        if (kinds == bit(Event::Line))
+            return runIt;
     }
     if (kinds & bit(Event::Instruction)) {
         if (!fire(globalObject, callFrame, monitor, offset, Event::Instruction, wanted(Event::Instruction)))
@@ -1630,19 +1705,21 @@ Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject, CallFrame* 
 
     case op_jmp: {
         // A jump to a jump is told of as one jump: CPython's compiler makes the first go where the second goes.
-        auto targetOf = [&](unsigned jump) { return jump + jumpTargetForInstruction<OpJmp>(codeBlock, codeBlock->instructions().at(jump)); };
         auto jumpAt = [&](unsigned where) {
             auto* other = monitor.pointAt(where);
             return other && other->opcode == op_jmp && other->kinds & bit(Event::Jump) ? other : nullptr;
         };
         bool isToldOfAlready = m_jumpGoesOn.callFrame == callFrame && m_jumpGoesOn.offset == offset;
         m_jumpGoesOn = { };
-        unsigned target = targetOf(offset);
-        if (!isToldOfAlready && kinds & bit(Event::Jump)) {
+        if (uint8_t tools = !isToldOfAlready && kinds & bit(Event::Jump) ? wanted(Event::Jump) : 0) {
             unsigned last = target;
-            for (unsigned count = 0; count < 8 && jumpAt(last); ++count)
-                last = targetOf(last);
-            if (!fire(globalObject, callFrame, monitor, offset, Event::Jump, wanted(Event::Jump), jsNumber(shownOffset(last))))
+            for (unsigned count = 0; count < 8; ++count) {
+                auto* other = jumpAt(last);
+                if (!other)
+                    break;
+                last = other->target;
+            }
+            if (!fire(globalObject, callFrame, monitor, offset, Event::Jump, tools, jsNumber(shownOffset(last))))
                 return threw;
             if (jumped(elsewhere))
                 return elsewhere;
@@ -1669,7 +1746,7 @@ Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject, CallFrame* 
         decodeResult(slow_path_py_send(callFrame, pc), target, signal);
         if (signal == LLInt::exceptionSignal())
             return threw;
-        callFrame->setCurrentVPC(pc);
+        setCurrentOffset(offset);
         auto* destination = static_cast<const JSInstruction*>(target);
         if (destination == next() || !PyGenerator::is(callFrame->uncheckedR(bytecode.m_iterator).jsValue()))
             return { destination, goOn };
@@ -1688,9 +1765,15 @@ Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject, CallFrame* 
     }
 
     // Which way a branch goes is known once it has gone.
-    point = monitor.pointAt(offset);
+    currentPoint();
     bool saysSomethingOfTarget = point && point->lineStartOfTarget != CodeMonitor::noLineStart;
-    if (kinds & bit(Event::BranchLeft) && (saysSomethingOfTarget || wanted(Event::BranchLeft) | wanted(Event::BranchRight) | (kinds & CodeMonitor::Point::forLoop ? monitor.tools(Event::Raise) : 0))) {
+    bool isWanted = saysSomethingOfTarget || wanted(Event::BranchLeft) | wanted(Event::BranchRight);
+    // The iterators written in C++ end without raising anything.
+    if (!isWanted && kinds & CodeMonitor::Point::forLoop && monitor.tools(Event::Raise)) {
+        JSValue iterator = callFrame->uncheckedR(pc->as<OpPyForIter>().m_iterator).jsValue();
+        isWanted = PyGenerator::is(iterator) || m_runtime.typeOf(iterator)->isHeapType();
+    }
+    if (kinds & bit(Event::BranchLeft) && isWanted) {
         const JSInstruction* destination;
         JSValue item;
         if (kinds & CodeMonitor::Point::forLoop) {
@@ -1699,28 +1782,25 @@ Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject, CallFrame* 
             item = nextOfLoop(globalObject, callFrame->uncheckedR(bytecode.m_iterator).jsValue(), stopIteration);
             if (vm.exceptionForInspection())
                 return threw;
-            if (item)
-                destination = next();
-            else
-                destination = codeBlock->instructions().at(offset + jumpTargetForInstruction<OpPyForIter>(codeBlock, codeBlock->instructions().at(offset))).ptr();
+            destination = item ? next() : at(target);
             if (stopIteration && !fire(globalObject, callFrame, monitor, offset, Event::Raise, monitor.tools(Event::Raise), stopIteration))
                 return threw;
         } else {
-            const void* target;
+            const void* result;
             const void* signal;
-            decodeResult(slowPathOfBranch(opcode)(callFrame, pc), target, signal);
+            decodeResult(slowPathOfBranch(opcode)(callFrame, pc), result, signal);
             if (signal == LLInt::exceptionSignal())
                 return threw;
-            callFrame->setCurrentVPC(pc);
-            destination = static_cast<const JSInstruction*>(target);
+            setCurrentOffset(offset);
+            destination = static_cast<const JSInstruction*>(result);
         }
         unsigned event = destination == next() ? Event::BranchLeft : Event::BranchRight;
-        unsigned shownDestination = codeBlock->bytecodeOffset(destination);
+        unsigned shownDestination = event == Event::BranchLeft ? offsetOfNext : target;
         if (event == Event::BranchLeft && kinds & CodeMonitor::Point::goesOnInItself)
             shownDestination = whereItGoesOnInItself(shownDestination);
         if (!fire(globalObject, callFrame, monitor, offset, event, wanted(event), jsNumber(shownOffset(shownDestination))))
             return threw;
-        if (event == Event::BranchRight && !tellOfLineAt(codeBlock->bytecodeOffset(destination), elsewhere))
+        if (event == Event::BranchRight && !tellOfLineAt(target, elsewhere))
             return elsewhere;
         if (item)
             callFrame->uncheckedR(pc->as<OpPyForIter>().m_dst) = item; // Last: see op_call above.

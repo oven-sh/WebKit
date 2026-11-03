@@ -2855,12 +2855,14 @@ llintOp(op_py_bind_args, OpPyBindArgs, macro (size, get, dispatch)
     loadi Python::Runtime::frameDepth[t3], t0
     addi 1, t0
     bigt t0, Python::Runtime::recursionLimit[t3], .slow
-    loadp Python::Runtime::runtimeCall[t3], t2
-    btpz t2, .noRuntimeCall
-    btpz Python::Runtime::RuntimeCall::entryFrame[t2], .slow
-.noRuntimeCall:
     loadp CodeBlock[cfr], t2
     loadp CodeBlock::m_vm[t2], t2
+    loadp Python::Runtime::runtimeCall[t3], t1
+    btpz t1, .noRuntimeCall
+    btpnz Python::Runtime::RuntimeCall::entryFrame[t1], .noRuntimeCall
+    loadp VM::topEntryFrame[t2], t5
+    storep t5, Python::Runtime::RuntimeCall::entryFrame[t1]
+.noRuntimeCall:
     btinz VM::m_threadContext + VMThreadContext::m_traps + VMTraps::m_trapBits[t2], constexpr VMTraps::NeedPythonCalls, .slow
     storei t0, Python::Runtime::frameDepth[t3]
     dispatch()
