@@ -1249,18 +1249,101 @@ static JSValue strPartition(JSGlobalObject* globalObject, JSValue self, JSValue 
     RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { sliceOfUnits(vm, nullptr, string, 0, position), separatorValue, sliceOfUnits(vm, nullptr, string, position + separator.length(), string.length()) }));
 }
 
+static JSString* joinItems(JSGlobalObject* globalObject, JSString* separatorString, std::span<const JSValue> items)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    size_t count = items.size();
+    if (!count)
+        return jsEmptyString(vm);
+
+    uint64_t total = static_cast<uint64_t>(separatorString->length()) * (count - 1);
+    bool is8Bit = count == 1 || separatorString->is8Bit();
+    bool hasRope = separatorString->isRope();
+    for (size_t i = 0; i < count; ++i) {
+        JSValue item = items[i];
+        if (!isStr(item)) [[unlikely]] {
+            // A hole, which only JS can make, reads as None.
+            raiseTypeError(globalObject, scope, "sequence item "_s, i, ": expected str instance, "_s, typeName(globalObject, item ? item : jsUndefined()), " found"_s);
+            return nullptr;
+        }
+        JSString* string = strValue(item);
+        total += string->length();
+        is8Bit &= string->is8Bit();
+        hasRope |= string->isRope();
+    }
+    if (count == 1 && items[0].isString())
+        return asString(items[0]);
+    if (total > String::MaxLength) [[unlikely]] {
+        raiseOverflowError(globalObject, scope, "join() result is too long for a Python string"_s);
+        return nullptr;
+    }
+    if (!total)
+        return jsEmptyString(vm);
+
+    // Up to here, and from here on if all the texts are flat, nothing is allocated in the heap, so nothing else runs and `items`
+    // may be the storage of a list. To flatten a rope does allocate: the strs are first put where nobody else gets at them. Their
+    // lengths stay what they are.
+    MarkedArgumentBuffer kept;
+    if (hasRope) [[unlikely]] {
+        for (JSValue item : items)
+            kept.append(strValue(item));
+        if (kept.hasOverflowed()) [[unlikely]] {
+            raiseMemoryError(globalObject, scope, String());
+            return nullptr;
+        }
+        items = spanOf(kept);
+        for (JSValue item : items) {
+            asString(item)->value(globalObject);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+        }
+        separatorString->value(globalObject);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+
+    StringView separator = separatorString->tryGetValueImpl();
+    auto fill = [&]<typename CharacterType>(std::span<CharacterType> buffer) {
+        for (size_t i = 0; i < count; ++i) {
+            if (i && separator.length() == 1) {
+                buffer[0] = static_cast<CharacterType>(separator[0]);
+                skip(buffer, 1);
+            } else if (i) {
+                separator.getCharacters(buffer);
+                skip(buffer, separator.length());
+            }
+            StringView text = strValue(items[i])->tryGetValueImpl();
+            text.getCharacters(buffer);
+            skip(buffer, text.length());
+        }
+        ASSERT(buffer.empty());
+    };
+    RefPtr<StringImpl> result;
+    if (is8Bit) {
+        std::span<Latin1Character> buffer;
+        if ((result = StringImpl::tryCreateUninitialized(total, buffer))) [[likely]]
+            fill(buffer);
+    } else {
+        std::span<char16_t> buffer;
+        if ((result = StringImpl::tryCreateUninitialized(total, buffer))) [[likely]]
+            fill(buffer);
+    }
+    RELEASE_AND_RETURN(scope, makeStrUnlessTooLong(globalObject, String(WTF::move(result))));
+}
+
 JSString* strJoin(JSGlobalObject* globalObject, JSString* separatorString, JSValue iterable)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // The items must stay put while they are measured and copied.
+    if (auto* tuple = PyTuple::tryFrom(iterable); tuple && tuple->type() == runtime(globalObject).tupleType())
+        RELEASE_AND_RETURN(scope, joinItems(globalObject, separatorString, tuple->span()));
+
     MarkedArgumentBuffer items;
-    if (auto* tuple = PyTuple::tryFrom(iterable); tuple && tuple->type() == runtime(globalObject).tupleType()) {
-        for (JSValue item : tuple->span())
-            items.append(item);
-    } else if (isExactList(iterable)) {
+    if (isExactList(iterable)) {
         JSArray* list = asList(iterable);
+        // Any other storage holds no str.
+        if (hasContiguous(list->indexingType())) [[likely]]
+            RELEASE_AND_RETURN(scope, joinItems(globalObject, separatorString, { reinterpret_cast<const JSValue*>(list->butterfly()->contiguous().data()), listLength(list) }));
         for (unsigned i = 0; i < listLength(list); ++i)
             items.append(listGet(list, i));
     } else {
@@ -1277,34 +1360,11 @@ JSString* strJoin(JSGlobalObject* globalObject, JSString* separatorString, JSVal
         });
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
-
-    size_t count = items.size();
-    if (!count)
-        return jsEmptyString(vm);
-    for (size_t i = 0; i < count; ++i) {
-        if (!isStr(items.at(i))) {
-            raiseTypeError(globalObject, scope, "sequence item "_s, i, ": expected str instance, "_s, typeName(globalObject, items.at(i)), " found"_s);
-            return nullptr;
-        }
-    }
-    if (count == 1 && items.at(0).isString())
-        return asString(items.at(0));
-
-    auto separator = separatorString->view(globalObject);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    StrBuilder builder;
-    for (size_t i = 0; i < count; ++i) {
-        if (i)
-            builder.append(separator.data);
-        auto item = strValue(items.at(i))->view(globalObject);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-        builder.append(item.data);
-    }
-    if (builder.hasOverflowed()) {
-        raiseOverflowError(globalObject, scope, "join() result is too long for a Python string"_s);
+    if (items.hasOverflowed()) [[unlikely]] {
+        raiseMemoryError(globalObject, scope, String());
         return nullptr;
     }
-    RELEASE_AND_RETURN(scope, makeStr(globalObject, builder));
+    RELEASE_AND_RETURN(scope, joinItems(globalObject, separatorString, spanOf(items)));
 }
 
 static JSValue strJoinMethod(JSGlobalObject* globalObject, JSValue self, JSValue iterable)
