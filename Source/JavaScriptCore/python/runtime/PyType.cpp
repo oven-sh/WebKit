@@ -23,6 +23,8 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 namespace JSC {
 namespace Python {
 
+JSValue docstringFor(JSGlobalObject*, const String& key); // PyDocstrings.cpp
+
 const ClassInfo PyType::s_info = { "PyType"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(PyType) };
 
 JSC_DEFINE_HOST_FUNCTION(callType, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -135,7 +137,7 @@ void PyType::initializeBuiltin(JSGlobalObject* globalObject, const TypeDef& def,
     }
 
     m_module.set(vm, this, dot == notFound ? rt.names.builtins() : internString(vm, fullName.left(dot)));
-    m_dict->set(vm, rt.names.dDoc(), def.doc.isNull() ? jsUndefined() : JSValue(makeStr(vm, def.doc)));
+    m_dict->set(vm, rt.names.dDoc(), def.doc.isNull() ? docstringFor(globalObject, def.name) : JSValue(makeStr(vm, def.doc)));
     addMethods(globalObject, def.methods);
     addGetSets(globalObject, def.getsets);
     if (def.flags.contains(TypeFlag::HasDict) && !(base && base->has(TypeFlag::HasDict)) && !m_dict->get(rt.names.dDict()))

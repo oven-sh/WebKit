@@ -843,6 +843,7 @@ python/runtime/PyCsv.cpp
 python/runtime/PyDescriptors.cpp
 python/runtime/PyDict.cpp
 python/runtime/PyDictType.cpp
+python/runtime/PyDocstrings.cpp
 python/runtime/PyErrno.cpp
 python/runtime/PyErrors.cpp
 python/runtime/PyException.cpp

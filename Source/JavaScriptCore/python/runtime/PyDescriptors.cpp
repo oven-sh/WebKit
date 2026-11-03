@@ -823,11 +823,16 @@ static JSValue getSetGetQualname(JSGlobalObject* globalObject, JSValue self)
     auto* descriptor = PyGetSetDescriptor::from(self);
     return makeStr(globalObject, makeString(stringOf(descriptor->owner()->qualname()), '.', descriptor->def().name));
 }
+JSValue docstringFor(JSGlobalObject*, const String& key); // PyDocstrings.cpp
+
 static JSValue descriptorGetDoc(JSGlobalObject* globalObject, JSValue self)
 {
-    if (auto* descriptor = PyGetSetDescriptor::tryFrom(self); descriptor && !descriptor->def().doc.isNull())
+    auto* descriptor = PyGetSetDescriptor::tryFrom(self);
+    if (!descriptor)
+        return jsUndefined();
+    if (!descriptor->def().doc.isNull())
         return makeStr(getVM(globalObject), descriptor->def().doc);
-    return jsUndefined();
+    return docstringFor(globalObject, makeString(descriptor->owner()->nameInMessages(), '.', descriptor->def().name));
 }
 
 static constexpr NativeDef getSetMethods[] = {

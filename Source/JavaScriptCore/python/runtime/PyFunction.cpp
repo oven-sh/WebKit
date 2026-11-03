@@ -1879,7 +1879,20 @@ static PyNativeFunction* asNative(JSValue value) { return uncheckedDowncast<PyNa
 
 static JSValue nativeCall(JSGlobalObject* globalObject, JSValue self, const CallArgs& args) { return asNative(self)->invoke(globalObject, args); }
 static JSValue nativeGetName(JSGlobalObject* globalObject, JSValue self) { return internString(getVM(globalObject), asNative(self)->def().name); }
-static JSValue nativeGetDoc(JSGlobalObject*, JSValue) { return jsUndefined(); }
+JSValue docstringFor(JSGlobalObject*, const String& key); // PyDocstrings.cpp
+
+static JSValue nativeGetDoc(JSGlobalObject* globalObject, JSValue self)
+{
+    auto* native = asNative(self);
+    JSValue owner = native->owner();
+    if (!owner)
+        return jsUndefined();
+    if (auto* type = PyType::tryFrom(owner))
+        return docstringFor(globalObject, makeString(type->nameInMessages(), '.', native->def().name));
+    if (owner.isString())
+        return docstringFor(globalObject, makeString(stringOf(asString(owner)), '.', native->def().name));
+    return jsUndefined();
+}
 
 static JSValue nativeGetTextSignature(JSGlobalObject* globalObject, JSValue self)
 {
