@@ -92,7 +92,9 @@ private:
     // The token, or null after "invalid syntax".
     const Token* expect(TokenKind);
     // The token, or null after "expected 'x'", which is an error whatever else could have been tried.
-    const Token* expectForced(TokenKind, ASCIILiteral expected);
+    enum class ForcedBy : uint8_t { RuleThatIsAlwaysTried, RuleThatExplainsErrors };
+    const Token* expectForced(TokenKind, ASCIILiteral expected, ForcedBy);
+    void errorIsOfARuleThatIsAlwaysTried();
     Name expectName();
 
     Position startPosition() { return peek().startPosition; }
@@ -127,6 +129,7 @@ private:
     std::nullptr_t indentationError(const String& message) { return syntaxError(message, SyntaxErrorInfo::Type::IndentationError); }
     // What no message explains. An enclosing production that knows better may replace it.
     std::nullptr_t invalidSyntax();
+    std::nullptr_t invalidSyntaxAtLastTokenSeen();
     std::nullptr_t stackOverflow();
     // For ast.parse(feature_version=...). False: what has just been parsed came with a later version, which is an error.
     bool checkVersion(int version, ASCIILiteral what)
@@ -298,6 +301,10 @@ private:
     bool m_errorIsFatal { false };
     bool m_errorIsGeneric { false };
     bool m_errorIsFinal { false }; // No error of the lexer further on replaces it.
+    // Of a fatal error. It is the parser's: it came of a rule that is always tried, not of one of those that explain errors, and
+    // after it nothing else is tried.
+    bool m_fatalErrorIsOfTheParser { false };
+    bool m_fatalErrorWasFoundDiagnosing { false }; // It was come upon past a mistake, while that was being explained.
     bool m_quiet { false }; // Nothing is diagnosed: what does not parse just fails.
     // CPython's parser remembers what came of a rule at a token. What it has once tried there without diagnosing anything, it does
     // not try again, so nothing is ever diagnosed there.

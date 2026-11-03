@@ -292,7 +292,7 @@ static JSValue contextVarNew(JSGlobalObject* globalObject, JSValue, const CallAr
     if (args.keywordCount()) {
         String keyword = stringOf(args.keywordName(0));
         if (keyword != "default"_s)
-            return raiseTypeError(globalObject, scope, "ContextVar() got an unexpected keyword argument '"_s, keyword, '\'');
+            RELEASE_AND_RETURN(scope, raiseUnexpectedKeyword(globalObject, "ContextVar"_s, keyword, { "default"_s }));
         defaultValue = args.keywordValue(0);
     }
     if (!isStr(name))

@@ -28,10 +28,15 @@ public:
     void add(JSGlobalObject*, ASCIILiteral name, JSValue);
     void addFunctions(JSGlobalObject*, std::span<const NativeDef>);
 
+    // Made by createNativeModule().
+    bool isNative() const { return m_isNative; }
+    void setIsNative() { m_isNative = true; }
+
 private:
     PyModule(VM&, Structure*, PyType*);
 
     WriteBarrier<PyDict> m_dict;
+    bool m_isNative { false };
 };
 
 // A module written in C++: what `import name` finds without looking at any file.
@@ -46,7 +51,13 @@ std::span<const NativeModuleDef> nativeModules();
 JS_EXPORT_PRIVATE void setHostNativeModules(std::span<const NativeModuleDef>);
 std::span<const NativeModuleDef> hostNativeModules();
 const NativeModuleDef* findNativeModule(StringView name);
-JSValue nativeModuleInstance(JSGlobalObject*, JSString* name, const NativeModuleDef&);
+// A module is initialized once for each interpreter: its types and functions are made then. No program gets to see the namespace that
+// comes of it. Null: an exception.
+PyDict* nativeModuleNamespace(JSGlobalObject*, JSString* name, const NativeModuleDef&);
+// A new module object, which begins with a copy of that. So a module that is taken out of sys.modules and imported again is a new one,
+// without what was done to the old one. (It is what CPython does for an extension module that cannot be initialized twice. Most of its
+// own can, and make their types and functions anew.)
+JSValue createNativeModule(JSGlobalObject*, JSString* name, const NativeModuleDef&);
 
 // For the message when a module has not got a name that is asked of it: where it is from, and whether that is the trouble.
 struct ModuleDiagnosis {

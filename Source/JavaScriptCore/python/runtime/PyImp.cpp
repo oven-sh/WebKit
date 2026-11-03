@@ -85,7 +85,7 @@ static JSValue impCreateBuiltin(JSGlobalObject* globalObject, JSValue spec)
         exception->setField(vm, ExceptionField::importErrorName, name);
         return raiseException(globalObject, scope, exception);
     }
-    RELEASE_AND_RETURN(scope, nativeModuleInstance(globalObject, name, *def));
+    RELEASE_AND_RETURN(scope, createNativeModule(globalObject, name, *def));
 }
 
 static JSValue impExecBuiltin(JSGlobalObject*, JSValue) { return jsNumber(0); }

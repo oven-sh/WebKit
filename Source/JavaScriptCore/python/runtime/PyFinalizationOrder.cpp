@@ -7,6 +7,7 @@
 #include "PyInternals.h"
 
 #include "AbstractSlotVisitorInlines.h"
+#include "BlockDirectoryInlines.h"
 #include "JSCInlines.h"
 #include "PyException.h"
 #include "PyFunction.h"
@@ -18,36 +19,47 @@
 namespace JSC {
 namespace Python {
 
-// In what order finalizers run.
+// What reference counts would have done with what a collection has found dead.
 //
 // With reference counts an object is finalized before what it alone refers to: the references it holds are dropped after its
 // finalizer has run, and if the finalizer has found the object a new home, they are not dropped at all. Programs count on it: a
-// __del__ that flushes self.file expects the file to be open.
+// __del__ that flushes self.file expects the file to be open. And what is in a cycle, or hangs off one, is not freed by reference
+// counts at all. That is left to CPython's collector, which has rules of its own, and says how much it found.
 //
-// A collection finds all the unreachable objects at once. So it looks at how those with finalizers (the candidates) reach one
-// another through what else is unreachable, and works out
-//  - their ranks: how many others must come before. Objects that reach one another, a cycle, have the same rank;
-//  - among those of the same rank, the order in which reference counts would have fallen to zero: an object lets go of what
-//    it refers to in a certain order (a list from its end), and what dies of that lets go of its own before the next is let go of;
-//  - what is in a cycle or hangs off one. That is what reference counts would not have freed. CPython's collector finalizes it
-//    in the order in which the objects were made, whatever refers to what, and does so after it has cleared some of the weak
-//    references: see Runtime::keepUnreachableObjectsToFinalize().
+// A collection of the engine's finds all the unreachable objects at once. So this looks at how the dead cells refer to one
+// another, and lets go of them as reference counts would: first of those that nothing dead refers to, each of which lets go
+// of what it refers to in a certain order (a list from its end), and what dies of that lets go of its own before the next is
+// let go of. That gives
+//  - the order in which the objects with finalizers (the candidates) would have died;
+//  - their ranks: how many other candidates come before on the way to them. Those wait (see order());
+//  - what is left in the end: the cycles and what hangs off them. CPython's collector finalizes that in the order in which the
+//    objects were made, whatever refers to what, after it has cleared some of the weak references
+//    (see Runtime::keepUnreachableObjectsToFinalize()), and that is what gc.collect() counts.
+//
+// A collection that the program has asked for looks at all that has died in it. That costs time for each dead cell, which is
+// what a tracing collector is there to avoid, so one of the engine's own looks only at what the candidates reach. It does
+// not see what refers to the candidates then: those that nothing else decides about go in the order they were made, and a
+// candidate that hangs off a cycle of objects without finalizers counts as freed by reference counts.
 
 namespace {
 
-// What the collection has left unmarked and the candidates reach, as a graph. Marks nothing.
-class UnreachableGraph final : public AbstractSlotVisitor {
+class DeadGraph final : public AbstractSlotVisitor {
 public:
-    UnreachableGraph(SlotVisitor& marker, std::span<JSCell* const> candidates)
+    DeadGraph(JSC::Heap& heap, SlotVisitor& marker, std::span<JSCell* const> candidates, const FinalizationQuestions& questions)
         : AbstractSlotVisitor(marker.collector(), "PythonFinalizationOrder"_s, m_opaqueRootStorage)
+        , m_heap(heap)
         , m_marker(marker)
+        , m_questions(questions)
         , m_candidateCount(candidates.size())
+        , m_hasAllThatDied(questions.looksAtAllThatDied)
     {
         for (JSCell* cell : candidates)
-            m_indices.add(cell, add(cell));
+            add(cell);
+        if (m_hasAllThatDied)
+            addAllThatDied(candidates);
     }
 
-    FinalizationOrder order(bool wantsCyclicGarbage);
+    FinalizationOrder order();
 
     void append(const ConservativeRoots&) final { }
     void appendUnbarriered(JSCell* cell) final { reach(cell); }
@@ -69,48 +81,189 @@ public:
 
 private:
     static constexpr unsigned none = std::numeric_limits<unsigned>::max();
-    // The graph takes some 70 bytes for a cell, while the world is stopped. Beyond this, what is reached is not looked into: it is
-    // taken to refer to nothing, and the order is only as good as what has been seen.
+    // The graph takes some 60 bytes for a cell, while the world is stopped. If more than this has died, only what the candidates
+    // reach is looked at, and beyond as many cells of that, what is reached is not looked into: it is taken to refer to nothing.
     static constexpr unsigned maxCells = 4'000'000;
 
-    unsigned add(JSCell* cell)
+    enum Flag : uint8_t {
+        Released = 1 << 0, // Reference counts would have freed it.
+        Waits = 1 << 1, // It is left, and a candidate that reference counts would have freed reaches it.
+        IsKept = 1 << 2, // A candidate reaches it.
+        HasLetGo = 1 << 3,
+    };
+
+    // These refer to nothing but their like.
+    static bool isLeaf(JSCell* cell)
     {
+        JSType type = cell->type();
+        return type == StringType || type == HeapBigIntType || type == SymbolType || type == PyFloatType;
+    }
+
+    // Where the number of a cell is kept: there is a table for each block that has any.
+    unsigned* slotFor(JSCell* cell, bool makesRoom)
+    {
+        if (cell->isPreciseAllocation()) {
+            if (makesRoom)
+                return &m_numbersOfPreciseAllocations.add(cell, none).iterator->value;
+            auto it = m_numbersOfPreciseAllocations.find(cell);
+            return it == m_numbersOfPreciseAllocations.end() ? nullptr : &it->value;
+        }
+        MarkedBlock& block = cell->markedBlock();
+        if (&block != m_lastBlock) {
+            auto it = m_tables.find(&block);
+            if (it != m_tables.end())
+                m_tableOfLastBlock = it->value;
+            else {
+                if (!makesRoom)
+                    return nullptr;
+                m_tableOfLastBlock = m_numbers.size();
+                m_numbers.grow(m_tableOfLastBlock + MarkedBlock::atomsPerBlock);
+                std::ranges::fill(m_numbers.mutableSpan().subspan(m_tableOfLastBlock), none);
+                m_tables.add(&block, m_tableOfLastBlock);
+            }
+            m_lastBlock = &block;
+        }
+        return &m_numbers[m_tableOfLastBlock + block.atomNumber(cell)];
+    }
+
+    void add(JSCell* cell)
+    {
+        unsigned* slot = slotFor(cell, true);
+        if (*slot != none)
+            return;
+        *slot = m_cells.size();
         m_cells.append(cell);
-        return m_cells.size() - 1;
+        m_references.append(0);
     }
 
     void reach(JSCell* cell)
     {
         if (!cell || cell == m_wholeOfCurrentCell || m_marker.isMarked(cell))
             return;
-        auto result = m_indices.add(cell, 0);
-        if (result.isNewEntry)
-            result.iterator->value = add(cell);
-        m_edges.append(result.iterator->value);
+        unsigned* slot = slotFor(cell, !m_hasAllThatDied);
+        if (!slot)
+            return;
+        if (*slot == none) {
+            if (m_hasAllThatDied || isLeaf(cell))
+                return;
+            *slot = m_cells.size();
+            m_cells.append(cell);
+            m_references.append(0);
+        }
+        m_edges.append(*slot);
+        ++m_references[*slot];
     }
 
     std::span<const unsigned> successors(unsigned node) const { return m_edges.span().subspan(m_firstEdge[node], m_firstEdge[node + 1] - m_firstEdge[node]); }
+    bool isCandidate(unsigned node) const { return node < m_candidateCount; }
 
+    template<typename Function> void forEachCellThatDied(MarkedSpace&, MarkedBlock::Handle*, const Function&);
+    void addAllThatDied(std::span<JSCell* const> candidates);
     void walk();
-    void findComponents();
-    Vector<unsigned> orderOfRelease();
+    Vector<unsigned> rootsInOrder();
+    void flagAllReachedFrom(Vector<unsigned>&& worklist, Flag);
 
+    JSC::Heap& m_heap;
     SlotVisitor& m_marker;
+    const FinalizationQuestions& m_questions;
     unsigned m_candidateCount;
+    bool m_hasAllThatDied;
+    size_t m_cellsLookedAt { 0 };
     JSCell* m_wholeOfCurrentCell { nullptr };
     ConcurrentPtrHashSet m_opaqueRootStorage;
+
+    UncheckedKeyHashMap<MarkedBlock*, unsigned> m_tables;
+    Vector<unsigned> m_numbers;
+    UncheckedKeyHashMap<JSCell*, unsigned> m_numbersOfPreciseAllocations;
+    MarkedBlock* m_lastBlock { nullptr };
+    unsigned m_tableOfLastBlock { 0 };
+
     // The candidates come first.
     Vector<JSCell*> m_cells;
-    UncheckedKeyHashMap<JSCell*, unsigned> m_indices;
     // Those of cell i are m_edges[m_firstEdge[i]] to m_edges[m_firstEdge[i + 1]], in the order in which it would let go of them.
     Vector<unsigned> m_edges;
     Vector<unsigned> m_firstEdge;
-    // Strongly connected components. One is numbered once all that it reaches is.
-    Vector<unsigned> m_component;
-    unsigned m_componentCount { 0 };
+    Vector<unsigned> m_references; // How many edges lead to it from cells that have not let go yet.
+    Vector<uint8_t> m_flags;
 };
 
-void UnreachableGraph::walk()
+// function(cell) for the cells of the block that were alive when the collection began and are not marked. This is
+// MarkedBlock::Handle::isLive() for a whole block, in a full collection, with the world stopped.
+template<typename Function>
+void DeadGraph::forEachCellThatDied(MarkedSpace& space, MarkedBlock::Handle* handle, const Function& function)
+{
+    MarkedBlock& block = handle->block();
+    bool marksAreCurrent = block.markingVersion() == space.markingVersion();
+    auto cellAt = [&](size_t atom) {
+        return reinterpret_cast<JSCell*>(reinterpret_cast<char*>(&block) + atom * MarkedBlock::atomSize);
+    };
+    if (handle->isAllocated()) {
+        size_t atomsPerCell = handle->cellSize() / MarkedBlock::atomSize;
+        for (size_t atom = block.atomNumber(handle->start()); atom < MarkedBlock::endAtom; atom += atomsPerCell) {
+            if (!marksAreCurrent || !block.marks().get(atom))
+                function(cellAt(atom));
+        }
+        return;
+    }
+    WTF::BitSet<MarkedBlock::atomsPerBlock> dead;
+    if (block.newlyAllocatedVersion() == space.newlyAllocatedVersion()) {
+        dead = block.newlyAllocated();
+        if (marksAreCurrent)
+            dead.exclude(block.marks());
+    } else if (!marksAreCurrent && MarkedSpace::nextVersion(block.markingVersion()) == space.markingVersion())
+        dead = block.marks(); // Nothing in it has been marked. These are the survivors of the last collection.
+    else
+        return;
+    dead.forEachSetBit([&](size_t atom) {
+        function(cellAt(atom));
+    });
+}
+
+void DeadGraph::addAllThatDied(std::span<JSCell* const> candidates)
+{
+    ASSERT(m_heap.collectionScope() == CollectionScope::Full);
+    auto look = [&](JSCell* cell) {
+        ++m_cellsLookedAt;
+        if (cell->structureID() && !isLeaf(cell) && m_cells.size() <= maxCells)
+            add(cell);
+    };
+    MarkedSpace& space = m_heap.objectSpace();
+    space.forEachBlock([&](MarkedBlock::Handle* handle) {
+        if (!isJSCellKind(handle->cellKind()))
+            return;
+        m_cellsLookedAt += handle->markCount();
+        forEachCellThatDied(space, handle, [&](JSCell* cell) {
+#if ASAN_ENABLED
+            if (handle->isRedZoneCell(cell))
+                return;
+#endif
+            look(cell);
+        });
+    });
+    // Those that earlier collections found dead are gone: they are swept when a collection ends.
+    for (PreciseAllocation* allocation : space.preciseAllocations()) {
+        if (!isJSCellKind(allocation->attributes().cellKind))
+            continue;
+        if (allocation->isMarked())
+            ++m_cellsLookedAt;
+        else
+            look(static_cast<JSCell*>(allocation->cell()));
+    }
+    if (m_cells.size() <= maxCells)
+        return;
+
+    m_hasAllThatDied = false;
+    m_tables.clear();
+    m_numbers.clear();
+    m_numbersOfPreciseAllocations.clear();
+    m_lastBlock = nullptr;
+    m_cells.clear();
+    m_references.clear();
+    for (JSCell* cell : candidates)
+        add(cell);
+}
+
+void DeadGraph::walk()
 {
     for (unsigned i = 0; i < m_cells.size(); ++i) {
         m_firstEdge.append(m_edges.size());
@@ -127,145 +280,130 @@ void UnreachableGraph::walk()
     m_firstEdge.append(m_edges.size());
 }
 
-// Tarjan's algorithm, without recursion.
-void UnreachableGraph::findComponents()
+// The cells that nothing dead refers to: the program dropped them, in an order that nobody knows. They are put in the order in which
+// the first candidate that each reaches was made. Those that reach none come last.
+Vector<unsigned> DeadGraph::rootsInOrder()
 {
     unsigned count = m_cells.size();
-    Vector<unsigned> index;
-    index.fill(none, count);
-    Vector<unsigned> low;
-    low.fill(0, count);
-    m_component.fill(none, count);
-    Vector<unsigned> stack;
-    struct Frame {
-        unsigned node;
-        unsigned next;
-    };
-    Vector<Frame> frames;
-    unsigned counter = 0;
-    for (unsigned start = 0; start < count; ++start) {
-        if (index[start] != none)
-            continue;
-        frames.append({ start, m_firstEdge[start] });
-        index[start] = low[start] = counter++;
-        stack.append(start);
-        while (!frames.isEmpty()) {
-            auto& frame = frames.last();
-            unsigned node = frame.node;
-            if (frame.next < m_firstEdge[node + 1]) {
-                unsigned successor = m_edges[frame.next++];
-                if (index[successor] == none) {
-                    index[successor] = low[successor] = counter++;
-                    stack.append(successor);
-                    frames.append({ successor, m_firstEdge[successor] });
-                } else if (m_component[successor] == none)
-                    low[node] = std::min(low[node], index[successor]);
+    Vector<unsigned> roots;
+    if (!m_hasAllThatDied) {
+        // All there is has been reached from a candidate.
+        for (unsigned i = 0; i < m_candidateCount; ++i) {
+            if (!m_references[i])
+                roots.append(i);
+        }
+        return roots;
+    }
+
+    Vector<unsigned> firstCandidateReached;
+    if (m_candidateCount) {
+        Vector<unsigned> firstPredecessor;
+        firstPredecessor.reserveInitialCapacity(count + 1);
+        unsigned sum = 0;
+        for (unsigned references : m_references) {
+            firstPredecessor.append(sum);
+            sum += references;
+        }
+        firstPredecessor.append(sum);
+        Vector<unsigned> predecessors;
+        predecessors.fill(0, sum);
+        {
+            Vector<unsigned> cursor = firstPredecessor;
+            for (unsigned node = 0; node < count; ++node) {
+                for (unsigned successor : successors(node))
+                    predecessors[cursor[successor]++] = node;
+            }
+        }
+        firstCandidateReached.fill(none, count);
+        Vector<unsigned> worklist;
+        for (unsigned i = 0; i < m_candidateCount; ++i) {
+            if (firstCandidateReached[i] != none)
                 continue;
+            firstCandidateReached[i] = i;
+            worklist.append(i);
+            while (!worklist.isEmpty()) {
+                unsigned node = worklist.takeLast();
+                for (unsigned p = firstPredecessor[node]; p < firstPredecessor[node + 1]; ++p) {
+                    unsigned predecessor = predecessors[p];
+                    if (firstCandidateReached[predecessor] != none)
+                        continue;
+                    firstCandidateReached[predecessor] = i;
+                    worklist.append(predecessor);
+                }
             }
-            if (low[node] == index[node]) {
-                unsigned member;
-                do {
-                    member = stack.takeLast();
-                    m_component[member] = m_componentCount;
-                } while (member != node);
-                ++m_componentCount;
-            }
-            frames.removeLast();
-            if (!frames.isEmpty())
-                low[frames.last().node] = std::min(low[frames.last().node], low[node]);
+        }
+        for (unsigned node = 0; node < count; ++node) {
+            if (!m_references[node] && firstCandidateReached[node] != none)
+                roots.append(node);
+        }
+        std::ranges::stable_sort(roots, [&](unsigned a, unsigned b) {
+            return firstCandidateReached[a] < firstCandidateReached[b];
+        });
+    }
+    for (unsigned node = 0; node < count; ++node) {
+        if (!m_references[node] && (!m_candidateCount || firstCandidateReached[node] == none))
+            roots.append(node);
+    }
+    return roots;
+}
+
+// What is in the worklist has the flag already.
+void DeadGraph::flagAllReachedFrom(Vector<unsigned>&& worklist, Flag flag)
+{
+    while (!worklist.isEmpty()) {
+        unsigned node = worklist.takeLast();
+        for (unsigned successor : successors(node)) {
+            if (m_flags[successor] & flag)
+                continue;
+            m_flags[successor] |= flag;
+            worklist.append(successor);
         }
     }
 }
 
-// For each candidate, its place in the order in which reference counts would have got to them, had the candidates that nothing
-// here refers to been dropped in the order they were made. Those that counts would never get to come last, as they were made.
-Vector<unsigned> UnreachableGraph::orderOfRelease()
-{
-    unsigned count = m_cells.size();
-    Vector<unsigned> references;
-    references.fill(0, count);
-    for (unsigned target : m_edges)
-        ++references[target];
-
-    Vector<unsigned> place;
-    place.fill(none, m_candidateCount);
-    unsigned next = 0;
-    struct Frame {
-        unsigned node;
-        unsigned next;
-    };
-    Vector<Frame> frames;
-    auto release = [&](unsigned node) {
-        if (node < m_candidateCount)
-            place[node] = next++;
-        frames.append({ node, m_firstEdge[node] });
-    };
-    for (unsigned start = 0; start < m_candidateCount; ++start) {
-        if (references[start])
-            continue;
-        release(start);
-        while (!frames.isEmpty()) {
-            auto& frame = frames.last();
-            if (frame.next == m_firstEdge[frame.node + 1]) {
-                frames.removeLast();
-                continue;
-            }
-            unsigned target = m_edges[frame.next++];
-            if (!--references[target])
-                release(target);
-        }
-    }
-    for (unsigned i = 0; i < m_candidateCount; ++i) {
-        if (place[i] == none)
-            place[i] = next++;
-    }
-    return place;
-}
-
-FinalizationOrder UnreachableGraph::order(bool wantsCyclicGarbage)
+FinalizationOrder DeadGraph::order()
 {
     walk();
-    findComponents();
     unsigned count = m_cells.size();
+    m_flags.fill(0, count);
+    FinalizationOrder result;
+    result.hasLookedAtAllThatDied = m_hasAllThatDied;
+    result.cellsLookedAt = m_cellsLookedAt;
 
-    // The cells of each component.
-    Vector<unsigned> firstMember;
-    firstMember.fill(0, m_componentCount + 1);
-    for (unsigned node = 0; node < count; ++node)
-        ++firstMember[m_component[node] + 1];
-    for (unsigned c = 0; c < m_componentCount; ++c)
-        firstMember[c + 1] += firstMember[c];
-    Vector<unsigned> members;
-    members.fill(0, count);
-    {
-        Vector<unsigned> cursor = firstMember;
-        for (unsigned node = 0; node < count; ++node)
-            members[cursor[m_component[node]]++] = node;
-    }
-
-    Vector<bool> hasCandidate;
-    hasCandidate.fill(false, m_componentCount);
-    for (unsigned i = 0; i < m_candidateCount; ++i)
-        hasCandidate[m_component[i]] = true;
-
-    // The rank of a component: how many components with candidates in them lie on the longest way to it.
+    // What reference counts would have freed, in their order.
+    // The rank of a cell: how many candidates lie on the longest way to it.
     Vector<unsigned> rank;
-    rank.fill(0, m_componentCount);
-    auto forEachSuccessorComponent = [&](unsigned c, const auto& function) {
-        for (unsigned m = firstMember[c]; m < firstMember[c + 1]; ++m) {
-            for (unsigned successor : successors(members[m]))
-                function(m_component[successor]);
-        }
-    };
+    rank.fill(0, count);
+    Vector<unsigned> released; // The candidates among it.
     unsigned deepest = 0;
-    for (unsigned c = m_componentCount; c--;) {
-        if (hasCandidate[c])
-            deepest = std::max(deepest, rank[c]);
-        unsigned next = rank[c] + hasCandidate[c];
-        forEachSuccessorComponent(c, [&](unsigned other) {
-            if (other != c)
-                rank[other] = std::max(rank[other], next);
-        });
+    {
+        struct Frame {
+            unsigned node;
+            unsigned next;
+        };
+        Vector<Frame> frames;
+        auto release = [&](unsigned node) {
+            m_flags[node] |= Released;
+            if (isCandidate(node)) {
+                released.append(node);
+                deepest = std::max(deepest, rank[node]);
+            }
+            frames.append({ node, m_firstEdge[node] });
+        };
+        for (unsigned root : rootsInOrder()) {
+            release(root);
+            while (!frames.isEmpty()) {
+                auto& frame = frames.last();
+                if (frame.next == m_firstEdge[frame.node + 1]) {
+                    frames.removeLast();
+                    continue;
+                }
+                unsigned target = m_edges[frame.next++];
+                rank[target] = std::max(rank[target], rank[frame.node] + isCandidate(frame.node));
+                if (!--m_references[target])
+                    release(target);
+            }
+        }
     }
 
     // What another candidate reaches waits: it is kept alive by that one now, and comes up again in the collection that finds
@@ -273,49 +411,80 @@ FinalizationOrder UnreachableGraph::order(bool wantsCyclicGarbage)
     // few levels (a linked list of objects with finalizers) is finalized in one round.
     constexpr unsigned deepestToTakeLevelByLevel = 3;
     bool takesAll = deepest > deepestToTakeLevelByLevel;
-
-    // What is in a cycle whose turn it is, and all that such a cycle reaches, is what CPython's collector would find. It calls the
-    // finalizers of all of it in one go, in the order in which the objects were made.
-    FinalizationOrder result;
-    Vector<bool> isOfCycle;
-    isOfCycle.fill(false, m_componentCount);
-    for (unsigned c = m_componentCount; c--;) {
-        bool isCycle = firstMember[c + 1] - firstMember[c] > 1;
-        forEachSuccessorComponent(c, [&](unsigned other) {
-            isCycle |= other == c;
-        });
-        if (isCycle && hasCandidate[c] && (takesAll || !rank[c]))
-            isOfCycle[c] = true;
-        if (!isOfCycle[c])
-            continue;
-        forEachSuccessorComponent(c, [&](unsigned other) {
-            isOfCycle[other] = true;
-        });
-        if (!wantsCyclicGarbage)
-            continue;
-        for (unsigned m = firstMember[c]; m < firstMember[c + 1]; ++m)
-            result.cyclicGarbage.add(m_cells[members[m]]);
-    }
-
-    // The rest goes as with reference counts, and goes first: it would have been gone before any collector came.
-    Vector<unsigned> place = orderOfRelease();
-    Vector<unsigned> inOrder;
-    for (unsigned i = 0; i < m_candidateCount; ++i) {
-        if (!isOfCycle[m_component[i]])
-            inOrder.append(i);
-    }
-    std::ranges::sort(inOrder, [&](unsigned a, unsigned b) {
-        return place[a] < place[b];
-    });
-    for (unsigned i : inOrder) {
-        if (takesAll || !rank[m_component[i]])
-            result.now.append(i);
+    for (unsigned node : released) {
+        if (takesAll || !rank[node])
+            result.now.append(node);
         else
-            result.later.append(i);
+            result.later.append(node);
+    }
+    result.freedByReferenceCounts = result.now.size();
+
+    // The rest is for CPython's collector, which comes later, and calls the finalizers of all that it finds in one go, in the
+    // order in which the objects were made.
+    if (!takesAll) {
+        Vector<unsigned> worklist;
+        for (unsigned node = 0; node < count; ++node) {
+            if (!(m_flags[node] & Released) && rank[node]) {
+                m_flags[node] |= Waits;
+                worklist.append(node);
+            }
+        }
+        flagAllReachedFrom(WTF::move(worklist), Waits);
     }
     for (unsigned i = 0; i < m_candidateCount; ++i) {
-        if (isOfCycle[m_component[i]])
+        if (m_flags[i] & Released)
+            continue;
+        if (m_flags[i] & Waits)
+            result.later.append(i);
+        else
             result.now.append(i);
+    }
+
+    if (m_hasAllThatDied) {
+        Vector<unsigned> worklist;
+        for (unsigned i = 0; i < m_candidateCount; ++i) {
+            m_flags[i] |= IsKept;
+            worklist.append(i);
+        }
+        flagAllReachedFrom(WTF::move(worklist), IsKept);
+    } else {
+        for (auto& flags : m_flags)
+            flags |= IsKept;
+    }
+
+    for (JSCell* cell : m_questions.askedAbout) {
+        unsigned* slot = slotFor(cell, false);
+        bool isGarbage = slot && *slot != none && (m_flags[*slot] & (Released | Waits | IsKept)) == IsKept;
+        result.isCyclicGarbageToFinalize.append(isGarbage);
+    }
+
+    if (!m_questions.wantsGarbage || !m_hasAllThatDied)
+        return result;
+
+    // CPython's collector closes the generators it finds, which then refer to nothing: if that was all that held a cycle
+    // together, reference counts do the rest, and it is not counted. (One with something to do when it is closed is a candidate.)
+    Vector<unsigned> worklist;
+    auto letGo = [&](unsigned node) {
+        if (m_flags[node] & HasLetGo)
+            return;
+        m_flags[node] |= HasLetGo;
+        for (unsigned successor : successors(node)) {
+            if (!--m_references[successor])
+                worklist.append(successor);
+        }
+    };
+    for (unsigned node = 0; node < count; ++node) {
+        if (!(m_flags[node] & (Released | IsKept)) && m_cells[node]->type() == PyGeneratorType)
+            letGo(node);
+    }
+    while (!worklist.isEmpty()) {
+        unsigned node = worklist.takeLast();
+        m_flags[node] |= Released;
+        letGo(node);
+    }
+    for (unsigned node = 0; node < count; ++node) {
+        if (!(m_flags[node] & (Released | IsKept)))
+            result.garbage.append(m_cells[node]);
     }
     return result;
 }
@@ -338,15 +507,16 @@ JSCell* wholeThatPartRefersTo(JSCell* cell)
     return nullptr;
 }
 
-FinalizationOrder finalizationOrder(SlotVisitor& marker, std::span<JSCell* const> candidates, bool wantsCyclicGarbage)
+FinalizationOrder finalizationOrder(JSC::Heap& heap, SlotVisitor& marker, std::span<JSCell* const> candidates, const FinalizationQuestions& questions)
 {
-    if (candidates.size() < 2 && !wantsCyclicGarbage) {
+    if (candidates.size() < 2 && !questions.wantsGarbage && !questions.wantsToKnowWhatReferenceCountsWouldFree && questions.askedAbout.empty()) {
         FinalizationOrder result;
         if (!candidates.empty())
             result.now.append(0);
+        result.freedByReferenceCounts = result.now.size();
         return result;
     }
-    return UnreachableGraph(marker, candidates).order(wantsCyclicGarbage);
+    return DeadGraph(heap, marker, candidates, questions).order();
 }
 
 } // namespace Python

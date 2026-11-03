@@ -17,9 +17,9 @@ namespace Python {
 
 // The module _types: names for the built-in types that have none in builtins. (Lib/types.py can find most of them by itself.)
 
-// ---- PyCapsule ---- (field 0: the name, a str)
+// ---- PyCapsule ---- (field 0: the name, a str; number: the pointer)
 //
-// There is no C API yet, so there is nothing in one: they are there where programs can see that CPython has one.
+// There is no C API yet. They are there where programs can see that CPython has one.
 
 static JSValue capsuleRepr(JSGlobalObject* globalObject, JSValue self)
 {
@@ -32,12 +32,21 @@ static constexpr NativeDef capsuleMethods[] = {
 
 static constexpr TypeDef capsuleTypeDef { "PyCapsule"_s, { TypeFlag::DisallowInstantiation }, capsuleMethods, { }, { } };
 
-JSValue makeCapsule(JSGlobalObject* globalObject, ASCIILiteral name)
+JSValue makeCapsule(JSGlobalObject* globalObject, ASCIILiteral name, const void* pointer)
 {
     VM& vm = getVM(globalObject);
     PyRecord* capsule = PyRecord::create(globalObject, runtime(globalObject).typeFor(capsuleTypeDef), 1);
     capsule->set(vm, 0, makeStr(vm, name));
+    capsule->number = static_cast<int64_t>(std::bit_cast<intptr_t>(pointer));
     return capsule;
+}
+
+const void* pointerOfCapsule(JSGlobalObject* globalObject, JSValue value, ASCIILiteral name)
+{
+    PyRecord* capsule = PyRecord::tryFrom(value, runtime(globalObject).typeFor(capsuleTypeDef));
+    if (!capsule || stringOf(asString(capsule->get(0))) != name)
+        return nullptr;
+    return std::bit_cast<const void*>(static_cast<intptr_t>(capsule->number));
 }
 
 void initializeTypesModule(JSGlobalObject* globalObject, PyModule* module)

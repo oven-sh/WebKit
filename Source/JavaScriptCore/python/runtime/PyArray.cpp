@@ -1336,9 +1336,6 @@ static JSValue arrayIMul(JSGlobalObject* globalObject, JSValue self, JSValue cou
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyRecord* array = arrayOf(self);
-    // As `array * 'x'` complains.
-    if (!hasIndex(globalObject, countValue))
-        return raiseTypeError(globalObject, scope, "can't multiply sequence by non-int of type '"_s, typeName(globalObject, countValue), '\'');
     int64_t count = toSsize(globalObject, countValue, runtime(globalObject).OverflowError());
     RETURN_IF_EXCEPTION(scope, { });
     int64_t length = arrayLength(array);

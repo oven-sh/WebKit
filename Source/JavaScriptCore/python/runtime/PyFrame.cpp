@@ -1305,9 +1305,10 @@ JSValue addTracebackEntry(JSGlobalObject* globalObject, JSValue exceptionValue, 
     VM& vm = rt.vm();
     // An exception raised again where it was caught has been through this frame already.
     bool isRaisedAgain = std::exchange(rt.reraisingFrame, nullptr) == callFrame;
-    // A call whose arguments do not fit never began.
+    // A call whose arguments do not fit never began. Nor did that of a generator expression whose first iterable is none: it is the
+    // code around it that asks for the iterator, as far as a program can tell.
     CodeBlock* codeBlock = callFrame->codeBlock();
-    if (OpcodeID opcodeID = codeBlock->instructionAt(index)->opcodeID(); opcodeID == op_py_bind_args || opcodeID == op_py_generator_enter)
+    if (!isPastStart(codeBlock->unlinkedCodeBlock()->pythonMarks(), index.offset()))
         return exceptionValue;
     if (!isRaisedAgain) {
         DeferGC deferGC(vm);

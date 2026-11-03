@@ -41,6 +41,9 @@ bool Parser::warnInvalidEscape(std::span<const uint8_t> body, size_t escape, siz
     if (inInterpolatedString && (c == '{' || c == '}'))
         return true; // The lexer has warned.
 
+    if (m_diagnosing)
+        return true;
+
     // What is parsed twice warns once.
     uint32_t sourceOffset = static_cast<uint32_t>(body.data() + escape - m_lexer.source().data());
     if (m_warnedEscapes.contains(sourceOffset))

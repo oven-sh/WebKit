@@ -12,6 +12,7 @@
 #include "PyErrors.h"
 #include "PyInternals.h"
 #include "PyList.h"
+#include "PyModuleHelpers.h"
 #include "PyNumbers.h"
 #include "PyRange.h"
 #include "PySet.h"
@@ -465,8 +466,7 @@ static bool stateAsIndex(JSGlobalObject* globalObject, JSValue state, int64_t& i
         raiseTypeError(globalObject, scope, "an integer is required"_s);
         return false;
     }
-    index = toSsize(globalObject, state, runtime(globalObject).OverflowError());
-    return !scope.exception();
+    RELEASE_AND_RETURN(scope, ssizeArgument(globalObject, state, index));
 }
 
 static JSValue iteratorSetState(JSGlobalObject* globalObject, JSValue self, JSValue state)
@@ -499,14 +499,16 @@ static JSValue iteratorSetState(JSGlobalObject* globalObject, JSValue self, JSVa
     }
 
     int64_t index;
-    if (!stateAsIndex(globalObject, state, index))
-        return { };
     if (iterator->kind() == PyIterator::Kind::Range) {
+        index = toInt64(globalObject, state);
+        RETURN_IF_EXCEPTION(scope, { });
         index = std::clamp<int64_t>(index, 0, iterator->remaining);
         iterator->position += index * iterator->step;
         iterator->remaining -= index;
         return jsUndefined();
     }
+    if (!stateAsIndex(globalObject, state, index))
+        return { };
     if (!target)
         return jsUndefined();
 
@@ -772,7 +774,8 @@ static bool parseStrict(JSGlobalObject* globalObject, ASCIILiteral function, con
     for (unsigned i = 0; i < args.keywordCount(); ++i) {
         String keyword = stringOf(args.keywordName(i));
         if (keyword != "strict"_s) {
-            raiseTypeError(globalObject, scope, function, "() got an unexpected keyword argument '"_s, keyword, '\'');
+            scope.release();
+            raiseUnexpectedKeyword(globalObject, function, keyword, { "strict"_s });
             return false;
         }
         strict = isTrue(globalObject, args.keywordValue(i));

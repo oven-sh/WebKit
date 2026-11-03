@@ -121,11 +121,26 @@ const Token* Parser::expect(TokenKind kind)
     return invalidSyntax();
 }
 
-const Token* Parser::expectForced(TokenKind kind, ASCIILiteral expected)
+const Token* Parser::expectForced(TokenKind kind, ASCIILiteral expected, ForcedBy forcedBy)
 {
     if (at(kind))
         return &advance();
-    return syntaxErrorAt(peek(), makeString("expected '"_s, expected, '\''));
+    if (failed())
+        return nullptr;
+    syntaxErrorAt(peek(), makeString("expected '"_s, expected, '\''));
+    if (forcedBy == ForcedBy::RuleThatIsAlwaysTried)
+        errorIsOfARuleThatIsAlwaysTried();
+    return nullptr;
+}
+
+void Parser::errorIsOfARuleThatIsAlwaysTried()
+{
+    if (m_errorIsFatal)
+        return;
+    m_errorIsFatal = true;
+    m_errorIsGeneric = false;
+    m_fatalErrorIsOfTheParser = true;
+    m_fatalErrorWasFoundDiagnosing = m_diagnosing;
 }
 
 Name Parser::expectName()
@@ -252,10 +267,17 @@ std::nullptr_t Parser::invalidSyntax()
     peek();
     if (failed())
         return nullptr;
+    return invalidSyntaxAtLastTokenSeen();
+}
+
+std::nullptr_t Parser::invalidSyntaxAtLastTokenSeen()
+{
     auto& last = m_tokens[m_tokensSeen - 1];
     if (last.kind == TokenKind::Indent || last.kind == TokenKind::Dedent) {
+        indentationError(last.kind == TokenKind::Indent ? "unexpected indent"_s : "unexpected unindent"_s);
         m_errorIsFinal = true;
-        return indentationError(last.kind == TokenKind::Indent ? "unexpected indent"_s : "unexpected unindent"_s);
+        m_errorIsGeneric = true;
+        return nullptr;
     }
     syntaxErrorAt(last, "invalid syntax"_s);
     m_errorIsGeneric = true;
@@ -280,6 +302,8 @@ void Parser::raiseLexerError()
         return;
     m_error = { };
     m_errorIsGeneric = false;
+    m_errorIsFinal = false;
+    m_fatalErrorWasFoundDiagnosing = m_diagnosing;
     int line = m_lexer.currentLine();
     switch (m_lexer.status()) {
     case Lexer::Status::Error:
@@ -405,13 +429,19 @@ Mod* Parser::parse()
         }
     }
 
-    if (!m_errorIsFatal && !m_errorIsFinal && m_error.isSyntaxError())
+    // What nothing explains is said last of all, and the line is shown as the lexer then has it.
+    if (m_errorIsGeneric && !m_errorIsFatal) {
+        m_error = { };
+        m_errorIsFinal = false;
+        invalidSyntaxAtLastTokenSeen();
+    }
+    if ((!m_errorIsFatal || m_fatalErrorIsOfTheParser) && !m_errorIsFinal && m_error.isSyntaxError())
         checkRestOfSourceForLexerErrors();
     if (m_error.isSyntaxError() && !m_errorIsAboutWhatFollows) {
         m_error.hasMetadata = true;
-        // CPython's parser notes the statements when it goes over the text again to explain the error, which it does not do for
-        // an error of the tokenizer.
-        if (!m_errorIsFatal) {
+        // CPython's parser notes the statements when it goes over the text again to explain the error, which it does not do
+        // after an error of the tokenizer, or of a rule that is always tried.
+        if (!m_errorIsFatal || m_fatalErrorWasFoundDiagnosing) {
             m_error.metadataLineno = m_lastCompoundStatement.line;
             m_error.metadataColOffset = m_lastCompoundStatement.column;
         }
@@ -854,6 +884,18 @@ Stmt* Parser::parseExpressionStatement()
             // A `yield` that is not in parentheses is a statement on its own.
             if ((first->is<Yield>() || first->is<YieldFrom>()) && !first->parenthesized)
                 return invalidSyntax();
+            {
+                SetForScope diagnosing(m_diagnosing, true);
+                SetForScope acceptsPrefix(m_acceptsPrefix, true);
+                auto saved = checkpoint();
+                advance();
+                if (!parseAnnotatedRHS()) {
+                    if (m_errorIsFatal || !m_errorIsGeneric)
+                        return nullptr;
+                    rewind(saved);
+                    return invalidSyntax();
+                }
+            }
             return syntaxErrorAt(first->range, makeString('\'', describe(first), "' is an illegal expression for augmented assignment"_s));
         }
         advance();
@@ -1440,7 +1482,7 @@ bool Parser::parseBlock(Seq<Stmt*>& result, ASCIILiteral what, const Token& open
 bool Parser::parseElse(Seq<Stmt*>& result)
 {
     const Token elseToken = advance();
-    if (!expectForced(TokenKind::Colon, ":"_s))
+    if (!expectForced(TokenKind::Colon, ":"_s, ForcedBy::RuleThatIsAlwaysTried))
         return false;
     if (!parseBlock(result, "'else' statement"_s, elseToken))
         return false;
@@ -1629,7 +1671,7 @@ Stmt* Parser::parseTry()
 {
     Position start = startPosition();
     const Token tryToken = advance();
-    if (!expectForced(TokenKind::Colon, ":"_s))
+    if (!expectForced(TokenKind::Colon, ":"_s, ForcedBy::RuleThatIsAlwaysTried))
         return nullptr;
     Seq<Stmt*> body;
     if (!parseBlock(body, "'try' statement"_s, tryToken))
@@ -1716,7 +1758,7 @@ Stmt* Parser::parseTry()
     Seq<Stmt*> finalbody;
     if (at(TokenKind::KwFinally)) {
         const Token finallyToken = advance();
-        if (!expectForced(TokenKind::Colon, ":"_s))
+        if (!expectForced(TokenKind::Colon, ":"_s, ForcedBy::RuleThatIsAlwaysTried))
             return nullptr;
         if (!parseBlock(finalbody, "'finally' statement"_s, finallyToken))
             return nullptr;
@@ -1783,7 +1825,7 @@ Stmt* Parser::parseFunctionDef(bool isAsync, Position start, Seq<Expr*> decorato
         if (!parseTypeParams(typeParams))
             return missingAfterOptionalPart(open, "expected '('"_s);
     }
-    if (!expectForced(TokenKind::LPar, "("_s))
+    if (!expectForced(TokenKind::LPar, "("_s, ForcedBy::RuleThatExplainsErrors))
         return nullptr;
     Arguments* arguments = parseParameters(false);
     if (!arguments)
@@ -1805,7 +1847,7 @@ Stmt* Parser::parseFunctionDef(bool isAsync, Position start, Seq<Expr*> decorato
         if (!returns)
             return missingAfterOptionalPart(arrow, "expected ':'"_s);
     }
-    if (!expectForced(TokenKind::Colon, ":"_s))
+    if (!expectForced(TokenKind::Colon, ":"_s, ForcedBy::RuleThatExplainsErrors))
         return nullptr;
 
     // func_type_comment: on the line of the ':', or alone on the next one, before the indented block.

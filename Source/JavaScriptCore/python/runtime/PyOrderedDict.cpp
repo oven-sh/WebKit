@@ -9,6 +9,7 @@
 #include "PyAbstract.h"
 #include "PyDict.h"
 #include "PyErrors.h"
+#include "PyException.h"
 #include "PyInternals.h"
 #include "PyIterators.h"
 #include "PyList.h"
@@ -422,13 +423,25 @@ static JSValue odictMoveToEnd(JSGlobalObject* globalObject, JSValue self, JSValu
         last = isTrue(globalObject, lastValue);
         RETURN_IF_EXCEPTION(scope, { });
     }
-    int64_t keyHash = hash(globalObject, key);
+    bool found = false;
+    // Nothing is looked for in an empty one, so the key need not even be hashable.
+    if (PyDict::from(self)->size()) {
+        int64_t keyHash = hash(globalObject, key);
+        RETURN_IF_EXCEPTION(scope, { });
+        found = PyDict::from(self)->moveToEnd(globalObject, key, keyHash, last);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    if (found)
+        return jsUndefined();
+    // CPython hands the key over as the value of the exception, not as its argument: a tuple is taken for all the arguments, None for none.
+    std::span<const JSValue> arguments { &key, 1 };
+    if (isNone(key))
+        arguments = { };
+    else if (auto* tuple = PyTuple::tryFrom(key))
+        arguments = tuple->span();
+    PyException* exception = newException(globalObject, runtime(globalObject).KeyError(), arguments);
     RETURN_IF_EXCEPTION(scope, { });
-    bool found = PyDict::from(self)->moveToEnd(globalObject, key, keyHash, last);
-    RETURN_IF_EXCEPTION(scope, { });
-    if (!found)
-        return raiseKeyError(globalObject, scope, key);
-    return jsUndefined();
+    return raiseException(globalObject, scope, exception);
 }
 
 static JSValue odictClear(JSGlobalObject* globalObject, JSValue self)

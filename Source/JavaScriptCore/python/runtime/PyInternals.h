@@ -207,6 +207,8 @@ JSString* formatInt(JSGlobalObject*, JSValue self, JSString* spec);
 JSString* formatFloat(JSGlobalObject*, JSValue self, JSString* spec);
 JSString* formatComplex(JSGlobalObject*, JSValue self, JSString* spec);
 JSString* formatStr(JSGlobalObject*, JSValue self, JSString* spec);
+// For an argument that CPython takes as a C string. True: there is a null character in it, and a ValueError has been raised.
+bool hasEmbeddedNull(JSGlobalObject*, JSString*);
 // The module _string.
 JSValue formatterParser(JSGlobalObject*, JSValue formatString);
 JSValue formatterFieldNameSplit(JSGlobalObject*, JSValue fieldName);
@@ -261,6 +263,9 @@ JSValue bytesFromObject(JSGlobalObject*, JSValue);
 
 // The index for a sequence of that length, from an index that may be negative. False: an IndexError with the message.
 bool normalizeIndex(JSGlobalObject*, JSValue index, int64_t length, ASCIILiteral message, int64_t& result);
+// Whether the type has a table of the methods of sequences in CPython (tp_as_sequence), be it an empty one, on which some messages and
+// the order of some checks depend: every class written in Python has, and every built-in type that has a length, items or `in`.
+bool hasTableOfSequenceMethods(PyType*);
 // As the start and end arguments of str.find() and list.index(): None or absent is the default, and what is out of range is clipped.
 bool sliceBounds(JSGlobalObject*, JSValue start, JSValue end, int64_t length, int64_t& from, int64_t& to);
 // The same in two steps, for a sequence that can change: the first may call __index__ methods, the second is for the length after that.
@@ -369,6 +374,9 @@ JSValue frameLocals(JSGlobalObject*, PyFrame*);
 
 // The name among the candidates that is closest to the one given. Null: none is close.
 String calculateSuggestion(const Vector<String>& candidates, const String& name);
+// TypeError: f() got an unexpected keyword argument 'x'. Did you mean 'y'? (The last if one of the names it takes is close.)
+JSValue raiseUnexpectedKeyword(JSGlobalObject*, StringView function, const String& keyword, std::span<const ASCIILiteral> names);
+inline JSValue raiseUnexpectedKeyword(JSGlobalObject* globalObject, StringView function, const String& keyword, std::initializer_list<ASCIILiteral> names) { return raiseUnexpectedKeyword(globalObject, function, keyword, std::span<const ASCIILiteral> { names.begin(), names.size() }); }
 // The exception and its traceback as text, without running Lib/traceback.py: see printException().
 String formatException(JSGlobalObject*, JSValue exception);
 
@@ -474,19 +482,32 @@ bool specIsInitializing(JSGlobalObject*, JSValue spec);
 bool ensureNativeModuleSpec(JSGlobalObject*, PyModule*);
 // See TypeFlag::Internal.
 ALWAYS_INLINE bool isInternalObject(JSCell* cell) { return cell->type() == PyObjectType && uncheckedDowncast<PyObject>(cell)->type()->has(TypeFlag::Internal); }
-// For whoever works out what reference counts would have done with objects that are dead (PyFinalizationOrder.cpp, Census in PyGC.cpp).
 // Some objects are made of several cells here, which refer to one another. Those are no cycles: in CPython there is one object,
 // or the part does not hold on to the whole. This is the whole that the cell, a part, refers back to. Null: there is none.
 JSCell* wholeThatPartRefersTo(JSCell*);
-// For the collector, when all that is reachable is marked, about the candidates, which are not marked. (PyFinalizationOrder.cpp)
+// For the collector, when all that is reachable is marked, about the candidates: the objects with finalizers that are not marked.
+// See PyFinalizationOrder.cpp.
+struct FinalizationQuestions {
+    std::span<JSCell* const> askedAbout; // See isCyclicGarbageToFinalize.
+    bool looksAtAllThatDied { false }; // Only in a full collection.
+    bool wantsGarbage { false };
+    bool wantsToKnowWhatReferenceCountsWouldFree { false };
+};
 struct FinalizationOrder {
     // Which of the candidates to finalize now, and which when those are gone. Each in the order in which to take them.
     Vector<unsigned> now;
     Vector<unsigned> later;
-    // If it was asked for: the cells that are in a cycle with one of the first, or that such a cycle reaches.
-    UncheckedKeyHashSet<JSCell*> cyclicGarbage;
+    // So many of the first are what reference counts would have freed. The others are in cycles, or hang off them.
+    unsigned freedByReferenceCounts { 0 };
+    // For each of the cells asked about: it is one of those others, or one of them reaches it.
+    Vector<bool> isCyclicGarbageToFinalize;
+    // False: it was not asked to, or that was too much.
+    bool hasLookedAtAllThatDied { false };
+    size_t cellsLookedAt { 0 }; // Then: how many cells there were, dead or alive.
+    // Then, if it was asked for: the cells that reference counts would not have freed and that no candidate reaches.
+    Vector<JSCell*> garbage;
 };
-FinalizationOrder finalizationOrder(SlotVisitor&, std::span<JSCell* const> candidates, bool wantsCyclicGarbage);
+FinalizationOrder finalizationOrder(JSC::Heap&, SlotVisitor&, std::span<JSCell* const> candidates, const FinalizationQuestions&);
 
 // Which of the locals of a frame of the LLInt or the Baseline JIT hold values that the code may still read. `isCalling`: there is a
 // frame that this one called. False: there is no telling.

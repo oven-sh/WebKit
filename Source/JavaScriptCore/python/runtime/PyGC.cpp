@@ -263,7 +263,8 @@ static bool isOfUntrackedType(PyType* type)
 }
 
 // gc.is_tracked(). It allocates no cell, and the object may be one that the collector has just found dead.
-static bool isTracked(Runtime& rt, JSValue value)
+// `isYoung`: it has not come through a collection of CPython's.
+static bool isTracked(Runtime& rt, JSValue value, bool isYoung = false)
 {
     if (!value.isCell() || !value.asCell()->isObject())
         return false;
@@ -274,10 +275,12 @@ static bool isTracked(Runtime& rt, JSValue value)
     PyType* type = rt.typeOf(cell);
     if (type->isHeapType())
         return true;
-    // A tuple is let go of once a collection has found that nothing in it is kept track of.
+    // A tuple is kept track of if any of its items is of a type whose instances may be, until a collection finds that none is.
     if (cell->type() == PyTupleType && type == rt.tupleType()) {
         for (JSValue item : uncheckedDowncast<PyTuple>(cell)->span()) {
-            if (item && isTracked(rt, item))
+            if (!item || !item.isCell() || !item.asCell()->isObject())
+                continue;
+            if (isYoung ? !isOfUntrackedType(rt.typeOf(item)) : isTracked(rt, item))
                 return true;
         }
         return false;
@@ -289,15 +292,13 @@ static bool isTracked(Runtime& rt, JSValue value)
 //
 // CPython's collector deals with what reference counts do not free: the objects that are in a cycle, and what only such
 // objects refer to. gc.collect() returns how many it found. The engine's collector finds all that is unreachable and does not
-// look at it, which is why it is fast. When a program asks for a collection, this does look, once all is marked and before
-// anything is swept: it takes the cells that have just died and does to them what reference counts would have done, letting go
-// of those that nothing dead refers to, then of those that only these referred to, and so on. What is left is what
-// CPython's collector would have found; those cells among it that are objects it keeps track of are counted.
-class Census final : public AbstractSlotVisitor, public Runtime::MarkingObserver {
+// look at it, which is why it is fast. When a program asks for a collection, the cells that have died in it are looked at, once
+// all is marked and before anything is swept (PyFinalizationOrder.cpp). Of what reference counts would have left, those
+// cells are counted that are objects which CPython's collector keeps track of.
+class Census final : public Runtime::MarkingObserver {
 public:
     Census(Runtime& rt, bool keepsWhatItFinds, bool describesWhatItFinds)
-        : AbstractSlotVisitor(rt.vm().heap.collector(), "PythonCensus"_s, m_opaqueRootStorage)
-        , m_runtime(rt)
+        : m_runtime(rt)
         , m_keepsWhatItFinds(keepsWhatItFinds)
         , m_describesWhatItFinds(describesWhatItFinds)
     {
@@ -318,192 +319,15 @@ public:
         m_keptByLastCollection.clear();
     }
 
-    bool didFinishMarking(SlotVisitor& marker) final
+    bool wantsGarbage() final { return !m_isDone; }
+
+    void didFindGarbage(std::span<JSCell* const> garbage, size_t cellsLookedAt, Vector<JSCell*>& toKeep) final
     {
-        if (std::exchange(m_isDone, true))
-            return false;
-        m_marker = &marker;
-        count();
-        m_marker = nullptr;
-        for (JSCell* cell : m_keptByLastCollection)
-            marker.appendUnbarriered(cell);
-        return !m_keptByLastCollection.isEmpty();
-    }
-
-    void append(const ConservativeRoots&) final { }
-    void appendUnbarriered(JSCell* cell) final { reach(cell); }
-    void appendHiddenUnbarriered(JSCell* cell) final { reach(cell); }
-    bool isFirstVisit() const final { return false; }
-    bool isMarked(const void* cell) const final { return m_marker->isMarked(cell); }
-    bool isMarked(MarkedBlock& block, HeapCell* cell) const final { return m_marker->isMarked(block, cell); }
-    bool isMarked(PreciseAllocation& allocation, HeapCell* cell) const final { return m_marker->isMarked(allocation, cell); }
-    void markAuxiliary(const void*) final { }
-    void reportExtraMemoryVisited(size_t) final { }
-#if ENABLE(RESOURCE_USAGE)
-    void reportExternalMemoryVisited(size_t) final { }
-#endif
-    bool mutatorsAreStopped() const final { return true; }
-    void didRace(const VisitRaceKey&) final { }
-    void visitAsConstraint(const JSCell* cell) final { cell->methodTable()->visitChildren(const_cast<JSCell*>(cell), *this); }
-    void addParallelConstraintTask(RefPtr<SharedTask<void(AbstractSlotVisitor&)>>) final { }
-    void addParallelConstraintTask(RefPtr<SharedTask<void(SlotVisitor&)>>) final { }
-
-private:
-    static constexpr unsigned none = std::numeric_limits<unsigned>::max();
-
-    // The number of a dead cell, by where it is: a table for each block that has any.
-    unsigned* slotFor(JSCell* cell, bool makesRoom)
-    {
-        if (cell->isPreciseAllocation()) {
-            if (makesRoom)
-                return &m_numbersOfPreciseAllocations.add(cell, none).iterator->value;
-            auto it = m_numbersOfPreciseAllocations.find(cell);
-            return it == m_numbersOfPreciseAllocations.end() ? nullptr : &it->value;
-        }
-        MarkedBlock& block = cell->markedBlock();
-        unsigned table;
-        if (&block == m_lastBlock)
-            table = m_tableOfLastBlock;
-        else {
-            auto it = m_tables.find(&block);
-            if (it != m_tables.end())
-                table = it->value;
-            else {
-                if (!makesRoom)
-                    return nullptr;
-                table = m_numbers.size();
-                m_numbers.grow(table + MarkedBlock::atomsPerBlock);
-                std::ranges::fill(m_numbers.mutableSpan().subspan(table), none);
-                m_tables.add(&block, table);
-            }
-            m_lastBlock = &block;
-            m_tableOfLastBlock = table;
-        }
-        return &m_numbers[table + block.atomNumber(cell)];
-    }
-
-    void reach(JSCell* cell)
-    {
-        if (!cell || cell == m_wholeOfCurrentCell || m_marker->isMarked(cell))
-            return;
-        unsigned* slot = slotFor(cell, false);
-        if (!slot || *slot == none)
-            return;
-        m_edges.append(*slot);
-        ++m_references[*slot];
-    }
-
-    // function(cell) for the cells of the block that were alive when the collection began and are not marked: MarkedBlock::Handle::isLive(),
-    // for a whole block, with the world stopped.
-    template<typename Function>
-    void forEachCellThatDied(MarkedSpace& space, MarkedBlock::Handle* handle, const Function& function)
-    {
-        MarkedBlock& block = handle->block();
-        bool marksAreCurrent = block.markingVersion() == space.markingVersion();
-        auto cellAt = [&](size_t atom) {
-            return reinterpret_cast<JSCell*>(reinterpret_cast<char*>(&block) + atom * MarkedBlock::atomSize);
-        };
-        if (handle->isAllocated()) {
-            size_t atomsPerCell = handle->cellSize() / MarkedBlock::atomSize;
-            for (size_t atom = block.atomNumber(handle->start()); atom < MarkedBlock::endAtom; atom += atomsPerCell) {
-                if (!marksAreCurrent || !block.marks().get(atom))
-                    function(cellAt(atom));
-            }
-            return;
-        }
-        WTF::BitSet<MarkedBlock::atomsPerBlock> dead;
-        if (block.newlyAllocatedVersion() == space.newlyAllocatedVersion()) {
-            dead = block.newlyAllocated();
-            if (marksAreCurrent)
-                dead.exclude(block.marks());
-        } else if (!marksAreCurrent && MarkedSpace::nextVersion(block.markingVersion()) == space.markingVersion())
-            dead = block.marks(); // It has not been marked in. These are the survivors of the last collection.
-        else
-            return;
-        dead.forEachSetBit([&](size_t atom) {
-            function(cellAt(atom));
-        });
-    }
-
-    void count()
-    {
+        m_isDone = true;
+        candidates = cellsLookedAt;
         JSGlobalObject* globalObject = m_runtime.globalObject();
-        ASSERT(m_runtime.vm().heap.collectionScope() == CollectionScope::Full);
-        candidates = 0;
-        Vector<JSCell*> dead;
-        auto look = [&](JSCell* cell) {
-            ++candidates;
-            if (!cell->structureID())
-                return;
-            // These refer to nothing but their like.
-            JSType type = cell->type();
-            if (type == StringType || type == HeapBigIntType || type == SymbolType || type == PyFloatType)
-                return;
-            *slotFor(cell, true) = dead.size();
-            dead.append(cell);
-        };
-        MarkedSpace& space = m_runtime.vm().heap.objectSpace();
-        space.forEachBlock([&](MarkedBlock::Handle* handle) {
-            if (!isJSCellKind(handle->cellKind()))
-                return;
-            candidates += handle->markCount();
-#if ASAN_ENABLED
-            forEachCellThatDied(space, handle, [&](JSCell* cell) {
-                if (!handle->isRedZoneCell(cell))
-                    look(cell);
-            });
-#else
-            forEachCellThatDied(space, handle, look);
-#endif
-        });
-        // Those that earlier collections found dead are gone: they are swept when a collection ends.
-        for (PreciseAllocation* allocation : space.preciseAllocations()) {
-            if (!isJSCellKind(allocation->attributes().cellKind))
-                continue;
-            if (allocation->isMarked())
-                ++candidates;
-            else
-                look(static_cast<JSCell*>(allocation->cell()));
-        }
-
-        unsigned count = dead.size();
-        m_references.fill(0, count);
-        Vector<unsigned> firstEdge;
-        firstEdge.reserveInitialCapacity(count + 1);
-        for (JSCell* cell : dead) {
-            firstEdge.append(m_edges.size());
-            // CPython's collector closes the generators it finds, which then refer to nothing: if that was all that held a
-            // cycle together, reference counts do the rest, and it is not counted. (One with something to do when it is closed
-            // has been closed by now.)
-            if (isInternalObject(cell) || cell->type() == PyGeneratorType)
-                continue;
-            m_wholeOfCurrentCell = wholeThatPartRefersTo(cell);
-            cell->methodTable()->visitChildren(cell, *this);
-        }
-        firstEdge.append(m_edges.size());
-
-        Vector<unsigned> released;
-        for (unsigned i = 0; i < count; ++i) {
-            if (!m_references[i])
-                released.append(i);
-        }
-        Vector<bool> isReleased;
-        isReleased.fill(false, count);
-        while (!released.isEmpty()) {
-            unsigned i = released.takeLast();
-            isReleased[i] = true;
-            for (unsigned edge = firstEdge[i]; edge < firstEdge[i + 1]; ++edge) {
-                if (!--m_references[m_edges[edge]])
-                    released.append(m_edges[edge]);
-            }
-        }
-        for (unsigned i = 0; i < count; ++i) {
-            JSCell* cell = dead[i];
-            if (isReleased[i] || !cell->isObject() || !isObjectOfPython(cell, globalObject) || !isWhole(cell))
-                continue;
-            // A tuple is kept track of until it has come through a collection. Most garbage is young.
-            bool isNewTuple = cell->type() == PyTupleType && uncheckedDowncast<PyTuple>(cell)->length();
-            if (!isNewTuple && !isTracked(m_runtime, cell))
+        for (JSCell* cell : garbage) {
+            if (!cell->isObject() || !isObjectOfPython(cell, globalObject) || !isWhole(cell) || !isTracked(m_runtime, cell, true))
                 continue;
             ++found;
             if (m_keepsWhatItFinds)
@@ -511,29 +335,15 @@ private:
             if (m_describesWhatItFinds)
                 descriptions.append(makeString('<', m_runtime.typeOf(cell)->nameInMessages(), " 0x"_s, hex(std::bit_cast<uintptr_t>(cell), WTF::Lowercase), '>'));
         }
-        m_tables.clear();
-        m_numbers.clear();
-        m_numbersOfPreciseAllocations.clear();
-        m_lastBlock = nullptr;
-        m_edges.clear();
-        m_references.clear();
+        toKeep.appendVector(m_keptByLastCollection);
     }
 
+private:
     Runtime& m_runtime;
     bool m_keepsWhatItFinds;
     bool m_describesWhatItFinds;
     bool m_isDone { false };
     Vector<JSCell*> m_keptByLastCollection;
-    SlotVisitor* m_marker { nullptr };
-    JSCell* m_wholeOfCurrentCell { nullptr };
-    ConcurrentPtrHashSet m_opaqueRootStorage;
-    UncheckedKeyHashMap<MarkedBlock*, unsigned> m_tables;
-    Vector<unsigned> m_numbers;
-    UncheckedKeyHashMap<JSCell*, unsigned> m_numbersOfPreciseAllocations;
-    MarkedBlock* m_lastBlock { nullptr };
-    unsigned m_tableOfLastBlock { 0 };
-    Vector<unsigned> m_edges;
-    Vector<unsigned> m_references;
 };
 
 // ---- Collections ----

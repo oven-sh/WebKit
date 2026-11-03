@@ -452,9 +452,6 @@ static JSValue dequeIMul(JSGlobalObject* globalObject, JSValue self, JSValue cou
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // As `deque * 'x'` complains.
-    if (!hasIndex(globalObject, countValue))
-        return raiseTypeError(globalObject, scope, "can't multiply sequence by non-int of type '"_s, typeName(globalObject, countValue), '\'');
     int64_t count = toSsize(globalObject, countValue, runtime(globalObject).OverflowError());
     RETURN_IF_EXCEPTION(scope, { });
     RELEASE_AND_RETURN(scope, dequeRepeatInPlace(globalObject, dequeOf(self), count));
@@ -603,11 +600,7 @@ static bool dequeSubscript(JSGlobalObject* globalObject, PyRecord* deque, JSValu
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!hasIndex(globalObject, key)) {
-        raiseTypeError(globalObject, scope, "sequence index must be integer, not '"_s, typeName(globalObject, key), '\'');
-        return false;
-    }
-    int64_t result = toSsize(globalObject, key, runtime(globalObject).IndexError());
+    int64_t result = toSsize(globalObject, key, runtime(globalObject).OverflowError());
     RETURN_IF_EXCEPTION(scope, false);
     // __index__ may have done anything to the deque.
     int64_t size = dequeSize(deque);
@@ -842,9 +835,9 @@ static constexpr NativeDef dequeMethods[] = {
     PY_SLOT("__ge__", dequeCompare<CompareOperator::GtE>, "($self, value, /)"),
     PY_SLOT("__iter__", dequeIter, "($self, /)"),
     PY_SLOT("__len__", dequeLen, "($self, /)"),
-    PY_SLOT("__getitem__", dequeGetItem, "($self, key, /)"),
-    PY_SLOT("__setitem__", dequeSetItem, "($self, key, value, /)"),
-    PY_SLOT("__delitem__", dequeDelItem, "($self, key, /)"),
+    PY_SEQUENCE_SLOT("__getitem__", dequeGetItem, "($self, key, /)"),
+    PY_SEQUENCE_SLOT("__setitem__", dequeSetItem, "($self, key, value, /)"),
+    PY_SEQUENCE_SLOT("__delitem__", dequeDelItem, "($self, key, /)"),
     PY_SLOT("__contains__", dequeContains, "($self, key, /)"),
     PY_SEQUENCE_SLOT("__add__", dequeAdd, "($self, value, /)"),
     PY_SEQUENCE_SLOT("__mul__", dequeMul, "($self, value, /)"),

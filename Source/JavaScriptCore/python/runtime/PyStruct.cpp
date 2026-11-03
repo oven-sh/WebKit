@@ -801,7 +801,8 @@ static JSValue structPackImpl(JSGlobalObject* globalObject, JSValue self, std::s
     StructLayout* layout = structLayoutOf(storage);
     if (static_cast<int64_t>(values.size()) != layout->length)
         return structRaise(globalObject, "pack expected "_s, layout->length, " items for packing (got "_s, values.size(), ')');
-    if (!layout->size)
+    // Of no size, it may still have values to look at ('0s').
+    if (!layout->size && values.empty())
         return runtime(globalObject).emptyBytes();
     PyBytes* result = newBytes(globalObject, layout->size);
     if (!result || !structPackAt(globalObject, storage, values, result->mutableData()))

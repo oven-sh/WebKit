@@ -19,6 +19,7 @@ A table maps a code of two bytes, (lead << 8) | trail, to a character. What it i
 import sys
 
 NONE = 0xFFFF
+DEPENDS_ON_NEXT = 0xFFFE
 
 
 def decode(codec, data):
@@ -108,6 +109,8 @@ def japanese():
             (to0213_2 if second else to0213_1)[c] = code
     for code, (first, second) in pairs.items():
         assert encode("euc_jis_2004", first, second) == bytes((code >> 8 | 0x80, code & 0xFF | 0x80))
+    # In the table, those are marked.
+    to0213_1.update(dict.fromkeys(starters, DEPENDS_ON_NEXT))
 
     # What Microsoft's code page 932 has over Shift_JIS, or has otherwise. In the bytes of Shift_JIS.
     cp932, to932 = {}, {}

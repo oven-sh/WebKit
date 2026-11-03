@@ -72,25 +72,36 @@ bool Runtime::keepUnreachableObjectsToFinalize(SlotVisitor& visitor)
         if (!visitor.isMarked(cell))
             candidates.append(cell);
     }
-    if (candidates.isEmpty()) {
+    auto finish = [&]() WTF_REQUIRES_LOCK(m_finalizationLock) {
         if (m_markingObserver && m_markingObserver->didFinishMarking(visitor))
             return true;
         didMarkAll(visitor);
         return false;
-    }
+    };
+    // A collection that was under way when the program asked for one is finished first.
+    bool looksAtAllThatDied = m_collectionWasAskedFor && m_vm.heap.collectionScope() == CollectionScope::Full;
+    bool wantsGarbage = looksAtAllThatDied && m_markingObserver && m_markingObserver->wantsGarbage();
+    if (candidates.isEmpty() && !wantsGarbage)
+        return finish();
 
     // An object is finalized before what it refers to.
-    Vector<PyWeakRef*> weakRefs = weakRefsWithCallbacksToUnmarkedObjects(visitor);
-    FinalizationOrder order = finalizationOrder(visitor, candidates.span(), !weakRefs.isEmpty());
+    Vector<PyWeakRef*> weakRefs;
+    if (!candidates.isEmpty() && !m_leavesCyclicGarbageForLater)
+        weakRefs = weakRefsWithCallbacksToUnmarkedObjects(visitor);
+    Vector<JSCell*> referents = weakRefs.map([](PyWeakRef* weakRef) {
+        return weakRef->referent();
+    });
+    FinalizationOrder order = finalizationOrder(m_vm.heap, visitor, candidates.span(), { referents.span(), looksAtAllThatDied, wantsGarbage, m_leavesCyclicGarbageForLater });
 
     // All that the candidates reach is about to be marked, so the weak references to it stay as they are until the finalizers have
     // run and another collection finds it dead: first __del__, then the weak references, as with reference counts. But what is
     // in a cycle, or hangs off one, is not freed by reference counts, and CPython's collector does it the other way round for
     // the weak references that have callbacks: it clears them, calls the callbacks of those that are not garbage
     // themselves, and then calls the finalizers. (So such a reference stays dead if a finalizer brings its referent back.)
-    for (PyWeakRef* weakRef : weakRefs) {
-        if (!order.cyclicGarbage.contains(weakRef->referent()))
+    for (unsigned i = 0; i < weakRefs.size(); ++i) {
+        if (!order.isCyclicGarbageToFinalize[i])
             continue;
+        PyWeakRef* weakRef = weakRefs[i];
         weakRef->setReferent(nullptr);
         if (visitor.isMarked(weakRef)) {
             m_pendingWeakRefCallbacks.append(weakRef);
@@ -99,17 +110,29 @@ bool Runtime::keepUnreachableObjectsToFinalize(SlotVisitor& visitor)
             weakRef->clearCallback();
     }
 
-    for (unsigned i : order.now) {
-        m_pendingFinalization.append(candidates[i]);
-        m_finalizable.remove(candidates[i]);
-        visitor.appendUnbarriered(candidates[i]);
+    for (unsigned n = 0; n < order.now.size(); ++n) {
+        JSCell* cell = candidates[order.now[n]];
+        visitor.appendUnbarriered(cell);
+        if (m_leavesCyclicGarbageForLater && n >= order.freedByReferenceCounts)
+            continue;
+        m_pendingFinalization.append(cell);
+        m_finalizable.remove(cell);
     }
     // The others are kept alive by those. They come up again, in this order, in the collection that finds those gone.
     for (unsigned i : order.later) {
         m_finalizable.remove(candidates[i]);
         m_finalizable.add(candidates[i]);
     }
-    didQueueCalls();
+    if (!candidates.isEmpty())
+        didQueueCalls();
+
+    Vector<JSCell*> toKeep;
+    if (wantsGarbage)
+        m_markingObserver->didFindGarbage(order.garbage.span(), order.cellsLookedAt, toKeep);
+    for (JSCell* cell : toKeep)
+        visitor.appendUnbarriered(cell);
+    if (candidates.isEmpty() && toKeep.isEmpty())
+        return finish();
     return true;
 }
 
@@ -459,8 +482,7 @@ void Runtime::finalizeAllAtExit()
     };
     auto collect = [&] {
         for (unsigned round = 0; round < 64 && !isDone(); ++round) {
-            m_vm.clearLastException();
-            m_vm.heap.collectNow(Synchronousness::Sync, CollectionScope::Full);
+            collectAsAskedFor();
             if (!hasPendingCalls())
                 break;
             runPendingCalls();
@@ -512,6 +534,36 @@ NEVER_INLINE void wipeStackBelow(VM& vm, size_t size)
         *reinterpret_cast<volatile uintptr_t*>(wiped + i) = 0;
 }
 
+void Runtime::collectAsAskedFor()
+{
+    // The VM remembers the last exception thrown, for the debugger, long after it has been handled, and with it the
+    // traceback and all that the frames in it refer to.
+    m_vm.clearLastException();
+    SetForScope wasAskedFor(m_collectionWasAskedFor, true);
+    m_vm.heap.collectNow(Synchronousness::Sync, CollectionScope::Full);
+}
+
+void Runtime::finalizeWhatReferenceCountsWouldHaveFreed()
+{
+    for (unsigned round = 0; round < 64; ++round) {
+        {
+            Locker locker { m_finalizationLock };
+            registerNotedGenerators();
+            if (m_finalizable.isEmpty() && m_pendingFinalization.isEmpty() && m_pendingWeakRefCallbacks.isEmpty())
+                return;
+        }
+        {
+            SetForScope leavesCyclicGarbage(m_leavesCyclicGarbageForLater, true);
+            collectAsAskedFor();
+        }
+        if (!hasPendingCalls())
+            return;
+        runPendingCalls();
+        if (m_vm.hasPendingTerminationException()) [[unlikely]]
+            return;
+    }
+}
+
 void collectAndFinalize(JSGlobalObject* globalObject, Runtime::MarkingObserver* observer)
 {
     Runtime& rt = runtime(globalObject);
@@ -521,15 +573,12 @@ void collectAndFinalize(JSGlobalObject* globalObject, Runtime::MarkingObserver* 
     // An object with a finalizer takes two rounds: one finds it, the next frees it, which may clear weak references in turn
     // and finds what only it referred to. The limit is for finalizers that make new garbage with finalizers for ever.
     for (unsigned round = 0; round < 64; ++round) {
-        // The VM remembers the last exception thrown, for the debugger, long after it has been handled, and with it the
-        // traceback and all that the frames in it refer to.
-        vm.clearLastException();
         wipeStackBelow(vm);
         if (observer) {
             observer->willCollect();
             rt.setMarkingObserver(observer);
         }
-        vm.heap.collectNow(Synchronousness::Sync, CollectionScope::Full);
+        rt.collectAsAskedFor();
         if (observer) {
             rt.setMarkingObserver(nullptr);
             observer->didCollect();

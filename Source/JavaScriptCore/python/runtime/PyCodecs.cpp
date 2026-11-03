@@ -79,6 +79,11 @@ static bool codecNameText(JSGlobalObject* globalObject, JSString* name, String& 
     RETURN_IF_EXCEPTION(scope, false);
     if (text.isNull())
         text = emptyString();
+    if (!text.is8Bit()) {
+        // The C string is in UTF-8: a lone surrogate is a UnicodeEncodeError.
+        codecEncodeUTF8(globalObject, name, String());
+        RETURN_IF_EXCEPTION(scope, false);
+    }
     if (text.find(static_cast<char16_t>(0)) != notFound) {
         raiseValueError(globalObject, scope, "embedded null character"_s);
         return false;
@@ -376,17 +381,14 @@ static bool codecGetRegistry(JSGlobalObject* globalObject, CodecRegistry& regist
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     // Not by way of sys.modules: codecs are looked up while the interpreter shuts down, when nothing can be imported.
-    JSValue module = nativeModuleInstance(globalObject, internString(vm, "_codecs"_s), *findNativeModule("_codecs"_s));
+    registry.moduleDict = nativeModuleNamespace(globalObject, internString(vm, "_codecs"_s), *findNativeModule("_codecs"_s));
     RETURN_IF_EXCEPTION(scope, false);
-    if (auto* codecs = PyModule::tryFrom(module)) {
-        registry.moduleDict = codecs->dict();
-        if (JSValue searchPath = registry.moduleDict->get(internString(vm, "_search_path"_s)))
-            registry.searchPath = tryAsList(searchPath);
-        if (JSValue cache = registry.moduleDict->get(internString(vm, "_cache"_s)))
-            registry.cache = PyDict::tryFrom(cache);
-        if (JSValue errorHandlers = registry.moduleDict->get(internString(vm, "_errors"_s)))
-            registry.errorHandlers = PyDict::tryFrom(errorHandlers);
-    }
+    if (JSValue searchPath = registry.moduleDict->get(internString(vm, "_search_path"_s)))
+        registry.searchPath = tryAsList(searchPath);
+    if (JSValue cache = registry.moduleDict->get(internString(vm, "_cache"_s)))
+        registry.cache = PyDict::tryFrom(cache);
+    if (JSValue errorHandlers = registry.moduleDict->get(internString(vm, "_errors"_s)))
+        registry.errorHandlers = PyDict::tryFrom(errorHandlers);
     if (!registry.searchPath || !registry.cache || !registry.errorHandlers) {
         raiseSystemError(globalObject, scope, "the codec registry is gone from the module _codecs"_s);
         return false;

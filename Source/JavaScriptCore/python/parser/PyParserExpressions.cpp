@@ -408,9 +408,23 @@ Expr* Parser::parseSequenceElement()
         return parseNamedExpression();
 
     const Token star = peek();
+    size_t starIndex = m_index;
     Expr* starred = parseStarExpression();
     if (!starred || m_quiet)
         return starred;
+    if (atStartOfExpression()) [[unlikely]] {
+        // Nothing valid. What follows the star was looked at as an expression, to see whether it is `*a if b else c` or `*a = b`.
+        SetForScope diagnosing(m_diagnosing, true);
+        SetForScope acceptsPrefix(m_acceptsPrefix, true);
+        auto afterStarred = checkpoint();
+        m_index = starIndex + 1;
+        m_lastEnd = star.endPosition;
+        parseExpression();
+        if (failed() && (m_errorIsFatal || !m_errorIsGeneric))
+            return nullptr;
+        rewind(afterStarred);
+        return starred;
+    }
     if (at(TokenKind::KwIf)) {
         // *a if b else c
         SetForScope diagnosing(m_diagnosing, true);
@@ -1480,6 +1494,25 @@ Expr* Parser::parseBraceDisplay()
     ExprVector keys;
     ExprVector values;
 
+    // The rules that say what is wrong with the first item of a dict are, unlike all the others of their kind, always tried
+    // (in the grammar, neither `dict` nor invalid_double_starred_kvpairs has them as an alternative of their own).
+    auto dictError = [&](auto raiseIt) -> std::nullptr_t {
+        if (failed())
+            return nullptr;
+        if (!keys.isEmpty()) {
+            raiseIt();
+            return nullptr;
+        }
+        SetForScope notQuiet(m_quiet, false);
+        raiseIt();
+        errorIsOfARuleThatIsAlwaysTried();
+        return nullptr;
+    };
+#define DIAGNOSE_UNLESS_FIRST_ITEM() \
+    if (m_quiet && !keys.isEmpty()) \
+        return invalidSyntax(); \
+    SetForScope diagnosing(m_diagnosing, m_diagnosing || !keys.isEmpty())
+
     auto finishDict = [&]() -> Expr* {
         if (!expect(TokenKind::RBrace))
             return nullptr;
@@ -1492,9 +1525,9 @@ Expr* Parser::parseBraceDisplay()
     // After the ':' of a pair.
     auto parseValue = [&](const Token& colon) -> Expr* {
         if (at(TokenKind::RBrace) || at(TokenKind::Comma))
-            return syntaxErrorAt(colon, "expression expected after dictionary key and ':'"_s);
+            return dictError([&] { syntaxErrorAt(colon, "expression expected after dictionary key and ':'"_s); });
         if (at(TokenKind::Star) || at(TokenKind::DoubleStar)) {
-            DIAGNOSE();
+            DIAGNOSE_UNLESS_FIRST_ITEM();
             bool isDouble = at(TokenKind::DoubleStar);
             Position starStart = startPosition();
             advance();
@@ -1502,9 +1535,9 @@ Expr* Parser::parseBraceDisplay()
                 return nullptr;
             auto message = isDouble ? "cannot use dict unpacking in a dictionary value"_s : "cannot use a starred expression in a dictionary value"_s;
             if (keys.isEmpty())
-                return syntaxErrorAt(rangeFrom(starStart), message);
+                return dictError([&] { syntaxErrorAt(rangeFrom(starStart), message); });
             peek();
-            return syntaxErrorStartingFrom(starStart, message);
+            return dictError([&] { syntaxErrorStartingFrom(starStart, message); });
         }
         return parseExpression();
     };
@@ -1515,19 +1548,19 @@ Expr* Parser::parseBraceDisplay()
         if (!value)
             return nullptr;
         if (at(TokenKind::KwIf)) {
-            DIAGNOSE();
+            DIAGNOSE_UNLESS_FIRST_ITEM();
             advance();
             if (parseDisjunction() && accept(TokenKind::KwElse) && parseExpression())
-                return syntaxErrorAt(rangeFrom(doubleStar.startPosition), "invalid double starred expression. Did you forget to wrap the conditional expression in parentheses?"_s);
+                return dictError([&] { syntaxErrorAt(rangeFrom(doubleStar.startPosition), "invalid double starred expression. Did you forget to wrap the conditional expression in parentheses?"_s); });
             return failed() ? nullptr : invalidSyntax();
         }
         if (at(TokenKind::Colon)) {
-            DIAGNOSE();
+            DIAGNOSE_UNLESS_FIRST_ITEM();
             Range range = rangeFrom(doubleStar.startPosition);
             advance();
             if (!parseExpression())
                 return nullptr;
-            return syntaxErrorAt(range, "cannot use dict unpacking in a dictionary key"_s);
+            return dictError([&] { syntaxErrorAt(range, "cannot use dict unpacking in a dictionary key"_s); });
         }
         return value;
     };
@@ -1546,21 +1579,21 @@ Expr* Parser::parseBraceDisplay()
                 continue;
             }
             if (at(TokenKind::Star)) {
-                DIAGNOSE();
+                DIAGNOSE_UNLESS_FIRST_ITEM();
                 Position starStart = startPosition();
                 advance();
                 if (!parseBitwiseOr())
                     return nullptr;
                 Range range = rangeFrom(starStart);
                 if (accept(TokenKind::Colon) && parseExpression())
-                    return syntaxErrorAt(range, "cannot use a starred expression in a dictionary key"_s);
+                    return dictError([&] { syntaxErrorAt(range, "cannot use a starred expression in a dictionary key"_s); });
                 return failed() ? nullptr : invalidSyntax();
             }
             Expr* key = parseExpression();
             if (!key)
                 return nullptr;
             if (!at(TokenKind::Colon))
-                return raise(SyntaxErrorInfo::Type::SyntaxError, key->range.lineno, key->range.endColOffset - 1, key->range.endLineno, -1, "':' expected after dictionary key"_s);
+                return dictError([&] { raise(SyntaxErrorInfo::Type::SyntaxError, key->range.lineno, key->range.endColOffset - 1, key->range.endLineno, -1, "':' expected after dictionary key"_s); });
             const Token colon = advance();
             Expr* value = parseValue(colon);
             if (!value)
@@ -1626,11 +1659,10 @@ Expr* Parser::parseBraceDisplay()
 
     if (at(TokenKind::Colon)) {
         if (first->is<Starred>()) {
-            DIAGNOSE();
             advance();
             if (!parseExpression())
                 return nullptr;
-            return syntaxErrorAt(first->range, "cannot use a starred expression in a dictionary key"_s);
+            return dictError([&] { syntaxErrorAt(first->range, "cannot use a starred expression in a dictionary key"_s); });
         }
         if (first->is<NamedExpr>() && !first->parenthesized)
             return invalidSyntax();
@@ -1686,6 +1718,8 @@ Expr* Parser::parseBraceDisplay()
     set->elts = m_arena.copy(elements);
     return set;
 }
+
+#undef DIAGNOSE_UNLESS_FIRST_ITEM
 
 // The lexer has checked the form of the literal.
 Expr* Parser::parseNumber()

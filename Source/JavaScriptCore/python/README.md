@@ -177,9 +177,22 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
 
 ## Imports
 
-The import system is `importlib`, unchanged. `importlib._bootstrap` and `_bootstrap_external`, which CPython has compiled in, are
-loaded from the standard library when the interpreter starts (`startImportSystem`), then `site`. `import` in C++ is what it is in
-CPython: a look in `sys.modules`, and `_find_and_load` if that fails.
+The import system is `importlib`, unchanged. `importlib._bootstrap` is loaded from the standard library when the interpreter starts
+(`startImportSystem`) and imports the rest itself, then `site`. `import` in C++ is what it is in CPython: a look in `sys.modules`,
+and `_find_and_load` if that fails.
+
+**Frozen modules** are the ones that are frozen in CPython (`runtime/PyImp.cpp` has the table: the import system, `os`, `site`,
+`codecs`, `io`, `abc`, `runpy` and what else every start needs, and `__hello__` and its like for tests). `FrozenImporter` finds them
+before `sys.path` is looked at, their `__spec__.origin` is `frozen`, their code says `<frozen os>`, and `-X frozen_modules=off`,
+`PYTHON_FROZEN_MODULES` and `_imp._override_frozen_modules_for_tests()` switch all but the import system's off. Nothing is
+compiled in: `_imp.get_frozen_object()` compiles the file in the directory of the standard library, or takes its `.pyc`, and a
+module whose file is not there is not frozen. What a host has written in Python for its own use
+(`VirtualFileSystem::hostLibrary`) is frozen too, so it can be imported whatever `sys.path` is, on which its directory is not.
+
+**Modules written in C++** are initialized once for each interpreter: that makes their types and functions, and a namespace that no
+program sees (`nativeModuleNamespace`). `_imp.create_builtin()` makes a new module object with a copy of it. So a module that is
+taken out of `sys.modules` and imported again is a new object without whatever was done to the old one, as in CPython, and state
+that belongs to the interpreter (the codec registry, the warning filters) is not lost with a module object.
 
 A host adds what it can import through a module of its own (`setImportSystemModule`), which also decides what module a file is that JS imports by path (one file, one module; the name Python would import it by, if there is one). Bun's (`src/python/_bun_import.py`) makes
 JavaScript and TypeScript files importable wherever Python files are, packages in `node_modules`, and `node.*` and `bun.*`. What
@@ -203,9 +216,28 @@ without source. What the runtime supplies is `marshal` for code objects (`runtim
   `ValueError`. A module without source fails with `OSError`.) A file with the right header that holds no code at all is left to
   importlib, which reports it as CPython does (`EOFError`, `ImportError`): CPython's tests ask for that. Against a file that was
   made to do harm there is no defence, no more than in CPython: whoever can write it can write the `.py` as well.
-- The two modules of importlib that are loaded before importlib exists are cached in the same files by C++ (`codeOfSourceFile`).
+- The code of frozen modules, which importlib does not read from files, is cached in the same files by C++ (`codeOfSourceFile`).
 - Nothing can be written beside the files a host has inside itself (`PyVirtualFiles.h`). The `__pycache__` directories there are
   real directories elsewhere: in a cache directory of the user's that the host names, one for each build (`toCachePath`).
+
+## Codecs
+
+What CPython has in C is in C++ here: UTF-8, 16, 32 and 7, ASCII, Latin-1, the escapes, charmap, the registry and the error handlers
+(`runtime/PyCodecs.cpp`). Everything else is `Lib/encodings/*.py`, unchanged.
+
+**Chinese, Japanese, Korean.** `_multibytecodec` (`runtime/PyMultibyteCodec.cpp`) has the objects that `Lib/encodings` derives its
+classes from, and all that has to do with errors, pending input and streams. `_codecs_cn`, `_hk`, `_iso2022`, `_jp`, `_kr` and `_tw`
+(`runtime/PyCJKCodecs.cpp`) have the 24 codecs, each a rule for writing the codes of one or more of 13 character sets as bytes.
+
+- The character sets are data. `tools/make_cjk_tables.py` asks the codecs of the CPython whose library is shipped about every
+  sequence of bytes and every code point, and writes `runtime/PyCJKTables.inc`: 173 KB of tables from code to character, which
+  are used where they lie in the executable. (CPython's seven extension modules take 1.1 MB.)
+- The way back, from character to code, is made by turning a table round when something is first encoded with it: 30 to 300 µs
+  and 10 to 150 KB for a set, which is kept for good. The tool works out for which characters that is not what CPython does,
+  47 in all, and the tables say so.
+- They are not built on what Bun has. `TextDecoder` (the crate `encoding_rs`) has the WHATWG's encodings, and its tables are its
+  own business: there `shift_jis` is code page 932, `euc-kr` is code page 949, `big5` is a mixture with HKSCS, `gbk` decodes as
+  GB 18030, and there is no JIS X 0213, Johab, HZ or ISO-2022-KR. No converter of ICU's is linked in.
 
 ## The event loop
 
@@ -330,6 +362,14 @@ while any thread has a function. The side tables are only touched with the GIL; 
 process, filled in by the host before Python starts) and CPython's command line: `readCommandLine()` parses the options and the
 `PYTHON*` variables before there is a VM, `runCommandLine()` runs the script, `-c`, `-m`, a directory or archive with a
 `__main__.py`, standard input or the interactive interpreter, with CPython's `sys.argv`, `sys.path[0]`, messages and exit statuses.
+Arguments, names of files and the values of variables are bytes to the system and `str` to Python by way of `surrogateescape`
+(`decodeFilesystem`), so none is lost for not being UTF-8.
+
+`sys.path` is what was put first for the program, `PYTHONPATH` (made absolute) and the directory of the standard library: that of
+`PYTHONHOME`, else what the host says. A file `python3._pth` beside the executable replaces all of it and isolates the interpreter,
+as in CPython. Without a standard library the command ends as CPython's does, with the path configuration on standard error.
+A standard stream whose descriptor was closed when the process started is `None` (`Configuration::standardStreamWasClosed`: a
+host may have opened something else under the number since, as Bun does).
 
 Bun is that command when the name it is started under, or that of the file that was executed, is `python`, `python3` or `python3.15`
 (`src/runtime/cli/python_command.rs`);

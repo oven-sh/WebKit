@@ -953,7 +953,7 @@ static JSValue floatFromHex(JSGlobalObject* globalObject, JSValue cls, JSValue s
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!isStr(string))
-        return raiseTypeError(globalObject, scope, "fromhex() argument must be str, not "_s, typeName(globalObject, string));
+        return raiseTypeError(globalObject, scope, "bad argument type for built-in operation"_s);
     String text = strValue(string)->value(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
 
@@ -965,11 +965,13 @@ static JSValue floatFromHex(JSGlobalObject* globalObject, JSValue cls, JSValue s
         RELEASE_AND_RETURN(scope, call(globalObject, cls, result));
     };
 
+    // Unlike float(), this knows the white space of C only.
+    auto isSpace = [](char16_t character) { return character == ' ' || (character >= '\t' && character <= '\r'); };
     unsigned i = 0;
     unsigned end = text.length();
-    while (i < end && isPythonWhitespace(text[i]))
+    while (i < end && isSpace(text[i]))
         ++i;
-    while (end > i && isPythonWhitespace(text[end - 1]))
+    while (end > i && isSpace(text[end - 1]))
         --end;
     for (unsigned j = i; j < end; ++j) {
         if (text[j] >= 0x80)

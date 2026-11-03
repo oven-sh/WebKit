@@ -37,9 +37,7 @@ bool parseKeywordArguments(JSGlobalObject* globalObject, ASCIILiteral function, 
             }
         }
         if (!found) {
-            VM& vm = getVM(globalObject);
-            auto scope = DECLARE_THROW_SCOPE(vm);
-            raiseTypeError(globalObject, scope, function, "() got an unexpected keyword argument '"_s, stringOf(args.keywordName(i)), '\'');
+            raiseUnexpectedKeyword(globalObject, function, stringOf(args.keywordName(i)), names);
             return false;
         }
     }
@@ -116,7 +114,7 @@ static JSValue builtinFormat(JSGlobalObject* globalObject, JSValue value, JSValu
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (spec && !isStr(spec))
         return raiseTypeError(globalObject, scope, "format() argument 2 must be str, not "_s, typeNameOfArgument(globalObject, spec));
-    RELEASE_AND_RETURN(scope, format(globalObject, value, spec ? strValue(spec) : nullptr));
+    RELEASE_AND_RETURN(scope, formatObject(globalObject, value, spec ? strValue(spec) : nullptr));
 }
 
 static JSValue builtinRound(JSGlobalObject* globalObject, JSValue number, JSValue digits)

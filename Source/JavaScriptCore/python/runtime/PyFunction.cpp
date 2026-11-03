@@ -1740,7 +1740,9 @@ static JSValue codeGetCode(JSGlobalObject* globalObject, JSValue self)
     static constexpr uint8_t resume = 128;
     static constexpr uint8_t extendedArg = 67;
     static constexpr uint8_t loadAttr = 79, loadGlobal = 91, loadName = 92, storeAttr = 109, storeGlobal = 114, storeName = 115;
+    static constexpr uint8_t importFrom = 71, importName = 72, loadCommonConstant = 80, loadConst = 81, loadSmallInt = 93;
     static constexpr unsigned cachesOfLoadAttr = 9, cachesOfLoadGlobal = 4, cachesOfStoreAttr = 4;
+    static constexpr unsigned commonConstantNone = 7;
 
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1770,19 +1772,11 @@ static JSValue codeGetCode(JSGlobalObject* globalObject, JSValue self)
         break;
     }
 
-    // After all that, where no offset of the program's points: which names the code reads and writes, in order, for what goes through
-    // code to find that out (cloudpickle for the globals a function needs, inspect.getclosurevars()). They do not fit in the units
-    // of their instructions: CPython's have caches behind them.
+    // After all that, where no offset of the program's points: which names the code reads and writes and what it imports, in order,
+    // for what goes through code to find that out (cloudpickle for the globals a function needs, inspect.getclosurevars(),
+    // modulefinder). They do not fit in the units of their instructions: CPython's have caches behind them.
     auto& names = PyCode::from(self)->codeInfo().names;
-    auto append = [&](uint8_t opcode, VirtualRegister nameRegister, unsigned shift, unsigned caches) {
-        JSValue name = codeBlock->getConstant(nameRegister);
-        if (!name || !name.isString())
-            return;
-        const StringImpl* impl = asString(name)->tryGetValueImpl();
-        size_t index = names.findIf([&](const Identifier& other) { return WTF::equal(other.impl(), impl); });
-        if (index == notFound)
-            return;
-        unsigned argument = static_cast<unsigned>(index) << shift;
+    auto appendUnit = [&](uint8_t opcode, unsigned argument, unsigned caches = 0) {
         for (unsigned bits : { 24, 16, 8 }) {
             if (argument >> bits)
                 code.appendList({ extendedArg, static_cast<uint8_t>(argument >> bits) });
@@ -1791,7 +1785,70 @@ static JSValue codeGetCode(JSGlobalObject* globalObject, JSValue self)
         for (unsigned i = 0; i < caches; ++i)
             code.appendList({ cache, static_cast<uint8_t>(0) });
     };
+    auto indexOfName = [&](JSValue name) -> size_t {
+        if (!name || !name.isString())
+            return notFound;
+        const StringImpl* impl = asString(name)->tryGetValueImpl();
+        return names.findIf([&](const Identifier& other) { return WTF::equal(other.impl(), impl); });
+    };
+    auto append = [&](uint8_t opcode, VirtualRegister nameRegister, unsigned shift, unsigned caches) {
+        if (size_t index = indexOfName(codeBlock->getConstant(nameRegister)); index != notFound)
+            appendUnit(opcode, static_cast<unsigned>(index) << shift, caches);
+    };
+    // The operands of an import are constants, which are moved to where the runtime takes them from right before it.
+    struct Move {
+        VirtualRegister destination;
+        VirtualRegister constant;
+    };
+    Vector<Move, 4> moves;
+    PyTuple* constants = nullptr;
     for (const auto& instruction : codeBlock->instructions()) {
+        if (instruction->opcodeID() == op_mov) {
+            auto move = instruction->as<OpMov>();
+            if (move.m_src.isConstant())
+                moves.append({ move.m_dst, move.m_src });
+            else
+                moves.clear();
+            continue;
+        }
+        if (instruction->opcodeID() == op_py_runtime) {
+            auto call = instruction->as<OpPyRuntime>();
+            auto operand = [&](unsigned index) -> JSValue {
+                for (auto& move : moves) {
+                    if (move.destination.offset() == call.m_argv.offset() - static_cast<int>(index))
+                        return codeBlock->getConstant(move.constant);
+                }
+                return { };
+            };
+            if (static_cast<RuntimeFunction>(call.m_function) == RuntimeFunction::ImportFrom) {
+                if (size_t index = indexOfName(operand(1)); index != notFound)
+                    appendUnit(importFrom, index);
+            } else if (static_cast<RuntimeFunction>(call.m_function) == RuntimeFunction::ImportName) {
+                size_t name = indexOfName(operand(0));
+                JSValue fromList = operand(1);
+                JSValue level = operand(2);
+                JSValue mode = operand(3);
+                size_t indexOfFromList = notFound;
+                if (fromList && !isNone(fromList)) {
+                    if (!constants) {
+                        constants = PyTuple::from(codeGetConsts(globalObject, self));
+                        RETURN_IF_EXCEPTION(scope, { });
+                    }
+                    indexOfFromList = std::ranges::find(constants->span(), fromList) - constants->span().begin();
+                    if (indexOfFromList == constants->span().size())
+                        fromList = { };
+                }
+                if (name != notFound && fromList && level && level.isInt32() && level.asInt32() >= 0 && level.asInt32() < 256 && mode && mode.isInt32()) {
+                    appendUnit(loadSmallInt, level.asInt32());
+                    if (isNone(fromList))
+                        appendUnit(loadCommonConstant, commonConstantNone);
+                    else
+                        appendUnit(loadConst, indexOfFromList);
+                    appendUnit(importName, static_cast<unsigned>(name) << 2 | mode.asInt32());
+                }
+            }
+        }
+        moves.clear();
         switch (instruction->opcodeID()) {
         case op_py_load_global:
             append(loadGlobal, instruction->as<OpPyLoadGlobal>().m_name, 1, cachesOfLoadGlobal);
@@ -2030,8 +2087,9 @@ static JSValue wrapperDescriptorRepr(JSGlobalObject* globalObject, JSValue self)
 template<bool wantEqual>
 static JSValue nativeEquality(JSGlobalObject* globalObject, JSValue self, JSValue other)
 {
+    // A function and a method-wrapper, say, are the same kind of object here and not to Python.
     auto* b = PyNativeFunction::tryFrom(other);
-    if (!b)
+    if (!b || typeOf(globalObject, other) != typeOf(globalObject, self))
         return runtime(globalObject).notImplemented();
     auto* a = asNative(self);
     bool equal = &a->def() == &b->def() && a->kind() == b->kind() && (a->self() ? b->self() && isIdentical(a->self(), b->self()) : !b->self());

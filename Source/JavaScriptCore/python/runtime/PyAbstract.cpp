@@ -187,7 +187,7 @@ void memberDescriptorSet(JSGlobalObject* globalObject, PyMemberDescriptor* descr
         return;
     }
     if (!holder->getDirect(vm, key)) {
-        raiseAttributeError(globalObject, scope, object, descriptor->name(), stringOf(descriptor->name()));
+        raise(globalObject, scope, runtime(globalObject).AttributeError(), stringOf(descriptor->name()));
         return;
     }
     DeletePropertySlot slot;
@@ -393,7 +393,7 @@ void genericSetAttr(JSGlobalObject* globalObject, JSValue object, JSString* name
     if (!dict) {
         String text = stringOf(name);
         if (descriptor)
-            raiseAttributeError(globalObject, scope, object, name, makeString('\'', type->name(), "' object attribute '"_s, text, "' is read-only"_s));
+            raise(globalObject, scope, rt.AttributeError(), makeString('\'', type->name(), "' object attribute '"_s, text, "' is read-only"_s));
         else {
             // The hint is for classes that leave setting attributes to object.
             auto* setter = PyNativeFunction::tryFrom(type->lookup(Special::SetAttr));
@@ -893,7 +893,9 @@ JSValue call(JSGlobalObject* globalObject, JSValue callable, const CallArgs& arg
     if (!method) {
         if (callable.isObject() && !isPyObject(callable.asCell()) && asObject(callable)->isCallable())
             RELEASE_AND_RETURN(scope, callForeignFunction(globalObject, callable, args));
-        return raiseTypeError(globalObject, scope, '\'', type->nameInMessages(), "' object is not callable"_s);
+        scope.release();
+        throwNotCallable(globalObject, callable);
+        return { };
     }
     RELEASE_AND_RETURN(scope, callSpecial(globalObject, method, callable, args));
 }
@@ -1075,6 +1077,12 @@ JSString* ascii(JSGlobalObject* globalObject, JSValue value)
 
 JSString* format(JSGlobalObject* globalObject, JSValue value, JSString* spec)
 {
+    JSValue result = formatObject(globalObject, value, spec);
+    return result ? strValue(result) : nullptr;
+}
+
+JSValue formatObject(JSGlobalObject* globalObject, JSValue value, JSString* spec)
+{
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1088,12 +1096,10 @@ JSString* format(JSGlobalObject* globalObject, JSValue value, JSString* spec)
     }
     JSValue method = rt.typeOf(value)->lookup(Special::Format);
     JSValue result = callSpecial(globalObject, method, value, spec ? spec : rt.names.empty());
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    if (!isStr(result)) {
-        raiseTypeError(globalObject, scope, typeNameForMessage(globalObject, rt.typeOf(value)), ".__format__() must return a str, not "_s, typeNameForMessage(globalObject, rt.typeOf(result)));
-        return nullptr;
-    }
-    return strValue(result);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!isStr(result))
+        return raiseTypeError(globalObject, scope, typeNameForMessage(globalObject, rt.typeOf(value)), ".__format__() must return a str, not "_s, typeNameForMessage(globalObject, rt.typeOf(result)));
+    return result;
 }
 
 String reprForMessage(JSGlobalObject* globalObject, JSValue value)
@@ -1514,6 +1520,25 @@ int64_t lengthHint(JSGlobalObject* globalObject, JSValue value, int64_t defaultV
     return size;
 }
 
+// A built-in type may have the items of a sequence and not those of a mapping (a deque): its __getitem__ and the like take an index.
+// Between brackets, what is no index is refused in other words than the method's, and one that is too large is an IndexError.
+static ALWAYS_INLINE bool takesIndexOnly(JSValue method)
+{
+    auto* native = dynamicDowncast<PyNativeFunction>(method);
+    return native && (native->def().flags & SequenceOperation);
+}
+
+static JSValue indexIntoSequence(JSGlobalObject* globalObject, JSValue key)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!hasIndex(globalObject, key))
+        return raiseTypeError(globalObject, scope, "sequence index must be integer, not '"_s, typeName(globalObject, key), '\'');
+    int64_t index = toSsize(globalObject, key, runtime(globalObject).IndexError());
+    RETURN_IF_EXCEPTION(scope, { });
+    return makeInt(globalObject, index);
+}
+
 JSValue getItem(JSGlobalObject* globalObject, JSValue object, JSValue key)
 {
     Runtime& rt = runtime(globalObject);
@@ -1565,8 +1590,13 @@ JSValue getItem(JSGlobalObject* globalObject, JSValue object, JSValue key)
     }
 
     PyType* type = rt.typeOf(object);
-    if (JSValue method = type->lookup(Special::GetItem))
+    if (JSValue method = type->lookup(Special::GetItem)) {
+        if (takesIndexOnly(method)) [[unlikely]] {
+            key = indexIntoSequence(globalObject, key);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
         RELEASE_AND_RETURN(scope, callSpecial(globalObject, method, object, key));
+    }
 
     if (PyType* asType = PyType::tryFrom(object)) {
         // list[int]
@@ -1579,6 +1609,11 @@ JSValue getItem(JSGlobalObject* globalObject, JSValue object, JSValue key)
         return raiseTypeError(globalObject, scope, "type '"_s, asType->nameInMessages(), "' is not subscriptable"_s);
     }
     return raiseTypeError(globalObject, scope, '\'', type->nameInMessages(), "' object is not subscriptable"_s);
+}
+
+bool hasTableOfSequenceMethods(PyType* type)
+{
+    return type->isHeapType() || type->lookup(Special::Len) || type->lookup(Special::GetItem) || type->lookup(Special::Contains);
 }
 
 void setItem(JSGlobalObject* globalObject, JSValue object, JSValue key, JSValue value)
@@ -1609,8 +1644,17 @@ void setItem(JSGlobalObject* globalObject, JSValue object, JSValue key, JSValue 
     PyType* type = rt.typeOf(object);
     JSValue method = type->lookup(Special::SetItem);
     if (!method) {
+        // An index into a sequence is looked at before the sequence is found not to take it.
+        if (hasTableOfSequenceMethods(type) && hasIndex(globalObject, key)) {
+            toSsize(globalObject, key, rt.IndexError());
+            RETURN_IF_EXCEPTION(scope, void());
+        }
         raiseTypeError(globalObject, scope, '\'', type->nameInMessages(), "' object does not support item assignment"_s);
         return;
+    }
+    if (takesIndexOnly(method)) [[unlikely]] {
+        key = indexIntoSequence(globalObject, key);
+        RETURN_IF_EXCEPTION(scope, void());
     }
     scope.release();
     callSpecial(globalObject, method, object, key, value);
@@ -1623,10 +1667,18 @@ void delItem(JSGlobalObject* globalObject, JSValue object, JSValue key)
     PyType* type = typeOf(globalObject, object);
     JSValue method = type->lookup(Special::DelItem);
     if (!method) {
-        // CPython words it otherwise for an index into what has any of the operations of sequences.
-        bool isSequenceLike = type->isHeapType() || type->lookup(Special::Len) || type->lookup(Special::GetItem) || type->lookup(Special::Contains);
-        raiseTypeError(globalObject, scope, '\'', type->nameInMessages(), isSequenceLike && hasIndex(globalObject, key) ? "' object doesn't support item deletion"_s : "' object does not support item deletion"_s);
+        // CPython words it otherwise for an index into a sequence, which it looks at first.
+        bool isIndexIntoSequence = hasTableOfSequenceMethods(type) && hasIndex(globalObject, key);
+        if (isIndexIntoSequence) {
+            toSsize(globalObject, key, runtime(globalObject).IndexError());
+            RETURN_IF_EXCEPTION(scope, void());
+        }
+        raiseTypeError(globalObject, scope, '\'', type->nameInMessages(), isIndexIntoSequence ? "' object doesn't support item deletion"_s : "' object does not support item deletion"_s);
         return;
+    }
+    if (takesIndexOnly(method)) [[unlikely]] {
+        key = indexIntoSequence(globalObject, key);
+        RETURN_IF_EXCEPTION(scope, void());
     }
     scope.release();
     callSpecial(globalObject, method, object, key);

@@ -7,12 +7,14 @@
 #include "PyCJKCodecs.h"
 
 #include "JSCInlines.h"
+#include "PyAbstract.h"
 #include "PyCodecs.h"
 #include "PyErrors.h"
 #include "PyInternals.h"
 #include "PyModule.h"
 #include <array>
 #include <atomic>
+#include <wtf/Lock.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -66,7 +68,10 @@ struct TableData {
 constexpr char32_t noCharacter = 0xFFFF;
 constexpr unsigned noCode = 0xFFFF;
 
+// From character to code there is a page for every 256 characters of the BMP and, if the set has any there, of plane 2. They are made
+// when a code is first asked for, by turning the table round, and kept for good. Until then the pointers are null.
 using Page = std::array<uint16_t, 256>;
+using PagePointer = std::atomic<const Page*>;
 
 static constexpr Page emptyPage = [] {
     Page page { };
@@ -74,89 +79,90 @@ static constexpr Page emptyPage = [] {
     return page;
 }();
 
-// From character to code: a page for every 256 characters of the BMP, and of plane 2.
-struct CodeMap {
-    std::array<const Page*, 512> pages;
-};
+static void makePages(const TableData&, std::span<PagePointer>);
 
+template<const TableData& data>
 class Table {
 public:
-    explicit constexpr Table(const TableData& data)
-        : m_data(data)
+    static ALWAYS_INLINE char32_t character(unsigned lead, unsigned trail)
     {
-    }
-
-    ALWAYS_INLINE char32_t character(unsigned lead, unsigned trail) const
-    {
-        if (lead < m_data.firstLead || lead > m_data.lastLead)
+        if (lead < data.firstLead || lead > data.lastLead)
             return noCharacter;
-        const Row& row = m_data.rows[lead - m_data.firstLead];
+        const Row& row = data.rows[lead - data.firstLead];
         if (trail < row.bottom || trail > row.top)
             return noCharacter;
         unsigned index = row.offset + trail - row.bottom;
-        char32_t character = m_data.values[index];
-        if (m_data.plane2 && (m_data.plane2[index >> 3] >> (index & 7) & 1))
-            character |= 0x20000;
+        char32_t character = data.values[index];
+        if constexpr (hasPlane2) {
+            if (data.plane2[index >> 3] >> (index & 7) & 1)
+                character |= 0x20000;
+        }
         return character;
     }
 
-    ALWAYS_INLINE unsigned code(char32_t character) const
+    static ALWAYS_INLINE unsigned code(char32_t character)
     {
-        const CodeMap* map = m_codeMap.load(std::memory_order_acquire);
-        if (!map) [[unlikely]]
-            map = makeCodeMap();
-        if (character < 0x10000)
-            return (*map->pages[character >> 8])[character & 0xFF];
-        if (character >> 16 == 2)
-            return (*map->pages[256 + ((character >> 8) & 0xFF)])[character & 0xFF];
-        return noCode;
+        unsigned index = character >> 8;
+        if (character >= 0x10000) {
+            if (!hasPlane2 || character >> 16 != 2)
+                return noCode;
+            index -= 0x200 - 0x100;
+        }
+        const Page* page = s_pages[index].load(std::memory_order_acquire);
+        if (!page) [[unlikely]] {
+            makePages(data, s_pages);
+            page = s_pages[index].load(std::memory_order_acquire);
+        }
+        return (*page)[character & 0xFF];
     }
 
 private:
-    const CodeMap* makeCodeMap() const;
+    static constexpr bool hasPlane2 = !!data.plane2;
+    static_assert(hasPlane2 || data.plane2Overrides.empty());
 
-    const TableData& m_data;
-    // Made when it is first needed, and kept for good.
-    mutable std::atomic<const CodeMap*> m_codeMap { nullptr };
+    static inline constinit std::array<PagePointer, hasPlane2 ? 512 : 256> s_pages { };
 };
 
-NEVER_INLINE const CodeMap* Table::makeCodeMap() const
+static NEVER_INLINE void makePages(const TableData& data, std::span<PagePointer> published)
 {
+    static Lock lock;
+    Locker locker { lock };
+    // Another thread, of another VM, may have been faster.
+    if (published[0].load(std::memory_order_relaxed))
+        return;
+
     auto forEachCharacter = [&](const auto& function) {
-        for (unsigned lead = m_data.firstLead; lead <= m_data.lastLead; ++lead) {
-            const Row& row = m_data.rows[lead - m_data.firstLead];
+        for (unsigned lead = data.firstLead; lead <= data.lastLead; ++lead) {
+            const Row& row = data.rows[lead - data.firstLead];
             for (unsigned trail = row.bottom; trail <= row.top; ++trail) {
-                if (char32_t found = character(lead, trail); found != noCharacter)
-                    function((found >> 16 ? 256 : 0) + ((found >> 8) & 0xFF), found & 0xFF, lead << 8 | trail);
+                unsigned index = row.offset + trail - row.bottom;
+                unsigned character = data.values[index];
+                if (character == noCharacter)
+                    continue;
+                bool isInPlane2 = data.plane2 && (data.plane2[index >> 3] >> (index & 7) & 1);
+                function((isInPlane2 ? 256 : 0) + (character >> 8), character & 0xFF, lead << 8 | trail);
             }
         }
     };
     auto forEachOverride = [&](const auto& function) {
-        for (auto& entry : m_data.overrides)
+        for (auto& entry : data.overrides)
             function(entry.character >> 8, entry.character & 0xFF, entry.code);
-        for (auto& entry : m_data.plane2Overrides)
+        for (auto& entry : data.plane2Overrides)
             function(256 + (entry.character >> 8), entry.character & 0xFF, entry.code);
     };
 
-    std::array<Page*, 512> pages { };
-    unsigned count = 0;
-    auto note = [&](unsigned page, unsigned, unsigned) {
-        if (!pages[page]) {
-            pages[page] = std::bit_cast<Page*>(static_cast<uintptr_t>(1));
-            ++count;
-        }
-    };
+    std::array<bool, 512> isNeeded { };
+    auto note = [&](unsigned page, unsigned, unsigned) { isNeeded[page] = true; };
     forEachCharacter(note);
     forEachOverride(note);
 
-    auto* map = static_cast<CodeMap*>(fastMalloc(sizeof(CodeMap) + count * sizeof(Page)));
-    auto* next = reinterpret_cast<Page*>(map + 1);
+    std::array<Page*, 512> pages { };
+    auto* next = static_cast<Page*>(fastMalloc(std::ranges::count(isNeeded, true) * sizeof(Page)));
     for (unsigned i = 0; i < pages.size(); ++i) {
-        if (pages[i]) {
+        if (isNeeded[i]) {
             pages[i] = next++;
             *pages[i] = emptyPage;
         }
-        map->pages[i] = pages[i] ? pages[i] : &emptyPage;
     }
     // Of several codes for a character the lowest is the one to write.
     forEachCharacter([&](unsigned page, unsigned index, unsigned code) {
@@ -166,28 +172,23 @@ NEVER_INLINE const CodeMap* Table::makeCodeMap() const
     forEachOverride([&](unsigned page, unsigned index, unsigned code) {
         (*pages[page])[index] = code;
     });
-
-    const CodeMap* expected = nullptr;
-    if (m_codeMap.compare_exchange_strong(expected, map, std::memory_order_acq_rel))
-        return map;
-    // Another thread, of another VM, was faster.
-    fastFree(map);
-    return expected;
+    for (unsigned i = 0; i < published.size(); ++i)
+        published[i].store(pages[i] ? pages[i] : &emptyPage, std::memory_order_release);
 }
 
-static constinit Table jisx0208 { jisx0208Data };
-static constinit Table jisx0212 { jisx0212Data };
-static constinit Table jisx0213Plane1 { jisx0213Plane1Data }; // What it has over JIS X 0208.
-static constinit Table jisx0213Plane2 { jisx0213Plane2Data };
-static constinit Table cp932Extension { cp932ExtensionData };
-static constinit Table ksx1001 { ksx1001Data };
-static constinit Table cp949Extension { cp949ExtensionData };
-static constinit Table gb2312 { gb2312Data };
-static constinit Table gbkExtension { gbkExtensionData };
-static constinit Table gb18030Extension { gb18030ExtensionData };
-static constinit Table big5 { big5Data };
-static constinit Table cp950Extension { cp950ExtensionData };
-static constinit Table big5hkscsExtension { big5hkscsExtensionData };
+static constexpr Table<jisx0208Data> jisx0208;
+static constexpr Table<jisx0212Data> jisx0212;
+static constexpr Table<jisx0213Plane1Data> jisx0213Plane1; // What it has over JIS X 0208.
+static constexpr Table<jisx0213Plane2Data> jisx0213Plane2;
+static constexpr Table<cp932ExtensionData> cp932Extension;
+static constexpr Table<ksx1001Data> ksx1001;
+static constexpr Table<cp949ExtensionData> cp949Extension;
+static constexpr Table<gb2312Data> gb2312;
+static constexpr Table<gbkExtensionData> gbkExtension;
+static constexpr Table<gb18030ExtensionData> gb18030Extension;
+static constexpr Table<big5Data> big5;
+static constexpr Table<cp950ExtensionData> cp950Extension;
+static constexpr Table<big5hkscsExtensionData> big5hkscsExtension;
 
 // ---- Text ----
 
@@ -226,22 +227,84 @@ Text::Text(const String& string)
     }
 }
 
+// ---- Output ----
+
+Output::~Output()
+{
+    fastFree(m_start);
+}
+
+bool Output::tryGrow(size_t count)
+{
+    size_t size = m_cursor - m_start;
+    size_t capacity = m_end - m_start;
+    if (count > maxLengthOfBytes - size)
+        return false;
+    size_t wanted = std::max(size + count, capacity + capacity / 2 + 16);
+    void* memory;
+    if (!WTF::tryFastRealloc(m_start, wanted).getValue(memory))
+        return false;
+    m_start = static_cast<char8_t*>(memory);
+    m_cursor = m_start + size;
+    m_end = m_start + wanted;
+    return true;
+}
+
+NEVER_INLINE bool Output::grow(size_t count)
+{
+    if (!m_hasFailed) {
+        if (tryGrow(count))
+            return true;
+        fastFree(m_start);
+        m_start = nullptr;
+        m_hasFailed = true;
+    }
+    m_cursor = m_nowhere;
+    m_end = m_nowhere + sizeof(m_nowhere);
+    return false;
+}
+
+void Output::expect(size_t count)
+{
+    if (!m_hasFailed && static_cast<size_t>(m_end - m_cursor) < count)
+        tryGrow(count);
+}
+
+void Output::append(std::span<const uint8_t> bytes)
+{
+    if (bytes.empty() || (static_cast<size_t>(m_end - m_cursor) < bytes.size() && !grow(bytes.size())))
+        return;
+    memcpy(m_cursor, bytes.data(), bytes.size());
+    m_cursor += bytes.size();
+}
+
+PyBytes* Output::makeBytes(JSGlobalObject* globalObject) const
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!m_hasFailed && !size())
+        return rt.emptyBytes();
+    PyBytes* result = m_hasFailed ? nullptr : PyBytes::tryCreateUninitialized(vm, rt.structure<PyBytes>(), rt.bytesType(), size());
+    if (!result) {
+        raiseMemoryError(globalObject, scope, String());
+        return nullptr;
+    }
+    memcpy(result->mutableData(), m_start, size());
+    return result;
+}
+
 // ---- Small things ----
 
-static ALWAYS_INLINE void put(ByteBuilder& out, unsigned byte)
-{
-    ASSERT(byte < 0x100);
-    out.append(static_cast<uint8_t>(byte));
-}
-
 template<typename... Bytes>
-static ALWAYS_INLINE void put(ByteBuilder& out, unsigned first, Bytes... rest)
+static ALWAYS_INLINE void put(Output& out, Bytes... bytes)
 {
-    put(out, first);
-    put(out, rest...);
+    ASSERT(((static_cast<unsigned>(bytes) < 0x100) && ...));
+    char8_t* room = out.room(sizeof...(bytes));
+    ((*room++ = static_cast<char8_t>(bytes)), ...);
 }
 
-static ALWAYS_INLINE void putCode(ByteBuilder& out, unsigned code) { put(out, code >> 8, code & 0xFF); }
+static ALWAYS_INLINE void putCode(Output& out, unsigned code) { put(out, code >> 8, code & 0xFF); }
 
 static ALWAYS_INLINE void put(StrBuilder& out, char32_t character)
 {
@@ -251,6 +314,32 @@ static ALWAYS_INLINE void put(StrBuilder& out, char32_t character)
         appendCodePoint(out, character);
 }
 
+// For the codecs that have ASCII as it is. At a byte below 0x80: takes it, and those that follow it.
+static ALWAYS_INLINE void takeASCII(std::span<const uint8_t> in, size_t& position, StrBuilder& out)
+{
+    size_t start = position++;
+    if (position == in.size() || in[position] >= 0x80) {
+        out.append(static_cast<Latin1Character>(in[start]));
+        return;
+    }
+    while (++position < in.size() && in[position] < 0x80) { }
+    out.append(byteCast<Latin1Character>(in.subspan(start, position - start)));
+}
+
+// The same at a character below U+0080.
+static ALWAYS_INLINE void takeASCII(const Text& text, size_t& position, Output& out)
+{
+    size_t start = position++;
+    auto* narrow = text.narrowCharacters();
+    if (!narrow) {
+        put(out, text[start]);
+        return;
+    }
+    while (position < text.length() && narrow[position] < 0x80)
+        ++position;
+    out.append(byteCast<uint8_t>(std::span { narrow + start, position - start }));
+}
+
 // ASCII as it is, and everything else two bytes that `characterOf` knows or does not.
 template<char32_t (*characterOf)(unsigned lead, unsigned trail)>
 static int decodeDoubleByte(const Codec&, State&, std::span<const uint8_t> in, size_t& position, StrBuilder& out)
@@ -258,8 +347,7 @@ static int decodeDoubleByte(const Codec&, State&, std::span<const uint8_t> in, s
     while (position < in.size()) {
         unsigned lead = in[position];
         if (lead < 0x80) {
-            put(out, lead);
-            ++position;
+            takeASCII(in, position, out);
             continue;
         }
         if (in.size() - position < 2)
@@ -274,18 +362,19 @@ static int decodeDoubleByte(const Codec&, State&, std::span<const uint8_t> in, s
 }
 
 template<unsigned (*codeOf)(char32_t)>
-static int encodeDoubleByte(const Codec&, State&, const Text& text, size_t& position, ByteBuilder& out, bool)
+static int encodeDoubleByte(const Codec&, State&, const Text& text, size_t& position, Output& out, bool)
 {
-    for (; position < text.length(); ++position) {
+    while (position < text.length()) {
         char32_t character = text[position];
         if (character < 0x80) {
-            put(out, character);
+            takeASCII(text, position, out);
             continue;
         }
         unsigned code = codeOf(character);
         if (code == noCode)
             return 1;
         putCode(out, code);
+        ++position;
     }
     return 0;
 }
@@ -330,38 +419,40 @@ static unsigned gbkCode(char32_t character)
 }
 
 // The sequences of four bytes are numbered: 0x81308130 is 0.
-static void putGB18030Number(ByteBuilder& out, unsigned number)
+static void putGB18030Number(Output& out, unsigned number)
 {
     put(out, 0x81 + number / 12600, 0x30 + number / 1260 % 10, 0x81 + number / 10 % 126, 0x30 + number % 10);
 }
 
 constexpr unsigned gb18030NumberOfPlane1 = (0x90 - 0x81) * 12600;
 
-static int encodeGB18030(const Codec&, State&, const Text& text, size_t& position, ByteBuilder& out, bool)
+static int encodeGB18030(const Codec&, State&, const Text& text, size_t& position, Output& out, bool)
 {
-    for (; position < text.length(); ++position) {
+    while (position < text.length()) {
         char32_t character = text[position];
         if (character < 0x80) {
-            put(out, character);
+            takeASCII(text, position, out);
             continue;
         }
-        if (character >= 0x10000) {
-            putGB18030Number(out, gb18030NumberOfPlane1 + (character - 0x10000));
-            continue;
+        unsigned code = noCode;
+        if (character < 0x10000) {
+            code = gbkCode(character);
+            if (code == noCode)
+                code = gb18030Extension.code(character);
         }
-        unsigned code = gbkCode(character);
-        if (code == noCode)
-            code = gb18030Extension.code(character);
-        if (code != noCode) {
+        if (code != noCode)
             putCode(out, code);
-            continue;
+        else if (character >= 0x10000)
+            putGB18030Number(out, gb18030NumberOfPlane1 + (character - 0x10000));
+        else {
+            auto* range = std::upper_bound(std::begin(gb18030Ranges), std::end(gb18030Ranges), character, [](char32_t wanted, const Range& entry) {
+                return wanted < entry.first;
+            });
+            if (range == std::begin(gb18030Ranges) || character > (--range)->last)
+                return 1;
+            putGB18030Number(out, range->number + (character - range->first));
         }
-        auto* range = std::upper_bound(std::begin(gb18030Ranges), std::end(gb18030Ranges), character, [](char32_t wanted, const Range& entry) {
-            return wanted < entry.first;
-        });
-        if (range == std::begin(gb18030Ranges) || character > (--range)->last)
-            return 1;
-        putGB18030Number(out, range->number + (character - range->first));
+        ++position;
     }
     return 0;
 }
@@ -371,8 +462,7 @@ static int decodeGB18030(const Codec&, State&, std::span<const uint8_t> in, size
     while (position < in.size()) {
         unsigned lead = in[position];
         if (lead < 0x80) {
-            put(out, lead);
-            ++position;
+            takeASCII(in, position, out);
             continue;
         }
         if (in.size() - position < 2)
@@ -413,14 +503,14 @@ static int decodeGB18030(const Codec&, State&, std::span<const uint8_t> in, size
 
 static void startHZ(State& state) { state.c[0] = 0; }
 
-static void finishEncodingHZ(State& state, ByteBuilder& out)
+static void finishEncodingHZ(State& state, Output& out)
 {
     if (state.c[0])
         put(out, '~', '}');
     state.c[0] = 0;
 }
 
-static int encodeHZ(const Codec&, State& state, const Text& text, size_t& position, ByteBuilder& out, bool)
+static int encodeHZ(const Codec&, State& state, const Text& text, size_t& position, Output& out, bool)
 {
     for (; position < text.length(); ++position) {
         char32_t character = text[position];
@@ -500,12 +590,12 @@ static unsigned cp950Code(char32_t character)
 }
 
 // Four codes of HKSCS stand for an E with a circumflex and, as a second character, a macron or a caron.
-static int encodeBig5HKSCS(const Codec&, State&, const Text& text, size_t& position, ByteBuilder& out, bool flush)
+static int encodeBig5HKSCS(const Codec&, State&, const Text& text, size_t& position, Output& out, bool flush)
 {
-    for (; position < text.length(); ++position) {
+    while (position < text.length()) {
         char32_t character = text[position];
         if (character < 0x80) {
-            put(out, character);
+            takeASCII(text, position, out);
             continue;
         }
         if (character == 0xCA || character == 0xEA) {
@@ -513,11 +603,9 @@ static int encodeBig5HKSCS(const Codec&, State&, const Text& text, size_t& posit
                 return needsMoreInput;
             char32_t mark = position + 1 < text.length() ? text[position + 1] : 0;
             unsigned base = character == 0xCA ? 0x8862 : 0x88A3;
-            if (mark == 0x304 || mark == 0x30C) {
-                putCode(out, base + (mark == 0x304 ? 0 : 2));
-                ++position;
-            } else
-                putCode(out, base + 4);
+            bool hasMark = mark == 0x304 || mark == 0x30C;
+            putCode(out, base + (!hasMark ? 4 : mark == 0x304 ? 0 : 2));
+            position += hasMark ? 2 : 1;
             continue;
         }
         unsigned code = big5hkscsExtension.code(character);
@@ -526,6 +614,7 @@ static int encodeBig5HKSCS(const Codec&, State&, const Text& text, size_t& posit
         if (code == noCode)
             return 1;
         putCode(out, code);
+        ++position;
     }
     return 0;
 }
@@ -535,8 +624,7 @@ static int decodeBig5HKSCS(const Codec&, State&, std::span<const uint8_t> in, si
     while (position < in.size()) {
         unsigned lead = in[position];
         if (lead < 0x80) {
-            put(out, lead);
-            ++position;
+            takeASCII(in, position, out);
             continue;
         }
         if (in.size() - position < 2)
@@ -587,25 +675,25 @@ static constexpr char32_t syllable(unsigned first, unsigned vowel, unsigned last
 constexpr unsigned rowOfLetters = 0xA4;
 constexpr unsigned filler = 0xD4;
 
-static int encodeEUCKR(const Codec&, State&, const Text& text, size_t& position, ByteBuilder& out, bool)
+static int encodeEUCKR(const Codec&, State&, const Text& text, size_t& position, Output& out, bool)
 {
-    for (; position < text.length(); ++position) {
+    while (position < text.length()) {
         char32_t character = text[position];
         if (character < 0x80) {
-            put(out, character);
+            takeASCII(text, position, out);
             continue;
         }
-        if (unsigned code = ksx1001.code(character); code != noCode) {
+        if (unsigned code = ksx1001.code(character); code != noCode)
             putCode(out, code | 0x8080);
-            continue;
-        }
-        if (cp949Extension.code(character) == noCode)
+        else if (cp949Extension.code(character) != noCode) {
+            ASSERT(character >= firstSyllable && character <= lastSyllable);
+            unsigned index = character - firstSyllable;
+            unsigned last = index % 28;
+            put(out, rowOfLetters, filler, rowOfLetters, 0xA1 + letterOfFirstConsonant[index / 588]);
+            put(out, rowOfLetters, 0xA1 + firstVowelLetter + index / 28 % 21, rowOfLetters, last ? 0xA1 + letterOfLastConsonant[last] : filler);
+        } else
             return 1;
-        ASSERT(character >= firstSyllable && character <= lastSyllable);
-        unsigned index = character - firstSyllable;
-        unsigned last = index % 28;
-        put(out, rowOfLetters, filler, rowOfLetters, 0xA1 + letterOfFirstConsonant[index / 588]);
-        put(out, rowOfLetters, 0xA1 + firstVowelLetter + index / 28 % 21, rowOfLetters, last ? 0xA1 + letterOfLastConsonant[last] : filler);
+        ++position;
     }
     return 0;
 }
@@ -615,8 +703,7 @@ static int decodeEUCKR(const Codec&, State&, std::span<const uint8_t> in, size_t
     while (position < in.size()) {
         unsigned lead = in[position];
         if (lead < 0x80) {
-            put(out, lead);
-            ++position;
+            takeASCII(in, position, out);
             continue;
         }
         if (in.size() - position < 2)
@@ -668,16 +755,15 @@ static constexpr unsigned johabVowel(unsigned index) { return index + 3 + (index
 static constexpr unsigned johabLast(unsigned index) { return index + 1 + (index >= 17); }
 static constexpr unsigned johabCode(unsigned first, unsigned vowel, unsigned last) { return 0x8000 | first << 10 | vowel << 5 | last; }
 
-// The index of what the five bits stand for; notThere if for nothing. `count` indices there are.
+// The other way round: the index of what five bits stand for, or notThere.
 template<unsigned (*bitsOf)(unsigned), unsigned count>
-static unsigned johabIndex(unsigned bits)
-{
-    for (unsigned i = 0; i < count; ++i) {
-        if (bitsOf(i) == bits)
-            return i;
-    }
-    return notThere;
-}
+static constexpr std::array<uint8_t, 32> johabIndices = [] {
+    std::array<uint8_t, 32> indices { };
+    indices.fill(notThere);
+    for (unsigned i = 0; i < count; ++i)
+        indices[bitsOf(i)] = i;
+    return indices;
+}();
 
 static unsigned johabCodeOf(char32_t character)
 {
@@ -713,9 +799,9 @@ static char32_t johabCharacter(unsigned lead, unsigned trail)
         unsigned firstBits = (lead >> 2) & 0x1F;
         unsigned vowelBits = (lead << 3 | trail >> 5) & 0x1F;
         unsigned lastBits = trail & 0x1F;
-        unsigned first = johabIndex<johabFirst, 19>(firstBits);
-        unsigned vowel = johabIndex<johabVowel, 21>(vowelBits);
-        unsigned last = johabIndex<johabLast, 28>(lastBits); // Nothing last is index 0.
+        unsigned first = johabIndices<johabFirst, 19>[firstBits];
+        unsigned vowel = johabIndices<johabVowel, 21>[vowelBits];
+        unsigned last = johabIndices<johabLast, 28>[lastBits]; // Nothing last is index 0.
         bool hasFirst = firstBits != johabNoFirst;
         bool hasVowel = vowelBits != johabNoVowel;
         bool hasLast = lastBits != johabNoLast;
@@ -760,14 +846,14 @@ constexpr unsigned katakanaOffset = 0xFEC0;
 
 // Shift_JIS packs two rows of 94 into a lead byte, around the bytes of JIS X 0201. `row` and `cell` count from 0; the rows of a
 // second plane follow those of the first.
-static ALWAYS_INLINE void putShiftJIS(ByteBuilder& out, unsigned row, unsigned cell)
+static ALWAYS_INLINE void putShiftJIS(Output& out, unsigned row, unsigned cell)
 {
     unsigned lead = row >> 1;
     unsigned trail = cell + (row & 1 ? 94 : 0);
     put(out, lead + (lead < 0x1F ? 0x81 : 0xC1), trail + (trail < 0x3F ? 0x40 : 0x41));
 }
 
-static ALWAYS_INLINE void putShiftJISCode(ByteBuilder& out, unsigned code) { putShiftJIS(out, (code >> 8) - 0x21, (code & 0xFF) - 0x21); }
+static ALWAYS_INLINE void putShiftJISCode(Output& out, unsigned code) { putShiftJIS(out, (code >> 8) - 0x21, (code & 0xFF) - 0x21); }
 
 static ALWAYS_INLINE bool isShiftJISTrail(unsigned trail) { return trail >= 0x40 && trail <= 0xFC && trail != 0x7F; }
 
@@ -781,13 +867,15 @@ static ALWAYS_INLINE void fromShiftJIS(unsigned lead, unsigned trail, unsigned& 
     }
 }
 
-static int encodeShiftJIS(const Codec&, State&, const Text& text, size_t& position, ByteBuilder& out, bool)
+static int encodeShiftJIS(const Codec&, State&, const Text& text, size_t& position, Output& out, bool)
 {
-    for (; position < text.length(); ++position) {
+    while (position < text.length()) {
         char32_t character = text[position];
-        if (character < 0x80)
-            put(out, character);
-        else if (character == yenSign)
+        if (character < 0x80) {
+            takeASCII(text, position, out);
+            continue;
+        }
+        if (character == yenSign)
             put(out, 0x5C);
         else if (character == overline)
             put(out, 0x7E);
@@ -799,6 +887,7 @@ static int encodeShiftJIS(const Codec&, State&, const Text& text, size_t& positi
                 return 1;
             putShiftJISCode(out, code);
         }
+        ++position;
     }
     return 0;
 }
@@ -807,8 +896,12 @@ static int decodeShiftJIS(const Codec&, State&, std::span<const uint8_t> in, siz
 {
     while (position < in.size()) {
         unsigned lead = in[position];
-        if (lead < 0x80 || isKatakanaByte(lead)) {
-            put(out, lead < 0x80 ? lead : lead + katakanaOffset);
+        if (lead < 0x80) {
+            takeASCII(in, position, out);
+            continue;
+        }
+        if (isKatakanaByte(lead)) {
+            put(out, lead + katakanaOffset);
             ++position;
             continue;
         }
@@ -834,12 +927,16 @@ static int decodeShiftJIS(const Codec&, State&, std::span<const uint8_t> in, siz
 constexpr char32_t cp932FirstOfUser = 0xE000;
 constexpr unsigned cp932CountOfUser = 10 * 188;
 
-static int encodeCP932(const Codec&, State&, const Text& text, size_t& position, ByteBuilder& out, bool)
+static int encodeCP932(const Codec&, State&, const Text& text, size_t& position, Output& out, bool)
 {
-    for (; position < text.length(); ++position) {
+    while (position < text.length()) {
         char32_t character = text[position];
-        if (character <= 0x80)
-            put(out, character);
+        if (character < 0x80) {
+            takeASCII(text, position, out);
+            continue;
+        }
+        if (character == 0x80)
+            put(out, 0x80);
         else if (isHalfwidthKatakana(character))
             put(out, character - katakanaOffset);
         else if (character == 0xF8F0)
@@ -854,6 +951,7 @@ static int encodeCP932(const Codec&, State&, const Text& text, size_t& position,
             putShiftJIS(out, (0xF0 - 0xC1) * 2 + (character - cp932FirstOfUser) / 94, (character - cp932FirstOfUser) % 94);
         else
             return 1;
+        ++position;
     }
     return 0;
 }
@@ -862,8 +960,12 @@ static int decodeCP932(const Codec&, State&, std::span<const uint8_t> in, size_t
 {
     while (position < in.size()) {
         unsigned lead = in[position];
-        if (lead <= 0x80 || (lead >= 0xA0 && lead <= 0xDF) || lead >= 0xFD) {
-            put(out, lead <= 0x80 ? lead : lead == 0xA0 ? 0xF8F0 : lead >= 0xFD ? 0xF8F1 + (lead - 0xFD) : lead + katakanaOffset);
+        if (lead < 0x80) {
+            takeASCII(in, position, out);
+            continue;
+        }
+        if (lead == 0x80 || (lead >= 0xA0 && lead <= 0xDF) || lead >= 0xFD) {
+            put(out, lead == 0x80 ? 0x80 : lead == 0xA0 ? 0xF8F0 : lead >= 0xFD ? 0xF8F1 + (lead - 0xFD) : lead + katakanaOffset);
             ++position;
             continue;
         }
@@ -888,13 +990,15 @@ static int decodeCP932(const Codec&, State&, std::span<const uint8_t> in, size_t
 
 // EUC-JP: JIS X 0208 with the high bits set, katakana of half width after 0x8E, JIS X 0212 after 0x8F.
 
-static int encodeEUCJP(const Codec&, State&, const Text& text, size_t& position, ByteBuilder& out, bool)
+static int encodeEUCJP(const Codec&, State&, const Text& text, size_t& position, Output& out, bool)
 {
-    for (; position < text.length(); ++position) {
+    while (position < text.length()) {
         char32_t character = text[position];
-        if (character < 0x80)
-            put(out, character);
-        else if (unsigned code = jisx0208.code(character); code != noCode)
+        if (character < 0x80) {
+            takeASCII(text, position, out);
+            continue;
+        }
+        if (unsigned code = jisx0208.code(character); code != noCode)
             putCode(out, code | 0x8080);
         else if (code = jisx0212.code(character); code != noCode)
             put(out, 0x8F, code >> 8 | 0x80, (code & 0xFF) | 0x80);
@@ -908,6 +1012,7 @@ static int encodeEUCJP(const Codec&, State&, const Text& text, size_t& position,
             put(out, 0x7E);
         else
             return 1;
+        ++position;
     }
     return 0;
 }
@@ -917,8 +1022,7 @@ static int decodeEUCJP(const Codec&, State&, std::span<const uint8_t> in, size_t
     while (position < in.size()) {
         unsigned lead = in[position];
         if (lead < 0x80) {
-            put(out, lead);
-            ++position;
+            takeASCII(in, position, out);
             continue;
         }
         unsigned length = lead == 0x8F ? 3 : 2;
@@ -996,12 +1100,7 @@ static unsigned jisx0213Code(char32_t character, bool is2000)
         if (character == whatItWasIn2000)
             return codeChangedIn2004 | inPlane2;
     }
-    if (character <= jisx0213PairStarters[std::size(jisx0213PairStarters) - 1].character) {
-        for (auto& starter : jisx0213PairStarters) {
-            if (starter.character == character)
-                return dependsOnNext;
-        }
-    }
+    // (The table says dependsOnNext itself.)
     unsigned code = jisx0213Plane1.code(character);
     if (code != noCode)
         return code;
@@ -1081,13 +1180,12 @@ static char32_t jisx0213Plane1Character(unsigned lead, unsigned trail, char32_t&
     return noCharacter;
 }
 
-static int encodeEUCJIS2004(const Codec& codec, State&, const Text& text, size_t& position, ByteBuilder& out, bool flush)
+static int encodeEUCJIS2004(const Codec& codec, State&, const Text& text, size_t& position, Output& out, bool flush)
 {
     while (position < text.length()) {
         char32_t character = text[position];
         if (character < 0x80) {
-            put(out, character);
-            ++position;
+            takeASCII(text, position, out);
             continue;
         }
         size_t consumed;
@@ -1122,8 +1220,7 @@ static int decodeEUCJIS2004(const Codec& codec, State&, std::span<const uint8_t>
     while (position < in.size()) {
         unsigned lead = in[position];
         if (lead < 0x80) {
-            put(out, lead);
-            ++position;
+            takeASCII(in, position, out);
             continue;
         }
         unsigned length = lead == 0x8F ? 3 : 2;
@@ -1167,7 +1264,7 @@ static int decodeEUCJIS2004(const Codec& codec, State&, std::span<const uint8_t>
 constexpr uint8_t firstRowsOfPlane2[] = { 1, 8, 3, 4, 5, 12, 13, 14, 15 };
 constexpr unsigned firstOfLastRowsOfPlane2 = 78;
 
-static int encodeShiftJIS2004(const Codec& codec, State&, const Text& text, size_t& position, ByteBuilder& out, bool flush)
+static int encodeShiftJIS2004(const Codec& codec, State&, const Text& text, size_t& position, Output& out, bool flush)
 {
     while (position < text.length()) {
         char32_t character = text[position];
@@ -1301,7 +1398,7 @@ static void startEncodingISO2022(State& state)
     state.c[4] = 0;
 }
 
-static void finishEncodingISO2022(State& state, ByteBuilder& out)
+static void finishEncodingISO2022(State& state, Output& out)
 {
     if (state.c[4] & isShifted) {
         put(out, shiftIn);
@@ -1313,7 +1410,7 @@ static void finishEncodingISO2022(State& state, ByteBuilder& out)
     }
 }
 
-static int encodeISO2022(const Codec& codec, State& state, const Text& text, size_t& position, ByteBuilder& out, bool flush)
+static int encodeISO2022(const Codec& codec, State& state, const Text& text, size_t& position, Output& out, bool flush)
 {
     const ISO2022& configuration = iso2022Of(codec);
     while (position < text.length()) {
@@ -1770,21 +1867,24 @@ static JSValue getCodec(JSGlobalObject* globalObject, JSValue, JSValue encoding)
     if (size_t end = compared.find(static_cast<char16_t>(0)); end != notFound)
         compared = compared.left(end);
     for (const Codec& codec : codecs) {
-        if (compared == codec.name)
-            RELEASE_AND_RETURN(scope, makeMultibyteCodec(globalObject, codec));
+        if (compared != codec.name)
+            continue;
+        JSValue module = importModule(globalObject, "_multibytecodec"_s);
+        RETURN_IF_EXCEPTION(scope, { });
+        JSValue create = getAttr(globalObject, module, internString(vm, "__create_codec"_s));
+        RETURN_IF_EXCEPTION(scope, { });
+        RELEASE_AND_RETURN(scope, call(globalObject, create, makeCapsule(globalObject, nameOfCodecCapsule, &codec)));
     }
     return raiseLookupError(globalObject, scope, "no such codec is supported."_s);
 }
 
 } // namespace CJK
 
-JSValue makeCapsule(JSGlobalObject*, ASCIILiteral name); // PyTypesModule.cpp
-
 // In CPython the modules get at one another's tables through these. Here they are only there.
 static void addCJKMaps(JSGlobalObject* globalObject, PyModule* module, std::initializer_list<ASCIILiteral> names)
 {
     for (ASCIILiteral name : names)
-        module->add(globalObject, name, makeCapsule(globalObject, "multibytecodec.map"_s));
+        module->add(globalObject, name, makeCapsule(globalObject, "multibytecodec.map"_s, nullptr));
 }
 
 #define PY_DEFINE_CJK_MODULE(Name, codecs, ...) \

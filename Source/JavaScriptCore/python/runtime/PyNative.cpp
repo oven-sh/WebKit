@@ -96,6 +96,14 @@ static String describeFunction(JSGlobalObject* globalObject, const NativeDef& de
 {
     if (function) {
         JSValue owner = function->owner();
+        // One that is bound goes by what it is bound to, as its __qualname__ does: True.bit_length is bool.bit_length.
+        if (JSValue bound = function->self(); bound && function->ownerType() && def.kind != NativeKind::New) {
+            PyType* type = PyType::is(bound) ? PyType::from(bound) : typeOf(globalObject, bound);
+            // What is bound to a module is taken for a function of the module.
+            if (type->isSubtypeOf(runtime(globalObject).moduleType()))
+                return makeString(def.name, "()"_s);
+            return makeString(stringOf(type->qualname()), '.', def.name, "()"_s);
+        }
         if (PyType* type = function->ownerType())
             return makeString(type->name(), '.', def.name, "()"_s);
         if (owner && owner.isString()) {
@@ -283,6 +291,19 @@ static NEVER_INLINE bool bindNativeArgumentsSlow(JSGlobalObject* globalObject, c
     else
         raiseTypeError(globalObject, scope, name, "() got an unexpected keyword argument '"_s, keyword, "'. Did you mean '"_s, suggestion, "'?"_s);
     return false;
+}
+
+JSValue raiseUnexpectedKeyword(JSGlobalObject* globalObject, StringView function, const String& keyword, std::span<const ASCIILiteral> names)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Vector<String> candidates;
+    for (ASCIILiteral name : names)
+        candidates.append(String(name));
+    String suggestion = calculateSuggestion(candidates, keyword);
+    if (suggestion.isNull())
+        return raiseTypeError(globalObject, scope, function, "() got an unexpected keyword argument '"_s, keyword, '\'');
+    return raiseTypeError(globalObject, scope, function, "() got an unexpected keyword argument '"_s, keyword, "'. Did you mean '"_s, suggestion, "'?"_s);
 }
 
 static NEVER_INLINE JSValue raiseNativeStackOverflow(JSGlobalObject* globalObject)

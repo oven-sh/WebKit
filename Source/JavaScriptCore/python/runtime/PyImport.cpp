@@ -157,30 +157,42 @@ static JSString* resolveRelativeName(JSGlobalObject* globalObject, JSString* nam
 
 // ---- Finding and loading ----
 
-
-// There is one of each, however often it is taken out of sys.modules and imported again: its types are made once.
-JSValue nativeModuleInstance(JSGlobalObject* globalObject, JSString* name, const NativeModuleDef& def)
+PyDict* nativeModuleNamespace(JSGlobalObject* globalObject, JSString* name, const NativeModuleDef& def)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue instances = rt.slot(Runtime::Slot::NativeModules);
-    if (!instances) {
-        instances = PyDict::create(globalObject);
-        rt.setSlot(Runtime::Slot::NativeModules, instances);
+    JSValue namespaces = rt.slot(Runtime::Slot::NativeModules);
+    if (!namespaces) {
+        namespaces = PyDict::create(globalObject);
+        rt.setSlot(Runtime::Slot::NativeModules, namespaces);
     }
-    if (JSValue existing = PyDict::from(instances)->get(name))
-        return existing;
+    // An initializer may import what imports the module in its turn, which then has what there is so far.
+    if (JSValue existing = PyDict::from(namespaces)->get(name))
+        return PyDict::from(existing);
     PyModule* module = PyModule::create(globalObject, name);
     module->dict()->set(vm, rt.names.dPackage(), rt.names.empty());
-    PyDict::from(instances)->set(vm, name, module);
+    PyDict::from(namespaces)->set(vm, name, module->dict());
     def.initialize(globalObject, module);
     if (scope.exception()) {
-        PyDict::from(instances)->remove(vm, name);
-        return { };
+        PyDict::from(namespaces)->remove(vm, name);
+        return nullptr;
     }
     if (JSValue doc = docstringFor(globalObject, makeString("module "_s, def.name)); !isNone(doc))
         module->dict()->set(vm, rt.names.dDoc(), doc);
+    return module->dict();
+}
+
+JSValue createNativeModule(JSGlobalObject* globalObject, JSString* name, const NativeModuleDef& def)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PyDict* initial = nativeModuleNamespace(globalObject, name, def);
+    RETURN_IF_EXCEPTION(scope, { });
+    PyModule* module = PyModule::create(vm, rt.structure<PyModule>(), rt.moduleType());
+    module->setDict(vm, initial->copy(globalObject));
+    module->setIsNative();
     return module;
 }
 
@@ -189,7 +201,7 @@ static JSValue loadNativeModule(JSGlobalObject* globalObject, JSString* name, co
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue module = nativeModuleInstance(globalObject, name, def);
+    JSValue module = createNativeModule(globalObject, name, def);
     RETURN_IF_EXCEPTION(scope, { });
     rt.modules()->set(vm, name, module);
     if (rt.modules()->get(internString(vm, "_frozen_importlib"_s))) {
@@ -354,8 +366,20 @@ static void installImportlib(JSGlobalObject* globalObject)
     RETURN_IF_EXCEPTION(scope, void());
     rt.setSlot(Runtime::Slot::FindAndLoad, findAndLoad);
     callMethod(globalObject, bootstrap, internString(vm, "_install_external_importers"_s));
-    if (scope.exception()) [[unlikely]]
+    if (scope.exception()) [[unlikely]] {
         rt.setSlot(Runtime::Slot::FindAndLoad, JSValue());
+        return;
+    }
+
+    // Archives come before directories among sys.path_hooks. Without zipimport there are none.
+    JSValue zipimport = importModule(globalObject, "zipimport"_s);
+    JSValue zipimporter = zipimport ? getAttr(globalObject, zipimport, internString(vm, "zipimporter"_s)) : JSValue();
+    if (scope.exception()) [[unlikely]] {
+        takePendingException(globalObject);
+        return;
+    }
+    if (JSArray* hooks = tryAsList(rt.sysDict()->get(internString(vm, "path_hooks"_s))))
+        listInsert(globalObject, hooks, 0, zipimporter);
 }
 
 static ASCIILiteral s_importSystemModule;
@@ -436,11 +460,8 @@ bool ensureNativeModuleSpec(JSGlobalObject* globalObject, PyModule* module)
     JSValue name = dict->get(rt.names.dName());
     if (!name || !name.isString())
         return true;
-    if (module != rt.sysModule() && module != rt.builtinsModule()) {
-        JSValue instances = rt.slot(Runtime::Slot::NativeModules);
-        if (!instances || PyDict::from(instances)->get(asString(name)) != module)
-            return true;
-    }
+    if (!module->isNative() && module != rt.sysModule() && module != rt.builtinsModule())
+        return true;
     // Loading it gives one to every module there is. Without the standard library they go without.
     JSValue bootstrap = importModuleOrNone(globalObject, internString(vm, "_frozen_importlib"_s), true);
     RETURN_IF_EXCEPTION(scope, false);

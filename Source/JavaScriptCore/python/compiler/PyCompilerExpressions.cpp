@@ -1481,7 +1481,16 @@ RegisterID* Unit::call(Call* node, RegisterID* dst)
     checkCaller(node->func);
     Reg callee = newTemporary();
     expr(node->func, callee.get());
-    return emitCall(dst, callee.get(), { }, node->args, node->keywords, nullptr, node->range);
+
+    // CPython's compiler has these go through a generator expression in place, without a call, and all of that comes from the name:
+    // that is what a traceback underlines when the generator raises.
+    Range range = node->range;
+    if (auto* name = node->func->tryAs<NameExpr>(); name && node->args.size() == 1 && node->keywords.isEmpty() && node->args[0]->is<GeneratorExp>()) {
+        auto& id = name->id->string();
+        if ((id == "all"_s || id == "any"_s || id == "tuple"_s || id == "list"_s || id == "set"_s) && !c.m_symbols->scopeFor(node->args[0])->isCoroutine)
+            range = name->range;
+    }
+    return emitCall(dst, callee.get(), { }, node->args, node->keywords, nullptr, range);
 }
 
 // ---- Generators and coroutines ----

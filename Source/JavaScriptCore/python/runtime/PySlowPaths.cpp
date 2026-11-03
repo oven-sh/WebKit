@@ -182,8 +182,23 @@ namespace Python {
 
 void throwNotCallable(JSGlobalObject* globalObject, JSValue callee)
 {
-    VM& vm = getVM(globalObject);
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    // import pprint; pprint(x)
+    if (auto* module = PyModule::tryFrom(callee); module && module->type() == rt.moduleType()) {
+        JSValue name = module->dict()->get(rt.names.dName());
+        if (name && name.isString()) {
+            JSValue attribute = getAttrIfPresent(globalObject, callee, asString(name));
+            if (scope.exception())
+                takePendingException(globalObject);
+            else if (attribute && isCallable(globalObject, attribute)) {
+                String text = stringOf(asString(name));
+                raiseTypeError(globalObject, scope, "'module' object is not callable. Did you mean: '"_s, text, '.', text, "(...)'?"_s);
+                return;
+            }
+        }
+    }
     raiseTypeError(globalObject, scope, '\'', typeName(globalObject, callee), "' object is not callable"_s);
 }
 
@@ -770,7 +785,7 @@ static JSValue formatValue(JSGlobalObject* globalObject, JSValue value, JSValue 
         return value;
     if (spec && !isStr(spec)) [[unlikely]]
         return raiseSystemError(globalObject, scope, "Format specifier must be a string, not "_s, typeName(globalObject, spec));
-    RELEASE_AND_RETURN(scope, format(globalObject, value, spec ? strValue(spec) : nullptr));
+    RELEASE_AND_RETURN(scope, formatObject(globalObject, value, spec ? strValue(spec) : nullptr));
 }
 
 static JSValue makeFunction(JSGlobalObject* globalObject, CallFrame* callFrame, const RuntimeArguments& args)
@@ -1228,7 +1243,7 @@ static JSValue runRuntimeFunction(JSGlobalObject* globalObject, CallFrame* callF
     // ---- Exceptions ----
     case RuntimeFunction::Raise:
         // `raise` alone raises again what has been through this frame already.
-        if (!args[0])
+        if (!args[0] && rt.handledException())
             rt.reraisingFrame = callFrame;
         raiseStatement(globalObject, args[0], args[1]);
         return { };

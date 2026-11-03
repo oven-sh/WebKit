@@ -41,6 +41,8 @@ public:
             return m_narrow[index];
         return m_wide[index];
     }
+    // Null: they are not all below U+0100.
+    const Latin1Character* narrowCharacters() const { return m_narrow; }
 
 private:
     String m_string;
@@ -51,20 +53,61 @@ private:
     bool m_hasFailed { false };
 };
 
+// The bytes that an encoder writes. If the memory runs out, what is written goes nowhere, and makeBytes() raises a MemoryError.
+// (They are char8_t because a compiler has to assume that writing a uint8_t may change anything at all, the position in the text
+// and the pointers here included, and would load all of that again for every character.)
+class Output {
+    WTF_MAKE_NONCOPYABLE(Output);
+public:
+    Output() = default;
+    ~Output();
+
+    // Room for a few bytes, for the caller to fill.
+    ALWAYS_INLINE char8_t* room(size_t count)
+    {
+        ASSERT(count <= sizeof(m_nowhere));
+        if (static_cast<size_t>(m_end - m_cursor) < count) [[unlikely]]
+            grow(count);
+        char8_t* result = m_cursor;
+        m_cursor += count;
+        return result;
+    }
+    void append(std::span<const uint8_t>);
+    // There will be about so many more.
+    void expect(size_t count);
+
+    size_t size() const { return m_hasFailed ? 0 : m_cursor - m_start; }
+    // Null: a MemoryError.
+    PyBytes* makeBytes(JSGlobalObject*) const;
+
+private:
+    bool tryGrow(size_t count);
+    bool grow(size_t count);
+
+    char8_t* m_start { nullptr };
+    char8_t* m_cursor { nullptr };
+    char8_t* m_end { nullptr };
+    bool m_hasFailed { false };
+    char8_t m_nowhere[16];
+};
+
 // What encode() and decode() return: 0 when they have come to the end of the input, or how many characters or bytes from the
 // position there is no way to convert, or one of these.
 constexpr int needsMoreInput = -2;
 constexpr int internalError = -3;
 
+// How a codec gets from its module to _multibytecodec.__create_codec().
+constexpr auto nameOfCodecCapsule = "multibytecodec.codec"_s;
+
 struct Codec {
     ASCIILiteral name;
     // They move the position past what they have converted. An encoder that is not to `flush` may stop before a character
     // whose code depends on what follows.
-    int (*encode)(const Codec&, State&, const Text&, size_t& position, ByteBuilder&, bool flush);
+    int (*encode)(const Codec&, State&, const Text&, size_t& position, Output&, bool flush);
     int (*decode)(const Codec&, State&, std::span<const uint8_t>, size_t& position, StrBuilder&);
     // Null for codecs without a state.
     void (*startEncoding)(State&);
-    void (*finishEncoding)(State&, ByteBuilder&);
+    void (*finishEncoding)(State&, Output&);
     void (*startDecoding)(State&);
     void (*resetDecoder)(State&);
     const void* configuration;
@@ -72,8 +115,9 @@ struct Codec {
 
 } // namespace CJK
 
-// A MultibyteCodec object. (PyMultibyteCodec.cpp)
-JSValue makeMultibyteCodec(JSGlobalObject*, const CJK::Codec&);
+// A PyCapsule, and what is in one of that name: null if the value is anything else. (PyTypesModule.cpp)
+JSValue makeCapsule(JSGlobalObject*, ASCIILiteral name, const void* pointer);
+const void* pointerOfCapsule(JSGlobalObject*, JSValue, ASCIILiteral name);
 
 } // namespace Python
 } // namespace JSC

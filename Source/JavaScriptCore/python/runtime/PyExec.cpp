@@ -556,6 +556,7 @@ bool finalizeInterpreter(JSGlobalObject* globalObject)
             stopWaitingForThreadsAtExit(globalObject);
             reportUnraisable(globalObject, "Exception ignored on threading shutdown"_s, { });
         }
+        rt.finalizeWhatReferenceCountsWouldHaveFreed();
         runAtexitCallbacks(globalObject);
     } while (hasThreadsOrAtexitCallbacks(globalObject));
     // The threads that are left are daemons. They have run their last.

@@ -126,6 +126,9 @@ static JSValue binaryOperationOrNotImplemented(JSGlobalObject* globalObject, uns
                 return raiseTypeError(globalObject, scope, "can't multiply sequence by non-int of type '"_s, typeName(globalObject, b), '\'');
             RELEASE_AND_RETURN(scope, callSpecial(globalObject, method, a, b));
         }
+        // PyNumber_InPlaceMultiply() goes on to the right operand only if the type of the left one has no table of sequence methods.
+        if (inPlace && hasTableOfSequenceMethods(rt.typeOf(a)))
+            return rt.notImplemented();
         method = asksB ? rt.typeOf(b)->lookup(Special::Mul) : JSValue();
         if (method && isSequenceOperation(method)) {
             if (!hasIndex(globalObject, a))

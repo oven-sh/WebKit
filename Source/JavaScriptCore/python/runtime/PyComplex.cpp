@@ -208,6 +208,11 @@ JSValue complexPower(JSGlobalObject* globalObject, double baseReal, double baseI
         r.imaginary = length * std::sin(phase);
         if (std::isinf(r.real) || std::isinf(r.imaginary))
             error = ComplexError::Range;
+#if defined(__GLIBC__)
+        // CPython goes by errno, which this C library sets for the cosine of an infinity. (Others do not: there the result is NaNs.)
+        if (std::isinf(phase))
+            error = ComplexError::Domain;
+#endif
     }
     if (error == ComplexError::Domain)
         return raiseZeroDivisionError(globalObject, scope, "zero to a negative or complex power"_s);
@@ -605,7 +610,7 @@ static JSValue complexNew(JSGlobalObject* globalObject, JSValue cls, const CallA
         String keyword = stringOf(args.keywordName(k));
         JSValue& target = keyword == "real"_s ? r : i;
         if (keyword != "real"_s && keyword != "imag"_s)
-            return raiseTypeError(globalObject, scope, "complex() got an unexpected keyword argument '"_s, keyword, '\'');
+            RELEASE_AND_RETURN(scope, raiseUnexpectedKeyword(globalObject, "complex"_s, keyword, { "real"_s, "imag"_s }));
         if (target)
             return raiseTypeError(globalObject, scope, "argument for complex() given by name ('"_s, keyword, "') and position ("_s, keyword == "real"_s ? 1 : 2, ')');
         target = args.keywordValue(k);

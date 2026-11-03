@@ -12,6 +12,10 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 namespace JSC {
 namespace Python {
 
+// To ask for more is an OverflowError, "byte string is too large", and not a MemoryError: what a Py_ssize_t holds, less the rest of
+// the object in CPython.
+constexpr size_t maxLengthOfBytes = static_cast<size_t>(std::numeric_limits<int64_t>::max()) - 33;
+
 class PyBytes final : public PyObject {
 public:
     PY_DECLARE_CELL(PyBytes, PyObject, PyBytesType);

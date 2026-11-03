@@ -71,7 +71,7 @@ static JSValue sentinelNew(JSGlobalObject* globalObject, JSValue cls, const Call
         String keyword = args.keywordName(0)->value(globalObject);
         RETURN_IF_EXCEPTION(scope, { });
         if (keyword != "repr"_s)
-            return raiseTypeError(globalObject, scope, "sentinel() got an unexpected keyword argument '"_s, keyword, '\'');
+            RELEASE_AND_RETURN(scope, raiseUnexpectedKeyword(globalObject, "sentinel"_s, keyword, { "repr"_s }));
         repr = args.keywordValue(0);
     }
     JSValue name = args[0];
@@ -192,7 +192,7 @@ static JSValue namespaceInit(JSGlobalObject* globalObject, JSValue self, const C
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (args.size() > 1)
-        return raiseTypeError(globalObject, scope, typeName(globalObject, self), " expected at most 1 argument, got "_s, args.size());
+        return raiseTypeError(globalObject, scope, typeOf(globalObject, self)->name(), " expected at most 1 argument, got "_s, args.size());
     PyDict* dict = namespaceDict(globalObject, self);
     if (args.size()) {
         JSValue source = args[0];

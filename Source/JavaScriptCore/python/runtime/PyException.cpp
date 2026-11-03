@@ -480,6 +480,10 @@ static bool initWithKeywords(JSGlobalObject* globalObject, JSValue object, const
     exception->setArgs(vm, PyTuple::create(globalObject, args.positional()));
     for (auto& keyword : keywords)
         exception->setField(vm, keyword.second, { });
+    if (args.keywordCount() > keywords.size()) {
+        raiseTypeError(globalObject, scope, typeName(globalObject, object), "() takes at most "_s, static_cast<unsigned>(keywords.size()), " keyword argument"_s, keywords.size() == 1 ? ""_s : "s"_s, " ("_s, args.keywordCount(), " given)"_s);
+        return false;
+    }
     for (unsigned i = 0; i < args.keywordCount(); ++i) {
         StringImpl* name = args.keywordName(i)->tryGetValueImpl();
         bool found = false;
@@ -491,7 +495,11 @@ static bool initWithKeywords(JSGlobalObject* globalObject, JSValue object, const
             }
         }
         if (!found) {
-            raiseTypeError(globalObject, scope, typeName(globalObject, object), "() got an unexpected keyword argument '"_s, StringView(*name), '\'');
+            Vector<ASCIILiteral, 4> names;
+            for (auto& keyword : keywords)
+                names.append(keyword.first);
+            scope.release();
+            raiseUnexpectedKeyword(globalObject, typeName(globalObject, object), String(name), names.span());
             return false;
         }
     }

@@ -223,7 +223,8 @@ JSValue objectInit(JSGlobalObject* globalObject, JSValue self, const CallArgs& a
     PyType* type = typeOf(globalObject, self);
     if (!isNativeNew(type->lookup(Special::Init), objectInit))
         return raiseTypeError(globalObject, scope, "object.__init__() takes exactly one argument (the instance to initialize)"_s);
-    if (isNativeNew(type->lookup(Special::New), objectNew))
+    // A built-in type whose instances cannot be made from Python has no __new__ at all in CPython, not that of object.
+    if (isNativeNew(type->lookup(Special::New), objectNew) && layoutBase(type) == runtime(globalObject).objectType())
         return raiseTypeError(globalObject, scope, type->nameInMessages(), ".__init__() takes exactly one argument (the instance to initialize)"_s);
     return jsUndefined();
 }
@@ -455,8 +456,11 @@ static void registerInstancesForFinalization(JSGlobalObject* globalObject, PyTyp
             return IterationStatus::Continue;
         });
     }
-    for (unsigned i = 0; i < instances.size(); ++i)
-        rt.registerFinalizable(instances.at(i).asCell());
+    for (unsigned i = 0; i < instances.size(); ++i) {
+        // A finalizer is called once.
+        if (!rt.hasBeenFinalized(instances.at(i).asCell()))
+            rt.registerFinalizable(instances.at(i).asCell());
+    }
 }
 
 static bool sameSlots(PyType* a, PyType* b)
@@ -524,7 +528,7 @@ static void objectSetClass(JSGlobalObject* globalObject, JSValue self, JSValue v
         uncheckedDowncast<PyListObject>(cell)->setType(vm, newType);
     else
         PyType::from(self)->setType(vm, newType);
-    if (newType->lookup(Special::Del) && !oldType->lookup(Special::Del)) [[unlikely]]
+    if (newType->lookup(Special::Del) && !oldType->lookup(Special::Del) && !rt.hasBeenFinalized(cell)) [[unlikely]]
         rt.registerFinalizable(cell);
 }
 

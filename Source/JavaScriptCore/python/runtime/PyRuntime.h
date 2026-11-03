@@ -368,7 +368,7 @@ public:
     // State of the native modules that programs must not see (it is not in a module's dict) and that outlives the modules.
     enum class Slot : unsigned {
         CurrentContext,
-        NativeModules, // dict: name -> module
+        NativeModules, // dict: name -> dict (nativeModuleNamespace())
         FindAndLoad, // importlib._bootstrap._find_and_load, once importlib is the import system
         Monitoring, // See Monitoring::state().
         TraceFunction, // sys.settrace() and sys.setprofile(), of the thread that is running. Empty: none.
@@ -523,17 +523,26 @@ public:
     void finalizeAllAtExit();
     // See the function of that name in PyBuffer.h.
     void releaseUnreachableBuffers(bool thorough);
-    // Told, with the world stopped, when a collection has marked all that it will.
     class MarkingObserver {
     public:
         virtual ~MarkingObserver() = default;
+        // With the world stopped, when a collection has marked all that it will.
         // True: it has marked something itself, so there is more to mark. It is told again when that is done.
-        virtual bool didFinishMarking(SlotVisitor&) = 0;
+        virtual bool didFinishMarking(SlotVisitor&) { return false; }
+        // In a collection that was asked for, with the world stopped, before any object is kept for its finalizer: whether it
+        // wants to be told what has died that reference counts would not have freed, and is told. It adds what is to be kept.
+        virtual bool wantsGarbage() { return false; }
+        virtual void didFindGarbage(std::span<JSCell* const>, size_t /* cellsLookedAt */, Vector<JSCell*>& /* toKeep */) { }
         // For collectAndFinalize(): before and after each of its collections, in the thread that asked for them.
         virtual void willCollect() { }
         virtual void didCollect() { }
     };
     void setMarkingObserver(MarkingObserver* observer) { m_markingObserver = observer; }
+    // A full collection for which the program waits. It takes the time to look at all that has died: see PyFinalizationOrder.cpp.
+    void collectAsAskedFor();
+    // For when the interpreter exits, before the program is told (atexit): what is unreachable by then and reference
+    // counts would have freed would have been finalized long ago.
+    void finalizeWhatReferenceCountsWouldHaveFreed();
     // Its finalizer has been called, and yet it is still there.
     bool hasBeenFinalized(JSCell*);
 
@@ -695,6 +704,8 @@ private:
     bool m_shouldCollectAfterPendingCalls { false };
     bool m_mayHavePendingOutput { false };
     MarkingObserver* m_markingObserver { nullptr };
+    bool m_collectionWasAskedFor { false };
+    bool m_leavesCyclicGarbageForLater { false };
 
     Lock m_moduleTypesLock;
     UncheckedKeyHashMap<const TypeDef*, WriteBarrier<PyType>> m_moduleTypes WTF_GUARDED_BY_LOCK(m_moduleTypesLock);

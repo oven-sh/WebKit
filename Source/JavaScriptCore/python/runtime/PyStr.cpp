@@ -13,6 +13,7 @@
 #include "PyInternals.h"
 #include "PyIterators.h"
 #include "PyList.h"
+#include "PyModuleHelpers.h"
 #include "PyNumbers.h"
 #include "PyRange.h"
 #include "PyTextSearch.h"
@@ -658,8 +659,13 @@ static JSValue strMul(JSGlobalObject* globalObject, JSValue self, JSValue countV
     String text = string->value(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
     String result = repeatString(text, count);
-    if (result.isNull())
+    if (result.isNull()) {
+        StrView view(globalObject, string);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (static_cast<int64_t>(view.length()) > std::numeric_limits<int64_t>::max() / count)
+            return raiseOverflowError(globalObject, scope, "repeated string is too long"_s);
         return raiseMemoryError(globalObject, scope, String());
+    }
     return makeStr(vm, result);
 }
 
@@ -796,7 +802,11 @@ static JSValue strGetItem(JSGlobalObject* globalObject, JSValue self, JSValue ke
 
 static JSValue strIter(JSGlobalObject* globalObject, JSValue self)
 {
-    return PyIterator::create(globalObject, PyIterator::Kind::Str, strValue(self));
+    PyIterator* iterator = PyIterator::create(globalObject, PyIterator::Kind::Str, strValue(self));
+    // The iterator for ASCII is for strs laid out as str itself lays them out, in CPython.
+    if (!self.isString()) [[unlikely]]
+        iterator->setType(getVM(globalObject), runtime(globalObject).strIteratorType());
+    return iterator;
 }
 
 static JSValue strGetNewArgs(JSGlobalObject* globalObject, JSValue self)
@@ -820,7 +830,10 @@ static JSValue strFormatSpecMethod(JSGlobalObject* globalObject, JSValue self, J
     // A class derived from str may have a __str__ of its own.
     if (!strValue(spec)->length())
         RELEASE_AND_RETURN(scope, isExactStr(self) ? asString(self) : str(globalObject, self));
-    RELEASE_AND_RETURN(scope, formatStr(globalObject, self, strValue(spec)));
+    JSString* result = formatStr(globalObject, self, strValue(spec));
+    RETURN_IF_EXCEPTION(scope, { });
+    // With nothing to add or to cut off it is the object itself, of whatever class.
+    return result == strValue(self) ? self : JSValue(result);
 }
 
 // What the text takes in CPython, which stores it in units as wide as its widest character needs.
@@ -961,10 +974,8 @@ static JSValue strReplace(JSGlobalObject* globalObject, JSValue self, JSValue ol
     if (!strArgument(globalObject, oldValue, "replace"_s, 1, target) || !strArgument(globalObject, newValue, "replace"_s, 2, replacement))
         return { };
     int64_t count = -1;
-    if (countValue) {
-        count = toSsize(globalObject, countValue, runtime(globalObject).OverflowError());
-        RETURN_IF_EXCEPTION(scope, { });
-    }
+    if (countValue && !ssizeArgument(globalObject, countValue, count))
+        return { };
     if (count < 0)
         count = std::numeric_limits<int64_t>::max();
     if (!count)
@@ -1012,10 +1023,9 @@ static bool parseMaxSplit(JSGlobalObject* globalObject, JSValue value, int64_t& 
     result = std::numeric_limits<int64_t>::max();
     if (!value)
         return true;
-    VM& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    int64_t given = toSsize(globalObject, value, runtime(globalObject).OverflowError());
-    RETURN_IF_EXCEPTION(scope, false);
+    int64_t given;
+    if (!ssizeArgument(globalObject, value, given))
+        return false;
     if (given >= 0)
         result = given;
     return true;
@@ -1326,7 +1336,7 @@ static JSValue pad(JSGlobalObject* globalObject, JSString* string, const StrView
     right = std::max<int64_t>(right, 0);
     int64_t unitsPerFill = U16_LENGTH(fill);
     if (left > String::MaxLength || right > String::MaxLength || (left + right) * unitsPerFill + view.unitLength() > String::MaxLength)
-        return raiseOverflowError(globalObject, scope, "padded string is too long"_s);
+        return raiseMemoryError(globalObject, scope, String());
     StrBuilder builder;
     for (int64_t i = 0; i < left; ++i)
         appendCodePoint(builder, fill);
@@ -1342,8 +1352,9 @@ template<Justify justify>
 static JSValue strJustify(JSGlobalObject* globalObject, JSValue self, JSValue widthValue, JSValue fillValue)
 {
     PY_STR_METHOD_PROLOGUE(view);
-    int64_t width = toSsize(globalObject, widthValue, runtime(globalObject).OverflowError());
-    RETURN_IF_EXCEPTION(scope, { });
+    int64_t width;
+    if (!ssizeArgument(globalObject, widthValue, width))
+        return { };
     char32_t fill;
     if (!fillCharacter(globalObject, fillValue, fill))
         return { };
@@ -1362,13 +1373,14 @@ static JSValue strJustify(JSGlobalObject* globalObject, JSValue self, JSValue wi
 static JSValue strZFill(JSGlobalObject* globalObject, JSValue self, JSValue widthValue)
 {
     PY_STR_METHOD_PROLOGUE(view);
-    int64_t width = toSsize(globalObject, widthValue, runtime(globalObject).OverflowError());
-    RETURN_IF_EXCEPTION(scope, { });
+    int64_t width;
+    if (!ssizeArgument(globalObject, widthValue, width))
+        return { };
     if (width <= static_cast<int64_t>(view.length()))
         return selfString;
     int64_t fill = width - view.length();
     if (width > String::MaxLength || fill + view.unitLength() > String::MaxLength)
-        return raiseOverflowError(globalObject, scope, "padded string is too long"_s);
+        return raiseMemoryError(globalObject, scope, String());
     const String& string = view.string();
     StrBuilder builder;
     unsigned start = 0;
@@ -1740,6 +1752,18 @@ static JSValue strMakeTrans(JSGlobalObject* globalObject, JSValue x, JSValue y, 
 // ---- encode, str() ----
 
 // False: a TypeError, "f() argument 'name' must be str, not int". Absent: null.
+bool hasEmbeddedNull(JSGlobalObject* globalObject, JSString* string)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto view = string->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, true);
+    if (view->find(static_cast<char16_t>(0)) == notFound)
+        return false;
+    raiseValueError(globalObject, scope, "embedded null character"_s);
+    return true;
+}
+
 static bool optionalStr(JSGlobalObject* globalObject, JSValue value, ASCIILiteral function, ASCIILiteral name, JSString*& result)
 {
     result = nullptr;
@@ -1752,7 +1776,7 @@ static bool optionalStr(JSGlobalObject* globalObject, JSValue value, ASCIILitera
         return false;
     }
     result = strValue(value);
-    return true;
+    return !hasEmbeddedNull(globalObject, result);
 }
 
 static JSValue strEncodeMethod(JSGlobalObject* globalObject, JSValue self, JSValue encodingValue, JSValue errorsValue)
@@ -1784,10 +1808,16 @@ static JSValue strNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs&
         while (index < 3 && keyword != names[index])
             ++index;
         if (index == 3)
-            return raiseTypeError(globalObject, scope, "str() got an unexpected keyword argument '"_s, keyword, '\'');
+            RELEASE_AND_RETURN(scope, raiseUnexpectedKeyword(globalObject, "str"_s, keyword, names));
         if (values[index])
             return raiseTypeError(globalObject, scope, "argument for str() given by name ('"_s, keyword, "') and position ("_s, index + 1, ')');
         values[index] = args.keywordValue(i);
+    }
+    if (!args.keywordCount() && type == rt.strType()) {
+        for (unsigned i = 1; i < 3; ++i) {
+            if (values[i] && !isStr(values[i]))
+                return raiseTypeError(globalObject, scope, "str() argument '"_s, names[i], "' must be str, not "_s, typeNameForMessage(globalObject, rt.typeOf(values[i])));
+        }
     }
     JSString* encoding;
     JSString* errors;

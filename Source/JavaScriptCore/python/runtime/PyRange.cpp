@@ -587,9 +587,19 @@ static JSValue sliceHash(JSGlobalObject* globalObject, JSValue self)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    int64_t result = hashOfTuple(globalObject, sliceAsTuple(globalObject, self));
-    RETURN_IF_EXCEPTION(scope, { });
-    return makeInt(globalObject, result);
+    // As hashOfTuple(), but that the length is not mixed in at the end.
+    auto* slice = PySlice::from(self);
+    uint64_t accumulator = 2870177450012600261ULL;
+    for (JSValue part : { slice->start(), slice->stop(), slice->step() }) {
+        int64_t lane = hash(globalObject, part);
+        RETURN_IF_EXCEPTION(scope, { });
+        accumulator += static_cast<uint64_t>(lane) * 14029467366897019727ULL;
+        accumulator = (accumulator << 31) | (accumulator >> 33);
+        accumulator *= 11400714785074694791ULL;
+    }
+    if (accumulator == static_cast<uint64_t>(-1))
+        accumulator = 1546275796;
+    return makeInt(globalObject, static_cast<int64_t>(accumulator));
 }
 
 static JSValue sliceIndices(JSGlobalObject* globalObject, JSValue self, JSValue lengthValue)

@@ -13,6 +13,7 @@
 #include "PyInternals.h"
 #include "PyIterators.h"
 #include "PyJSView.h"
+#include "PyModuleHelpers.h"
 #include "PyNumbers.h"
 #include "PyRange.h"
 #include "PyStr.h"
@@ -1273,13 +1274,17 @@ static bool listSubscriptIndex(JSGlobalObject* globalObject, JSArray* list, JSVa
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!key.isInt32()) [[unlikely]] {
-        int64_t number = toSsize(globalObject, key, runtime(globalObject).IndexError());
-        RETURN_IF_EXCEPTION(scope, false);
-        // (One that is not exact as a double is out of range anyway.)
-        key = jsNumber(static_cast<double>(number));
+    int64_t number = toSsize(globalObject, key, runtime(globalObject).IndexError());
+    RETURN_IF_EXCEPTION(scope, false);
+    int64_t length = list->length();
+    if (number < 0)
+        number += length;
+    if (number < 0 || number >= length) {
+        raiseIndexError(globalObject, scope, message);
+        return false;
     }
-    RELEASE_AND_RETURN(scope, normalizeIndex(globalObject, key, list->length(), message, index));
+    index = number;
+    return true;
 }
 
 static bool listSliceIndices(JSGlobalObject* globalObject, JSArray* list, PySlice* slice, PySlice::Indices& indices)
@@ -1349,7 +1354,11 @@ static void listAssignSubscript(JSGlobalObject* globalObject, JSArray* list, JSV
         return;
     }
 
-    // The items are collected first: working them out may change the list, and they may be the list.
+    PySlice::Indices indices;
+    if (!slice->unpack(globalObject, indices))
+        return;
+
+    // The items are collected before the length of the list is looked at: working them out may change the list, and they may be the list.
     MarkedArgumentBuffer items;
     if (value) {
         PyType* type = typeOf(globalObject, value);
@@ -1365,9 +1374,7 @@ static void listAssignSubscript(JSGlobalObject* globalObject, JSArray* list, JSV
     }
     std::span<const JSValue> itemSpan { reinterpret_cast<const JSValue*>(ArgList(items).data()), items.size() };
 
-    PySlice::Indices indices;
-    if (!listSliceIndices(globalObject, list, slice, indices))
-        return;
+    PySlice::adjust(list->length(), indices);
     if (indices.step == 1) {
         int64_t stop = std::max(indices.start, indices.stop);
         RELEASE_AND_RETURN(scope, listReplaceRange(globalObject, list, indices.start, stop, itemSpan));
@@ -1547,8 +1554,9 @@ static JSValue listInsertMethod(JSGlobalObject* globalObject, JSValue self, JSVa
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSArray* list = asList(self);
-    int64_t index = toSsize(globalObject, indexValue, runtime(globalObject).OverflowError());
-    RETURN_IF_EXCEPTION(scope, { });
+    int64_t index;
+    if (!ssizeArgument(globalObject, indexValue, index))
+        return { };
     int64_t length = list->length();
     if (index < 0)
         index = std::max<int64_t>(index + length, 0);
@@ -1564,10 +1572,8 @@ static JSValue listPop(JSGlobalObject* globalObject, JSValue self, JSValue index
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSArray* list = asList(self);
     int64_t index = -1;
-    if (indexValue) {
-        index = toSsize(globalObject, indexValue, runtime(globalObject).OverflowError());
-        RETURN_IF_EXCEPTION(scope, { });
-    }
+    if (indexValue && !ssizeArgument(globalObject, indexValue, index))
+        return { };
     int64_t length = list->length();
     if (!length)
         return raiseIndexError(globalObject, scope, "pop from empty list"_s);
@@ -1634,8 +1640,9 @@ static JSValue listIndex(JSGlobalObject* globalObject, JSValue self, JSValue ite
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSArray* list = asList(self);
-    int64_t from, to;
-    if (!unpackSliceBounds(globalObject, start, stop, from, to))
+    int64_t from = 0;
+    int64_t to = std::numeric_limits<int64_t>::max();
+    if ((start && !sliceIndexArgument(globalObject, start, from)) || (stop && !sliceIndexArgument(globalObject, stop, to)))
         return { };
     // Not clipped to the length: the list may grow as it is searched.
     if (from < 0)
@@ -1945,9 +1952,11 @@ static JSValue tupleIndex(JSGlobalObject* globalObject, JSValue self, JSValue it
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyTuple* tuple = PyTuple::from(self);
-    int64_t from, to;
-    if (!sliceBounds(globalObject, start, stop, tuple->length(), from, to))
+    int64_t from = 0;
+    int64_t to = std::numeric_limits<int64_t>::max();
+    if ((start && !sliceIndexArgument(globalObject, start, from)) || (stop && !sliceIndexArgument(globalObject, stop, to)))
         return { };
+    adjustSliceBounds(tuple->length(), from, to);
     for (int64_t i = from; i < to; ++i) {
         bool equal = isEqual(globalObject, tuple->at(i), item);
         RETURN_IF_EXCEPTION(scope, { });

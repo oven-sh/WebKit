@@ -416,6 +416,11 @@ static bool bytesAllocate(JSGlobalObject* globalObject, bool asArray, size_t len
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
+    if (length > maxLengthOfBytes) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        raiseOverflowError(globalObject, scope, "byte string is too large"_s);
+        return false;
+    }
     if (asArray) {
         PyByteArray* array = PyByteArray::create(vm, rt.structure<PyByteArray>(), rt.bytearrayType());
         if (!array->resize(globalObject, length))
@@ -535,7 +540,7 @@ static bool bytesOptionalStr(JSGlobalObject* globalObject, JSValue value, ASCIIL
         return false;
     }
     result = strValue(value);
-    return true;
+    return !hasEmbeddedNull(globalObject, result);
 }
 
 // As PyNumber_Check().
@@ -1128,6 +1133,8 @@ static JSValue bytesMul(JSGlobalObject* globalObject, JSValue self, JSValue coun
     size_t total = span.size() * count;
     if (total == span.size() && bytesIsExact(globalObject, self))
         return self;
+    if (total > maxLengthOfBytes)
+        RELEASE_AND_RETURN(scope, bytesRaiseNoMemory(globalObject));
     JSValue result;
     uint8_t* data;
     if (!bytesAllocate(globalObject, isArray, total, result, data))
@@ -1861,9 +1868,10 @@ static JSValue bytesJustifyMethod(JSGlobalObject* globalObject, JSValue self, JS
             return raiseTypeError(globalObject, scope, function, "(): argument 2 must be a byte string of length 1, not a "_s, bytesIsArray(fillValue) ? "bytearray"_s : "bytes"_s, " object of length "_s, span.size());
         fill = span[0];
     }
-    int64_t margin = width - static_cast<int64_t>(bytesSpanOf(self).size());
-    if (margin <= 0)
+    int64_t length = bytesSpanOf(self).size();
+    if (width <= length)
         RELEASE_AND_RETURN(scope, bytesSelfOrCopy(globalObject, self));
+    int64_t margin = width - length;
     scope.release();
     if constexpr (justify == BytesJustify::Left)
         return bytesPad(globalObject, self, 0, margin, fill);
@@ -1880,9 +1888,10 @@ static JSValue bytesZFill(JSGlobalObject* globalObject, JSValue self, JSValue wi
     int64_t width;
     if (!bytesSsizeArgument(globalObject, widthValue, width))
         return { };
-    int64_t fill = width - static_cast<int64_t>(bytesSpanOf(self).size());
-    if (fill <= 0)
+    int64_t length = bytesSpanOf(self).size();
+    if (width <= length)
         RELEASE_AND_RETURN(scope, bytesSelfOrCopy(globalObject, self));
+    int64_t fill = width - length;
     JSValue result = bytesPad(globalObject, self, fill, 0, '0');
     RETURN_IF_EXCEPTION(scope, { });
     // The sign stays in front. The result is new, so it can be written to whichever kind it is.
@@ -2761,9 +2770,6 @@ static JSValue byteArrayIMul(JSGlobalObject* globalObject, JSValue self, JSValue
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // So that `*=` goes on to complain as `*` does.
-    if (!hasIndex(globalObject, countValue))
-        return rt.notImplemented();
     int64_t count = toSsize(globalObject, countValue, rt.OverflowError());
     RETURN_IF_EXCEPTION(scope, { });
     count = std::max<int64_t>(count, 0);

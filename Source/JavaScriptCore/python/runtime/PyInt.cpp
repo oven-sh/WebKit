@@ -12,6 +12,7 @@
 #include "PyBytes.h"
 #include "PyErrors.h"
 #include "PyInternals.h"
+#include "PyModuleHelpers.h"
 #include "PyStr.h"
 #include "PyTypes.h"
 #include <wtf/text/StringToIntegerConversion.h>
@@ -806,6 +807,17 @@ static JSValue intGetNewArgs(JSGlobalObject* globalObject, JSValue self) { retur
 static JSValue intZero(JSGlobalObject*, JSValue) { return jsNumber(0); }
 static JSValue intOne(JSGlobalObject*, JSValue) { return jsNumber(1); }
 
+// The arguments are looked at in two rounds, as in CPython: are they of the right kind, all of them, and then what do they say.
+static bool checkByteOrder(JSGlobalObject* globalObject, ASCIILiteral function, JSValue byteOrder)
+{
+    if (!byteOrder || isStr(byteOrder))
+        return true;
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    raiseTypeError(globalObject, scope, function, "() argument 'byteorder' must be str, not "_s, typeNameOfArgument(globalObject, byteOrder));
+    return false;
+}
+
 static bool parseByteOrder(JSGlobalObject* globalObject, JSValue byteOrder, bool& littleEndian)
 {
     VM& vm = getVM(globalObject);
@@ -813,10 +825,6 @@ static bool parseByteOrder(JSGlobalObject* globalObject, JSValue byteOrder, bool
     littleEndian = false;
     if (!byteOrder)
         return true;
-    if (!isStr(byteOrder)) {
-        raiseTypeError(globalObject, scope, "byteorder must be str, not "_s, typeName(globalObject, byteOrder));
-        return false;
-    }
     String text = strValue(byteOrder)->value(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
     if (text == "little"_s)
@@ -834,19 +842,28 @@ static JSValue intToBytes(JSGlobalObject* globalObject, JSValue self, JSValue le
     auto scope = DECLARE_THROW_SCOPE(vm);
     int64_t length = 1;
     if (lengthValue) {
-        length = toSsize(globalObject, lengthValue, runtime(globalObject).OverflowError());
-        RETURN_IF_EXCEPTION(scope, { });
+        if (!ssizeArgument(globalObject, lengthValue, length))
+            return { };
         if (length < 0)
             return raiseValueError(globalObject, scope, "length cannot be negative"_s);
     }
-    bool littleEndian;
-    if (!parseByteOrder(globalObject, byteOrder, littleEndian))
+    if (!checkByteOrder(globalObject, "to_bytes"_s, byteOrder))
         return { };
     bool isSigned = false;
     if (isSignedValue) {
         isSigned = isTrue(globalObject, isSignedValue);
         RETURN_IF_EXCEPTION(scope, { });
     }
+    bool littleEndian;
+    if (!parseByteOrder(globalObject, byteOrder, littleEndian))
+        return { };
+    // The bytes are made before the int is looked at.
+    Runtime& rt = runtime(globalObject);
+    if (static_cast<uint64_t>(length) > maxLengthOfBytes)
+        return raiseOverflowError(globalObject, scope, "byte string is too large"_s);
+    PyBytes* result = length ? PyBytes::tryCreateUninitialized(vm, rt.structure<PyBytes>(), rt.bytesType(), length) : rt.emptyBytes();
+    if (!result)
+        return raiseMemoryError(globalObject, scope, String());
 
     JSValue value = intValue(self);
     bool negative = intSign(value) < 0;
@@ -860,10 +877,6 @@ static JSValue intToBytes(JSGlobalObject* globalObject, JSValue self, JSValue le
     size_t magnitudeBytes = (bits + 7) / 8;
     if (magnitudeBytes > static_cast<size_t>(length))
         return raiseOverflowError(globalObject, scope, "int too big to convert"_s);
-    Runtime& rt = runtime(globalObject);
-    PyBytes* result = length ? PyBytes::tryCreateUninitialized(vm, rt.structure<PyBytes>(), rt.bytesType(), length) : rt.emptyBytes();
-    if (!result)
-        return raiseMemoryError(globalObject, scope, String());
     uint8_t* data = result->mutableData();
     unsigned carry = 1;
     bool fits = true;
@@ -923,14 +936,16 @@ static JSValue intFromBytes(JSGlobalObject* globalObject, JSValue cls, JSValue b
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    bool littleEndian;
-    if (!parseByteOrder(globalObject, byteOrder, littleEndian))
+    if (!checkByteOrder(globalObject, "from_bytes"_s, byteOrder))
         return { };
     bool isSigned = false;
     if (isSignedValue) {
         isSigned = isTrue(globalObject, isSignedValue);
         RETURN_IF_EXCEPTION(scope, { });
     }
+    bool littleEndian;
+    if (!parseByteOrder(globalObject, byteOrder, littleEndian))
+        return { };
     JSValue bytesObject;
     std::span<const uint8_t> bytes;
     if (isBytesLike(bytesValue)) {
@@ -1076,8 +1091,12 @@ static JSValue intFromTextObject(JSGlobalObject* globalObject, JSValue source, i
     }
     JSValue result = intFromText(globalObject, StringView(text), base);
     RETURN_IF_EXCEPTION(scope, { });
-    if (!result)
+    if (!result) {
+        // What is not a str is shown as bytes, whatever it is.
+        if (!isStr(source))
+            source = PyBytes::create(globalObject, byteCast<uint8_t>(text.span8().first(std::min<size_t>(text.length(), 200))));
         return raiseValueError(globalObject, scope, "invalid literal for int() with base "_s, base, ": "_s, reprForMessage(globalObject, source));
+    }
     return result;
 }
 
@@ -1093,7 +1112,7 @@ static JSValue intNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs&
         return raiseTypeError(globalObject, scope, "int expected at most 2 arguments, got "_s, args.size());
     for (unsigned i = 0; i < args.keywordCount(); ++i) {
         if (!WTF::equal(args.keywordName(i)->tryGetValueImpl(), "base"_s.span8()) || baseValue)
-            return raiseTypeError(globalObject, scope, "int() got an unexpected keyword argument '"_s, stringOf(args.keywordName(i)), '\'');
+            RELEASE_AND_RETURN(scope, raiseUnexpectedKeyword(globalObject, "int"_s, stringOf(args.keywordName(i)), { "base"_s }));
         baseValue = args.keywordValue(i);
     }
 

@@ -158,15 +158,15 @@ static bool positionFromHandler(JSGlobalObject* globalObject, JSValue value, siz
 constexpr unsigned flushes = 1; // There is no more text to come.
 constexpr unsigned resets = 2; // The output is to end in the state it began in.
 
-static bool encodeText(JSGlobalObject*, const Codec&, State&, JSString*, const ErrorTreatment&, unsigned flags, ByteBuilder&, size_t& position, size_t& length);
+static bool encodeText(JSGlobalObject*, const Codec&, State&, JSValue text, const ErrorTreatment&, unsigned flags, Output&, size_t& position, size_t& length);
 
 struct EncodeRun {
     const Codec& codec;
     State& state;
     const ErrorTreatment& errors;
-    JSString* string;
+    JSValue object; // The str, which may be of a class derived from str.
     const Text& text;
-    ByteBuilder& out;
+    Output& out;
     size_t& position;
     PyException* exception { nullptr };
 };
@@ -191,14 +191,14 @@ static bool handleEncodeError(JSGlobalObject* globalObject, EncodeRun& run, int 
         Text questionMark { "?"_s };
         size_t position = 0;
         if (run.codec.encode(run.codec, run.state, questionMark, position, run.out, false))
-            run.out.append('?');
+            *run.out.room(1) = '?';
     }
     if (run.errors.mode == ErrorMode::Ignore || run.errors.mode == ErrorMode::Replace) {
         run.position += size;
         return true;
     }
 
-    if (!prepareUnicodeError(globalObject, run.exception, rt.UnicodeEncodeError(), run.codec, run.string, run.position, run.position + size, reason))
+    if (!prepareUnicodeError(globalObject, run.exception, rt.UnicodeEncodeError(), run.codec, run.object, run.position, run.position + size, reason))
         return false;
     if (run.errors.mode == ErrorMode::Strict) {
         raiseException(globalObject, scope, run.exception);
@@ -218,7 +218,7 @@ static bool handleEncodeError(JSGlobalObject* globalObject, EncodeRun& run, int 
         run.out.append(bytes->span());
     else {
         size_t position, length;
-        if (!encodeText(globalObject, run.codec, run.state, strValue(tuple->at(0)), { }, flushes, run.out, position, length))
+        if (!encodeText(globalObject, run.codec, run.state, tuple->at(0), { }, flushes, run.out, position, length))
             return false;
     }
     return positionFromHandler(globalObject, tuple->at(1), run.text.length(), run.position);
@@ -226,11 +226,11 @@ static bool handleEncodeError(JSGlobalObject* globalObject, EncodeRun& run, int 
 
 // Appends the bytes for the text. `position`: how many of its `length` characters they are for; without `flushes`, the last may
 // have to wait for what follows.
-static bool encodeText(JSGlobalObject* globalObject, const Codec& codec, State& state, JSString* string, const ErrorTreatment& errors, unsigned flags, ByteBuilder& out, size_t& position, size_t& length)
+static bool encodeText(JSGlobalObject* globalObject, const Codec& codec, State& state, JSValue object, const ErrorTreatment& errors, unsigned flags, Output& out, size_t& position, size_t& length)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    String value = string->value(globalObject);
+    String value = strValue(object)->value(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
     Text text { value };
     if (text.hasFailed()) {
@@ -239,8 +239,9 @@ static bool encodeText(JSGlobalObject* globalObject, const Codec& codec, State& 
     }
     position = 0;
     length = text.length();
+    out.expect(length * 2);
 
-    EncodeRun run { codec, state, errors, string, text, out, position };
+    EncodeRun run { codec, state, errors, object, text, out, position };
     while (position < length) {
         int result = codec.encode(codec, state, text, position, out, flags & flushes);
         if (!result || (result == needsMoreInput && !(flags & flushes)))
@@ -256,11 +257,11 @@ static bool encodeText(JSGlobalObject* globalObject, const Codec& codec, State& 
 }
 
 // What is not a str is encoded as str() shows it.
-static JSString* textToEncode(JSGlobalObject* globalObject, JSValue input)
+static JSValue textToEncode(JSGlobalObject* globalObject, JSValue input)
 {
     if (isStr(input)) [[likely]]
-        return strValue(input);
-    return str(globalObject, input);
+        return input;
+    return strObject(globalObject, input);
 }
 
 // ---- Decoding ----
@@ -383,17 +384,17 @@ static JSValue codecEncode(JSGlobalObject* globalObject, JSValue self, JSValue i
     ErrorTreatment errors;
     if (!treatmentFromArgument(globalObject, "encode"_s, errorsValue, errors))
         return { };
-    JSString* string = textToEncode(globalObject, input);
+    JSValue text = textToEncode(globalObject, input);
     RETURN_IF_EXCEPTION(scope, { });
 
     State state;
     if (codec.startEncoding)
         codec.startEncoding(state);
-    ByteBuilder out;
+    Output out;
     size_t position, length;
-    if (!encodeText(globalObject, codec, state, string, errors, flushes | resets, out, position, length))
+    if (!encodeText(globalObject, codec, state, text, errors, flushes | resets, out, position, length))
         return { };
-    PyBytes* bytes = makeBytes(globalObject, out);
+    PyBytes* bytes = out.makeBytes(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
     RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { bytes, jsNumber(length) }));
 }
@@ -606,33 +607,33 @@ static PyBytes* encodeMore(JSGlobalObject* globalObject, PyRecord* object, JSVal
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     const Codec& codec = codecOf(object);
-    JSString* string = textToEncode(globalObject, input);
+    JSValue text = textToEncode(globalObject, input);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     JSValue pendingBefore = object->get(FieldPending);
     if (pendingBefore) {
-        string = jsString(globalObject, asString(pendingBefore), string);
+        text = jsString(globalObject, asString(pendingBefore), strValue(text));
         RETURN_IF_EXCEPTION(scope, nullptr);
         object->set(vm, FieldPending, JSValue());
     }
 
     ErrorTreatment errors = treatmentOf(object);
-    ByteBuilder out;
+    Output out;
     size_t position, length;
-    if (!encodeText(globalObject, codec, stateOf(object), string, errors, isFinal ? flushes | resets : 0, out, position, length)) {
+    if (!encodeText(globalObject, codec, stateOf(object), text, errors, isFinal ? flushes | resets : 0, out, position, length)) {
         object->set(vm, FieldPending, pendingBefore);
         return nullptr;
     }
     if (position < length) {
         if (length - position > maxPendingCharacters) {
-            raiseUnicodeError(globalObject, rt.UnicodeEncodeError(), codec, string, position, length, "pending buffer overflow"_s);
+            raiseUnicodeError(globalObject, rt.UnicodeEncodeError(), codec, text, position, length, "pending buffer overflow"_s);
             return nullptr;
         }
-        StrView view(globalObject, string);
+        StrView view(globalObject, strValue(text));
         RETURN_IF_EXCEPTION(scope, nullptr);
         object->set(vm, FieldPending, makeStr(vm, view.substring(position, length)));
     }
-    RELEASE_AND_RETURN(scope, makeBytes(globalObject, out));
+    RELEASE_AND_RETURN(scope, out.makeBytes(globalObject));
 }
 
 // ---- MultibyteIncrementalEncoder ----
@@ -708,7 +709,7 @@ static JSValue incrementalEncoderReset(JSGlobalObject* globalObject, JSValue sel
 {
     auto* object = PyRecord::from(self);
     if (auto* finish = codecOf(object).finishEncoding) {
-        ByteBuilder discarded;
+        Output discarded;
         finish(stateOf(object), discarded);
     }
     object->set(getVM(globalObject), FieldPending, JSValue());
@@ -1041,14 +1042,14 @@ static JSValue streamWriterReset(JSGlobalObject* globalObject, JSValue self, con
     if (!pending)
         return jsUndefined();
     ErrorTreatment errors = treatmentOf(object);
-    ByteBuilder out;
+    Output out;
     size_t position, length;
-    bool succeeded = encodeText(globalObject, codecOf(object), stateOf(object), asString(pending), errors, flushes | resets, out, position, length);
+    bool succeeded = encodeText(globalObject, codecOf(object), stateOf(object), pending, errors, flushes | resets, out, position, length);
     object->set(vm, FieldPending, JSValue());
     if (!succeeded)
         return { };
     if (out.size()) {
-        PyBytes* bytes = makeBytes(globalObject, out);
+        PyBytes* bytes = out.makeBytes(globalObject);
         RETURN_IF_EXCEPTION(scope, { });
         callMethod(globalObject, object->get(FieldStream), internString(vm, "write"_s), bytes);
         RETURN_IF_EXCEPTION(scope, { });
@@ -1069,12 +1070,17 @@ static constexpr TypeDef streamWriterTypeDef { "_multibytecodec.MultibyteStreamW
 
 // ---- The module ----
 
-// In CPython the modules of the codecs hand theirs over in a capsule, which no program gets to see.
-static JSValue createCodec(JSGlobalObject* globalObject, JSValue)
+// What getcodec() of the modules of the codecs calls, with the codec in a capsule.
+static JSValue createCodec(JSGlobalObject* globalObject, JSValue capsule)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    return raiseValueError(globalObject, scope, "argument type invalid"_s);
+    const void* codec = pointerOfCapsule(globalObject, capsule, nameOfCodecCapsule);
+    if (!codec)
+        return raiseValueError(globalObject, scope, "argument type invalid"_s);
+    PyRecord* object = PyRecord::create(globalObject, runtime(globalObject).typeFor(codecTypeDef), 0);
+    object->number = static_cast<int64_t>(std::bit_cast<intptr_t>(codec));
+    return object;
 }
 
 static constexpr NativeDef moduleFunctions[] = {
@@ -1082,13 +1088,6 @@ static constexpr NativeDef moduleFunctions[] = {
 };
 
 } // namespace CJK
-
-JSValue makeMultibyteCodec(JSGlobalObject* globalObject, const CJK::Codec& codec)
-{
-    PyRecord* object = PyRecord::create(globalObject, runtime(globalObject).typeFor(CJK::codecTypeDef), 0);
-    object->number = static_cast<int64_t>(std::bit_cast<intptr_t>(&codec));
-    return object;
-}
 
 void initializeMultibyteCodecModule(JSGlobalObject* globalObject, PyModule* module)
 {
