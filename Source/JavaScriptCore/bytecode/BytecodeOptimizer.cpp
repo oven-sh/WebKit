@@ -459,6 +459,32 @@ void BytecodeOptimizerAccess::replaceWith(Insn& insn, Insn::Kind kind, VirtualRe
     computeUseDef(insn);
 }
 
+// The names and lengths of the opcodes, in their order.
+template<size_t size>
+static constexpr uint64_t addOpcodeToFingerprint(uint64_t hash, const char (&name)[size], unsigned length)
+{
+    for (char character : name)
+        hash = (hash ^ static_cast<uint8_t>(character)) * 1099511628211ull;
+    return (hash ^ length) * 1099511628211ull;
+}
+
+static constexpr uint64_t bytecodeListFingerprint()
+{
+    uint64_t hash = 14695981039346656037ull;
+#define ADD_OPCODE_TO_FINGERPRINT(name, length) hash = addOpcodeToFingerprint(hash, #name, length);
+    FOR_EACH_BYTECODE_ID(ADD_OPCODE_TO_FINGERPRINT)
+#undef ADD_OPCODE_TO_FINGERPRINT
+    return hash;
+}
+
+// The switches over opcodes in this file are written by hand, and an opcode without a case is taken to read and write
+// only the registers that it names. Upstream adds an opcode without a look at this file, and such an opcode compiles:
+// op_call_varargs_with_spread (325231@main) builds a callee frame, had no case in computeImplicitUses(), and moved the
+// opcode numbers that a bytecode cache stores. So the build stops here when the list changes. Give each new opcode its
+// cases, raise cachedTypesFormatRevision (CachedTypes.cpp) where a number moved, and then put the new value here (the
+// compiler prints it).
+static_assert(bytecodeListFingerprint() == 15177338073115851959ull, "The bytecode list changed: classify each new opcode in BytecodeOptimizer.cpp and raise cachedTypesFormatRevision in CachedTypes.cpp");
+
 void BytecodeOptimizerAccess::computeImplicitUses(Insn& insn)
 {
     auto range = [&](VirtualRegister first, int step, unsigned count) {
