@@ -1,10 +1,10 @@
 # Where this fork's tests differ from upstream's, and why
 
-`JSTests/`, `LayoutTests/js` and the PerformanceTests collections are upstream's tests. This fork changes 129 of them and
+`JSTests/`, `LayoutTests/js` and the PerformanceTests collections are upstream's tests. This fork changes 130 of them and
 three runner scripts. Every change is listed here by the reason for it, so that after an upstream sync a failing test can
 be sorted into one of three piles:
 
-1. **The fork behaves differently on purpose.** Update the expectation. Sections A1–A10 list every such behavior, how to
+1. **The fork behaves differently on purpose.** Update the expectation. Sections A1–A11 list every such behavior, how to
    recognize it in a failure, and the fork code that causes it. If a failure matches one of these and the fork code is
    still there, the test is the thing to change.
 2. **The test cannot pass in a mode or build we run.** Skip it in that mode only, with the reason. Section B.
@@ -127,6 +127,18 @@ Rules for an edit to an upstream test:
 - `stress/intl-extended-timezone-names.js`: CLDR 49 removed zh-Hant's short names for America/Los_Angeles: `PDT` → `GMT-7`,
   `PT` → `洛杉磯時間`.
 
+### A11. A definition that gives a value to a custom value with a setter calls the setter
+
+- Fork code: `validateAndApplyPropertyDescriptor` (`runtime/JSObject.cpp`), the block under `USE(BUN_JSC_ADDITIONS)` in front of
+  its last `putDirect`. A definition that gives a value and changes no attribute hands the value to the setter of a
+  `CustomValue` that has one and is not read-only, and the property stays what it is. Upstream puts the value in the
+  property's place. Since 324876@main a store through a proxy that only forwards ends in such a definition, and Bun has
+  custom values whose setters keep state elsewhere (`onmessage`, `Error.prepareStackTrace`).
+- How to recognize it: a test expects that a native setter did not run, or that a custom value became a plain value, behind
+  `Object.defineProperty(o, k, { value })`, `Reflect.set(target, k, v, proxy)` or `proxy.k = v`.
+- File: `stress/reflect-set-proxy-receiver-custom-value.js`: `Object.hasOwn(reified, 'value2')` is `true` (upstream:
+  `false`). A row of a static table that is not reified keeps upstream's result, so the other lines of the file stand.
+
 ---
 
 ## B. The test cannot pass in a mode or build we run: narrowed, not changed
@@ -202,6 +214,8 @@ Not upstream's: a sync neither brings nor changes them. Most are named `stress/b
 | `stress/bun-aot-builtins-table.js` | the ahead-of-time compiler's table of built-ins (`Source/JavaScriptCore/aot/builtins/*.builtins.ts`) agrees with the engine. **After a sync that removes, renames, moves or reimplements a built-in that the table knows this fails, and each line it prints names the entry to fix.** |
 | `stress/sort-scratch-double-pivot.js` | double arithmetic in the comparator of an inlined sort stores no double into an Int32 array |
 | `stress/array-sort-inline-int32-double-comparator.js` | an earlier, smaller test for the sort fix |
+| `stress/bun-definition-of-a-value-reaches-the-setter-of-a-custom-value.js` | a definition that gives a value and changes no attribute, and every store through a proxy that ends in one, calls the setter of a custom value with the holder and in the holder's realm, and leaves the property a custom value; a definition that changes an attribute, an accessor definition and `delete` replace it (A11) |
+| `stress/bun-json-parse-long-string-has-the-width-of-its-text.js` | a long string value of `JSON.parse` has the width of the text it is parsed from, also where the same value was parsed from text of the other width before (`JSONCache::longStringMatches`) |
 | `stress/bun-object-assign-calls-indexed-setters-on-the-chain.js` | `Object.assign()` stores with `[[Set]]` on its fast path too: an indexed setter on the target's prototype chain is called, and a read-only element there refuses the store |
 | `stress/bun-arrays-become-prototypes-below-immutable-prototypes.js` | with `Object.prototype` and `Array.prototype` immutable and a setter under an index on a class prototype, an array or an object with elements that becomes a prototype keeps the storage it has; reads, stores and changes of length on it and through its heirs answer as the language says |
 | `stress/function-prototype-call-not-called-as-a-method.js` | `f.call(...)` is compiled to a call of `f`, so only other ways reach `Function.prototype.call` itself: `call.bind(f)`, `Reflect.apply`, `call.call` and `call.apply`. Through each of them `this`, the arguments and `new.target` arrive as they should, and a callee that is not callable is a `TypeError`, in every tier |
@@ -244,7 +258,7 @@ the programs that test ahead-of-time compilation are in Bun's `test/aot`.
 
 ## E. After a sync: a failing test, step by step
 
-1. Does the difference match A1–A10 exactly (same text, same shape)? Check that the fork code named there is still in the
+1. Does the difference match A1–A11 exactly (same text, same shape)? Check that the fork code named there is still in the
    tree, then update the expectation with a `// Bun:` comment and add the file to its list here.
 2. Does it fail only in one mode or only with ASan, for a reason in the test and not the engine (it counts JIT compiles,
    depends on allocation never failing, needs more than 300 s)? Narrow it as in B.
