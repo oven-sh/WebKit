@@ -1393,9 +1393,14 @@ static JSValue typeGetDict(JSGlobalObject* globalObject, JSValue self)
     return makeMappingProxy(globalObject, PyType::from(self)->dict());
 }
 
+JSValue docstringFor(JSGlobalObject*, const String& key); // PyDocstrings.cpp
+
 static JSValue typeGetDoc(JSGlobalObject* globalObject, JSValue self)
 {
     PyType* type = PyType::from(self);
+    // What its own namespace has under the name is this very descriptor.
+    if (type == runtime(globalObject).typeType())
+        return docstringFor(globalObject, "type"_s);
     JSValue doc = type->dict()->get(runtime(globalObject).names.dDoc());
     if (!doc)
         return jsUndefined();
