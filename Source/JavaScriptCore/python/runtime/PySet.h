@@ -46,6 +46,7 @@ private:
 
     size_t m_mask;
 };
+static_assert(valuesMayFollow<PySetStorage>);
 
 // set and frozenset. The table is probed, and so iterated, exactly as CPython's: programs should not depend on the order
 // of a set, and do.

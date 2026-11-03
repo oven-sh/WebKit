@@ -49,6 +49,10 @@ static constexpr unsigned jsViewStructureFlags = OverridesGetOwnPropertySlot | I
 // The prototype of every PyObject but the exceptions.
 JSObject* prototypeOfPythonObjects(JSGlobalObject*);
 
+// Whether values may be kept right behind a cell of this class. The collector reads them while the program stores to them, and
+// only a store to an aligned address is sure to be seen whole: half of an int looks like the address of a cell.
+template<typename Cell> inline constexpr bool valuesMayFollow = !(sizeof(Cell) % sizeof(WriteBarrier<Unknown>));
+
 // An object that knows its Python type. No PyObject has a destructor: what one owns is in cells of its own.
 class PyObject : public JSNonFinalObject {
 public:
@@ -197,6 +201,7 @@ private:
 
     unsigned m_fieldCount;
 };
+static_assert(valuesMayFollow<PyRecord>);
 
 inline bool isPyObject(JSCell* cell) { return isPyObjectType(cell->type()); }
 inline bool isPyObject(JSValue value) { return value && value.isCell() && isPyObject(value.asCell()); }

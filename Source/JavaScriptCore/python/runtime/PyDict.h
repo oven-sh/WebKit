@@ -18,7 +18,7 @@ namespace Python {
 //
 // The hash of a str fits 32 bits. A table that holds other keys has room for 64, so that whoever takes the keys from the dict (a
 // copy, a set) need not ask them for their hashes again, which a program can tell.
-class PyDictStorage final : public JSCell {
+class alignas(WriteBarrier<Unknown>) PyDictStorage final : public JSCell {
 public:
     using Base = JSCell;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
@@ -108,6 +108,7 @@ private:
     unsigned m_entryCount { 0 }; // Including the deleted ones.
     unsigned m_filledSlotCount { 0 };
 };
+static_assert(valuesMayFollow<PyDictStorage>);
 
 class PyDict : public PyObject {
 public:

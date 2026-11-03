@@ -64,6 +64,7 @@ protected:
     unsigned m_length;
     int64_t m_hash { -1 };
 };
+static_assert(valuesMayFollow<PyTuple>);
 
 } // namespace Python
 } // namespace JSC

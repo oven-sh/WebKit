@@ -198,6 +198,7 @@ JSArray* newList(JSGlobalObject* globalObject, std::span<const JSValue> items)
     WriteBarrier<Unknown>* data = list->butterfly()->contiguous().data();
     for (size_t i = 0; i < items.size(); ++i)
         data[i].setWithoutWriteBarrier(items[i]);
+    vm.mutatorFence();
     return list;
 }
 
@@ -1287,6 +1288,7 @@ static JSArray* listSlice(JSGlobalObject* globalObject, JSArray* list, const PyS
     int64_t position = indices.start;
     for (int64_t i = 0; i < indices.length; ++i, position += indices.step)
         data[i].setWithoutWriteBarrier(listGet(list, position));
+    vm.mutatorFence();
     return result;
 }
 
@@ -1500,6 +1502,7 @@ static JSValue listAdd(JSGlobalObject* globalObject, JSValue self, JSValue other
         data[i].setWithoutWriteBarrier(listGet(a, i));
     for (unsigned i = 0; i < b->length(); ++i)
         data[lengthA + i].setWithoutWriteBarrier(listGet(b, i));
+    vm.mutatorFence();
     return result;
 }
 
@@ -1529,6 +1532,7 @@ static JSValue listMul(JSGlobalObject* globalObject, JSValue self, JSValue count
         for (unsigned j = 0; j < length; ++j)
             data[i * length + j].setWithoutWriteBarrier(listGet(list, j));
     }
+    vm.mutatorFence();
     return result;
 }
 

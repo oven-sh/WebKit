@@ -236,6 +236,7 @@ void PyDict::resize(VM& vm, unsigned minimumCapacity, unsigned unusedAtFront)
         ASSERT(count == m_used + unusedAtFront);
     }
     m_firstEntry = unusedAtFront;
+    vm.mutatorFence();
     m_storage.set(vm, this, newStorage);
     keysChanged();
 }

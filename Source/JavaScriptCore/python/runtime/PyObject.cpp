@@ -335,6 +335,7 @@ PyTuple* PyTuple::create(JSGlobalObject* globalObject, std::span<const JSValue> 
     // The tuple is new, so no barrier is needed.
     for (unsigned i = 0; i < values.size(); ++i)
         tuple->items()[i].setWithoutWriteBarrier(values[i]);
+    getVM(globalObject).mutatorFence();
     return tuple;
 }
 
@@ -343,6 +344,7 @@ PyTuple* PyTuple::createFromNegativeIndexed(JSGlobalObject* globalObject, const 
     PyTuple* tuple = create(globalObject, length);
     for (unsigned i = 0; i < length; ++i)
         tuple->items()[i].setWithoutWriteBarrier(first[-static_cast<int>(i)]);
+    getVM(globalObject).mutatorFence();
     return tuple;
 }
 
