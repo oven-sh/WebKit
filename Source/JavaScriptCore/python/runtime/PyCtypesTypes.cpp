@@ -36,17 +36,6 @@ static JSValue raiseAbstractClass(JSGlobalObject* globalObject)
     return raiseTypeError(globalObject, scope, "abstract class"_s);
 }
 
-// True: the stack is nearly used up, and a RecursionError has been raised.
-static bool asParameterRecursesTooDeep(JSGlobalObject* globalObject)
-{
-    VM& vm = getVM(globalObject);
-    if (vm.isSafeToRecurseSoft()) [[likely]]
-        return false;
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    raiseRecursionError(globalObject, scope, "maximum recursion depth exceeded while processing _as_parameter_"_s);
-    return true;
-}
-
 static JSValue metaRepeat(JSGlobalObject* globalObject, JSValue self, JSValue countValue)
 {
     VM& vm = getVM(globalObject);
@@ -287,7 +276,8 @@ JSValue dataTypeFromParam(JSGlobalObject* globalObject, JSValue self, JSValue va
     JSValue asParameter = getAttrIfPresent(globalObject, value, state.asParameterName.get());
     RETURN_IF_EXCEPTION(scope, { });
     if (asParameter) {
-        if (asParameterRecursesTooDeep(globalObject))
+        AsParameterScope nesting;
+        if (nesting.isTooDeep(globalObject))
             return { };
         RELEASE_AND_RETURN(scope, dataTypeFromParam(globalObject, self, asParameter));
     }
@@ -839,7 +829,8 @@ static JSValue stringPointerFromParam(JSGlobalObject* globalObject, JSValue self
     JSValue asParameter = getAttrIfPresent(globalObject, value, state.asParameterName.get());
     RETURN_IF_EXCEPTION(scope, { });
     if (asParameter) {
-        if (asParameterRecursesTooDeep(globalObject))
+        AsParameterScope nesting;
+        if (nesting.isTooDeep(globalObject))
             return { };
         RELEASE_AND_RETURN(scope, (stringPointerFromParam<pointerCode, characterCode, tag>(globalObject, self, asParameter)));
     }
@@ -877,7 +868,8 @@ static JSValue voidPointerFromParam(JSGlobalObject* globalObject, JSValue self, 
     JSValue asParameter = getAttrIfPresent(globalObject, value, state.asParameterName.get());
     RETURN_IF_EXCEPTION(scope, { });
     if (asParameter) {
-        if (asParameterRecursesTooDeep(globalObject))
+        AsParameterScope nesting;
+        if (nesting.isTooDeep(globalObject))
             return { };
         RELEASE_AND_RETURN(scope, voidPointerFromParam(globalObject, self, asParameter));
     }
@@ -1011,7 +1003,8 @@ static JSValue simpleMetaFromParam(JSGlobalObject* globalObject, JSValue self, J
     JSValue asParameter = getAttrIfPresent(globalObject, value, state.asParameterName.get());
     RETURN_IF_EXCEPTION(scope, { });
     if (asParameter) {
-        if (asParameterRecursesTooDeep(globalObject))
+        AsParameterScope nesting;
+        if (nesting.isTooDeep(globalObject))
             return { };
         RELEASE_AND_RETURN(scope, simpleMetaFromParam(globalObject, self, asParameter));
     }

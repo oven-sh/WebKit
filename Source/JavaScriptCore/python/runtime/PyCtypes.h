@@ -493,6 +493,20 @@ JSValue convertersFor(JSGlobalObject*, JSValue argTypes);
 
 // ---- Calls: PyCtypesCalls.cpp ----
 
+// While the _as_parameter_ of an object is looked at in its place. An object may be its own, or lead back to itself.
+class AsParameterScope {
+    WTF_MAKE_NONCOPYABLE(AsParameterScope);
+    WTF_FORBID_HEAP_ALLOCATION;
+public:
+    AsParameterScope() { ++depth(); }
+    ~AsParameterScope() { --depth(); }
+    // True: a RecursionError has been raised.
+    bool isTooDeep(JSGlobalObject*) const;
+
+private:
+    static unsigned& depth();
+};
+
 // The instance as an argument. Null: an exception.
 PyCArg* argumentFor(JSGlobalObject*, PyCData*);
 // byref(object, offset)

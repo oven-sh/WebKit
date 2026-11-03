@@ -275,6 +275,22 @@ static JSValue castTo(JSGlobalObject* globalObject, void* pointer, JSValue sourc
 
 // ---- Arguments ----
 
+unsigned& AsParameterScope::depth()
+{
+    static thread_local unsigned value;
+    return value;
+}
+
+bool AsParameterScope::isTooDeep(JSGlobalObject* globalObject) const
+{
+    VM& vm = getVM(globalObject);
+    if (depth() <= 1000 && vm.isSafeToRecurseSoft()) [[likely]]
+        return false;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    raiseRecursionError(globalObject, scope, "maximum recursion depth exceeded while processing _as_parameter_"_s);
+    return true;
+}
+
 struct Argument {
     ForeignKind kind { ForeignKind::SInt32 };
     PyCTypeInfo* aggregate { nullptr };
@@ -354,10 +370,9 @@ static bool convertArgument(JSGlobalObject* globalObject, JSValue object, unsign
     JSValue asParameter = getAttrIfPresent(globalObject, object, state.asParameterName.get());
     RETURN_IF_EXCEPTION(scope, false);
     if (asParameter) {
-        if (!vm.isSafeToRecurseSoft()) {
-            raiseRecursionError(globalObject, scope, "maximum recursion depth exceeded while processing _as_parameter_"_s);
+        AsParameterScope nesting;
+        if (nesting.isTooDeep(globalObject))
             return false;
-        }
         RELEASE_AND_RETURN(scope, convertArgument(globalObject, asParameter, index, result, keeps));
     }
     raiseTypeError(globalObject, scope, "Don't know how to convert parameter "_s, index);
