@@ -78,12 +78,17 @@ JSString* makeStr(VM& vm, const String& string)
     return jsString(vm, string);
 }
 
+JSString* makeStr(VM& vm, String&& string)
+{
+    return jsString(vm, WTF::move(string));
+}
+
 JSString* makeStr(VM& vm, ASCIILiteral literal)
 {
     return makeStr(vm, String(literal));
 }
 
-JSString* makeStrUnlessTooLong(JSGlobalObject* globalObject, const String& string)
+JSString* makeStrUnlessTooLong(JSGlobalObject* globalObject, String&& string)
 {
     VM& vm = getVM(globalObject);
     if (string.isNull()) [[unlikely]] {
@@ -91,7 +96,7 @@ JSString* makeStrUnlessTooLong(JSGlobalObject* globalObject, const String& strin
         raiseMemoryError(globalObject, scope, String());
         return nullptr;
     }
-    return makeStr(vm, string);
+    return makeStr(vm, WTF::move(string));
 }
 
 JSString* makeStr(JSGlobalObject* globalObject, StrBuilder& builder)
@@ -152,7 +157,7 @@ static constexpr unsigned shortestStrRemembered = 48;
 
 void StrView::lookThrough()
 {
-    auto units = m_string.span16();
+    auto units = string().span16();
     unsigned pairs = countSurrogatePairs(units);
     m_length = units.size() - pairs;
     m_isSimple = !pairs;
@@ -170,11 +175,19 @@ void StrView::lookThrough()
 }
 
 StrView::StrView(const String& string)
-    : m_string(string)
+    : m_text(nullptr, string.impl())
+    , m_retained(string)
     , m_length(string.length())
 {
-    if (!m_string.is8Bit())
+    if (!string.is8Bit())
         lookThrough();
+}
+
+StringImpl* StrView::flatten(JSGlobalObject* globalObject, JSString* string)
+{
+    string->value(globalObject);
+    // Null if that ran out of memory.
+    return string->tryGetValueImpl();
 }
 
 struct StrIndexCache {
@@ -190,12 +203,8 @@ struct StrIndexCache {
     HeapVersion heapVersion { 0 };
 };
 
-StrView::StrView(JSGlobalObject* globalObject, const String& string)
-    : m_string(string)
-    , m_length(string.length())
+void StrView::lookThroughOrRecall(JSGlobalObject* globalObject)
 {
-    if (m_string.is8Bit())
-        return;
     if (m_length < shortestStrRemembered) {
         lookThrough();
         return;
@@ -208,11 +217,11 @@ StrView::StrView(JSGlobalObject* globalObject, const String& string)
         cache.entries = { };
         cache.heapVersion = version;
     }
-    StringImpl* impl = m_string.impl();
+    StringImpl* impl = m_text.data;
     auto& entry = cache.entries[(std::bit_cast<uintptr_t>(impl) >> 5) % StrIndexCache::size];
     if (entry.impl == impl) [[likely]] {
         m_length = entry.length;
-        m_isSimple = m_length == m_string.length();
+        m_isSimple = m_length == impl->length();
         m_checkpoints = entry.checkpoints;
         return;
     }
@@ -220,16 +229,9 @@ StrView::StrView(JSGlobalObject* globalObject, const String& string)
     entry = { impl, m_length, m_checkpoints };
 }
 
-StrView::StrView(JSGlobalObject* globalObject, JSString* string)
-    : StrView(globalObject, String(string->value(globalObject)))
+unsigned StrView::unitOffsetSlow(unsigned index) const
 {
-}
-
-unsigned StrView::unitOffset(unsigned index) const
-{
-    if (m_isSimple)
-        return index;
-    auto units = m_string.span16();
+    auto units = string().span16();
     unsigned offset = 0;
     if (m_checkpoints && index < m_length) {
         offset = m_checkpoints->offsets[index / StrCheckpoints::interval];
@@ -241,11 +243,9 @@ unsigned StrView::unitOffset(unsigned index) const
     return offset;
 }
 
-unsigned StrView::indexOfUnitOffset(unsigned offset) const
+unsigned StrView::indexOfUnitOffsetSlow(unsigned offset) const
 {
-    if (m_isSimple)
-        return offset;
-    auto units = m_string.span16();
+    auto units = string().span16();
     if (!m_checkpoints)
         return offset - countSurrogatePairs(units.first(offset));
     auto& offsets = m_checkpoints->offsets;
@@ -254,11 +254,9 @@ unsigned StrView::indexOfUnitOffset(unsigned offset) const
     return checkpoint * StrCheckpoints::interval + (offset - from) - countSurrogatePairs(units.subspan(from, offset - from));
 }
 
-char32_t StrView::at(unsigned index) const
+char32_t StrView::atSlow(unsigned index) const
 {
-    if (m_isSimple)
-        return m_string[index];
-    auto units = m_string.span16();
+    auto units = string().span16();
     unsigned offset = unitOffset(index);
     char16_t unit = units[offset];
     if (U16_IS_LEAD(unit) && offset + 1 < units.size() && U16_IS_TRAIL(units[offset + 1]))
@@ -270,7 +268,7 @@ String StrView::substring(unsigned start, unsigned end) const
 {
     unsigned from = unitOffset(start);
     unsigned to = unitOffset(end);
-    return m_string.substring(from, to - from);
+    return string().substring(from, to - from);
 }
 
 unsigned strLength(JSGlobalObject* globalObject, JSString* string)
@@ -457,7 +455,7 @@ Vector<uint8_t> encodeFilesystem(StringView text)
     RETURN_IF_EXCEPTION(scope, { })
 
 // False: a TypeError, "f() argument 1 must be str, not int".
-static bool strArgument(JSGlobalObject* globalObject, JSValue value, ASCIILiteral function, int position, String& result)
+static bool strArgument(JSGlobalObject* globalObject, JSValue value, ASCIILiteral function, int position, GCOwnedDataScope<StringView>& result)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -468,7 +466,7 @@ static bool strArgument(JSGlobalObject* globalObject, JSValue value, ASCIILitera
             raiseTypeError(globalObject, scope, function, "() argument must be str, not "_s, typeNameOfArgument(globalObject, value));
         return false;
     }
-    result = strValue(value)->value(globalObject);
+    result = strValue(value)->view(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
     return true;
 }
@@ -859,7 +857,7 @@ static JSValue strSizeOf(JSGlobalObject* globalObject, JSValue self)
 // ---- Searching ----
 
 // In code points. -1: not found.
-static int64_t findIn(const StrView& view, const String& needle, int64_t from, int64_t to, bool reverse)
+static int64_t findIn(const StrView& view, StringView needle, int64_t from, int64_t to, bool reverse)
 {
     if (from > to)
         return -1;
@@ -878,7 +876,7 @@ template<bool reverse, bool mustFind>
 static JSValue strFindMethod(JSGlobalObject* globalObject, JSValue self, JSValue sub, JSValue start, JSValue end)
 {
     PY_STR_METHOD_PROLOGUE(view);
-    String needle;
+    GCOwnedDataScope<StringView> needle;
     if (failed(scope, strArgument(globalObject, sub, mustFind ? (reverse ? "rindex"_s : "index"_s) : (reverse ? "rfind"_s : "find"_s), 1, needle)))
         return { };
     int64_t from, to;
@@ -893,9 +891,10 @@ static JSValue strFindMethod(JSGlobalObject* globalObject, JSValue self, JSValue
 static JSValue strCount(JSGlobalObject* globalObject, JSValue self, JSValue sub, JSValue start, JSValue end)
 {
     PY_STR_METHOD_PROLOGUE(view);
-    String needle;
-    if (failed(scope, strArgument(globalObject, sub, "count"_s, 1, needle)))
+    GCOwnedDataScope<StringView> needleText;
+    if (failed(scope, strArgument(globalObject, sub, "count"_s, 1, needleText)))
         return { };
+    StringView needle = needleText;
     int64_t from, to;
     if (failed(scope, sliceBounds(globalObject, start, end, view.length(), from, to)))
         return { };
@@ -920,7 +919,7 @@ static JSValue strStartsOrEndsWith(JSGlobalObject* globalObject, JSValue self, J
     if (failed(scope, sliceBounds(globalObject, start, end, view.length(), from, to)))
         return { };
     auto matches = [&](JSValue candidate) -> bool {
-        String text = strValue(candidate)->value(globalObject);
+        auto text = strValue(candidate)->view(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
         if (from > to)
             return false;
@@ -950,31 +949,33 @@ static JSValue strStartsOrEndsWith(JSGlobalObject* globalObject, JSValue self, J
 static JSValue strRemovePrefix(JSGlobalObject* globalObject, JSValue self, JSValue prefixValue)
 {
     PY_STR_METHOD_PROLOGUE(view);
-    String prefix;
+    GCOwnedDataScope<StringView> prefix;
     if (failed(scope, strArgument(globalObject, prefixValue, "removeprefix"_s, 0, prefix)))
         return { };
     if (startsWithText(view.string(), prefix))
-        return sliceOfUnits(vm, selfString, view.string(), prefix.length(), view.unitLength());
+        return sliceOfUnits(vm, selfString, view.string(), prefix->length(), view.unitLength());
     return selfString;
 }
 
 static JSValue strRemoveSuffix(JSGlobalObject* globalObject, JSValue self, JSValue suffixValue)
 {
     PY_STR_METHOD_PROLOGUE(view);
-    String suffix;
+    GCOwnedDataScope<StringView> suffix;
     if (failed(scope, strArgument(globalObject, suffixValue, "removesuffix"_s, 0, suffix)))
         return { };
     if (endsWithText(view.string(), suffix))
-        return sliceOfUnits(vm, selfString, view.string(), 0, view.unitLength() - suffix.length());
+        return sliceOfUnits(vm, selfString, view.string(), 0, view.unitLength() - suffix->length());
     return selfString;
 }
 
 static JSValue strReplace(JSGlobalObject* globalObject, JSValue self, JSValue oldValue, JSValue newValue, JSValue countValue)
 {
     PY_STR_METHOD_PROLOGUE(view);
-    String target, replacement;
-    if (failed(scope, strArgument(globalObject, oldValue, "replace"_s, 1, target)) || failed(scope, strArgument(globalObject, newValue, "replace"_s, 2, replacement)))
+    GCOwnedDataScope<StringView> targetText, replacementText;
+    if (failed(scope, strArgument(globalObject, oldValue, "replace"_s, 1, targetText)) || failed(scope, strArgument(globalObject, newValue, "replace"_s, 2, replacementText)))
         return { };
+    StringView target = targetText;
+    StringView replacement = replacementText;
     int64_t count = -1;
     if (countValue && failed(scope, ssizeArgument(globalObject, countValue, count)))
         return { };
@@ -1037,9 +1038,9 @@ static bool parseMaxSplit(JSGlobalObject* globalObject, JSValue value, int64_t& 
 
 // Whether CPython sees without searching that the separator is not in the text: it is longer, or has characters that take more
 // bytes (1, 2 or 4) than any in the text. The one item of the result is then the object itself, of whatever class derived from str.
-static bool cannotHold(const StrView& view, const String& separator)
+static bool cannotHold(const StrView& view, StringView separator)
 {
-    auto measure = [](const String& string, int64_t& length) {
+    auto measure = [](StringView string, int64_t& length) {
         length = string.length();
         if (string.is8Bit())
             return 1;
@@ -1095,8 +1096,9 @@ static JSValue strSplit(JSGlobalObject* globalObject, JSValue self, JSValue sepa
     }
     if (!isStr(separatorValue))
         return raiseTypeError(globalObject, scope, "must be str or None, not "_s, typeName(globalObject, separatorValue));
-    String separator = strValue(separatorValue)->value(globalObject);
+    auto separatorText = strValue(separatorValue)->view(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
+    StringView separator = separatorText;
     if (separator.isEmpty())
         return raiseValueError(globalObject, scope, "empty separator"_s);
     if (!self.isString() && cannotHold(view, separator)) [[unlikely]] {
@@ -1161,8 +1163,9 @@ static JSValue strRSplit(JSGlobalObject* globalObject, JSValue self, JSValue sep
     }
     if (!isStr(separatorValue))
         return raiseTypeError(globalObject, scope, "must be str or None, not "_s, typeName(globalObject, separatorValue));
-    String separator = strValue(separatorValue)->value(globalObject);
+    auto separatorText = strValue(separatorValue)->view(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
+    StringView separator = separatorText;
     if (separator.isEmpty())
         return raiseValueError(globalObject, scope, "empty separator"_s);
     if (!self.isString() && cannotHold(view, separator)) [[unlikely]] {
@@ -1176,6 +1179,7 @@ static JSValue strRSplit(JSGlobalObject* globalObject, JSValue self, JSValue sep
         if (position == notFound)
             break;
         listAppend(globalObject, result, sliceOfUnits(vm, nullptr, string, position + separator.length(), end));
+        RETURN_IF_EXCEPTION(scope, { });
         end = position;
     }
     listAppend(globalObject, result, sliceOfUnits(vm, selfString, string, 0, end));
@@ -1219,8 +1223,9 @@ static JSValue strPartition(JSGlobalObject* globalObject, JSValue self, JSValue 
     if (!isStr(separatorValue))
         return raiseTypeError(globalObject, scope, "must be str, not "_s, typeNameForMessage(globalObject, typeOf(globalObject, separatorValue)));
     JSString* separatorString = strValue(separatorValue);
-    String separator = separatorString->value(globalObject);
+    auto separatorText = separatorString->view(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
+    StringView separator = separatorText;
     if (separator.isEmpty())
         return raiseValueError(globalObject, scope, "empty separator"_s);
     const String& string = view.string();

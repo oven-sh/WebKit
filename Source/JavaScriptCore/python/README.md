@@ -51,7 +51,8 @@ handed to JS (the result of a call, an argument, an attribute, an operator's res
 it behaves as a `Number` object does.
 
 **str.** A `JSString`, so UTF-16 where it is not Latin-1, while Python counts code points. A text without surrogate pairs is indexed
-directly. For one with pairs, `StrIndexCache` (16 entries for each runtime, emptied after each collection, nothing for texts shorter
+directly. C++ borrows the text of a str while it works on it (`StrView`, `JSString::view()`) instead of retaining it: the reference
+count of a `StringImpl` is atomic, and two such operations cost more than most methods of str. For one with pairs, `StrIndexCache` (16 entries for each runtime, emptied after each collection, nothing for texts shorter
 than 48 units) remembers the number of pairs and the offset of every 64th code point, so that `s[i]` in a loop does not scan from
 the start each time.
 

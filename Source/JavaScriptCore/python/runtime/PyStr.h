@@ -50,6 +50,7 @@ inline String stringOf(JSString* string)
 JSString* internString(JSGlobalObject*, JSString*);
 JSString* internString(VM&, const String&);
 JSString* makeStr(VM&, const String&);
+JSString* makeStr(VM&, String&&);
 JSString* makeStr(VM&, ASCIILiteral);
 
 // Text that is put together piece by piece. What a program asks for may be too long to be a str: the builder then takes no more,
@@ -66,8 +67,9 @@ public:
 // Null, with a MemoryError: it is too long.
 JSString* makeStr(JSGlobalObject*, StrBuilder&);
 // For what toStringOrNull() returned.
-JSString* makeStrUnlessTooLong(JSGlobalObject*, const String&);
+JSString* makeStrUnlessTooLong(JSGlobalObject*, String&&);
 inline JSString* makeStr(JSGlobalObject* globalObject, const String& string) { return makeStr(getVM(globalObject), string); }
+inline JSString* makeStr(JSGlobalObject* globalObject, String&& string) { return makeStr(getVM(globalObject), WTF::move(string)); }
 
 // For a str that has surrogate pairs: where, in code units, every 64th code point is.
 class StrCheckpoints : public RefCounted<StrCheckpoints> {
@@ -82,37 +84,64 @@ public:
 // Whether text in 16-bit units has surrogate pairs, and where, is found by going through it. A program that goes through a text
 // character by character, text[i] after text[i], would do that once for each. So it is remembered for the texts last asked about
 // (StrIndexCache, of the Runtime): the constructors that are given a global object do.
+//
+// The text of a JSString is borrowed, not retained: counting references to a StringImpl is atomic, and two such operations cost more
+// than most methods of str do. It stays put as for a GCOwnedDataScope, which this holds: see JSString::swapToAtomString().
 class StrView {
+    WTF_FORBID_HEAP_ALLOCATION;
 public:
     StrView() = default;
     // Check for an exception afterwards: flattening a rope may run out of memory.
-    StrView(JSGlobalObject*, JSString*);
-    StrView(JSGlobalObject*, const String&);
+    ALWAYS_INLINE StrView(JSGlobalObject* globalObject, JSString* string)
+        : m_text(string, string->isRope() ? flatten(globalObject, string) : string->tryGetValueImpl())
+    {
+        initialize(globalObject);
+    }
+    StrView(JSGlobalObject* globalObject, const String& string)
+        : m_text(nullptr, string.impl())
+        , m_retained(string)
+    {
+        initialize(globalObject);
+    }
     explicit StrView(const String&);
 
-    const String& string() const { return m_string; }
-    StringView view() const { return m_string; }
-    bool is8Bit() const { return m_string.is8Bit(); }
+    // As JSString::valueInternal(): a String is a pointer to a StringImpl and nothing else.
+    const String& string() const { return *std::bit_cast<const String*>(&m_text.data); }
+    StringView view() const { return string(); }
+    bool is8Bit() const { return string().is8Bit(); }
     // In code units.
-    unsigned unitLength() const { return m_string.length(); }
+    unsigned unitLength() const { return string().length(); }
     // Every character is one code unit.
     bool isSimple() const { return m_isSimple; }
     // In code points.
     unsigned length() const { return m_length; }
-    char32_t at(unsigned index) const;
+    char32_t at(unsigned index) const { return m_isSimple ? string()[index] : atSlow(index); }
     // From an index in code points to one in code units, and back.
-    unsigned unitOffset(unsigned index) const;
-    unsigned indexOfUnitOffset(unsigned offset) const;
+    unsigned unitOffset(unsigned index) const { return m_isSimple ? index : unitOffsetSlow(index); }
+    unsigned indexOfUnitOffset(unsigned offset) const { return m_isSimple ? offset : indexOfUnitOffsetSlow(offset); }
     String substring(unsigned start, unsigned end) const;
 
 private:
+    static StringImpl* flatten(JSGlobalObject*, JSString*);
+    ALWAYS_INLINE void initialize(JSGlobalObject* globalObject)
+    {
+        m_length = string().length();
+        if (!string().is8Bit()) [[unlikely]]
+            lookThroughOrRecall(globalObject);
+    }
     void lookThrough();
+    void lookThroughOrRecall(JSGlobalObject*);
+    char32_t atSlow(unsigned index) const;
+    unsigned unitOffsetSlow(unsigned index) const;
+    unsigned indexOfUnitOffsetSlow(unsigned offset) const;
 
-    String m_string;
+    GCOwnedDataScope<StringImpl*> m_text;
+    String m_retained; // The text, when it is not that of a JSString.
     unsigned m_length { 0 };
     bool m_isSimple { true };
     RefPtr<StrCheckpoints> m_checkpoints; // Only if it is long and not simple.
 };
+static_assert(sizeof(String) == sizeof(StringImpl*));
 
 unsigned strLength(JSGlobalObject*, JSString*);
 void appendCodePoint(StringBuilder&, char32_t);
