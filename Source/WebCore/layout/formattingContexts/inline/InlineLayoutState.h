@@ -47,7 +47,7 @@ public:
     const PlacedFloats& placedFloats() const LIFETIME_BOUND { return m_parentBlockLayoutState.placedFloats(); }
     PlacedFloats& placedFloats() LIFETIME_BOUND { return m_parentBlockLayoutState.placedFloats(); }
 
-    void setAvailableLineWidthOverride(AvailableLineWidthOverride availableLineWidthOverride) { m_availableLineWidthOverride = availableLineWidthOverride; }
+    void setAvailableLineWidthOverride(AvailableLineWidthOverride&& availableLineWidthOverride) { m_availableLineWidthOverride = WTF::move(availableLineWidthOverride); }
     const AvailableLineWidthOverride& availableLineWidthOverride() const LIFETIME_BOUND { return m_availableLineWidthOverride; }
 
     void setLegacyClampedLineIndex(size_t lineIndex) { m_legacyClampedLineIndex = lineIndex; }
@@ -70,6 +70,8 @@ public:
 
     void setInStandardsMode() { m_inStandardsMode = true; }
     bool inStandardsMode() const { return m_inStandardsMode; }
+    void setInQuirksMode() { m_inQuirksMode = true; }
+    bool inQuirksMode() const { return m_inQuirksMode; }
 
     void setShouldShapeTextAcrossInlineBoxes() { m_shouldShapeTextAcrossInlineBoxes = true; }
     bool shouldShapeTextAcrossInlineBoxes() const { return m_shouldShapeTextAcrossInlineBoxes; }
@@ -104,6 +106,7 @@ private:
     bool m_contentMayHaveInkOverflow { false };
     bool m_shouldNotSynthesizeInlineBlockBaseline { false };
     bool m_inStandardsMode { false };
+    bool m_inQuirksMode { false };
     bool m_shouldShapeTextAcrossInlineBoxes { false };
 };
 

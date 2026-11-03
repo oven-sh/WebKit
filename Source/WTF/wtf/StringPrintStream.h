@@ -33,7 +33,7 @@ namespace WTF {
 
 class StringPrintStream final : public PrintStream {
 public:
-    WTF_EXPORT_PRIVATE StringPrintStream();
+    NODELETE WTF_EXPORT_PRIVATE StringPrintStream();
     WTF_EXPORT_PRIVATE ~StringPrintStream() final;
     
     WTF_EXPORT_PRIVATE void vprintf(const char* format, va_list) final WTF_ATTRIBUTE_PRINTF(2, 0);
@@ -49,7 +49,7 @@ public:
     WTF_EXPORT_PRIVATE std::expected<String, UTF8ConversionError> tryToString() const;
     WTF_EXPORT_PRIVATE String toString() const;
     WTF_EXPORT_PRIVATE String toStringWithLatin1Fallback() const;
-    WTF_EXPORT_PRIVATE void LEGACY_NODELETE reset();
+    NODELETE WTF_EXPORT_PRIVATE void reset();
     
 private:
     void increaseSize(size_t);

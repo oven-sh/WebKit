@@ -177,9 +177,6 @@ private:
     void clearBrowsingWarningIfForMainFrameNavigation() override;
     bool hasBrowsingWarning() const override;
 
-    void enterAcceleratedCompositingMode(const LayerTreeContext&) override;
-    void exitAcceleratedCompositingMode() override;
-    void updateAcceleratedCompositingMode(const LayerTreeContext&) override;
     void setRemoteLayerTreeRootNode(RemoteLayerTreeNode*) override;
     CALayer* acceleratedCompositingRootLayer() const override;
 
@@ -189,7 +186,6 @@ private:
     void wheelEventWasNotHandledByWebCore(const NativeWebWheelEvent&) override;
 
     void didCommitLayerTree(const RemoteLayerTreeTransaction&, const std::optional<MainFrameData>&, const PageData&, const TransactionID&) final;
-    void didCommitMainFrameData(const MainFrameData&) final;
     void layerTreeCommitComplete() override;
         
     void didPerformDictionaryLookup(const WebCore::DictionaryPopupInfo&) override;

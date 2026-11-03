@@ -196,7 +196,7 @@ static Vector<uint32_t> computeUseCounts(const LinkedFunctions& functions, const
             if (!callee)
                 continue;
             uint32_t target = chainEnd[*callee] ? *chainEnd[*callee] : *callee;
-            WTF::atomicExchangeAdd(&uses[target], 1u, std::memory_order_relaxed);
+            WTF::atomicExchangeAdd<MemoryOrder::Relaxed>(&uses[target], 1u);
         }
     });
     return uses;

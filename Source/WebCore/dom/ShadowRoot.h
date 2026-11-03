@@ -57,6 +57,11 @@ class ShadowRoot final : public DocumentFragment, public TreeScope {
     WTF_MAKE_TZONE_ALLOCATED(ShadowRoot);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(ShadowRoot);
 public:
+    using DocumentFragment::checkedPtrCount;
+    using DocumentFragment::checkedPtrCountWithoutThreadCheck;
+    using DocumentFragment::decrementCheckedPtrCount;
+    using DocumentFragment::incrementCheckedPtrCount;
+    using DocumentFragment::setDidBeginCheckedPtrDeletion;
 
     enum class Clonable : bool { No, Yes };
 
@@ -96,11 +101,7 @@ public:
     void setIsDeclarativeShadowRoot(bool flag) { m_isDeclarativeShadowRoot = flag; }
 
     Element* host() const { return m_host; }
-    inline void LEGACY_NODELETE setHost(Element*); // Defined and only used in Element.cpp
     void setHost(WeakPtr<Element, WeakPtrImplWithEventTargetData>&& host) { m_host = WTF::move(host); }
-
-    Node* shadowIncludingRoot() const { return m_shadowIncludingRoot; }
-    inline void setShadowIncludingRoot(Node* root) { m_shadowIncludingRoot = root; }
 
     bool hasScopedCustomElementRegistry() const { return m_hasScopedCustomElementRegistry; }
     CustomElementRegistry* registryForBindings() const;
@@ -182,7 +183,6 @@ private:
     SlotAssignmentMode m_slotAssignmentMode { SlotAssignmentMode::Named };
 
     WeakPtr<Element, WeakPtrImplWithEventTargetData> m_host;
-    WeakPtr<Node, WeakPtrImplWithEventTargetData> m_shadowIncludingRoot;
     const RefPtr<StyleSheetList> m_styleSheetList;
 
     std::unique_ptr<Style::Scope> m_styleScope;

@@ -161,15 +161,15 @@ enum class SDKAlignedBehavior {
 using SDKAlignedBehaviors = WTF::BitSet<static_cast<size_t>(SDKAlignedBehavior::NumberOfBehaviors), uint32_t>;
 
 WTF_EXPORT_PRIVATE const SDKAlignedBehaviors& sdkAlignedBehaviors();
-WTF_EXPORT_PRIVATE void LEGACY_NODELETE setSDKAlignedBehaviors(SDKAlignedBehaviors);
+NODELETE WTF_EXPORT_PRIVATE void setSDKAlignedBehaviors(SDKAlignedBehaviors);
 
 WTF_EXPORT_PRIVATE void enableAllSDKAlignedBehaviors();
-WTF_EXPORT_PRIVATE void LEGACY_NODELETE disableAllSDKAlignedBehaviors();
+NODELETE WTF_EXPORT_PRIVATE void disableAllSDKAlignedBehaviors();
 
 WTF_EXPORT_PRIVATE bool linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior);
 
-WTF_EXPORT_PRIVATE bool LEGACY_NODELETE processIsExtension();
-WTF_EXPORT_PRIVATE void LEGACY_NODELETE setProcessIsExtension(bool);
+NODELETE WTF_EXPORT_PRIVATE bool processIsExtension();
+NODELETE WTF_EXPORT_PRIVATE void setProcessIsExtension(bool);
 
 WTF_EXPORT_PRIVATE void setApplicationBundleIdentifier(const String&);
 WTF_EXPORT_PRIVATE void setApplicationBundleIdentifierOverride(const String&);
@@ -199,6 +199,7 @@ namespace MacApplication {
 
 WTF_EXPORT_PRIVATE bool isAdobeInstaller();
 WTF_EXPORT_PRIVATE bool isAppleMail();
+WTF_EXPORT_PRIVATE bool isCaptiveNetworkAssistant();
 WTF_EXPORT_PRIVATE bool isMiniBrowser();
 WTF_EXPORT_PRIVATE bool isQuickenEssentials();
 WTF_EXPORT_PRIVATE bool isSafari();

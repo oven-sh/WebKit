@@ -228,7 +228,8 @@ protected:
     std::pair<LayoutUnit, LayoutUnit> computeIntrinsicLogicalWidths(TableIntrinsics) const;
     std::pair<LayoutUnit, LayoutUnit> computeIntrinsicLogicalWidths() const final;
     std::pair<LayoutUnit, LayoutUnit> computeIntrinsicKeywordLogicalWidths() const final;
-    void computeIntrinsicLogicalWidthContributions() override;
+    std::pair<LayoutUnit, LayoutUnit> computeIntrinsicLogicalWidthContributions() override;
+    void constrainIntrinsicLogicalWidthContributionsByMinMax(LayoutUnit& minContentLogicalWidthContribution, LayoutUnit& maxContentLogicalWidthContribution) const final;
     bool nodeAtPoint(const HitTestRequest&, HitTestResult&, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, HitTestAction) override;
 
     std::optional<LayoutUnit> firstLineBaseline() const override;
@@ -243,7 +244,7 @@ protected:
     
     void updateLogicalWidth() final;
 
-    template<typename SizeType> LayoutUnit convertStyleLogicalWidthToComputedWidth(const SizeType& styleLogicalWidth, LayoutUnit availableWidth);
+    template<typename SizeType> LayoutUnit convertStyleLogicalWidthToComputedWidth(const SizeType& styleLogicalWidth, LayoutUnit availableWidth) const;
     template<typename SizeType> LayoutUnit convertStyleLogicalHeightToComputedHeight(const SizeType& styleLogicalHeight);
 
     LayoutRect overflowClipRect(const LayoutPoint& location, OverlayScrollbarSizeRelevancy = OverlayScrollbarSizeRelevancy::IgnoreOverlayScrollbarSize, PaintPhase = PaintPhase::BlockBackground) const final;

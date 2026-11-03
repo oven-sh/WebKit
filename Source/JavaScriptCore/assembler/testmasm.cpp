@@ -8835,6 +8835,61 @@ static void testMove128ToVectorComprehensive()
     testPattern(v128_t { 0xABCD1234EF005678ULL, 0xABCD1234EF005678ULL }); // Arbitrary pattern repeated
 }
 
+template<typename T, typename Emit, typename... Arguments>
+T runWithFeatures(CPUFeatureSet, const Emit&, Arguments...);
+
+// Bun: an assembler has the CPU features of its policy, so the test takes the set that it emits for.
+static void testVectorDupElement(CPUFeatureSet features)
+{
+#if CPU(X86_64)
+    if (!MacroAssembler::supportsAVX(features))
+        return;
+#endif
+
+    v128_t input;
+    for (unsigned i = 0; i < 16; ++i)
+        input.u8x16[i] = 0x81 + i * 7;
+
+    auto testLane = [&](SIMDLane simdLane, unsigned lane, bool inPlace) {
+        FPRReg src = FPRInfo::argumentFPR0;
+        FPRReg dest = inPlace ? src : FPRInfo::argumentFPR1;
+        auto [low64, high64] = runWithFeatures<std::pair<uint64_t, uint64_t>>(features, [&](CCallHelpers& jit) {
+            emitFunctionPrologue(jit);
+            jit.move128ToVector(input, src);
+            jit.vectorDupElement(simdLane, CCallHelpers::TrustedImm32(lane), src, dest);
+            jit.vectorExtractLaneInt64(CCallHelpers::TrustedImm32(0), dest, GPRInfo::returnValueGPR);
+            jit.vectorExtractLaneInt64(CCallHelpers::TrustedImm32(1), dest, GPRInfo::returnValueGPR2);
+            emitFunctionEpilogue(jit);
+            jit.ret();
+        });
+
+        v128_t expected;
+        unsigned elementSize = elementByteSize(simdLane);
+        for (unsigned i = 0; i < 16; ++i)
+            expected.u8x16[i] = input.u8x16[lane * elementSize + i % elementSize];
+
+        CHECK_EQ(low64, expected.u64x2[0]);
+        CHECK_EQ(high64, expected.u64x2[1]);
+    };
+
+    for (SIMDLane simdLane : { SIMDLane::i8x16, SIMDLane::i16x8, SIMDLane::i32x4, SIMDLane::i64x2 }) {
+        for (unsigned lane = 0; lane < elementCount(simdLane); ++lane) {
+            testLane(simdLane, lane, false);
+            testLane(simdLane, lane, true);
+        }
+    }
+}
+
+#if CPU(X86_64)
+static void testVectorDupElementWithoutAVX2()
+{
+    CPUFeatureSet host = CPUFeatureSet::host();
+    if (!MacroAssembler::supportsAVX2(host))
+        return;
+    testVectorDupElement(CPUFeatureSet::fromBits(host.bits() & ~CPUFeatureSet().with(CPUFeature::AVX2).bits()));
+}
+#endif
+
 #if CPU(ARM64)
 // Test half-precision FMOV encoding (cmode=0b1110, op=1)
 // Verifies that 16-bit, 32-bit, and 64-bit FMOV use correct encodings
@@ -8901,6 +8956,72 @@ static void testFMovHalfPrecisionEncoding()
     };
 
     testHalfPrecisionValidation();
+}
+
+// Verifies that Assembler::canEmitJump() accepts exactly the displacements that the
+// unconditional-branch-immediate (b/bl) encoding can represent. canEmitJump() is the only
+// release-mode guard on the island->target hop emitted by
+// FixedVMPoolExecutableAllocator::islandForJumpLocation(), so if it disagrees with the encoder in
+// even one direction at one boundary value, that hop gets encoded as a branch to a completely
+// different address.
+static void testCanEmitJumpMatchesBranchEncoding()
+{
+    // An independent model of the 'b' encoding (ARM ARM C6.2.26): imm26 holds (to - from) / 4,
+    // and the CPU computes the target by sign-extending imm26, shifting it left by 2 and adding it
+    // to the address of the branch instruction. A displacement is representable exactly when that
+    // round trip recovers 'to'. Note that unconditionalBranchImmediate() masks the immediate rather
+    // than clamping it, which is why an out-of-range displacement silently branches elsewhere
+    // instead of failing to encode.
+    auto isRepresentableByB = [] (intptr_t from, intptr_t to) -> bool {
+        intptr_t delta = to - from;
+        if (delta & 3)
+            return false;
+        int32_t imm26 = static_cast<int32_t>(delta >> 2) & 0x3ffffff;
+        intptr_t sextImm26 = static_cast<intptr_t>((imm26 << 6) >> 6);
+        return from + (sextImm26 << 2) == to;
+    };
+
+    constexpr intptr_t nearJumpRange = static_cast<intptr_t>(MacroAssembler::nearJumpRange); // 128MB == 2^25 instructions.
+    constexpr intptr_t instructionSize = 4;
+
+    // isInt<26> accepts the asymmetric range [-2^25, 2^25 - 1], so the two ends of the range are
+    // *not* symmetric and computing the displacement backwards is observably different here:
+    // to - from == +nearJumpRange must be rejected while -nearJumpRange must be accepted.
+    intptr_t deltas[] = {
+        0,
+        instructionSize,
+        -instructionSize,
+        nearJumpRange - instructionSize, // Largest representable forward branch.
+        nearJumpRange, // Not representable: encodes as -nearJumpRange.
+        nearJumpRange + instructionSize,
+        -nearJumpRange, // Largest representable backward branch.
+        -nearJumpRange - instructionSize, // Not representable.
+        2 * nearJumpRange,
+        -2 * nearJumpRange,
+    };
+
+    // Sweep a few branch addresses so the result cannot depend on the absolute address, only on the
+    // displacement.
+    intptr_t froms[] = { 0x100000000, 0x7f0000000, 0x100000000 + nearJumpRange };
+
+    for (intptr_t from : froms) {
+        for (intptr_t delta : deltas) {
+            intptr_t to = from + delta;
+            bool expected = isRepresentableByB(from, to);
+            bool actual = Assembler::canEmitJump(std::bit_cast<void*>(from), std::bit_cast<void*>(to));
+            if (actual != expected)
+                dataLogLn("canEmitJump disagrees with the b encoding for from = ", RawPointer(std::bit_cast<void*>(from)), ", to - from = ", delta);
+            CHECK_EQ(actual, expected);
+        }
+    }
+
+    // Spell out the boundary behaviour explicitly, since this is the property the jump islands rely
+    // on and it is the one a reversed subtraction gets wrong.
+    void* from = std::bit_cast<void*>(static_cast<intptr_t>(0x200000000));
+    CHECK_EQ(Assembler::canEmitJump(from, std::bit_cast<void*>(std::bit_cast<intptr_t>(from) + nearJumpRange - instructionSize)), true);
+    CHECK_EQ(Assembler::canEmitJump(from, std::bit_cast<void*>(std::bit_cast<intptr_t>(from) + nearJumpRange)), false);
+    CHECK_EQ(Assembler::canEmitJump(from, std::bit_cast<void*>(std::bit_cast<intptr_t>(from) - nearJumpRange)), true);
+    CHECK_EQ(Assembler::canEmitJump(from, std::bit_cast<void*>(std::bit_cast<intptr_t>(from) - nearJumpRange - instructionSize)), false);
 }
 #endif
 
@@ -11769,6 +11890,10 @@ void run(const char* filter) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
     RUN(testMove32ToFloatComprehensive());
     RUN(testMove64ToDoubleComprehensive());
     RUN(testMove128ToVectorComprehensive());
+    RUN(testVectorDupElement(CPUFeatureSet::host()));
+#if CPU(X86_64)
+    RUN(testVectorDupElementWithoutAVX2());
+#endif
 
     RUN(testMove32ToFloatX64());
     RUN(testMove64ToDoubleX64());
@@ -11777,6 +11902,7 @@ void run(const char* filter) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
 #if CPU(ARM64)
     RUN(testMove16ToFloat16Comprehensive());
     RUN(testFMovHalfPrecisionEncoding());
+    RUN(testCanEmitJumpMatchesBranchEncoding());
     RUN(testCachedTempRegisterImm32Normalization());
 #endif
 
@@ -11832,6 +11958,7 @@ void run(const char* filter) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
 
     for (auto& thread : threads)
         thread->waitForCompletion();
+
     crashLock.lock();
     dataLog("Completed ", numberOfTests, " tests\n");
 }

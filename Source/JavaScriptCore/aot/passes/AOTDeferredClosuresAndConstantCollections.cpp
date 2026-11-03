@@ -358,7 +358,7 @@ struct WindowScanner {
             }
             if (!m_layouts.allocatedOnlyByOperations.quickGet(value.layout().index()))
                 return;
-            WTF::atomicExchangeAdd(&allocationsOfLayouts[value.layout().index()], 1u, std::memory_order_relaxed);
+            WTF::atomicExchangeAdd<MemoryOrder::Relaxed>(&allocationsOfLayouts[value.layout().index()], 1u);
             if (mayAllocateOtherLayout(m_program, value) || !isEnabled)
                 return;
             ClosureFieldFreshObject object = describeObject(block, index);
@@ -771,12 +771,12 @@ struct DeferralAnalysis {
                 const DataNode::Object* object = node.tryAs<DataNode::Object>();
                 if (!object || !object->layout)
                     return;
-                WTF::atomicExchangeAdd(&allocationsOfLayouts[object->layout.index()], 1u, std::memory_order_relaxed);
+                WTF::atomicExchangeAdd<MemoryOrder::Relaxed>(&allocationsOfLayouts[object->layout.index()], 1u);
                 for (const DataMember& member : object->members) {
                     if (member.value.is<DataNode::Undefined>() || member.value.is<DataNode::Null>())
                         continue;
                     if (std::optional<uint32_t> field = program.at(object->layout).findField(member.key))
-                        WTF::atomicExchangeAdd(&dataMembersOfFields[rowOf({ object->layout, *field })], 1u, std::memory_order_relaxed);
+                        WTF::atomicExchangeAdd<MemoryOrder::Relaxed>(&dataMembersOfFields[rowOf({ object->layout, *field })], 1u);
                 }
             });
         });

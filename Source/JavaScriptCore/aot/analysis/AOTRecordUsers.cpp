@@ -71,8 +71,8 @@ Vector<FunctionID> findFunctionsSeeing(const Program& program, const ChangedReco
     Vector<uint8_t> isKeyOfMarkedField;
     Vector<FieldReference> fieldsOfEnvironments;
 
-    auto markAt = [&](Node node) { return WTF::atomicLoad(&marks[node], std::memory_order_relaxed); };
-    auto addAt = [&](Node node, Mark mark) { WTF::atomicStore(&marks[node], markAt(node) | mark, std::memory_order_relaxed); };
+    auto markAt = [&](Node node) { return WTF::atomicLoad<MemoryOrder::Relaxed>(&marks[node]); };
+    auto addAt = [&](Node node, Mark mark) { WTF::atomicStore<MemoryOrder::Relaxed>(&marks[node], markAt(node) | mark); };
     auto searchInto = [&](Mark& found, bool looksAtTypes = true) {
         return [&, looksAtTypes](const auto& id) {
             if constexpr (requires { nodes.of(id); }) {
@@ -367,14 +367,14 @@ Vector<FunctionID> findFunctionsSeeing(const Program& program, const ChangedReco
 
         Vector<uint32_t> firstTarget(FillWith { }, count + 1, 0u);
         forEachEdge([&](Node source, Node) {
-            WTF::atomicExchangeAdd(&firstTarget[source + 1], 1u, std::memory_order_relaxed);
+            WTF::atomicExchangeAdd<MemoryOrder::Relaxed>(&firstTarget[source + 1], 1u);
         });
         std::partial_sum(firstTarget.begin(), firstTarget.end(), firstTarget.begin());
         Vector<Node> targets;
         targets.grow(firstTarget[count]);
         Vector<uint32_t> nextTarget(firstTarget.span().first(count));
         forEachEdge([&](Node source, Node target) {
-            targets[WTF::atomicExchangeAdd(&nextTarget[source], 1u, std::memory_order_relaxed)] = target;
+            targets[WTF::atomicExchangeAdd<MemoryOrder::Relaxed>(&nextTarget[source], 1u)] = target;
         });
 
         Vector<Node> worklist = findIndicesInParallel(loops, count, [&](unsigned node) {

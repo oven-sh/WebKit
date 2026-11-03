@@ -354,13 +354,13 @@ public:
 
     std::optional<bool> find(FunctionID function, unsigned callDepth) const
     {
-        uint8_t answer = WTF::atomicLoad(&m_answers[callDepth][function.index()], std::memory_order_relaxed);
+        uint8_t answer = WTF::atomicLoad<MemoryOrder::Relaxed>(&m_answers[callDepth][function.index()]);
         return answer ? std::optional(answer == isFresh) : std::nullopt;
     }
 
     void set(FunctionID function, unsigned callDepth, bool answer)
     {
-        WTF::atomicStore(&m_answers[callDepth][function.index()], answer ? isFresh : isNotFresh, std::memory_order_relaxed);
+        WTF::atomicStore<MemoryOrder::Relaxed>(&m_answers[callDepth][function.index()], answer ? isFresh : isNotFresh);
     }
 
 private:
@@ -742,11 +742,11 @@ void removeUnreadFields(ProgramEditor& editor, const OptimizationInputs& inputs,
     };
     Vector<uint8_t> liveCandidates(FillWith { }, fields.size() + variables.size(), static_cast<uint8_t>(0));
     auto isLive = [&](uint32_t candidate) -> bool {
-        return WTF::atomicLoad(&liveCandidates[candidate], std::memory_order_relaxed);
+        return WTF::atomicLoad<MemoryOrder::Relaxed>(&liveCandidates[candidate]);
     };
     auto markLive = [&](uint32_t candidate) {
         if (!isLive(candidate))
-            WTF::atomicStore(&liveCandidates[candidate], static_cast<uint8_t>(1), std::memory_order_relaxed);
+            WTF::atomicStore<MemoryOrder::Relaxed>(&liveCandidates[candidate], static_cast<uint8_t>(1));
     };
     auto markFieldsLive = [&](LayoutID id) {
         size_t candidate = std::ranges::lower_bound(fields, id, { }, &FieldReference::layout) - fields.begin();
@@ -1106,7 +1106,7 @@ void removeUnreadExports(ProgramEditor& editor, const FlowResults& flow, BuildCo
         Vector<uint8_t> isRead(FillWith { }, program.variables.size(), static_cast<uint8_t>(0));
         forEachIndexInParallel(loops, program.functions.size(), [&](unsigned index) {
             forEachListedValue(program, FunctionID(index), { Opcode::GetModuleVariable, Opcode::GetEncodedModuleVariable }, [&](BlockID, uint32_t, ValueID, const Value& value) {
-                WTF::atomicStore(&isRead[value.variable().index()], static_cast<uint8_t>(1), std::memory_order_relaxed);
+                WTF::atomicStore<MemoryOrder::Relaxed>(&isRead[value.variable().index()], static_cast<uint8_t>(1));
             });
         });
         for (size_t index : variablesToLookFor) {
@@ -1129,7 +1129,7 @@ void removeUnreadExports(ProgramEditor& editor, const FlowResults& flow, BuildCo
                 return;
             storedVariables.append(value.variable());
             if (storesOfObjects.keepsObjectAlive(value.operand(OperandIndex::PutModuleVariable::value), ValueID()))
-                WTF::atomicStore(&mayHoldObjects[value.variable().index()], static_cast<uint8_t>(1), std::memory_order_relaxed);
+                WTF::atomicStore<MemoryOrder::Relaxed>(&mayHoldObjects[value.variable().index()], static_cast<uint8_t>(1));
         });
         if (!storedVariables.isEmpty())
             found.append({ FunctionID(index), WTF::move(storedVariables) });

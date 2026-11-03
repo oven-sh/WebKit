@@ -550,6 +550,23 @@ URL WebExtension::resourceFileURLForPath(const String& originalPath)
     return result;
 }
 
+bool WebExtension::hasResourceForPath(const String& originalPath)
+{
+    ASSERT(originalPath);
+
+    String path = originalPath;
+    if (path.startsWith('/'))
+        path = path.substring(1);
+
+    if (path == generatedBackgroundPageFilename || path == generatedBackgroundServiceWorkerFilename)
+        return true;
+
+    if (m_stringResources.contains(path) || m_dataResources.contains(path))
+        return true;
+
+    return !resourceFileURLForPath(path).isEmpty();
+}
+
 String WebExtension::resourceMIMETypeForPath(const String& path)
 {
     auto dataPrefix = "data:"_s;
@@ -1191,15 +1208,18 @@ void WebExtension::populateBackgroundPropertiesIfNeeded()
     }
 
     if (!preferredEnvironments.size()) {
-        // Page takes precedence over service worker.
-        if (!m_backgroundPagePath.isEmpty())
-            m_backgroundServiceWorkerPath = nullString();
+        // Page takes precedence over scripts and service worker.
+        if (!m_backgroundPagePath.isEmpty()) {
+            if (!m_backgroundScriptPaths.isEmpty())
+                recordError(createError(Error::InvalidBackgroundContent, WEB_UI_STRING("Manifest `background` entry has both `page` and `scripts` keys. The `page` key is used and `scripts` is ignored.", "WKWebExtensionErrorInvalidBackgroundContent description for both background page and scripts keys")));
 
-        // Scripts takes precedence over page and service worker.
-        if (!m_backgroundScriptPaths.isEmpty()) {
+            m_backgroundScriptPaths = { };
             m_backgroundServiceWorkerPath = nullString();
-            m_backgroundPagePath = nullString();
         }
+
+        // Scripts takes precedence over service worker.
+        if (!m_backgroundScriptPaths.isEmpty())
+            m_backgroundServiceWorkerPath = nullString();
 
         m_backgroundContentEnvironment = !m_backgroundServiceWorkerPath.isEmpty() ? Environment::ServiceWorker : Environment::Document;
 
@@ -1655,6 +1675,9 @@ const WebExtension::PermissionsSet& WebExtension::supportedPermissions()
 #if ENABLE(WK_WEB_EXTENSIONS_OFFSCREEN)
         WebExtensionPermission::offscreen(),
 #endif
+#if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/WebExtensionSupportedPermissionsAdditions.h>)
+#include <WebKitAdditions/WebExtensionSupportedPermissionsAdditions.h>
+#endif
     };
     return permissions;
 }
@@ -2074,8 +2097,14 @@ RefPtr<WebCore::Icon> WebExtension::bestIconForManifestKey(const JSON::Object& o
         return *std::get_if<RefPtr<WebCore::Icon>>(&*cacheResult);
 
     RefPtr iconObject = object.getObject(manifestKey);
-    if (!iconObject)
+    if (!iconObject) {
+        // A string `default_icon` is loaded and reported by populateActionPropertiesIfNeeded().
+        RefPtr value = object.getValue(manifestKey);
+        if (value && !(manifestKey == defaultIconManifestKey && value->type() == JSON::Value::Type::String))
+            recordError(createError(error));
+
         return nullptr;
+    }
 
     RefPtr result = bestIcon(iconObject, idealSize, [&](Ref<API::Error> error) {
         recordError(error);
@@ -2129,8 +2158,19 @@ RefPtr<JSON::Object> WebExtension::bestIconVariantJSONObject(RefPtr<JSON::Array>
     if (!variants || !variants->length())
         return nullptr;
 
-    if (variants->length() == 1)
-        return variants->get(0)->asObject();
+    // A variant with an unknown property is skipped entirely, so a later variant can match instead.
+    auto hasOnlyKnownProperties = [](const JSON::Object& variantObject) {
+        for (auto key : variantObject.keys()) {
+            if (key == anyManifestKey || key == colorSchemesManifestKey || key == colorSchemesAPIKey)
+                continue;
+
+            auto size = parseInteger<size_t>(key);
+            if (!size || !*size)
+                return false;
+        }
+
+        return true;
+    };
 
     RefPtr<JSON::Object> bestVariant;
     RefPtr<JSON::Object> fallbackVariant;
@@ -2141,10 +2181,10 @@ RefPtr<JSON::Object> WebExtension::bestIconVariantJSONObject(RefPtr<JSON::Array>
 
     // Pick the first variant matching color scheme and/or size.
     for (Ref variant : *variants) {
-        if (!variant)
+        RefPtr variantObject = variant->asObject();
+        if (!variantObject || !hasOnlyKnownProperties(*variantObject))
             continue;
 
-        RefPtr variantObject = variant->asObject();
         auto colorSchemes = toColorSchemes(variantObject ? variantObject->getValue(colorSchemesManifestKey) ?: variantObject->getValue(colorSchemesAPIKey) : nullptr);
         auto currentBestSize = bestIconSize(*variantObject, idealPixelSize);
 
@@ -2189,6 +2229,11 @@ RefPtr<WebCore::Icon> WebExtension::bestIconVariantForManifestKey(const JSON::Ob
         return *std::get_if<RefPtr<WebCore::Icon>>(&*cacheResult);
 
     RefPtr iconArray = object.getArray(manifestKey);
+    if (!iconArray) {
+        recordError(createError(error));
+        return nullptr;
+    }
+
     RefPtr result = bestIconVariant(iconArray, idealSize, [&](Ref<API::Error> error) {
         recordError(error);
     });

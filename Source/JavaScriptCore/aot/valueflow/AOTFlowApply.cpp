@@ -673,7 +673,7 @@ static BitVector findFunctionsThatAreOnlyConstructed(const FlowApplyContext& con
     // First every construction is noted, then every other call is taken back. Within each of the two the order does not matter, so all threads write, a byte a function.
     Vector<uint8_t> isConstructed(FillWith { }, program.functions.size(), static_cast<uint8_t>(0));
     auto isNoted = [&](FunctionID callee) {
-        return !!WTF::atomicLoad(&isConstructed[callee.index()], std::memory_order_relaxed);
+        return !!WTF::atomicLoad<MemoryOrder::Relaxed>(&isConstructed[callee.index()]);
     };
     auto forEachStampedCallee = [&](bool ofConstructions, const auto& functor) {
         forEachIndexInParallel(loops, bodies.size(), [&](unsigned index) {
@@ -691,11 +691,11 @@ static BitVector findFunctionsThatAreOnlyConstructed(const FlowApplyContext& con
             return;
         const Function& function = program.at(callee);
         if (function.kind == FunctionKind::Plain && context.results.function(callee).callers == CallerState::AllKnown && makesTailCall(function))
-            WTF::atomicStore(&isConstructed[callee.index()], static_cast<uint8_t>(1), std::memory_order_relaxed);
+            WTF::atomicStore<MemoryOrder::Relaxed>(&isConstructed[callee.index()], static_cast<uint8_t>(1));
     };
     auto noteOtherCall = [&](FunctionID callee) {
         if (isNoted(callee))
-            WTF::atomicStore(&isConstructed[callee.index()], static_cast<uint8_t>(0), std::memory_order_relaxed);
+            WTF::atomicStore<MemoryOrder::Relaxed>(&isConstructed[callee.index()], static_cast<uint8_t>(0));
     };
     forEachStampedCallee(true, noteConstruction);
     for (const FlowIndirectCall& call : context.results.indirectCalls()) {

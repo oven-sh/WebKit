@@ -82,6 +82,10 @@ public:
     std::optional<double> preferredAspectRatio() const override;
     FloatSize preferredAspectRatioAsSize() const override;
 
+    // The content box max-content width of an element with a preferred aspect ratio but no natural size, measured into the
+    // available space. Used for flex base sizes.
+    std::optional<LayoutUnit> stretchFitLogicalWidthWithoutNaturalSize() const;
+
 protected:
     RenderReplaced(Type, Element&, Style::ComputedStyle&&, OptionSet<ReplacedFlag> = { });
     RenderReplaced(Type, Element&, Style::ComputedStyle&&, const LayoutSize& intrinsicSize, OptionSet<ReplacedFlag> = { });
@@ -132,7 +136,8 @@ private:
 
     bool canHaveChildren() const override { return false; }
 
-    void computeIntrinsicLogicalWidthContributions() final;
+    std::pair<LayoutUnit, LayoutUnit> computeIntrinsicLogicalWidthContributions() final;
+    void constrainIntrinsicLogicalWidthContributionsByMinMax(LayoutUnit& minContentLogicalWidthContribution, LayoutUnit& maxContentLogicalWidthContribution) const final;
     virtual void paintReplaced(PaintInfo&, const LayoutPoint&) { }
 
     RepaintRects localRectsForRepaint(RepaintOutlineBounds) const override;

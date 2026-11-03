@@ -276,6 +276,13 @@ class RunTest(unittest.TestCase, StreamTestingMixin):
         self.assertEqual(details.exit_code, 0)
         self.assertContains(err, 'All tests skipped.\n')
 
+    def test_ignored_sanitizer_options_warning_logged_once_per_run(self):
+        with patch.dict('os.environ', {'ASAN_OPTIONS': 'log_path=/tmp/shell'}):
+            details, err, _ = logging_run(['-1', '-2', 'passes/text.html', 'passes/image.html'], tests_included=True)
+        self.assertEqual(details.exit_code, 0)
+        warnings = [line for line in err.getvalue().splitlines() if line.startswith('ASAN_OPTIONS is set')]
+        self.assertEqual(['ASAN_OPTIONS is set in the environment but is ignored; pass it with --additional-env-var=ASAN_OPTIONS=... instead.'], warnings)
+
     def test_target_host_available_when_capturing_upload_configuration(self):
         # Regression for 314080@main: capture configuration_for_upload(target_host(0))
         # before _run_test_subset, because the subset's finally calls clean_up_test_run,
@@ -900,6 +907,12 @@ class RunTest(unittest.TestCase, StreamTestingMixin):
         # This checks that neither test ran as expected.
         # FIXME: This log message is confusing; tests that were skipped should be called out separately.
         self.assertTrue('0 tests ran as expected, 2 didn\'t:\n' in regular_output.getvalue())
+
+    def test_results_are_unchanged_by_expected_failure_time_out(self):
+        tests = ['failures/expected', 'failures/unexpected/timeout.html', 'failures/unexpected/text-image-checksum.html', 'corner-cases/ews', 'passes/text.html']
+        results = {(result.test_name, result.type) for result in get_test_results(['--time-out-ms', '30000'] + tests)}
+        short_results = {(result.test_name, result.type) for result in get_test_results(['--time-out-ms', '30000', '--expected-failure-time-out-ms', '6000'] + tests)}
+        self.assertEqual(results, short_results)
 
     def test_exit_after_n_failures(self):
         # Unexpected failures should result in tests stopping.

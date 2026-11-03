@@ -111,7 +111,7 @@ void RenderLayerFilters::updateReferenceFilterClients(const Style::Filter& filte
                     CheckedPtr layer = m_layer.get();
                     if (!layer)
                         return;
-                    RefPtr filterElement = layer->renderer().document().getElementById(filterReference.cachedFragment);
+                    RefPtr filterElement = protect(layer->renderer().document())->getElementById(filterReference.cachedFragment);
                     if (!filterElement)
                         return;
                     CheckedPtr renderer = dynamicDowncast<LegacyRenderSVGResourceFilter>(filterElement->renderer());
@@ -199,7 +199,7 @@ GraphicsContext* RenderLayerFilters::beginFilterEffect(RenderElement& renderer, 
 
     auto filterScale = m_filterScale;
     if (usesSVGUserSpace)
-        filterScale = m_filterScale * SVGTransformComputation(downcast<RenderLayerModelObject>(renderer)).calculateAccumulatedSVGAncestorTransformScale();
+        filterScale = (m_filterScale * SVGTransformComputation(downcast<RenderLayerModelObject>(renderer)).calculateAccumulatedSVGAncestorTransformScale()).expandedTo(context.scaleFactor());
 
     auto geometry = FilterGeometry {
         .referenceBox = referenceBox,

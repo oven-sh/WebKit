@@ -357,7 +357,7 @@ void GraphicsContextCG::restore(GraphicsContextState::Purpose purpose)
     m_userToDeviceTransformKnownToBeIdentity = false;
 }
 
-void GraphicsContextCG::drawNativeImage(const NativeImage& nativeImage, const FloatRect& destRect, const FloatRect& srcRect, ImageDrawingOptions options)
+void GraphicsContextCG::drawNativeImage(const NativeImage& nativeImage, const FloatRect& destRect, const FloatRect& srcRect, RasterDrawingOptions options)
 {
     auto image = nativeImage.platformImage();
     if (!image)
@@ -401,7 +401,7 @@ void GraphicsContextCG::drawNativeImage(const NativeImage& nativeImage, const Fl
         return !WTF::areEssentiallyEqual(xScale, yScale) || xScale > 1;
     };
 
-    auto getSubimage = [](CGImageRef image, const FloatSize& imageSize, const FloatRect& subimageRect, ImageDrawingOptions options) -> RetainPtr<CGImageRef> {
+    auto getSubimage = [](CGImageRef image, const FloatSize& imageSize, const FloatRect& subimageRect, RasterDrawingOptions options) -> RetainPtr<CGImageRef> {
         auto physicalSubimageRect = subimageRect;
 
         if (options.orientation() != ImageOrientation::Orientation::None) {
@@ -560,7 +560,7 @@ static void drawPatternReleaseCallback(void* info)
     SUPPRESS_RETAINPTR_CTOR_ADOPT callOnMainThread([image = adoptCF(static_cast<CGImageRef>(info))] { });
 }
 
-void GraphicsContextCG::drawPattern(const NativeImage& nativeImage, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImageDrawingOptions options)
+void GraphicsContextCG::drawPattern(const NativeImage& nativeImage, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, RasterDrawingOptions options)
 {
     if (!patternTransform.isInvertible())
         return;
@@ -1089,6 +1089,24 @@ void GraphicsContextCG::clipPath(const Path& path, WindRule clipRule)
         else
             CGContextClip(context);
     }
+}
+
+void GraphicsContextCG::clipTransformedPath(const AffineTransform& pathTransform, const Path& path, WindRule clipRule)
+{
+    const RetainPtr<CGContextRef>& context = contextForDraw();
+    if (path.isEmpty()) {
+        CGContextClipToRect(context, CGRectZero);
+        return;
+    }
+    // The clip is stored in device space, so the CTM can be restored afterwards without affecting it.
+    auto ctm = CGContextGetCTM(context);
+    CGContextConcatCTM(context, pathTransform);
+    setCGContextPath(context, path);
+    if (clipRule == WindRule::EvenOdd)
+        CGContextEOClip(context);
+    else
+        CGContextClip(context);
+    CGContextSetCTM(context, ctm);
 }
 
 void GraphicsContextCG::clipToImageBuffer(ImageBuffer& imageBuffer, const FloatRect& destRect)

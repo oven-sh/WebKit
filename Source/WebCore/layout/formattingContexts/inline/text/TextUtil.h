@@ -46,6 +46,7 @@ struct SpacingState;
 
 struct GlyphOverflow;
 class FontCascade;
+class RenderText;
 class TextRun;
 
 namespace Layout {
@@ -92,8 +93,6 @@ public:
     static WordBreakLeft breakWord(const InlineTextItem&, const FontCascade&, InlineLayoutUnit textWidth, InlineLayoutUnit availableWidth, InlineLayoutUnit contentLogicalLeft);
 
     static bool mayBreakInBetween(const InlineTextItem& previousInlineItem, const InlineTextItem& nextInlineItem);
-    // FIXME: Remove when computeInlineIntrinsicLogicalWidths is all IFC.
-    static bool mayBreakInBetween(String previousContent, const Style::ComputedStyle& previousContentStyle, String nextContent, const Style::ComputedStyle& nextContentStyle);
     static unsigned findNextBreakablePosition(CachedLineBreakIteratorFactory&, unsigned startPosition, const Style::ComputedStyle&);
     static TextBreakIterator::LineMode::Behavior LEGACY_NODELETE lineBreakIteratorMode(LineBreak);
     static TextBreakIterator::ContentAnalysis LEGACY_NODELETE contentAnalysis(WordBreak);
@@ -105,6 +104,9 @@ public:
 
     static bool isStrongDirectionalityCharacter(char32_t);
     static bool containsStrongDirectionalityText(StringView);
+
+    static std::optional<TextDirection> overridingDirection(const InlineTextBox&);
+    static std::optional<TextDirection> overridingDirection(const RenderText&);
 
     static AtomString ellipsisTextInInlineDirection(bool isHorizontal = true);
 

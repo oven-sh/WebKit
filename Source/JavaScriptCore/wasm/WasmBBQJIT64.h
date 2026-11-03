@@ -149,28 +149,27 @@ auto BBQJIT::emitCheckAndPrepareAndMaterializePointerApply(Value pointer, uint64
     }
 
     bool canUseOffsetForm = uoffset <= static_cast<uint64_t>(std::numeric_limits<int32_t>::max()) && B3::Air::Arg::isValidAddrForm(B3::Air::Move, static_cast<int32_t>(uoffset), accessWidth);
-#if CPU(ARM64)
     if (canUseOffsetForm) {
         if (m_info.memory(memoryIndex).isMemory64())
             return functor(CCallHelpers::BaseIndex(baseRegister, pointerLocation.asGPR(), CCallHelpers::TimesOne, static_cast<int32_t>(uoffset)));
+#if CPU(ARM64)
         return functor(CCallHelpers::BaseIndex(baseRegister, pointerLocation.asGPR(), CCallHelpers::TimesOne, static_cast<int32_t>(uoffset), CCallHelpers::Extend::ZExt32));
+#else
+        m_jit.zeroExtend32ToWord(pointerLocation.asGPR(), wasmScratchGPR);
+        return functor(CCallHelpers::BaseIndex(baseRegister, wasmScratchGPR, CCallHelpers::TimesOne, static_cast<int32_t>(uoffset)));
+#endif
     }
 
-    if (m_info.memory(memoryIndex).isMemory64())
-        m_jit.addPtr(baseRegister, pointerLocation.asGPR(), wasmScratchGPR);
-    else
-        m_jit.addZeroExtend64(baseRegister, pointerLocation.asGPR(), wasmScratchGPR);
-#else
     if (m_info.memory(memoryIndex).isMemory64())
         m_jit.addPtr(baseRegister, pointerLocation.asGPR(), wasmScratchGPR);
     else {
+#if CPU(ARM64)
+        m_jit.addZeroExtend64(baseRegister, pointerLocation.asGPR(), wasmScratchGPR);
+#else
         m_jit.zeroExtend32ToWord(pointerLocation.asGPR(), wasmScratchGPR);
         m_jit.addPtr(baseRegister, wasmScratchGPR);
-    }
 #endif
-
-    if (canUseOffsetForm)
-        return functor(Address(wasmScratchGPR, static_cast<int32_t>(uoffset)));
+    }
 
     // FIXME: We (potentially) already computed this above before adding the boundary, we should preserve that add result and use it again here
     m_jit.addPtr(TrustedImmPtr(uoffset), wasmScratchGPR);
@@ -522,39 +521,6 @@ void BBQJIT::emitModOrDiv(Value& lhs, Location lhsLocation, Value& rhs, Location
 #else
 #define PREPARE_FOR_SHIFT
 #endif
-
-template<size_t N, typename OverflowHandler>
-void BBQJIT::emitShuffleMove(Vector<Value, N, OverflowHandler>& srcVector, Vector<Location, N, OverflowHandler>& dstVector, Vector<ShuffleStatus, N, OverflowHandler>& statusVector, unsigned index)
-{
-    Location srcLocation = locationOf(srcVector[index]);
-    Location dst = dstVector[index];
-    if (srcLocation == dst)
-        return; // Easily eliminate redundant moves here.
-
-    uint32_t dstSize = srcVector[index].size();
-    statusVector[index] = ShuffleStatus::BeingMoved;
-    for (unsigned i = 0; i < srcVector.size(); i ++) {
-        // This check should handle constants too - constants always have location None, and no
-        // dst should ever be a constant. But we assume that's asserted in the caller.
-        if (Location::rangesOverlap(locationOf(srcVector[i]), srcVector[i].size(), dst, dstSize)) {
-            switch (statusVector[i]) {
-            case ShuffleStatus::ToMove:
-                emitShuffleMove(srcVector, dstVector, statusVector, i);
-                break;
-            case ShuffleStatus::BeingMoved: {
-                Location temp = srcVector[i].isFloat() ? Location::fromFPR(wasmScratchFPR) : Location::fromGPR(wasmScratchGPR);
-                emitMove(srcVector[i], temp);
-                srcVector[i] = Value::pinned(srcVector[i].type(), temp);
-                break;
-            }
-            case ShuffleStatus::Moved:
-                break;
-            }
-        }
-    }
-    emitMove(srcVector[index], dst);
-    statusVector[index] = ShuffleStatus::Moved;
-}
 
 template<typename Func>
 void BBQJIT::emitCCall(Func function, std::span<const Value> arguments)

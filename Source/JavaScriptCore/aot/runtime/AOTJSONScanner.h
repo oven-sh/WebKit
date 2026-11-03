@@ -333,10 +333,10 @@ ALWAYS_INLINE std::optional<ParsedJSONString> findCachedJSONString(const JSONWor
         return std::nullopt;
     if (words.sourceEncoding != JSONSourceEncoding::Latin1) {
         constexpr unsigned quotes = 2;
-        if (entry->textLength > maxLengthOfJSONStringOfEitherWidth + quotes || (!entry->textIsASCII && !isShortTextLatin1AfterDecoding(words, quote, entry->textLength)))
+        if (entry->textLength() > maxLengthOfJSONStringOfEitherWidth + quotes || (!entry->textIsASCII() && !isShortTextLatin1AfterDecoding(words, quote, entry->textLength())))
             return std::nullopt;
     }
-    return ParsedJSONString { entry->string, quote + entry->textLength };
+    return ParsedJSONString { entry->string(), quote + entry->textLength() };
 }
 
 ALWAYS_INLINE std::optional<ParsedJSONValue> tryParseJSONScalarAt(Instance& instance, VM& vm, const uint8_t* start)

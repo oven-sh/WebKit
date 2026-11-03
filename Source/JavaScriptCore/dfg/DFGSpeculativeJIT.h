@@ -1319,6 +1319,7 @@ public:
     void compileNewSet(Node*);
     void compileNewWeakMap(Node*);
     void compileNewWeakSet(Node*);
+    void compileNewProxyObject(Node*);
     void compileNewRegExpUntyped(Node*);
 
     void emitNewTypedArrayWithSizeInRegister(Node*, TypedArrayType, RegisteredStructure, GPRReg sizeGPR);
@@ -1541,6 +1542,9 @@ public:
     void compileForwardVarargs(Node*);
     void compileVarargsLength(Node*);
     void compileLoadVarargs(Node*);
+    void compileVarargsLengthWithSpread(Node*);
+    void compileLoadVarargsWithSpread(Node*);
+    EncodedJSValue* fillSpreadArgumentsBuffer(Node*, unsigned base, unsigned numArgs);
     void compileCreateActivation(Node*);
     void compileCreateDirectArguments(Node*);
     void compileGetFromArguments(Node*);

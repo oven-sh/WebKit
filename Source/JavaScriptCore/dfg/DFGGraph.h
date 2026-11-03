@@ -611,7 +611,7 @@ public:
             return false;
 
         SpeculatedType prediction = node->child1()->prediction();
-        return prediction && !(prediction & ~(SpecHeapBigInt | SpecOther));
+        return isHeapBigIntSpeculation(prediction & ~SpecOther);
     }
 
     bool variadicArithShouldSpeculateInt32(Node* node, PredictionPass pass)
@@ -1288,6 +1288,7 @@ public:
             auto instruction = codeBlock->instructions().at(bytecodeIndex.offset());
             switch (instruction->opcodeID()) {
             case op_call_varargs:
+            case op_call_varargs_with_spread:
             case op_tail_call_varargs:
             case op_construct_varargs:
             case op_super_construct_varargs:

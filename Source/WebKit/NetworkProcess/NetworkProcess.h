@@ -167,9 +167,6 @@ public:
     ~NetworkProcess();
     static constexpr WTF::AuxiliaryProcessType processType = WTF::AuxiliaryProcessType::Network;
 
-    // Never sent to the WebContent process.
-    const SecurityFlags& securityFlags() const LIFETIME_BOUND { return m_securityFlags; }
-
     // CanMakeThreadSafeCheckedPtr interface
     uint32_t checkedPtrCount() const final { return AuxiliaryProcess::checkedPtrCount(); }
     uint32_t checkedPtrCountWithoutThreadCheck() const final { return AuxiliaryProcess::checkedPtrCountWithoutThreadCheck(); }
@@ -218,6 +215,8 @@ public:
 
     void processWillSuspendImminentlyForTestingSync(CompletionHandler<void()>&&);
     void isStorageSuspendedForTesting(PAL::SessionID, CompletionHandler<void(bool)>&&);
+    void canPrefetchDNSForTesting(PAL::SessionID, CompletionHandler<void(bool)>&&);
+    void prefetchedDNSHostnameCountForTesting(CompletionHandler<void(uint64_t)>&&) const;
     void prepareToSuspend(bool isSuspensionImminent, MonotonicTime estimatedSuspendTime, CompletionHandler<void()>&&);
     void processDidResume(bool forForegroundActivity);
 
@@ -244,7 +243,9 @@ public:
 
     void findPendingDownloadLocation(NetworkDataTask&, ResponseCompletionHandler&&, const WebCore::ResourceResponse&);
 
+#if USE(SOUP)
     void prefetchDNS(const String&);
+#endif
 
     void addWebsiteDataStore(WebsiteDataStoreParameters&&);
 
@@ -562,7 +563,7 @@ private:
     void initializeNetworkProcess(NetworkProcessCreationParameters&&, CompletionHandler<void()>&&);
     void createNetworkConnectionToWebProcess(WebCore::ProcessIdentifier, PAL::SessionID, NetworkProcessConnectionParameters&&,  CompletionHandler<void(std::optional<IPC::Connection::Handle>&&, WebCore::HTTPCookieAcceptPolicy)>&&);
     void sharedPreferencesForWebProcessDidChange(WebCore::ProcessIdentifier, SharedPreferencesForWebProcess&&, CompletionHandler<void()>&&);
-    void securityFlagsDidChange(SecurityFlags&&);
+    void securityFlagsDidChange(SecurityFlags::Storage&&);
     void isSecurityFlagEnabledForTesting(const String&, CompletionHandler<void(std::optional<bool>)>&&);
 
     void fetchWebsitesWithUserInteractions(PAL::SessionID, CompletionHandler<void(std::optional<HashMap<RegistrableDomain, WallTime>>&&)>&&);
@@ -573,7 +574,7 @@ private:
     // FIXME: This should take a session ID so we can identify which disk cache to delete.
     void clearDiskCache(WallTime modifiedSince, CompletionHandler<void()>&&);
 
-    void downloadRequest(PAL::SessionID, DownloadID, const WebCore::ResourceRequest&, const std::optional<WebCore::SecurityOriginData>& topOrigin, std::optional<NavigatingToAppBoundDomain>, const String& suggestedFilename);
+    void downloadRequest(PAL::SessionID, DownloadID, const WebCore::ResourceRequest&, const std::optional<WebCore::SecurityOriginData>& topOrigin, std::optional<NavigatingToAppBoundDomain>, OptionSet<WebCore::AdvancedPrivacyProtections>, const String& suggestedFilename);
     void resumeDownload(PAL::SessionID, DownloadID, std::span<const uint8_t> resumeData, const String& path, SandboxExtensionHandle&&, CallDownloadDidStart, std::span<const uint8_t> activityAccessToken);
     void cancelDownload(DownloadID, CompletionHandler<void(std::span<const uint8_t>)>&&);
 #if PLATFORM(COCOA)
@@ -736,8 +737,6 @@ private:
         CompletionHandler<void()> completionHandler;
     };
     HashMap<TaskIdentifier, DeleteWebsiteDataTask> m_deleteWebsiteDataTasks;
-
-    SecurityFlags m_securityFlags;
 
 #if ENABLE(DNS_SERVER_FOR_TESTING_IN_NETWORKING_PROCESS)
     OSObjectPtr<nw_resolver_config_t> m_resolverConfig;

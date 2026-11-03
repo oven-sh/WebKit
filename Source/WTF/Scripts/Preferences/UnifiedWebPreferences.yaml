@@ -502,6 +502,10 @@ ApplePayEnabled:
   defaultValue:
     "ENABLE(APPLE_PAY_REMOTE_UI)": true
     default: false
+    WebKit:
+      "PLATFORM(APPLETV)": WebKit::defaultApplePayEnabled()
+      "ENABLE(APPLE_PAY_REMOTE_UI)": true
+      default: false
   sharedPreferenceForWebProcess: true
   richJavaScript: true
 
@@ -611,6 +615,15 @@ AttachmentWideLayoutEnabled:
   condition: ENABLE(ATTACHMENT_ELEMENT)
   defaultValue: false
 
+AudioContextSetSinkIdEnabled:
+  type: bool
+  status: testable
+  category: media
+  humanReadableName: "AudioContext setSinkId"
+  humanReadableDescription: "Enable AudioContext.setSinkId() for audio output device selection"
+  condition: ENABLE(WEB_AUDIO)
+  defaultValue: false
+
 AudioControlsScaleWithPageZoom:
   type: bool
   status: embedder
@@ -655,7 +668,7 @@ AutomaticallyAdjustsViewScaleUsingMinimumEffectiveDeviceWidth:
   defaultValue:
     default: false
     WebKit:
-      "ENABLE(FLEXIBLE_VIEW_SCALE_FACTOR)": true
+      "PLATFORM(APPLETV)": WebKit::defaultAutomaticallyAdjustsViewScaleUsingMinimumEffectiveDeviceWidth()
       default: false
 
 AutomaticallyForceEnableScrollingIfNeededToRevealUI:
@@ -1055,6 +1068,14 @@ CSSMathDepthEnabled:
   humanReadableName: "CSS math-depth"
   humanReadableDescription: "Enable support for math-depth from MathML Core."
   defaultValue: true
+
+CSSMeshGradientsEnabled:
+  type: bool
+  status: unstable
+  category: css
+  humanReadableName: "CSS mesh gradients"
+  humanReadableDescription: "Enable support for CSS mesh gradients."
+  defaultValue: false
 
 CSSModuleScriptsEnabled:
   type: bool
@@ -1481,6 +1502,16 @@ CaptureAudioInGPUProcessEnabled:
   condition: ENABLE(MEDIA_STREAM)
   excludeFrom: [ WebKitLegacy, WebCore ]
   defaultValue: WebKit::defaultCaptureAudioInGPUProcessEnabled()
+
+CaptureDevicePreviewInPromptEnabled:
+  type: bool
+  status: internal
+  category: media
+  humanReadableName: "Capture Device Preview In Permission Prompt"
+  humanReadableDescription: "Show a live camera preview, microphone level meter, and device menus in the getUserMedia permission prompt"
+  condition: ENABLE(MEDIA_STREAM)
+  excludeFrom: [ WebKitLegacy, WebCore ]
+  defaultValue: false
 
 CaptureVideoInGPUProcessEnabled:
   type: bool
@@ -2772,7 +2803,7 @@ HTMLEnhancedSelectParsingQuirkEnabled:
 
 HTMLInCanvasEnabled:
   type: bool
-  status: unstable
+  status: testable
   category: dom
   webcoreOnChange: setNeedsRelayoutAllFrames
   humanReadableName: "HTML-in-Canvas"
@@ -3010,6 +3041,17 @@ ImageControlsEnabled:
   humanReadableDescription: "Enable image controls"
   condition: ENABLE(SERVICE_CONTROLS)
   defaultValue: false
+
+ImageElementImmersiveEnabled:
+  type: bool
+  status: unstable
+  category: javascript
+  condition: ENABLE(IMAGE_ELEMENT_IMMERSIVE)
+  humanReadableName: "Immersive <img> API"
+  humanReadableDescription: "Enable <img> element immersive API"
+  defaultValue: false
+  disableInLockdownMode: true
+  sharedPreferenceForWebProcess: true
 
 ImportDeferEnabled:
   type: bool
@@ -3570,7 +3612,8 @@ LayoutViewportHeightExpansionFactor:
   defaultValue:
     default: 0
     WebKit:
-      "PLATFORM(WATCHOS) || ENABLE(FLEXIBLE_VIEW_SCALE_FACTOR)" : 1
+      "PLATFORM(WATCHOS)" : 1
+      "PLATFORM(APPLETV)": WebKit::defaultLayoutViewportHeightExpansionFactor()
       default: 0
 
 LazyIframeLoadingEnabled:
@@ -4114,6 +4157,15 @@ MediaResourceLoadTimeoutForTesting:
   humanReadableName: "Media Resource Load Timeout For Testing"
   humanReadableDescription: "Test override for the timeout applied to each media resource load serviced by WebKit, in milliseconds (0 means use production default)"
   defaultValue: 0
+
+MediaSessionCallToActionEnabled:
+  type: bool
+  status: internal
+  category: media
+  humanReadableName: "MediaSession call-to-action"
+  humanReadableDescription: "Enable the MediaSession call-to-action action, shown as a button in Picture-in-Picture"
+  condition: ENABLE(MEDIA_SESSION_CALL_TO_ACTION)
+  defaultValue: false
 
 MediaSessionCaptureToggleAPIEnabled:
   type: bool
@@ -6281,7 +6333,7 @@ TextAutosizingEnabledAtLargeInitialScale:
   humanReadableDescription: "Enable Text Autosizing at Large Initial Scale"
   excludeFrom: [ WebKitLegacy, WebKit ]
   defaultValue:
-    "ENABLE(TEXT_AUTOSIZING_BASED_ON_INITIAL_SCALE)": false
+    "PLATFORM(APPLETV)": defaultTextAutosizingEnabledAtLargeInitialScale()
     default: true
 
 # FIXME: Is this implemented for WebKitLegacy? If not, this should be excluded from WebKitLegacy entirely.
@@ -7142,12 +7194,14 @@ WebAuthenticationASEnabled:
 
 WebAuthenticationCrossDeviceFallbackURLEnabled:
   type: bool
-  status: testable
+  status: embedder
   category: dom
   humanReadableName: "Web Authentication cross-device fallback URL"
   humanReadableDescription: "Enable the Web Authentication crossDeviceFallbackUrl extension"
   condition: ENABLE(WEB_AUTHN)
-  defaultValue: false
+  defaultValue:
+    default: true
+    WebKitLegacy: false
 
 # FIXME: Is this implemented for WebKitLegacy? If not, this should be excluded from WebKitLegacy entirely.
 WebAuthenticationEnabled:
@@ -7587,16 +7641,6 @@ WebRTCVP9Profile2CodecEnabled:
     default: false
     WebKitLegacy: false
 
-WebRTCWebCoreVideoCodecsEnabled:
-  type: bool
-  status: stable
-  category: media
-  humanReadableName: "WebRTC WebCore Video Codecs"
-  humanReadableDescription: "Use WebCore's native video codecs instead of libwebrtc's for WebRTC codecs that support it"
-  condition: ENABLE(WEB_RTC)
-  defaultValue: true
-  sharedPreferenceForWebProcess: true
-
 WebSQLEnabled:
   type: bool
   status: embedder
@@ -7723,6 +7767,18 @@ WebXRLayersAPIEnabled:
     "ENABLE(WEBXR_LAYERS) && USE(OPENXR)": true
     default: false
     WebKitLegacy: false
+
+WebXRPlaneDetectionModuleEnabled:
+  type: bool
+  status: testable
+  category: dom
+  humanReadableName: "WebXR Plane Detection Module"
+  humanReadableDescription: "Adds support for the Plane Detection Module for WebXR"
+  condition: ENABLE(WEBXR_PLANE_DETECTION)
+  defaultValue:
+    "USE(OPENXR)": true
+    default: false
+  disableInLockdownMode: true
 
 WebXRWebGPUBindingsEnabled:
   type: bool

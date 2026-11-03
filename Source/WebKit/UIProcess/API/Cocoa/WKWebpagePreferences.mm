@@ -886,6 +886,9 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
 
 - (void)setSecurityRestrictionMode:(WKSecurityRestrictionMode)mode
 {
+    if (WebKit::lockdownModeEnabledBySystem())
+        return;
+
     switch (mode) {
     case WKSecurityRestrictionModeNone:
         _websitePolicies->setIsEnhancedSecurityEnabled(false);
@@ -910,5 +913,19 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
         return WKSecurityRestrictionModeMaximizeCompatibility;
     return WKSecurityRestrictionModeNone;
 }
+
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+
+- (BOOL)_forceDisableAXCustomColorMode
+{
+    return _websitePolicies->forceDisableAXCustomColorMode();
+}
+
+- (void)_setForceDisableAXCustomColorMode:(BOOL)disabled
+{
+    _websitePolicies->setForceDisableAXCustomColorMode(disabled);
+}
+
+#endif
 
 @end

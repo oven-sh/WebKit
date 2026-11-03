@@ -847,7 +847,7 @@ static unsigned LEGACY_NODELETE buffersForStage(const Configuration& configurati
 
 std::optional<Error> RewriteGlobalVariables::collectGlobals()
 {
-    Vector<std::tuple<AST::Variable*, unsigned>> bufferLengths;
+    Vector<std::tuple<AST::Variable*, unsigned, unsigned>> bufferLengths;
     // we can't use a range-based for loop here since we might create new structs
     // and insert them into the declarations vector
     auto size = m_shaderModule.declarations().size();
@@ -881,15 +881,20 @@ std::optional<Error> RewriteGlobalVariables::collectGlobals()
             result.iterator->value.append({ resource->binding, globalVar->name() });
             packResource(*globalVar);
 
-            bufferLengths.append({ globalVar, resource->group });
+            bufferLengths.append({ globalVar, resource->group, resource->binding });
         }
     }
 
     for (auto& [_, vector] : m_groupBindingMap)
         std::ranges::sort(vector, { }, &std::pair<unsigned, String>::first);
 
+    // Ensure buffer lengths are sorted by id to avoid clashes
+    std::ranges::sort(bufferLengths, { }, [](const auto& bufferLength) {
+        return std::pair { std::get<1>(bufferLength), std::get<2>(bufferLength) };
+    });
+
     if (!bufferLengths.isEmpty()) {
-        for (const auto& [variable, group] : bufferLengths) {
+        for (const auto& [variable, group, webBinding] : bufferLengths) {
             auto name = AST::Identifier::make(makeString("__"_s, variable->name(), "_ArrayLength"_s));
             auto& lengthVariable = m_shaderModule.astBuilder().construct<AST::Variable>(
                 SourceSpan::empty(),
@@ -1516,7 +1521,8 @@ auto RewriteGlobalVariables::determineUsedGlobals(const CallGraph::EntryPoint& e
         auto binding = global.resource->binding;
         auto groupResult = usedGlobals.resources.add(group, IndexMap<const Global*>());
         auto bindingResult = groupResult.iterator->value.add(binding, &global);
-        ASSERT_UNUSED(bindingResult, bindingResult.isNewEntry);
+        if (!bindingResult.isNewEntry) [[unlikely]]
+            return makeUnexpected(Error(makeString("entry point '"_s, entryPoint.originalName, "' uses two variables with the same resource binding: @group("_s, group, ") @binding("_s, binding, ')'), function.span()));
     }
 
     m_shaderModule.addOverrideValidation([span = function.span(), variables = WTF::move(workgroupVariables), maximumCombinedWorkgroupVariablesSize](auto&) -> std::optional<Error> {

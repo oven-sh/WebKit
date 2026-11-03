@@ -77,9 +77,11 @@ static bool canPutPropertiesDirectly(Structure* structure)
 }
 
 // A definition replaces a property that is configurable, whatever it was, and is refused by one that is not.
+// The one property that it does not replace is a custom value with a setter: the setter gets the value (validateAndApplyPropertyDescriptor()).
+// An object with any getter or setter may have one.
 static bool canDefinePropertiesOneByOne(Structure* structure)
 {
-    return canPutPropertiesDirectly(structure) && !structure->hasNonConfigurableProperties();
+    return canPutPropertiesDirectly(structure) && !structure->hasNonConfigurableProperties() && !structure->hasAnyKindOfGetterSetterProperties();
 }
 
 static bool canStorePropertyRun(Structure* structure)

@@ -319,7 +319,7 @@ ALWAYS_INLINE void SavedFrame::visitFields(SavedFrame* saved, Visitor& visitor)
     // The flag does not change after the cell is made. A store that races with this has its barrier behind it.
     if (saved->m_flags & isHeapFrameFlag) {
         for (uint32_t index = 0; index < saved->m_numberOfWords; ++index)
-            visitor.appendUnbarriered(JSValue::decode(static_cast<EncodedJSValue>(WTF::atomicLoad(&saved->words()[index], std::memory_order_relaxed))));
+            visitor.appendUnbarriered(JSValue::decode(static_cast<EncodedJSValue>(WTF::atomicLoad<MemoryOrder::Relaxed>(&saved->words()[index]))));
         return;
     }
     uint32_t version = saved->m_version;

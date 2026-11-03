@@ -168,6 +168,10 @@ set(WebCore_PRIVATE_INCLUDE_DIRECTORIES
     "${WEBCORE_DIR}/loader/archive/mhtml"
     "${WEBCORE_DIR}/loader/cache"
     "${WEBCORE_DIR}/loader/icon"
+    "${WEBCORE_DIR}/loader/images"
+    "${WEBCORE_DIR}/loader/images/bitmap"
+    "${WEBCORE_DIR}/loader/images/sizing"
+    "${WEBCORE_DIR}/loader/images/svg"
     "${WEBCORE_DIR}/mathml"
     "${WEBCORE_DIR}/page"
     "${WEBCORE_DIR}/page/csp"
@@ -510,6 +514,7 @@ set(WebCore_NON_SVG_IDL_FILES
     Modules/mediarecorder/MediaRecorder.idl
     Modules/mediarecorder/MediaRecorderErrorEvent.idl
 
+    Modules/mediasession/CallToActionLabel.idl
     Modules/mediasession/MediaImage.idl
     Modules/mediasession/MediaMetadata.idl
     Modules/mediasession/MediaMetadataInit.idl
@@ -518,6 +523,7 @@ set(WebCore_NON_SVG_IDL_FILES
     Modules/mediasession/MediaSessionAction.idl
     Modules/mediasession/MediaSessionActionDetails.idl
     Modules/mediasession/MediaSessionActionHandler.idl
+    Modules/mediasession/MediaSessionActionHandlerOptions.idl
     Modules/mediasession/MediaSessionCaptionTrack.idl
     Modules/mediasession/MediaSessionCoordinator.idl
     Modules/mediasession/MediaSessionCoordinatorState.idl
@@ -768,6 +774,9 @@ set(WebCore_NON_SVG_IDL_FILES
     Modules/webaudio/AudioProcessingEvent.idl
     Modules/webaudio/AudioProcessingEventInit.idl
     Modules/webaudio/AudioScheduledSourceNode.idl
+    Modules/webaudio/AudioSinkInfo.idl
+    Modules/webaudio/AudioSinkOptions.idl
+    Modules/webaudio/AudioSinkType.idl
     Modules/webaudio/AudioTimestamp.idl
     Modules/webaudio/AudioWorklet.idl
     Modules/webaudio/AudioWorkletGlobalScope.idl
@@ -1730,6 +1739,8 @@ list(APPEND WebCore_NON_SVG_IDL_FILES
     Modules/webxr/WebXRJointPose.idl
     Modules/webxr/WebXRJointSpace.idl
     Modules/webxr/WebXRLayer.idl
+    Modules/webxr/WebXRPlane.idl
+    Modules/webxr/WebXRPlaneSet.idl
     Modules/webxr/WebXRPose.idl
     Modules/webxr/WebXRRay.idl
     Modules/webxr/WebXRReferenceSpace.idl
@@ -1745,6 +1756,7 @@ list(APPEND WebCore_NON_SVG_IDL_FILES
     Modules/webxr/WebXRViewport.idl
     Modules/webxr/WebXRWebGLLayer.idl
     Modules/webxr/XRCompositionLayer.idl
+    Modules/webxr/XRPlaneOrientation.idl
     Modules/webxr/XRCubeLayer.idl
     Modules/webxr/XRCubeLayerInit.idl
     Modules/webxr/XRCylinderLayer.idl
@@ -2036,11 +2048,13 @@ set(WebCore_SUPPLEMENTAL_IDL_FILES
     Modules/webxr/Navigator+WebXR.idl
     Modules/webxr/WebXRFrame+HandInput.idl
     Modules/webxr/WebXRFrame+HitTest.idl
+    Modules/webxr/WebXRFrame+PlaneDetection.idl
     Modules/webxr/WebXRInputSource+Gamepad.idl
     Modules/webxr/WebXRInputSource+HandInput.idl
     Modules/webxr/WebXRRenderState+Layers.idl
     Modules/webxr/WebXRSession+AR.idl
     Modules/webxr/WebXRSession+HitTest.idl
+    Modules/webxr/WebXRSession+PlaneDetection.idl
     Modules/webxr/WebXRSession+Layers.idl
 
     accessibility/AccessibilityRole.idl

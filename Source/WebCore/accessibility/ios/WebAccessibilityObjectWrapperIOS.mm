@@ -262,11 +262,22 @@ static AccessibilityObjectWrapper* AccessibilityUnignoredAncestor(AccessibilityO
     return m_axObject.get();
 }
 
+- (NSArray *)accessibilityFormValidationFields
+{
+    return m_formValidationFields.get();
+}
+
+- (void)_setAccessibilityFormValidationFields:(NSArray *)fields
+{
+    m_formValidationFields = fields;
+}
+
 - (void)detach
 {
     // rdar://8798960 Make sure the object is gone early, so that anything _accessibilityUnregister
     // does can't call back into the render tree.
     [super detach];
+    m_formValidationFields = nil;
 
     if ([self respondsToSelector:@selector(_accessibilityUnregister)])
         [self _accessibilityUnregister];
@@ -1875,7 +1886,9 @@ static void appendStringToResult(NSMutableString *result, NSString *string)
 {
     RefPtr<AccessibilityObject> object = self.axBackingObject;
     auto rect = FloatRect(snappedIntRect(object->elementRect()));
+#if !ENABLE(ACCESSIBILITY_LOCAL_FRAME)
     rect.moveBy({ object->remoteFrameOffset() });
+#endif
     return [self convertRectToSpace:rect space:AccessibilityConversionSpace::Page];
 }
 
@@ -1921,7 +1934,11 @@ static void appendStringToResult(NSMutableString *result, NSString *string)
 
     RefPtr<AccessibilityObject> object = self.axBackingObject;
     auto rect = FloatRect(snappedIntRect(object->elementRect()));
+#if !ENABLE(ACCESSIBILITY_LOCAL_FRAME)
     rect.moveBy({ object->remoteFrameOffset() });
+#endif
+    // With ACCESSIBILITY_LOCAL_FRAME, the screen conversion uses this frame's own screen position,
+    // which already includes the frame's offset within the main frame.
     return [self convertRectToSpace:rect space:AccessibilityConversionSpace::Screen];
 }
 

@@ -3492,7 +3492,7 @@ void ValueFlowSolver::takeUpPartsOfNodesWithFirstUser(Vector<uint32_t>&& nodes)
             if (madeNodes.statement() && !madeNodes.clear(MadeNodes::HasStatementRunWhereMade))
                 share.due.append(madeNodes.statement());
             forEachPartOf(madeNodes, [&](uint32_t part) {
-                if (!WTF::atomicExchangeAdd(&m_numberOfUsers[part], 1u, std::memory_order_relaxed))
+                if (!WTF::atomicExchangeAdd<MemoryOrder::Relaxed>(&m_numberOfUsers[part], 1u))
                     toTakeUp.append(part);
             });
         }
@@ -3563,7 +3563,7 @@ void ValueFlowSolver::letGoOf(Vector<uint32_t>&& records, WhatIsLetGo whatIsLetG
                 recordsWhosePartsAreLetGo.append(number);
         };
         auto letGo = [&](uint32_t number) ALWAYS_INLINE_LAMBDA {
-            if (WTF::atomicExchangeAdd(&m_numberOfUsers[number], static_cast<uint32_t>(-1), std::memory_order_relaxed) == 1)
+            if (WTF::atomicExchangeAdd<MemoryOrder::Relaxed>(&m_numberOfUsers[number], static_cast<uint32_t>(-1)) == 1)
                 putToRest(number);
         };
         for (uint32_t number : records.subspan(index * recordsPerShare, std::min(recordsPerShare, records.size() - index * recordsPerShare))) {
@@ -3802,7 +3802,7 @@ void ValueFlowSolver::noteNodesAskedFor()
                 if (next + distance < share.askedForAnew.size())
                     __builtin_prefetch(&m_numberOfUsers[share.askedForAnew[next + distance]], 1);
                 uint32_t number = share.askedForAnew[next];
-                if (!WTF::atomicExchangeAdd(&m_numberOfUsers[number], 1u, std::memory_order_relaxed))
+                if (!WTF::atomicExchangeAdd<MemoryOrder::Relaxed>(&m_numberOfUsers[number], 1u))
                     share.nodesWithFirstUser.append(number);
                 room[position] = number;
             }
@@ -7509,7 +7509,7 @@ void ValueFlowSolver::dumpReadersByStatement() const
         ++row.byObjects[objects <= 1 ? 0 : objects <= 16 ? 1 : objects <= 1024 ? 2 : 3];
         row.holdingNothing += made.first && m_graph.valueOf(made.first) == ValueSets::nothing;
         row.withStatement += !!made.statement();
-        bool isAtRest = !WTF::atomicLoad(const_cast<unsigned*>(&m_numberOfUsers[index]), std::memory_order_relaxed);
+        bool isAtRest = !WTF::atomicLoad<MemoryOrder::Relaxed>(const_cast<unsigned*>(&m_numberOfUsers[index]));
         uint64_t edges = 0;
         // Constants, marks and instances are not counted by their users, and a constant may have very many successors.
         bool isCountedByUsers = made.key.kind != ValueFlowMadeNodeKind::Constant && made.key.kind != ValueFlowMadeNodeKind::Marked && made.key.kind != ValueFlowMadeNodeKind::Instance;

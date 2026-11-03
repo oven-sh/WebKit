@@ -60,6 +60,10 @@ namespace WebCore {
 
 class Page;
 
+#if PLATFORM(APPLETV)
+bool defaultTextAutosizingEnabledAtLargeInitialScale();
+#endif
+
 class SettingsBase : public AbstractRefCountedAndCanMakeWeakPtr<SettingsBase> {
     WTF_MAKE_TZONE_ALLOCATED(SettingsBase);
     WTF_MAKE_NONCOPYABLE(SettingsBase);
@@ -76,6 +80,7 @@ public:
 
     virtual FontGenericFamilies& fontGenericFamilies() LIFETIME_BOUND = 0;
     virtual const FontGenericFamilies& fontGenericFamilies() const LIFETIME_BOUND = 0;
+    void setFontGenericFamilies(const FontGenericFamilies&);
 
     WEBCORE_EXPORT void setStandardFontFamily(const String&, UScriptCode = USCRIPT_COMMON);
     WEBCORE_EXPORT const String& standardFontFamily(UScriptCode = USCRIPT_COMMON) const LIFETIME_BOUND;

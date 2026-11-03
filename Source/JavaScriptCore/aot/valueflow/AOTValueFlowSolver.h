@@ -218,11 +218,11 @@ public:
         if (size > this->size())
             m_words.insertFill(m_words.size(), 0u, (size + 31) / 32 - m_words.size());
     }
-    bool get(size_t index) const { return WTF::atomicLoad(const_cast<uint32_t*>(&m_words[index >> 5]), std::memory_order_relaxed) >> (index & 31) & 1; }
-    bool set(size_t index) { return WTF::atomicExchangeOr(&m_words[index >> 5], 1u << (index & 31), std::memory_order_relaxed) >> (index & 31) & 1; }
-    bool clear(size_t index) { return WTF::atomicExchangeAnd(&m_words[index >> 5], ~(1u << (index & 31)), std::memory_order_relaxed) >> (index & 31) & 1; }
-    bool setInOrder(size_t index) { return WTF::atomicExchangeOr(&m_words[index >> 5], 1u << (index & 31), std::memory_order_seq_cst) >> (index & 31) & 1; }
-    bool clearInOrder(size_t index) { return WTF::atomicExchangeAnd(&m_words[index >> 5], ~(1u << (index & 31)), std::memory_order_seq_cst) >> (index & 31) & 1; }
+    bool get(size_t index) const { return WTF::atomicLoad<MemoryOrder::Relaxed>(const_cast<uint32_t*>(&m_words[index >> 5])) >> (index & 31) & 1; }
+    bool set(size_t index) { return WTF::atomicExchangeOr<MemoryOrder::Relaxed>(&m_words[index >> 5], 1u << (index & 31)) >> (index & 31) & 1; }
+    bool clear(size_t index) { return WTF::atomicExchangeAnd<MemoryOrder::Relaxed>(&m_words[index >> 5], ~(1u << (index & 31))) >> (index & 31) & 1; }
+    bool setInOrder(size_t index) { return WTF::atomicExchangeOr<MemoryOrder::SeqCst>(&m_words[index >> 5], 1u << (index & 31)) >> (index & 31) & 1; }
+    bool clearInOrder(size_t index) { return WTF::atomicExchangeAnd<MemoryOrder::SeqCst>(&m_words[index >> 5], ~(1u << (index & 31))) >> (index & 31) & 1; }
     void clearAll() { zeroSpan(m_words.mutableSpan()); }
 
 private:
@@ -613,9 +613,9 @@ private:
             HasParts = 1 << 7,
         };
         // Threads that look after different things write to different flags of one record at a time.
-        bool has(Flag flag) const { return WTF::atomicLoad(const_cast<uint8_t*>(&key.flagsOfRecord), std::memory_order_relaxed) & flag; }
-        bool set(Flag flag) { return WTF::atomicExchangeOr(&key.flagsOfRecord, static_cast<uint8_t>(flag), std::memory_order_relaxed) & flag; }
-        bool clear(Flag flag) { return WTF::atomicExchangeAnd(&key.flagsOfRecord, static_cast<uint8_t>(~flag), std::memory_order_relaxed) & flag; }
+        bool has(Flag flag) const { return WTF::atomicLoad<MemoryOrder::Relaxed>(const_cast<uint8_t*>(&key.flagsOfRecord)) & flag; }
+        bool set(Flag flag) { return WTF::atomicExchangeOr<MemoryOrder::Relaxed>(&key.flagsOfRecord, static_cast<uint8_t>(flag)) & flag; }
+        bool clear(Flag flag) { return WTF::atomicExchangeAnd<MemoryOrder::Relaxed>(&key.flagsOfRecord, static_cast<uint8_t>(~flag)) & flag; }
         void setTo(Flag flag, bool value) { value ? set(flag) : clear(flag); }
 
         // A record has a statement or parts, never both.
@@ -1193,7 +1193,7 @@ private:
     AOT_CLASS_THRESHOLD(uint8_t, mostWakeUpsByGrowingChain, 15);
     bool isChainOfPrototypes(ValueFlowNodeID) const;
     void listAsDueLast(ValueFlowStatementID) const;
-    void noteListener(ValueFlowNodeID node, ListenerOfNode listener) { WTF::atomicExchangeOr(&m_listenersOfNode[node.index()], static_cast<uint8_t>(listener), std::memory_order_relaxed); }
+    void noteListener(ValueFlowNodeID node, ListenerOfNode listener) { WTF::atomicExchangeOr<MemoryOrder::Relaxed>(&m_listenersOfNode[node.index()], static_cast<uint8_t>(listener)); }
     ListWithRoomToFill<uint8_t> m_listenersOfNode;
     bool m_isFullRound { false };
     struct NodeRead {

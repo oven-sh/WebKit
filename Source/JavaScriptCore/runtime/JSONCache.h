@@ -25,18 +25,20 @@
 
 #pragma once
 
+#include <JavaScriptCore/MarkedBlock.h>
 #include <JavaScriptCore/PropertyOffset.h>
 #include <JavaScriptCore/WriteBarrier.h>
 #include <array>
+#include <optional>
 #include <span>
 #include <wtf/Noncopyable.h>
+#include <wtf/SIMDHelpers.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/text/AtomStringImpl.h>
 #include <wtf/text/Latin1Character.h>
 
 namespace JSC {
 
-class JSString;
 class Structure;
 class VM;
 
@@ -67,8 +69,6 @@ public:
     static_assert(sizeof(AtomStringSlot) <= 64);
 
     static constexpr unsigned maxLongStringLength = 256;
-    static constexpr unsigned longStringCapacityLog2 = 7;
-    static constexpr unsigned longStringCapacity = 1U << longStringCapacityLog2;
 
     static constexpr unsigned primaryTransitionCapacity = 256;
     static constexpr unsigned secondaryTransitionCapacity = 64;
@@ -97,15 +97,43 @@ public:
     static_assert(sizeof(NameEntry) == 16);
     static_assert(nameEntrySize <= std::numeric_limits<uint16_t>::max());
 
-    static constexpr unsigned stringEntrySize = 64;
+    static constexpr unsigned stringEntrySize = 128;
+    static constexpr unsigned longStringEntrySize = 256;
+    static constexpr unsigned secondaryLongStringEntrySize = 128;
 
-    // A short string value with the source text that produced it: the quoted string, without escapes. A
-    // repeated value can then be matched with two vector comparisons against the source, without scanning it.
     struct StringEntry {
-        JSString* string { nullptr };
-        unsigned textLength { 0 };
-        bool textIsASCII { false };
+        static constexpr unsigned pointerBits = 48;
+        static_assert(OS_CONSTANT(EFFECTIVE_ADDRESS_WIDTH) <= pointerBits);
+        static constexpr unsigned textLengthBits = 9;
+        static constexpr uint64_t textLengthMask = ((1ULL << textLengthBits) - 1) << pointerBits;
+        static constexpr uint64_t pointerMask = ((1ULL << pointerBits) - 1) & ~static_cast<uint64_t>(MarkedBlock::atomSize - 1);
+        // Bun: a key bit of the short value table, whose keys have no hash bits: the text is known to be ASCII. A source that is
+        // no Latin-1 text has one byte for each of its characters, and the same byte for many of them. An ASCII byte stands for
+        // itself in every source.
+        static constexpr uint64_t asciiTextKeyBit = 2;
+        static_assert(!(asciiTextKeyBit & pointerMask));
+
+        static constexpr uint64_t makeKey(unsigned textLength, uint64_t hashBits = 0) { return (static_cast<uint64_t>(textLength) << pointerBits) | hashBits; }
+
+        StringEntry() = default;
+        StringEntry(JSString* string, uint64_t key)
+            : m_bits(static_cast<uint64_t>(std::bit_cast<uintptr_t>(string)) | key)
+        {
+            ASSERT(!(std::bit_cast<uintptr_t>(string) & ~pointerMask));
+            ASSERT(!(key & pointerMask));
+        }
+
+        JSString* string() const { return std::bit_cast<JSString*>(static_cast<uintptr_t>(m_bits & pointerMask)); }
+        uint64_t key() const { return m_bits & ~pointerMask; }
+        // The length of the value's source text from its opening quote to its closing one. That text has no escapes.
+        unsigned textLength() const { return (m_bits & textLengthMask) >> pointerBits; }
+        // Only for an entry of the short value table.
+        bool textIsASCII() const { return m_bits & asciiTextKeyBit; }
+
+        uint64_t m_bits { 0 };
     };
+    static_assert(sizeof(StringEntry) == 8);
+    static_assert(maxLongStringLength + 2 < (1U << StringEntry::textLengthBits));
 
     class ParsingScope {
         WTF_MAKE_NONCOPYABLE(ParsingScope);
@@ -135,9 +163,12 @@ public:
     template<typename CharacterType>
     ALWAYS_INLINE AtomStringImpl* existingIdentifier(VM&, std::span<const CharacterType> characters);
 
+    // isSourceText tells whether the string token is JSON text whose characters, between its quotes, are the
+    // string's characters.
     template<typename CharacterType>
     // Null if a string longer than maxAtomizeStringLength cannot be allocated.
-    ALWAYS_INLINE JSString* tryMakeJSString(VM&, std::span<const CharacterType> characters);
+    // A caller that does not know passes false for isSourceText: the characters are then searched for one that JSON escapes.
+    ALWAYS_INLINE JSString* tryMakeJSString(VM&, std::span<const CharacterType> characters, bool isSourceText = false);
 
     template<typename CharacterType> ALWAYS_INLINE Structure* getTransition(Structure* from, std::span<const CharacterType> name);
     template<typename CharacterType> ALWAYS_INLINE void addTransition(Structure* from, Structure* to, std::span<const CharacterType> name);
@@ -153,9 +184,16 @@ public:
     void addName(Structure* from, Structure* to, PropertyOffset);
     void addPrefixedName(Structure* from, Structure* to, PropertyOffset);
 
-    // Returns the entry whose text the source starts with. The caller consumes entry->textLength characters
-    // of the source.
-    ALWAYS_INLINE const StringEntry* findString(std::span<const Latin1Character> source) const LIFETIME_BOUND;
+    // Returns the cached value whose source text the source starts with. A long value without escapes that is
+    // not cached yet is created and cached, which can run a GC, so the Structure of keepAlive, which the caller
+    // holds only as an ID, is kept alive until then. Returns null when the lexer has to read the value. The caller
+    // consumes entry->textLength() characters of the source.
+    // Bun: a source that is no Latin-1 text (UTF-8 bytes) finds only a short value whose text is ASCII, and nothing is
+    // created for it: its other bytes are not its characters.
+    ALWAYS_INLINE const StringEntry* findOrCreateString(VM&, std::span<const Latin1Character> source, StructureID keepAlive, bool sourceIsLatin1Text = true) LIFETIME_BOUND;
+    // Bun: the short value table alone. Nothing past maxNameTextLength is read and nothing is created, so this is for a caller
+    // that may not allocate here, or that holds the encoding of the text against entry->textIsASCII() itself.
+    ALWAYS_INLINE const StringEntry* findString(std::span<const Latin1Character> source) LIFETIME_BOUND;
     // Records the first textLength characters of source, a string token without escapes, as the text of string.
     ALWAYS_INLINE void addString(std::span<const Latin1Character> source, unsigned textLength, JSString*, bool textIsASCII = false);
 
@@ -168,8 +206,9 @@ public:
     ALWAYS_INLINE void clearJSStrings()
     {
         m_jsStrings.fill(nullptr);
-        m_longJSStrings.fill(nullptr);
         m_strings.m_entries.fill({ });
+        m_longStrings.fill({ });
+        m_secondaryLongStrings.fill({ });
     }
 
     template<typename Visitor> void visitAggregate(Visitor&);
@@ -191,11 +230,16 @@ private:
     static constexpr unsigned prefixedNameEntrySize = 128;
     static constexpr unsigned prefixedNameWays = 2;
     static constexpr unsigned stringWays = 2;
+    // Values too long to atomize are shared through a 4-way table. A value of longStringSearchLength characters
+    // or more is indexed by its first longStringSearchLength only, so that a lookup before its token is lexed
+    // searches no further for the closing quote: searching to the end costs more than the hits it adds.
+    static constexpr unsigned maxAtomizeStringLength = 16;
+    static constexpr unsigned longStringWays = 4;
+    static constexpr unsigned longStringSearchLength = 64;
 
     static constexpr unsigned maxNameLength = maxNameTextLength - 3;
     using NameText = std::array<Latin1Character, maxNameTextLength>;
-    using NameSource = std::span<const Latin1Character, maxNameTextLength>;
-    using NameSource16 = std::span<const char16_t, maxNameTextLength>;
+    template<typename CharacterType> using NameSource = std::span<const CharacterType, maxNameTextLength>;
 
     // Slots [0, primaryStringCapacity) are the primary table and the rest the secondary one. A new string
     // takes its primary slot and demotes the previous occupant to that string's secondary slot, so that two
@@ -215,7 +259,7 @@ private:
     template<typename CharacterType> JSString* makeJSStringSlow(VM&, uint64_t key, std::span<const CharacterType>);
 
     template<typename CharacterType>
-    JSString* tryMakeLongJSString(VM&, std::span<const CharacterType> characters);
+    JSString* tryMakeLongJSString(VM&, std::span<const CharacterType> characters, bool isSourceText);
 
     static ALWAYS_INLINE uint64_t transitionKey(StructureID, unsigned length, Latin1Character first, Latin1Character last);
     template<typename CharacterType> static ALWAYS_INLINE uint64_t transitionKey(StructureID, std::span<const CharacterType> name);
@@ -223,16 +267,51 @@ private:
     static ALWAYS_INLINE unsigned secondaryTransitionIndex(uint64_t key);
     template<typename CharacterType> static ALWAYS_INLINE Structure* transitionIfMatches(const TransitionEntry&, StructureID from, std::span<const CharacterType> name);
     static ALWAYS_INLINE unsigned prefixedNameIndex(StructureID, uint32_t prefix);
-    // Names are indexed by the first characters of their source text truncated to bytes, so that 16-bit
-    // source finds the entries recorded from 8-bit source.
+    // Characters are folded to bytes before they are hashed, so that 16-bit text finds the names recorded from
+    // the same 8-bit text. Bun: a long string is only given to text of its own width (longStringMatches()).
     static ALWAYS_INLINE uint32_t sourcePrefix(std::span<const Latin1Character> source);
     static ALWAYS_INLINE uint32_t sourcePrefix(std::span<const char16_t> source);
+    static ALWAYS_INLINE uint64_t stringPrefix(const Latin1Character*);
+    static ALWAYS_INLINE uint64_t stringPrefix(const char16_t*);
     static ALWAYS_INLINE unsigned stringIndex(std::span<const Latin1Character> source);
+    struct LongStringIndex {
+        unsigned set;
+        // Includes sourceTextKeyBit. Values that need escapes are recorded without it, so that only
+        // makeLongJSString() finds them: their source text is not their characters between quotes.
+        uint64_t hashBits;
+    };
+    static constexpr uint64_t sourceTextKeyBit = 1;
+    // Length is the value's length, or longStringSearchLength for any longer value.
+    template<typename CharacterType> static ALWAYS_INLINE LongStringIndex longStringIndex(const CharacterType* characters, size_t length);
+    // The secondary table is direct-mapped and indexed by the whole value, so that values sharing their first
+    // longStringSearchLength characters are still shared when more of them repeat than a set of the main table holds.
+    template<typename CharacterType> static ALWAYS_INLINE LongStringIndex secondaryLongStringIndex(const CharacterType* characters, size_t length);
+    template<typename CharacterType> static ALWAYS_INLINE uint64_t longStringHash(const CharacterType* characters, size_t length);
+    template<typename CharacterType> static ALWAYS_INLINE bool longStringMatches(JSString*, std::span<const CharacterType> characters);
+    template<unsigned setBits> static ALWAYS_INLINE uint64_t longStringHashBits(uint64_t hash);
+    static ALWAYS_INLINE void insertLongString(std::span<StringEntry, longStringWays>, JSString*, uint64_t key);
+    // Returns the length of the value that the source starts with, a string token, or longStringSearchLength if
+    // its closing quote is not among the next longStringSearchLength characters.
+    static ALWAYS_INLINE std::optional<size_t> boundedValueLength(std::span<const Latin1Character> source);
+    static ALWAYS_INLINE bool longTextMatches(std::span<const Latin1Character> expected, std::span<const Latin1Character> source);
+    ALWAYS_INLINE const StringEntry* findShortString(std::span<const Latin1Character> source) LIFETIME_BOUND;
+    ALWAYS_INLINE const StringEntry* findLongString(VM&, std::span<const Latin1Character> source, StructureID keepAlive) LIFETIME_BOUND;
+    // Records a value that findLongString() did not find, and returns its entry, unless the lexer has to read it.
+    const StringEntry* addLongString(VM&, std::span<const Latin1Character> source, size_t searchedLength, LongStringIndex, StructureID keepAlive) LIFETIME_BOUND;
+    // Whether JSON must escape any of these characters between quotes: '"', '\', or a control character.
+    template<typename CharacterType> static ALWAYS_INLINE bool hasUnsafeStringCharacter(std::span<const CharacterType>);
     static std::span<const Latin1Character> recordableName(Structure* from, Structure* to, PropertyOffset);
     static unsigned makeText(NameText&, std::span<const Latin1Character> name);
     static uint32_t textPrefix(std::span<const Latin1Character> name);
-    static ALWAYS_INLINE bool textMatches(const NameText&, unsigned length, NameSource);
-    static ALWAYS_INLINE bool textMatches(const NameText&, unsigned length, NameSource16);
+    // The first maxNameTextLength characters of the source, as bytes.
+    struct TextWindow {
+        std::array<simde_uint8x16_t, 2> characters;
+        // The high bytes of 16-bit characters, so that a character outside Latin-1 matches no text.
+        std::array<simde_uint8x16_t, 2> nonLatin1;
+    };
+    template<typename CharacterType> static ALWAYS_INLINE TextWindow loadTextWindow(NameSource<CharacterType>);
+    static ALWAYS_INLINE bool textMatches(const NameText&, unsigned length, const TextWindow&);
+    template<typename CharacterType> static ALWAYS_INLINE bool textMatches(const NameText& text, unsigned length, NameSource<CharacterType> source) { return textMatches(text, length, loadTextWindow(source)); }
 
     // Texts are kept apart from the entries, which a parse reads for every key, so that the entries
     // occupy fewer cache lines. A text is only meaningful while its entry has a source Structure.
@@ -247,7 +326,7 @@ private:
 
     // Laid out like NameTable. A text is only meaningful while its entry has a string.
     struct StringTable {
-        ALWAYS_INLINE const StringEntry* match(unsigned index, std::span<const Latin1Character> source) const LIFETIME_BOUND;
+        ALWAYS_INLINE const StringEntry* match(unsigned index, const TextWindow&) const LIFETIME_BOUND;
         ALWAYS_INLINE void insert(unsigned set, JSString*, std::span<const Latin1Character> source, unsigned textLength, bool textIsASCII);
 
         std::array<StringEntry, stringEntrySize> m_entries { };
@@ -256,12 +335,13 @@ private:
 
     std::array<AtomStringSlot, stringCapacity> m_atomStrings { };
     std::array<JSString*, stringCapacity> m_jsStrings { };
-    std::array<JSString*, longStringCapacity> m_longJSStrings { };
     std::array<TransitionEntry, primaryTransitionCapacity> m_primaryTransitions { };
     std::array<TransitionEntry, secondaryTransitionCapacity> m_secondaryTransitions { };
     NameTable<nameEntrySize> m_names { };
     NameTable<prefixedNameEntrySize> m_prefixedNames { };
     StringTable m_strings { };
+    std::array<StringEntry, longStringEntrySize> m_longStrings { };
+    std::array<StringEntry, secondaryLongStringEntrySize> m_secondaryLongStrings { };
     bool m_isParsing { false };
 };
 

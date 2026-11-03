@@ -115,7 +115,10 @@ public:
 
     SingleThreadWeakPtr<RenderMultiColumnFlow> m_multiColumnFlow;
 
+    std::optional<LayoutUnit> m_percentageBasisForDescendants;
+
     bool m_didBreakAtLineToAvoidWidow : 1;
+    bool m_hasPercentageBasisForDescendants : 1;
 };
 
 class RenderBlockFlow : public RenderBlock {
@@ -338,7 +341,11 @@ public:
         InsertionOrRemoval, // child renderer gets constructed/goes away
         ContentChange       // existing renderer gets changed (text content only atm)
     };
+    // Drops the line layout and issues the repaints and layout that the change needs.
     void invalidateLineLayout(InvalidationReason);
+    // Drops the line layout without repaints or layout. The line layout reads its content through the render tree, so it must
+    // go before its root is destroyed and before child list changes that it isn't notified of.
+    void destroyLineLayout();
     void LEGACY_NODELETE computeAndSetLineLayoutPath();
 
     enum LineLayoutPath { UndeterminedPath = 0, InlinePath };
@@ -402,6 +409,7 @@ protected:
     bool shouldResetLogicalHeightBeforeLayout() const override { return true; }
 
     std::pair<LayoutUnit, LayoutUnit> computeIntrinsicLogicalWidths() const override;
+    std::pair<LayoutUnit, LayoutUnit> computeIntrinsicLogicalWidthContributions() override;
     
     bool pushToNextPageWithMinimumLogicalHeight(LayoutUnit& adjustment, LayoutUnit logicalOffset, LayoutUnit minimumLogicalHeight) const;
 
@@ -510,7 +518,6 @@ private:
     bool layoutSimpleBlockContentInInline(MarginInfo&);
     void updateRepaintTopAndBottomAfterLayout(RelayoutChildren, std::optional<LayoutRect> partialRepaintRect, std::pair<float, float> oldContentTopAndBottomIncludingInkOverflow, LayoutUnit& repaintLogicalTop, LayoutUnit& repaintLogicalBottom);
     std::optional<LayoutUnit> updateLineClampStateAndLogicalHeightAfterLayout();
-    bool tryComputeIntrinsicLogicalWidthsUsingInlinePath(LayoutUnit& minLogicalWidth, LayoutUnit& maxLogicalWidth);
     void setStaticPositionsForSimpleOutOfFlowContent();
 
     void adjustIntrinsicLogicalWidthsForColumns(LayoutUnit& minLogicalWidth, LayoutUnit& maxLogicalWidth) const;
@@ -522,6 +529,7 @@ private:
     std::pair<float, float> inlineContentTopAndBottomIncludingInkOverflow() const;
 
     void dirtyForLayoutFromPercentageHeightDescendants();
+    void dirtyForLayoutFromPercentageHeightDescendantsIfBasisChanged();
 
     int m_widthForTextAutosizing;
     unsigned m_lineCountForTextAutosizing : 2;

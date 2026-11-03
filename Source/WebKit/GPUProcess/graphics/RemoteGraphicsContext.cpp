@@ -346,6 +346,20 @@ void RemoteGraphicsContext::clipCachedPath(RemotePathImplIdentifier identifier, 
     context().clipPath(path, rule);
 }
 
+void RemoteGraphicsContext::clipTransformedPath(const AffineTransform& pathTransform, const Path& path, WindRule rule)
+{
+    context().clipTransformedPath(pathTransform, path, rule);
+}
+
+void RemoteGraphicsContext::clipTransformedCachedPath(const AffineTransform& pathTransform, RemotePathImplIdentifier identifier, WebCore::WindRule rule)
+{
+    RefPtr pathImpl = resourceCache().cachedPathImpl(identifier);
+    MESSAGE_CHECK(pathImpl);
+
+    Path path(pathImpl.releaseNonNull());
+    context().clipTransformedPath(pathTransform, path, rule);
+}
+
 void RemoteGraphicsContext::resetClip()
 {
     context().resetClip();
@@ -412,7 +426,7 @@ void RemoteGraphicsContext::drawGlyphs(RenderingResourceIdentifier fontIdentifie
     context().drawGlyphsImmediate(*font, glyphs.span(), advances.span(), localAnchor, fontSmoothingMode);
 }
 
-void RemoteGraphicsContext::drawImageBuffer(RenderingResourceIdentifier imageBufferIdentifier, const FloatRect& destinationRect, const FloatRect& srcRect, ImageDrawingOptions options)
+void RemoteGraphicsContext::drawImageBuffer(RenderingResourceIdentifier imageBufferIdentifier, const FloatRect& destinationRect, const FloatRect& srcRect, RasterDrawingOptions options)
 {
     RefPtr sourceImage = imageBuffer(imageBufferIdentifier);
     MESSAGE_CHECK(sourceImage);
@@ -427,7 +441,7 @@ void RemoteGraphicsContext::drawDisplayList(RemoteDisplayListIdentifier identifi
     context().drawDisplayList(*displayList, controlFactory());
 }
 
-void RemoteGraphicsContext::drawNativeImage(RenderingResourceIdentifier imageIdentifier, const FloatRect& destRect, const FloatRect& srcRect, ImageDrawingOptions options)
+void RemoteGraphicsContext::drawNativeImage(RenderingResourceIdentifier imageIdentifier, const FloatRect& destRect, const FloatRect& srcRect, RasterDrawingOptions options)
 {
     RefPtr image = resourceCache().cachedNativeImage(imageIdentifier);
     MESSAGE_CHECK(image);
@@ -454,14 +468,14 @@ void RemoteGraphicsContext::drawSystemImage(Ref<SystemImage>&& systemImage, cons
     context().drawSystemImage(systemImage, destinationRect);
 }
 
-void RemoteGraphicsContext::drawPatternNativeImage(RenderingResourceIdentifier imageIdentifier, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& transform, const FloatPoint& phase, const FloatSize& spacing, ImageDrawingOptions options)
+void RemoteGraphicsContext::drawPatternNativeImage(RenderingResourceIdentifier imageIdentifier, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& transform, const FloatPoint& phase, const FloatSize& spacing, RasterDrawingOptions options)
 {
     RefPtr image = resourceCache().cachedNativeImage(imageIdentifier);
     MESSAGE_CHECK(image);
     context().drawPattern(*image, destRect, tileRect, transform, phase, spacing, options);
 }
 
-void RemoteGraphicsContext::drawPatternImageBuffer(RenderingResourceIdentifier imageIdentifier, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& transform, const FloatPoint& phase, const FloatSize& spacing, ImageDrawingOptions options)
+void RemoteGraphicsContext::drawPatternImageBuffer(RenderingResourceIdentifier imageIdentifier, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& transform, const FloatPoint& phase, const FloatSize& spacing, RasterDrawingOptions options)
 {
     RefPtr image = imageBuffer(imageIdentifier);
     MESSAGE_CHECK(image);
@@ -617,7 +631,7 @@ SharedVideoFrameReader& RemoteGraphicsContext::sharedVideoFrameReader()
     return *m_sharedVideoFrameReader;
 }
 
-void RemoteGraphicsContext::drawVideoFrame(SharedVideoFrame&& frame, const FloatRect& destination, ShouldDiscardAlpha shouldDiscardAlpha, ImageDrawingOptions options)
+void RemoteGraphicsContext::drawVideoFrame(SharedVideoFrame&& frame, const FloatRect& destination, ShouldDiscardAlpha shouldDiscardAlpha, RasterDrawingOptions options)
 {
     if (auto videoFrame = sharedVideoFrameReader().read(WTF::move(frame)))
         context().drawVideoFrame(*videoFrame, destination, shouldDiscardAlpha, options);

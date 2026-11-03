@@ -8323,6 +8323,30 @@ Ran 1296 tests of 1298 with 1293 successful
         self.expect_outcome(result=FAILURE, state_string='3 api tests failed or timed out')
         return self.run_step()
 
+    def test_glib_failures_run_whole_test_programs(self):
+        self.setup_step(RunAPITestsWithoutChange())
+        self.setProperty('fullPlatform', 'gtk')
+        self.setProperty('platform', 'gtk')
+        self.setProperty('configuration', 'release')
+        self.setProperty('buildername', 'API-Tests-GTK-EWS')
+        self.setProperty('buildnumber', '164882')
+        self.setProperty('workername', 'igalia14-gtk-wk2-ews')
+        self.setProperty('api_first_run_failures', ['TestWebsiteData:/webkit/WebKitWebsiteData/compression-dictionary', 'TestWTF.WTF_DateMath.calculateLocalTimeOffset'])
+        self.setProperty('api_second_run_failures', ['TestWebsiteData:/webkit/WebKitWebsiteData/compression-dictionary', 'TestWebsiteData:/webkit/WebKitWebsiteData/sizes'])
+
+        self.expectRemoteCommands(
+            ExpectShell(workdir='wkdir',
+                        log_environ=False,
+                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', f'python3 Tools/Scripts/run-gtk-tests --release --json-output={self.jsonFileName} TestWTF.WTF_DateMath.calculateLocalTimeOffset TestWebsiteData 2>&1 | Tools/Scripts/filter-test-logs api'],
+                        logfiles={'json': self.jsonFileName},
+                        timeout=20 * 60
+                        )
+            .log('stdio', stdout='Ran 12 tests of 12 with 12 successful\n')
+            .exit(0),
+        )
+        self.expect_outcome(result=SUCCESS, state_string='run-api-tests-without-change')
+        return self.run_step()
+
 
 class TestAnalyzeAPITestsResults(BuildStepMixinAdditions, unittest.TestCase):
     def setUp(self):
@@ -12076,6 +12100,13 @@ class TestCanonicalize(BuildStepMixinAdditions, unittest.TestCase):
                 timeout=300,
                 log_environ=False,
                 env=self.ENV,
+                command=['git', 'checkout', '--progress', 'eng/pull-request-branch'],
+            ).exit(0),
+            ExpectShell(
+                workdir='wkdir',
+                timeout=300,
+                log_environ=False,
+                env=self.ENV,
                 command=['git', 'pull', 'origin', 'main', '--rebase'],
             ).exit(0),
             ExpectShell(
@@ -12091,6 +12122,68 @@ class TestCanonicalize(BuildStepMixinAdditions, unittest.TestCase):
                 log_environ=False,
                 env=self.ENV,
                 command=['git', 'branch', '-f', 'main', 'eng/pull-request-branch'],
+            ).exit(0),
+            ExpectShell(
+                workdir='wkdir',
+                timeout=300,
+                log_environ=False,
+                env=self.ENV,
+                command=['git', 'checkout', '--progress', 'main'],
+            ).exit(0),
+            ExpectShell(
+                workdir='wkdir',
+                timeout=300,
+                log_environ=False,
+                env=self.ENV,
+                command=['python3', 'Tools/Scripts/git-webkit', 'canonicalize', '-n', '1'],
+            ).exit(0),
+            ExpectShell(workdir='wkdir',
+                        log_environ=False,
+                        env=self.ENV,
+                        timeout=300,
+                        command=[
+                            'git', 'filter-branch', '-f',
+                            '--env-filter', "GIT_AUTHOR_DATE='{date}';GIT_COMMITTER_DATE='{date}';GIT_COMMITTER_NAME='WebKit Committer';GIT_COMMITTER_EMAIL='committer@webkit.org'".format(date=date),
+                            'HEAD...HEAD~1',
+                        ],
+                        ).exit(0),
+        )
+        self.expect_outcome(result=SUCCESS, state_string='Canonicalized commit')
+        return self.run_step()
+
+    def test_success_no_head_ref(self):
+        self.setup_step(Canonicalize())
+        self.setProperty('github.number', '1234')
+        self.setProperty('github.base.ref', 'main')
+        self.setProperty('owners', ['webkit-commit-queue'])
+        self.setProperty('remote', 'origin')
+
+        gmtoffset = int(time.localtime().tm_gmtoff * 100 / (60 * 60))
+        fixed_time = int(time.time())
+        date = f'{int(time.time())} {gmtoffset}'
+        time.time = lambda: fixed_time
+
+        self.expectRemoteCommands(
+            ExpectShell(
+                workdir='wkdir',
+                timeout=300,
+                log_environ=False,
+                env=self.ENV,
+                command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'rm .git/identifiers.json || true'],
+            ).exit(0),
+            ExpectShell(
+                workdir='wkdir',
+                timeout=300,
+                log_environ=False,
+                env=self.ENV,
+                command=['git', 'pull', 'origin', 'main', '--rebase'],
+            ).exit(0),
+            ExpectShell(
+                workdir='wkdir',
+                timeout=300,
+                log_environ=False,
+                env=self.ENV,
+                command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'test "$(git rev-list --count FETCH_HEAD..HEAD)" -eq 1'],
             ).exit(0),
             ExpectShell(
                 workdir='wkdir',
@@ -12141,6 +12234,13 @@ class TestCanonicalize(BuildStepMixinAdditions, unittest.TestCase):
                 log_environ=False,
                 env=self.ENV,
                 command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'rm .git/identifiers.json || true'],
+            ).exit(0),
+            ExpectShell(
+                workdir='wkdir',
+                timeout=300,
+                log_environ=False,
+                env=self.ENV,
+                command=['git', 'checkout', '--progress', 'eng/pull-request-branch'],
             ).exit(0),
             ExpectShell(
                 workdir='wkdir',
@@ -12211,6 +12311,13 @@ class TestCanonicalize(BuildStepMixinAdditions, unittest.TestCase):
                 log_environ=False,
                 env=self.ENV,
                 command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'rm .git/identifiers.json || true'],
+            ).exit(0),
+            ExpectShell(
+                workdir='wkdir',
+                timeout=300,
+                log_environ=False,
+                env=self.ENV,
+                command=['git', 'checkout', '--progress', 'eng/pull-request-branch'],
             ).exit(0),
             ExpectShell(
                 workdir='wkdir',
@@ -12324,6 +12431,13 @@ class TestCanonicalize(BuildStepMixinAdditions, unittest.TestCase):
                 timeout=300,
                 log_environ=False,
                 env=self.ENV,
+                command=['git', 'checkout', '--progress', 'eng/pull-request-branch'],
+            ).exit(0),
+            ExpectShell(
+                workdir='wkdir',
+                timeout=300,
+                log_environ=False,
+                env=self.ENV,
                 command=['git', 'pull', 'origin', 'main', '--rebase'],
             ).exit(0),
             ExpectShell(
@@ -12373,6 +12487,13 @@ class TestCanonicalize(BuildStepMixinAdditions, unittest.TestCase):
                 log_environ=False,
                 env=self.ENV,
                 command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'rm .git/identifiers.json || true'],
+            ).exit(0),
+            ExpectShell(
+                workdir='wkdir',
+                timeout=300,
+                log_environ=False,
+                env=self.ENV,
+                command=['git', 'checkout', '--progress', 'eng/pull-request-branch'],
             ).exit(0),
             ExpectShell(
                 workdir='wkdir',

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020 Apple Inc. All rights reserved.
+ * Copyright (C) 2020-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,15 +27,12 @@
 
 #include <WebCore/LayoutBox.h>
 #include <wtf/OptionSet.h>
-#include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
 
 namespace Layout {
 
 class InlineTextBox : public Box {
-    WTF_MAKE_TZONE_ALLOCATED(InlineTextBox);
-    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(InlineTextBox);
 public:
     enum class ContentCharacteristic : uint8_t {
         CanUseSimplifiedContentMeasuring,
@@ -43,11 +40,9 @@ public:
         ShouldUseSimpleGlyphOverflowCodePath,
         HasPositionDependentContentWidth,
         HasStrongDirectionalityContent,
-        HasSynthesizedGlyph // A list marker's disc, circle or square: the text is the character the counter style produced.
+        HasSynthesizedGlyph, // A list marker's disc, circle or square: the text is the character the counter style produced.
+        HighestEnumValue = HasSynthesizedGlyph
     };
-    InlineTextBox(String, bool isCombined, EnumSet<ContentCharacteristic>, Style::ComputedStyle&&, std::unique_ptr<Style::ComputedStyle>&& firstLineStyle = nullptr);
-    virtual ~InlineTextBox() = default;
-
     const String& content() const LIFETIME_BOUND { return m_content; }
     bool isCombined() const { return m_isCombined; }
     // FIXME: This should not be a box's property.
@@ -58,8 +53,14 @@ public:
     bool hasStrongDirectionalityContent() const { return m_contentCharacteristicSet.contains(ContentCharacteristic::HasStrongDirectionalityContent); }
     bool hasSynthesizedGlyph() const { return m_contentCharacteristicSet.contains(ContentCharacteristic::HasSynthesizedGlyph); }
 
+    // BoxTreeUpdater sets these from the renderer.
     void setContent(String newContent, EnumSet<ContentCharacteristic>);
-    void setContentCharacteristic(EnumSet<ContentCharacteristic> contentCharacteristicSet) { m_contentCharacteristicSet = contentCharacteristicSet; }
+    void setCanUseSimplifiedContentMeasuring(bool value) { m_contentCharacteristicSet.set(ContentCharacteristic::CanUseSimplifiedContentMeasuring, value); }
+    void setIsCombined(bool isCombined) { m_isCombined = isCombined; }
+
+protected:
+    explicit InlineTextBox(Style::ComputedStyle&&);
+    ~InlineTextBox() = default;
 
 private:
     String m_content;
@@ -69,7 +70,7 @@ private:
 
 inline void InlineTextBox::setContent(String newContent, EnumSet<ContentCharacteristic> contentCharacteristicSet)
 {
-    m_content = newContent;
+    m_content = WTF::move(newContent);
     m_contentCharacteristicSet = contentCharacteristicSet;
 }
 

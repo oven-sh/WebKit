@@ -1143,8 +1143,8 @@ CallingConventions chooseCallingConventions(ProgramEditor& editor, const Optimiz
         });
         forEachDirectCall(program, FunctionID(index), [&](BlockID block, ValueID id, FunctionID callee) {
             uint8_t& isCalled = (tailCalls.contains(std::pair { block, id }) ? tailCalled : returnedTo)[callee.index()];
-            if (!WTF::atomicLoad(&isCalled, std::memory_order_relaxed))
-                WTF::atomicStore(&isCalled, static_cast<uint8_t>(1), std::memory_order_relaxed);
+            if (!WTF::atomicLoad<MemoryOrder::Relaxed>(&isCalled))
+                WTF::atomicStore<MemoryOrder::Relaxed>(&isCalled, static_cast<uint8_t>(1));
         });
     });
     for (unsigned index = 0; index < count; ++index) {

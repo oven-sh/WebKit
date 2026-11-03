@@ -420,7 +420,7 @@ private:
     void crossOriginParentSyntheticSameDocLoadEventTimerFired();
 
     void loadSameDocumentItem(HistoryItem&);
-    void loadDifferentDocumentItem(HistoryItem&, HistoryItem* fromItem, FrameLoadType, FormSubmissionCacheLoadPolicy, ShouldTreatAsContinuingLoad, ShouldRestoreFromBackForwardCache = ShouldRestoreFromBackForwardCache::Unspecified, PolicyAlreadyDecided = PolicyAlreadyDecided::No);
+    void loadDifferentDocumentItem(HistoryItem&, HistoryItem* fromItem, FrameLoadType, FormSubmissionCacheLoadPolicy, ShouldTreatAsContinuingLoad, ShouldRestoreFromBackForwardCache = ShouldRestoreFromBackForwardCache::Unspecified, PolicyAlreadyDecided = PolicyAlreadyDecided::No, std::optional<NavigationIdentifier> navigationIDForCacheOnlyLoadRetry = std::nullopt);
 
     void loadProvisionalItemFromCachedPage();
     void dispatchPageswapEvent(DocumentLoader*, bool fromBackForwardCache, CompletionHandler<void()>&& proceedWithNavigation);
@@ -463,10 +463,11 @@ private:
     void dispatchDidCommitLoad(const std::optional<BackForwardCacheCommitData>&);
 
     void loadWithDocumentLoader(DocumentLoader*, FrameLoadType, RefPtr<const FormSubmission>&&, AllowNavigationToInvalidURL, ShouldRestoreFromBackForwardCache = ShouldRestoreFromBackForwardCache::Unspecified, CompletionHandler<void()>&& = [] { }); // Calls continueLoadAfterNavigationPolicy
+    void updateShouldReportResourceTimingToParentFrame(const DocumentLoader&, FrameLoadType);
     bool shouldCheckNavigationPolicyAfterDispatchingEvents(DocumentLoader&);
     void load(DocumentLoader&, const SecurityOrigin* requesterOrigin); // Calls loadWithDocumentLoader
 
-    void loadWithNavigationAction(ResourceRequest&&, NavigationAction&&, FrameLoadType, RefPtr<const FormSubmission>&&, AllowNavigationToInvalidURL, ShouldTreatAsContinuingLoad, ShouldRestoreFromBackForwardCache = ShouldRestoreFromBackForwardCache::Unspecified, CompletionHandler<void()>&& = [] { }); // Calls loadWithDocumentLoader
+    void loadWithNavigationAction(ResourceRequest&&, NavigationAction&&, FrameLoadType, RefPtr<const FormSubmission>&&, AllowNavigationToInvalidURL, ShouldTreatAsContinuingLoad, ShouldRestoreFromBackForwardCache = ShouldRestoreFromBackForwardCache::Unspecified, std::optional<NavigationIdentifier> navigationIDForCacheOnlyLoadRetry = std::nullopt, CompletionHandler<void()>&& = [] { }); // Calls loadWithDocumentLoader
 
     void loadPostRequest(FrameLoadRequest&&, const String& referrer, FrameLoadType, Event*, RefPtr<const FormSubmission>&&, CompletionHandler<void()>&&);
     void loadURL(FrameLoadRequest&&, const String& referrer, FrameLoadType, Event*, RefPtr<const FormSubmission>&&, std::optional<PrivateClickMeasurement>&&, CompletionHandler<void()>&&);
@@ -608,7 +609,6 @@ private:
 
     bool m_needsCancellationForContentRuleListCrossOriginRedirect { false };
     bool m_isStoppingForCacheOnlyLoadRetry { false };
-    std::optional<NavigationIdentifier> m_navigationIDForCacheOnlyLoadRetry;
 };
 
 // This function is called by createWindow() in JSDOMWindowBase.cpp, for example, for

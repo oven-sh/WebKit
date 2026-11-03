@@ -145,6 +145,10 @@ namespace PAL {
 class SessionID;
 }
 
+#if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/WebExtensionContextAdditionsPrefix.h>)
+#include <WebKitAdditions/WebExtensionContextAdditionsPrefix.h>
+#endif
+
 namespace WebKit {
 
 #if ENABLE(2022_GLIB_API)
@@ -412,8 +416,9 @@ public:
     void setBaseURL(URL&&);
 
     bool isURLForThisExtension(const URL&) const;
-    bool canOpenURLInNewTabOrWindow(const URL&) const;
-    String unsupportedURLForNewTabOrWindowMessage(const URL&) const;
+    bool hasResource(const String& path) const;
+    bool canNavigateToURL(const URL&) const;
+    String unsupportedNavigationURLMessage(const URL&) const;
 
     bool hasCustomUniqueIdentifier() const { return m_customUniqueIdentifier; }
 
@@ -515,6 +520,7 @@ public:
     RefPtr<WebExtensionTab> getTab(WebExtensionTabIdentifier, IgnoreExtensionAccess = IgnoreExtensionAccess::No) const;
     RefPtr<WebExtensionTab> getTab(WebPageProxyIdentifier, std::optional<WebExtensionTabIdentifier> = std::nullopt, IncludeExtensionViews = IncludeExtensionViews::No, IgnoreExtensionAccess = IgnoreExtensionAccess::No) const;
     RefPtr<WebExtensionTab> getCurrentTab(WebPageProxyIdentifier, IncludeExtensionViews = IncludeExtensionViews::Yes, IgnoreExtensionAccess = IgnoreExtensionAccess::No) const;
+    std::optional<WebExtensionWindowIdentifier> windowIdentifierForPage(WebPageProxyIdentifier) const;
     std::expected<Ref<WebExtensionTab>, WebExtensionError> getTabFromIdentifiers(std::optional<WebExtensionWindowIdentifier>, std::optional<WebExtensionTabIdentifier>) const;
     void forgetTab(WebExtensionTabIdentifier) const;
 
@@ -907,12 +913,12 @@ private:
     void actionGetBadgeText(std::optional<WebExtensionWindowIdentifier>, std::optional<WebExtensionTabIdentifier>, CompletionHandler<void(std::expected<String, WebExtensionError>&&)>&&);
     void actionSetBadgeText(std::optional<WebExtensionWindowIdentifier>, std::optional<WebExtensionTabIdentifier>, const String& text, CompletionHandler<void(std::expected<void, WebExtensionError>&&)>&&);
     void actionGetEnabled(std::optional<WebExtensionWindowIdentifier>, std::optional<WebExtensionTabIdentifier>, CompletionHandler<void(std::expected<bool, WebExtensionError>&&)>&&);
-    void actionSetEnabled(std::optional<WebExtensionTabIdentifier>, bool enabled, CompletionHandler<void(std::expected<void, WebExtensionError>&&)>&&);
+    void actionSetEnabled(std::optional<WebExtensionWindowIdentifier>, std::optional<WebExtensionTabIdentifier>, bool enabled, CompletionHandler<void(std::expected<void, WebExtensionError>&&)>&&);
     void fireActionClickedEventIfNeeded(WebExtensionTab*);
 
     // Alarms APIs
     bool isAlarmsMessageAllowed(IPC::Decoder&);
-    void alarmsCreate(const String& name, Seconds initialInterval, Seconds repeatInterval, CompletionHandler<void()>&&);
+    void alarmsCreate(const String& name, Seconds initialInterval, Seconds repeatInterval, CompletionHandler<void(std::expected<void, WebExtensionError>&&)>&&);
     void alarmsGet(const String& name, CompletionHandler<void(std::optional<WebExtensionAlarmParameters>&&)>&&);
     void alarmsClear(const String& name, CompletionHandler<void(bool)>&&);
     void alarmsGetAll(CompletionHandler<void(Vector<WebExtensionAlarmParameters>&&)>&&);
@@ -1298,6 +1304,10 @@ private:
     RefPtr<WebExtensionStorageSQLiteStore> m_localStorageStore;
     RefPtr<WebExtensionStorageSQLiteStore> m_sessionStorageStore;
     RefPtr<WebExtensionStorageSQLiteStore> m_syncStorageStore;
+
+#if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/WebExtensionContextAdditions.h>)
+#include <WebKitAdditions/WebExtensionContextAdditions.h>
+#endif
 
     struct TestMessage {
         String message;

@@ -44,7 +44,6 @@
 #include "GraphicsLayerTransformAnimationValue.h"
 #include "HTMLVideoElement.h"
 #include "HostingContext.h"
-#include "Image.h"
 #include "Logging.h"
 #include "Model.h"
 #include "PlatformCAAnimationCocoa.h"
@@ -2224,11 +2223,6 @@ void GraphicsLayerCA::platformCALayerLayerDisplay(PlatformCALayer* layer)
     ASSERT(layer == m_contentsLayer);
     if (RefPtr delegate = m_contentsDisplayDelegate)
         delegate->display(*layer);
-}
-
-bool GraphicsLayerCA::platformCALayerNeedsPlatformContext(const PlatformCALayer*) const
-{
-    return client().layerNeedsPlatformContext(*this);
 }
 
 void GraphicsLayerCA::commitLayerTypeChangesBeforeSublayers(CommitState&, float pageScaleFactor, bool& layerTypeChanged)

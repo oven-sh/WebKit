@@ -108,7 +108,7 @@ public:
     bool LEGACY_NODELETE hasMarginBeforeQuirk(const RenderBox& child) const;
     bool LEGACY_NODELETE hasMarginAfterQuirk(const RenderBox& child) const;
 
-    void markOutOfFlowBoxesForLayout(MarkingBehavior = MarkingBehavior::MarkContainingBlockChain);
+    void markOutOfFlowBoxesForLayout(MarkingBehavior = MarkingBehavior::ContainingBlockChain);
     void markForPaginationRelayoutIfNeeded() override;
     
     // FIXME-BLOCKFLOW: Remove virtualizaion when all of the line layout code has been moved out of RenderBlock
@@ -287,7 +287,7 @@ protected:
     bool nodeAtPoint(const HitTestRequest&, HitTestResult&, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, HitTestAction) override;
 
     std::pair<LayoutUnit, LayoutUnit> computeIntrinsicLogicalWidths() const override;
-    void computeIntrinsicLogicalWidthContributions() override;
+    std::pair<LayoutUnit, LayoutUnit> computeIntrinsicLogicalWidthContributions() override;
     std::optional<LayoutUnit> fixedLogicalWidthContribution(const Style::PreferredSize&) const;
     std::pair<LayoutUnit, LayoutUnit> logicalWidthContributionsForSize(const Style::PreferredSize&, LayoutUnit minContentLogicalWidth, LayoutUnit maxContentLogicalWidth) const;
     

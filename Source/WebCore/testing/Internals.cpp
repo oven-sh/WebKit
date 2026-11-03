@@ -103,6 +103,7 @@
 #include "FloatQuad.h"
 #include "FontCache.h"
 #include "FormController.h"
+#include "FourCC.h"
 #include "FragmentDirectiveGenerator.h"
 #include "FrameInspectorController.h"
 #include "FrameLoader.h"
@@ -208,6 +209,7 @@
 #include "PseudoElement.h"
 #include "PushSubscription.h"
 #include "PushSubscriptionData.h"
+#include "QuirkTable.h"
 #include "RTCController.h"
 #include "RTCNetworkManager.h"
 #include "Range.h"
@@ -305,6 +307,7 @@
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSCJSValue.h>
 #include <JavaScriptCore/JSCellInlines.h>
+#include <JavaScriptCore/JSONObject.h>
 #include <JavaScriptCore/MarkedSpaceInlines.h>
 #include <JavaScriptCore/SourceTaintedness.h>
 #include <wtf/FileHandle.h>
@@ -653,6 +656,7 @@ void Internals::resetToConsistentState(Page& page)
     page.setConsoleMessageListenerForTesting(nullptr);
     page.setQuirksSubframeURLForTesting({ });
     page.setQuirksTopDocumentHostForTesting({ });
+    QuirkTableOverride::restore();
 #if ENABLE(SERVICE_CONTROLS)
     page.servicesOverlayController().setHasRelevantSelectionServicesForTesting(std::nullopt);
 #endif
@@ -2968,6 +2972,11 @@ RefPtr<Range> Internals::rangeOfStringNearLocation(const Range& liveRange, const
     return createLiveRange(findClosestPlainText(range, text, { }, targetOffset));
 }
 
+unsigned Internals::computeNodeIndexCount() const
+{
+    return Node::computeNodeIndexCountForTesting();
+}
+
 Vector<Internals::TextIteratorState> Internals::statesOfTextIterator(const Range& liveRange)
 {
     auto simpleRange = makeSimpleRange(liveRange);
@@ -4304,7 +4313,7 @@ ExceptionOr<String> Internals::cachedGlyphDisplayListsForTextNode(Node& node, un
 
     protect(textNode->document())->updateLayout(LayoutOptions::IgnorePendingStylesheets);
 
-    if (!textNode->renderer())
+    if (!node.renderer())
         return Exception { ExceptionCode::InvalidAccessError };
 
     return TextPainter::cachedGlyphDisplayListsForTextNodeAsText(*textNode, toDisplayListFlags(flags));
@@ -7225,6 +7234,101 @@ Vector<int> Internals::webglDefaultFramebufferAllocatedSize(WebGLRenderingContex
     auto size = context.defaultFramebufferAllocatedSize();
     return { size.width(), size.height() };
 }
+
+#if ENABLE(VIDEO)
+void Internals::setWebGLVideoUploadPath(WebGLRenderingContextBase& context, WebGLVideoUploadPath path)
+{
+    using Path = WebGLRenderingContextBase::VideoUploadPathForTesting;
+    switch (path) {
+    case WebGLVideoUploadPath::Default:
+        context.setVideoUploadPathForTesting(Path::Default);
+        return;
+    case WebGLVideoUploadPath::Software:
+        context.setVideoUploadPathForTesting(Path::Software);
+        return;
+    case WebGLVideoUploadPath::Hardware:
+        context.setVideoUploadPathForTesting(Path::Hardware);
+        return;
+    }
+    ASSERT_NOT_REACHED();
+}
+
+static String webglVideoUploadFourCCString(uint32_t value)
+{
+    if (!value)
+        return emptyString();
+    auto characters = FourCC(value).string();
+    if (std::ranges::all_of(std::span { characters }.first(4), [](char c) { return c >= 0x20 && c < 0x7f; }))
+        return String::fromLatin1(characters.data());
+    return makeString("0x"_s, hex(value, 8));
+}
+
+static ASCIILiteral webglVideoUploadOutcomeName(GraphicsContextGL::VideoUploadOutcome outcome)
+{
+    switch (outcome) {
+    case GraphicsContextGL::VideoUploadOutcome::Direct: return "direct"_s;
+    case GraphicsContextGL::VideoUploadOutcome::Converted: return "converted"_s;
+    case GraphicsContextGL::VideoUploadOutcome::Cached: return "cached"_s;
+    case GraphicsContextGL::VideoUploadOutcome::NotTransferable: return "not-transferable"_s;
+    case GraphicsContextGL::VideoUploadOutcome::ContextLost: return "context-lost"_s;
+    case GraphicsContextGL::VideoUploadOutcome::NoFrame: return "gpu-no-frame"_s;
+    case GraphicsContextGL::VideoUploadOutcome::Unsupported: return "unsupported"_s;
+    case GraphicsContextGL::VideoUploadOutcome::ConversionFailed: return "conversion-failed"_s;
+    case GraphicsContextGL::VideoUploadOutcome::NoIOSurface: return "no-iosurface"_s;
+    case GraphicsContextGL::VideoUploadOutcome::FramebufferIncomplete: return "fbo-incomplete"_s;
+    case GraphicsContextGL::VideoUploadOutcome::PbufferFailed: return "pbuffer-failed"_s;
+    }
+    ASSERT_NOT_REACHED();
+    return "unknown"_s;
+}
+
+static ASCIILiteral webglVideoUploadDecisionName(WebGLRenderingContextBase::VideoUploadDecision decision)
+{
+    using Decision = WebGLRenderingContextBase::VideoUploadDecision;
+    switch (decision) {
+    case Decision::Copy: return "copy"_s;
+    case Decision::Forced: return "forced"_s;
+    case Decision::GateFunction: return "gate-function"_s;
+    case Decision::GateTarget: return "gate-target"_s;
+    case Decision::GateSourceRect: return "gate-source-rect"_s;
+    case Decision::GateCombination: return "gate-combination"_s;
+    case Decision::GateLevel: return "gate-level"_s;
+    case Decision::GateVideoFrameFormat: return "gate-videoframe-format"_s;
+    case Decision::NoFrame: return "no-frame"_s;
+    }
+    ASSERT_NOT_REACHED();
+    return "unknown"_s;
+}
+
+static ASCIILiteral webglVideoUploadPathName(WebGLRenderingContextBase::VideoUploadPathTakenForTesting path)
+{
+    using Path = WebGLRenderingContextBase::VideoUploadPathTakenForTesting;
+    switch (path) {
+    case Path::Hardware: return "hardware"_s;
+    case Path::Software: return "software"_s;
+    case Path::None: return "none"_s;
+    }
+    ASSERT_NOT_REACHED();
+    return "unknown"_s;
+}
+
+std::optional<Internals::WebGLVideoUploadRecord> Internals::webglLastVideoUpload(WebGLRenderingContextBase& context)
+{
+    auto record = context.lastVideoUploadForTesting();
+    if (!record)
+        return std::nullopt;
+    WebGLVideoUploadRecord result { webglVideoUploadPathName(record->path), { }, emptyString(), record->sequence };
+    if (record->decision != WebGLRenderingContextBase::VideoUploadDecision::Copy)
+        result.reason = webglVideoUploadDecisionName(record->decision);
+    else if (!record->copy)
+        result.reason = "unknown"_s; // The copy record is not this upload's.
+    else {
+        result.reason = webglVideoUploadOutcomeName(record->copy->outcome);
+        result.pixelFormat = webglVideoUploadFourCCString(record->copy->pixelFormat);
+    }
+    return result;
+}
+#endif
 #endif
 
 void Internals::setPageVisibility(bool isVisible)
@@ -8637,6 +8741,15 @@ ExceptionOr<void> Internals::sendMediaSessionAction(MediaSession& session, const
     return Exception { ExceptionCode::InvalidStateError };
 }
 
+#if ENABLE(MEDIA_SESSION_CALL_TO_ACTION)
+std::optional<CallToActionLabel> Internals::mediaSessionCallToActionLabel(const MediaSession& session)
+{
+    if (!session.hasActionHandler(MediaSessionAction::CallToAction))
+        return std::nullopt;
+    return session.callToActionLabel();
+}
+#endif
+
 #if ENABLE(WEB_CODECS)
 void Internals::loadArtworkImage(String&& url, ArtworkImagePromise&& promise)
 {
@@ -8659,7 +8772,7 @@ void Internals::loadArtworkImage(String&& url, ArtworkImagePromise&& promise)
             return;
 
         auto promise = std::exchange(protectedThis->m_artworkImagePromise, { });
-        RefPtr nativeImage = image ? image->nativeImage(MediaSessionArtworkSizing { }.resolve(image->naturalDimensions())) : nullptr;
+        RefPtr nativeImage = image ? image->nativeImage(ImageDrawDescriptor { MediaSessionArtworkSizing { }.resolve(image->naturalDimensions()) }) : nullptr;
         if (!nativeImage) {
             promise->reject(Exception { ExceptionCode::InvalidAccessError, "No image retrieved."_s });
             return;
@@ -9195,6 +9308,32 @@ void Internals::setTopDocumentHostForQuirks(const String& host)
     page->setQuirksTopDocumentHostForTesting(String { host });
 }
 
+ExceptionOr<void> Internals::setQuirkTableForTesting(JSDOMGlobalObject& globalObject, JSC::JSValue table)
+{
+    RefPtr document = contextDocument();
+    if (!document || !document->page())
+        return Exception { ExceptionCode::InvalidAccessError };
+
+    auto& vm = globalObject.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    String json = JSC::JSONStringify(&globalObject, table, 0u);
+    RETURN_IF_EXCEPTION(scope, Exception { ExceptionCode::ExistingExceptionError });
+
+    auto result = parseQuirkTable(json);
+    if (!result.errors.isEmpty()) {
+        StringBuilder message;
+        for (auto& error : result.errors)
+            message.append(error.description(), '\n');
+        return Exception { ExceptionCode::SyntaxError, message.toString() };
+    }
+
+    QuirkTableOverride::install(WTF::move(result.table));
+
+    protect(document->page())->settings().setNeedsSiteSpecificQuirks(true);
+    document->quirks().urlsDidChange();
+    return { };
+}
+
 Vector<String> Internals::activeQuirks() const
 {
     RefPtr document = contextDocument();
@@ -9202,6 +9341,15 @@ Vector<String> Internals::activeQuirks() const
         return { };
 
     return document->quirks().activeQuirks();
+}
+
+Vector<String> Internals::activeQuirkNames() const
+{
+    RefPtr document = contextDocument();
+    if (!document)
+        return { };
+
+    return document->quirks().activeQuirkNames();
 }
 
 #if ENABLE(DAMAGE_TRACKING)
@@ -9433,6 +9581,14 @@ String Internals::volumetricScenePresentationMode(Element& element)
 {
     return ElementVolumetricScene::presentationModeForTesting(element);
 }
+#endif
+
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+bool Internals::isAXCustomColorModeActive(const Document& document)
+{
+    return document.isAXCustomColorModeActive();
+}
+
 #endif
 
 ExceptionOr<void> Internals::copyImageAtLocation(int x, int y)

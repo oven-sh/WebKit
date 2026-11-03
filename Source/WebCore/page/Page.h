@@ -280,6 +280,8 @@ enum class MediaProducerMutedState : uint8_t;
 enum class RouteSharingPolicy : uint8_t;
 enum class ShouldRelaxThirdPartyCookieBlocking : bool;
 enum class ShouldTreatAsContinuingLoad : uint8_t;
+enum class UseDarkAppearance : bool;
+enum class UseElevatedUserInterfaceLevel : bool;
 enum class VisibilityState : bool;
 
 #if ENABLE(DOM_AUDIO_SESSION)
@@ -733,7 +735,7 @@ public:
 
     WEBCORE_EXPORT bool useDarkAppearance() const;
     bool useElevatedUserInterfaceLevel() const { return m_useElevatedUserInterfaceLevel; }
-    WEBCORE_EXPORT void setUseColorAppearance(bool useDarkAppearance, bool useElevatedUserInterfaceLevel);
+    WEBCORE_EXPORT void setUseColorAppearance(UseDarkAppearance, UseElevatedUserInterfaceLevel);
     bool defaultUseDarkAppearance() const { return m_useDarkAppearance; }
     void setUseDarkAppearanceOverride(std::optional<bool>);
 
@@ -988,6 +990,7 @@ public:
     WEBCORE_EXPORT Color sampledPageTopColor() const;
 
     WEBCORE_EXPORT void updateFixedContainerEdges(EnumSet<BoxSide>);
+    WEBCORE_EXPORT bool canSampleTopFixedContainerEdge() const;
     const FixedContainerEdges& fixedContainerEdges() const LIFETIME_BOUND { return m_fixedContainerEdgesAndElements.first; }
     Element* LEGACY_NODELETE lastFixedContainer(BoxSide) const;
 

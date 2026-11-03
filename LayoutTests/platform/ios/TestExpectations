@@ -205,6 +205,8 @@ accessibility/detected-form-error-message-replaced.html [ Pass ]
 accessibility/detected-form-error-message-rewritten.html [ Pass ]
 accessibility/detected-form-error-message-wrapper-without-a-box.html [ Pass ]
 accessibility/detected-form-error-messages-in-field-order.html [ Pass ]
+accessibility/detected-form-error-notification-lists-fields.html [ Pass ]
+accessibility/detected-form-error-notification-lists-fields-of-hidden-form.html [ Pass ]
 accessibility/detected-form-error-notification-when-submitter-replaced.html [ Pass ]
 accessibility/detected-form-error-outranks-author-saying-valid.html [ Pass ]
 accessibility/detected-form-error-pairing.html [ Pass ]
@@ -259,6 +261,7 @@ media/media-source/media-managedmse-video-with-poster.html [ Pass Crash ] # rdar
 media/media-source/media-source-vp8-webm-error.html [ Pass ]
 media/media-source/media-source-vp8-webm-error-offscreen.html [ Pass ]
 media/media-source/media-source-webm-seek-singlekeyframe.html [ Pass ]
+media/media-source/media-source-seek-unbuffered-readystate.html [ Pass ]
 
 webkit.org/b/269897 media/media-source/media-managedmse-poster.html [ Skip ]
 
@@ -416,10 +419,20 @@ fast/scrolling/iframe-scrollable-after-back.html [ Skip ]
 fast/scrolling/overflow-scrollable-after-back.html [ Skip ]
 fast/scrolling/programmatic-scroll-to-zero-zero.html [ Skip ]
 http/tests/site-isolation/wheel-event-coordinates.html [ Skip ]
+http/tests/site-isolation/scrolling/add-root-frame.html [ Skip ]
+http/tests/site-isolation/scrolling/navigate-subframe-changes-process.html [ Skip ]
+http/tests/site-isolation/scrolling/nested-cross-site-grandchild-frame.html [ Skip ]
+http/tests/site-isolation/scrolling/resize-cross-origin-iframe.html [ Skip ]
 http/tests/site-isolation/scrolling/basic-mouse-wheel-scrolling.html [ Skip ]
 http/tests/site-isolation/scrolling/scroll-snap-in-progress-in-cross-origin-iframe.html [ Skip ]
 http/tests/site-isolation/scrolling/scrolling-after-cross-origin-navigation.html [ Skip ]
 http/tests/site-isolation/scrolling/wheel-scroll-full-size-iframe-after-content-grows.html [ Skip ]
+http/tests/site-isolation/scrolling/mouse-wheel-scroll-cross-origin-iframe.html [ Skip ]
+http/tests/site-isolation/scrolling/passive-wheel-listener-does-not-block-scroll-in-cross-origin-iframe.html [ Skip ]
+http/tests/site-isolation/scrolling/latching-stays-on-cross-origin-iframe-when-mouse-moves-to-mainframe.html [ Skip ]
+http/tests/site-isolation/scrolling/latching-stays-on-mainframe-when-mouse-moves-to-cross-origin-iframe.html [ Skip ]
+http/tests/site-isolation/scrolling/dynamically-add-remove-wheel-listener-in-cross-origin-iframe.html [ Skip ]
+http/tests/site-isolation/scrolling/latching-with-synchronous-wheel-listener-across-processes.html [ Skip ]
 
 # This test requires alpha-channel video support.
 compositing/video/video-background-color.html [ WontFix ]
@@ -686,9 +699,12 @@ webkit.org/b/165799 fast/mediastream/device-change-event-2.html [ Skip ]
 # AutoFill button is not supported
 fast/forms/auto-fill-button/mouse-down-input-mouse-release-auto-fill-button.html
 
+# SecureEventInput is not supported on iOS.
+editing/secure-input [ Skip ]
+http/tests/secure-input [ Skip ]
+
 # Mouse events are not supported on iOS
 editing/deleting/smart-delete-across-editable-boundaries-2.html [ Skip ]
-editing/secure-input/password-input-focusing-to-different-frame.html [ Skip ]
 editing/selection/4895428-1.html [ Skip ]
 editing/selection/4895428-4.html [ Skip ]
 editing/selection/5195166-1.html [ Skip ]
@@ -1630,6 +1646,7 @@ http/tests/site-isolation/accessibility/ [ Skip ]
 # ...except these tests, which run in-process and use the iOS remote-frame placeholder (AXRemoteElement).
 http/tests/site-isolation/accessibility/heading-search-returns-remote-frame.html [ Pass ]
 http/tests/site-isolation/accessibility/remote-frame-built-during-remote-element-lookup.html [ Pass ]
+http/tests/site-isolation/accessibility/remote-frame-element-frame.html [ Pass ]
 
 ###
 # Known failures
@@ -3136,6 +3153,7 @@ http/tests/dom/document-contentType.html [ Failure ]
 
 # rdar://problem/26477897
 imported/w3c/web-platform-tests/dom/nodes/Document-contentType/contentType/contenttype_mimeheader_01.html [ Failure ]
+imported/w3c/web-platform-tests/dom/nodes/Document-contentType/contentType/contenttype_mimeheader_03.html [ Failure ]
 
 css3/font-variant-petite-caps-synthesis.html [ ImageOnlyFailure ]
 css3/font-variant-small-caps-synthesis.html [ ImageOnlyFailure ]
@@ -5757,10 +5775,6 @@ editing/inserting/insert-tab-001.html [ Failure ]
 editing/inserting/insert-tab-002.html [ Failure ]
 editing/inserting/insert-tab-004.html [ Failure ]
 editing/inserting/typing-around-br-001.html [ Failure ]
-editing/secure-input/password-input-changed-type.html [ Failure ]
-editing/secure-input/password-input-focusing.html [ Failure ]
-editing/secure-input/removed-password-input.html [ Failure ]
-editing/secure-input/reset-state-on-navigation.html [ Failure ]
 editing/selection/caret-in-empty-inline-1.html [ Failure ]
 editing/selection/caret-in-empty-inline-2.html [ Failure ]
 editing/selection/click-in-margins-inside-editable-div.html [ Failure ]
@@ -6995,6 +7009,7 @@ fast/scrolling/ios/body-overflow-hidden-height-100-percent-zoomed-1.html [ Failu
 fast/media/mq-color-gamut.html [ ImageOnlyFailure ]
 
 webkit.org/b/230004 imported/w3c/web-platform-tests/css/css-pseudo/active-selection-011.html [ ImageOnlyFailure ]
+webkit.org/b/230004 imported/w3c/web-platform-tests/css/css-pseudo/active-selection-014.html [ ImageOnlyFailure ]
 webkit.org/b/230004 imported/w3c/web-platform-tests/css/css-pseudo/active-selection-016.html [ ImageOnlyFailure ]
 webkit.org/b/230004 imported/w3c/web-platform-tests/css/css-pseudo/selection-text-decoration-currentcolor.html [ ImageOnlyFailure ]
 webkit.org/b/230004 imported/w3c/web-platform-tests/css/css-pseudo/target-text-005.html [ ImageOnlyFailure ]
@@ -7327,7 +7342,6 @@ imported/w3c/web-platform-tests/html/user-activation/consumption-crossorigin.sub
 imported/w3c/web-platform-tests/html/user-activation/navigation-state-reset-crossorigin.sub.html [ Skip ]
 imported/w3c/web-platform-tests/html/user-activation/navigation-state-reset-sameorigin.html [ Skip ]
 imported/w3c/web-platform-tests/html/user-activation/user-activation-interface.html [ Skip ]
-imported/w3c/web-platform-tests/html/user-activation/activation-same-and-cross-origin.sub.html [ Skip ]
 
 # WebGL in OffscreenCanvas requires the GPUP.
 imported/w3c/web-platform-tests/html/canvas/offscreen/manual/the-offscreen-canvas/offscreencanvas.getcontext.worker.html [ Skip ]
@@ -7337,6 +7351,9 @@ webkit.org/b/243494 [ Debug ] compositing/layer-creation/scale-rotation-animatio
 
 # Early hints require network callbacks that are only present in macOS 12 / iOS 15 or greater.
 http/wpt/loading/early-hints [ Pass ]
+
+# Content extensions are Mac-WK2-only for now
+http/wpt/loading/early-hints/contentextensions [ Skip ]
 
 # Test timing out on iOS since its import.
 imported/w3c/web-platform-tests/dom/events/no-focus-events-at-clicking-editable-content-in-link.html [ Skip ]
@@ -8173,7 +8190,7 @@ webkit.org/b/290564 imported/w3c/web-platform-tests/css/css-viewport/computedSty
 
 webkit.org/b/290568 [ Debug ] fast/dynamic/link-href-change.html [ Pass Crash ]
 
-webkit.org/b/290580 webkit.org/b/328341 [ Debug ] fast/multicol/simple-line-layout-line-index-after-strut-2.html [ Pass Crash ImageOnlyFailure ]
+webkit.org/b/290580 [ Debug ] fast/multicol/simple-line-layout-line-index-after-strut-2.html [ Pass Crash ]
 
 webkit.org/b/290568 [ Debug ] compositing/child-layer-with-subpixel-gap-needs-repaint-when-parent-moves.html [ Pass Crash ]
 
@@ -8564,8 +8581,6 @@ fast/events/selection-clear-on-click-fractional-coordinates.html [ Skip ]
 
 webkit.org/b/261344 requestidlecallback/requestidlecallback-does-not-block-timer.html [ Pass Failure ] # rdar://178748996
 
-webkit.org/b/297669 http/tests/site-isolation/edge-sampling-viewport-constrained-object.html [ Pass Failure Crash ] # rdar://178675260
-
 webkit.org/b/295435 compositing/layer-creation/overlap-animation-container.html [ Pass Failure ]
 
 imported/w3c/web-platform-tests/css/css-break/block-in-inline-012.html [ ImageOnlyFailure ]
@@ -8952,7 +8967,6 @@ http/tests/cache/cancel-multiple-post-xhrs.html [ Pass Failure ] # rdar://178676
 http/tests/download/anchor-download-redirect-cross-origin.html [ Pass Crash ] # rdar://178214780
 http/tests/privateClickMeasurement/database-disabled-in-ephemeral-session.html [ Pass Timeout Crash ] # rdar://176608751, rdar://179387095
 http/tests/security/referrer-policy-header-invalid.html [ Pass Timeout ] # rdar://178168636
-http/tests/site-isolation/type-in-cross-origin-iframe.html [ Failure Timeout ] # rdar://178168718
 http/wpt/service-workers/persistent-modules.html [ Pass Failure ] # rdar://178676392
 imported/w3c/web-platform-tests/IndexedDB/interleaved-cursors-small.any.html [ Pass Failure ] # rdar://178158917
 imported/w3c/web-platform-tests/IndexedDB/nested-cloning-large-multiple.any.html [ Pass Failure ] # rdar://178158917
@@ -10421,8 +10435,6 @@ webkit.org/b/327798 [ Release ] compositing/backing/backface-visibility-flip.htm
 
 webkit.org/b/328339 compositing/hdr/hdr-basic-image-dynamic-range-limit.html [ Pass Failure ]
 
-webkit.org/b/328341 [ Release ] fast/multicol/simple-line-layout-line-index-after-strut-2.html [ Pass ImageOnlyFailure ]
-
 webkit.org/b/328343 [ Debug ] http/tests/IndexedDB/transaction-abort-pending-requests-stop.html [ Failure ]
 
 webkit.org/b/327767 svg/W3C-I18N/tspan-dirNone-ubOverride-in-rtl-context.svg [ Failure ]
@@ -10460,3 +10472,28 @@ webkit.org/b/327767 svg/text/text-text-07-t.svg [ Failure ]
 webkit.org/b/327767 svg/text/text-tspan-01-b.svg [ Failure ]
 webkit.org/b/327767 svg/text/text-vkern.svg [ Failure ]
 webkit.org/b/289121 imported/w3c/web-platform-tests/webrtc/RTCPeerConnection-mandatory-getStats.https.html [ Pass Failure ]
+webkit.org/b/329163 imported/w3c/web-platform-tests/FileAPI [ Skip ]
+
+webkit.org/b/329531 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/basic-rect-zoom.tentative.html [ ImageOnlyFailure ]
+webkit.org/b/329531 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/basic-rect.tentative.html [ ImageOnlyFailure ]
+webkit.org/b/329531 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/broken-image.tentative.html [ ImageOnlyFailure ]
+webkit.org/b/329531 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/canvas-in-custom-element-multiple.tentative.html [ ImageOnlyFailure ]
+webkit.org/b/329531 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/canvas-in-custom-element.tentative.html [ ImageOnlyFailure ]
+webkit.org/b/329531 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/css-backdrop-filter-with-mix-blend-mode-and-opacity.tentative.html [ ImageOnlyFailure ]
+webkit.org/b/329531 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/css-backdrop-filter-with-mix-blend-mode.tentative.html [ ImageOnlyFailure ]
+webkit.org/b/329531 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/css-blend-mode-over-both.tentative.html [ ImageOnlyFailure ]
+webkit.org/b/329531 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/css-blend-mode-over-content.tentative.html [ ImageOnlyFailure ]
+webkit.org/b/329531 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/css-blur-filter-on-div.tentative.html [ ImageOnlyFailure ]
+webkit.org/b/329531 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/css-clip-path-on-div.tentative.html [ ImageOnlyFailure ]
+webkit.org/b/329531 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/css-mask-on-div.tentative.html [ ImageOnlyFailure ]
+webkit.org/b/329531 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/draw-element-image-scale-variant.tentative.html [ ImageOnlyFailure ]
+webkit.org/b/329531 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/element-shadow.tentative.html [ ImageOnlyFailure ]
+webkit.org/b/329531 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/iframe-local.tentative.html [ ImageOnlyFailure ]
+webkit.org/b/329531 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/nested-drawable-filter.tentative.html [ ImageOnlyFailure ]
+webkit.org/b/329531 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/privacy/selection-colors-default.tentative.html [ ImageOnlyFailure ]
+webkit.org/b/329531 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/privacy/selection-painted-overlay-path.tentative.html [ ImageOnlyFailure ]
+webkit.org/b/329531 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/shadow-dom-slotted.tentative.html [ ImageOnlyFailure ]
+webkit.org/b/329531 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/svg-foreign-object.tentative.html [ ImageOnlyFailure ]
+webkit.org/b/329531 imported/w3c/web-platform-tests/html/canvas/element/manual/draw-element-image/svg-rect.tentative.html [ ImageOnlyFailure ]
+
+webkit.org/b/328390 fast/filter-image/filter-image-blur.html [ ImageOnlyFailure ]

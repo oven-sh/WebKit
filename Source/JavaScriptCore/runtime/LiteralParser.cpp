@@ -220,17 +220,19 @@ ALWAYS_INLINE Identifier LiteralParser<CharType, reviverMode>::makeIdentifier(VM
 }
 
 template<typename CharType, JSONReviverMode reviverMode>
-ALWAYS_INLINE JSString* LiteralParser<CharType, reviverMode>::tryMakeJSString(VM& vm, JSONCache& cache, typename Lexer::LiteralParserTokenPtr token)
+ALWAYS_INLINE JSString* LiteralParser<CharType, reviverMode>::tryMakeJSString(VM& vm, JSONCache& cache)
 {
+    auto token = m_lexer.currentToken();
     if constexpr (Lexer::isUTF8) {
         if (token->stringOrIdentifierLength > JSONCache::maxLongStringLength) [[unlikely]] {
             if (String string = m_lexer.takeStringOfCurrentToken(); !string.isNull())
                 return jsNontrivialString(vm, WTF::move(string));
         }
     }
+    bool isSourceText = m_lexer.currentStringIsSourceText();
     if (token->stringIs8Bit)
-        return cache.tryMakeJSString(vm, token->string8());
-    return cache.tryMakeJSString(vm, token->string16());
+        return cache.tryMakeJSString(vm, token->string8(), isSourceText);
+    return cache.tryMakeJSString(vm, token->string16(), isSourceText);
 }
 
 [[maybe_unused]] static ALWAYS_INLINE bool LEGACY_NODELETE cannotBeIdentPartOrEscapeStart(Latin1Character)
@@ -1059,16 +1061,28 @@ ALWAYS_INLINE bool LiteralParser<CharType, reviverMode>::Lexer::tryConsumeString
 }
 
 template<typename CharType, JSONReviverMode reviverMode>
-ALWAYS_INLINE void LiteralParser<CharType, reviverMode>::Lexer::cacheString(JSONCache& cache, JSString* string, std::span<const CachedCharType> source)
+ALWAYS_INLINE bool LiteralParser<CharType, reviverMode>::Lexer::currentStringIsSourceText() const
+{
+    // The token only points into the source when the string had no escapes. Only strict JSON quotes
+    // every string with '"' and escapes every character that needs it.
+    // (In UTF-8 bytes it also had ASCII characters only: the lexer copies every other character.)
+    if (m_mode != StrictJSON)
+        return false;
+    if constexpr (sizeof(CharType) == 1)
+        return m_currentToken.stringStart8 == std::bit_cast<const Latin1Character*>(m_currentStringStart) + 1;
+    else
+        return !m_currentToken.stringIs8Bit && m_currentToken.stringStart16 == m_currentStringStart + 1;
+}
+
+template<typename CharType, JSONReviverMode reviverMode>
+ALWAYS_INLINE void LiteralParser<CharType, reviverMode>::Lexer::cacheString(JSONCache& cache, JSString* string)
 {
     if constexpr (sizeof(CharType) == 1) {
-        // The token only points into the source when the string had no escapes, and then the source text
-        // from the opening quote to the closing one is exactly what a later match compares against.
-        if (m_currentToken.stringStart8 != source.data() + 1)
+        if (!currentStringIsSourceText())
             return;
-        cache.addString(source, remaining().data() - source.data(), string, isUTF8);
+        cache.addString(currentStringSource(), m_ptr - m_currentStringStart, string, isUTF8);
     } else
-        UNUSED_PARAM(cache), UNUSED_PARAM(string), UNUSED_PARAM(source);
+        UNUSED_PARAM(cache), UNUSED_PARAM(string);
 }
 
 template <>
@@ -1183,7 +1197,7 @@ template<typename CharType, JSONReviverMode reviverMode>
 template <JSONIdentifierHint hint>
 ALWAYS_INLINE TokenType LiteralParser<CharType, reviverMode>::Lexer::lexString(LiteralParserToken<CharType>& token, CharType terminator)
 {
-    ++m_ptr;
+    m_currentStringStart = m_ptr++;
     const CharType* runStart = m_ptr;
 
     if constexpr (hint == JSONIdentifierHint::MaybeIdentifier) {
@@ -1660,7 +1674,7 @@ ALWAYS_INLINE JSValue LiteralParser<CharType, reviverMode>::parsePrimitiveValue(
 {
     switch (m_lexer.currentToken()->type) {
     case TokString: {
-        JSString* result = tryMakeJSString(vm, m_jsonCache, m_lexer.currentToken());
+        JSString* result = tryMakeJSString(vm, m_jsonCache);
         if (!result) [[unlikely]] {
             auto scope = DECLARE_THROW_SCOPE(vm);
             throwOutOfMemoryError(m_globalObject, scope);
@@ -1841,32 +1855,43 @@ JSArray* LiteralParser<CharType, reviverMode>::materializeArray(VM& vm, unsigned
         break;
     }
 
-    {
-        ObjectInitializationScope initializationScope(vm);
-        Structure* structure = m_globalObject->arrayStructureForIndexingTypeDuringAllocation(indexingType);
-        if (JSArray* array = JSArray::tryCreateUninitializedRestricted(initializationScope, structure, length)) [[likely]] {
-            // The structure can have a different shape than requested, for example when double arrays are disabled.
-            IndexingType shape = array->indexingType() & IndexingShapeMask;
-            if (shape == DoubleShape) {
+    Structure* structure = m_globalObject->arrayStructureForIndexingTypeDuringAllocation(indexingType);
+    IndexingType actualIndexingType = structure->indexingType();
+    if (!hasAnyArrayStorage(actualIndexingType) && length <= MAX_STORAGE_VECTOR_LENGTH) [[likely]] {
+        ASSERT(!structure->outOfLineCapacity());
+        unsigned vectorLength = Butterfly::optimalContiguousVectorLength(static_cast<size_t>(0), length);
+        void* memory = vm.auxiliarySpace().allocate(
+            vm,
+            Butterfly::totalSize(0, 0, true, vectorLength * sizeof(EncodedJSValue)),
+            nullptr, AllocationFailureMode::ReturnNull);
+        if (memory) [[likely]] {
+            Butterfly* butterfly = Butterfly::fromBase(memory, 0, 0);
+            butterfly->setVectorLength(vectorLength);
+            butterfly->setPublicLength(length);
+            if (hasDouble(actualIndexingType)) {
                 // JSON has no NaN, so every element can be stored as a double.
-                double* data = array->butterfly()->contiguousDouble().data();
+                double* data = butterfly->contiguousDouble().data();
                 for (unsigned i = 0; i < length; ++i)
                     data[i] = values[i].asNumber();
-            } else if (shape == Int32Shape)
-                memcpy(std::bit_cast<JSValue*>(array->butterfly()->contiguous().data()), values, length * sizeof(JSValue));
-            else if (shape == ContiguousShape) {
-                gcSafeMemcpy(std::bit_cast<JSValue*>(array->butterfly()->contiguous().data()), values, length * sizeof(JSValue));
-                vm.writeBarrier(array);
             } else {
-                for (unsigned i = 0; i < length; ++i)
-                    array->initializeIndex(initializationScope, i, values[i]);
+                JSValue* dst = std::bit_cast<JSValue*>(butterfly->contiguous().data());
+                if (length == 1)
+                    dst[0] = values[0];
+                else if (length <= 4) {
+                    dst[0] = values[0];
+                    dst[1] = values[1];
+                    dst[length - 2] = values[length - 2];
+                    dst[length - 1] = values[length - 1];
+                } else
+                    memcpySpan(unsafeMakeSpan(dst, length), unsafeMakeSpan(values, length));
             }
-            return array;
+            Butterfly::clearRange(actualIndexingType, butterfly, length, vectorLength);
+            return JSArray::createWithButterfly(vm, nullptr, structure, butterfly);
         }
     }
 
-    // Lengths beyond what a contiguous vector can hold, and allocation failures, grow an empty array
-    // instead so that they report out of memory rather than crashing.
+    // Array storage shapes take the general path, and so do lengths beyond what a contiguous vector
+    // can hold and allocation failures, which have to report out of memory rather than crash.
     JSArray* array = constructEmptyArray(m_globalObject, nullptr);
     RETURN_IF_EXCEPTION(scope, nullptr);
     for (unsigned i = 0; i < length; ++i) {
@@ -1960,20 +1985,19 @@ JSValue LiteralParser<CharType, reviverMode>::parseRecursively(VM& vm, uint8_t* 
         case '"': {
             if constexpr (parserMode == StrictJSON && sizeof(CharType) == 1) {
                 if (lookUpCachedStrings) {
-                    if (auto* entry = m_lexer.mayHaveCachedString() ? jsonCache.findString(m_lexer.remaining()) : nullptr; entry && (!Lexer::isUTF8 || entry->textIsASCII)) {
-                        m_lexer.advance(entry->textLength);
+                    if (auto* entry = m_lexer.mayHaveCachedString() ? jsonCache.findOrCreateString(vm, m_lexer.remaining(), StructureID(), !Lexer::isUTF8) : nullptr) {
+                        m_lexer.advance(entry->textLength());
                         m_lexer.nextAfterValue();
-                        return entry->string;
+                        return entry->string();
                     }
                 }
             }
-            auto source = m_lexer.remaining();
             if (m_lexer.nextString() == TokString) [[likely]] {
-                JSString* result = tryMakeJSString(vm, jsonCache, m_lexer.currentToken());
+                JSString* result = tryMakeJSString(vm, jsonCache);
                 if (!result) [[unlikely]]
                     return parsePrimitiveValue(vm); // Throws the out of memory error.
                 if constexpr (parserMode == StrictJSON && sizeof(CharType) == 1)
-                    m_lexer.cacheString(jsonCache, result, source);
+                    m_lexer.cacheString(jsonCache, result);
                 m_lexer.nextAfterValue();
                 return result;
             }
@@ -2079,9 +2103,10 @@ JSValue LiteralParser<CharType, reviverMode>::parseRecursively(VM& vm, uint8_t* 
                 if (cursor < end) [[likely]] {
                     if (*cursor == '"') {
                         if constexpr (sizeof(CharType) == 1) {
-                            if (auto* stringEntry = Lexer::mayHaveCachedString(cursor, end) ? jsonCache.findString(std::span { std::bit_cast<const typename Lexer::CachedCharType*>(cursor), static_cast<size_t>(end - cursor) }) : nullptr; stringEntry && (!Lexer::isUTF8 || stringEntry->textIsASCII)) {
-                                value = stringEntry->string;
-                                cursor += stringEntry->textLength;
+                            std::span source { std::bit_cast<const typename Lexer::CachedCharType*>(cursor), static_cast<size_t>(end - cursor) };
+                            if (auto* stringEntry = Lexer::mayHaveCachedString(cursor, end) ? jsonCache.findOrCreateString(vm, source, newStructureID, !Lexer::isUTF8) : nullptr) {
+                                value = stringEntry->string();
+                                cursor += stringEntry->textLength();
                             }
                         }
                     } else if (isASCIIDigit(*cursor)) {

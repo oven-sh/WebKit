@@ -175,9 +175,8 @@ std::unique_ptr<InlineLayoutResult> InlineFormattingContext::layout(const Constr
     auto isStableTextWrap = lineClamp && lineClamp->isStableTextWrap;
     if (!isStableTextWrap && InlineContentConstrainer::constrainsContent(root().style())) {
         auto constrainer = InlineContentConstrainer { *this, inlineItemList, constraints.horizontal() };
-        auto constrainedLineWidths = constrainer.computeParagraphLevelConstraints(root().style().textWrapStyle());
-        if (constrainedLineWidths)
-            inlineLayoutState.setAvailableLineWidthOverride({ *constrainedLineWidths });
+        if (auto constrainedLineWidths = constrainer.computeParagraphLevelConstraints(root().style().textWrapStyle()))
+            inlineLayoutState.setAvailableLineWidthOverride({ WTF::move(*constrainedLineWidths) });
     }
 
     if (TextOnlySimpleLineBuilder::isEligibleForSimplifiedTextOnlyInlineLayoutByContent(inlineItems, inlineLayoutState) && TextOnlySimpleLineBuilder::isEligibleForSimplifiedInlineLayoutByStyle(root())) {
@@ -475,7 +474,7 @@ InlineRect InlineFormattingContext::createDisplayContentForInlineContent(const L
         auto isLegacyLineClamp = lineClamp && lineClamp->isLegacy;
         CheckedRef styleForTruncation = root().isAnonymous() ? IntegrationUtils::firstNonAnonymousAncestorStyle(root()) : root().style();
         auto truncationPolicy = InlineFormattingUtils::lineEndingTruncationPolicy(styleForTruncation, numberOfLinesWithInlineContent, numberOfVisibleLinesAllowed, lineLayoutResult.hasContentfulInFlowContent());
-        ellipsis = InlineDisplayLineBuilder::placeTrailingEllipsisIfNeeded(truncationPolicy, lineLayoutResult.blockEllipsis, displayLine, boxes.mutableSpan(), isLegacyLineClamp);
+        ellipsis = InlineDisplayLineBuilder::placeTrailingEllipsisIfNeeded(truncationPolicy, styleForTruncation, lineLayoutResult.blockEllipsis, displayLine, boxes.mutableSpan(), isLegacyLineClamp);
         if (ellipsis) {
             displayLine.setHasEllipsis();
             auto lineHasLegacyLineClamp = isLegacyLineClamp && truncationPolicy == LineEndingTruncationPolicy::WhenContentOverflowsInBlockDirection;
@@ -602,6 +601,8 @@ void InlineFormattingContext::initializeInlineLayoutState(const LayoutState& glo
     inlineLayoutState.setShouldNotSynthesizeInlineBlockBaseline();
     if (globalLayoutState.inStandardsMode())
         inlineLayoutState.setInStandardsMode();
+    if (globalLayoutState.inQuirksMode())
+        inlineLayoutState.setInQuirksMode();
     if (globalLayoutState.isTextShapingAcrossInlineBoxesEnabled())
         inlineLayoutState.setShouldShapeTextAcrossInlineBoxes();
 }

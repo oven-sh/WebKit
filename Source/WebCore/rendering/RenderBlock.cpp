@@ -90,6 +90,7 @@
 #include "StyleContainmentCheckerInlines.h"
 #include "StylePrimitiveNumericTypes+Evaluation.h"
 #include "StylePrimitiveNumericTypes+EvaluationMinimum.h"
+#include "TextUtil.h"
 #include "TransformState.h"
 #include <wtf/HexNumber.h>
 #include <wtf/NeverDestroyed.h>
@@ -537,7 +538,7 @@ void RenderBlock::relayoutRenderBlockForScrollbarChange(RenderBlock& block)
 {
     if (block.sizesLogicalWidthToFitContent())
         block.invalidateContentLogicalWidths();
-    block.setNeedsLayout(MarkingBehavior::MarkOnlyThis);
+    block.setNeedsLayout(MarkingBehavior::OnlyThis);
     auto scope = LayoutScope { block, InOverflowRelayout::Yes };
     block.layoutBlock(RelayoutChildren::Yes);
 }
@@ -756,11 +757,11 @@ void RenderBlock::updateBlockChildDirtyBitsBeforeLayout(RelayoutChildren relayou
         return style.height().isPercentOrCalculated() || style.minHeight().isPercentOrCalculated() || style.maxHeight().isPercentOrCalculated();
     };
     if (relayoutChildren == RelayoutChildren::Yes || (childHasRelativeHeight() && !isRenderView()))
-        child.setChildNeedsLayout(MarkingBehavior::MarkOnlyThis);
+        child.setChildNeedsLayout(MarkingBehavior::OnlyThis);
 
     // If relayoutChildren is set and the child has percentage padding or an embedded content box, we also need to invalidate the childs pref widths.
     if (relayoutChildren == RelayoutChildren::Yes && child.shouldInvalidateContentWidths())
-        child.invalidateContentLogicalWidths(MarkingBehavior::MarkOnlyThis);
+        child.invalidateContentLogicalWidths(MarkingBehavior::OnlyThis);
 }
 
 void RenderBlock::simplifiedNormalFlowLayout()
@@ -863,11 +864,11 @@ void RenderBlock::markFixedPositionBoxForLayoutIfNeeded(RenderBox& positionedChi
         positionedChild.computeLogicalWidth(computedValues);
         LayoutUnit newLeft = computedValues.position;
         if (newLeft != positionedChild.logicalLeft())
-            positionedChild.setChildNeedsLayout(MarkingBehavior::MarkOnlyThis);
+            positionedChild.setChildNeedsLayout(MarkingBehavior::OnlyThis);
     } else if (hasStaticBlockPosition) {
         auto logicalTop = positionedChild.logicalTop();
         if (logicalTop != positionedChild.computeLogicalHeight(positionedChild.logicalHeight(), logicalTop).position)
-            positionedChild.setChildNeedsLayout(MarkingBehavior::MarkOnlyThis);
+            positionedChild.setChildNeedsLayout(MarkingBehavior::OnlyThis);
     }
 }
 
@@ -920,11 +921,11 @@ void RenderBlock::layoutOutOfFlowBox(RenderBox& outOfFlowBox, RelayoutChildren r
         return false;
     };
     if (needsLayout())
-        outOfFlowBox.setChildNeedsLayout(MarkingBehavior::MarkOnlyThis);
+        outOfFlowBox.setChildNeedsLayout(MarkingBehavior::OnlyThis);
 
     // If relayoutChildren is set and the child has percentage padding or an embedded content box, we also need to invalidate the childs pref widths.
     if (relayoutChildren == RelayoutChildren::Yes && outOfFlowBox.shouldInvalidateContentWidths())
-        outOfFlowBox.invalidateContentLogicalWidths(MarkingBehavior::MarkOnlyThis);
+        outOfFlowBox.invalidateContentLogicalWidths(MarkingBehavior::OnlyThis);
     
     outOfFlowBox.markForPaginationRelayoutIfNeeded();
     
@@ -963,12 +964,12 @@ void RenderBlock::layoutOutOfFlowBox(RenderBox& outOfFlowBox, RelayoutChildren r
 
     // Lay out again if our estimate was wrong.
     if (layoutChanged || (needsBlockDirectionLocationSetBeforeLayout && logicalTopForChild(outOfFlowBox) != oldLogicalTop)) {
-        outOfFlowBox.setChildNeedsLayout(MarkingBehavior::MarkOnlyThis);
+        outOfFlowBox.setChildNeedsLayout(MarkingBehavior::OnlyThis);
         outOfFlowBox.layoutIfNeeded();
     }
 
     if (updateFragmentRangeForBoxChild(outOfFlowBox)) {
-        outOfFlowBox.setNeedsLayout(MarkingBehavior::MarkOnlyThis);
+        outOfFlowBox.setNeedsLayout(MarkingBehavior::OnlyThis);
         outOfFlowBox.layoutIfNeeded();
     }
     
@@ -1008,7 +1009,7 @@ void RenderBlock::markForPaginationRelayoutIfNeeded()
         return;
 
     if (layoutState->pageLogicalHeightChanged() || (layoutState->pageLogicalHeight() && layoutState->pageLogicalOffset(this, logicalTop()) != pageLogicalOffset()))
-        setChildNeedsLayout(MarkingBehavior::MarkOnlyThis);
+        setChildNeedsLayout(MarkingBehavior::OnlyThis);
 }
 
 void RenderBlock::paintCarets(PaintInfo& paintInfo, const LayoutPoint& paintOffset)
@@ -1810,7 +1811,7 @@ void RenderBlock::addOutOfFlowBox(RenderBox& outOfFlowBox)
 
     if (outOfFlowBox.isRenderFragmentedFlow())
         return;
-    // FIXME: Find out if we can do this as part of outOfFlowBox.setChildNeedsLayout(MarkingBehavior::MarkOnlyThis)
+    // FIXME: Find out if we can do this as part of outOfFlowBox.setChildNeedsLayout(MarkingBehavior::OnlyThis)
     if (outOfFlowBox.needsLayout()) {
         // We should turn this bit on only while in layout.
         ASSERT(outOfFlowChildNeedsLayout() || view().frameView().layoutContext().isInLayout());
@@ -1826,9 +1827,9 @@ void RenderBlock::removeOutOfFlowBox(const RenderBox& rendererToRemove)
 
 static inline void markRendererAndParentForLayout(RenderBox& renderer)
 {
-    renderer.setChildNeedsLayout(MarkingBehavior::MarkOnlyThis);
+    renderer.setChildNeedsLayout(MarkingBehavior::OnlyThis);
     if (renderer.shouldInvalidateContentWidths())
-        renderer.invalidateContentLogicalWidths(MarkingBehavior::MarkOnlyThis);
+        renderer.invalidateContentLogicalWidths(MarkingBehavior::OnlyThis);
     auto* parentBlock = RenderObject::containingBlockForPositionType(PositionType::Static, renderer);
     if (!parentBlock) {
         ASSERT_NOT_REACHED();
@@ -2367,36 +2368,28 @@ std::pair<LayoutUnit, LayoutUnit> RenderBlock::logicalWidthContributionsForSize(
     return { resolveCalcSizeLogicalWidth(calcSize, minContentLogicalWidth, 0_lu), resolveCalcSizeLogicalWidth(calcSize, maxContentLogicalWidth, 0_lu) };
 }
 
-void RenderBlock::computeIntrinsicLogicalWidthContributions()
+std::pair<LayoutUnit, LayoutUnit> RenderBlock::computeIntrinsicLogicalWidthContributions()
 {
     ASSERT(hasInvalidContentLogicalWidths());
 
-    m_minContentLogicalWidthContribution = 0_lu;
-    m_maxContentLogicalWidthContribution = 0_lu;
-
     auto& styleToUse = style();
     auto logicalWidth = overridingLogicalWidthForFlexBasisComputation().value_or(styleToUse.logicalWidth());
-    if (auto contribution = fixedLogicalWidthContribution(logicalWidth)) {
-        m_minContentLogicalWidthContribution = *contribution;
-        m_maxContentLogicalWidthContribution = *contribution;
-    } else if (shouldComputeLogicalWidthFromAspectRatio()) {
-        m_maxContentLogicalWidthContribution = std::max(0_lu, computeLogicalWidthFromAspectRatio() - borderAndPaddingLogicalWidth());
-        m_minContentLogicalWidthContribution = m_maxContentLogicalWidthContribution;
-        applyAutomaticContentBasedMinimumSize(m_minContentLogicalWidthContribution, m_maxContentLogicalWidthContribution);
-    } else {
-        auto [minContentLogicalWidth, maxContentLogicalWidth] = computeIntrinsicLogicalWidths();
+    if (auto contribution = fixedLogicalWidthContribution(logicalWidth))
+        return { *contribution, *contribution };
 
-        if (overridingLogicalWidthForFlexBasisComputation() && logicalWidth.isCalcSize() && logicalWidth.isAuto()) {
-            // A flex-basis used as the main size, where `auto` means the width property rather than the width this box would otherwise take.
-            std::tie(minContentLogicalWidth, maxContentLogicalWidth) = logicalWidthContributionsForSize(styleToUse.logicalWidth(), minContentLogicalWidth, maxContentLogicalWidth);
-        }
-
-        std::tie(m_minContentLogicalWidthContribution, m_maxContentLogicalWidthContribution) = logicalWidthContributionsForSize(logicalWidth, minContentLogicalWidth, maxContentLogicalWidth);
+    if (shouldComputeLogicalWidthFromAspectRatio()) {
+        auto maxContentLogicalWidth = std::max(0_lu, computeLogicalWidthFromAspectRatio() - borderAndPaddingLogicalWidth());
+        auto minContentLogicalWidth = maxContentLogicalWidth;
+        applyAutomaticContentBasedMinimumSize(minContentLogicalWidth, maxContentLogicalWidth);
+        return { minContentLogicalWidth, maxContentLogicalWidth };
     }
 
-    constrainIntrinsicLogicalWidthsByMinMax(m_minContentLogicalWidthContribution, m_maxContentLogicalWidthContribution);
-
-    clearContentLogicalWidthsInvalidation();
+    auto [minContentLogicalWidth, maxContentLogicalWidth] = computeIntrinsicLogicalWidths();
+    if (overridingLogicalWidthForFlexBasisComputation() && logicalWidth.isCalcSize() && logicalWidth.isAuto()) {
+        // A flex-basis used as the main size, where `auto` means the width property rather than the width this box would otherwise take.
+        std::tie(minContentLogicalWidth, maxContentLogicalWidth) = logicalWidthContributionsForSize(styleToUse.logicalWidth(), minContentLogicalWidth, maxContentLogicalWidth);
+    }
+    return logicalWidthContributionsForSize(logicalWidth, minContentLogicalWidth, maxContentLogicalWidth);
 }
 
 std::pair<LayoutUnit, LayoutUnit> RenderBlock::computeBlockIntrinsicLogicalWidths() const
@@ -2439,7 +2432,7 @@ std::pair<LayoutUnit, LayoutUnit> RenderBlock::computeBlockIntrinsicLogicalWidth
         auto margin = marginStart + marginEnd;
 
         // An orthogonal child contributes its block-axis size (its logical height) to our inline axis
-        auto [childMinContentInParentInlineAxis, childMaxContentInParentInlineAxis] = [&]() -> std::pair<LayoutUnit, LayoutUnit> {
+        auto [childMinContentInParentInlineAxis, childMaxContentInParentInlineAxis] = [&] -> std::pair<LayoutUnit, LayoutUnit> {
             auto& box = const_cast<RenderBox&>(childBox);
             if (writingMode().isOrthogonal(box.writingMode())) {
                 auto intrinsicBlockSize = box.computeIntrinsicLogicalHeight();
@@ -3029,7 +3022,13 @@ TextRun RenderBlock::constructTextRun(const RenderText& text, unsigned offset, u
 {
     unsigned stop = offset + length;
     ASSERT(stop <= text.text().length());
-    return constructTextRun(text.stringView(offset, stop), style, expansion);
+    auto run = constructTextRun(text.stringView(offset, stop), style, expansion);
+    // Measure with the same direction and override as inline layout, see Layout::TextUtil::width().
+    if (auto direction = Layout::TextUtil::overridingDirection(text)) {
+        run.setDirection(*direction);
+        run.setDirectionalOverride(true);
+    }
+    return run;
 }
 
 TextRun RenderBlock::constructTextRun(std::span<const Latin1Character> characters, const Style::ComputedStyle& style, ExpansionBehavior expansion)
@@ -3219,7 +3218,7 @@ void RenderBlock::layoutExcludedChildren(RelayoutChildren relayoutChildren)
 
     RenderBox& legend = *box;
     if (relayoutChildren == RelayoutChildren::Yes)
-        legend.setChildNeedsLayout(MarkingBehavior::MarkOnlyThis);
+        legend.setChildNeedsLayout(MarkingBehavior::OnlyThis);
     legend.layoutIfNeeded();
     
     LayoutUnit logicalLeft;
@@ -3452,7 +3451,7 @@ std::pair<LayoutUnit, LayoutUnit> RenderBlock::computeIntrinsicLogicalWidthsForF
 
     legend->setIsExcludedFromNormalLayout(true);
 
-    auto [legendMinContentInParentInlineAxis, legendMaxContentInParentInlineAxis] = [&]() -> std::pair<LayoutUnit, LayoutUnit> {
+    auto [legendMinContentInParentInlineAxis, legendMaxContentInParentInlineAxis] = [&] -> std::pair<LayoutUnit, LayoutUnit> {
         if (writingMode().isOrthogonal(legend->writingMode())) {
             auto intrinsicBlockSize = legend->computeIntrinsicLogicalHeight();
             return { intrinsicBlockSize, intrinsicBlockSize };

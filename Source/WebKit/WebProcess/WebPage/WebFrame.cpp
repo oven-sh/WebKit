@@ -51,7 +51,6 @@
 #include "WebChromeClient.h"
 #include "WebContextMenu.h"
 #include "WebEventConversion.h"
-#include "WebEventFactory.h"
 #include "WebFrameProxyMessages.h"
 #include "WebHistoryItemClient.h"
 #include "WebImage.h"
@@ -814,8 +813,12 @@ void WebFrame::startDownload(const WebCore::ResourceRequest& request, const Stri
 
     std::optional<NavigatingToAppBoundDomain> isAppBound = NavigatingToAppBoundDomain::No;
     isAppBound = m_isNavigatingToAppBoundDomain;
-    if (localFrame)
-        protect(WebProcess::singleton().ensureNetworkProcessConnection().connection())->send(Messages::NetworkConnectionToWebProcess::StartDownload(policyDownloadID, request, topOrigin, isAppBound, suggestedName, fromDownloadAttribute, localFrame->frameID(), localFrame->pageID()), 0);
+    if (localFrame) {
+        OptionSet<WebCore::AdvancedPrivacyProtections> advancedPrivacyProtections;
+        if (RefPtr documentLoader = localFrame->loader().documentLoader())
+            advancedPrivacyProtections = documentLoader->advancedPrivacyProtections();
+        protect(WebProcess::singleton().ensureNetworkProcessConnection().connection())->send(Messages::NetworkConnectionToWebProcess::StartDownload(policyDownloadID, request, topOrigin, isAppBound, advancedPrivacyProtections, suggestedName, fromDownloadAttribute, localFrame->frameID(), localFrame->pageID()), 0);
+    }
 }
 
 void WebFrame::convertMainResourceLoadToDownload(DocumentLoader* documentLoader, const ResourceRequest& request, const ResourceResponse& response)
@@ -1563,7 +1566,7 @@ std::optional<OptionSet<WebCore::AdvancedPrivacyProtections>> WebFrame::originat
 static bool LEGACY_NODELETE isContextClick(const PlatformMouseEvent& event)
 {
 #if USE(APPKIT)
-    return WebEventFactory::shouldBeHandledAsContextClick(event);
+    return event.isContextMenuEvent();
 #else
     return event.button() == WebCore::MouseButton::Right;
 #endif
@@ -1575,7 +1578,7 @@ bool WebFrame::handleContextMenuEvent(const PlatformMouseEvent& platformMouseEve
     if (!coreLocalFrame)
         return false;
     IntPoint point = protect(coreLocalFrame->view())->windowToContents(flooredIntPoint(platformMouseEvent.position()));
-    constexpr OptionSet<HitTestRequest::Type> hitType { HitTestRequest::Type::ReadOnly, HitTestRequest::Type::Active, HitTestRequest::Type::DisallowUserAgentShadowContent,  HitTestRequest::Type::AllowChildFrameContent };
+    constexpr OptionSet hitType { HitTestRequest::Type::ReadOnly, HitTestRequest::Type::Active, HitTestRequest::Type::DisallowUserAgentShadowContent,  HitTestRequest::Type::AllowChildFrameContent };
     HitTestResult result = coreLocalFrame->eventHandler().hitTestResultAtPoint(point, hitType);
 
     Ref frame = *coreLocalFrame;
@@ -1612,7 +1615,7 @@ WebCore::HandleUserInputEventResult WebFrame::handleMouseEvent(const WebMouseEve
 
         auto mousePressEventResult = coreLocalFrame->eventHandler().handleMousePressEvent(platformMouseEvent);
 #if ENABLE(CONTEXT_MENU_EVENT)
-        if (isContextClick(platformMouseEvent) && !mousePressEventResult.remoteUserInputEventData())
+        if (isContextClick(platformMouseEvent) && !mousePressEventResult.remoteUserInputEventData() && !mousePressEventResult.wasHandledByPageOverlay())
             mousePressEventResult.setHandled(handleContextMenuEvent(platformMouseEvent));
 #endif
         return mousePressEventResult;
@@ -1885,8 +1888,10 @@ void WebFrame::takeSnapshotOfNode(JSHandleIdentifier identifier, CompletionHandl
         return completion({ });
 
     RefPtr<ShareableBitmap> bitmap;
-    if (RefPtr node = nodeFromJSHandleIdentifier(identifier))
+    if (RefPtr node = nodeFromJSHandleIdentifier(identifier)) {
+        protect(node->document())->updateLayoutIgnorePendingStylesheets();
         bitmap = page->shareableBitmapForNodeIncludingOffscreen(*node);
+    }
 #if ENABLE(OFFSCREEN_CANVAS)
     else if (RefPtr offscreenCanvas = offscreenCanvasFromJSHandleIdentifier(identifier))
         bitmap = shareableBitmapFromOffscreenCanvas(*offscreenCanvas);

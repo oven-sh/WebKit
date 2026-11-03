@@ -163,13 +163,13 @@ static_assert(sizeof(FunctionUses) <= 160);
 static void add(uint32_t& sum, uint32_t more)
 {
     if (more)
-        WTF::atomicExchangeAdd(&sum, more, std::memory_order_relaxed);
+        WTF::atomicExchangeAdd<MemoryOrder::Relaxed>(&sum, more);
 }
 
 static void addSaturated(SiteWeight& sum, SiteWeight more)
 {
     for (;;) {
-        SiteWeight previous = WTF::atomicLoad(&sum, std::memory_order_relaxed);
+        SiteWeight previous = WTF::atomicLoad<MemoryOrder::Relaxed>(&sum);
         if (WTF::atomicCompareExchangeWeakRelaxed(&sum, previous, saturatedSum(previous, more)))
             return;
     }

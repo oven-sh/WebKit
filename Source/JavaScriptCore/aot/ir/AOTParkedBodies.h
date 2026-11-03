@@ -34,7 +34,7 @@ public:
     // From any thread. The first read of a function takes its body back.
     const Function& at(FunctionID id)
     {
-        if (m_states[id.index()].load(std::memory_order_acquire) >= IsParked) [[unlikely]]
+        if (m_states[id.index()].load<MemoryOrder::Acquire>() >= IsParked) [[unlikely]]
             takeBack(id);
         return m_functions[id.index()];
     }

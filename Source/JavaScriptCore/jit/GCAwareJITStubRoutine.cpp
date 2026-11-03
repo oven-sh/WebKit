@@ -178,6 +178,8 @@ bool PolymorphicAccessJITStubRoutine::reconcileWeakReferencesAtGCEndImpl(VM& vm)
             return !key || key.isStillLive(vm);
         });
     }
+    for (auto& accessCase : m_cases)
+        isValid &= accessCase->isStillLive(vm);
     isValid &= Base::reconcileWeakReferencesAtGCEndImpl(vm);
     return isValid;
 }

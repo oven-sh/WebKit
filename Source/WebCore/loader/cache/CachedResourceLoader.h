@@ -130,6 +130,8 @@ public:
     typedef HashMap<String, CachedResourceHandle<CachedResource>> DocumentResourceMap;
     const DocumentResourceMap& allCachedResources() const LIFETIME_BOUND { return m_documentResources; }
 
+    URL urlWithRequestedFragmentIdentifier(const CachedResource&) const;
+
     void notifyFinished(const CachedResource&);
     Vector<Ref<SVGImage>> allCachedSVGImages() const;
 
@@ -203,6 +205,7 @@ private:
     Ref<CachedResource> updateCachedResourceWithCurrentRequest(const CachedResource&, CachedResourceRequest&&, PAL::SessionID, const CookieJar&, const Settings&);
 
     bool shouldContinueAfterNotifyingLoadedFromMemoryCache(const CachedResourceRequest&, CachedResource&, ResourceError&);
+    void notifyInspectorOfFragmentIdentifier(CachedResource&, const String& fragmentIdentifier);
     bool checkInsecureContent(CachedResource::Type, const URL&, MixedContentChecker::IsUpgradable, IPAddressSpace targetAddressSpace) const;
 
     void performPostLoadActions();
@@ -216,6 +219,7 @@ private:
     MemoryCompactRobinHoodHashSet<URL> m_validatedURLs;
     MemoryCompactRobinHoodHashSet<URL> m_cachedSVGImagesURLs;
     mutable DocumentResourceMap m_documentResources;
+    HashMap<String, String> m_documentResourceFragmentIdentifiers;
     WeakPtr<Document, WeakPtrImplWithEventTargetData> m_document;
     SingleThreadWeakPtr<DocumentLoader> m_documentLoader;
 

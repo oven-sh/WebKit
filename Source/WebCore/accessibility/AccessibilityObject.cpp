@@ -2013,11 +2013,19 @@ VisiblePositionRange AccessibilityObject::rightLineVisiblePositionRange(const Vi
     return { startPosition, endPosition };
 }
 
+// Text has the style of its parent here, so text in the same parent stays in one style range.
+static const Style::ComputedStyle& styleForStyleRange(const RenderObject& renderer)
+{
+    if (is<RenderText>(renderer) && renderer.parent())
+        return renderer.parent()->style();
+    return renderer.style();
+}
+
 static VisiblePosition startOfStyleRange(const VisiblePosition& visiblePos)
 {
     CheckedPtr renderer = visiblePos.deepEquivalent().deprecatedNode()->renderer();
     CheckedPtr startRenderer = renderer;
-    CheckedPtr style = &renderer->style();
+    CheckedPtr style = &styleForStyleRange(*renderer);
 
     // traverse backward by renderer to look for style change
     for (CheckedPtr r = renderer->previousInPreOrder(); r; r = r->previousInPreOrder()) {
@@ -2026,7 +2034,7 @@ static VisiblePosition startOfStyleRange(const VisiblePosition& visiblePos)
             continue;
 
         // stop at style change
-        if (&r->style() != style.get())
+        if (&styleForStyleRange(*r) != style.get())
             break;
 
         // remember match
@@ -2040,7 +2048,7 @@ static VisiblePosition endOfStyleRange(const VisiblePosition& visiblePos)
 {
     CheckedPtr renderer = visiblePos.deepEquivalent().deprecatedNode()->renderer();
     CheckedPtr endRenderer = renderer;
-    const CheckedRef style = renderer->style();
+    const CheckedRef style = styleForStyleRange(*renderer);
 
     // traverse forward by renderer to look for style change
     for (CheckedPtr r = renderer->nextInPreOrder(); r; r = r->nextInPreOrder()) {
@@ -2049,7 +2057,7 @@ static VisiblePosition endOfStyleRange(const VisiblePosition& visiblePos)
             continue;
 
         // stop at style change
-        if (&r->style() != style.ptr())
+        if (&styleForStyleRange(*r) != style.ptr())
             break;
 
         // remember match
@@ -2547,7 +2555,7 @@ int AccessibilityObject::lineForPosition(const VisiblePosition& visiblePos) cons
     // top document.
     while (true) {
         savedVisiblePos = currentVisiblePos;
-        currentVisiblePos = previousLinePosition(currentVisiblePos, 0, HasEditableAXRole);
+        currentVisiblePos = previousLinePosition(currentVisiblePos, 0, EditableType::AXRole);
         if (currentVisiblePos.isNull() || inSameLine(currentVisiblePos, savedVisiblePos))
             break;
         // Count lines rather than steps, because one step can cross more than one. The start of a
@@ -3447,7 +3455,7 @@ RefPtr<SharedBuffer> AccessibilityObject::imageData(const AXImageDataParameters&
         return nullptr;
 
     // Draw the source image scaled into the buffer.
-    image->draw(imageBuffer->context(), concreteObjectSize, FloatRect({ }, bufferSize), FloatRect({ }, imageSize), { renderImage->imageOrientation() });
+    image->draw(imageBuffer->context(), ImageDrawDescriptor { concreteObjectSize, renderImage->imageOrientation() }, FloatRect({ }, bufferSize), FloatRect({ }, imageSize));
 
     // Determine the extraction rect from subrect parameters or full image.
     IntRect extractionRect;

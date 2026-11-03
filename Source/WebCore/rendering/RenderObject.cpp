@@ -152,7 +152,6 @@ struct SameSizeAsRenderObject : public CanMakeSingleThreadWeakPtr<SameSizeAsRend
     SingleThreadPackedWeakPtr<RenderObject> m_next;
     uint8_t m_type;
     uint8_t m_typeSpecificFlags;
-    CheckedPtr<Layout::Box> layoutBox;
     void* cachedResourceClient;
 };
 
@@ -182,25 +181,7 @@ RenderObject::RenderObject(Type type, Node& node, OptionSet<TypeFlag> typeFlags,
 
 RenderObject::~RenderObject()
 {
-    clearLayoutBox();
     ASSERT(!hasRareData());
-}
-
-void RenderObject::setLayoutBox(Layout::Box& box)
-{
-    m_layoutBox = &box;
-    m_layoutBox->setRendererForIntegration(this);
-}
-
-void RenderObject::clearLayoutBox()
-{
-    if (!m_layoutBox)
-        return;
-
-    ASSERT(m_layoutBox->rendererForIntegration() == this);
-
-    m_layoutBox->setRendererForIntegration(nullptr);
-    m_layoutBox = nullptr;
 }
 
 RenderTheme& RenderObject::theme() const
@@ -662,7 +643,7 @@ RenderElement* RenderObject::markContainingBlocksForLayout(RenderElement* layout
 
 void RenderObject::invalidateContentLogicalWidths(MarkingBehavior markParents, const RenderBlock* ancestorUpdateBoundary)
 {
-    ASSERT_IMPLIES(ancestorUpdateBoundary, markParents == MarkingBehavior::MarkContainingBlockChain);
+    ASSERT_IMPLIES(ancestorUpdateBoundary, markParents == MarkingBehavior::ContainingBlockChain);
 
     if (hasInvalidContentLogicalWidths() && (!hasRareData() || !rareData().contentLogicalWidthsInvalidationIsMarkOnlyThis)) {
         // Both this and our ancestor chain are already marked dirty.
@@ -675,7 +656,7 @@ void RenderObject::invalidateContentLogicalWidths(MarkingBehavior markParents, c
         return;
     }
 
-    if (markParents == MarkingBehavior::MarkOnlyThis) {
+    if (markParents == MarkingBehavior::OnlyThis) {
         ensureRareData().contentLogicalWidthsInvalidationIsMarkOnlyThis = true;
         return;
     }
@@ -1542,7 +1523,6 @@ void RenderObject::outputRenderObject(TextStream& stream, bool mark, int depth) 
     }
 
     stream << " renderer (" << this << ")";
-    stream << " layout box (" << layoutBox() << ")";
 
     if (node())
         stream << " node (" << node() << ")";
@@ -2114,10 +2094,10 @@ PositionWithAffinity RenderObject::createPositionWithAffinity(int offset, Affini
         if (!node->hasEditableStyle()) {
             // If it can be found, we prefer a visually equivalent position that is editable. 
             Position position = makeDeprecatedLegacyPosition(node.get(), convertOffsetInTextFragmentToNodeOffset(*this, offset));
-            Position candidate = position.downstream(CanCrossEditingBoundary);
+            Position candidate = position.downstream(EditingBoundaryCrossingRule::CanCross);
             if (protect(candidate.deprecatedNode())->hasEditableStyle())
                 return PositionWithAffinity(candidate, affinity);
-            candidate = position.upstream(CanCrossEditingBoundary);
+            candidate = position.upstream(EditingBoundaryCrossingRule::CanCross);
             if (protect(candidate.deprecatedNode())->hasEditableStyle())
                 return PositionWithAffinity(candidate, affinity);
         }
@@ -2172,7 +2152,7 @@ PositionWithAffinity RenderObject::createPositionWithAffinity(const Position& po
 
 CursorDirective RenderObject::getCursor(const LayoutPoint&, Cursor&) const
 {
-    return CursorDirective::SetCursorBasedOnStyle;
+    return CursorDirective::SetBasedOnStyle;
 }
 
 bool RenderObject::useDarkAppearance() const
@@ -3232,13 +3212,6 @@ bool RenderObject::CachedImageListener::allowsAnimation() const
     if (CheckedPtr renderer = m_renderer.get())
         return renderer->allowsAnimation();
     return true;
-}
-
-bool RenderObject::CachedImageListener::useSystemDarkAppearance() const
-{
-    if (CheckedPtr renderer = m_renderer.get())
-        return renderer->useSystemDarkAppearance();
-    return false;
 }
 
 bool RenderObject::CachedImageListener::canDestroyDecodedData() const

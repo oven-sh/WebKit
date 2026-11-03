@@ -1174,16 +1174,6 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
     return _impl->candidateListTouchBarItem();
 }
 
-- (void)_web_didAddMediaControlsManager:(id)controlsManager
-{
-    [self _addMediaPlaybackControlsView:controlsManager];
-}
-
-- (void)_web_didRemoveMediaControlsManager
-{
-    [self _removeMediaPlaybackControlsView];
-}
-
 - (void)_interactWithMediaControlsForTesting
 {
     [self _setWantsMediaPlaybackControlsView:YES];
@@ -1211,8 +1201,14 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
 - (BOOL)respondsToSelector:(SEL)selector
 {
 #if ENABLE(SCROLL_POCKET_IN_FULLSCREEN)
-    if (selector == @selector(setFullScreenTitlebarOverlayHeight:))
+    if (selector == @selector(setFullScreenTitlebarOverlayHeight:)) {
+        // The top scroll pocket is suppressed while in element fullscreen, so we must not claim to
+        // draw our own pocket behind the titlebar; otherwise AppKit removes its titlebar backdrop
+        // and the revealed titlebar becomes translucent.
+        if (_impl && _impl->isInElementFullScreenWindow())
+            return NO;
         return [self _scrollPocketInFullscreenEnabled];
+    }
 #endif
     return [super respondsToSelector:selector];
 }
@@ -1461,6 +1457,20 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 {
     _lastContentSize = newSize;
 }
+
+#if HAVE(TOUCH_BAR)
+
+- (void)_web_didAddMediaControlsManager:(id)controlsManager
+{
+    [self _addMediaPlaybackControlsView:controlsManager];
+}
+
+- (void)_web_didRemoveMediaControlsManager
+{
+    [self _removeMediaPlaybackControlsView];
+}
+
+#endif // HAVE(TOUCH_BAR)
 
 - (BOOL)_web_hasActiveIntelligenceTextEffects
 {
@@ -1956,7 +1966,6 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     BOOL expandsToFit = size.width > 0 && size.height > 0;
 
     _page->setSizeToContentAutoSizeMaximumSize(WebCore::IntSize(size.width, size.height));
-    _page->setMainFrameIsScrollable(!expandsToFit);
 
     _impl->setClipsToVisibleRect(expandsToFit);
 }

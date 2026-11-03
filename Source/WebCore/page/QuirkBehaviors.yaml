@@ -131,6 +131,9 @@ NeedsCNNCaptionQuirk:
   available: cocoa
   export: true
 
+# chatgpt.com rdar://189766320
+NeedsMarginTrimInlineSupportsQuirk:
+
 NeedsLimitedMatroskaSupportQuirk:
   available: "mediaRecorder && cocoaWebMPlayer"
   accessor: needsLimitedMatroskaSupport
@@ -631,6 +634,11 @@ ShouldIgnoreViewportArgumentsToAvoidEnlargedViewQuirk:
   available: metaViewport
   accessor: shouldIgnoreViewportArgumentsToAvoidEnlargedView
   export: true
+
+# gemini.google.com rdar://190477522
+ShouldIgnoreViewportInteractiveWidgetQuirk:
+  available: metaViewport
+  accessor: shouldIgnoreViewportInteractiveWidget
 
 # slack.com rdar://171190689
 ShouldUseDynamicViewportUnitsAsDefaultQuirk:

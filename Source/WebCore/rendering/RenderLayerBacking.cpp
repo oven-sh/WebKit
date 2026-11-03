@@ -1474,7 +1474,7 @@ bool RenderLayerBacking::updateConfiguration(const RenderLayer* compositingAnces
         case PluginLayerHostingStrategy::None:
             break;
         case PluginLayerHostingStrategy::PlatformLayer:
-            m_graphicsLayer->setContentsToPlatformLayer(pluginViewBase->platformLayer(), GraphicsLayer::ContentsLayerPurpose::Plugin);
+            SUPPRESS_FORWARD_DECL_ARG m_graphicsLayer->setContentsToPlatformLayer(pluginViewBase->platformLayer(), GraphicsLayer::ContentsLayerPurpose::Plugin);
             break;
         case PluginLayerHostingStrategy::GraphicsLayer:
             // layer is parented in RenderLayerCompositor::updateBackingAndHierarchy().
@@ -4031,14 +4031,6 @@ bool RenderLayerBacking::isDirectlyCompositedImage() const
     // so using a directly composited image doesn't help (and has non-zero cost)
     if (m_owningLayer.behavesAsFixed() && m_graphicsLayer->allowsBackingStoreDetaching())
         return false;
-
-#if (PLATFORM(GTK) || PLATFORM(WPE))
-        // GTK and WPE ports don't support rounded rect clipping at TextureMapper level, so they cannot
-        // directly composite images that have border-radius propery. Draw them as non directly composited
-        // content instead. See https://bugs.webkit.org/show_bug.cgi?id=174157.
-        if (renderer().style().border().hasBorderRadius())
-            return false;
-#endif
 
     if (auto* viewTransitionCapture = dynamicDowncast<RenderViewTransitionCapture>(renderer())) {
         auto image = viewTransitionCapture->image();
