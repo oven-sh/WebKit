@@ -73,6 +73,9 @@ public:
 
     // A module, a class body, or anything given to exec(): the one parameter is the namespace the names live in.
     bool takesNamespace { false };
+    // Whether there is a `for` loop over the value of a call in the code, once somebody has looked: Runtime::releaseIteratorsOfLoopsLeft().
+    enum class LoopsOverCalls : uint8_t { Unknown, No, Yes };
+    LoopsOverCalls loopsOverCalls { LoopsOverCalls::Unknown };
     VirtualRegister namespaceRegister; // Where the running code keeps it.
 
     Vector<Variable> variables;

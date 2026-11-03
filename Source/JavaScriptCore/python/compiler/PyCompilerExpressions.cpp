@@ -442,6 +442,7 @@ void Unit::boolOperand(Expr* node, RegisterID* result, Label* ifTrue, Label* ifF
 // and back up.
 RegisterID* Unit::chain(Expr* node, RegisterID* dst)
 {
+    unsigned temporaryOfWhole = takeTemporary(node);
     Vector<Expr*, 8> chain;
     JSValue constant;
     while (true) {
@@ -472,10 +473,13 @@ RegisterID* Unit::chain(Expr* node, RegisterID* dst)
     if (chain.isEmpty())
         return load(dst, constant);
 
+    // The number of what `result` holds, if the next in the chain is its one use and a subscript.
+    unsigned temporary = chain.last()->is<Subscript>() ? beginTemporary(node) : 0;
     Reg result = node->is<BinOp>() ? load(nullptr, constant) : expr(node);
     while (!chain.isEmpty()) {
         node = chain.takeLast();
         RegisterID* finalDst = chain.isEmpty() ? dst : nullptr;
+        unsigned used = std::exchange(temporary, 0);
         switch (node->kind) {
         case ExprKind::BinOp: {
             Reg right = expr(node->as<BinOp>()->right);
@@ -490,6 +494,13 @@ RegisterID* Unit::chain(Expr* node, RegisterID* dst)
         case ExprKind::Subscript: {
             Reg key = expr(node->as<Subscript>()->slice);
             loc(node->range);
+            markTemporaryUsed(used, TemporaryUse::SubscriptBase, nullptr, true);
+            if (chain.isEmpty())
+                markTemporaryMade(temporaryOfWhole);
+            else if (chain.last()->is<Subscript>()) {
+                temporary = ++m_temporaryCount;
+                markTemporaryMade(temporary);
+            }
             result = g.emitPyGetItem(g.finalDestination(finalDst, result.get()), result.get(), key.get());
             break;
         }
@@ -926,9 +937,11 @@ void Unit::store(Expr* target, RegisterID* value)
     }
     case ExprKind::Subscript: {
         auto* subscript = target->as<Subscript>();
+        unsigned temporary = std::exchange(m_storedTemporary, 0);
         Reg base = expr(subscript->value);
         Reg key = expr(subscript->slice);
         loc(subscript->range);
+        markTemporaryUsed(temporary, TemporaryUse::StoredValue, base.get(), true);
         g.emitPySetItem(base.get(), key.get(), value);
         return;
     }
@@ -1262,6 +1275,35 @@ bool Unit::looksLikeClass(Expr* node)
     return i < text.length() && isASCIIUpper(text[i]);
 }
 
+unsigned Unit::beginTemporary(Expr* node)
+{
+    if (!makesTemporary(node))
+        return 0;
+    m_temporaryNode = node;
+    m_temporaryNumber = ++m_temporaryCount;
+    return m_temporaryNumber;
+}
+
+unsigned Unit::takeTemporary(Expr* node)
+{
+    if (m_temporaryNode != node)
+        return 0;
+    m_temporaryNode = nullptr;
+    return m_temporaryNumber;
+}
+
+void Unit::markTemporaryMade(unsigned number)
+{
+    if (number)
+        g.addPythonMark(PythonMark::TemporaryMade, number);
+}
+
+void Unit::markTemporaryUsed(unsigned number, TemporaryUse::Kind kind, RegisterID* reg, bool isLast)
+{
+    if (number)
+        g.addPythonMark(PythonMark::TemporaryUsed, number, TemporaryUse::encode(kind, (reg ? reg->virtualRegister() : VirtualRegister()).offset(), isLast));
+}
+
 RegisterID* Unit::emitSimpleCall(RegisterID* dst, RegisterID* callee, std::initializer_list<RegisterID*> args, const Range& range)
 {
     Reg heldCallee = callee;
@@ -1326,7 +1368,7 @@ static bool isSimpleCall(Seq<Expr*> args, Seq<Keyword*> keywords, unsigned extra
     return true;
 }
 
-RegisterID* Unit::emitCall(RegisterID* dst, RegisterID* callee, std::span<RegisterID* const> pushed, Seq<Expr*> args, Seq<Keyword*> keywords, Name injected, const Range& range)
+RegisterID* Unit::emitCall(RegisterID* dst, RegisterID* callee, std::span<RegisterID* const> pushed, Seq<Expr*> args, Seq<Keyword*> keywords, Name injected, const Range& range, unsigned temporary)
 {
     validateKeywords(keywords);
     Reg heldCallee = callee;
@@ -1338,14 +1380,22 @@ RegisterID* Unit::emitCall(RegisterID* dst, RegisterID* callee, std::span<Regist
         unsigned next = 0;
         for (RegisterID* value : pushed)
             g.move(arguments.argumentRegister(next++), value);
-        for (Expr* argument : args)
+        Vector<unsigned, 8> temporaries;
+        for (Expr* argument : args) {
+            temporaries.append(beginTemporary(argument));
             expr(argument, arguments.argumentRegister(next++));
+        }
         if (injected)
             loadName(injected, arguments.argumentRegister(next++), range);
-        for (Keyword* keyword : keywords)
+        for (Keyword* keyword : keywords) {
+            temporaries.append(beginTemporary(keyword->value));
             expr(keyword->value, arguments.argumentRegister(next++));
+        }
         load(arguments.thisRegister(), keywordNames(keywords));
         loc(range);
+        for (unsigned number : temporaries)
+            markTemporaryUsed(number, TemporaryUse::Argument, callee, true);
+        markTemporaryMade(temporary);
         return g.emitPyCall(result.get(), callee, arguments, count);
     }
 
@@ -1399,6 +1449,7 @@ RegisterID* Unit::emitCall(RegisterID* dst, RegisterID* callee, std::span<Regist
     callRuntime(array.get(), RuntimeFunction::CallArguments, operands);
     Reg thisValue = newTemporary();
     callRuntime(thisValue.get(), RuntimeFunction::TakeKeywordNames);
+    markTemporaryMade(temporary);
     return g.emitPyCallVarargs(result.get(), callee, thisValue.get(), array.get());
 }
 
@@ -1415,6 +1466,7 @@ JSValue Unit::keywordNames(Seq<Keyword*> keywords)
 
 RegisterID* Unit::call(Call* node, RegisterID* dst)
 {
+    unsigned temporary = takeTemporary(node);
     validateKeywords(node->keywords);
 
     // object.name(...): if name turns out to be a function of the class, it is called with the object as its first argument,
@@ -1425,17 +1477,31 @@ RegisterID* Unit::call(Call* node, RegisterID* dst)
         Reg callee = newTemporary();
         unsigned count = node->args.size() + node->keywords.size();
         CallArguments arguments(g, nullptr, count + 1);
+        unsigned receiver = beginTemporary(method->value);
+        RegisterID* name;
         {
             Reg base = expr(method->value);
             loc(rangeOfAttributeName(method));
-            g.emitPyGetMethod(callee.get(), arguments.argumentRegister(0), base.get(), usedName(mangle(method->attr)));
+            name = usedName(mangle(method->attr));
+            g.emitPyGetMethod(callee.get(), arguments.argumentRegister(0), base.get(), name);
         }
         unsigned next = 1;
-        for (Expr* argument : node->args)
+        Vector<unsigned, 8> temporaries;
+        for (Expr* argument : node->args) {
+            temporaries.append(beginTemporary(argument));
             expr(argument, arguments.argumentRegister(next++));
-        for (Keyword* keyword : node->keywords)
+        }
+        for (Keyword* keyword : node->keywords) {
+            temporaries.append(beginTemporary(keyword->value));
             expr(keyword->value, arguments.argumentRegister(next++));
+        }
         load(arguments.thisRegister(), keywordNames(node->keywords));
+        auto markCall = [&](bool isLast) {
+            markTemporaryUsed(receiver, TemporaryUse::Receiver, name, isLast);
+            for (unsigned number : temporaries)
+                markTemporaryUsed(number, TemporaryUse::Argument, callee.get(), isLast);
+            markTemporaryMade(temporary);
+        };
 
         Range range = node->range;
         if (range.lineno != method->range.endLineno) {
@@ -1453,12 +1519,14 @@ RegisterID* Unit::call(Call* node, RegisterID* dst)
             g.emitJumpIfTrue(isEmpty.get(), notMethod.get());
         }
         loc(range);
+        markCall(false);
         g.emitPyCall(result.get(), callee.get(), arguments, count + 1);
         hiddenJump(done.get());
         g.emitLabel(notMethod.get());
         for (unsigned i = 0; i < count; ++i)
             g.move(arguments.argumentRegister(i), arguments.argumentRegister(i + 1));
         loc(range);
+        markCall(true);
         g.emitPyCall(result.get(), callee.get(), arguments, count);
         g.emitLabel(done.get());
         return result.get();
@@ -1500,6 +1568,7 @@ RegisterID* Unit::call(Call* node, RegisterID* dst)
         hiddenJump(done.get());
         g.emitLabel(notSuchAClass.get());
         loc(node->range);
+        markTemporaryMade(temporary);
         g.emitPyCall(result.get(), callee.get(), arguments, count);
         g.emitLabel(done.get());
         return result.get();
@@ -1517,7 +1586,7 @@ RegisterID* Unit::call(Call* node, RegisterID* dst)
         if ((id == "all"_s || id == "any"_s || id == "tuple"_s || id == "list"_s || id == "set"_s) && !c.m_symbols->scopeFor(node->args[0])->isCoroutine)
             range = name->range;
     }
-    return emitCall(dst, callee.get(), { }, node->args, node->keywords, nullptr, range);
+    return emitCall(dst, callee.get(), { }, node->args, node->keywords, nullptr, range, temporary);
 }
 
 // ---- Generators and coroutines ----

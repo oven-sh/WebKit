@@ -509,6 +509,8 @@ public:
     void queueWeakRefCallback(PyWeakRef*);
 
     ALWAYS_INLINE bool hasPendingCalls() const { return m_hasPendingCalls; }
+    // Some of them are finalizers or callbacks of weak references: the next collection may find more than the last.
+    bool hasPendingFinalizers();
     // At a safe point. What the calls raise is reported and goes no further. But signals are looked at between the calls, and what
     // a handler raises is thrown: what is left in the queue then is left for the next safe point.
     // `mayPutOff`: nobody asked for it or waits for it. Then it is put off if the stack is nearly used up.
@@ -541,8 +543,8 @@ public:
         virtual void didCollect() { }
     };
     void setMarkingObserver(MarkingObserver* observer) { m_markingObserver = observer; }
-    // A full collection for which the program waits. It takes the time to look at all that has died: see PyFinalizationOrder.cpp.
-    void collectAsAskedFor();
+    // A collection for which the program waits. It takes the time to look at all that has died: see PyFinalizationOrder.cpp.
+    void collectAsAskedFor(CollectionScope = CollectionScope::Full);
     // For when the interpreter exits, before the program is told (atexit): what is unreachable by then and reference
     // counts would have freed would have been finalized long ago.
     void finalizeWhatReferenceCountsWouldHaveFreed();
@@ -612,7 +614,56 @@ public:
     {
         if (!m_collectionBegan)
             m_collectionBegan = MonotonicTime::now();
+        forgetTemporaries();
     }
+
+    // ---- Objects that only a temporary register refers to (PyTemporaries.cpp) ----
+
+    // The function that `nativeFrame` is the call of has made `object`, which it is about to return and nothing else refers to.
+    void didMakeResult(CallFrame* nativeFrame, JSCell* object);
+    // The instruction that the frame, of Python code, is at has.
+    void didMakeResultOfInstruction(CallFrame*, JSCell* object);
+    ALWAYS_INLINE bool ownsTemporaries() const { return m_ownedTemporaryCount; }
+    // If ownsTemporaries(): the call, or the instruction, is over, with `result` or with an exception. Those of its operands that
+    // it was the one use of are finalized.
+    void didCallWithTemporaries(CallFrame* nativeFrame, JSValue result);
+    void didRunInstructionWithTemporaries(CallFrame*, std::span<const JSValue> operands, JSValue result);
+    // For the code of a type that keeps none of the arguments it is called with, when it has made the instance or failed to.
+    void didCallType(PyType*, JSValue result, bool resultIsFresh);
+    // For a method that is NativeFlag::KeepsNothing, when it is done.
+    void didCallMethod(JSValue self, JSValue result, bool resultIsFresh);
+    // For the code of a type whose instances may be owned: base[key] has given `result`, or raised.
+    void didSubscript(JSValue base, JSValue result);
+    // If ownsTemporaries(): for the code of a type that copies what is stored in its items: base[key] = value is done, or has raised.
+    void didStoreInItem(JSValue value);
+    // Code of the program is about to run that is shown the arguments of a call, or may change the variables of the frames.
+    void forgetOwnedTemporaries() { m_ownedTemporaryCount = 0; }
+    // The program is being handed objects that it may have had no reference to.
+    void temporariesMayHaveEscaped()
+    {
+        forgetTemporaries();
+        ++m_ownershipEpoch;
+    }
+    // A generator function is about to return the generator to whoever called it.
+    ALWAYS_INLINE void didMakeGenerator(PyGenerator* generator, CallFrame* frameOfFunction)
+    {
+        void* caller = frameOfFunction->callerFrameOrEntryFrame();
+        if (caller == m_vm.topEntryFrame) [[unlikely]] {
+            m_newGenerator = nullptr;
+            return;
+        }
+        m_newGenerator = generator;
+        m_callerOfNewGenerator = static_cast<CallFrame*>(caller);
+        m_codeBlockOfCallerOfNewGenerator = m_callerOfNewGenerator->codeBlock();
+        m_callSiteOfNewGenerator = m_callerOfNewGenerator->callSiteIndex();
+    }
+    // For op_py_get_iter, which the frame is at: the generator is its own iterator.
+    ALWAYS_INLINE bool isNewGenerator(JSValue value, CallFrame* callFrame) const { return value.isCell() && value.asCell() == std::bit_cast<JSCell*>(m_newGenerator) && m_callerOfNewGenerator == callFrame; }
+    void claimIteratorOfLoop(CallFrame*, unsigned offsetOfGetIter);
+    // The loop is left before the iterator is exhausted.
+    void releaseIteratorOfLoop(JSValue iterator);
+    // An exception is caught in the frame, or leaves it.
+    void releaseIteratorsOfLoopsLeft(CallFrame*, unsigned offset, bool isCaught);
 
     // ---- What an instruction leaves for the next ----
 
@@ -728,6 +779,29 @@ private:
     // Not visited. All were made since the last collection looked at this, so none has been freed. The thread that runs Python
     // code adds to it, and the collector takes from it while that thread is stopped.
     Vector<PyGenerator*> m_newFinalizableGenerators;
+
+    // Nobody visits these: a collection forgets them.
+    struct OwnedTemporary {
+        JSCell* object;
+        CallFrame* frame;
+        unsigned firstUse; // Offsets of instructions.
+        unsigned lastUse;
+    };
+    void forgetTemporaries()
+    {
+        m_ownedTemporaryCount = 0;
+        m_newGenerator = nullptr;
+    }
+    void ownTemporary(CallFrame*, unsigned offset, JSCell*);
+    template<typename IsOperand> void releaseTemporariesUsedAt(CallFrame*, unsigned offset, JSValue result, const IsOperand&);
+    static constexpr unsigned maxOwnedTemporaries = 4;
+    std::array<OwnedTemporary, maxOwnedTemporaries> m_ownedTemporaries;
+    unsigned m_ownedTemporaryCount { 0 };
+    unsigned m_ownershipEpoch { 1 };
+    PyGenerator* m_newGenerator { nullptr };
+    CallFrame* m_callerOfNewGenerator { nullptr };
+    CodeBlock* m_codeBlockOfCallerOfNewGenerator { nullptr };
+    CallSiteIndex m_callSiteOfNewGenerator;
     void registerNotedGenerators() WTF_REQUIRES_LOCK(m_finalizationLock);
     Deque<JSCell*> m_pendingFinalization WTF_GUARDED_BY_LOCK(m_finalizationLock);
     Deque<PyWeakRef*> m_pendingWeakRefCallbacks WTF_GUARDED_BY_LOCK(m_finalizationLock);
@@ -748,7 +822,7 @@ private:
     bool m_shouldCollectAfterPendingCalls { false };
     bool m_mayHavePendingOutput { false };
     MarkingObserver* m_markingObserver { nullptr };
-    bool m_collectionWasAskedFor { false };
+    std::optional<CollectionScope> m_scopeAskedFor;
     bool m_leavesCyclicGarbageForLater { false };
 
     Lock m_moduleTypesLock;

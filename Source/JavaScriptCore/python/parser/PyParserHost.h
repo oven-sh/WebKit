@@ -44,6 +44,9 @@ public:
 
     // sys.get_int_max_str_digits()
     virtual int maxStrDigits() { return 4300; }
+
+    // Asked before the first \N{...}: in CPython the names of characters come with the module unicodedata, which may fail to be imported.
+    virtual bool hasCharacterNames() { return true; }
 };
 
 // A failed parse or compilation, in terms the runtime can raise.

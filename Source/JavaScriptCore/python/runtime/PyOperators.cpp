@@ -338,7 +338,7 @@ JSValue toIndex(JSGlobalObject* globalObject, JSValue value)
     PyType* type = typeOf(globalObject, value);
     JSValue method = type->lookup(Special::Index);
     if (!method)
-        return raiseTypeError(globalObject, scope, '\'', type->name(), "' object cannot be interpreted as an integer"_s);
+        return raiseTypeError(globalObject, scope, '\'', type->nameInMessages(), "' object cannot be interpreted as an integer"_s);
     JSValue result = callSpecial(globalObject, method, value);
     RETURN_IF_EXCEPTION(scope, { });
     if (!isInt(result))
@@ -446,7 +446,7 @@ double toDoubleAsFloatDoes(JSGlobalObject* globalObject, JSValue value)
         RETURN_IF_EXCEPTION(scope, -1);
         return fromInt(index);
     }
-    raiseTypeError(globalObject, scope, "must be real number, not "_s, type->name());
+    raiseTypeError(globalObject, scope, "must be real number, not "_s, type->nameInMessages());
     return -1;
 }
 

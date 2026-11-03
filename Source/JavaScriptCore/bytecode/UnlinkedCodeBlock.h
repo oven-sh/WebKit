@@ -149,6 +149,10 @@ struct PythonMark {
         Start, // The function has its arguments and its variables are set up: its code begins.
         BlockBegin, // What follows needs something that only the code before it provides. `value` numbers the block. `bits`: Python::TracedBlock.
         BlockEnd,
+        // The instruction that comes next makes a value that goes in a temporary register and has one use. `value` numbers it.
+        TemporaryMade,
+        // The instruction that comes next is that use, or one of the forms it takes. `bits`: Python::TemporaryUse.
+        TemporaryUsed,
     };
     static constexpr unsigned kindBits = 3;
 

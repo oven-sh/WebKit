@@ -555,7 +555,10 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_get_iter)
 {
     BEGIN();
     auto bytecode = pc->as<OpPyGetIter>();
-    RETURN(getIter(globalObject, GET_C(bytecode.m_iterable).jsValue()));
+    JSValue iterable = GET_C(bytecode.m_iterable).jsValue();
+    if (Runtime& rt = runtime(globalObject); rt.isNewGenerator(iterable, callFrame))
+        rt.claimIteratorOfLoop(callFrame, codeBlock->bytecodeOffset(pc));
+    RETURN(getIter(globalObject, iterable));
 }
 
 JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_for_iter)
@@ -828,6 +831,7 @@ static JSValue makeGenerator(JSGlobalObject* globalObject, CallFrame* callFrame,
         generator->setSlot(vm, i, callFrame->r(virtualRegisterForArgumentIncludingThis(i + 1)).jsValue()); // There may be fewer arguments than parameters.
     if (extra)
         generator->setSlot(vm, count, extra);
+    runtime(globalObject).didMakeGenerator(generator, callFrame);
     return generator;
 }
 
@@ -1242,6 +1246,10 @@ static JSValue runRuntimeFunction(JSGlobalObject* globalObject, CallFrame* callF
         return args[0];
     case RuntimeFunction::MakeGenerator:
         RELEASE_AND_RETURN(scope, makeGenerator(globalObject, callFrame, args[0].asInt32(), args.size() > 1 ? args[1] : JSValue()));
+    case RuntimeFunction::ReleaseIterator:
+        scope.release();
+        rt.releaseIteratorOfLoop(args[0]);
+        return jsUndefined();
     case RuntimeFunction::CallArguments:
         RELEASE_AND_RETURN(scope, callArguments(globalObject, args[0], args[1], args[2]));
     case RuntimeFunction::TakeKeywordNames:

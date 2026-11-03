@@ -456,11 +456,14 @@ void Threads::collectWhileIdle(JSGlobalObject* globalObject, bool isLastResort)
     Runtime& rt = runtime(globalObject);
     if (rt.isRunningPendingCalls())
         return;
-    // If nothing has been allocated since the last time, there is little to find. But the count moves in steps: it may stand still
-    // though a little has been allocated, and to drop something takes no allocation at all. So without that sign this still
-    // collects, as often as costs a program that wakes up every now and then for nothing a fiftieth of its time.
+    // Such a collection stops every thread, and any number of threads may be idle while one works: all of them together spend
+    // at most a twentieth of the time on it. If nothing has been allocated since the last time, there is little to find, but
+    // the count moves in steps, and to drop something takes no allocation at all: then a fiftieth.
     int64_t start = monotonicNanoseconds();
-    if (!isLastResort && m_vm.heap.totalBytesAllocated() == m_bytesAllocatedAtIdleCollection && start < m_timeForIdleCollectionWithoutCause)
+    int64_t earliest = m_timeForIdleCollectionWithoutCause;
+    if (m_vm.heap.totalBytesAllocated() != m_bytesAllocatedAtIdleCollection)
+        earliest -= 30 * m_durationOfLastIdleCollection;
+    if (!isLastResort && start < earliest)
         return;
     collectAndFinalize(globalObject);
     m_bytesAllocatedAtIdleCollection = m_vm.heap.totalBytesAllocated();
@@ -469,7 +472,7 @@ void Threads::collectWhileIdle(JSGlobalObject* globalObject, bool isLastResort)
     m_timeForIdleCollectionWithoutCause = end + 50 * (end - start);
 }
 
-NEVER_INLINE void Threads::willCallFunctionThatMayWait(CallFrame* callFrame)
+NEVER_INLINE bool Threads::willCallFunctionThatMayWait(CallFrame* callFrame)
 {
     // The first may be the object whose method it is.
     for (unsigned i = 1; i < callFrame->argumentCount(); ++i) {
@@ -479,6 +482,7 @@ NEVER_INLINE void Threads::willCallFunctionThatMayWait(CallFrame* callFrame)
             break;
     }
     current().callThatMayBeginAgain = callFrame;
+    return callFrame;
 }
 
 NEVER_INLINE bool Threads::takeRequestToCallAgain(JSGlobalObject*)
@@ -521,10 +525,13 @@ int64_t IdleWait::nextPiece(int64_t remaining) const
 
 bool IdleWait::didWait(int64_t remaining)
 {
-    if (monotonicNanoseconds() < m_timeToCollect)
-        return true;
     VM& vm = getVM(m_globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    // A signal that came between two pieces has interrupted neither.
+    if (failed(scope, checkSignals(m_globalObject)))
+        return false;
+    if (monotonicNanoseconds() < m_timeToCollect)
+        return true;
     Threads& threads = runtime(m_globalObject).threads();
     // A wait that is nearly over is not made longer by a collection.
     if (remaining >= 0 && remaining < 2 * threads.m_durationOfLastIdleCollection) {

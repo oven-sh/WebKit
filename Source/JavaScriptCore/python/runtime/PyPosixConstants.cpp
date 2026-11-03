@@ -555,23 +555,14 @@ static constexpr PosixConstant posixConstants[] = {
 #ifdef STATX_BTIME
     { "STATX_BTIME"_s, STATX_BTIME },
 #endif
-#ifdef STATX_MNT_ID
-    { "STATX_MNT_ID"_s, STATX_MNT_ID },
-#endif
-#ifdef STATX_DIOALIGN
-    { "STATX_DIOALIGN"_s, STATX_DIOALIGN },
-#endif
-#ifdef STATX_MNT_ID_UNIQUE
-    { "STATX_MNT_ID_UNIQUE"_s, STATX_MNT_ID_UNIQUE },
-#endif
-#ifdef STATX_SUBVOL
-    { "STATX_SUBVOL"_s, STATX_SUBVOL },
-#endif
-#ifdef STATX_WRITE_ATOMIC
-    { "STATX_WRITE_ATOMIC"_s, STATX_WRITE_ATOMIC },
-#endif
-#ifdef STATX_DIO_READ_ALIGN
-    { "STATX_DIO_READ_ALIGN"_s, STATX_DIO_READ_ALIGN },
+#ifdef STATX_BASIC_STATS
+    // Whatever the headers of the system know: os.statx() has its own description of the structure, with the members these ask for.
+    { "STATX_MNT_ID"_s, 0x1000 },
+    { "STATX_DIOALIGN"_s, 0x2000 },
+    { "STATX_MNT_ID_UNIQUE"_s, 0x4000 },
+    { "STATX_SUBVOL"_s, 0x8000 },
+    { "STATX_WRITE_ATOMIC"_s, 0x10000 },
+    { "STATX_DIO_READ_ALIGN"_s, 0x20000 },
 #endif
 #ifdef AT_STATX_SYNC_AS_STAT
     { "AT_STATX_SYNC_AS_STAT"_s, AT_STATX_SYNC_AS_STAT },

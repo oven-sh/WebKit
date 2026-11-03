@@ -1019,8 +1019,11 @@ void Unit::unwindBlock(const Block& block, Vector<TryContext>& suspended)
 {
     suspendTry(block.tryDepth, suspended);
     switch (block.kind) {
-    case BlockKind::WhileLoop:
     case BlockKind::ForLoop:
+        if (block.ownsIterator)
+            callRuntimeForEffect(RuntimeFunction::ReleaseIterator, { block.saved });
+        return;
+    case BlockKind::WhileLoop:
     case BlockKind::AsyncForLoop:
     case BlockKind::TryExcept:
     case BlockKind::ExceptionHandler:
@@ -1291,6 +1294,19 @@ void Unit::assign(Assign* node)
             }
         }
     }
+    // variable[key] = f(): the store is the one use of the value. The value comes first, so what it is stored in can only be known
+    // when it is made if nothing of the program runs in between.
+    if (auto* target = node->targets.size() == 1 ? node->targets[0]->tryAs<Subscript>() : nullptr; target && makesTemporary(node->value)) {
+        auto isAtHand = [&](Expr* operand) {
+            if (!operand || operand->is<Constant>())
+                return true;
+            auto* name = operand->tryAs<NameExpr>();
+            return name && resolve(mangle(name->id)).kind == Access::Kind::Fast;
+        };
+        auto* slice = target->slice->tryAs<Slice>();
+        if (target->value->is<NameExpr>() && isAtHand(target->value) && (slice ? isAtHand(slice->lower) && isAtHand(slice->upper) && isAtHand(slice->step) : isAtHand(target->slice)))
+            m_storedTemporary = beginTemporary(node->value);
+    }
     Reg value = expr(node->value);
     for (Expr* target : node->targets)
         store(target, value.get());
@@ -1472,13 +1488,16 @@ void Unit::forLoop(For* node, bool isLast)
     Ref<Label> end = g.newLabel();
 
     Reg iterator = newTemporary();
+    // Nothing but a call: in `for x in (g := f()):` there is a variable as well.
+    unsigned temporary = node->iter->is<Call>() ? beginTemporary(node->iter) : 0;
     {
         Reg iterable = expr(node->iter);
         loc(node->iter->range);
+        markTemporaryUsed(temporary, TemporaryUse::ForHeader, nullptr, true);
         g.emitPyGetIter(iterator.get(), iterable.get());
     }
 
-    pushBlock({ .kind = BlockKind::ForLoop, .tryDepth = g.tryDepth(), .continueTarget = start.ptr(), .breakTarget = end.ptr(), .saved = iterator.get(), .isLast = isLast });
+    pushBlock({ .kind = BlockKind::ForLoop, .tryDepth = g.tryDepth(), .continueTarget = start.ptr(), .breakTarget = end.ptr(), .saved = iterator.get(), .isLast = isLast, .ownsIterator = !!temporary });
     m_finallyContexts.append({ false, true });
     g.emitLabel(start.get());
     line(node->iter->range.lineno);
@@ -1594,6 +1613,8 @@ void Unit::breakOrContinue(Stmt* node, bool isBreak)
         fail(node->range, isBreak ? "'break' outside loop"_s : "'continue' not properly in loop"_s);
     else {
         suspendTry(loop->tryDepth, suspended);
+        if (isBreak && loop->ownsIterator)
+            callRuntimeForEffect(RuntimeFunction::ReleaseIterator, { loop->saved });
         if (isBreak)
             leaveStatement(*loop->breakTarget, loop->isLast, JumpIs::OfTheProgram);
         else

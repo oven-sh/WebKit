@@ -456,22 +456,28 @@ NEVER_INLINE bool Collector::runBeginPhase(GCConductor conn)
 
     m_parallelMarkersShouldExit = false;
 
+    // To wake the helpers, and to wait at the end until each of them has woken once more and left, takes ten times as long as a
+    // collection that finds little to mark. So they are started when there is work to share: see
+    // SlotVisitor::donateKnownParallel() and donateAll(). A collection that is sure to have work for them starts them now, so
+    // that they take part in the first round of constraints as well.
     m_hasStartedHelpers.store(false, std::memory_order_relaxed);
-    if (startsHelpersLazily()) {
-        if (unsigned maxHelpers = Options::numberOfGCMarkers() - 1) {
-            constexpr size_t bytesPerHelper = 16 * MB;
-            size_t allocated = totalBytesAllocatedThisCycle();
-            size_t bytesToVisit = allocated / 2;
-            if (scope == CollectionScope::Full) {
-                bytesToVisit = allocated;
-                forEachHeap([&](Heap& heap) {
-                    bytesToVisit += heap.m_sizeAfterLastCollect;
-                });
-            }
-            m_helperClient.pool().ensureThreads(std::clamp<size_t>(bytesToVisit / bytesPerHelper, 1, maxHelpers));
+    if (unsigned maxHelpers = Options::numberOfGCMarkers() - 1) {
+        constexpr size_t bytesPerHelper = 16 * MB;
+        size_t allocated = totalBytesAllocatedThisCycle();
+        size_t bytesToVisit = allocated / 2;
+        if (scope == CollectionScope::Full) {
+            bytesToVisit = allocated;
+            forEachHeap([&](Heap& heap) {
+                bytesToVisit += heap.m_sizeAfterLastCollect;
+            });
         }
-    } else
-        startHelpers();
+        // TEMPORARY-AB: for measuring both ways with one binary.
+        static const bool isAsBefore = getenv("JSC_EAGER_GC_HELPERS");
+        if (startsHelpersLazily())
+            m_helperClient.pool().ensureThreads(std::clamp<size_t>(bytesToVisit / bytesPerHelper, 1, maxHelpers));
+        else if (bytesToVisit >= bytesPerHelper || isAsBefore)
+            startHelpers();
+    }
 
     m_constraintSet->didStartMarking();
 
@@ -564,9 +570,15 @@ bool Collector::canSkipMarking()
     return result;
 }
 
+// The threads themselves: a compiled image begins without any, gets as many as its heap has work for, and wakes them one by one.
+bool Collector::startsHelpersLazily()
+{
+    return Options::runsCompiledImage();
+}
+
 void Collector::startHelpers()
 {
-    if (startsHelpersLazily() && m_collectionsWithoutHelpers.load(std::memory_order_relaxed))
+    if (m_collectionsWithoutHelpers.load(std::memory_order_relaxed))
         return;
     if (m_hasStartedHelpers.exchange(true))
         return;

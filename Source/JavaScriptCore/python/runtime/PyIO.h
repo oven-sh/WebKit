@@ -46,6 +46,8 @@ void flushAllOpenFiles(JSGlobalObject*);
 void flushStandardStreamsIfPending(JSGlobalObject*);
 bool textIOHasPendingOutput(PyRecord*);
 bool bufferedHasPendingOutput(PyRecord*);
+// Whether a thread, which may be this one, is in the middle of an operation on it.
+bool bufferedIsBusy(PyRecord*);
 // For writeOutPendingOutput(): a TextIOWrapper, BufferedWriter or BufferedRandom, none of a class derived from those, over a FileIO
 // itself, so that nothing of the program's runs when it is written out. The list keeps it alive until then.
 void ioNotePendingOutput(JSGlobalObject*, PyRecord*);

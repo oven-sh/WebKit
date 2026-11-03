@@ -86,6 +86,7 @@ void initializeCodecsISO2022Module(JSGlobalObject*, PyModule*);
 void initializeCodecsJPModule(JSGlobalObject*, PyModule*);
 void initializeCodecsKRModule(JSGlobalObject*, PyModule*);
 void initializeCodecsTWModule(JSGlobalObject*, PyModule*);
+void initializeCtypesModule(JSGlobalObject*, PyModule*); // PyCtypes.cpp
 void initializeDateTimeModule(JSGlobalObject*, PyModule*); // PyDateTime.cpp
 void initializeMultibyteCodecModule(JSGlobalObject*, PyModule*); // PyMultibyteCodec.cpp
 
@@ -104,6 +105,7 @@ static constexpr NativeModuleDef nativeModuleTable[] = {
     { "_collections"_s, initializeCollectionsModule },
     { "_contextvars"_s, initializeContextVarsModule },
     { "_csv"_s, initializeCsvModule },
+    { "_ctypes"_s, initializeCtypesModule },
     { "_datetime"_s, initializeDateTimeModule },
     { "_functools"_s, initializeFunctoolsModule },
     { "_heapq"_s, initializeHeapqModule },

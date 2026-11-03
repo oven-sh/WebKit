@@ -783,7 +783,17 @@ static bool bytesParseConstructorArguments(JSGlobalObject* globalObject, ASCIILi
     RELEASE_AND_RETURN(scope, bytesOptionalStr(globalObject, values[2], function, "errors"_s, result.errors));
 }
 
+static JSValue bytesMake(JSGlobalObject*, JSValue cls, const CallArgs&);
+
 static JSValue bytesNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs& args)
+{
+    JSValue result = bytesMake(globalObject, cls, args);
+    if (Runtime& rt = runtime(globalObject); rt.ownsTemporaries()) [[unlikely]]
+        rt.didCallType(rt.bytesType(), result, false);
+    return result;
+}
+
+static JSValue bytesMake(JSGlobalObject* globalObject, JSValue cls, const CallArgs& args)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
@@ -958,7 +968,17 @@ static JSValue byteArrayNew(JSGlobalObject* globalObject, JSValue cls, const Cal
     return PyByteArray::create(rt.vm(), rt.structure<PyByteArray>(), PyType::from(cls));
 }
 
+static JSValue byteArrayFill(JSGlobalObject*, JSValue self, const CallArgs&);
+
 static JSValue byteArrayInit(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
+{
+    JSValue result = byteArrayFill(globalObject, self, args);
+    if (Runtime& rt = runtime(globalObject); rt.ownsTemporaries()) [[unlikely]]
+        rt.didCallType(rt.bytearrayType(), result, false);
+    return result;
+}
+
+static JSValue byteArrayFill(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2779,7 +2799,13 @@ static JSValue byteArrayAssign(JSGlobalObject* globalObject, JSValue self, JSVal
     return jsUndefined();
 }
 
-static JSValue byteArraySetItem(JSGlobalObject* globalObject, JSValue self, JSValue key, JSValue value) { return byteArrayAssign(globalObject, self, key, value); }
+static JSValue byteArraySetItem(JSGlobalObject* globalObject, JSValue self, JSValue key, JSValue value)
+{
+    JSValue result = byteArrayAssign(globalObject, self, key, value);
+    if (Runtime& rt = runtime(globalObject); rt.ownsTemporaries()) [[unlikely]]
+        rt.didStoreInItem(value);
+    return result;
+}
 static JSValue byteArrayDelItem(JSGlobalObject* globalObject, JSValue self, JSValue key) { return byteArrayAssign(globalObject, self, key, { }); }
 
 static JSValue byteArrayIAdd(JSGlobalObject* globalObject, JSValue self, JSValue other)

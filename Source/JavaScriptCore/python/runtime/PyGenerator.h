@@ -76,6 +76,9 @@ public:
     bool hooksInitialized { false };
     bool isClosed { false };
     bool isRunningAsync { false };
+    // Not 0: nothing refers to it but the register in which a `for` loop keeps its iterator, if nothing has escaped since: see
+    // Runtime::claimIteratorOfLoop().
+    unsigned loopOwnership { 0 };
     JSValue finalizer() const { return m_finalizer.get(); }
     void setFinalizer(VM& vm, JSValue value) { m_finalizer.set(vm, this, value); }
 
@@ -186,6 +189,8 @@ JSValue generatorThrow(JSGlobalObject*, PyGenerator*, JSValue exception, JSValue
 JSValue makeANextAwaitable(JSGlobalObject*, JSValue awaitable, JSValue defaultValue);
 // generator.close()
 void generatorClose(JSGlobalObject*, PyGenerator*);
+// What is done to one that the program has dropped.
+void finalizeGeneratorNow(JSGlobalObject*, PyGenerator*);
 // RuntimeWarning: coroutine '...' was never awaited
 void warnOfUnawaitedCoroutine(JSGlobalObject*, PyGenerator*);
 

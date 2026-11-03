@@ -98,6 +98,23 @@ struct TracedBlock {
     static constexpr int registerOffsetOf(uint64_t bits) { return static_cast<int32_t>(static_cast<uint32_t>(bits >> 8)); }
 };
 
+// PythonMark::TemporaryMade, TemporaryUsed: see runtime/PyTemporaries.cpp. The value of a call or a subscript that is in no variable,
+// and what is done with it, once.
+struct TemporaryUse {
+    enum Kind : uint8_t {
+        Receiver, // A method of it is called. The register is a constant, the name of the method.
+        SubscriptBase, // It is subscripted.
+        Argument, // It is passed to what is in the register, which was there before the value was made.
+        StoredValue, // It is stored in an item of what is in the register, a variable. No code runs between making it and that.
+        ForHeader, // A `for` loop goes through it.
+    };
+    // `isLast`: no other mark for this value follows.
+    static constexpr uint64_t encode(Kind kind, int registerOffset, bool isLast) { return kind | isLast << 7 | static_cast<uint64_t>(static_cast<uint32_t>(registerOffset)) << 8; }
+    static constexpr Kind kindOf(uint64_t bits) { return static_cast<Kind>(bits & 0x7f); }
+    static constexpr bool isLast(uint64_t bits) { return bits & 0x80; }
+    static constexpr int registerOffsetOf(uint64_t bits) { return static_cast<int32_t>(static_cast<uint32_t>(bits >> 8)); }
+};
+
 // op_py_send. The mode is a JSGenerator::ResumeMode, or this plus 0, or 1 after __aenter__, or 2 after __aexit__: `iterator` holds
 // what `await` was given, which the instruction replaces by what to iterate over, and then sends None to.
 constexpr int firstSendOfAwait = 8;
@@ -177,7 +194,8 @@ constexpr int firstSendOfAwait = 8;
     v(TypeAlias, 3) /* name, type params or None, a function that computes the value */ \
     /* Other */ \
     v(PrintExpression, 1) \
-    v(SetupAnnotations, 1) /* namespace */
+    v(SetupAnnotations, 1) /* namespace */ \
+    v(ReleaseIterator, 1) /* the iterator of a `for` loop that is left before its end */
 
 enum class RuntimeFunction : uint8_t {
 #define PY_DEFINE_RUNTIME_FUNCTION(name, argc) name,

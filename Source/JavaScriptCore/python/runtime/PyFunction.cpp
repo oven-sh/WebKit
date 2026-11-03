@@ -2234,14 +2234,15 @@ static JSValue nativeFunctionGetQualname(JSGlobalObject* globalObject, JSValue s
     return makeStr(vm, makeString(prefix, '.', asNative(self)->def().name));
 }
 
-// What a built-in function is bound to: an object, the type it is a static method of, or the module it belongs to.
+// What a built-in function is bound to: an object, or the module it belongs to. A static method says None, though it is shown and
+// pickled as a method of its type.
 static JSValue nativeGetSelf(JSGlobalObject* globalObject, JSValue self)
 {
     auto* native = asNative(self);
     if (JSValue bound = native->self())
         return bound;
     if (native->def().kind == NativeKind::StaticMethod && native->ownerType())
-        return native->ownerType();
+        return jsUndefined();
     JSValue owner = native->owner();
     if (owner && owner.isString()) {
         if (JSValue module = runtime(globalObject).modules()->get(asString(owner)))
@@ -2274,6 +2275,8 @@ static JSValue nativeFunctionRepr(JSGlobalObject* globalObject, JSValue self)
 {
     auto* native = asNative(self);
     JSValue bound = native->self();
+    if (!bound && native->def().kind == NativeKind::StaticMethod)
+        bound = native->ownerType();
     if (!bound || PyModule::is(bound))
         return makeStr(globalObject, makeString("<built-in function "_s, native->def().name, '>'));
     if (auto* type = PyType::tryFrom(bound))

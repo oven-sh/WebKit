@@ -440,8 +440,11 @@ static JSValue gcCollect(JSGlobalObject* globalObject, JSValue generationValue)
         writeToStderr(globalObject, makeString("gc: collecting generation "_s, generation, "...\ngc: objects in each generation: 0 0 0\ngc: objects in permanent generation: 0\n"_s));
     MonotonicTime start = MonotonicTime::now();
 
+    if (debug & debugSaveAll)
+        rt.temporariesMayHaveEscaped();
     Census census(rt, debug & debugSaveAll, debug & debugCollectable);
-    collectAndFinalize(globalObject, &census);
+    // There are two generations here. What has come through a collection, of the engine's own or one asked for, is old.
+    collectAndFinalize(globalObject, &census, generation == 2 ? CollectionScope::Full : CollectionScope::Eden);
     RETURN_IF_EXCEPTION(scope, { });
 
     stats.collected = census.found;
@@ -544,6 +547,7 @@ static JSValue gcGetStats(JSGlobalObject* globalObject)
 static JSValue gcGetObjects(JSGlobalObject* globalObject, JSValue generation)
 {
     Runtime& rt = runtime(globalObject);
+    rt.temporariesMayHaveEscaped();
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (failed(scope, audit(globalObject, "gc.get_objects"_s, generation && !isNone(generation) ? generation : jsNumber(-1))))
@@ -626,6 +630,7 @@ private:
 static JSValue gcGetReferrers(JSGlobalObject* globalObject, const CallArgs& args)
 {
     VM& vm = getVM(globalObject);
+    runtime(globalObject).temporariesMayHaveEscaped();
     auto scope = DECLARE_THROW_SCOPE(vm);
     // The hooks are given the objects in a tuple, which refers to them for as long as it is there.
     PyTuple* forHooks = isAudited(globalObject) ? PyTuple::create(globalObject, args.positional()) : nullptr;
@@ -772,6 +777,7 @@ static void appendReferents(JSGlobalObject* globalObject, JSCell* object, Marked
 static JSValue gcGetReferents(JSGlobalObject* globalObject, const CallArgs& args)
 {
     VM& vm = getVM(globalObject);
+    runtime(globalObject).temporariesMayHaveEscaped();
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (isAudited(globalObject) && failed(scope, audit(globalObject, "gc.get_referents"_s, PyTuple::create(globalObject, args.positional()))))
         return { };

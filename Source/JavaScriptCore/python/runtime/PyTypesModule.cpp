@@ -41,6 +41,17 @@ JSValue makeCapsule(JSGlobalObject* globalObject, ASCIILiteral name, const void*
     return capsule;
 }
 
+// One that owns what it points to. (Field 1: the cell whose memory that is.)
+JSValue makeCapsuleWithMemory(JSGlobalObject* globalObject, ASCIILiteral name, JSCell* memory, const void* pointer)
+{
+    VM& vm = getVM(globalObject);
+    PyRecord* capsule = PyRecord::create(globalObject, runtime(globalObject).typeFor(capsuleTypeDef), 2);
+    capsule->set(vm, 0, makeStr(vm, name));
+    capsule->set(vm, 1, memory);
+    capsule->number = static_cast<int64_t>(std::bit_cast<intptr_t>(pointer));
+    return capsule;
+}
+
 const void* pointerOfCapsule(JSGlobalObject* globalObject, JSValue value, ASCIILiteral name)
 {
     PyRecord* capsule = PyRecord::tryFrom(value, runtime(globalObject).typeFor(capsuleTypeDef));

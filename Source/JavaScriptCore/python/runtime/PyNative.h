@@ -216,6 +216,12 @@ enum NativeFlag : uint8_t {
     // It may wait for other threads, in Threads::waitUntil(), which then has it begun again on a wiped stack: see there. It does
     // nothing that shows before it waits.
     MayWait = 1 << 3,
+    // When it returns, nothing that outlives the call refers to its arguments (self is one), what it returns or raises included, and
+    // it has shown them to no code of the program: as far as they are of the built-in types that PyTemporaries.cpp is about.
+    // It calls Runtime::didCallMethod() when it is done.
+    KeepsNothing = 1 << 4,
+    // A __getitem__ that takes indices, among other things: the type has no __iter__ and is iterated over by index.
+    ItemOfSequence = 1 << 6,
 };
 
 class NativeDef {
@@ -295,6 +301,7 @@ private:
 
 #define PY_FUNCTION(name, function, signature) NativeDef(NativeKind::Function, name ""_s, function, signature ""_s)
 #define PY_METHOD(name, function, signature) NativeDef(NativeKind::Method, name ""_s, function, signature ""_s)
+#define PY_METHOD_WITH_FLAGS(name, function, signature, flags) NativeDef(NativeKind::Method, name ""_s, function, signature ""_s, flags)
 #define PY_WAITING_METHOD(name, function, signature) NativeDef(NativeKind::Method, name ""_s, function, signature ""_s, MayWait)
 #define PY_SLOT(name, function, signature) NativeDef(NativeKind::SlotWrapper, name ""_s, function, signature ""_s)
 #define PY_SEQUENCE_SLOT(name, function, signature) NativeDef(NativeKind::SlotWrapper, name ""_s, function, signature ""_s, SequenceOperation)

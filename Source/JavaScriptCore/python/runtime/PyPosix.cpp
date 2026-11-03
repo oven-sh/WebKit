@@ -492,6 +492,8 @@ bool PosixPath::convert(JSGlobalObject* globalObject, JSValue value)
     }
 
     if (isText) {
+        if (m_options & AsText)
+            return true;
         if (failed(scope, posixEncodeStr(globalObject, strValue(value), m_narrow)))
             return false;
     } else
@@ -833,7 +835,7 @@ static JSValue posixPathNormpath(JSGlobalObject* globalObject, JSValue pathValue
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    PosixPath path("_path_normpath"_s, PosixPath::Nonstrict | PosixPath::AllowVirtual);
+    PosixPath path("_path_normpath"_s, PosixPath::Nonstrict | PosixPath::AllowVirtual | PosixPath::AsText);
     if (failed(scope, path.convert(globalObject, pathValue)))
         return { };
     if (path.isBytes())
@@ -850,7 +852,7 @@ static JSValue posixPathSplitrootEx(JSGlobalObject* globalObject, JSValue pathVa
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    PosixPath path("_path_splitroot_ex"_s, PosixPath::Nonstrict | PosixPath::AllowVirtual);
+    PosixPath path("_path_splitroot_ex"_s, PosixPath::Nonstrict | PosixPath::AllowVirtual | PosixPath::AsText);
     if (!path.convert(globalObject, pathValue))
         return { };
     if (path.isBytes()) {

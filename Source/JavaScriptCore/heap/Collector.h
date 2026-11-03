@@ -203,7 +203,7 @@ private:
     // The per-heap part of the Begin and End phases.
     void beginCollectionInEachHeap(CollectionScope, MonotonicTime startTime);
     void setUpVisitors(CollectionScope);
-    static bool startsHelpersLazily() { return Options::runsCompiledImage(); }
+    static bool startsHelpersLazily();
     void startHelpers();
     void endCollectionInEachHeap();
 

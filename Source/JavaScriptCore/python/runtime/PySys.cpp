@@ -472,6 +472,14 @@ static JSValue sysSetCoroutineOriginTrackingDepth(JSGlobalObject* globalObject, 
     runtime(globalObject).coroutineOriginTrackingDepth = depth;
     return jsUndefined();
 }
+
+static JSValue sysClearTypeCache(JSGlobalObject* globalObject)
+{
+    if (!warn(globalObject, runtime(globalObject).DeprecationWarning(), "sys._clear_type_cache() is deprecated and scheduled for removal in a future version. Use sys._clear_internal_caches() instead."_s))
+        return { };
+    return jsUndefined();
+}
+
 // -X cpu_count, which nothing sets: os.cpu_count() is to ask the system.
 static JSValue sysGetCpuCountConfig(JSGlobalObject*) { return jsNumber(configuration().cpuCount); }
 static JSValue sysGetSwitchInterval(JSGlobalObject* globalObject) { return makeFloat(globalObject, static_cast<double>(runtime(globalObject).threads().switchInterval()) * 1e-9); }
@@ -613,7 +621,7 @@ static JSValue sysBaseRepl(JSGlobalObject* globalObject)
 
 static constexpr NativeDef sysFunctions[] = {
     PY_FUNCTION("_clear_internal_caches", sysReturnNone, "()"),
-    PY_FUNCTION("_clear_type_cache", sysReturnNone, "()"),
+    PY_FUNCTION("_clear_type_cache", sysClearTypeCache, "()"),
     PY_FUNCTION("_get_cpu_count_config", sysGetCpuCountConfig, "()"),
     PY_FUNCTION("_current_exceptions", sysCurrentExceptions, "()"),
     PY_FUNCTION("_current_frames", sysCurrentFrames, "()"),
@@ -1020,6 +1028,26 @@ void initializeSysconfigDataModule(JSGlobalObject* globalObject, PyModule* modul
     set("Py_GIL_DISABLED"_s, jsNumber(0));
     set("Py_ENABLE_SHARED"_s, jsNumber(0));
     set("Py_HASH_ALGORITHM"_s, jsNumber(0)); // None of CPython's: see sys.hash_info.algorithm.
+    set("WITH_DOC_STRINGS"_s, jsNumber(1));
+    // os.urandom() needs no file descriptor.
+    set("HAVE_GETENTROPY"_s, jsNumber(1));
+#if OS(LINUX)
+    set("HAVE_GETRANDOM"_s, jsNumber(1));
+    set("HAVE_GETRANDOM_SYSCALL"_s, jsNumber(1));
+#endif
+    set("SIZEOF_SHORT"_s, jsNumber(sizeof(short)));
+    set("SIZEOF_INT"_s, jsNumber(sizeof(int)));
+    set("SIZEOF_LONG"_s, jsNumber(sizeof(long)));
+    set("SIZEOF_LONG_LONG"_s, jsNumber(sizeof(long long)));
+    set("SIZEOF_FLOAT"_s, jsNumber(sizeof(float)));
+    set("SIZEOF_DOUBLE"_s, jsNumber(sizeof(double)));
+    set("SIZEOF_VOID_P"_s, jsNumber(sizeof(void*)));
+    set("SIZEOF_SIZE_T"_s, jsNumber(sizeof(size_t)));
+    set("SIZEOF_UINTPTR_T"_s, jsNumber(sizeof(uintptr_t)));
+    set("SIZEOF_WCHAR_T"_s, jsNumber(sizeof(wchar_t)));
+    set("SIZEOF_TIME_T"_s, jsNumber(sizeof(time_t)));
+    set("SIZEOF_OFF_T"_s, jsNumber(sizeof(off_t)));
+    set("SIZEOF_PID_T"_s, jsNumber(sizeof(pid_t)));
     // Where zoneinfo looks for the time zones of the system.
     set("TZPATH"_s, text("/usr/share/zoneinfo:/usr/lib/zoneinfo:/usr/share/lib/zoneinfo:/etc/zoneinfo"_s));
     module->add(globalObject, "build_time_vars"_s, variables);

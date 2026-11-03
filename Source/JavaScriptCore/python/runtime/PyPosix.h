@@ -161,6 +161,7 @@ public:
         VirtualUnsupported = 1 << 4, // The function changes nothing, but there is no doing it there: ENOTSUP.
         MakesNew = 1 << 5, // Nothing may be at the path,
         MakesOrReplaces = 1 << 6, // or nothing need be: otherwise that is what is wrong with it.
+        AsText = 1 << 7, // The function only looks at the characters: a str is not encoded, so whatever is in it is fine. No narrow() then.
     };
 
     explicit PosixPath(ASCIILiteral function, ASCIILiteral argument = "path"_s, unsigned options = 0)

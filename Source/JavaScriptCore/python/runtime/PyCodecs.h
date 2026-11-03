@@ -52,6 +52,9 @@ JSValue codecDecodeCharmap(JSGlobalObject*, std::span<const uint8_t>, JSValue ma
 
 // codecs.lookup(encoding): the tuple, usually a CodecInfo, of (encoder, decoder, stream reader, stream writer).
 JSValue codecLookup(JSGlobalObject*, const String& encoding);
+// To be called before the name of a character is looked up or given. The names are the engine's, but in CPython they come with the
+// module unicodedata, which is imported when one is first needed: a program can see that, and can make it fail. False: it did.
+bool codecLoadCharacterNames(JSGlobalObject*);
 // The same, for a codec between str and bytes: any other is a LookupError, which points to `alternateCommand` if that is not null.
 JSValue codecLookupTextEncoding(JSGlobalObject*, const String& encoding, ASCIILiteral alternateCommand);
 // codecs.lookup_error(name)

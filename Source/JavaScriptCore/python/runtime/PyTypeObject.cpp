@@ -979,7 +979,13 @@ static MROResult resolveMRO(JSGlobalObject* globalObject, PyType* type)
         mro = computeMRO(globalObject, type);
         RETURN_IF_EXCEPTION(scope, MROResult::Raised);
     } else {
-        JSValue result = callMethod(globalObject, type, rt.names.mro());
+        // Looked up as a special method is: the __getattribute__ of the metaclass is not asked.
+        JSValue method = type->type()->lookup(rt.names.mro());
+        if (!method) {
+            raise(globalObject, scope, rt.AttributeError(), "mro"_s);
+            return MROResult::Raised;
+        }
+        JSValue result = callSpecial(globalObject, method, type);
         RETURN_IF_EXCEPTION(scope, MROResult::Raised);
         mro = tupleFromIterable(globalObject, result);
         RETURN_IF_EXCEPTION(scope, MROResult::Raised);

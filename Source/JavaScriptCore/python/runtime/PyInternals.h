@@ -69,7 +69,10 @@ JSValue allocateInstance(JSGlobalObject*, PyType*, PyType* layout = nullptr);
 JSValue callBodyOfGenerator(JSGlobalObject*, PyFunction* body, std::span<const JSValue> arguments);
 // What gc.collect() does: collects, runs the finalizers of what was found, and so on until there is nothing left to do. Not from
 // a finalizer. Throws nothing but the host's termination.
-void collectAndFinalize(JSGlobalObject*, Runtime::MarkingObserver* = nullptr);
+// Of the young generation only (what has been allocated since the last collection, whoever made that): once. What is kept for its
+// finalizer is old afterwards, so that it takes a full collection to find that it is still dead, to clear the weak references
+// to it and to free it.
+void collectAndFinalize(JSGlobalObject*, Runtime::MarkingObserver* = nullptr, CollectionScope = CollectionScope::Full);
 // In CPython a file that is dropped is closed at once, and programs count on it: open(path, "w").write(text), and whoever opens the
 // file next finds the text. Here it would be closed after some collection. So the streams over files that hold output are kept in
 // a list, and what they hold is written before the program, or anyone it starts, can look at a file, and before it does anything

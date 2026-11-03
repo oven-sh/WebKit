@@ -216,6 +216,14 @@ bool Parser::decodeString(std::span<const uint8_t> body, bool isRaw, const Token
             truncated = "truncated \\UXXXXXXXX escape"_s;
             break;
         case 'N': {
+            if (!m_host.hasCharacterNames()) {
+                auto message = "(unicode error) \\N escapes not supported (can't load unicodedata module)"_s;
+                if (errorRange)
+                    syntaxErrorAt(*errorRange, message);
+                else
+                    syntaxError(message);
+                return false;
+            }
             auto malformed = "malformed \\N character escape"_s;
             if (i >= size || body[i] != '{')
                 return fail(escapeStart, virtualOffset, '\\', malformed);

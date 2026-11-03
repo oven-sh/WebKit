@@ -214,7 +214,8 @@ private:
 };
 
 // function(cell) for the cells of the block that were alive when the collection began and are not marked. This is
-// MarkedBlock::Handle::isLive() for a whole block, in a full collection, with the world stopped.
+// MarkedBlock::Handle::isLive() for a whole block, with the world stopped. (In a collection of the young generation the marks of
+// the last collection stand, so that what is old counts as alive.)
 template<typename Function>
 void DeadGraph::forEachCellThatDied(MarkedSpace& space, MarkedBlock::Handle* handle, const Function& function)
 {
@@ -236,7 +237,7 @@ void DeadGraph::forEachCellThatDied(MarkedSpace& space, MarkedBlock::Handle* han
         dead = block.newlyAllocated();
         if (marksAreCurrent)
             dead.exclude(block.marks());
-    } else if (!marksAreCurrent && MarkedSpace::nextVersion(block.markingVersion()) == space.markingVersion())
+    } else if (!marksAreCurrent && MarkedSpace::nextVersion(block.markingVersion()) == space.markingVersion() && m_heap.collectionScope() == CollectionScope::Full)
         dead = block.marks(); // Nothing in it has been marked. These are the survivors of the last collection.
     else
         return;
@@ -247,7 +248,6 @@ void DeadGraph::forEachCellThatDied(MarkedSpace& space, MarkedBlock::Handle* han
 
 void DeadGraph::addAllThatDied(std::span<JSCell* const> candidates)
 {
-    ASSERT(m_heap.collectionScope() == CollectionScope::Full);
     auto look = [&](JSCell* cell) {
         ++m_cellsLookedAt;
         if (cell->structureID() && !isLeaf(cell) && m_cells.size() <= maxCells)

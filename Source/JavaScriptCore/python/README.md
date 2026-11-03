@@ -247,13 +247,48 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
   closing it, and waits for a server in another thread that waits for the end of the connection. A thread that has waited for
   50 ms collects and finalizes (`Threads::collectWhileIdle`), then less and less often; so does one that would otherwise be told
   that it waits for ever. (If nothing seems to have been allocated since the last such collection, it is skipped, but not more
-  often than keeps these collections below a fiftieth of the time: to drop something takes no allocation.) That goes for waiting for another thread (`Threads::waitUntil`) and for waiting for the kernel, which is
-  done piece by piece (`IdleWait`): `time.sleep`, everything in `select` and every socket call that goes through
-  `waitForEvents` (with a timeout, or on the main thread of a host with an event loop), reads from what is not a regular file
-  (`waitUntilReadable`: `os.read`, `FileIO`, so `input()` too), `os.waitpid` for one process on Linux. A native function that
-  finds that it has to wait is begun again on a wiped stack, for the same reason as `gc.collect()` (`NativeFlag::MayWait`,
-  `Threads::willCallFunctionThatMayWait`). Not covered: `recv` and the like on a blocking socket in a thread other than the main
-  one, writes, `connect`, `flock`, `wait()` for any child, `sigwait`.
+  often than keeps these collections below a fiftieth of the time: to drop something takes no allocation. And a wait with less
+  left than twice what the last such collection took is not made longer by one.) That goes for waiting for another thread
+  (`Threads::waitUntil`) and for waiting for the kernel, which is done piece by piece (`IdleWait`): `time.sleep`, everything in
+  `select` and every socket call that goes through `waitForEvents` (with a timeout, or on the main thread of a host with an event
+  loop), `os.read` and `FileIO` (so `input()` too), `os.waitpid` for one process on Linux.
+  - *A piece that ends is not a signal.* A signal that comes between two pieces interrupts neither, so signals are looked at
+    after every piece (`IdleWait::didWait`); one that comes between that look and the system call waits for the end of the
+    piece, where in CPython it waits for the end of the whole call.
+  - *"Nothing to read" is not "`read()` would wait".* A read of no bytes, of the end of a pipe that is open for writing, of a
+    socket that listens or has `SO_RCVTIMEO`, of a terminal with `VMIN` 0 returns at once or in its own time. So
+    `waitUntilReadable` waits in `poll` only for the kinds of descriptor of which the two are known to be the same
+    (`readWaitsAsPollDoes`), and asks only after `poll` has said that there is nothing: a read that finds data costs one
+    more system call, no more.
+  - *The stack.* A native function that finds that it has to wait is begun again on a wiped stack, for the same reason as
+    `gc.collect()` (`NativeFlag::MayWait`, `Threads::willCallFunctionThatMayWait`). That takes a function that waits once, before
+    it has done anything, and arguments that can be looked at twice without running code. With other arguments
+    (`select.select`: lists) the stack is wiped before the call. A function that may have consumed something when it comes to
+    wait (`readall`, the buffered readers) is neither: there the collection happens, but what the frames above hold by
+    chance stays.
+  - Not covered: `recv` and the like on a blocking socket in a thread other than the main one, writes, `connect`, `flock`,
+    `wait()` for any child, `sigwait`.
+- **What only a temporary holds is finalized at once**, where that can be known without the collector (`PyTemporaries.cpp`, which has the
+  argument in full). `bytes(memoryview(b)[:n]); del b[:n]` and `for x in g(): break` count on it. The compiler leaves marks beside the
+  code, no instructions: this call or subscript makes a value that goes in a temporary register, and that instruction is its one
+  use (`PythonMark::TemporaryMade`, `TemporaryUsed`).
+  - A memoryview looks at the marks when it is made. It is noted as owned by the temporary only if the use is known *then* to keep
+    nothing: a method of memoryview that says so (`NativeFlag::KeepsNothing`), a subscript, being passed to a callee that is
+    already waiting in a register and says so, being stored in an item of a bytearray with nothing to run in between. To find out
+    afterwards is not sound: a use that keeps the object (a function in Python, a store in a list) runs no code that could
+    say so, and addresses of frames and offsets of instructions come round again. When the use is over, or has raised,
+    the view is released.
+  - Generators are made too often for that. A generator function notes the last one it made and for which instruction, and
+    `op_py_get_iter`, the next instruction to run there, claims it if the marks say that it is at the head of a `for` over that very
+    call. The loop then closes it on every way out but the end: an instruction on the way of `break`, `return` and the `continue`
+    of an outer loop; for an exception the unwinder does it, from the marks that tracing has for loops, before anybody is
+    told that the exception is caught or leaves the frame, as CPython pops the stack of a frame first.
+  - A program can get at an object that it has no reference to through `gc.get_objects()`, `get_referrers()`, `get_referents()` and
+    `DEBUG_SAVEALL`, and at a generator through `frame.f_generator`: those end all such ownership
+    (`temporariesMayHaveEscaped()`). What traces the program is shown arguments of calls and can assign to variables: that forgets the
+    notes of views. So does a collection, for nobody visits them.
+  - It is about promptness only. What is not covered (anything that has been in a variable, a parameter, a container or a return
+    value; objects made by a class written in Python) waits for the collector as before.
 - **Files that are dropped** without being closed are closed by a finalizer, some time later, where CPython closes them at once.
   Two things make up for most of that. Streams as `open()` makes them that hold output are in a list
   (`ioNotePendingOutput`), and `writeOutPendingOutput()`, one load and a branch when the list is empty, writes them out before
@@ -392,6 +427,57 @@ lock (`runtime/PyThreads.h`). To hold it is to hold the VM's `JSLock`, with what
   others may be waiting for what a dropped object holds open, and in CPython it would have been closed when it was dropped.
 - At exit the threads that are not daemons are joined, unless the wait is interrupted; daemon threads never get the lock again.
 - Signals are handled by the main thread, whichever thread the system delivers them to.
+
+## ctypes
+
+`_ctypes` is `runtime/PyCtypes*.cpp`; `Lib/ctypes` is CPython's. What a ctypes type knows (size, alignment, format, how its bytes
+are read: CPython's `StgInfo`) is a cell, `PyCTypeInfo`, under a hidden key of the type; a type of one of the metaclasses that has
+none is abstract. The layout of a structure is worked out in Python, by `ctypes._layout`, as in CPython.
+
+**Memory.** An instance (`PyCData`) has no memory in itself. It refers to one of three things:
+- A `PyByteStorage`: memory of the collector, which does not move. That is what an instance made by calling its type has, and
+  what a part of it (a field, an item) shares with it. Nothing is freed by hand and no instance has a destructor: the memory lives while
+  any instance refers to it. `resize()` beyond what there is room for gives the instance new memory; parts made before go on using the
+  old, which stays valid.
+- A memoryview (`from_buffer`). The address is looked up through the view at each use, so it is noticed when the view has been
+  released or JS has detached or shrunk the memory. While the instance lives, the view counts as an export: a bytearray cannot be resized.
+- An address about which nothing is known: `from_address`, `in_dll`, what a pointer points to. Where a pointer points into the memory
+  of something that it keeps alive, which is the rule, the instance made from it holds on to that memory instead.
+
+**What keeps what alive** is as in CPython, for programs look at it: `_objects` of the outermost instance (`_b_base_` leads there)
+holds, under keys that say which part they are for, what the pointers in the memory point into: the bytes of a `c_char_p`, the
+instance a pointer was made from, a capsule for the `wchar_t` copy of a str.
+
+**Safety.** What a program does with instances, fields, items, slices, `value`, `raw`, `resize`, `from_buffer`,
+`from_buffer_copy`, buffers and pickles stays within memory that is alive. Each access checks its bounds against the instance (so a
+`CField` applied to an instance of another type is an error), and a value is converted, which may run any code, before the
+memory is located. A pointer that points into something it keeps alive (`pointer(x)`, `p.contents = x`, an array assigned to a pointer field,
+`cast` of an instance) is checked too: `p[i]`, `p[a:b]` and `p.contents` raise `ValueError` if they would leave the memory of that object, which
+also covers a pointer that was given `contents` of another type than its own. What follows an address of which nothing is known is not
+checked and cannot be: `from_address`, `in_dll`, `string_at` and the like, an int stored in a `c_char_p` or a `c_void_p`, a pointer whose bytes came from
+elsewhere (a union, `memmove`, `from_buffer_copy`, a foreign function), and foreign calls themselves. These can crash the process, as in CPython. So
+can changing `_objects`, whose docstring says not to.
+
+**`py_object`.** There is no `PyObject*`. The eight bytes are the bits of the `JSValue`, which for most objects is what `id()`
+returns, and 0 is NULL. The object is kept alive by `_objects`. Bits read from memory are handed out as an object if they are those of
+what `_objects` holds for that place; otherwise only after the heap has confirmed that they are those of a live cell of a kind that programs
+see (`objectFromBits()`). `Py_INCREF` and `Py_DECREF` keep a table of objects that are to stay alive. `ctypes.pythonapi` is the
+program itself, which has no C API: its functions are missing (`AttributeError`).
+
+**`cast`, `string_at`, `wstring_at`, `memoryview_at`, `memmove`, `memset`** are, in `Lib/ctypes`, function pointers made from addresses
+that `_ctypes` exports. The addresses are real and distinct, and a call to one of them runs the C++ function directly.
+
+**Foreign calls** are behind an interface shaped like libffi's, at the end of `PyCtypes.h`: `callForeignFunction()`, `allocateCallbackCode()`,
+`releaseCallbackCode()`, `runCallback()`. What is behind it now, `PyCtypesForeign.cpp`, is a stopgap until it is decided whether libffi is vendored. It generates
+no code and has no assembly: on x86-64 (System V) and AArch64 the place of an argument depends only on its class and on how many of that class came before
+it, so one call through a prototype that fills every argument register and a stretch of stack stands for every signature, and the work is to find
+the place of each argument, structures by value included. That is calling functions through prototypes that are not theirs: the calling conventions
+define what happens, C++ does not. Callbacks are taken from a fixed table of entry points compiled into the program. Its limits are in DEFERRED.md.
+
+`CDLL` functions run without the GIL, `PyDLL` functions with it. A callback that arrives on a thread that is in a foreign call takes the GIL back for as long as it
+runs; on a thread that holds the VM's lock it just runs; on any other thread (one that C started) it is refused: a message on stderr, and zero
+for a result. An exception in a callback goes to `sys.unraisablehook`. The entry point of a callback is free again once the collector has found that
+nothing refers to the callback; a call that comes after that is refused too.
 
 ## Tracing
 
@@ -601,14 +687,14 @@ first use. A module is `void initializeXModule(JSGlobalObject*, PyModule*)` list
 
 Everything is tested through Bun, against CPython 3.15 as the oracle. The tests are in Bun's repository, under `test/js/bun/python/`.
 
-- **Differential tests** (`differential/`, with a README): some 580 scripts, each with what CPython printed beside it. `bun script.py`
+- **Differential tests** (`differential/`, with a README): some 830 scripts, each with what CPython printed beside it. `bun script.py`
   must give the same stdout, the same exit status, the same last line of stderr. `differential/*.test.ts` run them in Bun's test runner,
   without a CPython; `differential/tools/run.py` runs them by hand, shows differences legibly, and asks a CPython again
   (`--update`). `expected-failures.json` lists what is known to differ, and why; a listed script that passes is a failure.
   `differential/command-line/` does the same for about 130 command lines of `python3`.
 - **The grid** (`differential/extra/grid/grid.py`): every method of the built-in types and of many others written in C++, every operator, the
   built-in functions, formats, codecs, `struct`, `math`, attributes, exceptions, calls, special methods that misbehave, containers that change
-  under an iteration, arithmetic around the sizes where the representation of an int changes: 4.3 million calls on ordinary and borderline
+  under an iteration, arithmetic around the sizes where the representation of an int changes: five million calls on ordinary and borderline
   arguments, each of which has to come out as in CPython, message included. What cannot, by design, is left out there with a comment saying
   why. `differential/extra/grid_*.py` are samples of it (each Nth call, digests of the outcomes) small enough for a debug build;
   `tools/grid_compare.py` and `tools/grid_classes.py` make all the calls under both interpreters, in half a minute with a release build, and show

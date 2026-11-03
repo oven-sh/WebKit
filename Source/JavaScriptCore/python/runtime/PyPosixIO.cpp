@@ -260,7 +260,7 @@ static JSValue posixRead(JSGlobalObject* globalObject, JSValue fdValue, JSValue 
         return { };
     if (length > 0 && static_cast<size_t>(length) > posixMaxTransfer)
         length = static_cast<int64_t>(posixMaxTransfer);
-    if (length >= 0) {
+    if (length > 0) {
         writeOutPendingOutput(globalObject);
         if (failed(scope, waitUntilReadable(globalObject, fd)))
             return { };

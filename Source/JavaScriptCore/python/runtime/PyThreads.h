@@ -160,8 +160,9 @@ public:
     // of earlier calls were, and what they do not write still refers to what those dealt with: the very objects that were
     // dropped last. So a native function that finds that it has to wait gives up (waitUntil() throws something that nobody but
     // its caller sees), its frames go, the stack below is wiped, and it is called again: NativeFlag::MayWait. Only if its
-    // arguments are such that looking at them a second time runs no code of the program.
-    void willCallFunctionThatMayWait(CallFrame*);
+    // arguments are such that looking at them a second time runs no code of the program. False: they are not, and the
+    // stack is to be wiped before the call, whether it will wait or not.
+    bool willCallFunctionThatMayWait(CallFrame*);
     bool takeRequestToCallAgain(JSGlobalObject*);
     // For such a function, when it finds that it has to wait and has done nothing yet that must not be done twice.
     // True: that has been thrown, and it is to return at once.

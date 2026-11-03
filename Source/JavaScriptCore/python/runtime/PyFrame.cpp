@@ -880,8 +880,9 @@ static void frameSetTraceOpcodes(JSGlobalObject* globalObject, JSValue self, JSV
         runtime(globalObject).monitoring().setTracesOpcodes(globalObject, frame, true);
 }
 
-static JSValue frameGetGenerator(JSGlobalObject*, JSValue self)
+static JSValue frameGetGenerator(JSGlobalObject* globalObject, JSValue self)
 {
+    runtime(globalObject).temporariesMayHaveEscaped();
     PyGenerator* generator = PyFrame::from(self)->generator();
     return generator ? JSValue(generator) : jsUndefined();
 }

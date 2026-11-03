@@ -1502,6 +1502,8 @@ Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject, CallFrame* 
 NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject, CallFrame* callFrame, const JSInstruction* pc, CodeMonitor& monitor, CodeMonitor::Point* point)
 {
     VM& vm = m_runtime.vm();
+    // A tool is shown the first argument of a call, and can assign to the variables of the frame.
+    m_runtime.forgetOwnedTemporaries();
     CodeBlock* codeBlock = callFrame->codeBlock();
     unsigned offset = point->offset;
     auto at = [&](unsigned where) { return reinterpret_cast<const JSInstruction*>(monitor.instructions() + where); };
@@ -1867,6 +1869,8 @@ JSValue exceptionIsRaised(JSGlobalObject* globalObject, JSValue exception, CallF
 
 JSValue exceptionStaysOrLeaves(JSGlobalObject* globalObject, JSValue exception, CallFrame* callFrame, BytecodeIndex index, bool isCaught)
 {
+    // First what CPython does by popping the stack of the frame.
+    runtime(globalObject).releaseIteratorsOfLoopsLeft(callFrame, index.offset(), isCaught);
     if (!runtime(globalObject).monitoring().wantsExceptions()) [[likely]]
         return exception;
     CodeBlock* codeBlock = callFrame->codeBlock();

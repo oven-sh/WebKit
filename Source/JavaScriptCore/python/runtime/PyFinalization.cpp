@@ -100,7 +100,7 @@ bool Runtime::keepUnreachableObjectsToFinalize(SlotVisitor& visitor)
         return false;
     };
     // A collection that was under way when the program asked for one is finished first.
-    bool wasAskedFor = m_collectionWasAskedFor && m_vm.heap.collectionScope() == CollectionScope::Full;
+    bool wasAskedFor = m_scopeAskedFor && (*m_scopeAskedFor == CollectionScope::Eden || m_vm.heap.collectionScope() == CollectionScope::Full);
     bool wantsGarbage = wasAskedFor && m_markingObserver && m_markingObserver->wantsGarbage();
     // That takes time for every dead cell, which at exit is every cell there is.
     bool looksAtAllThatDied = wasAskedFor && (wantsGarbage || finalizersOfProgram > 1);
@@ -404,6 +404,15 @@ static void finalizeGenerator(JSGlobalObject* globalObject, PyGenerator* generat
         reportUnraisable(globalObject, makeString("Exception ignored while closing generator "_s, reprForMessage(globalObject, generator)), { });
 }
 
+void finalizeGeneratorNow(JSGlobalObject* globalObject, PyGenerator* generator)
+{
+    // Once. If it does not let itself be closed, the collector is not to try again.
+    if (generator->finalization() == PyGenerator::Finalization::Registered)
+        runtime(globalObject).unregisterFinalizable(generator);
+    generator->setFinalization(PyGenerator::Finalization::None);
+    finalizeGenerator(globalObject, generator);
+}
+
 static void finalizeObject(JSGlobalObject* globalObject, JSCell* cell)
 {
     Runtime& rt = runtime(globalObject);
@@ -583,8 +592,9 @@ void Runtime::finalizeAllAtExit()
             collectAsAskedFor();
             if (!hasPendingCalls())
                 break;
+            bool mayFindMore = hasPendingFinalizers();
             runPendingCalls();
-            if (m_vm.hasPendingTerminationException()) [[unlikely]]
+            if (!mayFindMore || m_vm.hasPendingTerminationException())
                 break;
         }
     };
@@ -632,13 +642,23 @@ NEVER_INLINE void wipeStackBelow(VM& vm, size_t size)
         *reinterpret_cast<volatile uintptr_t*>(wiped + i) = 0;
 }
 
-void Runtime::collectAsAskedFor()
+bool Runtime::hasPendingFinalizers()
+{
+    Locker locker { m_finalizationLock };
+    return !m_pendingFinalization.isEmpty() || !m_pendingWeakRefCallbacks.isEmpty();
+}
+
+void Runtime::collectAsAskedFor(CollectionScope collectionScope)
 {
     // The VM remembers the last exception thrown, for the debugger, long after it has been handled, and with it the
     // traceback and all that the frames in it refer to.
     m_vm.clearLastException();
-    SetForScope wasAskedFor(m_collectionWasAskedFor, true);
-    m_vm.heap.collectNow(Synchronousness::Sync, CollectionScope::Full);
+    SetForScope scopeAskedFor(m_scopeAskedFor, collectionScope);
+    // The one is asked for to get rid of things, the other to be quick: what it frees is swept when the memory is wanted.
+    if (collectionScope == CollectionScope::Full)
+        m_vm.heap.collectNow(Synchronousness::Sync, CollectionScope::Full);
+    else
+        m_vm.heap.collectSync(CollectionScope::Eden);
 }
 
 void Runtime::finalizeWhatReferenceCountsWouldHaveFreed()
@@ -659,13 +679,14 @@ void Runtime::finalizeWhatReferenceCountsWouldHaveFreed()
         }
         if (!hasPendingCalls())
             return;
+        bool mayFindMore = hasPendingFinalizers();
         runPendingCalls();
-        if (m_vm.hasPendingTerminationException()) [[unlikely]]
+        if (!mayFindMore || m_vm.hasPendingTerminationException())
             return;
     }
 }
 
-void collectAndFinalize(JSGlobalObject* globalObject, Runtime::MarkingObserver* observer)
+void collectAndFinalize(JSGlobalObject* globalObject, Runtime::MarkingObserver* observer, CollectionScope collectionScope)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
@@ -679,17 +700,18 @@ void collectAndFinalize(JSGlobalObject* globalObject, Runtime::MarkingObserver* 
             observer->willCollect();
             rt.setMarkingObserver(observer);
         }
-        rt.collectAsAskedFor();
+        rt.collectAsAskedFor(collectionScope);
         if (observer) {
             rt.setMarkingObserver(nullptr);
             observer->didCollect();
         }
         if (!rt.hasPendingCalls())
             break;
+        bool mayFindMore = rt.hasPendingFinalizers();
         // What the handler of a signal that came meanwhile raises is for whoever waits for this. The calls that are left are made
         // at the next safe point then.
         rt.runPendingCalls();
-        if (vm.exceptionForInspection()) [[unlikely]]
+        if (!mayFindMore || collectionScope == CollectionScope::Eden || vm.exceptionForInspection())
             break;
     }
 }

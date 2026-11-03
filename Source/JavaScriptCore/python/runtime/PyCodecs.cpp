@@ -414,6 +414,26 @@ static bool codecImportEncodings(JSGlobalObject* globalObject, CodecRegistry& re
     return true;
 }
 
+bool codecLoadCharacterNames(JSGlobalObject* globalObject)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    CodecRegistry registry;
+    if (failed(scope, codecGetRegistry(globalObject, registry)))
+        return false;
+    JSString* key = internString(vm, "_unicodedata_imported"_s);
+    if (registry.moduleDict->get(key))
+        return true;
+    importModule(globalObject, "unicodedata"_s);
+    if (scope.exception()) [[unlikely]] {
+        takePendingException(globalObject);
+        raise(globalObject, scope, runtime(globalObject).ImportError(), "PyCapsule_Import could not import module \"unicodedata\""_s);
+        return false;
+    }
+    registry.moduleDict->set(vm, key, jsBoolean(true));
+    return true;
+}
+
 JSValue codecLookup(JSGlobalObject* globalObject, const String& encoding)
 {
     VM& vm = getVM(globalObject);
@@ -957,6 +977,8 @@ static JSValue codecNameReplaceErrors(JSGlobalObject* globalObject, JSValue valu
     auto* exception = codecAsError(value, runtime(globalObject).UnicodeEncodeError());
     if (!exception)
         RELEASE_AND_RETURN(scope, codecRaiseWrongExceptionType(globalObject, value));
+    if (failed(scope, codecLoadCharacterNames(globalObject)))
+        return { };
     CodecErrorInfo info;
     if (failed(scope, codecGetErrorInfo(globalObject, exception, false, info)))
         return { };
@@ -2073,6 +2095,10 @@ JSValue codecDecodeUnicodeEscape(JSGlobalObject* globalObject, std::span<const u
                 message = "truncated \\UXXXXXXXX escape"_s;
                 break;
             case 'N': {
+                if (failed(scope, codecLoadCharacterNames(globalObject))) {
+                    takePendingException(globalObject);
+                    return raise(globalObject, scope, runtime(globalObject).UnicodeError(), "\\N escapes not supported (can't load unicodedata module)"_s);
+                }
                 message = "malformed \\N character escape"_s;
                 if (s >= size) {
                     outcome = CodecEscapeOutcome::Incomplete;

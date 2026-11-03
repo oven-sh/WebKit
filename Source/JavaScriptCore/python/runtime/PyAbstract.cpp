@@ -1685,13 +1685,16 @@ void delItem(JSGlobalObject* globalObject, JSValue object, JSValue key)
 }
 
 // Anything with a __getitem__ written in Python may be a sequence, and can then be iterated over without an __iter__. A built-in
-// type that is a sequence has an __iter__; the __getitem__ of the others (re.Match, int | str) takes keys.
+// type that is a sequence has an __iter__, or says that its __getitem__ is that of a sequence (the arrays of ctypes); the
+// __getitem__ of the others (re.Match, int | str) takes keys.
 static bool isIterableThroughGetItem(PyType* type)
 {
     if (type->has(TypeFlag::DictSubclass))
         return false;
     JSValue method = type->lookup(Special::GetItem);
-    return method && !PyNativeFunction::is(method);
+    if (auto* native = PyNativeFunction::tryFrom(method))
+        return native->def().flags & ItemOfSequence;
+    return !!method;
 }
 
 bool contains(JSGlobalObject* globalObject, JSValue container, JSValue item)

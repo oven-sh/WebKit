@@ -526,8 +526,11 @@ void SlotVisitor::donateKnownParallel(MarkStackArray& from, MarkStackArray& to)
     if (from.size() < 2)
         return;
 
+    // Helpers that do not run yet are worth starting once this visitor has marked, by itself, for about as long as that takes
+    // (half a millisecond), and there is something to give them.
     constexpr size_t minCellsPerHelper = 512;
-    if (from.size() < minCellsPerHelper && !collector().hasStartedHelpers())
+    constexpr size_t minCellsMarkedAlone = 32768;
+    if (!collector().hasStartedHelpers() && (from.size() < minCellsPerHelper || m_visitCount < minCellsMarkedAlone))
         return;
 
     // If there's already some shared work queued up, be conservative and assume
@@ -544,8 +547,8 @@ void SlotVisitor::donateKnownParallel(MarkStackArray& from, MarkStackArray& to)
     // Otherwise, assume that a thread will go idle soon, and donate.
     from.donateSomeCellsTo(to);
 
+    collector().startHelpers();
     if (Collector::startsHelpersLazily()) {
-        collector().startHelpers();
         collector().m_markingConditionVariable.notifyOne();
         return;
     }

@@ -168,6 +168,9 @@ struct BufferExport {
 };
 // A memoryview of a one-dimensional array. `flags` is the argument of __buffer__().
 JSValue exportBuffer(JSGlobalObject*, JSValue self, JSValue flags, const BufferExport&);
+// The same for an exporter whose items have a format that is not a literal, or that has more or fewer dimensions than one. The
+// buffer says everything but `data`, whatever the flags ask for, and is taken over.
+JSValue exportBuffer(JSGlobalObject*, JSValue flags, Buffer&);
 JSValue releaseBufferMethod(JSGlobalObject*, JSValue self, JSValue view);
 // __buffer__ of bytes, bytearray and memoryview.
 JSValue bufferMethod(JSGlobalObject*, JSValue self, JSValue flags);

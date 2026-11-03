@@ -8,6 +8,7 @@
 
 #include "JSCInlines.h"
 #include "PyAbstract.h"
+#include "PyCodecs.h"
 #include "PyCommandLine.h"
 #include "PyCompiler.h"
 #include "PyErrors.h"
@@ -120,6 +121,15 @@ public:
     }
 
     int maxStrDigits() final { return runtime(m_globalObject).maxStrDigits; }
+
+    bool hasCharacterNames() final
+    {
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(m_globalObject));
+        if (!failed(scope, codecLoadCharacterNames(m_globalObject)))
+            return true;
+        scope.clearException();
+        return false;
+    }
 
     // bytes.decode(encoding)
     UTF8CString decodeSource(std::span<const uint8_t> bytes, const ASCIICString& encoding, String& error, bool& unknownEncoding) final

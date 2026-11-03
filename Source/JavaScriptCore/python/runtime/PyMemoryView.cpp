@@ -1293,6 +1293,16 @@ JSValue exportBuffer(JSGlobalObject* globalObject, JSValue self, JSValue flagsVa
     RELEASE_AND_RETURN(scope, memoryViewTakingOver(globalObject, buffer));
 }
 
+JSValue exportBuffer(JSGlobalObject* globalObject, JSValue flagsValue, Buffer& buffer)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    unsigned flags;
+    if (failed(scope, bufferFlagsArgument(globalObject, flagsValue, flags)) || failed(scope, refreshBuffer(globalObject, buffer)))
+        return { };
+    RELEASE_AND_RETURN(scope, memoryViewTakingOver(globalObject, buffer));
+}
+
 static JSValue memoryViewRelease(JSGlobalObject*, JSValue self);
 
 JSValue releaseBufferMethod(JSGlobalObject* globalObject, JSValue self, JSValue viewValue)
@@ -1581,7 +1591,11 @@ static JSValue memoryViewNew(JSGlobalObject* globalObject, JSValue, const CallAr
     JSValue object;
     if (failed(scope, unpackKeywordArguments(globalObject, "memoryview"_s, keywords, 1, 1, false, args, &object)))
         return { };
-    RELEASE_AND_RETURN(scope, makeMemoryView(globalObject, object));
+    scope.release();
+    JSValue view = makeMemoryView(globalObject, object);
+    Runtime& rt = runtime(globalObject);
+    rt.didCallType(rt.memoryviewType(), view, true);
+    return view;
 }
 
 static JSValue memoryViewFromFlags(JSGlobalObject* globalObject, JSValue, JSValue object, JSValue flagsValue)
@@ -1907,7 +1921,16 @@ static JSValue memoryViewItem(JSGlobalObject* globalObject, const PyMemoryView* 
     RELEASE_AND_RETURN(scope, memoryViewUnpackAt(globalObject, view, offset));
 }
 
+static JSValue memoryViewSubscript(JSGlobalObject*, JSValue self, JSValue key);
+
 static JSValue memoryViewGetItem(JSGlobalObject* globalObject, JSValue self, JSValue key)
+{
+    JSValue result = memoryViewSubscript(globalObject, self, key);
+    runtime(globalObject).didSubscript(self, result);
+    return result;
+}
+
+static JSValue memoryViewSubscript(JSGlobalObject* globalObject, JSValue self, JSValue key)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
@@ -2516,6 +2539,18 @@ static constexpr NativeDef managedBufferMethods[] = {
     PY_SLOT("__del__", managedBufferFinalize, "($self, /)"),
 };
 
+// A method that keeps nothing of the view. See PyTemporaries.cpp.
+template<auto function, bool returnsNewView> struct MemoryViewUse;
+template<typename... Arguments, JSValue (*function)(JSGlobalObject*, JSValue, Arguments...), bool returnsNewView>
+struct MemoryViewUse<function, returnsNewView> {
+    static JSValue call(JSGlobalObject* globalObject, JSValue self, Arguments... arguments)
+    {
+        JSValue result = function(globalObject, self, arguments...);
+        runtime(globalObject).didCallMethod(self, result, returnsNewView);
+        return result;
+    }
+};
+
 static constexpr NativeDef memoryViewMethods[] = {
     PY_NEW(memoryViewNew, "($type, *args, **kwargs)"),
     PY_SLOT("__repr__", memoryViewRepr, "($self, /)"),
@@ -2534,11 +2569,11 @@ static constexpr NativeDef memoryViewMethods[] = {
     PY_SLOT("__buffer__", bufferMethod, "($self, flags, /)"),
     PY_SLOT("__release_buffer__", releaseBufferMethod, "($self, buffer, /)"),
     PY_METHOD("release", memoryViewRelease, "($self, /)"),
-    PY_METHOD("tobytes", memoryViewToBytes, "($self, /, order='C')"),
-    PY_METHOD("hex", memoryViewHex, "($self, /, sep=<unrepresentable>, bytes_per_sep=1)"),
-    PY_METHOD("tolist", memoryViewToList, "($self, /)"),
-    PY_METHOD("cast", memoryViewCast, "($self, /, format, shape=<unrepresentable>)"),
-    PY_METHOD("toreadonly", memoryViewToReadOnly, "($self, /)"),
+    PY_METHOD_WITH_FLAGS("tobytes", (MemoryViewUse<memoryViewToBytes, false>::call), "($self, /, order='C')", KeepsNothing),
+    PY_METHOD_WITH_FLAGS("hex", (MemoryViewUse<memoryViewHex, false>::call), "($self, /, sep=<unrepresentable>, bytes_per_sep=1)", KeepsNothing),
+    PY_METHOD_WITH_FLAGS("tolist", (MemoryViewUse<memoryViewToList, false>::call), "($self, /)", KeepsNothing),
+    PY_METHOD_WITH_FLAGS("cast", (MemoryViewUse<memoryViewCast, true>::call), "($self, /, format, shape=<unrepresentable>)", KeepsNothing),
+    PY_METHOD_WITH_FLAGS("toreadonly", (MemoryViewUse<memoryViewToReadOnly, true>::call), "($self, /)", KeepsNothing),
     PY_CLASSMETHOD("_from_flags", memoryViewFromFlags, "($type, /, object, flags)"),
     PY_METHOD("count", memoryViewCount, "($self, value, /)"),
     PY_METHOD("index", memoryViewIndex, "($self, value, start=0, stop=sys.maxsize, /)"),

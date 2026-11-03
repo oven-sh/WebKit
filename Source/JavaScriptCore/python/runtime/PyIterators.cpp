@@ -240,6 +240,8 @@ JSValue PyIterator::next(JSGlobalObject* globalObject)
         return key;
     }
     case Kind::Sequence: {
+        if (position == std::numeric_limits<int64_t>::max()) [[unlikely]]
+            return raiseOverflowError(globalObject, scope, "iter index too large"_s);
         JSValue item = getItem(globalObject, target, makeInt(globalObject, position));
         if (!failed(scope, item)) {
             ++position;
@@ -412,7 +414,7 @@ static JSValue iteratorReduce(JSGlobalObject* globalObject, JSValue self)
     case PyIterator::Kind::ByteArray:
     case PyIterator::Kind::Sequence:
         if (target)
-            RELEASE_AND_RETURN(scope, reduceTo(globalObject, iter, target, jsNumber(static_cast<double>(iterator->position))));
+            RELEASE_AND_RETURN(scope, reduceTo(globalObject, iter, target, makeInt(globalObject, iterator->position)));
         RELEASE_AND_RETURN(scope, reduceTo(globalObject, iter, rt.emptyTuple()));
     case PyIterator::Kind::Range: {
         // What is left of the range.

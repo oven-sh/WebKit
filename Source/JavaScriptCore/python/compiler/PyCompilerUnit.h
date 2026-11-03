@@ -135,6 +135,7 @@ private:
         Scope* comprehension { nullptr }; // InlinedComprehension
         unsigned number { 0 }; // For PythonMark.
         bool isLast { false }; // A loop: after it the function ends.
+        bool ownsIterator { false }; // ForLoop: it goes through the value of a call. See beginTemporary().
     };
 
     struct PatternContext {
@@ -347,7 +348,22 @@ private:
     void checkCompare(AST::Compare*);
     RegisterID* call(AST::Call*, RegisterID* dst);
     // callee(pushed..., *args, **keywords). `injected`: a variable to pass after the positional arguments.
-    RegisterID* emitCall(RegisterID* dst, RegisterID* callee, std::span<RegisterID* const> pushed, Seq<Expr*> args, Seq<AST::Keyword*> keywords, Name injected, const Range&);
+    RegisterID* emitCall(RegisterID* dst, RegisterID* callee, std::span<RegisterID* const> pushed, Seq<Expr*> args, Seq<AST::Keyword*> keywords, Name injected, const Range&, unsigned temporary = 0);
+
+    // Marks for runtime/PyTemporaries.cpp: the value of a call or a subscript that goes in a temporary register and is used once.
+    static bool makesTemporary(Expr* node) { return node->is<AST::Call>() || node->is<AST::Subscript>(); }
+    // For what is about to compile `node` as an operand of its own: the number of the value, which it passes to markTemporaryUsed()
+    // right before each instruction that may turn out to be the use. 0: the node is not of that kind.
+    unsigned beginTemporary(Expr* node);
+    // For what compiles `node`, first thing: the number, which it passes to markTemporaryMade() right before each instruction that may
+    // turn out to make the value. 0: nobody asked.
+    unsigned takeTemporary(Expr* node);
+    void markTemporaryMade(unsigned number);
+    void markTemporaryUsed(unsigned number, TemporaryUse::Kind, RegisterID*, bool isLast);
+    Expr* m_temporaryNode { nullptr };
+    unsigned m_temporaryNumber { 0 };
+    unsigned m_temporaryCount { 0 };
+    unsigned m_storedTemporary { 0 }; // For store(): the number of the value, if it is to mark the store as its use.
     RegisterID* emitSimpleCall(RegisterID* dst, RegisterID* callee, std::initializer_list<RegisterID*> args, const Range&);
     // What op_py_get_method gave is called: with `self` before the arguments, unless it is the empty value.
     RegisterID* emitMethodCall(RegisterID* dst, RegisterID* callee, RegisterID* self, std::initializer_list<RegisterID*> args, const Range&);

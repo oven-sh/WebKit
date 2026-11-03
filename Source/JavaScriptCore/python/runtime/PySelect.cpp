@@ -12,6 +12,9 @@
 #include "PyHooks.h"
 #include "PyPosix.h"
 #include <limits.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <termios.h>
 #include <time.h>
 #include <wtf/HexNumber.h>
 
@@ -199,17 +202,54 @@ int waitForEvents(JSGlobalObject* globalObject, WaitRequest& request)
     }
 }
 
-bool waitUntilReadable(JSGlobalObject* globalObject, int fd)
+bool waitUntilReady(JSGlobalObject* globalObject, int fd)
 {
     struct pollfd descriptor { fd, POLLIN, 0 };
-    // Most of the time there is something to read. What is wrong with the descriptor, the read will say.
-    if (poll(&descriptor, 1, 0) || (fcntl(fd, F_GETFL) & O_NONBLOCK))
-        return true;
     WaitRequest request { WaitRequest::Kind::Poll };
     request.timeout = -1;
     request.descriptors = &descriptor;
     request.descriptorCount = 1;
     return waitForEvents(globalObject, request) != waitRaised;
+}
+
+// Nothing can be read from it now. Whether read() is sure to wait until something can.
+static bool readWaitsAsPollDoes(int fd)
+{
+    int flags = fcntl(fd, F_GETFL);
+    if (flags < 0 || (flags & O_NONBLOCK) || (flags & O_ACCMODE) == O_WRONLY)
+        return false;
+    struct stat status;
+    if (fstat(fd, &status) < 0)
+        return false;
+    if (S_ISFIFO(status.st_mode))
+        return true;
+    if (S_ISSOCK(status.st_mode)) {
+        // read() fails at once on a socket that listens, and gives up after a time that poll() knows nothing of.
+        int isListening = 0;
+        socklen_t length = sizeof(isListening);
+        if (getsockopt(fd, SOL_SOCKET, SO_ACCEPTCONN, &isListening, &length) < 0 || isListening)
+            return false;
+        struct timeval timeout { };
+        length = sizeof(timeout);
+        return !getsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, &length) && !timeout.tv_sec && !timeout.tv_usec;
+    }
+    if (S_ISCHR(status.st_mode)) {
+        // A terminal may be set to return nothing rather than wait, or to wait for a time only.
+        struct termios settings;
+        if (tcgetattr(fd, &settings) < 0)
+            return false;
+        return (settings.c_lflag & ICANON) || (settings.c_cc[VMIN] && !settings.c_cc[VTIME]);
+    }
+    return false;
+}
+
+bool waitUntilReadable(JSGlobalObject* globalObject, int fd)
+{
+    struct pollfd descriptor { fd, POLLIN, 0 };
+    // Most of the time there is something to read. What is wrong with the descriptor, the read will say.
+    if (poll(&descriptor, 1, 0) || !readWaitsAsPollDoes(fd))
+        return true;
+    return waitUntilReady(globalObject, fd);
 }
 
 bool timeoutFromObject(JSGlobalObject* globalObject, JSValue value, int64_t unit, int64_t& nanoseconds, bool namesTimeout)
@@ -1005,7 +1045,7 @@ static constexpr TypeDef kqueueTypeDef { "select.kqueue"_s, { }, kqueueMethods, 
 // ---- The module ----
 
 static constexpr NativeDef selectFunctions[] = {
-    PY_FUNCTION("select", selectSelect, "(rlist, wlist, xlist, timeout=None, /)"),
+    NativeDef(NativeKind::Function, "select"_s, selectSelect, "(rlist, wlist, xlist, timeout=None, /)"_s, MayWait),
     PY_FUNCTION("poll", selectPoll, "()"),
 };
 

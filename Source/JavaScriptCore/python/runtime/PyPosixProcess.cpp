@@ -1376,13 +1376,13 @@ static JSValue posixWaitpid(JSGlobalObject* globalObject, JSValue pidValue, JSVa
     int status = 0;
     pid_t result;
 #if OS(LINUX)
-    // A descriptor for the process can be waited for like any other: see waitUntilReadable().
+    // A descriptor for the process can be waited for like any other: see waitUntilReady().
     if (pid > 0 && !(options & (WNOHANG | WUNTRACED | WCONTINUED))) {
         result = waitpid(pid, &status, options | WNOHANG);
         if (result > 0)
             RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { jsNumber(result), jsNumber(status) }));
         if (int descriptor = result ? -1 : static_cast<int>(syscall(SYS_pidfd_open, pid, 0)); descriptor >= 0) {
-            bool succeeded = waitUntilReadable(globalObject, descriptor);
+            bool succeeded = waitUntilReady(globalObject, descriptor);
             close(descriptor);
             if (failed(scope, succeeded))
                 return { };

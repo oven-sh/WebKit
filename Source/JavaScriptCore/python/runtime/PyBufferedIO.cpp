@@ -205,6 +205,8 @@ bool bufferedHasPendingOutput(PyRecord* buffer)
     return state.writable && state.writeEnd != -1 && state.writePosition < state.writeEnd;
 }
 
+bool bufferedIsBusy(PyRecord* buffer) { return ioStateOf<BufferedState>(buffer).lock.isHeld(); }
+
 JSValue bufferedWrappedStream(PyRecord* stream) { return stream->get(BufferedRawField); }
 
 bool BufferedStream::checkInitialized()

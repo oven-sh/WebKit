@@ -974,6 +974,13 @@ static JSValue textIOInit(JSGlobalObject* globalObject, JSValue self, const Call
         if (failed(scope, ioToOptionalString(globalObject, errorsValue, "TextIOWrapper"_s, "errors"_s, ignored)))
             return { };
         errors = strValue(errorsValue);
+        // python -X dev: the handler is looked up though there may never be a use for it.
+        if (configuration().devMode) [[unlikely]] {
+            String name = errors->value(globalObject);
+            RETURN_IF_EXCEPTION(scope, { });
+            if (failed(scope, codecLookupError(globalObject, name)))
+                return { };
+        }
     }
     if (!ioIsLegalNewline(newline))
         return raiseValueError(globalObject, scope, "illegal newline value: "_s, newline);
@@ -1187,6 +1194,13 @@ void textIOWriteOutPending(JSGlobalObject* globalObject, PyRecord* record)
     stream.s.isListedForPendingOutput = false;
     if (!stream.s.isInitialized || stream.s.isDetached || !stream.s.pendingCount)
         return;
+    // Another time. It may be this thread that is busy with the buffer, and got here from its system call, while another thread has
+    // written to the stream; and to wait for another thread here, with the lock of some other buffer held, is to ask for a deadlock.
+    if (bufferedIsBusy(PyRecord::from(stream.get(TextIOBufferField)))) {
+        stream.s.isListedForPendingOutput = true;
+        ioNotePendingOutput(globalObject, record);
+        return;
+    }
     if (failed(scope, stream.writeFlush()))
         reportUnraisable(globalObject, makeString("Exception ignored while flushing "_s, reprForMessage(globalObject, record)), { });
 }
