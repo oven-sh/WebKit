@@ -857,6 +857,7 @@ void initializeSysModule(JSGlobalObject* globalObject, PyModule* module)
     String prefix = !directoryOfPathFile.isNull() ? directoryOfPathFile : library.isNull() ? emptyString() : FileSystem::parentPath(FileSystem::parentPath(library));
     // A virtual environment is where there is a pyvenv.cfg beside the executable or one directory up. `site` does the rest.
     String environment = prefix;
+    String baseExecutable = !configuration.baseExecutable.isNull() ? configuration.baseExecutable : configuration.executable.isNull() ? emptyString() : configuration.executable;
     if (!configuration.executable.isEmpty()) {
         String directory = FileSystem::parentPath(configuration.executable);
         for (const String& candidate : { directory, FileSystem::parentPath(directory) }) {
@@ -866,13 +867,36 @@ void initializeSysModule(JSGlobalObject* globalObject, PyModule* module)
             }
         }
     }
+    if (environment != prefix) {
+        // The interpreter the environment was made with is in the directory that pyvenv.cfg calls `home`, under the name this one
+        // was started by, or else under one of the usual names. (Modules/getpath.py in CPython.)
+        String home;
+        if (auto contents = readFile(makeString(environment, "/pyvenv.cfg"_s))) {
+            for (auto line : String::fromUTF8ReplacingInvalidSequences(contents->span()).split('\n')) {
+                size_t separator = line.find('=');
+                if (separator != notFound && equalLettersIgnoringASCIICase(line.left(separator).trim(isASCIIWhitespace<char16_t>), "home"_s)) {
+                    home = line.substring(separator + 1).trim(isASCIIWhitespace<char16_t>);
+                    break;
+                }
+            }
+        }
+        if (!home.isEmpty()) {
+            for (const String& name : { FileSystem::pathFileName(configuration.executable), String("python3"_s), makeString("python"_s, versionMajor, '.', versionMinor) }) {
+                String candidate = makeString(home, '/', name);
+                if (kindOfFile(candidate) == VirtualFileKind::File) {
+                    baseExecutable = candidate;
+                    break;
+                }
+            }
+        }
+    }
     module->add(globalObject, "prefix"_s, text(environment));
     module->add(globalObject, "exec_prefix"_s, text(environment));
     module->add(globalObject, "base_prefix"_s, text(prefix));
     module->add(globalObject, "base_exec_prefix"_s, text(prefix));
     module->add(globalObject, "platlibdir"_s, text(configuration.platlibdir));
     module->add(globalObject, "executable"_s, text(configuration.executable.isNull() ? emptyString() : configuration.executable));
-    module->add(globalObject, "_base_executable"_s, text(!configuration.baseExecutable.isNull() ? configuration.baseExecutable : configuration.executable.isNull() ? emptyString() : configuration.executable));
+    module->add(globalObject, "_base_executable"_s, text(baseExecutable));
     module->add(globalObject, "_home"_s, jsUndefined());
     module->add(globalObject, "_framework"_s, text(emptyString()));
     module->add(globalObject, "pycache_prefix"_s, configuration.pycachePrefix.isNull() ? jsUndefined() : text(configuration.pycachePrefix));
