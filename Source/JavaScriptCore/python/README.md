@@ -428,13 +428,13 @@ The event loop is the host's, and there are three ways to it (`PyExec.h`, `PyEve
 - **`await promise`** in Python, for a JS promise (type `JSPromise`), is a future of the running loop that the promise settles.
   The promise of a coroutine that JS has called is awaited as the task it is, so to cancel who waits cancels the coroutine:
   `wait_for(queue.get(), 1)` from JS, and `ensure_future(queue.get()).cancel()`. An async function of JS cannot be cancelled.
-  A `Task` can be made of a promise, which is all that JS ever holds of a coroutine: `create_task(queue.get())`,
-  `TaskGroup.create_task(promise)`. It awaits the promise.
-- **A promise is a future** to asyncio (`isfuture()`): it has `done()`, `result()`, `exception()`, `add_done_callback()` and the rest, which the
-  host supplies. So `gather()`, `wait()`, `shield()`, `as_completed()` and `ensure_future()` take it as it is and put their callbacks on it
-  at once. Wrapped in a task, as any other awaitable is, it would be without a handler until the task took its first step, an
-  iteration of the loop later, and a rejection in the meantime would be reported as unhandled. It belongs to whichever loop asks.
-  `cancel()` cancels the coroutine behind the promise if there is one, and otherwise refuses.
+- **A promise is to asyncio what a coroutine object is** (`iscoroutine()`): what the call of an async function gave, to be awaited or made
+  a task of. It is all that JS ever holds of a coroutine. So `create_task(queue.get())`, `TaskGroup.create_task()`, `ensure_future()`,
+  `gather()`, `shield()`, `as_completed()`, `run_until_complete()` and `run()` make a task of it, on whichever loop, and `wait()`
+  refuses it as it refuses a coroutine. The task awaits the promise, and has a handler on it from the moment it is made: an iteration
+  of the loop later, at its first step, a rejection would already have been reported as unhandled. To cancel the task cancels the
+  waiting. A future a promise is not: that belongs to one loop, and can be cancelled. `send()`, `throw()` and `close()` are those of
+  the iterator of `await promise`, for whoever drives coroutines by hand.
 - **Futures and tasks** are native: the module `_asyncio` (`runtime/PyAsyncio.cpp`), which Lib/asyncio takes in place of its own classes.
   A step of a task resumes the coroutine from C++, outside any handler, and `await future` gets the result without a `StopIteration`
   (`PyAsyncio.h`). The loop stays asyncio's: callbacks go through its `call_soon()`. `all_tasks()` reads a table that the collector

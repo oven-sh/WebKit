@@ -851,75 +851,57 @@ static JSValue jsPromiseAwait(JSGlobalObject* globalObject, JSValue self)
     RELEASE_AND_RETURN(scope, call(globalObject, wait, self));
 }
 
-// A promise is a future to asyncio (asyncio.isfuture()), so that gather(), wait(), shield() and the like take it as it is and have their
-// callbacks on it at once. Wrapped in a task it would be without one until the task took its first step, and a rejection in
-// the meantime would count as unhandled. The methods are the host's, which has the loop.
-template<size_t length>
-struct FutureMethodName {
-    constexpr FutureMethodName(const char (&text)[length]) { std::copy_n(text, length, characters); }
-    char characters[length];
-};
-template<FutureMethodName name>
-static JSValue jsPromiseFutureMethod(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
+// A promise is to asyncio what a coroutine object is (asyncio.iscoroutine()): what the call of an async function gave, to be awaited or
+// made a task of. So create_task(), ensure_future(), gather(), run_until_complete() and run() take one, on whichever loop. (A future it
+// is not: that belongs to one loop and can be cancelled.) A task runs a coroutine of its own for it (taskInit()); these are for whoever
+// else drives a coroutine by hand.
+static constexpr unsigned awaitIteratorField = 0;
+static JSValue jsPromiseAwaitIterator(JSGlobalObject* globalObject, JSValue self)
 {
-    if (!ensureMainThreadForJS(globalObject))
-        return { };
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue function = eventLoopFunction(globalObject, ASCIILiteral::fromLiteralUnsafe(name.characters));
+    if (JSValue iterator = hiddenField(globalObject, self, awaitIteratorField))
+        return iterator;
+    JSValue iterator = jsPromiseAwait(globalObject, self);
     RETURN_IF_EXCEPTION(scope, { });
-    if (!function)
-        return raiseRuntimeError(globalObject, scope, "there is no event loop to wait for a JavaScript promise on"_s);
-    RELEASE_AND_RETURN(scope, withFirstArgument(self, args, [&](const CallArgs& all) {
-        return call(globalObject, function, all);
-    }));
+    setHiddenField(globalObject, self, awaitIteratorField, iterator);
+    return iterator;
+}
+
+static JSValue jsPromiseSend(JSGlobalObject* globalObject, JSValue self, JSValue value)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue iterator = jsPromiseAwaitIterator(globalObject, self);
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, callMethod(globalObject, iterator, runtime(globalObject).names.send(), value));
+}
+
+static JSValue jsPromiseThrow(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue iterator = jsPromiseAwaitIterator(globalObject, self);
+    RETURN_IF_EXCEPTION(scope, { });
+    JSValue method = getAttr(globalObject, iterator, runtime(globalObject).names.throw_());
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, call(globalObject, method, args));
+}
+
+static JSValue jsPromiseClose(JSGlobalObject* globalObject, JSValue self)
+{
+    JSValue iterator = hiddenField(globalObject, self, awaitIteratorField);
+    if (!iterator)
+        return jsUndefined();
+    return callMethod(globalObject, iterator, runtime(globalObject).names.close());
 }
 
 static constexpr NativeDef jsPromiseMethods[] = {
     PY_SLOT("__await__", jsPromiseAwait, "($self, /)"),
-    PY_METHOD("done", jsPromiseFutureMethod<"future_done">, "($self, *args, **kwargs)"),
-    PY_METHOD("cancelled", jsPromiseFutureMethod<"future_cancelled">, "($self, *args, **kwargs)"),
-    PY_METHOD("result", jsPromiseFutureMethod<"future_result">, "($self, *args, **kwargs)"),
-    PY_METHOD("exception", jsPromiseFutureMethod<"future_exception">, "($self, *args, **kwargs)"),
-    PY_METHOD("cancel", jsPromiseFutureMethod<"future_cancel">, "($self, *args, **kwargs)"),
-    PY_METHOD("get_loop", jsPromiseFutureMethod<"future_get_loop">, "($self, *args, **kwargs)"),
-    PY_METHOD("add_done_callback", jsPromiseFutureMethod<"future_add_done_callback">, "($self, *args, **kwargs)"),
-    PY_METHOD("remove_done_callback", jsPromiseFutureMethod<"future_remove_done_callback">, "($self, *args, **kwargs)"),
+    PY_METHOD("send", jsPromiseSend, "($self, value, /)"),
+    PY_METHOD("throw", jsPromiseThrow, "($self, *args)"),
+    PY_METHOD("close", jsPromiseClose, "($self, /)"),
 };
-
-// By which asyncio knows a future. A task sets it on what a coroutine yields to it, which a promise never is.
-static constexpr unsigned futureBlockingField = 0;
-static JSValue jsPromiseGetFutureBlocking(JSGlobalObject* globalObject, JSValue self)
-{
-    JSValue value = hiddenField(globalObject, self, futureBlockingField);
-    return value ? value : jsBoolean(false);
-}
-static void jsPromiseSetFutureBlocking(JSGlobalObject* globalObject, JSValue self, JSValue value)
-{
-    setHiddenField(globalObject, self, futureBlockingField, value ? value : jsBoolean(false));
-}
-static constexpr NativeGetSet jsPromiseGetSets[] = {
-    { "_asyncio_future_blocking"_s, jsPromiseGetFutureBlocking, jsPromiseSetFutureBlocking },
-};
-
-// (0, None) while the promise is pending, (1, value) when it is fulfilled, (2, reason) when it is rejected.
-static JSValue jsPromiseState(JSGlobalObject* globalObject, JSValue value)
-{
-    VM& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* promise = dynamicDowncast<JSPromise>(value);
-    if (!promise)
-        return raiseTypeError(globalObject, scope, "promise_state() argument must be a JavaScript promise, not "_s, typeName(globalObject, value));
-    switch (promise->status()) {
-    case JSPromise::Status::Pending:
-        return PyTuple::create(globalObject, { jsNumber(0), jsUndefined() });
-    case JSPromise::Status::Fulfilled:
-        return PyTuple::create(globalObject, { jsNumber(1), promise->result() });
-    case JSPromise::Status::Rejected:
-        return PyTuple::create(globalObject, { jsNumber(2), promise->result() });
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
 
 // What `except` catches when JS throws the value: the value, if it is an exception of Python's, or the JSError that stands for it.
 static JSValue jsExceptionFor(JSGlobalObject* globalObject, JSValue thrown)
@@ -929,7 +911,6 @@ static JSValue jsExceptionFor(JSGlobalObject* globalObject, JSValue thrown)
 
 static constexpr NativeDef jsModuleFunctions[] = {
     PY_FUNCTION("exception_for", jsExceptionFor, "(thrown, /)"),
-    PY_FUNCTION("promise_state", jsPromiseState, "(promise, /)"),
 };
 
 // The module _js: what Python code needs to name when it deals with JS. (`import js` is the global object of JS.)
@@ -951,7 +932,7 @@ void initializeInteropTypes(JSGlobalObject* globalObject)
     Runtime& rt = runtime(globalObject);
     rt.jsObjectType()->initializeBuiltin(globalObject, { "JSObject"_s, { TypeFlag::DisallowInstantiation }, jsObjectMethods, { }, { } }, rt.typeType(), rt.objectType());
     rt.jsFunctionType()->initializeBuiltin(globalObject, { "JSFunction"_s, { TypeFlag::DisallowInstantiation }, jsFunctionMethods, jsFunctionGetSets, { } }, rt.typeType(), rt.jsObjectType());
-    rt.jsPromiseType()->initializeBuiltin(globalObject, { "JSPromise"_s, { TypeFlag::DisallowInstantiation }, jsPromiseMethods, jsPromiseGetSets, { } }, rt.typeType(), rt.jsObjectType());
+    rt.jsPromiseType()->initializeBuiltin(globalObject, { "JSPromise"_s, { TypeFlag::DisallowInstantiation }, jsPromiseMethods, { }, { } }, rt.typeType(), rt.jsObjectType());
 }
 
 } // namespace Python
