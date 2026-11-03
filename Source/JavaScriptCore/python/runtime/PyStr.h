@@ -6,6 +6,7 @@
 #pragma once
 
 #include "JSString.h"
+#include "PyBytecode.h"
 #include "PyObject.h"
 #include <wtf/text/StringBuilder.h>
 
@@ -144,6 +145,10 @@ private:
 static_assert(sizeof(String) == sizeof(StringImpl*));
 
 unsigned strLength(JSGlobalObject*, JSString*);
+// Negative, 0 or positive. By code point, which is not the order of UTF-16 code units.
+int compareStrings(StringView, StringView);
+// One of the six rich comparisons.
+JSValue strCompare(JSGlobalObject*, JSString*, JSString*, CompareOperator);
 void appendCodePoint(StringBuilder&, char32_t);
 // The count may be anything a program asked for.
 void appendRepeated(StringBuilder&, char32_t, int64_t count);

@@ -531,10 +531,14 @@ bool normalizeIndex(JSGlobalObject* globalObject, JSValue index, int64_t length,
     return true;
 }
 
-// By code point, which is not the order of UTF-16 code units.
-static int compareStrings(StringView a, StringView b)
+int compareStrings(StringView a, StringView b)
 {
     unsigned common = std::min(a.length(), b.length());
+    if (a.is8Bit() && b.is8Bit()) {
+        if (int order = memcmp(a.span8().data(), b.span8().data(), common))
+            return order;
+        return a.length() < b.length() ? -1 : a.length() > b.length();
+    }
     for (unsigned i = 0; i < common; ++i) {
         unsigned x = a[i];
         unsigned y = b[i];
@@ -576,16 +580,11 @@ static JSValue strHashMethod(JSGlobalObject* globalObject, JSValue self)
 
 static JSValue strLenMethod(JSGlobalObject* globalObject, JSValue self) { return jsNumber(strLength(globalObject, strValue(self))); }
 
-template<CompareOperator op>
-static JSValue strCompareMethod(JSGlobalObject* globalObject, JSValue self, JSValue other)
+JSValue strCompare(JSGlobalObject* globalObject, JSString* a, JSString* b, CompareOperator op)
 {
-    if (!isStr(other))
-        return runtime(globalObject).notImplemented();
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSString* a = strValue(self);
-    JSString* b = strValue(other);
-    if constexpr (op == CompareOperator::Eq || op == CompareOperator::NotEq) {
+    if (op == CompareOperator::Eq || op == CompareOperator::NotEq) {
         bool equal = a->equal(globalObject, b);
         RETURN_IF_EXCEPTION(scope, { });
         return jsBoolean(equal == (op == CompareOperator::Eq));
@@ -602,9 +601,19 @@ static JSValue strCompareMethod(JSGlobalObject* globalObject, JSValue self, JSVa
         return jsBoolean(order <= 0);
     case CompareOperator::Gt:
         return jsBoolean(order > 0);
-    default:
+    case CompareOperator::GtE:
         return jsBoolean(order >= 0);
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
     }
+}
+
+template<CompareOperator op>
+static JSValue strCompareMethod(JSGlobalObject* globalObject, JSValue self, JSValue other)
+{
+    if (!isStr(other))
+        return runtime(globalObject).notImplemented();
+    return strCompare(globalObject, strValue(self), strValue(other), op);
 }
 
 static JSValue strAdd(JSGlobalObject* globalObject, JSValue self, JSValue other)

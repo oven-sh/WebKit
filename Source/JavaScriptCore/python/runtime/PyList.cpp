@@ -536,27 +536,7 @@ private:
             m_comparison = Comparison::Generic;
     }
 
-    static bool stringLess(JSString* a, JSString* b)
-    {
-        StringView x = a->tryGetValue().data;
-        StringView y = b->tryGetValue().data;
-        unsigned common = std::min(x.length(), y.length());
-        for (unsigned i = 0; i < common; ++i) {
-            unsigned c = x[i];
-            unsigned d = y[i];
-            if (c == d)
-                continue;
-            // As compareStrings() in PyStr.cpp: by code point, and a surrogate may stand alone.
-            if (i && U16_IS_LEAD(x[i - 1]) && U16_IS_TRAIL(c) != U16_IS_TRAIL(d))
-                return U16_IS_TRAIL(d);
-            if (U16_IS_LEAD(c) && i + 1 < x.length() && U16_IS_TRAIL(x[i + 1]))
-                c = U16_GET_SUPPLEMENTARY(c, x[i + 1]);
-            if (U16_IS_LEAD(d) && i + 1 < y.length() && U16_IS_TRAIL(y[i + 1]))
-                d = U16_GET_SUPPLEMENTARY(d, y[i + 1]);
-            return c < d;
-        }
-        return x.length() < y.length();
-    }
+    static bool stringLess(JSString* a, JSString* b) { return compareStrings(a->tryGetValue().data, b->tryGetValue().data) < 0; }
 
     // These say whether a < b. After a failure they say no, and m_failed is set. That is what the sorter looks at: the exception
     // stays pending for whoever called sort(), and nothing else runs before it gets there.

@@ -1363,6 +1363,8 @@ static JSValue richCompareOrNotImplemented(JSGlobalObject* globalObject, JSValue
     // Numbers that are not boxed compare as JS numbers do, whether they are ints or floats.
     if (a.isNumber() && b.isNumber())
         return jsBoolean(compareOrdered(a.asNumber(), b.asNumber(), op));
+    if (a.isString() && b.isString())
+        return strCompare(globalObject, asString(a), asString(b), op);
 
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
