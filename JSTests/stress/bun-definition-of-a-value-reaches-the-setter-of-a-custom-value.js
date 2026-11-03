@@ -86,6 +86,28 @@ const storesThatReachTheSetter = {
             },
         }).customValue2 = value;
     },
+    // A field defines its value on what the constructor of the base class returned, and says all three attributes.
+    "a class field on a returned object"(object, value) {
+        class Returns {
+            constructor() {
+                return object;
+            }
+        }
+        new (class extends Returns {
+            customValue2 = value;
+        })();
+    },
+    "a class field with a computed name on a returned object"(object, value) {
+        const name = "customValue2";
+        class Returns {
+            constructor() {
+                return object;
+            }
+        }
+        new (class extends Returns {
+            [name] = value;
+        })();
+    },
 };
 
 const definitionsThatReplaceTheProperty = {
@@ -146,6 +168,57 @@ function test() {
         const object = $vm.createCustomTestGetterSetter();
         Object.defineProperty(object, "customValueNoSetter", { value: 1 });
         shouldBe(object.customValueNoSetter, 1, "customValueNoSetter");
+    }
+
+    {
+        // ... and a class field puts its value in the place of such a custom value.
+        const object = $vm.createCustomTestGetterSetter();
+        class Returns {
+            constructor() {
+                return object;
+            }
+        }
+        new (class extends Returns {
+            customValueNoSetter = 1;
+        })();
+        shouldBe(object.customValueNoSetter, 1, "customValueNoSetter as a class field");
+    }
+
+    {
+        // Object.preventExtensions() defines nothing: the property stays what it is.
+        const object = $vm.createCustomTestGetterSetter();
+        object.customValue2 = {};
+        Object.preventExtensions(object);
+        shouldBe(isStillCustomValue(object), true, "after Object.preventExtensions(), a store reaches the setter");
+        const value = {};
+        Object.defineProperty(object, "customValue2", { value });
+        shouldBe(object.value2, value, "after Object.preventExtensions(), what the setter got from a definition");
+    }
+
+    {
+        // Object.seal() defines each property of this object again with { configurable: false }. That changes an
+        // attribute, so the custom value becomes a value that can still be written, and no store reaches the setter.
+        // (objectConstructorSeal() seals a final object and an array by a transition of the structure. That leaves a
+        // custom value what it is. $vm has no final object with a custom value; Bun's Module.prototype is one.)
+        const object = $vm.createCustomTestGetterSetter();
+        const before = {};
+        object.customValue2 = before;
+        Object.seal(object);
+        shouldBe(object.customValue2, before, "after Object.seal(), the value");
+        shouldBe(isStillCustomValue(object), false, "after Object.seal(), a store reaches no setter");
+        shouldBe(object.value2, before, "after Object.seal(), what the setter got last");
+    }
+
+    {
+        // Object.freeze() does the same with { writable: false } added, so nothing can store a value anymore.
+        const object = $vm.createCustomTestGetterSetter();
+        const before = {};
+        object.customValue2 = before;
+        Object.freeze(object);
+        object.customValue2 = {};
+        shouldBe(Reflect.defineProperty(object, "customValue2", { value: {} }), false, "after Object.freeze(), a definition of another value");
+        shouldBe(object.customValue2, before, "after Object.freeze(), the value");
+        shouldBe(object.value2, before, "after Object.freeze(), what the setter got last");
     }
 }
 

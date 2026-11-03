@@ -133,9 +133,24 @@ Rules for an edit to an upstream test:
   its last `putDirect`. A definition that gives a value and changes no attribute hands the value to the setter of a
   `CustomValue` that has one and is not read-only, and the property stays what it is. Upstream puts the value in the
   property's place. Since 324876@main a store through a proxy that only forwards ends in such a definition, and Bun has
-  custom values whose setters keep state elsewhere (`onmessage`, `Error.prepareStackTrace`).
+  custom values whose setters keep state elsewhere (`onmessage`, `Error.prepareStackTrace`). Upstream's comment in
+  `definePropertyOnReceiverSlow`, that the definition "replaces the custom value", does not hold here for those.
+- The rule stands in two more places. `canPutDirectFast` (`runtime/CommonSlowPaths.h`) sends a class field on a returned
+  object to the definition where the name is a custom value: `putDirect()` would put the value in its place. The extra
+  properties of a compiled object have it in `tryHandValueToSetterOfExtraProperty` (`aot/object/AOTObjectMethodTable.cpp`).
+- What replaces the property as upstream has it: a definition that changes an attribute, a definition of an accessor,
+  `delete`. `Object.seal()` and `Object.freeze()` are of the first kind for most objects: `setIntegrityLevel`
+  (`runtime/ObjectConstructor.cpp`) defines each property again with `configurable: false`, so the custom value becomes a
+  plain value, and a sealed one that can still be written reaches no setter. A `JSFinalObject` and a `JSArray` are sealed
+  and frozen by one transition of the structure, which leaves a custom value what it is. Upstream moves that line: a final
+  object with indexed properties and an array joined the transition in 325271@main. `Object.preventExtensions()` defines
+  nothing.
+- When it can go: the rule serves the custom values with a setter that Bun gives to scripts as data properties (`onmessage`
+  and `onerror` of the global object, `Error.prepareStackTrace`, `Module.prototype.require`, the `exports` of a compiled
+  module). When Bun has none left, the three places go, and the file below gets upstream's line back.
 - How to recognize it: a test expects that a native setter did not run, or that a custom value became a plain value, behind
-  `Object.defineProperty(o, k, { value })`, `Reflect.set(target, k, v, proxy)` or `proxy.k = v`.
+  `Object.defineProperty(o, k, { value })`, `Reflect.set(target, k, v, proxy)`, `proxy.k = v` or a class field
+  (`class extends Base { k = v }` where the constructor of `Base` returns the object).
 - File: `stress/reflect-set-proxy-receiver-custom-value.js`: `Object.hasOwn(reified, 'value2')` is `true` (upstream:
   `false`). A row of a static table that is not reified keeps upstream's result, so the other lines of the file stand.
 
