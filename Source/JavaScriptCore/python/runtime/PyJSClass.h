@@ -26,8 +26,11 @@ namespace Python {
 //   static x = 1         Derived.x = 1, once the class is made
 //   x = 1, this.x = 1    an attribute of the instance
 //   [Symbol.x]() {}      kept for JS, which finds it on the instances
-//   constructor() {}     __new__: it makes the instance. `super(...)` in it is Base's __new__ and __init__.
-//   super.method()       what follows Base in the MRO of the instance, Base included, bound to `this`
+//   constructor() {}     __new__: it makes the instance. `super(...)` in it is the __new__ and the __init__ that follow Derived in the MRO
+//                        of the class that is being instantiated. Derived.__init__ does nothing then, unless the class has one.
+//   no constructor, and nothing that one would have to do (fields, private methods): neither __new__ nor __init__, as for
+//                        `class Derived(Base): pass`. So __init__(a, b) {} can be written as in Python.
+//   super.method()       what follows Derived in the MRO of `this`, bound to it: super().method()
 
 // Type.prototype: an object that has what the type and its bases have in their namespaces.
 //
@@ -55,8 +58,12 @@ public:
 
     // The one of the type.
     static PyPrototypeView* of(JSGlobalObject*, PyType*);
+    // What `super` is in the methods of the type, which is written in JS: it has what the types have that follow the type in the MRO of
+    // `this`. It is the prototype of their home object.
+    static PyPrototypeView* createSuper(JSGlobalObject*, PyType*);
 
     PyType* type() const { return m_type.get(); }
+    bool isSuper() const { return m_isSuper; }
 
     static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
     static bool getOwnPropertySlotByIndex(JSObject*, JSGlobalObject*, unsigned, PropertySlot&);
@@ -69,6 +76,40 @@ private:
     PyPrototypeView(VM&, Structure*);
 
     WriteBarrier<PyType> m_type;
+    bool m_isSuper { false };
+};
+
+// What `super` is in the constructor and in the static methods of a type that is written in JS: the prototype of the constructor.
+//
+//   super(...)        the __new__, and then the __init__, that follow the type in the MRO of new.target
+//   super.method()    what follows the type in the MRO of `this`, which is a class: super().method() in a classmethod
+class PySuperConstructor final : public InternalFunction {
+public:
+    using Base = InternalFunction;
+    static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetOwnPropertySlot | ProhibitsPropertyCaching | GetOwnPropertySlotIsImpureForPropertyAbsence;
+    static constexpr DestructionMode needsDestruction = DoesNotNeedDestruction;
+
+    template<typename CellType, SubspaceAccess>
+    static CompleteSubspace* subspaceFor(VM& vm) { return &vm.cellSpace(); }
+
+    DECLARE_INFO;
+    DECLARE_VISIT_CHILDREN;
+
+    static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
+    {
+        return Structure::create(vm, globalObject, prototype, TypeInfo(InternalFunctionType, StructureFlags), info());
+    }
+
+    static PySuperConstructor* create(JSGlobalObject*, PyType*);
+
+    PyType* type() const { return m_type.get(); }
+
+    static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
+
+private:
+    PySuperConstructor(VM&, Structure*);
+
+    WriteBarrier<PyType> m_type;
 };
 
 // A property of an instance whose key is a symbol, if a class of its that is written in JS has it. False: none has, or an exception.
@@ -78,9 +119,14 @@ bool symbolPropertyOfClasses(JSGlobalObject*, PyType*, PropertyName, PropertySlo
 PyType* jsMethodType(Runtime&);
 JSValue makeJSMethod(JSGlobalObject*, JSValue function);
 
+// A function of JS, or a JSMethod of one: what is a plain function where a class is made. (__init_subclass__ is a classmethod then.)
+bool isFunctionOfJS(Runtime&, JSValue);
+
 // Whether a class derived from one written in JS, or written in JS itself, has an __init__ other than the one that those are given,
 // which does nothing.
 bool hasInitOfItsOwn(PyType*);
+// Whether the class itself, which is written in JS, has the __init__ that does nothing: its constructor sees to those of its bases.
+bool constructorInitializes(PyType*);
 
 // `new.target` is a class derived from the type: super(...) in a constructor, Reflect.construct(Type, arguments, Derived).
 JSValue constructBaseOfDerivedClass(JSGlobalObject*, PyType*, PyType* derived, const CallArgs&);

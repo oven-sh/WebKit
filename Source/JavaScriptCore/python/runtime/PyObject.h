@@ -71,6 +71,7 @@ public:
 
     // An object whose type has __call__ is a function to JS, and to the call instructions.
     static CallData getCallData(JSCell*);
+    static CallData getConstructData(JSCell*);
     PY_DECLARE_JS_VIEW;
 
     PyType* type() const { return m_type.get(); }

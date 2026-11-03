@@ -781,13 +781,27 @@ static JSValue typeDelAttr(JSGlobalObject* globalObject, JSValue self, JSValue n
 
 // ---- type: calling one ----
 
-JSValue typeCall(JSGlobalObject* globalObject, PyType* type, const CallArgs& allArgs, PyType* derived)
+JSValue typeCall(JSGlobalObject* globalObject, PyType* type, const CallArgs& allArgs, PyType* derived, bool afterType)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     CallArgs args = allArgs;
     PyType* cls = derived ? derived : type;
+    // For a derived class: what the type has, or what follows it, in the MRO of that class.
+    auto lookup = [&](Special special) -> JSValue {
+        PyTuple* mro = derived ? derived->mro() : nullptr;
+        if (!mro)
+            return type->lookup(special);
+        unsigned i = 0;
+        while (i < mro->length() && mro->at(i).asCell() != type)
+            ++i;
+        for (i += afterType ? 1 : 0; i < mro->length(); ++i) {
+            if (JSValue found = PyType::from(mro->at(i))->dict()->get(rt.name(special)))
+                return found;
+        }
+        return { };
+    };
 
     if (type == rt.typeType() && !derived) {
         if (args.size() == 1 && !args.hasKeywords())
@@ -796,8 +810,8 @@ JSValue typeCall(JSGlobalObject* globalObject, PyType* type, const CallArgs& all
             return raiseTypeError(globalObject, scope, "type() takes 1 or 3 arguments"_s);
     }
 
-    JSValue newMethod = type->lookup(Special::New);
-    if (!newMethod || type->has(TypeFlag::DisallowInstantiation))
+    JSValue newMethod = lookup(Special::New);
+    if (!newMethod || (type->has(TypeFlag::DisallowInstantiation) && !afterType))
         return raiseTypeError(globalObject, scope, "cannot create '"_s, type->nameInMessages(), "' instances"_s);
 
     JSValue object;
@@ -810,16 +824,16 @@ JSValue typeCall(JSGlobalObject* globalObject, PyType* type, const CallArgs& all
     // object.__new__ and object.__init__ tell by the class of the instance whether the arguments are meant for the other of the two.
     // Here that is for the type to say, whose methods these are.
     if (derived && isNativeNew(newMethod, objectNew)) {
-        if (hasExcessArguments(args) && isNativeNew(type->lookup(Special::Init), objectInit) && !hasInitOfItsOwn(derived))
+        if (hasExcessArguments(args) && isNativeNew(lookup(Special::Init), objectInit) && !hasInitOfItsOwn(derived))
             return raiseTypeError(globalObject, scope, derived->nameInMessages(), "() takes no arguments"_s);
         args = CallArgs();
     }
     // In CPython the __new__ of a built-in type, found in a class or in the classes it derives from, stands for "what the class
     // inherits", whichever type it is of: that of __base__, which decides the layout. So class C(tzinfo, dict) is made by dict's,
     // and so is class C(dict): __new__ = object.__new__.
-    if (native && type->isHeapType() && (native->ownerType()->solidBase() != layoutBase(type) || !type->isSubtypeOf(native->ownerType()))) [[unlikely]] {
+    if (native && cls->isHeapType() && (native->ownerType()->solidBase() != layoutBase(cls) || !cls->isSubtypeOf(native->ownerType()))) [[unlikely]] {
         PyNativeFunction* inherited = native;
-        for (PyType* base = type->base(); base; base = base->base()) {
+        for (PyType* base = cls->base(); base; base = base->base()) {
             inherited = nativeNew(base->lookup(Special::New));
             if (!inherited || !base->isHeapType())
                 break;
@@ -852,7 +866,10 @@ JSValue typeCall(JSGlobalObject* globalObject, PyType* type, const CallArgs& all
         return object;
     if (objectType->lookup(Special::Del) && object.isCell()) [[unlikely]]
         rt.registerFinalizable(object.asCell());
-    JSValue init = (derived ? type : objectType)->lookup(Special::Init);
+    // A class written in JS that has an __init__ besides its constructor calls those of its bases from there.
+    if (afterType && !constructorInitializes(type))
+        return object;
+    JSValue init = derived ? lookup(Special::Init) : objectType->lookup(Special::Init);
     if (!init || (derived && isNativeNew(init, objectInit)))
         return object;
     JSValue result = callSpecial(globalObject, init, object, allArgs);
@@ -1228,13 +1245,13 @@ static JSValue typeNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs
     }
 
     // A plain function under one of these names is not an ordinary method.
-    if (JSValue function = dict->get(rt.name(Special::New)); function && PyFunction::is(function)) {
+    if (JSValue function = dict->get(rt.name(Special::New)); function && (PyFunction::is(function) || isFunctionOfJS(rt, function))) {
         JSValue method = makeStaticMethod(globalObject, function);
         RETURN_IF_EXCEPTION(scope, { });
         dict->set(vm, rt.name(Special::New), method);
     }
     for (Special special : { Special::InitSubclass, Special::ClassGetItem }) {
-        if (JSValue function = dict->get(rt.name(special)); function && PyFunction::is(function)) {
+        if (JSValue function = dict->get(rt.name(special)); function && (PyFunction::is(function) || isFunctionOfJS(rt, function))) {
             JSValue method = makeClassMethod(globalObject, function);
             RETURN_IF_EXCEPTION(scope, { });
             dict->set(vm, rt.name(special), method);

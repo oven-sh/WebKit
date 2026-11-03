@@ -6063,12 +6063,12 @@ RegisterID* ClassExprNode::emitBytecode(BytecodeGenerator& generator, RegisterID
     }
 
     // A class derived from a class of Python's is one itself, made from the constructor and the prototype, and takes the place of the
-    // constructor from here on: python/runtime/PyJSClass.h. A class of Python's is an InternalFunction.
+    // constructor from here on: python/runtime/PyJSClass.h. A class of Python's is no JSFunction.
     RefPtr<RegisterID> homeObjectOfStaticElements = constructor;
     if (superclass) {
         homeObjectOfStaticElements = generator.move(generator.newTemporary(), constructor.get());
         Ref<Label> isClassOfJS = generator.newLabel();
-        generator.emitJumpIfFalse(generator.emitIsCellWithType(generator.newTemporary(), superclass.get(), InternalFunctionType), isClassOfJS.get());
+        generator.emitJumpIfTrue(generator.emitIsCellWithType(generator.newTemporary(), superclass.get(), JSFunctionType), isClassOfJS.get());
         RefPtr<RegisterID> function = generator.moveLinkTimeConstant(nullptr, LinkTimeConstant::deriveClassFromPython);
         CallArguments args(generator, nullptr, 3);
         generator.emitLoad(args.thisRegister(), jsUndefined());

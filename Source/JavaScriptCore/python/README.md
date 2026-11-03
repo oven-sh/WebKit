@@ -590,21 +590,30 @@ while any thread has a function. The side tables are only changed with the GIL, 
 - A class is called or `new`ed; `instanceof` is `isinstance`.
 - **`class Derived extends Base`**, where `Base` is a class of Python's, is `class Derived(Base)` (`runtime/PyJSClass.h`). When the
   methods are in place and before anything can see the class, the bytecode of a class definition with a heritage hands
-  constructor, prototype and superclass to `deriveClassFromJS` (if the superclass is an `InternalFunction`, which a `PyType` is), and
+  constructor, prototype and superclass to `deriveClassFromJS` (unless the superclass is a `JSFunction`, which a `PyType` is not), and
   what that returns is the class from then on: a `PyType`, made by the metaclass of `Base` from a namespace with what the
   prototype and the constructor have. So `__init_subclass__`, `__set_name__`, `ABCMeta` and the like run when they would in Python,
   `issubclass()` holds, Python finds the methods and can derive from the class in its turn.
   A method is a `JSMethod`, a function whose first argument is the `this` of the JS function, so `Derived.method(instance)` works as
   `instance.method()` does; an accessor is a `property`; a static method is a `classmethod`; what has a symbol for a key stays
   with JS, which finds it on the instances.
-  The constructor is the `__new__` of the class, since it is what makes the instance, and `__init__` does nothing. `super(...)` in it
-  constructs `Base` with `new.target` a class derived from it: that is `Base`'s `__new__` and `__init__` for an instance of that class
-  (`typeCall` with `derived`). So `class Day extends date { constructor(text) { super(...parse(text)); } }` works, which in Python
-  takes a `__new__`. As with any class that has a `__new__`, a class in Python that derives from it and takes other arguments
-  has to have one too.
-- **`Class.prototype`** (`PyPrototypeView`) has what the class and its bases have. Read for an instance (`super.method`) it binds as
-  `super()` does, looking from the class on in the MRO of the instance. Read by itself it gives functions that take the instance
-  as `this`: `list.prototype.index.call(array, item)`. What is assigned to it, or defined on it, is a method or a property of the class.
+  `__new__`, `__init_subclass__` and `__class_getitem__` are a static method and class methods without being told, as in a class statement.
+  A class without a constructor, and without fields or private methods, which a constructor would have to install, has neither
+  `__new__` nor `__init__`: it is `class Derived(Base): pass`, hides nothing as a mixin, and can have an `__init__(a, b) {}` as in Python.
+  Otherwise the constructor is the `__new__` of the class, since it is what makes the instance, and `__init__` does nothing.
+  So `class Day extends date { constructor(text) { super(...parse(text)); } }` works, which in Python takes a `__new__`. As with
+  any class that has a `__new__`, a class in Python that derives from it and takes other arguments has to have one too.
+  What can stand among the bases of a class can stand behind `extends`: `Generic[T]`, `list[int]` (`__mro_entries__`).
+- **`super` goes by the MRO**, as `super()` does, so that a class written in JS cooperates with whatever it is combined with
+  (`class C(Derived, Other)`). The home object of the methods and the constructor get prototypes of their own for it:
+  `super.method()` is what follows `Derived` in the MRO of `this` (`PyPrototypeView::createSuper`; in a static method, of the class
+  that is `this`), and `super(...)` is the `__new__` and then the `__init__` that follow `Derived` in the MRO of `new.target`
+  (`PySuperConstructor`, `typeCall` with `afterType`). If the class has an `__init__` besides its constructor, `super(...)` is `__new__`
+  alone, and the `__init__` calls those of the bases.
+- **`Class.prototype`** (`PyPrototypeView`) has what the class and its bases have. Read for an instance
+  (`Reflect.get(Class.prototype, name, instance)`) it binds as `super()` does, looking from the class on in the MRO of the instance.
+  Read by itself it gives functions that take the instance as `this`: `list.prototype.index.call(array, item)`. What is assigned
+  to it, or defined on it, is a method or a property of the class.
 - **A function written in JS that is found in a class is a method**, as one written in Python is (`foreignMethodKind`): what Python
   gets from the instance is a bound method, and to call that passes the instance as `this`. An arrow function has no `this`:
   it is to JS what a lambda is to Python, and takes the instance first. Bound functions, classes and functions written in C++ are
@@ -699,7 +708,7 @@ What every program pays, with the sizes of a release build for x86-64:
 | `Bun.deepEquals()`, `expect().toEqual()` | the same test for each pair of values compared |
 | Untyped arithmetic, DFG and FTL | the result is known to be a primitive only if the operands are known not to be Python objects |
 | `x * 1`, `1 * x` | a multiplication: the parser no longer makes it `+x` |
-| A class definition with `extends` | a move, and a test of the type of the superclass; if that is an `InternalFunction` (`Map`, `Error`, `Promise`), a call of a function that finds it is not Python's |
+| A class definition with `extends` | a move, and a test of the type of the superclass; unless that is a `JSFunction` (so for `Map`, `Error`, `Promise`, a proxy, `null`), a call of a function that finds it is not Python's |
 | A block or large allocation is swept | one load and branch (`mayRunEmbedderFinalizers()`) |
 | The incremental sweeper runs | one load and branch (`hasParkedThreads()`) |
 | A call is linked, or is virtual and not to compiled JS | is the caller Python code: three loads and a branch |

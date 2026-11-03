@@ -59,6 +59,19 @@ CallData PyObject::getCallData(JSCell* cell)
     return callData;
 }
 
+// What can stand among the bases of a class (Generic[T], list[int]) can stand behind `extends`, which takes constructors only.
+CallData PyObject::getConstructData(JSCell* cell)
+{
+    CallData constructData;
+    if (uncheckedDowncast<PyObject>(cell)->type()->lookup(Special::MroEntries)) {
+        constructData.type = CallData::Type::Native;
+        constructData.native.function = callPythonObject;
+        constructData.native.isBoundFunction = false;
+        constructData.native.isWasm = false;
+    }
+    return constructData;
+}
+
 PY_DEFINE_JS_VIEW(PyObject)
 
 JSObject* prototypeOfPythonObjects(JSGlobalObject* globalObject)

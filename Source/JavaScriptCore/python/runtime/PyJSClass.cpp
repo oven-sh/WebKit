@@ -215,6 +215,37 @@ PyPrototypeView* PyPrototypeView::of(JSGlobalObject* globalObject, PyType* type)
     return view;
 }
 
+PyPrototypeView* PyPrototypeView::createSuper(JSGlobalObject* globalObject, PyType* type)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    // For what has a symbol for a key, which goes by the first bases alone.
+    JSObject* parent = type->base() ? static_cast<JSObject*>(of(globalObject, type->base())) : rt.jsViewObject(JSViewObject::ObjectPrototype);
+    Structure* structure = createStructure(vm, globalObject, parent);
+    auto* view = new (NotNull, allocateCell<PyPrototypeView>(vm)) PyPrototypeView(vm, structure);
+    view->finishCreation(vm);
+    view->m_type.set(vm, view, type);
+    view->m_isSuper = true;
+    view->didBecomePrototype(vm);
+    return view;
+}
+
+// What the types have for the name that follow the type in the MRO of `start`, a type derived from it; with the type itself, if asked.
+static JSValue lookupFollowing(PyType* start, PyType* type, bool includingType, JSString* name)
+{
+    PyTuple* mro = start->mro();
+    if (!mro)
+        return { };
+    unsigned i = 0;
+    while (i < mro->length() && mro->at(i).asCell() != type)
+        ++i;
+    for (i += includingType ? 0 : 1; i < mro->length(); ++i) {
+        if (JSValue found = PyType::from(mro->at(i))->dict()->get(name))
+            return found;
+    }
+    return { };
+}
+
 // Type.prototype.name.call(instance, ...) is Type.name(instance, ...).
 static constexpr unsigned unboundMethodField = 0;
 
@@ -268,36 +299,38 @@ bool PyPrototypeView::getOwnPropertySlot(JSObject* object, JSGlobalObject*, Prop
         return false;
     }
     constexpr unsigned hidden = static_cast<unsigned>(PropertyAttribute::DontEnum);
-    PyType* type = uncheckedDowncast<PyPrototypeView>(object)->type();
+    auto* view = uncheckedDowncast<PyPrototypeView>(object);
+    PyType* type = view->type();
     if (propertyName == vm.propertyNames->constructor) {
+        if (view->isSuper())
+            return false;
         slot.setValue(object, hidden, type);
         return true;
     }
     JSString* name = internString(vm, String(propertyName.uid()));
 
+    // As super(type, receiver) has it: the receiver is an instance of the type, or a class derived from it.
     JSValue receiver = slot.thisValue();
-    PyType* receiverType = receiver && receiver != JSValue(object) ? rt.typeOf(receiver) : nullptr;
-    if (!receiverType || !receiverType->isSubtypeOf(type) || !receiverType->mro()) {
-        JSValue found = type->lookup(name);
+    JSValue instance = receiver;
+    PyType* start = receiver && receiver != JSValue(object) ? rt.typeOf(receiver) : nullptr;
+    if (start && !start->isSubtypeOf(type)) {
+        start = PyType::tryFrom(receiver);
+        instance = { };
+    }
+    if (!start || !start->isSubtypeOf(type) || !start->mro()) {
+        JSValue found = lookupFollowing(type, type, !view->isSuper(), name);
         if (!found)
             return false;
         slot.setValue(object, hidden, unboundForJS(globalObject, name, found));
         return true;
     }
-    PyTuple* mro = receiverType->mro();
-    unsigned i = 0;
-    while (i < mro->length() && mro->at(i).asCell() != type)
-        ++i;
-    for (; i < mro->length(); ++i) {
-        JSValue found = PyType::from(mro->at(i))->dict()->get(name);
-        if (!found)
-            continue;
-        JSValue bound = bindDescriptor(globalObject, found, receiver, receiverType);
-        RETURN_IF_EXCEPTION(scope, false);
-        slot.setValue(object, hidden, valueForJS(bound));
-        return true;
-    }
-    return false;
+    JSValue found = lookupFollowing(start, type, !view->isSuper(), name);
+    if (!found)
+        return false;
+    JSValue bound = bindDescriptor(globalObject, found, instance, start);
+    RETURN_IF_EXCEPTION(scope, false);
+    slot.setValue(object, hidden, valueForJS(bound));
+    return true;
 }
 
 bool PyPrototypeView::getOwnPropertySlotByIndex(JSObject*, JSGlobalObject*, unsigned, PropertySlot& slot)
@@ -421,6 +454,82 @@ JSValue constructBaseOfDerivedClass(JSGlobalObject* globalObject, PyType* type, 
     return typeCall(globalObject, type, args, derived);
 }
 
+const ClassInfo PySuperConstructor::s_info = { "PySuperConstructor"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(PySuperConstructor) };
+
+static JSC_DECLARE_HOST_FUNCTION(callSuperConstructor);
+static JSC_DECLARE_HOST_FUNCTION(constructSuperConstructor);
+
+JSC_DEFINE_HOST_FUNCTION(callSuperConstructor, (JSGlobalObject* globalObject, CallFrame*))
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    return throwVMTypeError(globalObject, scope, "super(...) is for the constructor of a class"_s);
+}
+
+JSC_DEFINE_HOST_FUNCTION(constructSuperConstructor, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PyType* type = uncheckedDowncast<PySuperConstructor>(callFrame->jsCallee())->type();
+    PyType* derived = PyType::tryFrom(callFrame->newTarget());
+    if (!derived || !derived->isSubtypeOf(type))
+        return throwVMTypeError(globalObject, scope, "super(...) is for the constructor of a class"_s);
+    RELEASE_AND_RETURN(scope, JSValue::encode(valueForJS(withArgumentsFromJS(globalObject, callFrame, [&](const CallArgs& args) {
+        return typeCall(globalObject, type, args, derived, true);
+    }))));
+}
+
+PySuperConstructor::PySuperConstructor(VM& vm, Structure* structure)
+    : Base(vm, structure, callSuperConstructor, constructSuperConstructor)
+{
+}
+
+template<typename Visitor>
+void PySuperConstructor::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = uncheckedDowncast<PySuperConstructor>(cell);
+    Base::visitChildren(thisObject, visitor);
+    visitor.append(thisObject->m_type);
+}
+
+DEFINE_VISIT_CHILDREN(PySuperConstructor);
+
+PySuperConstructor* PySuperConstructor::create(JSGlobalObject* globalObject, PyType* type)
+{
+    VM& vm = getVM(globalObject);
+    Structure* structure = createStructure(vm, globalObject, type->base() ? JSValue(type->base()) : jsNull());
+    auto* function = new (NotNull, allocateCell<PySuperConstructor>(vm)) PySuperConstructor(vm, structure);
+    function->finishCreation(vm);
+    function->m_originalName.set(vm, function, jsEmptyString(vm));
+    function->m_type.set(vm, function, type);
+    return function;
+}
+
+bool PySuperConstructor::getOwnPropertySlot(JSObject* object, JSGlobalObject*, PropertyName propertyName, PropertySlot& slot)
+{
+    JSGlobalObject* globalObject = object->realm();
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (propertyName.isSymbol())
+        RELEASE_AND_RETURN(scope, Base::getOwnPropertySlot(object, globalObject, propertyName, slot));
+    slot.disableCaching();
+    if (slot.isVMInquiry()) {
+        slot.setIsTaintedByOpaqueObject();
+        return false;
+    }
+    PyType* type = uncheckedDowncast<PySuperConstructor>(object)->type();
+    PyType* start = PyType::tryFrom(slot.thisValue());
+    if (!start || !start->isSubtypeOf(type))
+        start = type;
+    JSValue found = lookupFollowing(start, type, false, internString(vm, String(propertyName.uid())));
+    if (!found)
+        return false;
+    JSValue bound = bindDescriptor(globalObject, found, { }, start);
+    RETURN_IF_EXCEPTION(scope, false);
+    slot.setValue(object, static_cast<unsigned>(PropertyAttribute::DontEnum), valueForJS(bound));
+    return true;
+}
+
 // Derived.__new__(cls, ...): `self` is the constructor.
 static JSValue jsClassNew(JSGlobalObject* globalObject, JSValue constructor, const CallArgs& args)
 {
@@ -434,10 +543,31 @@ static JSValue jsClassNew(JSGlobalObject* globalObject, JSValue constructor, con
 // The constructor has seen to it.
 static JSValue jsClassInit(JSGlobalObject*, JSValue, const CallArgs&) { return jsUndefined(); }
 
-bool hasInitOfItsOwn(PyType* type)
+static bool isInitOfConstructor(JSValue init)
 {
-    auto* native = PyNativeFunction::tryFrom(type->lookup(Special::Init));
-    return !native || native->def().pointer.variadicWithSelf != jsClassInit;
+    auto* native = PyNativeFunction::tryFrom(init);
+    return native && native->def().pointer.variadicWithSelf == jsClassInit;
+}
+
+bool hasInitOfItsOwn(PyType* type) { return !isInitOfConstructor(type->lookup(Special::Init)); }
+
+bool constructorInitializes(PyType* type) { return isInitOfConstructor(type->dict()->get(runtime(type->realm()).name(Special::Init))); }
+
+bool isFunctionOfJS(Runtime& rt, JSValue value)
+{
+    return isJSMethod(rt, value) || (value.isCell() && foreignMethodKind(value.asCell()) != ForeignMethodKind::NotAMethod);
+}
+
+// Whether there is anything for the constructor to do that making an instance as Python does would leave out.
+static bool hasWorkForConstructor(JSObject* constructor)
+{
+    auto* function = dynamicDowncast<JSFunction>(constructor);
+    if (!function || function->isHostFunction())
+        return true;
+    UnlinkedFunctionExecutable* executable = function->jsExecutable()->unlinkedExecutable();
+    return !executable->isBuiltinDefaultClassConstructor()
+        || executable->needsClassFieldInitializer() == NeedsClassFieldInitializer::Yes
+        || executable->privateBrandRequirement() == PrivateBrandRequirement::Needed;
 }
 
 static constexpr NativeDef jsClassNewDef = PY_FUNCTION("__new__", jsClassNew, "($self, *args, **kwargs)");
@@ -466,11 +596,10 @@ static bool forEachOwnProperty(JSGlobalObject* globalObject, JSObject* object, P
 
 JSValue deriveClassFromJS(JSGlobalObject* lexicalGlobalObject, JSValue constructorValue, JSValue prototypeValue, JSValue superclass)
 {
-    PyType* base = PyType::tryFrom(superclass);
-    if (!base)
+    if (!PyType::is(superclass) && !isPyObject(superclass))
         return constructorValue;
     UNUSED_PARAM(lexicalGlobalObject);
-    JSGlobalObject* globalObject = base->realm();
+    JSGlobalObject* globalObject = asObject(superclass)->realm();
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -488,10 +617,12 @@ JSValue deriveClassFromJS(JSGlobalObject* lexicalGlobalObject, JSValue construct
         };
         add(rt.names.dModule(), internString(vm, "js"_s));
         RETURN_IF_EXCEPTION(scope, { });
-        add(rt.name(Special::New), PyNativeFunction::create(globalObject, jsClassNewDef, NativeKind::Function, constructor, { }));
-        RETURN_IF_EXCEPTION(scope, { });
-        add(rt.name(Special::Init), PyNativeFunction::create(globalObject, jsClassInitDef, NativeKind::Method, { }, rt.objectType()));
-        RETURN_IF_EXCEPTION(scope, { });
+        if (hasWorkForConstructor(constructor)) {
+            add(rt.name(Special::New), PyNativeFunction::create(globalObject, jsClassNewDef, NativeKind::Function, constructor, { }));
+            RETURN_IF_EXCEPTION(scope, { });
+            add(rt.name(Special::Init), PyNativeFunction::create(globalObject, jsClassInitDef, NativeKind::Method, { }, rt.objectType()));
+            RETURN_IF_EXCEPTION(scope, { });
+        }
         for (bool isStatic : { false, true }) {
             bool succeeded = forEachOwnProperty(globalObject, isStatic ? constructor : prototype, PropertyNameMode::Strings, [&](const Identifier& key, const PropertyDescriptor& descriptor) {
                 if (isStatic ? key == names.length || key == names.name || key == names.prototype : key == names.constructor)
@@ -505,7 +636,7 @@ JSValue deriveClassFromJS(JSGlobalObject* lexicalGlobalObject, JSValue construct
         }
         return jsUndefined();
     };
-    JSValue result = buildClass(globalObject, name, PyTuple::create(globalObject, { base }), CallArgs(), fill);
+    JSValue result = buildClass(globalObject, name, PyTuple::create(globalObject, { superclass }), CallArgs(), fill);
     RETURN_IF_EXCEPTION(scope, { });
     PyType* type = PyType::tryFrom(result);
     if (!type)
@@ -524,6 +655,9 @@ JSValue deriveClassFromJS(JSGlobalObject* lexicalGlobalObject, JSValue construct
     if (failed(scope, succeeded))
         return { };
     prototype->putDirect(vm, names.constructor, type, static_cast<unsigned>(PropertyAttribute::DontEnum));
+    // `super` goes by the MRO, which classes that derive from this one and from others have a say in.
+    prototype->setPrototypeDirect(vm, PyPrototypeView::createSuper(globalObject, type));
+    constructor->setPrototypeDirect(vm, PySuperConstructor::create(globalObject, type));
     return type;
 }
 

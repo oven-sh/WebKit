@@ -216,6 +216,9 @@ static bool jsViewAdaptorProperty(JSGlobalObject* globalObject, JSObject* object
     }
     if (propertyName == names.constructor)
         return jsViewFound(object, slot, type, hidden);
+    // `extends` asks for it: see PyObject::getConstructData().
+    if (propertyName == names.prototype)
+        return jsViewHas(type, Special::MroEntries) && jsViewFound(object, slot, jsNull(), hidden);
     if (object->type() != PyExceptionType)
         return false;
     if (propertyName == names.name)

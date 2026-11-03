@@ -59,9 +59,10 @@ String descriptorRepr(JSGlobalObject*, ASCIILiteral kind, StringView name, PyTyp
 
 // type.__getattribute__. With `suppress`, a missing attribute is an empty value and no exception.
 JSValue typeGetAttr(JSGlobalObject*, PyType*, JSString* name, bool suppress = false);
-// type.__call__: makes an instance. With `derived`, a class derived from the type: an instance of that, made and initialized by
-// what the type has for __new__ and __init__. (`super(...)` in the constructor of a class written in JS.)
-JSValue typeCall(JSGlobalObject*, PyType*, const CallArgs&, PyType* derived = nullptr);
+// type.__call__: makes an instance. With `derived`, a class derived from the type: an instance of that, made and initialized by the
+// __new__ and the __init__ that are found in its MRO from the type on (Reflect.construct(type, arguments, derived)) or, with
+// `afterType`, behind the type (`super(...)` in the constructor of the type, which is written in JS).
+JSValue typeCall(JSGlobalObject*, PyType*, const CallArgs&, PyType* derived = nullptr, bool afterType = false);
 // An instance of the type with nothing set: what object.__new__ makes, given how the type's instances are laid out.
 // `layout`: the built-in type that decides the layout, if not object. (One whose instances differ from object's in CPython only.)
 JSValue allocateInstance(JSGlobalObject*, PyType*, PyType* layout = nullptr);
