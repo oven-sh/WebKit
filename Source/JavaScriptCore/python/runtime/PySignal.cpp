@@ -75,6 +75,9 @@ struct SignalState {
     bool isWatched[signalLimit] { };
     bool watchChains[signalLimit] { };
     struct sigaction actionBeforeWatch[signalLimit] { };
+    // What the host does about a fault, if it does something: see signalIsHandledByHostAsByDefault().
+    bool hasHostAction[signalLimit] { };
+    struct sigaction hostAction[signalLimit] { };
     // Sent to the thread to get it out of a system call. 0: not set up.
     std::atomic<int> wakeSignal { 0 };
     std::atomic<int> wakeupDescriptor { -1 };
@@ -121,6 +124,10 @@ static void signalArrivedOnThread(int, siginfo_t*, void*);
 
 static void signalSetAction(int number, void (*function)(int), int& error)
 {
+    if (function == SIG_DFL && s_signalState.hasHostAction[number]) {
+        error = sigaction(number, &s_signalState.hostAction[number], nullptr) ? errno : 0;
+        return;
+    }
     struct sigaction action;
     memset(&action, 0, sizeof(action));
     sigemptyset(&action.sa_mask);
@@ -175,6 +182,25 @@ static bool signalIsOnMainThreadOfProcess()
 #endif
 }
 
+// A host may have a handler of its own for the signals that tell of a fault, which reports the crash and lets the process die of
+// the signal. To a program that is what the signal does by default: getsignal() says SIG_DFL, so that what signal() returns can be
+// given back to it, and SIG_DFL puts the handler of the host back.
+static bool signalIsHandledByHostAsByDefault(int number, const struct sigaction& action)
+{
+    switch (number) {
+    case SIGILL:
+    case SIGTRAP:
+    case SIGABRT:
+    case SIGBUS:
+    case SIGFPE:
+    case SIGSEGV:
+    case SIGSYS:
+        return !signalActionIsOurs(action);
+    default:
+        return false;
+    }
+}
+
 static ALWAYS_INLINE bool signalCanHandle(JSGlobalObject* globalObject) { return s_signalState.runtime == &runtime(globalObject); }
 // Handlers run on the main thread, and only there can they be set.
 static ALWAYS_INLINE bool signalIsOnHandlingThread(JSGlobalObject* globalObject) { return signalCanHandle(globalObject) && pthread_equal(pthread_self(), s_signalState.thread); }
@@ -224,11 +250,17 @@ static JSArray* signalHandlers(JSGlobalObject* globalObject)
         // None: it is handled, but not by Python.
         JSValue handler = jsUndefined();
         struct sigaction action;
-        if (!sigaction(number, nullptr, &action) && !(action.sa_flags & SA_SIGINFO)) {
-            if (action.sa_handler == SIG_DFL)
+        if (!sigaction(number, nullptr, &action)) {
+            bool isFunction = action.sa_flags & SA_SIGINFO;
+            if (!isFunction && action.sa_handler == SIG_DFL)
                 handler = jsNumber(signalDefault);
-            else if (action.sa_handler == SIG_IGN)
+            else if (!isFunction && action.sa_handler == SIG_IGN)
                 handler = jsNumber(signalIgnore);
+            else if (s_signalState.runtime == &rt && signalIsHandledByHostAsByDefault(number, action)) {
+                s_signalState.hostAction[number] = action;
+                s_signalState.hasHostAction[number] = true;
+                handler = jsNumber(signalDefault);
+            }
         }
         handlers.append(handler);
     }
