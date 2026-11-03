@@ -1697,11 +1697,19 @@ void Unit::comprehensionGenerator(ComprehensionKind kind, Seq<Comprehension*> ge
     Ref<Label> end = g.newLabel();
 
     auto emitInner = [&] {
-        for (Expr* condition : generator->ifs)
+        for (Expr* condition : generator->ifs) {
             jumpIf(condition, next.get(), false);
-        if (index + 1 < generators.size())
+            // CPython's compiler has the branch go where the jump at `next` goes, and then it is of the line of that jump.
+            line(element->range.lineno);
+        }
+        if (index + 1 < generators.size()) {
             comprehensionGenerator(kind, generators, index + 1, element, value, result, nullptr, range);
-        else
+            // So nothing jumps to where the inner loop goes on when it has ended.
+            if (!generator->ifs.isEmpty()) {
+                line(element->range.lineno);
+                g.emitJump(start.get());
+            }
+        } else
             comprehensionElement(kind, element, value, result);
     };
 
@@ -1779,12 +1787,16 @@ void Unit::comprehensionGenerator(ComprehensionKind kind, Seq<Comprehension*> ge
         Reg item = newTemporary();
         g.emitPyForIter(item.get(), iterator.get(), end.get());
         store(generator->target, item.get());
-    }
+    } else
+        line(generator->target->range.lineno);
     emitInner();
     g.emitLabel(next.get());
     line(element->range.lineno);
     g.emitJump(start.get());
     g.emitLabel(end.get());
+    // A generator expression returns from there.
+    if (kind == ComprehensionKind::Generator && !index)
+        line(generator->iter->range.lineno);
 }
 
 RegisterID* Unit::comprehension(Expr* node, ComprehensionKind kind, Seq<Comprehension*> generators, Expr* element, Expr* value, RegisterID* dst)

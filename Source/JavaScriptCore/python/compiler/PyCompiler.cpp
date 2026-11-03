@@ -1497,8 +1497,8 @@ void Unit::forLoop(For* node, bool isLast)
         Reg item = newTemporary();
         g.emitPyForIter(item.get(), iterator.get(), cleanup.get());
         store(node->target, item.get());
-    }
-    line(node->target->range.lineno);
+    } else
+        line(node->target->range.lineno);
     statements(node->body);
     g.emitJump(start.get());
     m_finallyContexts.removeLast();
