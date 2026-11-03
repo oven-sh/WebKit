@@ -245,6 +245,7 @@
 #include "ProfilerSupport.h"
 #include "ProxyConstructorInlines.h"
 #include "ProxyObjectInlines.h"
+#include "PyHooks.h"
 #include "PyRuntime.h"
 #include "ReflectObjectInlines.h"
 #include "RegExpConstructorInlines.h"
@@ -2074,6 +2075,9 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
         });
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::cloneObject)].initLater([] (const Initializer<JSCell>& init) {
             init.set(JSFunction::create(init.vm, init.owner, 0, "cloneObject"_s, globalFuncCloneObject, ImplementationVisibility::Private));
+        });
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::deriveClassFromPython)].initLater([] (const Initializer<JSCell>& init) {
+            init.set(JSFunction::create(init.vm, init.owner, 3, "deriveClassFromPython"_s, Python::deriveClassFromJSFunction, ImplementationVisibility::Private));
         });
 #if USE(BUN_JSC_ADDITIONS)
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::enqueueJob)].initLater([] (const Initializer<JSCell>& init) {

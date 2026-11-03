@@ -200,6 +200,7 @@ namespace JSC {
     macro(moduleFailureKind) \
     macro(copyDataProperties) \
     macro(cloneObject) \
+    macro(deriveClassFromPython) \
     macro(meta) \
     macro(moduleLoader) \
     macro(instanceFieldInitializer) \

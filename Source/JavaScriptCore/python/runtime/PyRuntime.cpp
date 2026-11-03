@@ -66,6 +66,7 @@ Runtime::Runtime(JSGlobalObject* globalObject)
     : m_vm(globalObject->vm())
     , m_globalObject(globalObject)
     , m_dictKey(PrivateName::PrivateSymbol, "__dict__"_s)
+    , m_keywordsKey(PrivateName::PrivateSymbol, "keywords"_s)
     , m_hiddenKeys { PrivateName(PrivateName::PrivateSymbol, "hidden0"_s), PrivateName(PrivateName::PrivateSymbol, "hidden1"_s), PrivateName(PrivateName::PrivateSymbol, "hidden2"_s), PrivateName(PrivateName::PrivateSymbol, "hidden3"_s) }
     , m_instanceKeys { PrivateName(PrivateName::PrivateSymbol, "type"_s), PrivateName(PrivateName::PrivateSymbol, "dict"_s), PrivateName(PrivateName::PrivateSymbol, "hasDict"_s) }
 {
@@ -91,7 +92,6 @@ void Runtime::visit(Visitor& visitor)
     visitor.append(m_functionStructure);
     visitor.append(m_listSubclassStructure);
     visitor.append(m_weakRefStructure);
-    visitor.append(m_keywordMarkerStructure);
     for (auto& object : m_jsViewObjects)
         visitor.append(object);
     for (auto& type : m_types)
@@ -153,7 +153,6 @@ void Runtime::initializeStructures()
     iteratorStructureID = structure<PyIterator>()->id();
     m_keywordNamesStructure.set(vm, globalObject, PyTuple::createKeywordNamesStructure(vm, globalObject));
     m_structures[static_cast<unsigned>(CellClass::PyException)].set(vm, globalObject, Structure::create(vm, globalObject, jsViewObject(JSViewObject::ExceptionPrototype), TypeInfo(PyExceptionType, PyException::StructureFlags), PyException::info()));
-    m_keywordMarkerStructure.set(vm, globalObject, PyRecord::createStructure(vm, globalObject));
     JSObject* functionPrototype = jsViewObject(JSViewObject::FunctionPrototype);
     m_typeStructure.set(vm, globalObject, PyType::createStructure(vm, globalObject, functionPrototype));
     m_nativeFunctionStructure.set(vm, globalObject, PyNativeFunction::createStructure(vm, globalObject, functionPrototype));

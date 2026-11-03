@@ -2849,7 +2849,7 @@ llintOp(op_py_bind_args, OpPyBindArgs, macro (size, get, dispatch)
     loadq ThisArgumentOffset - 8[cfr, t1, 8], t2
     btqnz t2, notCellMask, .noKeywordMarker
     btqz t2, .noKeywordMarker
-    bbeq JSCell::m_type[t2], PyObjectType, .slow
+    bbeq JSCell::m_type[t2], FinalObjectType, .slow
 .noKeywordMarker:
     loadPythonRuntime(t3)
     loadi Python::Runtime::frameDepth[t3], t0

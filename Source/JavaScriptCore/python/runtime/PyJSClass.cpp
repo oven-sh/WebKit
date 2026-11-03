@@ -1,0 +1,547 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#include "config.h"
+#include "PyJSClass.h"
+
+#include "JSCInlines.h"
+#include "PropertyNameArray.h"
+#include "PyAbstract.h"
+#include "PyErrors.h"
+#include "PyFunction.h"
+#include "PyHooks.h"
+#include "PyInternals.h"
+#include "PyJSView.h"
+#include "PyStr.h"
+#include "PyThreads.h"
+
+namespace JSC {
+namespace Python {
+
+// ---- JSMethod ----
+
+enum JSMethodField : unsigned { JSMethodFunction, JSMethodQualname, JSMethodFieldCount };
+
+static JSValue functionOfJSMethod(JSValue method) { return uncheckedDowncast<PyRecord>(method.asCell())->get(JSMethodFunction); }
+
+JSValue makeJSMethod(JSGlobalObject* globalObject, JSValue function)
+{
+    PyRecord* method = PyRecord::create(globalObject, jsMethodType(runtime(globalObject)), JSMethodFieldCount);
+    method->set(getVM(globalObject), JSMethodFunction, function);
+    return method;
+}
+
+static JSValue jsMethodNew(JSGlobalObject* globalObject, JSValue, JSValue function)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!isForeignCallee(function) || !asObject(function)->isCallable())
+        return raiseTypeError(globalObject, scope, "JSMethod() argument must be a JavaScript function, not "_s, typeName(globalObject, function));
+    return makeJSMethod(globalObject, function);
+}
+
+static JSValue jsMethodCall(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (args.isEmpty()) {
+        JSString* name = str(globalObject, self);
+        RETURN_IF_EXCEPTION(scope, { });
+        return raiseTypeError(globalObject, scope, "unbound method "_s, stringOf(name), " needs an argument"_s);
+    }
+    RELEASE_AND_RETURN(scope, callForeignFunction(globalObject, functionOfJSMethod(self), args.withoutFirst(), args[0]));
+}
+
+static JSValue jsMethodGet(JSGlobalObject* globalObject, JSValue self, JSValue instance, JSValue)
+{
+    return isNone(instance) ? self : JSValue(PyMethod::create(globalObject, self, instance));
+}
+
+// What it does not have itself is looked for on the function, where whatever is set goes: __name__, __isabstractmethod__, __doc__.
+static JSValue jsMethodGetAttribute(JSGlobalObject* globalObject, JSValue self, JSValue nameValue)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSString* name = attributeName(globalObject, nameValue);
+    RETURN_IF_EXCEPTION(scope, { });
+    PyType* type = typeOf(globalObject, self);
+    if (JSValue descriptor = type->lookup(name))
+        RELEASE_AND_RETURN(scope, bindDescriptor(globalObject, descriptor, self, type));
+    RELEASE_AND_RETURN(scope, getAttr(globalObject, functionOfJSMethod(self), name));
+}
+
+static JSValue jsMethodSetAttr(JSGlobalObject* globalObject, JSValue self, JSValue nameValue, JSValue value)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSString* name = attributeName(globalObject, nameValue);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (typeOf(globalObject, self)->lookup(name))
+        RELEASE_AND_RETURN(scope, (genericSetAttr(globalObject, self, name, value), jsUndefined()));
+    setAttr(globalObject, functionOfJSMethod(self), name, value);
+    RETURN_IF_EXCEPTION(scope, { });
+    return jsUndefined();
+}
+
+static JSValue jsMethodDelAttr(JSGlobalObject* globalObject, JSValue self, JSValue nameValue)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSString* name = attributeName(globalObject, nameValue);
+    RETURN_IF_EXCEPTION(scope, { });
+    delAttr(globalObject, functionOfJSMethod(self), name);
+    RETURN_IF_EXCEPTION(scope, { });
+    return jsUndefined();
+}
+
+static JSValue jsMethodRepr(JSGlobalObject* globalObject, JSValue self)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue name = getAttr(globalObject, self, rt.names.dQualname());
+    RETURN_IF_EXCEPTION(scope, { });
+    JSString* text = str(globalObject, name);
+    RETURN_IF_EXCEPTION(scope, { });
+    return makeStr(vm, makeString("<JavaScript method "_s, stringOf(text), " at "_s, addressForRepr(globalObject, self), '>'));
+}
+
+static JSValue jsMethodWrapped(JSGlobalObject*, JSValue self) { return functionOfJSMethod(self); }
+
+// "Class.method", for one that was in the body of a class.
+static JSValue jsMethodGetQualname(JSGlobalObject* globalObject, JSValue self)
+{
+    if (JSValue qualname = uncheckedDowncast<PyRecord>(self.asCell())->get(JSMethodQualname))
+        return qualname;
+    return getAttr(globalObject, functionOfJSMethod(self), runtime(globalObject).names.dQualname());
+}
+
+static void jsMethodSetQualname(JSGlobalObject* globalObject, JSValue self, JSValue value)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!value || !isStr(value)) {
+        raiseTypeError(globalObject, scope, "__qualname__ must be set to a string object"_s);
+        return;
+    }
+    uncheckedDowncast<PyRecord>(self.asCell())->set(vm, JSMethodQualname, value);
+}
+
+static JSValue jsMethodSetName(JSGlobalObject* globalObject, JSValue self, JSValue owner, JSValue name)
+{
+    VM& vm = getVM(globalObject);
+    auto* record = uncheckedDowncast<PyRecord>(self.asCell());
+    if (auto* type = PyType::tryFrom(owner); type && isStr(name) && !record->get(JSMethodQualname))
+        record->set(vm, JSMethodQualname, makeStr(vm, makeString(stringOf(type->qualname()), '.', stringOf(strValue(name)))));
+    return jsUndefined();
+}
+
+static constexpr NativeDef jsMethodMethods[] = {
+    PY_NEW(jsMethodNew, "($type, function, /)"),
+    PY_SLOT("__call__", jsMethodCall, "($self, *args, **kwargs)"),
+    PY_SLOT("__get__", jsMethodGet, "($self, instance, owner=None, /)"),
+    PY_SLOT("__getattribute__", jsMethodGetAttribute, "($self, name, /)"),
+    PY_SLOT("__setattr__", jsMethodSetAttr, "($self, name, value, /)"),
+    PY_SLOT("__delattr__", jsMethodDelAttr, "($self, name, /)"),
+    PY_SLOT("__repr__", jsMethodRepr, "($self, /)"),
+    PY_METHOD("__set_name__", jsMethodSetName, "($self, owner, name, /)"),
+};
+static constexpr NativeGetSet jsMethodGetSets[] = {
+    PY_MEMBER("__wrapped__", jsMethodWrapped),
+    { "__qualname__"_s, jsMethodGetQualname, jsMethodSetQualname },
+};
+static constexpr TypeDef jsMethodTypeDef { "_js.JSMethod"_s, { TypeFlag::OwnLayout }, jsMethodMethods, jsMethodGetSets, { } };
+PyType* jsMethodType(Runtime& rt) { return rt.typeFor(jsMethodTypeDef); }
+
+static bool isJSMethod(Runtime& rt, JSValue value)
+{
+    return value && value.isCell() && value.asCell()->type() == PyObjectType && uncheckedDowncast<PyObject>(value.asCell())->type() == jsMethodType(rt);
+}
+
+// `static get x() {}`: the getter is called with the class as `this`. (To assign to Class.x replaces it, as it does any attribute
+// of a class that its metaclass has nothing to say about.)
+enum JSStaticAccessorField : unsigned { JSStaticAccessorGetter, JSStaticAccessorFieldCount };
+
+static JSValue jsStaticAccessorGet(JSGlobalObject* globalObject, JSValue self, JSValue instance, JSValue owner)
+{
+    JSValue cls = owner && !isNone(owner) ? owner : JSValue(typeOf(globalObject, instance));
+    return callForeignFunction(globalObject, uncheckedDowncast<PyRecord>(self.asCell())->get(JSStaticAccessorGetter), CallArgs(), cls);
+}
+
+static constexpr NativeDef jsStaticAccessorMethods[] = {
+    PY_SLOT("__get__", jsStaticAccessorGet, "($self, instance, owner=None, /)"),
+};
+static constexpr TypeDef jsStaticAccessorTypeDef { "_js.JSStaticAccessor"_s, { TypeFlag::OwnLayout, TypeFlag::DisallowInstantiation }, jsStaticAccessorMethods, { }, { } };
+
+// ---- Type.prototype ----
+
+const ClassInfo PyPrototypeView::s_info = { "PyPrototypeView"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(PyPrototypeView) };
+
+PyPrototypeView::PyPrototypeView(VM& vm, Structure* structure)
+    : Base(vm, structure)
+{
+}
+
+template<typename Visitor>
+void PyPrototypeView::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = uncheckedDowncast<PyPrototypeView>(cell);
+    Base::visitChildren(thisObject, visitor);
+    visitor.append(thisObject->m_type);
+}
+
+DEFINE_VISIT_CHILDREN(PyPrototypeView);
+
+PyPrototypeView* PyPrototypeView::of(JSGlobalObject* globalObject, PyType* type)
+{
+    if (JSObject* view = type->jsPrototype())
+        return uncheckedDowncast<PyPrototypeView>(view);
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    // As the instances have it: what all objects of Python's inherit comes last.
+    JSObject* parent;
+    if (PyType* base = type->base())
+        parent = of(globalObject, base);
+    else
+        parent = rt.jsViewObject(JSViewObject::ObjectPrototype);
+    Structure* structure = createStructure(vm, globalObject, parent);
+    auto* view = new (NotNull, allocateCell<PyPrototypeView>(vm)) PyPrototypeView(vm, structure);
+    view->finishCreation(vm);
+    view->m_type.set(vm, view, type);
+    view->didBecomePrototype(vm);
+    type->setJSPrototype(vm, view);
+    return view;
+}
+
+// Type.prototype.name.call(instance, ...) is Type.name(instance, ...).
+static constexpr unsigned unboundMethodField = 0;
+
+static JSC_DECLARE_HOST_FUNCTION(callUnboundMethod);
+JSC_DEFINE_HOST_FUNCTION(callUnboundMethod, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    JSValue function = hiddenField(globalObject, callFrame->jsCallee(), unboundMethodField);
+    JSValue result = withArgumentsFromJS(globalObject, callFrame, [&](const CallArgs& args) {
+        return withFirstArgument(callFrame->thisValue(), args, [&](const CallArgs& all) {
+            // As wherever JS calls a function of Python's: what it has no parameter for is dropped.
+            unsigned most = all.size();
+            if (auto* native = PyNativeFunction::tryFrom(function); native && !native->def().signature.isVariadic)
+                most = native->def().signature.maxPositional + 1;
+            else if (auto* pyFunction = PyFunction::tryFrom(function); pyFunction && !pyFunction->codeInfo().flags.contains(CodeFlag::VarArgs))
+                most = pyFunction->codeInfo().argCount;
+            if (all.size() > most && !all.hasKeywords())
+                return call(globalObject, function, CallArgs(all.positional().first(most)));
+            return call(globalObject, function, all);
+        });
+    });
+    return JSValue::encode(valueForJS(result));
+}
+
+static JSValue unboundForJS(JSGlobalObject* globalObject, JSString* name, JSValue found)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    if (isJSMethod(rt, found))
+        return functionOfJSMethod(found);
+    bool isMethod = PyFunction::is(found);
+    if (auto* native = PyNativeFunction::tryFrom(found))
+        isMethod = native->kind() == NativeKind::Method || native->kind() == NativeKind::SlotWrapper;
+    if (!isMethod)
+        return valueForJS(found);
+    JSFunction* function = JSFunction::create(vm, globalObject, 0, stringOf(name), callUnboundMethod, ImplementationVisibility::Public);
+    setHiddenField(globalObject, function, unboundMethodField, found);
+    return function;
+}
+
+bool PyPrototypeView::getOwnPropertySlot(JSObject* object, JSGlobalObject*, PropertyName propertyName, PropertySlot& slot)
+{
+    JSGlobalObject* globalObject = object->realm();
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (propertyName.isSymbol())
+        RELEASE_AND_RETURN(scope, Base::getOwnPropertySlot(object, globalObject, propertyName, slot));
+    slot.disableCaching();
+    if (slot.isVMInquiry()) {
+        slot.setIsTaintedByOpaqueObject();
+        return false;
+    }
+    constexpr unsigned hidden = static_cast<unsigned>(PropertyAttribute::DontEnum);
+    PyType* type = uncheckedDowncast<PyPrototypeView>(object)->type();
+    if (propertyName == vm.propertyNames->constructor) {
+        slot.setValue(object, hidden, type);
+        return true;
+    }
+    JSString* name = internString(vm, String(propertyName.uid()));
+
+    JSValue receiver = slot.thisValue();
+    PyType* receiverType = receiver && receiver != JSValue(object) ? rt.typeOf(receiver) : nullptr;
+    if (!receiverType || !receiverType->isSubtypeOf(type) || !receiverType->mro()) {
+        JSValue found = type->lookup(name);
+        if (!found)
+            return false;
+        slot.setValue(object, hidden, unboundForJS(globalObject, name, found));
+        return true;
+    }
+    PyTuple* mro = receiverType->mro();
+    unsigned i = 0;
+    while (i < mro->length() && mro->at(i).asCell() != type)
+        ++i;
+    for (; i < mro->length(); ++i) {
+        JSValue found = PyType::from(mro->at(i))->dict()->get(name);
+        if (!found)
+            continue;
+        JSValue bound = bindDescriptor(globalObject, found, receiver, receiverType);
+        RETURN_IF_EXCEPTION(scope, false);
+        slot.setValue(object, hidden, valueForJS(bound));
+        return true;
+    }
+    return false;
+}
+
+bool PyPrototypeView::getOwnPropertySlotByIndex(JSObject*, JSGlobalObject*, unsigned, PropertySlot& slot)
+{
+    slot.disableCaching();
+    return false;
+}
+
+bool PyPrototypeView::put(JSCell* cell, JSGlobalObject*, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
+{
+    auto* view = uncheckedDowncast<PyPrototypeView>(cell);
+    JSGlobalObject* globalObject = view->realm();
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (propertyName.isSymbol())
+        RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, value, slot));
+    // super.name = value
+    if (slot.thisValue() != JSValue(cell)) [[unlikely]]
+        RELEASE_AND_RETURN(scope, JSObject::definePropertyOnReceiver(globalObject, propertyName, value, slot));
+    PropertyDescriptor descriptor(value, 0);
+    RELEASE_AND_RETURN(scope, defineOwnProperty(view, globalObject, propertyName, descriptor, slot.isStrictMode()));
+}
+
+bool PyPrototypeView::deleteProperty(JSCell* cell, JSGlobalObject*, PropertyName propertyName, DeletePropertySlot& slot)
+{
+    auto* view = uncheckedDowncast<PyPrototypeView>(cell);
+    JSGlobalObject* globalObject = view->realm();
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (propertyName.isSymbol())
+        RELEASE_AND_RETURN(scope, Base::deleteProperty(cell, globalObject, propertyName, slot));
+    JSString* name = internString(vm, String(propertyName.uid()));
+    if (!view->type()->dict()->get(name))
+        return true;
+    delAttr(globalObject, view->type(), name);
+    RETURN_IF_EXCEPTION(scope, false);
+    return true;
+}
+
+// As the methods of a class of JS, none can be enumerated.
+void PyPrototypeView::getOwnPropertyNames(JSObject* object, JSGlobalObject*, PropertyNameArrayBuilder& builder, DontEnumPropertiesMode mode)
+{
+    JSGlobalObject* globalObject = object->realm();
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (mode == DontEnumPropertiesMode::Include && builder.includeStringProperties()) {
+        builder.add(vm.propertyNames->constructor);
+        PyDict* dict = uncheckedDowncast<PyPrototypeView>(object)->type()->dict();
+        JSValue key;
+        JSValue value;
+        for (unsigned position = 0; dict->next(position, key, value);) {
+            if (!isStr(key))
+                continue;
+            Identifier identifier = strValue(key)->toIdentifier(globalObject);
+            RETURN_IF_EXCEPTION(scope, void());
+            builder.add(identifier);
+        }
+    }
+    RELEASE_AND_RETURN(scope, Base::getOwnPropertyNames(object, globalObject, builder, mode));
+}
+
+// What a property of a class of JS is in a class of Python's. Empty: an exception.
+static JSValue attributeForProperty(JSGlobalObject* globalObject, const PropertyDescriptor& descriptor, bool isStatic)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto isFunctionOfJS = [](JSValue value) {
+        return value && isForeignCallee(value) && asObject(value)->isCallable();
+    };
+    if (descriptor.isAccessorDescriptor()) {
+        JSValue getter = descriptor.getterPresent() && isFunctionOfJS(descriptor.getter()) ? descriptor.getter() : JSValue();
+        JSValue setter = descriptor.setterPresent() && isFunctionOfJS(descriptor.setter()) ? descriptor.setter() : JSValue();
+        if (isStatic) {
+            PyRecord* accessor = PyRecord::create(globalObject, rt.typeFor(jsStaticAccessorTypeDef), JSStaticAccessorFieldCount);
+            accessor->set(vm, JSStaticAccessorGetter, getter ? getter : jsUndefined());
+            return accessor;
+        }
+        RELEASE_AND_RETURN(scope, call(globalObject, rt.propertyType(), getter ? makeJSMethod(globalObject, getter) : jsUndefined(), setter ? makeJSMethod(globalObject, setter) : jsUndefined()));
+    }
+    JSValue value = descriptor.value();
+    if (!isFunctionOfJS(value) || foreignMethodKind(value.asCell()) != ForeignMethodKind::TakesThis)
+        return value ? value : jsUndefined();
+    JSValue method = makeJSMethod(globalObject, value);
+    if (isStatic)
+        RELEASE_AND_RETURN(scope, makeClassMethod(globalObject, method));
+    return method;
+}
+
+bool PyPrototypeView::defineOwnProperty(JSObject* object, JSGlobalObject*, PropertyName propertyName, const PropertyDescriptor& descriptor, bool shouldThrow)
+{
+    JSGlobalObject* globalObject = object->realm();
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (propertyName.isSymbol())
+        RELEASE_AND_RETURN(scope, Base::defineOwnProperty(object, globalObject, propertyName, descriptor, shouldThrow));
+    if (!descriptor.isAccessorDescriptor() && !descriptor.value())
+        return true;
+    JSValue attribute = attributeForProperty(globalObject, descriptor, false);
+    RETURN_IF_EXCEPTION(scope, false);
+    setAttr(globalObject, uncheckedDowncast<PyPrototypeView>(object)->type(), internString(vm, String(propertyName.uid())), attribute);
+    RETURN_IF_EXCEPTION(scope, false);
+    return true;
+}
+
+bool symbolPropertyOfClasses(JSGlobalObject* globalObject, PyType* type, PropertyName propertyName, PropertySlot& slot)
+{
+    PyTuple* mro = type->mro();
+    for (unsigned i = 0; mro && i < mro->length(); ++i) {
+        JSObject* view = PyType::from(mro->at(i))->jsPrototype();
+        if (view && JSObject::getOwnPropertySlot(view, globalObject, propertyName, slot))
+            return true;
+    }
+    return false;
+}
+
+// ---- class Derived extends Base ----
+
+JSValue constructBaseOfDerivedClass(JSGlobalObject* globalObject, PyType* type, PyType* derived, const CallArgs& args)
+{
+    return typeCall(globalObject, type, args, derived);
+}
+
+// Derived.__new__(cls, ...): `self` is the constructor.
+static JSValue jsClassNew(JSGlobalObject* globalObject, JSValue constructor, const CallArgs& args)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (args.isEmpty() || !PyType::is(args[0]))
+        return raiseTypeError(globalObject, scope, "__new__(X): X is not a type object"_s);
+    RELEASE_AND_RETURN(scope, constructForeignFunction(globalObject, constructor, args.withoutFirst(), args[0]));
+}
+
+// The constructor has seen to it.
+static JSValue jsClassInit(JSGlobalObject*, JSValue, const CallArgs&) { return jsUndefined(); }
+
+bool hasInitOfItsOwn(PyType* type)
+{
+    auto* native = PyNativeFunction::tryFrom(type->lookup(Special::Init));
+    return !native || native->def().pointer.variadicWithSelf != jsClassInit;
+}
+
+static constexpr NativeDef jsClassNewDef = PY_FUNCTION("__new__", jsClassNew, "($self, *args, **kwargs)");
+static constexpr NativeDef jsClassInitDef = PY_METHOD("__init__", jsClassInit, "($self, *args, **kwargs)");
+
+// Calls the function with the key and the descriptor of each property the object itself has. False: an exception.
+template<typename Function>
+static bool forEachOwnProperty(JSGlobalObject* globalObject, JSObject* object, PropertyNameMode mode, const Function& function)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PropertyNameArrayBuilder keys(vm, mode, PrivateSymbolMode::Exclude);
+    object->methodTable()->getOwnPropertyNames(object, globalObject, keys, DontEnumPropertiesMode::Include);
+    RETURN_IF_EXCEPTION(scope, false);
+    for (auto& key : keys) {
+        PropertyDescriptor descriptor;
+        bool isThere = object->getOwnPropertyDescriptor(globalObject, key, descriptor);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!isThere)
+            continue;
+        function(key, descriptor);
+        RETURN_IF_EXCEPTION(scope, false);
+    }
+    return true;
+}
+
+JSValue deriveClassFromJS(JSGlobalObject* lexicalGlobalObject, JSValue constructorValue, JSValue prototypeValue, JSValue superclass)
+{
+    PyType* base = PyType::tryFrom(superclass);
+    if (!base)
+        return constructorValue;
+    UNUSED_PARAM(lexicalGlobalObject);
+    JSGlobalObject* globalObject = base->realm();
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* constructor = asObject(constructorValue);
+    JSObject* prototype = asObject(prototypeValue);
+    auto& names = *vm.propertyNames;
+
+    JSValue nameValue = constructor->get(globalObject, names.name);
+    RETURN_IF_EXCEPTION(scope, { });
+    JSString* name = nameValue.isString() ? asString(nameValue) : jsEmptyString(vm);
+
+    auto fill = [&](JSValue ns) -> JSValue {
+        auto add = [&](JSString* key, JSValue value) {
+            setItem(globalObject, ns, key, value);
+        };
+        add(rt.names.dModule(), internString(vm, "js"_s));
+        RETURN_IF_EXCEPTION(scope, { });
+        add(rt.name(Special::New), PyNativeFunction::create(globalObject, jsClassNewDef, NativeKind::Function, constructor, { }));
+        RETURN_IF_EXCEPTION(scope, { });
+        add(rt.name(Special::Init), PyNativeFunction::create(globalObject, jsClassInitDef, NativeKind::Method, { }, rt.objectType()));
+        RETURN_IF_EXCEPTION(scope, { });
+        for (bool isStatic : { false, true }) {
+            bool succeeded = forEachOwnProperty(globalObject, isStatic ? constructor : prototype, PropertyNameMode::Strings, [&](const Identifier& key, const PropertyDescriptor& descriptor) {
+                if (isStatic ? key == names.length || key == names.name || key == names.prototype : key == names.constructor)
+                    return;
+                JSValue attribute = attributeForProperty(globalObject, descriptor, isStatic);
+                RETURN_IF_EXCEPTION(scope, void());
+                add(internString(vm, key.string()), attribute);
+            });
+            if (failed(scope, succeeded))
+                return { };
+        }
+        return jsUndefined();
+    };
+    JSValue result = buildClass(globalObject, name, PyTuple::create(globalObject, { base }), CallArgs(), fill);
+    RETURN_IF_EXCEPTION(scope, { });
+    PyType* type = PyType::tryFrom(result);
+    if (!type)
+        return result;
+
+    // What Python has no names for stays with JS.
+    PyPrototypeView* view = PyPrototypeView::of(globalObject, type);
+    bool succeeded = forEachOwnProperty(globalObject, prototype, PropertyNameMode::Symbols, [&](const Identifier& key, const PropertyDescriptor& descriptor) {
+        view->methodTable()->defineOwnProperty(view, globalObject, key, descriptor, true);
+    });
+    if (failed(scope, succeeded))
+        return { };
+    succeeded = forEachOwnProperty(globalObject, constructor, PropertyNameMode::Symbols, [&](const Identifier& key, const PropertyDescriptor& descriptor) {
+        type->methodTable()->defineOwnProperty(type, globalObject, key, descriptor, true);
+    });
+    if (failed(scope, succeeded))
+        return { };
+    prototype->putDirect(vm, names.constructor, type, static_cast<unsigned>(PropertyAttribute::DontEnum));
+    return type;
+}
+
+void setNameOfDerivedClass(JSGlobalObject*, JSCell* cell, JSValue name)
+{
+    PyType* type = PyType::tryFrom(cell);
+    if (!type || !name.isString() || type->nameString()->length())
+        return;
+    VM& vm = type->vm();
+    JSString* interned = internString(type->realm(), asString(name));
+    type->setNameString(vm, interned);
+    type->setQualname(vm, interned);
+}
+
+JSC_DEFINE_HOST_FUNCTION(deriveClassFromJSFunction, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    return JSValue::encode(deriveClassFromJS(globalObject, callFrame->argument(0), callFrame->argument(1), callFrame->argument(2)));
+}
+
+} // namespace Python
+} // namespace JSC

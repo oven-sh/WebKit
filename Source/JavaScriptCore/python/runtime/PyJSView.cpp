@@ -7,6 +7,7 @@
 #include "PyJSView.h"
 
 #include "AsyncIteratorPrototype.h"
+#include "BytecodeStructs.h"
 #include "CodeBlock.h"
 #include "FunctionPrototype.h"
 #include "IteratorOperations.h"
@@ -23,6 +24,7 @@
 #include "PyGenerator.h"
 #include "PyHooks.h"
 #include "PyInternals.h"
+#include "PyJSClass.h"
 #include "PyList.h"
 #include "PyModule.h"
 #include "PyNumbers.h"
@@ -163,6 +165,8 @@ static bool jsViewSymbolProperty(JSGlobalObject* globalObject, JSObject* object,
     auto& names = *vm.propertyNames;
     constexpr unsigned hidden = static_cast<unsigned>(PropertyAttribute::DontEnum);
     PyType* type = rt.typeOf(object);
+    if (symbolPropertyOfClasses(globalObject, type, propertyName, slot))
+        return true;
     if (propertyName == names.iteratorSymbol)
         return jsViewIsIterable(object, type) && jsViewFound(object, slot, rt.jsViewObject(JSViewObject::Iterator), hidden);
     if (propertyName == names.asyncIteratorSymbol)
@@ -199,6 +203,10 @@ static bool jsViewAdaptorProperty(JSGlobalObject* globalObject, JSObject* object
         return hasOne && jsViewFound(object, slot, rt.jsViewObject(JSViewObject::ToJSON), hidden);
     }
     if (!isPyObject(object)) {
+        if (propertyName == names.prototype) {
+            auto* pyType = PyType::tryFrom(object);
+            return pyType && jsViewFound(object, slot, PyPrototypeView::of(globalObject, pyType), hidden);
+        }
         // A PyFunction has the name of any function of JS.
         if (propertyName != names.name || object->type() != InternalFunctionType)
             return false;
@@ -279,6 +287,9 @@ bool JSView::getOwnPropertySlot(JSObject* object, PropertyName propertyName, Pro
     if (!isNameOfError) {
         JSValue value = getAttrIfPresent(globalObject, object, name);
         RETURN_IF_EXCEPTION(scope, false);
+        // So with the name of a class. What ImportError has under `name` is how its instances find theirs.
+        if (value && propertyName == vm.propertyNames->name && PyType::is(object) && rt.typeOf(value)->lookup(Special::Get))
+            value = { };
         if (value) {
             // Only who asks for a descriptor cares.
             bool isHidden = slot.internalMethodType() == PropertySlot::InternalMethodType::GetOwnProperty && !jsViewIsEnumerableAttribute(globalObject, object, type, name);
@@ -875,25 +886,46 @@ JSC_DEFINE_HOST_FUNCTION(jsViewIdentity, (JSGlobalObject*, CallFrame* callFrame)
 
 // ---- Calls from JS ----
 
-enum JSViewMarkerField : unsigned { MarkerNames, MarkerValues, MarkerFieldCount };
+bool hasKeywordMark(JSGlobalObject* globalObject, JSObject* object)
+{
+    if (!globalObject->pythonRuntime())
+        return false;
+    return isValidOffset(object->structure()->get(getVM(globalObject), PropertyName(runtime(globalObject).keywordsKey())));
+}
 
-static constexpr TypeDef jsViewKeywordMarkerTypeDef { "kwargs"_s, { }, { }, { }, { } };
+JSObject* makeKeywordMarker(JSGlobalObject* globalObject)
+{
+    JSObject* object = constructEmptyObject(globalObject);
+    object->putDirect(getVM(globalObject), PropertyName(runtime(globalObject).keywordsKey()), jsBoolean(true), static_cast<unsigned>(PropertyAttribute::DontEnum));
+    return object;
+}
 
-PyTuple* keywordMarkerNames(JSValue marker) { return uncheckedDowncast<PyTuple>(PyRecord::from(marker)->get(MarkerNames).asCell()); }
-PyTuple* keywordMarkerValues(JSValue marker) { return PyTuple::from(PyRecord::from(marker)->get(MarkerValues)); }
+bool keywordsOfMarker(JSGlobalObject* globalObject, JSValue marker, PyTuple*& names, MarkedArgumentBuffer& values)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* object = asObject(marker);
+    PropertyNameArrayBuilder keys(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+    object->methodTable()->getOwnPropertyNames(object, globalObject, keys, DontEnumPropertiesMode::Exclude);
+    RETURN_IF_EXCEPTION(scope, false);
+    unsigned count = keys.size();
+    names = count ? PyTuple::createUninitialized(vm, rt.keywordNamesStructure(), rt.tupleType(), count) : nullptr;
+    for (unsigned i = 0; i < count; ++i)
+        names->initializeAt(vm, i, jsString(vm, keys[i].string()));
+    for (unsigned i = 0; i < count; ++i) {
+        JSValue value = object->get(globalObject, keys[i]);
+        RETURN_IF_EXCEPTION(scope, false);
+        values.append(value);
+    }
+    return true;
+}
 
 JSValue callWithKeywordMarker(JSGlobalObject* globalObject, CallFrame* callFrame)
 {
-    unsigned positional = callFrame->argumentCount() - 1;
-    JSValue marker = callFrame->uncheckedArgument(positional);
-    PyTuple* names = keywordMarkerNames(marker);
-    PyTuple* values = keywordMarkerValues(marker);
-    MarkedArgumentBuffer buffer;
-    for (unsigned i = 0; i < positional; ++i)
-        buffer.append(callFrame->uncheckedArgument(i));
-    for (unsigned i = 0; i < values->length(); ++i)
-        buffer.append(values->at(i));
-    return call(globalObject, callFrame->jsCallee(), CallArgs(valuesOf(buffer), positional, names->length() ? names : nullptr));
+    return withArgumentsFromJS(globalObject, callFrame, [&](const CallArgs& args) {
+        return call(globalObject, callFrame->jsCallee(), args);
+    });
 }
 
 bool isCalledByPython(JSGlobalObject* globalObject, CallFrame* callFrame)
@@ -905,6 +937,29 @@ bool isCalledByPython(JSGlobalObject* globalObject, CallFrame* callFrame)
     }
     CallFrame* caller = callFrame->callerFrame();
     return !caller->isNativeCalleeFrame() && caller->codeBlock() && caller->codeBlock()->unlinkedCodeBlock()->isPython();
+}
+
+bool isBeingCalledByPython(JSGlobalObject* globalObject, CallFrame* callFrame)
+{
+    if (!isCalledByPython(globalObject, callFrame))
+        return false;
+    if (callFrame->callerFrameOrEntryFrame() == getVM(globalObject).topEntryFrame)
+        return true;
+    // The register still has what the instruction called: nothing has run since that could have collected.
+    CallFrame* caller = callFrame->callerFrame();
+    const JSInstruction* instruction = caller->codeBlock()->instructions().at(caller->bytecodeIndex()).ptr();
+    VirtualRegister callee;
+    switch (instruction->opcodeID()) {
+    case op_call:
+        callee = instruction->as<OpCall>().m_callee;
+        break;
+    case op_call_varargs:
+        callee = instruction->as<OpCallVarargs>().m_callee;
+        break;
+    default:
+        return true;
+    }
+    return caller->r(callee).jsValue() == JSValue(callFrame->jsCallee());
 }
 
 JSValue resultForCaller(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue result)
@@ -933,8 +988,7 @@ JSValue resultForCaller(JSGlobalObject* globalObject, CallFrame* callFrame, JSVa
 // kwargs({ a: 1 }): as the last argument of a call of something in Python, a=1.
 JSC_DEFINE_HOST_FUNCTION(jsViewKwargs, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
-    Runtime& rt = runtime(globalObject);
-    VM& vm = rt.vm();
+    VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue argument = callFrame->argument(0);
     if (!argument.isObject())
@@ -944,18 +998,13 @@ JSC_DEFINE_HOST_FUNCTION(jsViewKwargs, (JSGlobalObject* globalObject, CallFrame*
     PropertyNameArrayBuilder keys(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
     object->methodTable()->getOwnPropertyNames(object, globalObject, keys, DontEnumPropertiesMode::Exclude);
     RETURN_IF_EXCEPTION(scope, { });
-    unsigned count = keys.size();
-    PyTuple* names = PyTuple::createUninitialized(vm, rt.keywordNamesStructure(), rt.tupleType(), count);
-    PyTuple* values = PyTuple::create(globalObject, count);
-    for (unsigned i = 0; i < count; ++i) {
-        JSValue value = object->get(globalObject, keys[i]);
+    JSObject* marker = makeKeywordMarker(globalObject);
+    for (auto& key : keys) {
+        JSValue value = object->get(globalObject, key);
         RETURN_IF_EXCEPTION(scope, { });
-        names->initializeAt(vm, i, jsString(vm, keys[i].string()));
-        values->initializeAt(vm, i, value);
+        marker->putDirectMayBeIndex(globalObject, key, value);
+        RETURN_IF_EXCEPTION(scope, { });
     }
-    PyRecord* marker = PyRecord::create(vm, rt.keywordMarkerStructure(), rt.typeFor(jsViewKeywordMarkerTypeDef), MarkerFieldCount);
-    marker->set(vm, MarkerNames, names);
-    marker->set(vm, MarkerValues, values);
     return JSValue::encode(marker);
 }
 
@@ -967,6 +1016,12 @@ JSC_DEFINE_HOST_FUNCTION(jsViewFloat, (JSGlobalObject* globalObject, CallFrame* 
     double value = callFrame->argument(0).toNumber(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
     RELEASE_AND_RETURN(scope, JSValue::encode(makeFloat(globalObject, value)));
+}
+
+// method(function () { ... }): a function for Python, whose first argument is the `this` of the function.
+JSC_DEFINE_HOST_FUNCTION(jsViewMethod, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    return JSValue::encode(call(globalObject, jsMethodType(runtime(globalObject)), callFrame->argument(0)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsViewImport, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -1041,6 +1096,7 @@ void initializeJSView(JSGlobalObject* globalObject)
     namespaceObject->putDirect(vm, Identifier::fromString(vm, "kwargs"_s), makeFunction("kwargs"_s, 1, jsViewKwargs), visible);
     namespaceObject->putDirect(vm, Identifier::fromString(vm, "float"_s), makeFunction("float"_s, 1, jsViewFloat), visible);
     namespaceObject->putDirect(vm, Identifier::fromString(vm, "import"_s), makeFunction("import"_s, 1, jsViewImport), visible);
+    namespaceObject->putDirect(vm, Identifier::fromString(vm, "method"_s), makeFunction("method"_s, 1, jsViewMethod), visible);
 }
 
 } // namespace Python

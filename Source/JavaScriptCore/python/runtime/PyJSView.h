@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "PyHooks.h"
 #include "PyNative.h"
 #include "PyRuntime.h"
 
@@ -122,21 +123,44 @@ void initializeJSView(JSGlobalObject*);
 
 // ---- Calls from JS ----
 
-// f(1, kwargs({ a: 2 })) is f(1, a=2). Whether the value is what kwargs() made, which counts as the last argument of a call.
+// Keyword arguments are an object to JS. f(1, a=2) in Python calls a function of JS with (1, { a: 2 }), and f(1, kwargs({ a: 2 })) in JS
+// is f(1, a=2). Both are plain objects with a mark that JS does not see. As the last argument of a call that JS makes of something
+// of Python's, an object with the mark is keyword arguments: so a function of JS can pass on what it was given, super(...args).
+bool hasKeywordMark(JSGlobalObject*, JSObject*);
+JSObject* makeKeywordMarker(JSGlobalObject*); // Empty.
 ALWAYS_INLINE bool isKeywordMarker(JSGlobalObject* globalObject, JSValue value)
 {
-    return value && value.isCell() && value.asCell()->type() == PyObjectType && value.asCell()->structure() == runtime(globalObject).keywordMarkerStructure();
+    return value && value.isCell() && value.asCell()->type() == FinalObjectType && hasKeywordMark(globalObject, asObject(value));
 }
+// As isCalledByPython(), for a callee that is just starting, and exact. `return f(...)` in strict code of JS is a tail call: f then
+// returns to whoever called that code, which may be Python code that never heard of f.
+bool isBeingCalledByPython(JSGlobalObject*, CallFrame*);
+// `callFrame` is that of something of Python's, which is just starting.
 ALWAYS_INLINE bool hasKeywordMarker(JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     size_t count = callFrame->argumentCount();
-    return count && isKeywordMarker(globalObject, callFrame->uncheckedArgument(count - 1));
+    return count && isKeywordMarker(globalObject, callFrame->uncheckedArgument(count - 1)) && !isBeingCalledByPython(globalObject, callFrame);
 }
-// The names (a tuple as calls pass them) and the values in it.
-PyTuple* keywordMarkerNames(JSValue marker);
-PyTuple* keywordMarkerValues(JSValue marker);
+// The names in it (a tuple as calls pass them; null if there are none), whose values are added to the buffer. False: an exception.
+bool keywordsOfMarker(JSGlobalObject*, JSValue marker, PyTuple*& names, MarkedArgumentBuffer& values);
 // For a host function that finds one: calls the callee of the frame with the arguments spelled out.
 JSValue callWithKeywordMarker(JSGlobalObject*, CallFrame*);
+// function(CallArgs) with the arguments of a frame that JS made, whose `this` is not about them.
+template<typename Function>
+JSValue withArgumentsFromJS(JSGlobalObject* globalObject, CallFrame* callFrame, const Function& function)
+{
+    unsigned count = static_cast<unsigned>(callFrame->argumentCount());
+    const JSValue* values = reinterpret_cast<const JSValue*>(callFrame->addressOfArgumentsStart());
+    if (!count || !isKeywordMarker(globalObject, values[count - 1])) [[likely]]
+        return function(CallArgs(values, count));
+    MarkedArgumentBuffer buffer;
+    for (unsigned i = 0; i + 1 < count; ++i)
+        buffer.append(values[i]);
+    PyTuple* names = nullptr;
+    if (!keywordsOfMarker(globalObject, values[count - 1], names, buffer))
+        return { };
+    return function(CallArgs(reinterpret_cast<const JSValue*>(buffer.data()), count - 1, names));
+}
 
 // What a host function that is Python to its callers returns: JS code gets valueForJS(result).
 // resultForCaller() is in PyHooks.h.

@@ -345,12 +345,20 @@ The event loop is the host's, and there are three ways to it (`PyExec.h`, `PyEve
 - **Coroutines without a loop of their own**: a module that awaits at the top level, a coroutine that JS awaits, an async generator
   that JS iterates over. They are tasks of one more asyncio loop, which never sleeps: the host's loop calls it when a descriptor
   is ready, a timer is due or a callback has been scheduled (`src/python/_bun_asyncio.py` in Bun). To JS they are promises.
+  It counts as running (`is_running()`) between its iterations too.
   For what JS calls, that loop is the running loop where no other is: `get_running_loop()` and `get_event_loop()` give it if a
   frame of JS is on the stack (`loopOfHost`), so `gather()`, `ensure_future()`, `Future()` and `loop.call_later()` work from JS.
   (`_get_running_loop()` does not, so `asyncio.run()` can still be called.)
 - **`await promise`** in Python, for a JS promise (type `JSPromise`), is a future of the running loop that the promise settles.
   The promise of a coroutine that JS has called is awaited as the task it is, so to cancel who waits cancels the coroutine:
   `wait_for(queue.get(), 1)` from JS, and `ensure_future(queue.get()).cancel()`. An async function of JS cannot be cancelled.
+  A `Task` can be made of a promise, which is all that JS ever holds of a coroutine: `create_task(queue.get())`,
+  `TaskGroup.create_task(promise)`. It awaits the promise.
+- **A promise is a future** to asyncio (`isfuture()`): it has `done()`, `result()`, `exception()`, `add_done_callback()` and the rest, which the
+  host supplies. So `gather()`, `wait()`, `shield()`, `as_completed()` and `ensure_future()` take it as it is and put their callbacks on it
+  at once. Wrapped in a task, as any other awaitable is, it would be without a handler until the task took its first step, an
+  iteration of the loop later, and a rejection in the meantime would be reported as unhandled. It belongs to whichever loop asks.
+  `cancel()` cancels the coroutine behind the promise if there is one, and otherwise refuses.
 - **Futures and tasks** are native: the module `_asyncio` (`runtime/PyAsyncio.cpp`), which Lib/asyncio takes in place of its own classes.
   A step of a task resumes the coroutine from C++, outside any handler, and `await future` gets the result without a `StopIteration`
   (`PyAsyncio.h`). The loop stays asyncio's: callbacks go through its `call_soon()`. `all_tasks()` reads a table that the collector
@@ -452,18 +460,46 @@ while any thread has a function. The side tables are only changed with the GIL, 
 
 - Properties are attributes (items first, for mappings), through the method table, as for any exotic object of JSC.
 - A class is called or `new`ed; `instanceof` is `isinstance`.
+- **`class Derived extends Base`**, where `Base` is a class of Python's, is `class Derived(Base)` (`runtime/PyJSClass.h`). When the
+  methods are in place and before anything can see the class, the bytecode of a class definition with a heritage hands
+  constructor, prototype and superclass to `deriveClassFromJS` (if the superclass is an `InternalFunction`, which a `PyType` is), and
+  what that returns is the class from then on: a `PyType`, made by the metaclass of `Base` from a namespace with what the
+  prototype and the constructor have. So `__init_subclass__`, `__set_name__`, `ABCMeta` and the like run when they would in Python,
+  `issubclass()` holds, Python finds the methods and can derive from the class in its turn.
+  A method is a `JSMethod`, a function whose first argument is the `this` of the JS function, so `Derived.method(instance)` works as
+  `instance.method()` does; an accessor is a `property`; a static method is a `classmethod`; what has a symbol for a key stays
+  with JS, which finds it on the instances.
+  The constructor is the `__new__` of the class, since it is what makes the instance, and `__init__` does nothing. `super(...)` in it
+  constructs `Base` with `new.target` a class derived from it: that is `Base`'s `__new__` and `__init__` for an instance of that class
+  (`typeCall` with `derived`). So `class Day extends date { constructor(text) { super(...parse(text)); } }` works, which in Python
+  takes a `__new__`. As with any class that has a `__new__`, a class in Python that derives from it and takes other arguments
+  has to have one too.
+- **`Class.prototype`** (`PyPrototypeView`) has what the class and its bases have. Read for an instance (`super.method`) it binds as
+  `super()` does, looking from the class on in the MRO of the instance. Read by itself it gives functions that take the instance
+  as `this`: `list.prototype.index.call(array, item)`. What is assigned to it, or defined on it, is a method or a property of the class.
+- **A function written in JS that is found in a class is a method**, as one written in Python is (`foreignMethodKind`): what Python
+  gets from the instance is a bound method, and to call that passes the instance as `this`. An arrow function has no `this`:
+  it is to JS what a lambda is to Python, and takes the instance first. Bound functions, classes and functions written in C++ are
+  not methods (nor are built-in functions in Python). Taken from the class, it is the function as it is.
 - What a Python function returns to code that is not Python is made fit for it (`resultForCaller`): a whole float is a number, and
   a coroutine is a promise, so an `async def` is an async function to JS. An awaitable can be awaited, an async generator iterated over with `for await`.
 - A call follows the rules of the language it is written in. JS may pass a function more than it takes, and callers of
-  callbacks do (`array.map(f)` is `f(item, index, array)`): what a function or bound method written in Python has no parameter
-  for is dropped, if the caller is not Python. Too few arguments are a `TypeError` for every caller.
+  callbacks do (`array.map(f)` is `f(item, index, array)`): what a function or bound method has no parameter for is dropped, if
+  the caller is not Python, be it written in Python or in C++ (`array.map(len)`). What takes `*args` takes it all, and so do
+  classes. Too few arguments are a `TypeError` for every caller.
 - In Python, to call a class is to make an instance, so Python calling a class of JS is `new`: what `class` declares, and the
   constructors of the engine and the host (`js.Map()`, `js.Date()`, `js.Response("body")`). The constructors of
   primitive values (`String`, `Number`, `Boolean`, `Symbol`, `BigInt`) make one, as they do when JS calls them. A plain `function` is called; `f.new(...)` is `new f(...)` for anything.
-- Keyword arguments for a JS function are a trailing object. A dict iterates in JS as a `Map` does, by `[key, value]`.
+- Keyword arguments for a JS function are a trailing object, and JS passes keyword arguments as `kwargs({ name: value })`, last. The two
+  are the same thing: a plain object with a mark that JS cannot see (a property whose key is a private name: `isKeywordMarker`).
+  As the last argument of a call that JS makes of something of Python's, an object with the mark is keyword arguments. So
+  what a function of JS was given it can pass on: `constructor(...args) { super(...args); }`. A copy (`{ ...options }`) has no mark, and
+  when it is Python that passes the object it is an object like any other. (Who calls is told as the callee starts, by
+  `isBeingCalledByPython`: the frame it returns to does not tell, since `return f(...)` in strict JS code is a tail call.)
+- A dict iterates in JS as a `Map` does, by `[key, value]`.
 - **Operators.** `a + b`, `-a`, `a < b`, `a == b` and so on ask the classes of the Python objects among the operands
   (`__add__`, `__radd__`, ...), in the slow paths that all tiers share (`OperationsInlines.h`, `JSValue::equalSlowCaseInline`). If
-  neither class answers, JS does what it does with any object. `a == a` is true and `a == null` false without asking.
+  neither class answers, JS does what it does with any object. `a == null` is false without asking.
   The parser does not make `+a` of `a * 1`, which it did.
   `===`, `Object.is`, `switch`, `includes`, `indexOf` and the keys of a `Map` or `Set` go by identity.
   To the DFG and FTL a Python object has a type of its own, `SpecPyObject`. An arithmetic operator returns a primitive unless an
@@ -514,10 +550,11 @@ What every program pays, with the sizes of a release build for x86-64:
 | `UnlinkedCodeBlock::RareData`, `UnlinkedFunctionExecutable::RareData` | 8 bytes each, where there is rare data; `FunctionExecutable::RareData` 16. `CodeBlock`, `UnlinkedCodeBlock`, `UnlinkedFunctionExecutable`, `CallLinkInfo`, `Structure`, `JSString`, `JSArray`, `JSFunction`: nothing |
 | `JSType`, opcodes, `SpeculatedType`, `UseKind`, `VMTraps` | 19 of the 256 cell types, 55 of the 255 opcodes, 1 of 64 bits, 1 of 64 kinds, 1 of 32 bits |
 | `==` on two objects, DFG and FTL | nothing where the site has seen only plain objects (instances of classes are), only arrays or only functions. Otherwise, for each operand not known to be something else: subtract, compare, branch |
-| `==`, `<`, `+`, `-`... in the slow paths | for each operand that is a cell: the same test, before the conversion to a primitive |
+| `==`, `<`, `+`, `-`... in the slow paths | for each operand that is a cell: the same test, before the conversion to a primitive; for `a == a` in the slow path, before the answer |
 | `Bun.deepEquals()`, `expect().toEqual()` | the same test for each pair of values compared |
 | Untyped arithmetic, DFG and FTL | the result is known to be a primitive only if the operands are known not to be Python objects |
 | `x * 1`, `1 * x` | a multiplication: the parser no longer makes it `+x` |
+| A class definition with `extends` | a move, and a test of the type of the superclass; if that is an `InternalFunction` (`Map`, `Error`, `Promise`), a call of a function that finds it is not Python's |
 | A block or large allocation is swept | one load and branch (`mayRunEmbedderFinalizers()`) |
 | A call is linked, or is virtual and not to compiled JS | is the caller Python code: three loads and a branch |
 | An exception passes a frame | the same, twice |

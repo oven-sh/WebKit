@@ -877,6 +877,7 @@ python/runtime/PyInt.cpp
 python/runtime/PyInterop.cpp
 python/runtime/PyIterators.cpp
 python/runtime/PyItertools.cpp
+python/runtime/PyJSClass.cpp
 python/runtime/PyJSView.cpp
 python/runtime/PyJson.cpp
 python/runtime/PyList.cpp

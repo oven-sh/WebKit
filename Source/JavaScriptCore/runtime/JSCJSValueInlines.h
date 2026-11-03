@@ -338,7 +338,8 @@ ALWAYS_INLINE bool JSValue::equalSlowCaseInline(JSGlobalObject* globalObject, JS
 
         // This deals with Booleans, Objects, and is a shortcut for a few more types.
         // It has to come here and not before, because it is NOT true that NaN == NaN
-        if (v1 == v2)
+        // (Nor of an object of Python's whose class has it otherwise: a NaN that is one.)
+        if (v1 == v2 && !mayOverloadOperators(v1))
             return true;
 
         if (v1.isUndefinedOrNull()) {
@@ -360,6 +361,8 @@ ALWAYS_INLINE bool JSValue::equalSlowCaseInline(JSGlobalObject* globalObject, JS
             RETURN_IF_EXCEPTION(scope, false);
             if (result)
                 return *result;
+            if (v1 == v2)
+                return true;
         }
 
         if (v1.isObject()) {

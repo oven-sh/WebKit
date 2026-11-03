@@ -6062,6 +6062,29 @@ RegisterID* ClassExprNode::emitBytecode(BytecodeGenerator& generator, RegisterID
         }
     }
 
+    // A class derived from a class of Python's is one itself, made from the constructor and the prototype, and takes the place of the
+    // constructor from here on: python/runtime/PyJSClass.h. A class of Python's is an InternalFunction.
+    RefPtr<RegisterID> homeObjectOfStaticElements = constructor;
+    if (superclass) {
+        homeObjectOfStaticElements = generator.move(generator.newTemporary(), constructor.get());
+        Ref<Label> isClassOfJS = generator.newLabel();
+        generator.emitJumpIfFalse(generator.emitIsCellWithType(generator.newTemporary(), superclass.get(), InternalFunctionType), isClassOfJS.get());
+        RefPtr<RegisterID> function = generator.moveLinkTimeConstant(nullptr, LinkTimeConstant::deriveClassFromPython);
+        CallArguments args(generator, nullptr, 3);
+        generator.emitLoad(args.thisRegister(), jsUndefined());
+        generator.move(args.argumentRegister(0), constructor.get());
+        generator.move(args.argumentRegister(1), prototype.get());
+        generator.move(args.argumentRegister(2), superclass.get());
+        generator.emitCall(constructor.get(), function.get(), NoExpectedFunction, args, divot(), divotStart(), divotEnd(), DebuggableCall::No);
+        if (shouldInstallBrandOnConstructor) {
+            Ref<Label> hasBrand = generator.newLabel();
+            generator.emitJumpIfTrue(generator.emitEqualityOp<OpStricteq>(generator.newTemporary(), constructor.get(), homeObjectOfStaticElements.get()), hasBrand.get());
+            generator.emitInstallPrivateClassBrand(constructor.get());
+            generator.emitLabel(hasBrand.get());
+        }
+        generator.emitLabel(isClassOfJS.get());
+    }
+
     if (!m_name.isNull()) {
         Variable classNameVar = generator.variable(m_name);
         RELEASE_ASSERT(classNameVar.isResolved());
@@ -6073,7 +6096,7 @@ RegisterID* ClassExprNode::emitBytecode(BytecodeGenerator& generator, RegisterID
         RefPtr<RegisterID> staticFieldInitializer = generator.emitNewClassFieldInitializerFunction(generator.newTemporary(), WTF::move(staticElementDefinitions), m_classHeritage);
         // FIXME: Skip this if the initializer function isn't going to need a home object (no eval or super properties)
         // https://bugs.webkit.org/show_bug.cgi?id=196867
-        emitPutHomeObject(generator, staticFieldInitializer.get(), constructor.get());
+        emitPutHomeObject(generator, staticFieldInitializer.get(), homeObjectOfStaticElements.get());
 
         CallArguments args(generator, nullptr);
         generator.move(args.thisRegister(), constructor.get());

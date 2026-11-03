@@ -616,9 +616,11 @@ bool bindArguments(JSGlobalObject* globalObject, CallFrame* callFrame, PyFunctio
         keywordNames = uncheckedDowncast<PyTuple>(thisValue.asCell());
         count -= keywordNames->length();
     } else if (hasKeywordMarker(globalObject, callFrame)) [[unlikely]] {
-        // From JS: f(1, kwargs({ a: 2 })). The frame keeps the marker, and so the values, alive until they are in their places.
-        JSValue marker = callFrame->uncheckedArgument(count - 1);
-        return bindArgumentsSlow(globalObject, callFrame, function, count - 1, keywordMarkerNames(marker), keywordMarkerValues(marker)->span().data());
+        // From JS: f(1, kwargs({ a: 2 })).
+        MarkedArgumentBuffer values;
+        if (!keywordsOfMarker(globalObject, callFrame->uncheckedArgument(count - 1), keywordNames, values))
+            return false;
+        return bindArgumentsSlow(globalObject, callFrame, function, count - 1, keywordNames, valuesOf(values));
     } else if (count == info.argCount && info.parameterCount() == count) [[likely]]
         return true; // Every argument is where its parameter is.
     return bindArgumentsSlow(globalObject, callFrame, function, count, keywordNames, reinterpret_cast<const JSValue*>(callFrame->addressOfArgumentsStart()) + count);

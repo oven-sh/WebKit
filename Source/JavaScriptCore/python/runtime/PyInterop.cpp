@@ -22,6 +22,8 @@
 #include "PyFunction.h"
 #include "PyHooks.h"
 #include "PyInternals.h"
+#include "PyJSClass.h"
+#include "PyJSView.h"
 #include "PyList.h"
 #include "PyModule.h"
 #include "PyNumbers.h"
@@ -530,7 +532,7 @@ static JSObject* objectOfKeywordArguments(JSGlobalObject* globalObject, unsigned
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSObject* object = constructEmptyObject(globalObject);
+    JSObject* object = makeKeywordMarker(globalObject);
     for (unsigned i = 0; i < count; ++i) {
         Identifier key = propertyKeyFor(globalObject, nameAt(i));
         RETURN_IF_EXCEPTION(scope, nullptr);
@@ -605,7 +607,7 @@ static void argumentsForJS(JSGlobalObject* globalObject, const CallArgs& args, M
     list.append(object);
 }
 
-JSValue callForeignFunction(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
+JSValue callForeignFunction(JSGlobalObject* globalObject, JSValue self, const CallArgs& args, JSValue thisValue)
 {
     if (!ensureMainThreadForJS(globalObject))
         return { };
@@ -614,26 +616,66 @@ JSValue callForeignFunction(JSGlobalObject* globalObject, JSValue self, const Ca
     MarkedArgumentBuffer list;
     argumentsForJS(globalObject, args, list);
     RETURN_IF_EXCEPTION(scope, { });
-    if (isClassOfJS(self.asCell()))
-        RELEASE_AND_RETURN(scope, JSC::construct(globalObject, self, list, "not a constructor"_s));
-    RELEASE_AND_RETURN(scope, JSC::call(globalObject, self, JSC::getCallData(self), jsUndefined(), list));
+    // What these return when something is thrown is not the empty value.
+    JSValue result = isClassOfJS(self.asCell())
+        ? JSValue(JSC::construct(globalObject, self, list, "not a constructor"_s))
+        : JSC::call(globalObject, self, JSC::getCallData(self), thisValue ? valueForJS(thisValue) : jsUndefined(), list);
+    RETURN_IF_EXCEPTION(scope, { });
+    return result;
 }
 
-// function.new(...): `new function(...)`
-static JSValue jsFunctionNew(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
+JSValue constructForeignFunction(JSGlobalObject* globalObject, JSValue constructor, const CallArgs& args, JSValue newTarget)
 {
     if (!ensureMainThreadForJS(globalObject))
         return { };
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    CallData constructData = JSC::getConstructData(self);
+    CallData constructData = JSC::getConstructData(constructor);
     if (constructData.type == CallData::Type::None)
         return raiseTypeError(globalObject, scope, "this JavaScript function is not a constructor"_s);
     MarkedArgumentBuffer list;
     argumentsForJS(globalObject, args, list);
     RETURN_IF_EXCEPTION(scope, { });
-    RELEASE_AND_RETURN(scope, JSC::construct(globalObject, self, constructData, list));
+    JSObject* result = JSC::construct(globalObject, constructor, constructData, list, newTarget ? newTarget : constructor);
+    RETURN_IF_EXCEPTION(scope, { });
+    return result;
 }
+
+ForeignMethodKind foreignMethodKind(JSCell* cell)
+{
+    auto* function = dynamicDowncast<JSFunction>(cell);
+    if (!function || PyFunction::is(cell) || function->isHostFunction())
+        return ForeignMethodKind::NotAMethod;
+    FunctionExecutable* executable = function->jsExecutable();
+    if (executable->isClassConstructorFunction())
+        return ForeignMethodKind::NotAMethod;
+    return isArrowFunctionParseMode(executable->parseMode()) ? ForeignMethodKind::TakesFirstArgument : ForeignMethodKind::TakesThis;
+}
+
+JSValue callForeignMethod(JSGlobalObject* globalObject, JSValue function, JSValue self, const CallArgs& args)
+{
+    if (foreignMethodKind(function.asCell()) == ForeignMethodKind::TakesThis)
+        return callForeignFunction(globalObject, function, args, self);
+    return withFirstArgument(self, args, [&](const CallArgs& all) {
+        return callForeignFunction(globalObject, function, all);
+    });
+}
+
+// function.new(...): `new function(...)`
+static JSValue jsFunctionNew(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
+{
+    return constructForeignFunction(globalObject, self, args);
+}
+
+// A function found in a class is a method of the instances, as one of Python's is.
+static JSValue jsFunctionGet(JSGlobalObject* globalObject, JSValue self, JSValue instance, JSValue)
+{
+    if (isNone(instance) || foreignMethodKind(self.asCell()) == ForeignMethodKind::NotAMethod)
+        return self;
+    return PyMethod::create(globalObject, self, instance);
+}
+
+static JSValue jsFunctionCall(JSGlobalObject* globalObject, JSValue self, const CallArgs& args) { return callForeignFunction(globalObject, self, args); }
 
 // isinstance(value, function): `value instanceof function`
 static JSValue jsFunctionInstanceCheck(JSGlobalObject* globalObject, JSValue self, JSValue value)
@@ -688,7 +730,8 @@ static JSValue jsFunctionCopy(JSGlobalObject*, JSValue self) { return self; }
 static JSValue jsFunctionDeepCopy(JSGlobalObject*, JSValue self, JSValue) { return self; }
 
 static constexpr NativeDef jsFunctionMethods[] = {
-    PY_SLOT("__call__", callForeignFunction, "($self, *args, **kwargs)"),
+    PY_SLOT("__call__", jsFunctionCall, "($self, *args, **kwargs)"),
+    PY_SLOT("__get__", jsFunctionGet, "($self, instance, owner=None, /)"),
     PY_SLOT("__repr__", jsFunctionRepr, "($self, /)"),
     PY_METHOD("__copy__", jsFunctionCopy, "($self, /)"),
     PY_METHOD("__deepcopy__", jsFunctionDeepCopy, "($self, memo, /)"),
@@ -808,9 +851,75 @@ static JSValue jsPromiseAwait(JSGlobalObject* globalObject, JSValue self)
     RELEASE_AND_RETURN(scope, call(globalObject, wait, self));
 }
 
+// A promise is a future to asyncio (asyncio.isfuture()), so that gather(), wait(), shield() and the like take it as it is and have their
+// callbacks on it at once. Wrapped in a task it would be without one until the task took its first step, and a rejection in
+// the meantime would count as unhandled. The methods are the host's, which has the loop.
+template<size_t length>
+struct FutureMethodName {
+    constexpr FutureMethodName(const char (&text)[length]) { std::copy_n(text, length, characters); }
+    char characters[length];
+};
+template<FutureMethodName name>
+static JSValue jsPromiseFutureMethod(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
+{
+    if (!ensureMainThreadForJS(globalObject))
+        return { };
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue function = eventLoopFunction(globalObject, ASCIILiteral::fromLiteralUnsafe(name.characters));
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!function)
+        return raiseRuntimeError(globalObject, scope, "there is no event loop to wait for a JavaScript promise on"_s);
+    RELEASE_AND_RETURN(scope, withFirstArgument(self, args, [&](const CallArgs& all) {
+        return call(globalObject, function, all);
+    }));
+}
+
 static constexpr NativeDef jsPromiseMethods[] = {
     PY_SLOT("__await__", jsPromiseAwait, "($self, /)"),
+    PY_METHOD("done", jsPromiseFutureMethod<"future_done">, "($self, *args, **kwargs)"),
+    PY_METHOD("cancelled", jsPromiseFutureMethod<"future_cancelled">, "($self, *args, **kwargs)"),
+    PY_METHOD("result", jsPromiseFutureMethod<"future_result">, "($self, *args, **kwargs)"),
+    PY_METHOD("exception", jsPromiseFutureMethod<"future_exception">, "($self, *args, **kwargs)"),
+    PY_METHOD("cancel", jsPromiseFutureMethod<"future_cancel">, "($self, *args, **kwargs)"),
+    PY_METHOD("get_loop", jsPromiseFutureMethod<"future_get_loop">, "($self, *args, **kwargs)"),
+    PY_METHOD("add_done_callback", jsPromiseFutureMethod<"future_add_done_callback">, "($self, *args, **kwargs)"),
+    PY_METHOD("remove_done_callback", jsPromiseFutureMethod<"future_remove_done_callback">, "($self, *args, **kwargs)"),
 };
+
+// By which asyncio knows a future. A task sets it on what a coroutine yields to it, which a promise never is.
+static constexpr unsigned futureBlockingField = 0;
+static JSValue jsPromiseGetFutureBlocking(JSGlobalObject* globalObject, JSValue self)
+{
+    JSValue value = hiddenField(globalObject, self, futureBlockingField);
+    return value ? value : jsBoolean(false);
+}
+static void jsPromiseSetFutureBlocking(JSGlobalObject* globalObject, JSValue self, JSValue value)
+{
+    setHiddenField(globalObject, self, futureBlockingField, value ? value : jsBoolean(false));
+}
+static constexpr NativeGetSet jsPromiseGetSets[] = {
+    { "_asyncio_future_blocking"_s, jsPromiseGetFutureBlocking, jsPromiseSetFutureBlocking },
+};
+
+// (0, None) while the promise is pending, (1, value) when it is fulfilled, (2, reason) when it is rejected.
+static JSValue jsPromiseState(JSGlobalObject* globalObject, JSValue value)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* promise = dynamicDowncast<JSPromise>(value);
+    if (!promise)
+        return raiseTypeError(globalObject, scope, "promise_state() argument must be a JavaScript promise, not "_s, typeName(globalObject, value));
+    switch (promise->status()) {
+    case JSPromise::Status::Pending:
+        return PyTuple::create(globalObject, { jsNumber(0), jsUndefined() });
+    case JSPromise::Status::Fulfilled:
+        return PyTuple::create(globalObject, { jsNumber(1), promise->result() });
+    case JSPromise::Status::Rejected:
+        return PyTuple::create(globalObject, { jsNumber(2), promise->result() });
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
 
 // What `except` catches when JS throws the value: the value, if it is an exception of Python's, or the JSError that stands for it.
 static JSValue jsExceptionFor(JSGlobalObject* globalObject, JSValue thrown)
@@ -820,6 +929,7 @@ static JSValue jsExceptionFor(JSGlobalObject* globalObject, JSValue thrown)
 
 static constexpr NativeDef jsModuleFunctions[] = {
     PY_FUNCTION("exception_for", jsExceptionFor, "(thrown, /)"),
+    PY_FUNCTION("promise_state", jsPromiseState, "(promise, /)"),
 };
 
 // The module _js: what Python code needs to name when it deals with JS. (`import js` is the global object of JS.)
@@ -832,6 +942,7 @@ void initializeJSModule(JSGlobalObject* globalObject, PyModule* module)
     module->add(globalObject, "JSPromise"_s, rt.jsPromiseType());
     module->add(globalObject, "JSIterator"_s, jsIteratorObjectType(rt));
     module->add(globalObject, "JSGenerator"_s, jsGeneratorType(rt));
+    module->add(globalObject, "JSMethod"_s, jsMethodType(rt));
     module->addFunctions(globalObject, jsModuleFunctions);
 }
 
@@ -840,7 +951,7 @@ void initializeInteropTypes(JSGlobalObject* globalObject)
     Runtime& rt = runtime(globalObject);
     rt.jsObjectType()->initializeBuiltin(globalObject, { "JSObject"_s, { TypeFlag::DisallowInstantiation }, jsObjectMethods, { }, { } }, rt.typeType(), rt.objectType());
     rt.jsFunctionType()->initializeBuiltin(globalObject, { "JSFunction"_s, { TypeFlag::DisallowInstantiation }, jsFunctionMethods, jsFunctionGetSets, { } }, rt.typeType(), rt.jsObjectType());
-    rt.jsPromiseType()->initializeBuiltin(globalObject, { "JSPromise"_s, { TypeFlag::DisallowInstantiation }, jsPromiseMethods, { }, { } }, rt.typeType(), rt.jsObjectType());
+    rt.jsPromiseType()->initializeBuiltin(globalObject, { "JSPromise"_s, { TypeFlag::DisallowInstantiation }, jsPromiseMethods, jsPromiseGetSets, { } }, rt.typeType(), rt.jsObjectType());
 }
 
 } // namespace Python

@@ -317,7 +317,6 @@ public:
     Structure* listSubclassStructure() const { return m_listSubclassStructure.get(); }
     Structure* weakRefStructure() const { return m_weakRefStructure.get(); }
     // Of what kwargs() makes in JS: a PyRecord that is told from all others by it.
-    Structure* keywordMarkerStructure() const { return m_keywordMarkerStructure.get(); }
 
     JSObject* jsViewObject(JSViewObject which) const { return m_jsViewObjects[static_cast<unsigned>(which)].get(); }
     void setJSViewObject(JSViewObject which, JSObject* object) { m_jsViewObjects[static_cast<unsigned>(which)].set(m_vm, m_globalObject, object); }
@@ -404,6 +403,8 @@ public:
 
     // A key under which an object that has no field for it keeps its __dict__.
     PrivateName dictKey() const { return m_dictKey; }
+    // Of an object of JS that stands for keyword arguments: see isKeywordMarker().
+    PrivateName keywordsKey() const { return m_keywordsKey; }
     // Keys under which a type written in C++ keeps what its instances have no field for. See hiddenField().
     static constexpr unsigned numberOfHiddenKeys = 4;
     PrivateName hiddenKey(unsigned index) const { return m_hiddenKeys[index]; }
@@ -688,7 +689,6 @@ private:
     WriteBarrier<Structure> m_functionStructure;
     WriteBarrier<Structure> m_listSubclassStructure;
     WriteBarrier<Structure> m_weakRefStructure;
-    WriteBarrier<Structure> m_keywordMarkerStructure;
     std::array<WriteBarrier<JSObject>, static_cast<unsigned>(JSViewObject::Count)> m_jsViewObjects;
     std::array<WriteBarrier<PyType>, static_cast<unsigned>(TypeID::Count)> m_types;
     std::array<WriteBarrier<JSString>, numberOfNames> m_names;
@@ -718,6 +718,7 @@ private:
     WriteBarrier<Unknown> m_exceptionGroupRest;
 
     PrivateName m_dictKey;
+    PrivateName m_keywordsKey;
     std::array<PrivateName, numberOfHiddenKeys> m_hiddenKeys;
     std::array<PrivateName, 3> m_instanceKeys;
     std::unique_ptr<Monitoring> m_monitoring;

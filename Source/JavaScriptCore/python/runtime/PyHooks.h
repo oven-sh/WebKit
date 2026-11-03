@@ -89,13 +89,19 @@ JS_EXPORT_PRIVATE JSValue binaryOperatorForJS(JSGlobalObject*, JSOperator, JSVal
 JS_EXPORT_PRIVATE JSValue unaryOperatorForJS(JSGlobalObject*, JSOperator, JSValue);
 // JS has it that a comparison is true or false: that is the truth of whatever the method returns.
 JS_EXPORT_PRIVATE std::optional<bool> compareForJS(JSGlobalObject*, JSOperator, JSValue left, JSValue right);
-// ==, of two values that are not the same and neither of which is undefined or null.
+// ==, of two values neither of which is undefined or null.
 JS_EXPORT_PRIVATE std::optional<bool> equalForJS(JSGlobalObject*, JSValue left, JSValue right);
 
 // Python code is calling what is not Python code: whether it is, and the frame made ready for it (or an exception).
 // True: the callee is a class, and the call is `new callee(...)`.
 JS_EXPORT_PRIVATE bool isForeignCallee(JSValue callee);
 JS_EXPORT_PRIVATE bool prepareForeignCall(JSGlobalObject*, CallFrame* calleeFrame);
+
+// `class constructor extends superclass`, when the methods are in place and before anything sees the class. If the superclass is a
+// class of Python's, so is this: the class. Otherwise the constructor. See PyJSClass.h.
+JSC_DECLARE_HOST_FUNCTION(deriveClassFromJSFunction); // (constructor, prototype, superclass)
+// op_set_function_name, for such a class: { [key]: class extends Base {} }
+void setNameOfDerivedClass(JSGlobalObject*, JSCell*, JSValue name);
 
 } // namespace Python
 } // namespace JSC

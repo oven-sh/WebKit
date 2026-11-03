@@ -13,6 +13,7 @@
 #include "PyErrors.h"
 #include "PyHooks.h"
 #include "PyInternals.h"
+#include "PyJSClass.h"
 #include "PyJSView.h"
 #include "PyList.h"
 #include "PyRuntime.h"
@@ -39,10 +40,16 @@ JSC_DEFINE_HOST_FUNCTION(callType, (JSGlobalObject* globalObject, CallFrame* cal
 // `new T(...)` in JS.
 JSC_DEFINE_HOST_FUNCTION(constructType, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
-    if (hasKeywordMarker(globalObject, callFrame)) [[unlikely]]
-        return JSValue::encode(valueForJS(callWithKeywordMarker(globalObject, callFrame)));
-    CallArgs args(reinterpret_cast<const JSValue*>(callFrame->addressOfArgumentsStart()), static_cast<unsigned>(callFrame->argumentCount()));
-    return JSValue::encode(valueForJS(call(globalObject, callFrame->jsCallee(), args)));
+    JSObject* callee = callFrame->jsCallee();
+    // super(...) in the constructor of a class derived from this one.
+    PyType* derived = callFrame->newTarget() != JSValue(callee) ? PyType::tryFrom(callFrame->newTarget()) : nullptr;
+    if (derived && !derived->isSubtypeOf(uncheckedDowncast<PyType>(callee)))
+        derived = nullptr;
+    return JSValue::encode(valueForJS(withArgumentsFromJS(globalObject, callFrame, [&](const CallArgs& args) {
+        if (derived) [[unlikely]]
+            return constructBaseOfDerivedClass(globalObject, uncheckedDowncast<PyType>(callee), derived, args);
+        return call(globalObject, callee, args);
+    })));
 }
 
 PY_DEFINE_JS_VIEW(PyType)
@@ -83,6 +90,7 @@ void PyType::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_dict);
     visitor.append(thisObject->m_subclasses);
     visitor.append(thisObject->m_instanceStructure);
+    visitor.append(thisObject->m_jsPrototype);
     visitor.appendValues(thisObject->m_specials.data(), numberOfSpecials);
     for (auto& entry : thisObject->m_lookupCache) {
         visitor.append(entry.name);

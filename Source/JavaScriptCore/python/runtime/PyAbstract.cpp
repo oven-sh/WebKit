@@ -217,7 +217,7 @@ JSValue bindDescriptor(JSGlobalObject* globalObject, JSValue descriptor, JSValue
     JSCell* cell = descriptor.asCell();
     switch (cell->type()) {
     case JSFunctionType:
-        if (PyFunction::is(cell))
+        if (PyFunction::is(cell) || foreignMethodKind(cell) != ForeignMethodKind::NotAMethod)
             return object ? JSValue(PyMethod::create(globalObject, descriptor, object)) : descriptor;
         return descriptor;
     case InternalFunctionType:
@@ -301,8 +301,8 @@ JSValue genericGetAttr(JSGlobalObject* globalObject, JSValue object, JSString* n
             getter = descriptorType->lookup(Special::Get);
             if (getter && (descriptorType->lookup(Special::Set) || descriptorType->lookup(Special::Delete)))
                 RELEASE_AND_RETURN(scope, callSpecial(globalObject, getter, descriptor, object, type));
-        } else if (descriptor.isCell() && descriptor.asCell()->type() == InternalFunctionType)
-            bindsDirectly = true; // A class method, or nothing to bind.
+        } else if (descriptor.isCell() && (descriptor.asCell()->type() == InternalFunctionType || descriptor.asCell()->type() == JSFunctionType))
+            bindsDirectly = true; // A class method, a function of JS, or nothing to bind.
     }
 
     JSValue value = instanceAttribute(globalObject, object, name);
@@ -883,6 +883,8 @@ JSValue call(JSGlobalObject* globalObject, JSValue callable, const CallArgs& arg
         }
         case PyMethodType: {
             auto* method = uncheckedDowncast<PyMethod>(cell);
+            if (JSValue function = method->function(); function.isCell() && function.asCell()->type() == JSFunctionType && !PyFunction::is(function.asCell())) [[unlikely]]
+                RELEASE_AND_RETURN(scope, callForeignMethod(globalObject, function, method->self(), args));
             RELEASE_AND_RETURN(scope, withFirstArgument(method->self(), args, [&](const CallArgs& all) {
                 return call(globalObject, method->function(), all);
             }));

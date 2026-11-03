@@ -1640,6 +1640,15 @@ static JSValue taskInit(JSGlobalObject* globalObject, JSValue self, JSValue coro
     if (failed(scope, initializeFuture(globalObject, state, task, loop)))
         return { };
 
+    // JS never holds a coroutine: what it gets from an `async def`, as from an async function of its own, is a promise.
+    if (typeOf(globalObject, coroutine) == runtime(globalObject).jsPromiseType()) {
+        JSValue coroutineFor = eventLoopFunction(globalObject, "coroutine_for"_s);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (coroutineFor) {
+            coroutine = call(globalObject, coroutineFor, coroutine);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
+    }
     int isOne = isCoroutine(globalObject, state, coroutine);
     RETURN_IF_EXCEPTION(scope, { });
     if (!isOne)

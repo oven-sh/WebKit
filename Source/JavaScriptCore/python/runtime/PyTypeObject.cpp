@@ -5,6 +5,7 @@
 
 #include "config.h"
 #include "PyInternals.h"
+#include "PyJSClass.h"
 
 #include "HeapIterationScope.h"
 #include "JSCInlines.h"
@@ -780,13 +781,15 @@ static JSValue typeDelAttr(JSGlobalObject* globalObject, JSValue self, JSValue n
 
 // ---- type: calling one ----
 
-JSValue typeCall(JSGlobalObject* globalObject, PyType* type, const CallArgs& args)
+JSValue typeCall(JSGlobalObject* globalObject, PyType* type, const CallArgs& allArgs, PyType* derived)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    CallArgs args = allArgs;
+    PyType* cls = derived ? derived : type;
 
-    if (type == rt.typeType()) {
+    if (type == rt.typeType() && !derived) {
         if (args.size() == 1 && !args.hasKeywords())
             return rt.typeOf(args[0]);
         if (args.size() != 3)
@@ -804,6 +807,13 @@ JSValue typeCall(JSGlobalObject* globalObject, PyType* type, const CallArgs& arg
     };
     PyNativeFunction* native = nativeNew(newMethod);
     bool isChecked = false;
+    // object.__new__ and object.__init__ tell by the class of the instance whether the arguments are meant for the other of the two.
+    // Here that is for the type to say, whose methods these are.
+    if (derived && isNativeNew(newMethod, objectNew)) {
+        if (hasExcessArguments(args) && isNativeNew(type->lookup(Special::Init), objectInit) && !hasInitOfItsOwn(derived))
+            return raiseTypeError(globalObject, scope, derived->nameInMessages(), "() takes no arguments"_s);
+        args = CallArgs();
+    }
     // In CPython the __new__ of a built-in type, found in a class or in the classes it derives from, stands for "what the class
     // inherits", whichever type it is of: that of __base__, which decides the layout. So class C(tzinfo, dict) is made by dict's,
     // and so is class C(dict): __new__ = object.__new__.
@@ -821,7 +831,7 @@ JSValue typeCall(JSGlobalObject* globalObject, PyType* type, const CallArgs& arg
             isChecked = true;
     }
     if (native && !isChecked)
-        object = native->invokeWithSelf(globalObject, type, args);
+        object = native->invokeWithSelf(globalObject, cls, args);
     else {
         JSValue function;
         if (auto* wrapper = dynamicDowncast<PyWrapperObject>(newMethod); wrapper && wrapper->type() == rt.staticmethodType())
@@ -830,7 +840,7 @@ JSValue typeCall(JSGlobalObject* globalObject, PyType* type, const CallArgs& arg
             function = bindDescriptor(globalObject, newMethod, { }, type);
             RETURN_IF_EXCEPTION(scope, { });
         }
-        object = withFirstArgument(type, args, [&](const CallArgs& all) {
+        object = withFirstArgument(cls, args, [&](const CallArgs& all) {
             return call(globalObject, function, all);
         });
     }
@@ -838,14 +848,14 @@ JSValue typeCall(JSGlobalObject* globalObject, PyType* type, const CallArgs& arg
 
     // What __new__ made may be something else altogether, which is then left alone.
     PyType* objectType = rt.typeOf(object);
-    if (!objectType->isSubtypeOf(type))
+    if (!objectType->isSubtypeOf(cls))
         return object;
     if (objectType->lookup(Special::Del) && object.isCell()) [[unlikely]]
         rt.registerFinalizable(object.asCell());
-    JSValue init = objectType->lookup(Special::Init);
-    if (!init)
+    JSValue init = (derived ? type : objectType)->lookup(Special::Init);
+    if (!init || (derived && isNativeNew(init, objectInit)))
         return object;
-    JSValue result = callSpecial(globalObject, init, object, args);
+    JSValue result = callSpecial(globalObject, init, object, allArgs);
     RETURN_IF_EXCEPTION(scope, { });
     if (!isNone(result))
         return raiseTypeError(globalObject, scope, "__init__() should return None, not '"_s, typeName(globalObject, result), '\'');
@@ -2113,7 +2123,17 @@ JSValue buildClass(JSGlobalObject* globalObject, const CallArgs& args)
     JSValue name = args[1];
     if (!isStr(name))
         return raiseTypeError(globalObject, scope, "__build_class__: name is not a string"_s);
-    PyTuple* originalBases = PyTuple::create(globalObject, args.positional().subspan(2));
+    PyTuple* bases = PyTuple::create(globalObject, args.positional().subspan(2));
+    RELEASE_AND_RETURN(scope, buildClass(globalObject, name, bases, args, [&](JSValue ns) {
+        return call(globalObject, function, ns);
+    }));
+}
+
+JSValue buildClass(JSGlobalObject* globalObject, JSValue name, PyTuple* originalBases, const CallArgs& args, const ScopedLambda<JSValue(JSValue)>& body)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PyTuple* bases = updateBases(globalObject, originalBases);
     RETURN_IF_EXCEPTION(scope, { });
 
@@ -2161,7 +2181,7 @@ JSValue buildClass(JSGlobalObject* globalObject, const CallArgs& args)
             return raiseTypeError(globalObject, scope, isClass ? PyType::from(meta)->name() : "<metaclass>"_str, ".__prepare__() must return a mapping, not "_s, typeName(globalObject, ns));
     }
 
-    JSValue cell = call(globalObject, function, ns);
+    JSValue cell = body(ns);
     RETURN_IF_EXCEPTION(scope, { });
     if (bases != originalBases) {
         setItem(globalObject, ns, rt.names.dOrigBases(), originalBases);

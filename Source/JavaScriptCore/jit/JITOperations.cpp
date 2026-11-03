@@ -2846,9 +2846,11 @@ JSC_DEFINE_JIT_OPERATION(operationSetFunctionName, void, (JSGlobalObject* global
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSFunction* func = uncheckedDowncast<JSFunction>(funcCell);
     JSValue name = JSValue::decode(encodedName);
-    func->setFunctionName(globalObject, name);
+    if (auto* func = dynamicDowncast<JSFunction>(funcCell)) [[likely]]
+        func->setFunctionName(globalObject, name);
+    else
+        Python::setNameOfDerivedClass(globalObject, funcCell, name);
     OPERATION_RETURN(scope);
 }
 

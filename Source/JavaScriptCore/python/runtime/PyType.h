@@ -167,6 +167,10 @@ public:
         return createInstanceStructure(vm);
     }
 
+    // Type.prototype in JS: see PyJSClass.h. Null: nobody has asked for it.
+    JSObject* jsPrototype() const { return m_jsPrototype.get(); }
+    void setJSPrototype(VM& vm, JSObject* prototype) { m_jsPrototype.set(vm, this, prototype); }
+
     // The classes derived directly from this one, oldest first. It does not keep them alive.
     void appendSubclassesTo(MarkedArgumentBuffer&) const;
     JSValue subclasses() const { return m_subclasses.get(); } // The list they are kept in, which is for nobody else. Empty: there is none.
@@ -217,6 +221,7 @@ private:
     WriteBarrier<PyDict> m_dict;
     WriteBarrier<Unknown> m_subclasses; // A list, or empty: of built-in types, of weak references to classes, and of tuples of one such for dependents.
     WriteBarrier<Structure> m_instanceStructure;
+    WriteBarrier<JSObject> m_jsPrototype;
     OptionSet<TypeFlag> m_flags;
     uint32_t m_version;
     std::array<bool, numberOfSpecials> m_specialIsCached { };

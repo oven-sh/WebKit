@@ -2334,9 +2334,12 @@ LLINT_SLOW_PATH_DECL(slow_path_set_function_name)
 {
     LLINT_BEGIN();
     auto bytecode = pc->as<OpSetFunctionName>();
-    JSFunction* func = uncheckedDowncast<JSFunction>(getNonConstantOperand(callFrame, bytecode.m_function));
+    JSCell* cell = getNonConstantOperand(callFrame, bytecode.m_function).asCell();
     JSValue name = getOperand(callFrame, bytecode.m_name);
-    func->setFunctionName(globalObject, name);
+    if (auto* func = dynamicDowncast<JSFunction>(cell)) [[likely]]
+        func->setFunctionName(globalObject, name);
+    else
+        Python::setNameOfDerivedClass(globalObject, cell, name);
     LLINT_END();
 }
 

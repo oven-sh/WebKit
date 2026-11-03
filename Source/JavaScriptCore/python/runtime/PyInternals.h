@@ -59,8 +59,9 @@ String descriptorRepr(JSGlobalObject*, ASCIILiteral kind, StringView name, PyTyp
 
 // type.__getattribute__. With `suppress`, a missing attribute is an empty value and no exception.
 JSValue typeGetAttr(JSGlobalObject*, PyType*, JSString* name, bool suppress = false);
-// type.__call__: makes an instance.
-JSValue typeCall(JSGlobalObject*, PyType*, const CallArgs&);
+// type.__call__: makes an instance. With `derived`, a class derived from the type: an instance of that, made and initialized by
+// what the type has for __new__ and __init__. (`super(...)` in the constructor of a class written in JS.)
+JSValue typeCall(JSGlobalObject*, PyType*, const CallArgs&, PyType* derived = nullptr);
 // An instance of the type with nothing set: what object.__new__ makes, given how the type's instances are laid out.
 // `layout`: the built-in type that decides the layout, if not object. (One whose instances differ from object's in CPython only.)
 JSValue allocateInstance(JSGlobalObject*, PyType*, PyType* layout = nullptr);
@@ -92,6 +93,9 @@ constexpr size_t stackBytesWipedForWaiting = 16 * KB;
 JSValue prepareConstruct(JSGlobalObject*, JSValue callee, JSValue& self);
 // __build_class__(function, name, *bases, **keywords)
 JSValue buildClass(JSGlobalObject*, const CallArgs&);
+// The same for a body that is not a function of Python's: it is given the namespace to fill, and returns None, or nothing if it raises.
+// Of the arguments only the keywords count.
+JSValue buildClass(JSGlobalObject*, JSValue name, PyTuple* bases, const CallArgs& keywords, const ScopedLambda<JSValue(JSValue ns)>& body);
 // The most derived of the metaclass given and those of the bases. Null: an exception.
 PyType* calculateMetaclass(JSGlobalObject*, PyType* metatype, PyTuple* bases);
 // "module.qualname", or the qualname alone for a built-in.
@@ -472,7 +476,16 @@ JSValue moduleGetAttribute(JSGlobalObject*, JSValue self, JSValue name);
 // import name: what __import__ does.
 JSValue importName(JSGlobalObject*, JSString* name, JSValue globals, JSValue locals, JSValue fromList, int level);
 // Calls what is not Python code, with the arguments as JS takes them (see PyHooks.h).
-JSValue callForeignFunction(JSGlobalObject*, JSValue function, const CallArgs&);
+JSValue callForeignFunction(JSGlobalObject*, JSValue function, const CallArgs&, JSValue thisValue = { });
+// new function(...). `newTarget`: new.target, if not the function.
+JSValue constructForeignFunction(JSGlobalObject*, JSValue function, const CallArgs&, JSValue newTarget = { });
+// A function written in JS that is found in a class is a method of the instances, as one written in Python is. The instance is its
+// `this`; an arrow function, which has none, is to JS what a lambda is to Python and takes it first. Not a method: a class, a bound
+// function, a function written in C++ (as in Python).
+enum class ForeignMethodKind : uint8_t { NotAMethod, TakesThis, TakesFirstArgument };
+ForeignMethodKind foreignMethodKind(JSCell*);
+// What to call a bound method of such a function is.
+JSValue callForeignMethod(JSGlobalObject*, JSValue function, JSValue self, const CallArgs&);
 
 JSValue importModule(JSGlobalObject*, JSString* absoluteName);
 JSValue importModule(JSGlobalObject*, ASCIILiteral absoluteName);
