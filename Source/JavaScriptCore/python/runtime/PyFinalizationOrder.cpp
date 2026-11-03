@@ -266,13 +266,15 @@ void DeadGraph::addAllThatDied(std::span<JSCell* const> candidates)
             look(cell);
         });
     });
-    // Those that earlier collections found dead are gone: they are swept when a collection ends.
+    // What an earlier collection found dead may still be in the list: not swept yet (Heap::mayRunEmbedderFinalizers()), or swept, so
+    // that there is no cell any more, and kept for the weak handles on it. See PreciseAllocation::flip() for what the bits say
+    // while a full collection marks.
     for (PreciseAllocation* allocation : space.preciseAllocations()) {
         if (!isJSCellKind(allocation->attributes().cellKind))
             continue;
         if (allocation->isMarked())
             ++m_cellsLookedAt;
-        else
+        else if (allocation->isNewlyAllocated() && allocation->hasValidCell())
             look(static_cast<JSCell*>(allocation->cell()));
     }
     if (m_cells.size() <= maxCells)

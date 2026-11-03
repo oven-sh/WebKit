@@ -220,6 +220,9 @@ void Threads::takeGIL(ThreadState& thread)
         ++m_switchNumber;
     }
     m_dropIsRequested.store(false);
+    // The host's objects belong to the main thread, dead ones too. This is said before the thread takes the lock of the VM: to take
+    // it may be to finish a collection, which sweeps.
+    m_vm.heap.setMayRunEmbedderFinalizers(thread.isMain);
     m_switchCondition.notifyAll();
     m_gilLock.unlock();
 }
@@ -272,8 +275,7 @@ void Threads::acquire(ThreadState& thread, JSLock::ParkedThread& parked, SavedSt
 void Threads::didTakeGIL(ThreadState& thread)
 {
     m_vm.traps().fireTrap(VMTraps::NeedPythonCalls);
-    // The host's objects belong to the main thread, dead ones too.
-    m_vm.heap.setMayRunEmbedderFinalizers(thread.isMain);
+    ASSERT(m_vm.heap.mayRunEmbedderFinalizers() == thread.isMain);
     if (thread.isMain) {
         m_didTellMainThreadOfFinalizers = false;
         m_vm.traps().fireTrapsLeftToEmbedderThread();
