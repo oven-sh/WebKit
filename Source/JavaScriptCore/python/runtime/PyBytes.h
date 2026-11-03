@@ -131,6 +131,14 @@ public:
         if (makeRoomFor(bytes.size())) [[likely]]
             m_bytes.append(bytes);
     }
+    void appendRepeated(uint8_t byte, size_t count)
+    {
+        if (makeRoomFor(count)) [[likely]] {
+            size_t size = m_bytes.size();
+            m_bytes.grow(size + count);
+            memset(m_bytes.mutableSpan().data() + size, byte, count);
+        }
+    }
     size_t size() const { return m_bytes.size(); }
     bool hasOverflowed() const { return m_hasOverflowed; }
     std::span<const uint8_t> span() const { return m_bytes.span(); }

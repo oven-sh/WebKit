@@ -75,7 +75,7 @@ public:
             }
             if (m_text.isNull())
                 m_text = emptyString();
-            else if (!m_text.is8Bit())
+            else if (failed(scope, m_text.is8Bit()))
                 m_text = String::make8Bit(m_text.span16());
             return true;
         }
@@ -335,7 +335,7 @@ static JSValue binasciiB2AUU(JSGlobalObject* globalObject, JSValue dataValue, JS
     auto scope = DECLARE_THROW_SCOPE(vm);
     BinasciiSource data;
     bool backtick = false;
-    if (failed(scope, data.setBuffer(globalObject, dataValue)) || !binasciiBoolArgument(globalObject, backtickValue, backtick)
+    if (failed(scope, data.setBuffer(globalObject, dataValue)) || failed(scope, binasciiBoolArgument(globalObject, backtickValue, backtick))
         || !data.refresh())
         return { };
     auto input = data.bytes();
@@ -371,11 +371,11 @@ static JSValue binasciiA2BBase64(JSGlobalObject* globalObject, JSValue dataValue
     bool isPadded = true;
     bool isCanonical = false;
     if (failed(scope, data.setASCII(globalObject, dataValue))
-        || !binasciiBoolArgument(globalObject, strictValue, isStrict)
-        || !binasciiBoolArgument(globalObject, paddedValue, isPadded)
-        || !binasciiAlphabetArgument(globalObject, "a2b_base64"_s, alphabetValue, alphabet)
-        || (ignoreValue && !ignoreSource.setBuffer(globalObject, ignoreValue))
-        || !binasciiBoolArgument(globalObject, canonicalValue, isCanonical)
+        || failed(scope, binasciiBoolArgument(globalObject, strictValue, isStrict))
+        || failed(scope, binasciiBoolArgument(globalObject, paddedValue, isPadded))
+        || failed(scope, binasciiAlphabetArgument(globalObject, "a2b_base64"_s, alphabetValue, alphabet))
+        || (ignoreValue && failed(scope, ignoreSource.setBuffer(globalObject, ignoreValue)))
+        || failed(scope, binasciiBoolArgument(globalObject, canonicalValue, isCanonical))
         || !data.refresh() || !alphabet.refresh() || !ignoreSource.refresh())
         return { };
     // To say what to ignore is to say that nothing else is to be.
@@ -486,10 +486,10 @@ static JSValue binasciiB2ABase64(JSGlobalObject* globalObject, JSValue dataValue
     bool hasNewline = true;
     size_t width = 0;
     if (failed(scope, data.setBuffer(globalObject, dataValue))
-        || !binasciiBoolArgument(globalObject, paddedValue, isPadded)
-        || !binasciiSizeArgument(globalObject, wrapValue, width)
-        || !binasciiBoolArgument(globalObject, newlineValue, hasNewline)
-        || (alphabetValue && !alphabet.setBuffer(globalObject, alphabetValue))
+        || failed(scope, binasciiBoolArgument(globalObject, paddedValue, isPadded))
+        || failed(scope, binasciiSizeArgument(globalObject, wrapValue, width))
+        || failed(scope, binasciiBoolArgument(globalObject, newlineValue, hasNewline))
+        || (alphabetValue && failed(scope, alphabet.setBuffer(globalObject, alphabetValue)))
         || !data.refresh() || !alphabet.refresh())
         return { };
     const uint8_t* table = binasciiBase64Alphabet.characters;
@@ -580,10 +580,10 @@ static JSValue binasciiA2BAscii85(JSGlobalObject* globalObject, JSValue dataValu
     bool isAdobe = false;
     bool isCanonical = false;
     if (failed(scope, data.setASCII(globalObject, dataValue))
-        || !binasciiBoolArgument(globalObject, foldValue, foldSpaces)
-        || !binasciiBoolArgument(globalObject, adobeValue, isAdobe)
-        || (ignoreValue && !ignoreSource.setBuffer(globalObject, ignoreValue))
-        || !binasciiBoolArgument(globalObject, canonicalValue, isCanonical)
+        || failed(scope, binasciiBoolArgument(globalObject, foldValue, foldSpaces))
+        || failed(scope, binasciiBoolArgument(globalObject, adobeValue, isAdobe))
+        || (ignoreValue && failed(scope, ignoreSource.setBuffer(globalObject, ignoreValue)))
+        || failed(scope, binasciiBoolArgument(globalObject, canonicalValue, isCanonical))
         || !data.refresh() || !ignoreSource.refresh())
         return { };
     BinasciiIgnored ignored(ignoreSource.bytes());
@@ -675,10 +675,10 @@ static JSValue binasciiB2AAscii85(JSGlobalObject* globalObject, JSValue dataValu
     bool isAdobe = false;
     size_t width = 0;
     if (failed(scope, data.setBuffer(globalObject, dataValue))
-        || !binasciiBoolArgument(globalObject, foldValue, foldSpaces)
-        || !binasciiSizeArgument(globalObject, wrapValue, width)
-        || !binasciiBoolArgument(globalObject, padValue, pad)
-        || !binasciiBoolArgument(globalObject, adobeValue, isAdobe)
+        || failed(scope, binasciiBoolArgument(globalObject, foldValue, foldSpaces))
+        || failed(scope, binasciiSizeArgument(globalObject, wrapValue, width))
+        || failed(scope, binasciiBoolArgument(globalObject, padValue, pad))
+        || failed(scope, binasciiBoolArgument(globalObject, adobeValue, isAdobe))
         || !data.refresh())
         return { };
     auto input = data.bytes();
@@ -741,9 +741,9 @@ static JSValue binasciiA2BBase85(JSGlobalObject* globalObject, JSValue dataValue
     BinasciiSource ignoreSource;
     bool isCanonical = false;
     if (failed(scope, data.setASCII(globalObject, dataValue))
-        || !binasciiAlphabetArgument(globalObject, "a2b_base85"_s, alphabetValue, alphabet)
-        || (ignoreValue && !ignoreSource.setBuffer(globalObject, ignoreValue))
-        || !binasciiBoolArgument(globalObject, canonicalValue, isCanonical)
+        || failed(scope, binasciiAlphabetArgument(globalObject, "a2b_base85"_s, alphabetValue, alphabet))
+        || (ignoreValue && failed(scope, ignoreSource.setBuffer(globalObject, ignoreValue)))
+        || failed(scope, binasciiBoolArgument(globalObject, canonicalValue, isCanonical))
         || !data.refresh() || !alphabet.refresh() || !ignoreSource.refresh())
         return { };
     static constexpr BinasciiTable standardTable = binasciiReverseTable(binasciiBase85Alphabet.span(), -1);
@@ -793,9 +793,9 @@ static JSValue binasciiB2ABase85(JSGlobalObject* globalObject, JSValue dataValue
     bool pad = false;
     size_t width = 0;
     if (failed(scope, data.setBuffer(globalObject, dataValue))
-        || !binasciiBoolArgument(globalObject, padValue, pad)
-        || !binasciiSizeArgument(globalObject, wrapValue, width)
-        || (alphabetValue && !alphabet.setBuffer(globalObject, alphabetValue))
+        || failed(scope, binasciiBoolArgument(globalObject, padValue, pad))
+        || failed(scope, binasciiSizeArgument(globalObject, wrapValue, width))
+        || (alphabetValue && failed(scope, alphabet.setBuffer(globalObject, alphabetValue)))
         || !data.refresh() || !alphabet.refresh())
         return { };
     const uint8_t* table = binasciiBase85Alphabet.characters;
@@ -840,10 +840,10 @@ static JSValue binasciiA2BBase32(JSGlobalObject* globalObject, JSValue dataValue
     bool isPadded = true;
     bool isCanonical = false;
     if (failed(scope, data.setASCII(globalObject, dataValue))
-        || !binasciiBoolArgument(globalObject, paddedValue, isPadded)
-        || !binasciiAlphabetArgument(globalObject, "a2b_base32"_s, alphabetValue, alphabet)
-        || (ignoreValue && !ignoreSource.setBuffer(globalObject, ignoreValue))
-        || !binasciiBoolArgument(globalObject, canonicalValue, isCanonical)
+        || failed(scope, binasciiBoolArgument(globalObject, paddedValue, isPadded))
+        || failed(scope, binasciiAlphabetArgument(globalObject, "a2b_base32"_s, alphabetValue, alphabet))
+        || (ignoreValue && failed(scope, ignoreSource.setBuffer(globalObject, ignoreValue)))
+        || failed(scope, binasciiBoolArgument(globalObject, canonicalValue, isCanonical))
         || !data.refresh() || !alphabet.refresh() || !ignoreSource.refresh())
         return { };
     static constexpr BinasciiTable standardTable = binasciiReverseTable(binasciiBase32Alphabet.span(), '=');
@@ -920,9 +920,9 @@ static JSValue binasciiB2ABase32(JSGlobalObject* globalObject, JSValue dataValue
     bool isPadded = true;
     size_t width = 0;
     if (failed(scope, data.setBuffer(globalObject, dataValue))
-        || !binasciiBoolArgument(globalObject, paddedValue, isPadded)
-        || !binasciiSizeArgument(globalObject, wrapValue, width)
-        || (alphabetValue && !alphabet.setBuffer(globalObject, alphabetValue))
+        || failed(scope, binasciiBoolArgument(globalObject, paddedValue, isPadded))
+        || failed(scope, binasciiSizeArgument(globalObject, wrapValue, width))
+        || (alphabetValue && failed(scope, alphabet.setBuffer(globalObject, alphabetValue)))
         || !data.refresh() || !alphabet.refresh())
         return { };
     const uint8_t* table = binasciiBase32Alphabet.characters;
@@ -1121,7 +1121,7 @@ static JSValue binasciiA2BQP(JSGlobalObject* globalObject, JSValue dataValue, JS
     auto scope = DECLARE_THROW_SCOPE(vm);
     BinasciiSource data;
     bool isHeader = false;
-    if (failed(scope, data.setASCII(globalObject, dataValue)) || !binasciiBoolArgument(globalObject, headerValue, isHeader)
+    if (failed(scope, data.setASCII(globalObject, dataValue)) || failed(scope, binasciiBoolArgument(globalObject, headerValue, isHeader))
         || !data.refresh())
         return { };
     auto input = data.bytes();
@@ -1172,9 +1172,9 @@ static JSValue binasciiB2AQP(JSGlobalObject* globalObject, JSValue dataValue, JS
     bool isText = true;
     bool isHeader = false;
     if (failed(scope, data.setBuffer(globalObject, dataValue))
-        || !binasciiBoolArgument(globalObject, quoteTabsValue, quoteTabs)
-        || !binasciiBoolArgument(globalObject, isTextValue, isText)
-        || !binasciiBoolArgument(globalObject, headerValue, isHeader)
+        || failed(scope, binasciiBoolArgument(globalObject, quoteTabsValue, quoteTabs))
+        || failed(scope, binasciiBoolArgument(globalObject, isTextValue, isText))
+        || failed(scope, binasciiBoolArgument(globalObject, headerValue, isHeader))
         || !data.refresh())
         return { };
     auto input = data.bytes();

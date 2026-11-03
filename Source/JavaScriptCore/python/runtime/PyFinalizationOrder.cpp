@@ -156,6 +156,13 @@ private:
     {
         if (!cell || cell == m_wholeOfCurrentCell || m_marker.isMarked(cell))
             return;
+#if ASSERT_ENABLED
+        // What a cell that was alive until now refers to was alive until now.
+        if (!cell->structureID()) [[unlikely]] {
+            dataLogLn("A cell of class ", m_currentCell->classInfo()->className, m_currentCell->type() == PyObjectType ? makeString(" and type "_s, uncheckedDowncast<PyObject>(m_currentCell)->type()->name()) : String(), " refers to a cell that has been freed");
+            RELEASE_ASSERT_NOT_REACHED();
+        }
+#endif
         unsigned* slot = slotFor(cell, !m_hasAllThatDied);
         if (!slot)
             return;
@@ -186,6 +193,9 @@ private:
     bool m_hasAllThatDied;
     size_t m_cellsLookedAt { 0 };
     JSCell* m_wholeOfCurrentCell { nullptr };
+#if ASSERT_ENABLED
+    JSCell* m_currentCell { nullptr };
+#endif
     ConcurrentPtrHashSet m_opaqueRootStorage;
 
     UncheckedKeyHashMap<MarkedBlock*, unsigned> m_tables;
@@ -288,6 +298,9 @@ void DeadGraph::walk()
         if (i >= maxCells || isInternalObject(cell))
             continue;
         m_wholeOfCurrentCell = wholeThatPartRefersTo(cell);
+#if ASSERT_ENABLED
+        m_currentCell = cell;
+#endif
         cell->methodTable()->visitChildren(cell, *this);
         if (cell->type() == PyObjectType && uncheckedDowncast<PyObject>(cell)->type()->has(TypeFlag::OwnsContainers)) {
             for (unsigned part : m_edges.span().subspan(m_firstEdge[i]))

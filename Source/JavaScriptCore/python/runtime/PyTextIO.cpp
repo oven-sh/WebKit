@@ -951,7 +951,7 @@ static JSValue textIOInit(JSGlobalObject* globalObject, JSValue self, const Call
         return { };
     JSValue buffer = values[0];
     String encoding, newline;
-    if (!ioToOptionalString(globalObject, values[1], "TextIOWrapper"_s, "encoding"_s, encoding))
+    if (failed(scope, ioToOptionalString(globalObject, values[1], "TextIOWrapper"_s, "encoding"_s, encoding)))
         return { };
     JSValue errorsValue = values[2] ? values[2] : jsUndefined();
     if (!ioToOptionalString(globalObject, values[3], "TextIOWrapper"_s, "newline"_s, newline))
@@ -971,7 +971,7 @@ static JSValue textIOInit(JSGlobalObject* globalObject, JSValue self, const Call
     JSString* errors = rt.names.strict();
     if (!isNone(errorsValue)) {
         String ignored;
-        if (!ioToOptionalString(globalObject, errorsValue, "TextIOWrapper"_s, "errors"_s, ignored))
+        if (failed(scope, ioToOptionalString(globalObject, errorsValue, "TextIOWrapper"_s, "errors"_s, ignored)))
             return { };
         errors = strValue(errorsValue);
     }
@@ -1026,7 +1026,7 @@ static JSValue textIOInit(JSGlobalObject* globalObject, JSValue self, const Call
     s.hasRead1 = hasAttr(globalObject, buffer, stream.name(IOName::read1));
     RETURN_IF_EXCEPTION(scope, { });
     s.encodingStartOfStream = false;
-    if (!stream.fixEncoderState())
+    if (failed(scope, stream.fixEncoderState()))
         return { };
 
     s.isInitialized = true;
@@ -1182,11 +1182,12 @@ bool TextStream::writeFlush()
 
 void textIOWriteOutPending(JSGlobalObject* globalObject, PyRecord* record)
 {
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(globalObject));
     TextStream stream(globalObject, record);
     stream.s.isListedForPendingOutput = false;
     if (!stream.s.isInitialized || stream.s.isDetached || !stream.s.pendingCount)
         return;
-    if (!stream.writeFlush())
+    if (failed(scope, stream.writeFlush()))
         reportUnraisable(globalObject, makeString("Exception ignored while flushing "_s, reprForMessage(globalObject, record)), { });
 }
 
@@ -1242,12 +1243,12 @@ static JSValue textIOWrite(JSGlobalObject* globalObject, JSValue self, JSValue t
     if (byteCount >= s.chunkSize) {
         // Too much to be worth copying. What the buffer's write() runs may write to this stream in turn.
         while (s.pendingCount) {
-            if (!stream.writeFlush())
+            if (failed(scope, stream.writeFlush()))
                 return { };
         }
         if (!encoded)
             encoded = PyBytes::create(globalObject, bytes);
-        if (!stream.writeToBuffer(encoded))
+        if (failed(scope, stream.writeToBuffer(encoded)))
             return { };
     } else if (byteCount) {
         JSValue pending = stream.get(TextIOPendingField);
@@ -1271,12 +1272,12 @@ static JSValue textIOWrite(JSGlobalObject* globalObject, JSValue self, JSValue t
     ensureStillAliveHere(encoded);
 
     if (s.pendingCount >= s.chunkSize || needsFlush || s.writeThrough) {
-        if (!stream.writeFlush())
+        if (failed(scope, stream.writeFlush()))
             return { };
     }
     if (needsFlush) {
         JSValue buffer = stream.safeBuffer();
-        if (!buffer || !ioFlush(globalObject, buffer))
+        if (!buffer || failed(scope, ioFlush(globalObject, buffer)))
             return { };
     }
 
@@ -1284,7 +1285,7 @@ static JSValue textIOWrite(JSGlobalObject* globalObject, JSValue self, JSValue t
         stream.setDecoded({ });
         stream.clearSnapshot();
     }
-    if (stream.get(TextIODecoderField) && !stream.resetDecoder())
+    if (stream.get(TextIODecoderField) && failed(scope, stream.resetDecoder()))
         return { };
     RELEASE_AND_RETURN(scope, makeInt(globalObject, static_cast<uint64_t>(textLength)));
 }
@@ -1391,10 +1392,10 @@ static JSValue textIORead(JSGlobalObject* globalObject, JSValue self, JSValue si
     if (failed(scope, ioToOptionalSize(globalObject, sizeValue, size)))
         return { };
     TextStream stream(globalObject, self);
-    if (failed(scope, stream.checkAttached()) || !stream.checkClosed())
+    if (failed(scope, stream.checkAttached()) || failed(scope, stream.checkClosed()))
         return { };
     if (!stream.get(TextIODecoderField))
-        return stream.raiseUnsupported("not readable"_s);
+        RELEASE_AND_RETURN(scope, stream.raiseUnsupported("not readable"_s));
     if (!stream.writeFlush())
         return { };
 
@@ -1424,7 +1425,7 @@ static JSValue textIORead(JSGlobalObject* globalObject, JSValue self, JSValue si
     result.append(first);
     while (remaining > 0) {
         int status = stream.readChunk(remaining);
-        if (status < 0) {
+        if (failed(scope, status >= 0)) {
             if (ioTrapEINTR(globalObject))
                 continue;
             return { };
@@ -1443,7 +1444,7 @@ JSValue TextStream::readline(int64_t limit)
 {
     Runtime& rt = runtime(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!checkClosed() || !writeFlush())
+    if (failed(scope, checkClosed()) || !writeFlush())
         return { };
 
     uint8_t newline[2] = { };
@@ -1470,7 +1471,7 @@ JSValue TextStream::readline(int64_t limit)
         int status = 1;
         while (!get(TextIODecodedField) || !asString(get(TextIODecodedField))->length()) {
             status = readChunk(0);
-            if (status < 0) {
+            if (failed(scope, status >= 0)) {
                 if (ioTrapEINTR(globalObject))
                     continue;
                 return { };
@@ -1926,10 +1927,10 @@ static JSValue textIOFlush(JSGlobalObject* globalObject, JSValue self)
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     TextStream stream(globalObject, self);
-    if (failed(scope, stream.checkAttached()) || !stream.checkClosed())
+    if (failed(scope, stream.checkAttached()) || failed(scope, stream.checkClosed()))
         return { };
     stream.s.telling = stream.s.seekable;
-    if (!stream.writeFlush())
+    if (failed(scope, stream.writeFlush()))
         return { };
     RELEASE_AND_RETURN(scope, stream.callBuffer(runtime(globalObject).names.flush()));
 }
@@ -1949,12 +1950,14 @@ static JSValue textIOClose(JSGlobalObject* globalObject, JSValue self)
         return jsUndefined();
 
     if (stream.s.finalizing) {
-        if (!stream.callBuffer(stream.name(IOName::deallocWarn), self))
+        if (failed(scope, stream.callBuffer(stream.name(IOName::deallocWarn), self)))
             takePendingException(globalObject);
     }
-    ioFlush(globalObject, self);
-    JSValue flushError = takePendingException(globalObject);
+    JSValue flushError;
+    if (failed(scope, ioFlush(globalObject, self)))
+        flushError = takePendingException(globalObject);
     JSValue result = stream.callBuffer(runtime(globalObject).names.close());
+    EXCEPTION_ASSERT(!!scope.exception() == !result);
     ioDidClose(globalObject, stream.record);
     scope.release();
     if (flushError) {

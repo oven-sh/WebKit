@@ -6,6 +6,7 @@
 #include "config.h"
 #include "PyType.h"
 
+#include "FrameTracers.h"
 #include "JSCInlines.h"
 #include "PyAbstract.h"
 #include "PyDescriptors.h"
@@ -112,6 +113,10 @@ void PyType::initializeBuiltin(JSGlobalObject* globalObject, const TypeDef& def,
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
+    // Nothing here raises: nothing of the program's runs, and what is allocated is small. The type may be wanted for the first time
+    // while an exception propagates, which is set aside.
+    SuspendExceptionScope suspended(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     String fullName = def.name;
     size_t dot = fullName.reverseFind('.');
@@ -132,6 +137,7 @@ void PyType::initializeBuiltin(JSGlobalObject* globalObject, const TypeDef& def,
         m_mro.set(vm, this, mro);
         m_solidBase.set(vm, this, has(TypeFlag::OwnLayout) ? this : base->solidBase());
         base->addSubclass(globalObject, this);
+        scope.assertNoException();
     } else {
         m_bases.set(vm, this, rt.emptyTuple());
         m_mro.set(vm, this, PyTuple::create(globalObject, { JSValue(this) }));
@@ -256,8 +262,9 @@ JSValue PyType::lookupSlow(JSString* name)
         if (vm.exceptionForInspection())
             continue;
         JSGlobalObject* globalObject = realm();
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         value = dict->get(globalObject, name);
-        if (!value && vm.exceptionForInspection())
+        if (scope.exception()) [[unlikely]]
             takePendingException(globalObject);
     }
     // And it may have changed the type, or its bases.
@@ -368,24 +375,29 @@ void PyType::addSubclass(JSGlobalObject* globalObject, PyType* subclass)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     if (!m_subclasses)
         m_subclasses.set(vm, this, newList(globalObject));
     JSArray* list = asList(m_subclasses.get());
     // Now and then, what is left of the classes that are gone goes too.
     if (unsigned length = listLength(list); length >= 16 && !(length & (length - 1))) {
         for (unsigned i = length; i--;) {
-            if (!subclassInEntry(listGet(list, i)))
+            if (!subclassInEntry(listGet(list, i))) {
                 listRemove(globalObject, list, i);
+                RETURN_IF_EXCEPTION(scope, void());
+            }
         }
     }
     JSValue entry = subclass;
     if (subclass->isHeapType())
         entry = PyWeakRef::create(vm, rt.weakRefStructure(), rt.weakRefType(), subclass, { });
     listAppend(globalObject, list, entry);
+    RETURN_IF_EXCEPTION(scope, void());
 }
 
 void PyType::addDependent(JSGlobalObject* globalObject, PyType* dependent)
 {
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     if (JSValue subclasses = m_subclasses.get()) {
         JSArray* list = asList(subclasses);
         for (unsigned i = 0; i < listLength(list); ++i) {
@@ -394,20 +406,24 @@ void PyType::addDependent(JSGlobalObject* globalObject, PyType* dependent)
         }
     }
     addSubclass(globalObject, dependent);
+    RETURN_IF_EXCEPTION(scope, void());
     JSArray* list = asList(m_subclasses.get());
     unsigned last = listLength(list) - 1;
-    listSet(globalObject, list, last, PyTuple::create(globalObject, { listGet(list, last) }));
+    PyTuple* entry = PyTuple::create(globalObject, { listGet(list, last) });
+    RETURN_IF_EXCEPTION(scope, void());
+    RELEASE_AND_RETURN(scope, listSet(globalObject, list, last, entry));
 }
 
 void PyType::removeSubclass(JSGlobalObject* globalObject, PyType* subclass)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     if (!m_subclasses)
         return;
     JSArray* list = asList(m_subclasses.get());
     for (unsigned i = 0; i < listLength(list); ++i) {
         if (JSValue entry = listGet(list, i); !PyTuple::is(entry) && subclassInEntry(entry) == subclass) {
-            listRemove(globalObject, list, i);
-            return;
+            RELEASE_AND_RETURN(scope, listRemove(globalObject, list, i));
         }
     }
 }

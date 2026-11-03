@@ -1298,12 +1298,7 @@ ExpressionNode* ASTBuilder::makeMultNode(const JSTokenLocation& location, Expres
         return createNumberFromBinaryOperation(location, numberExpr1.value() * numberExpr2.value(), numberExpr1, numberExpr2);
     }
 
-    if (expr1->isNumber() && static_cast<NumberNode*>(expr1)->value() == 1)
-        return createUnaryPlus(location, expr2);
-
-    if (expr2->isNumber() && static_cast<NumberNode*>(expr2)->value() == 1)
-        return createUnaryPlus(location, expr1);
-
+    // Not `+x` for `x * 1`: the class of an operand may have its own `*` (python/README.md, "Operators").
     return new (m_parserArena) MultNode(location, expr1, expr2, rightHasAssignments);
 }
 

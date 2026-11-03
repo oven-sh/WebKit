@@ -316,7 +316,7 @@ static JSValue symtable(JSGlobalObject* globalObject, JSValue source, JSValue fi
 
     int flags = 0;
     Vector<uint8_t> bytes;
-    if (!sourceBytes(globalObject, source, "symtable"_s, "string or bytes"_s, bytes, flags))
+    if (failed(scope, sourceBytes(globalObject, source, "symtable"_s, "string or bytes"_s, bytes, flags)))
         return { };
     ASCIILiteral mode;
     if (start == "exec"_s)

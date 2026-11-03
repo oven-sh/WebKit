@@ -777,7 +777,7 @@ static JSValue strGetItem(JSGlobalObject* globalObject, JSValue self, JSValue ke
     if (!slice)
         return raiseTypeError(globalObject, scope, "string indices must be integers, not '"_s, typeName(globalObject, key), '\'');
     PySlice::Indices indices;
-    if (!slice->indices(globalObject, view.length(), indices))
+    if (failed(scope, slice->indices(globalObject, view.length(), indices)))
         return { };
     if (indices.length <= 0)
         return jsEmptyString(vm);
@@ -834,8 +834,8 @@ static JSValue strFormatSpecMethod(JSGlobalObject* globalObject, JSValue self, J
         RELEASE_AND_RETURN(scope, isExactStr(self) ? asString(self) : str(globalObject, self));
     JSString* result = formatStr(globalObject, self, strValue(spec));
     RETURN_IF_EXCEPTION(scope, { });
-    // With nothing to add or to cut off it is the object itself, of whatever class.
-    return result == strValue(self) ? self : JSValue(result);
+    // With nothing to add or to cut off it is the object itself, of whatever class, unless it is empty.
+    return result == strValue(self) && result->length() ? self : JSValue(result);
 }
 
 // What the text takes in CPython, which stores it in units as wide as its widest character needs.
@@ -882,7 +882,7 @@ static JSValue strFindMethod(JSGlobalObject* globalObject, JSValue self, JSValue
     if (failed(scope, strArgument(globalObject, sub, mustFind ? (reverse ? "rindex"_s : "index"_s) : (reverse ? "rfind"_s : "find"_s), 1, needle)))
         return { };
     int64_t from, to;
-    if (!sliceBounds(globalObject, start, end, view.length(), from, to))
+    if (failed(scope, sliceBounds(globalObject, start, end, view.length(), from, to)))
         return { };
     int64_t result = findIn(view, needle, from, to, reverse);
     if (mustFind && result < 0)
@@ -897,7 +897,7 @@ static JSValue strCount(JSGlobalObject* globalObject, JSValue self, JSValue sub,
     if (failed(scope, strArgument(globalObject, sub, "count"_s, 1, needle)))
         return { };
     int64_t from, to;
-    if (!sliceBounds(globalObject, start, end, view.length(), from, to))
+    if (failed(scope, sliceBounds(globalObject, start, end, view.length(), from, to)))
         return { };
     if (from > to)
         return jsNumber(0);
@@ -917,7 +917,7 @@ static JSValue strStartsOrEndsWith(JSGlobalObject* globalObject, JSValue self, J
 {
     PY_STR_METHOD_PROLOGUE(view);
     int64_t from, to;
-    if (!sliceBounds(globalObject, start, end, view.length(), from, to))
+    if (failed(scope, sliceBounds(globalObject, start, end, view.length(), from, to)))
         return { };
     auto matches = [&](JSValue candidate) -> bool {
         String text = strValue(candidate)->value(globalObject);
@@ -1082,12 +1082,14 @@ static JSValue strSplit(JSGlobalObject* globalObject, JSValue self, JSValue sepa
             if (!maxSplit--) {
                 // The rest, whitespace at its end and all.
                 listAppend(globalObject, result, sliceOfUnits(vm, nullptr, string, i, length));
+                RETURN_IF_EXCEPTION(scope, { });
                 break;
             }
             unsigned start = i;
             while (i < length && !isPythonWhitespace(string[i]))
                 ++i;
             listAppend(globalObject, result, sliceOfUnits(vm, selfString, string, start, i));
+            RETURN_IF_EXCEPTION(scope, { });
         }
         return result;
     }
@@ -1098,6 +1100,7 @@ static JSValue strSplit(JSGlobalObject* globalObject, JSValue self, JSValue sepa
     if (separator.isEmpty())
         return raiseValueError(globalObject, scope, "empty separator"_s);
     if (!self.isString() && cannotHold(view, separator)) [[unlikely]] {
+        scope.release();
         listAppend(globalObject, result, self);
         return result;
     }
@@ -1110,6 +1113,7 @@ static JSValue strSplit(JSGlobalObject* globalObject, JSValue self, JSValue sepa
         start = position + separator.length();
     }
     listAppend(globalObject, result, sliceOfUnits(vm, selfString, string, start, length));
+    RETURN_IF_EXCEPTION(scope, { });
     return result;
 }
 
@@ -1142,12 +1146,14 @@ static JSValue strRSplit(JSGlobalObject* globalObject, JSValue self, JSValue sep
                 break;
             if (!maxSplit--) {
                 listAppend(globalObject, result, sliceOfUnits(vm, nullptr, string, 0, i));
+                RETURN_IF_EXCEPTION(scope, { });
                 break;
             }
             unsigned end = i;
             while (i && !isPythonWhitespace(string[i - 1]))
                 --i;
             listAppend(globalObject, result, sliceOfUnits(vm, selfString, string, i, end));
+            RETURN_IF_EXCEPTION(scope, { });
         }
         reverseList(globalObject, result);
         return result;
@@ -1159,6 +1165,7 @@ static JSValue strRSplit(JSGlobalObject* globalObject, JSValue self, JSValue sep
     if (separator.isEmpty())
         return raiseValueError(globalObject, scope, "empty separator"_s);
     if (!self.isString() && cannotHold(view, separator)) [[unlikely]] {
+        scope.release();
         listAppend(globalObject, result, self);
         return result;
     }
@@ -1171,6 +1178,7 @@ static JSValue strRSplit(JSGlobalObject* globalObject, JSValue self, JSValue sep
         end = position;
     }
     listAppend(globalObject, result, sliceOfUnits(vm, selfString, string, 0, end));
+    RETURN_IF_EXCEPTION(scope, { });
     reverseList(globalObject, result);
     return result;
 }
@@ -1198,6 +1206,7 @@ static JSValue strSplitLines(JSGlobalObject* globalObject, JSValue self, JSValue
                 end = i;
         }
         listAppend(globalObject, result, sliceOfUnits(vm, selfString, string, start, end));
+        RETURN_IF_EXCEPTION(scope, { });
     }
     return result;
 }
@@ -1207,7 +1216,7 @@ static JSValue strPartition(JSGlobalObject* globalObject, JSValue self, JSValue 
 {
     PY_STR_METHOD_PROLOGUE(view);
     if (!isStr(separatorValue))
-        return raiseTypeError(globalObject, scope, "must be str, not "_s, typeName(globalObject, separatorValue));
+        return raiseTypeError(globalObject, scope, "must be str, not "_s, typeNameForMessage(globalObject, typeOf(globalObject, separatorValue)));
     JSString* separatorString = strValue(separatorValue);
     String separator = separatorString->value(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
@@ -1242,7 +1251,7 @@ JSString* strJoin(JSGlobalObject* globalObject, JSString* separatorString, JSVal
     } else {
         // Whatever TypeError asking for the iterator ends in.
         JSValue iterator = getIter(globalObject, iterable);
-        if (!iterator) {
+        if (failed(scope, iterator)) {
             if (clearPendingExceptionIfMatches(globalObject, runtime(globalObject).TypeError()))
                 raiseTypeError(globalObject, scope, "can only join an iterable"_s);
             return nullptr;
@@ -1712,7 +1721,7 @@ static JSValue strTranslate(JSGlobalObject* globalObject, JSValue self, JSValue 
     StrBuilder builder;
     for (char32_t character : view.view().codePoints()) {
         JSValue mapped = getItem(globalObject, table, jsNumber(static_cast<uint32_t>(character)));
-        if (!mapped) {
+        if (failed(scope, mapped)) {
             // What the table does not know stays as it is.
             if (!clearPendingExceptionIfMatches(globalObject, rt.LookupError()))
                 return { };
@@ -1822,11 +1831,13 @@ static bool optionalStr(JSGlobalObject* globalObject, JSValue value, ASCIILitera
 
 static JSValue strEncodeMethod(JSGlobalObject* globalObject, JSValue self, JSValue encodingValue, JSValue errorsValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSString* encoding;
     JSString* errors;
-    if (!optionalStr(globalObject, encodingValue, "encode"_s, "encoding"_s, encoding) || !optionalStr(globalObject, errorsValue, "encode"_s, "errors"_s, errors))
+    if (failed(scope, optionalStr(globalObject, encodingValue, "encode"_s, "encoding"_s, encoding)) || failed(scope, optionalStr(globalObject, errorsValue, "encode"_s, "errors"_s, errors)))
         return { };
-    return strEncode(globalObject, strValue(self), encoding, errors);
+    RELEASE_AND_RETURN(scope, strEncode(globalObject, strValue(self), encoding, errors));
 }
 
 static JSValue strNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs& args)
@@ -1862,7 +1873,7 @@ static JSValue strNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs&
     }
     JSString* encoding;
     JSString* errors;
-    if (!optionalStr(globalObject, values[1], "str"_s, "encoding"_s, encoding) || !optionalStr(globalObject, values[2], "str"_s, "errors"_s, errors))
+    if (failed(scope, optionalStr(globalObject, values[1], "str"_s, "encoding"_s, encoding)) || failed(scope, optionalStr(globalObject, values[2], "str"_s, "errors"_s, errors)))
         return { };
 
     JSString* result;

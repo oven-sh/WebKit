@@ -318,8 +318,7 @@ inline JSValue JSValue::toThis(JSGlobalObject* globalObject, ECMAMode ecmaMode) 
 }
 
 // Whether the value is an object whose class may say what the operators of JS do to it: an object of Python.
-// The optimizing JITs know which operators those are, and that there is no such object until
-// VM::operatorOverloadingWatchpointSet() fires.
+// To the optimizing JITs, these are the values of type SpecPyObject.
 ALWAYS_INLINE bool mayOverloadOperators(JSValue value)
 {
     return value.isCell() && isPyObjectType(value.asCell()->type());

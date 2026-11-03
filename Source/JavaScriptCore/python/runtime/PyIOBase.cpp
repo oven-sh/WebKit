@@ -7,6 +7,7 @@
 #include "PyIO.h"
 
 #include "Exception.h"
+#include "FrameTracers.h"
 #include "JSCInlines.h"
 #include "PyCodeCache.h"
 #include "PyCodecs.h"
@@ -34,6 +35,7 @@ PyTuple* ioMakeState(JSGlobalObject* globalObject)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     MarkedArgumentBuffer state;
     for (unsigned i = 0; i < static_cast<unsigned>(IOType::Count) + static_cast<unsigned>(IOName::Count); ++i)
         state.append(jsUndefined());
@@ -70,6 +72,7 @@ PyTuple* ioMakeState(JSGlobalObject* globalObject)
     PyDict* namespaceDict = PyDict::create(globalObject);
     namespaceDict->set(vm, rt.names.dModule(), makeStr(vm, "io"_s));
     JSValue unsupportedOperation = call(globalObject, rt.typeType(), makeStr(vm, "UnsupportedOperation"_s), PyTuple::create(globalObject, { rt.OSError(), rt.ValueError() }), namespaceDict);
+    scope.assertNoException();
     RELEASE_ASSERT(unsupportedOperation);
     valuesOf(state)[static_cast<unsigned>(IOType::UnsupportedOperation)] = unsupportedOperation;
 
@@ -80,6 +83,7 @@ PyTuple* ioMakeState(JSGlobalObject* globalObject)
 
     PyTuple* tuple = PyTuple::create(globalObject, spanOf(state));
     setHiddenField(globalObject, ioBase, 0, tuple);
+    RETURN_IF_EXCEPTION(scope, nullptr);
     return tuple;
 }
 
@@ -164,19 +168,21 @@ void ioWarnUnclosed(JSGlobalObject* globalObject, JSValue self, JSValue source)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
-    JSValue saved = takePendingException(globalObject);
+    // An exception that is propagating is set aside.
+    SuspendExceptionScope suspended(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSString* text = repr(globalObject, source);
-    if (text) {
+    if (!scope.exception()) {
         String string = text->value(globalObject);
-        if (!vm.exceptionForInspection())
+        if (!scope.exception())
             warnAbout(globalObject, rt.ResourceWarning(), makeString("unclosed file "_s, string), 1, source);
     }
+    if (!scope.exception())
+        return;
     if (pendingExceptionMatches(globalObject, rt.Warning()))
         ioReportWhileFinalizing(globalObject, self);
     else
         takePendingException(globalObject);
-    if (saved)
-        ioRestoreException(globalObject, saved);
 }
 
 // ---- Arguments ----
@@ -449,10 +455,12 @@ JSValue ioBaseClose(JSGlobalObject* globalObject, JSValue self)
     if (isClosed)
         return jsUndefined();
 
-    ioFlush(globalObject, self);
-    JSValue flushError = takePendingException(globalObject);
+    JSValue flushError;
+    if (failed(scope, ioFlush(globalObject, self)))
+        flushError = takePendingException(globalObject);
     setAttr(globalObject, self, ioName(globalObject, IOName::ioBaseClosed), jsBoolean(true));
-    ioChainExceptions(globalObject, flushError);
+    if (scope.exception() || flushError)
+        ioChainExceptions(globalObject, flushError);
     RETURN_IF_EXCEPTION(scope, { });
     return jsUndefined();
 }
@@ -650,7 +658,8 @@ void ioNotePendingOutput(JSGlobalObject* globalObject, PyRecord* stream)
 void writeOutPendingOutputSlow(JSGlobalObject* globalObject)
 {
     Runtime& rt = runtime(globalObject);
-    if (rt.vm().exceptionForInspection())
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(rt.vm());
+    if (scope.exception())
         return;
     rt.setMayHavePendingOutput(false);
     JSArray* list = ioStreamsWithPendingOutput(globalObject);
@@ -949,7 +958,7 @@ static JSValue ioOpen(JSGlobalObject* globalObject, JSValue file, JSValue modeVa
     if (modeValue) {
         if (!isStr(modeValue))
             return raiseTypeError(globalObject, scope, "open() argument 'mode' must be str, not "_s, isNone(modeValue) ? "None"_str : typeName(globalObject, modeValue));
-        if (!ioToOptionalString(globalObject, modeValue, "open"_s, "mode"_s, mode))
+        if (failed(scope, ioToOptionalString(globalObject, modeValue, "open"_s, "mode"_s, mode)))
             return { };
     }
     int buffering = -1;

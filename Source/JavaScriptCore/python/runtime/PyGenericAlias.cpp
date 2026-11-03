@@ -546,21 +546,24 @@ static constexpr ASCIILiteral aliasBlockedAttributes[] = {
 
 static JSValue aliasGetAttribute(JSGlobalObject* globalObject, JSValue self, JSValue nameValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSString* name = attributeName(globalObject, nameValue);
+    RETURN_IF_EXCEPTION(scope, { });
     if (!name)
         return { };
     String text = stringOf(name);
     if (text.startsWith("__"_s)) {
         for (auto blocked : aliasBlockedAttributes) {
             if (text == blocked)
-                return genericGetAttr(globalObject, self, name);
+                RELEASE_AND_RETURN(scope, genericGetAttr(globalObject, self, name));
         }
         for (auto own : aliasOwnAttributes) {
             if (text == own)
-                return genericGetAttr(globalObject, self, name);
+                RELEASE_AND_RETURN(scope, genericGetAttr(globalObject, self, name));
         }
     }
-    return getAttr(globalObject, aliasRecord(self)->get(AliasOrigin), name);
+    RELEASE_AND_RETURN(scope, getAttr(globalObject, aliasRecord(self)->get(AliasOrigin), name));
 }
 
 static JSValue aliasEq(JSGlobalObject* globalObject, JSValue self, JSValue other)
@@ -778,6 +781,8 @@ public:
 
     bool add(JSValue argument)
     {
+        VM& vm = getVM(m_globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
         Runtime& rt = runtime(m_globalObject);
         if (isNone(argument))
             argument = rt.noneType();
@@ -785,6 +790,7 @@ public:
             return addAll(unionArgs(record));
         if (m_isChecked && !unionAccepts(m_globalObject, argument)) {
             argument = checkType(argument);
+            RETURN_IF_EXCEPTION(scope, false);
             if (!argument)
                 return false;
         }
@@ -793,8 +799,9 @@ public:
 
     bool addAll(PyTuple* tuple)
     {
+        auto scope = DECLARE_THROW_SCOPE(getVM(m_globalObject));
         for (unsigned i = 0; i < tuple->length(); ++i) {
-            if (!add(tuple->at(i)))
+            if (failed(scope, add(tuple->at(i))))
                 return false;
         }
         return true;
@@ -883,34 +890,40 @@ private:
 
 JSValue makeUnion(JSGlobalObject* globalObject, JSValue left, JSValue right)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     if (!unionAccepts(globalObject, left) || !unionAccepts(globalObject, right))
-        return runtime(globalObject).notImplemented();
+        RELEASE_AND_RETURN(scope, runtime(globalObject).notImplemented());
     UnionBuilder builder(globalObject, false);
-    if (!builder.initialize() || !builder.add(left) || !builder.add(right))
+    if (failed(scope, builder.initialize()) || failed(scope, builder.add(left)) || failed(scope, builder.add(right)))
         return { };
-    return builder.finish();
+    RELEASE_AND_RETURN(scope, builder.finish());
 }
 
 // Union[arguments]
 static JSValue unionFromSubscript(JSGlobalObject* globalObject, JSValue arguments)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     UnionBuilder builder(globalObject, true);
-    if (!builder.initialize())
+    if (failed(scope, builder.initialize()))
         return { };
     auto* tuple = PyTuple::tryFrom(arguments);
     if (tuple && tuple->type() != runtime(globalObject).tupleType())
         tuple = nullptr;
-    if (!(tuple ? builder.addAll(tuple) : builder.add(arguments)))
+    if (failed(scope, tuple ? builder.addAll(tuple) : builder.add(arguments)))
         return { };
-    return builder.finish();
+    RELEASE_AND_RETURN(scope, builder.finish());
 }
 
 static JSValue unionCheckedOr(JSGlobalObject* globalObject, JSValue left, JSValue right)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     UnionBuilder builder(globalObject, true);
-    if (!builder.initialize() || !builder.add(left) || !builder.add(right))
+    if (failed(scope, builder.initialize()) || failed(scope, builder.add(left)) || failed(scope, builder.add(right)))
         return { };
-    return builder.finish();
+    RELEASE_AND_RETURN(scope, builder.finish());
 }
 
 static JSValue unionOr(JSGlobalObject* globalObject, JSValue self, JSValue other) { return unionCheckedOr(globalObject, self, other); }
@@ -1013,12 +1026,15 @@ static JSValue unionGetItem(JSGlobalObject* globalObject, JSValue self, JSValue 
 // The module typing expects the __module__ of the type, not an AttributeError.
 static JSValue unionGetAttribute(JSGlobalObject* globalObject, JSValue self, JSValue nameValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSString* name = attributeName(globalObject, nameValue);
+    RETURN_IF_EXCEPTION(scope, { });
     if (!name)
         return { };
     if (stringOf(name) == "__module__"_s)
-        return getAttr(globalObject, aliasRecord(self)->type(), name);
-    return genericGetAttr(globalObject, self, name);
+        RELEASE_AND_RETURN(scope, getAttr(globalObject, aliasRecord(self)->type(), name));
+    RELEASE_AND_RETURN(scope, genericGetAttr(globalObject, self, name));
 }
 
 static JSValue unionMroEntries(JSGlobalObject* globalObject, JSValue self, JSValue)

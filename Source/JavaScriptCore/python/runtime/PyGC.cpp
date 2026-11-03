@@ -17,6 +17,7 @@
 #include "PyAbstract.h"
 #include "PyErrors.h"
 #include "PyException.h"
+#include "PyGenerator.h"
 #include "PyInternals.h"
 #include "PyList.h"
 #include "PyModule.h"
@@ -545,7 +546,7 @@ static JSValue gcGetObjects(JSGlobalObject* globalObject, JSValue generation)
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!audit(globalObject, "gc.get_objects"_s, generation && !isNone(generation) ? generation : jsNumber(-1)))
+    if (failed(scope, audit(globalObject, "gc.get_objects"_s, generation && !isNone(generation) ? generation : jsNumber(-1))))
         return { };
     if (generation && !isNone(generation)) {
         if (!hasIndex(globalObject, generation))
@@ -628,16 +629,16 @@ static JSValue gcGetReferrers(JSGlobalObject* globalObject, const CallArgs& args
     auto scope = DECLARE_THROW_SCOPE(vm);
     // The hooks are given the objects in a tuple, which refers to them for as long as it is there.
     PyTuple* forHooks = isAudited(globalObject) ? PyTuple::create(globalObject, args.positional()) : nullptr;
-    if (forHooks && !audit(globalObject, "gc.get_referrers"_s, forHooks))
+    if (forHooks && failed(scope, audit(globalObject, "gc.get_referrers"_s, forHooks)))
         return { };
     MarkedArgumentBuffer result;
     {
         vm.clearLastException();
         ReferrerListener listener(args.positional());
         listener.listen(vm);
+        UncheckedKeyHashSet<JSCell*> seen;
         if (!listener.found().isEmpty()) {
             HeapView view(globalObject);
-            UncheckedKeyHashSet<JSCell*> seen;
             if (forHooks)
                 seen.add(forHooks);
             for (JSCell* cell : listener.found()) {
@@ -646,6 +647,11 @@ static JSValue gcGetReferrers(JSGlobalObject* globalObject, const CallArgs& args
                     result.append(cell);
             }
         }
+        // No cell says so of these.
+        forEachVariableOfRunningGenerators(vm, [&](PyGenerator* generator, JSValue value) {
+            if (std::ranges::find(args.positional(), value) != args.positional().end() && generator->structure()->realm() == globalObject && seen.add(generator).isNewEntry)
+                result.append(generator);
+        });
     }
     RELEASE_AND_RETURN(scope, newList(globalObject, spanOf(result)));
 }
@@ -700,7 +706,8 @@ static void appendReferents(JSGlobalObject* globalObject, JSCell* object, Marked
             result.append(listGet(list, i));
     } else if (auto* tuple = PyTuple::tryFrom(object)) {
         for (JSValue item : tuple->span()) {
-            if (item)
+            // In one that is the memory of something else, None may stand for nothing.
+            if (item && !(depth && isNone(item)))
                 result.append(item);
         }
     } else if (auto* dict = PyDict::tryFrom(object)) {
@@ -750,9 +757,15 @@ static void appendReferents(JSGlobalObject* globalObject, JSCell* object, Marked
             if (cell->isString() || cell->isHeapBigInt() || (cell->isObject() && isObjectOfPython(cell, globalObject) && isWhole(cell)))
                 result.append(cell);
         }
+        if (auto* generator = PyGenerator::tryFrom(object); generator && generator->isRunning()) {
+            forEachVariableOfRunningGenerators(rt.vm(), [&](PyGenerator* running, JSValue value) {
+                if (running == generator)
+                    result.append(value);
+            });
+        }
     }
-    // In CPython an object holds on to its type only if that is a class.
-    if (PyType* type = rt.typeOf(object); !depth && type->isHeapType())
+    // In CPython an object holds on to its type only if that has been allocated.
+    if (PyType* type = rt.typeOf(object); !depth && isAllocatedInCPython(type))
         result.append(type);
 }
 
@@ -760,7 +773,7 @@ static JSValue gcGetReferents(JSGlobalObject* globalObject, const CallArgs& args
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (isAudited(globalObject) && !audit(globalObject, "gc.get_referents"_s, PyTuple::create(globalObject, args.positional())))
+    if (isAudited(globalObject) && failed(scope, audit(globalObject, "gc.get_referents"_s, PyTuple::create(globalObject, args.positional()))))
         return { };
     MarkedArgumentBuffer result;
     for (JSValue object : args.positional()) {

@@ -9,6 +9,7 @@
 
 #include "JSCInlines.h"
 #include "PyCodecs.h"
+#include "PyEventWait.h"
 #include "PyType.h"
 #include "PyVirtualFiles.h"
 #include <errno.h>
@@ -81,9 +82,12 @@ bool fileIOIsClosed(PyRecord* file) { return ioStateOf<FileIOState>(file).fd < 0
 // ---- System calls ----
 // The count. -1: an exception. -2: nothing can be read or written without waiting.
 
-static int64_t fileIOSystemRead(JSGlobalObject* globalObject, int fd, uint8_t* buffer, size_t count)
+static int64_t fileIOSystemRead(JSGlobalObject* globalObject, const FileIOState& state, uint8_t* buffer, size_t count)
 {
     writeOutPendingOutput(globalObject);
+    int fd = state.fd;
+    if (!(state.hasStat && S_ISREG(state.statMode)) && !waitUntilReadable(globalObject, fd))
+        return -1;
     ssize_t result;
     do {
         AllowThreads allow(globalObject);
@@ -120,6 +124,8 @@ static int64_t fileIOSystemWrite(JSGlobalObject* globalObject, int fd, const uin
 // -1: an exception.
 static int64_t fileIOSystemSeek(JSGlobalObject* globalObject, FileIOState& state, int64_t position, int whence, bool pipeIsFine = false)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     writeOutPendingOutput(globalObject);
     off_t result = lseek(state.fd, position, whence);
     if (state.seekable < 0)
@@ -128,6 +134,7 @@ static int64_t fileIOSystemSeek(JSGlobalObject* globalObject, FileIOState& state
         return result;
     if (pipeIsFine && errno == ESPIPE)
         return 0;
+    scope.release();
     fileIORaiseErrno(globalObject, errno);
     return -1;
 }
@@ -162,7 +169,7 @@ int64_t fileIOReadInto(JSGlobalObject* globalObject, PyRecord* file, std::span<u
         fileIORaiseMode(globalObject, "reading"_s);
         return -1;
     }
-    return fileIOSystemRead(globalObject, state.fd, buffer.data(), buffer.size());
+    return fileIOSystemRead(globalObject, state, buffer.data(), buffer.size());
 }
 
 int64_t fileIOWrite(JSGlobalObject* globalObject, PyRecord* file, std::span<const uint8_t> buffer)
@@ -261,7 +268,7 @@ static JSValue fileIOInit(JSGlobalObject* globalObject, JSValue self, const Call
     }
 
     int fd = -1;
-    if (ioToInt(globalObject, nameObject, fd)) {
+    if (!failed(scope, ioToInt(globalObject, nameObject, fd))) {
         if (fd < 0)
             return raiseValueError(globalObject, scope, "negative file descriptor"_s);
     } else {
@@ -340,7 +347,7 @@ static JSValue fileIOInit(JSGlobalObject* globalObject, JSValue self, const Call
         flags |= state.readable && state.writable ? O_RDWR : state.readable ? O_RDONLY : O_WRONLY;
         flags |= O_CLOEXEC;
 
-        if (isAudited(globalObject) && !audit(globalObject, "open"_s, nameObject, makeStr(vm, mode), jsNumber(flags)))
+        if (isAudited(globalObject) && failed(scope, audit(globalObject, "open"_s, nameObject, makeStr(vm, mode), jsNumber(flags))))
             return false;
 
         if (fd >= 0) {
@@ -412,7 +419,7 @@ static JSValue fileIOInit(JSGlobalObject* globalObject, JSValue self, const Call
         return true;
     };
 
-    if (!open()) {
+    if (failed(scope, open())) {
         if (!fdIsOwn)
             state.fd = -1;
         if (state.fd >= 0) {
@@ -568,7 +575,7 @@ static JSValue fileIOReadall(JSGlobalObject* globalObject, JSValue self)
         result = ioTryNewBytes(globalObject, expected);
         RETURN_IF_EXCEPTION(scope, { });
         while (filled < expected) {
-            int64_t count = fileIOSystemRead(globalObject, state.fd, result->mutableData() + filled, expected - filled);
+            int64_t count = fileIOSystemRead(globalObject, state, result->mutableData() + filled, expected - filled);
             if (count == -1)
                 return { };
             if (count <= 0) {
@@ -591,7 +598,7 @@ static JSValue fileIOReadall(JSGlobalObject* globalObject, JSValue self)
             if (!rest.tryGrow(rest.size() + (result && rest.isEmpty() ? fileIOSmallChunk : addend)))
                 return raiseWithArgs(globalObject, scope, runtime(globalObject).MemoryError(), { });
         }
-        int64_t count = fileIOSystemRead(globalObject, state.fd, rest.mutableSpan().data() + restFilled, rest.size() - restFilled);
+        int64_t count = fileIOSystemRead(globalObject, state, rest.mutableSpan().data() + restFilled, rest.size() - restFilled);
         if (count == -1)
             return { };
         if (count == -2) {
@@ -631,7 +638,7 @@ static JSValue fileIORead(JSGlobalObject* globalObject, JSValue self, JSValue si
 
     PyBytes* result = ioTryNewBytes(globalObject, size);
     RETURN_IF_EXCEPTION(scope, { });
-    int64_t count = fileIOSystemRead(globalObject, state.fd, result->mutableData(), size);
+    int64_t count = fileIOSystemRead(globalObject, state, result->mutableData(), size);
     if (count < 0)
         RELEASE_AND_RETURN(scope, fileIOResult(globalObject, count));
     if (count == size)

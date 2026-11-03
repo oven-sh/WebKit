@@ -131,12 +131,48 @@ static void waitClearSets(WaitRequest& request)
 
 int waitForEvents(JSGlobalObject* globalObject, WaitRequest& request)
 {
+    // See Threads::willCallFunctionThatMayWait().
+    if (Threads& threads = runtime(globalObject).threads(); request.timeout && threads.mayBeginCallAgain()) {
+        int result = waitWithoutBlocking(request);
+        if (result > 0 || (result < 0 && errno != EINTR))
+            return result;
+        if (threads.beginsCallAgain(globalObject))
+            return waitRaised;
+    }
+
     int64_t deadline = 0;
     if (request.timeout > 0 && __builtin_add_overflow(monotonicNanoseconds(), request.timeout, &deadline))
         deadline = std::numeric_limits<int64_t>::max();
     WaitFunction function = waitsInHost(globalObject) ? s_hostWaitFunction : blockingWait;
+    IdleWait idle(globalObject);
     while (true) {
+        // A long wait is made piece by piece.
+        int64_t timeout = request.timeout;
+        int64_t piece = timeout ? idle.nextPiece(timeout) : 0;
+        fd_set* sets[3] = { request.readable, request.writable, request.exceptional };
+        fd_set saved[3];
+        if (piece != timeout && request.kind == WaitRequest::Kind::Select) {
+            for (unsigned i = 0; i < 3; ++i) {
+                if (sets[i])
+                    saved[i] = *sets[i];
+            }
+        }
+        request.timeout = piece;
         int result = function(globalObject, request);
+        request.timeout = timeout;
+        if (!result && piece != timeout) {
+            if (request.kind == WaitRequest::Kind::Select) {
+                for (unsigned i = 0; i < 3; ++i) {
+                    if (sets[i])
+                        *sets[i] = saved[i];
+                }
+            }
+            if (!idle.didWait())
+                return waitRaised;
+            if (timeout > 0)
+                request.timeout = std::max<int64_t>(deadline - monotonicNanoseconds(), 0);
+            continue;
+        }
         if (!result)
             waitClearSets(request);
         if (result >= 0 || errno != EINTR)
@@ -146,6 +182,11 @@ int waitForEvents(JSGlobalObject* globalObject, WaitRequest& request)
             auto scope = DECLARE_THROW_SCOPE(vm);
             makeCallsOwed(vm);
             RETURN_IF_EXCEPTION(scope, waitRaised);
+            // What that has put off would end the next wait as it ended this one.
+            if (Runtime& rt = runtime(globalObject); rt.hasPendingCalls()) {
+                rt.runPendingCalls();
+                RETURN_IF_EXCEPTION(scope, waitRaised);
+            }
         }
         if (request.timeout < 0)
             continue;
@@ -156,6 +197,19 @@ int waitForEvents(JSGlobalObject* globalObject, WaitRequest& request)
             return 0;
         }
     }
+}
+
+bool waitUntilReadable(JSGlobalObject* globalObject, int fd)
+{
+    struct pollfd descriptor { fd, POLLIN, 0 };
+    // Most of the time there is something to read. What is wrong with the descriptor, the read will say.
+    if (poll(&descriptor, 1, 0) || (fcntl(fd, F_GETFL) & O_NONBLOCK))
+        return true;
+    WaitRequest request { WaitRequest::Kind::Poll };
+    request.timeout = -1;
+    request.descriptors = &descriptor;
+    request.descriptorCount = 1;
+    return waitForEvents(globalObject, request) != waitRaised;
 }
 
 bool timeoutFromObject(JSGlobalObject* globalObject, JSValue value, int64_t unit, int64_t& nanoseconds, bool namesTimeout)
@@ -376,8 +430,9 @@ static JSValue pollRegister(JSGlobalObject* globalObject, JSValue self, JSValue 
     auto scope = DECLARE_THROW_SCOPE(vm);
     int fd;
     unsigned short mask = POLLIN | POLLPRI | POLLOUT;
-    if (!posixToFileDescriptor(globalObject, fdValue, fd) || (maskValue && failed(scope, selectToUnsignedShort(globalObject, maskValue, mask))))
+    if (failed(scope, posixToFileDescriptor(globalObject, fdValue, fd)) || (maskValue && failed(scope, selectToUnsignedShort(globalObject, maskValue, mask))))
         return { };
+    scope.release();
     PyDict::from(PyRecord::from(self)->get(0))->set(globalObject, jsNumber(fd), jsNumber(mask));
     return jsUndefined();
 }
@@ -402,9 +457,11 @@ static JSValue pollUnregister(JSGlobalObject* globalObject, JSValue self, JSValu
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     int fd;
-    if (!posixToFileDescriptor(globalObject, fdValue, fd))
+    if (failed(scope, posixToFileDescriptor(globalObject, fdValue, fd)))
         return { };
-    if (!PyDict::from(PyRecord::from(self)->get(0))->remove(globalObject, jsNumber(fd)))
+    bool removed = PyDict::from(PyRecord::from(self)->get(0))->remove(globalObject, jsNumber(fd));
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!removed)
         return raiseKeyError(globalObject, scope, jsNumber(fd));
     return jsUndefined();
 }
@@ -455,7 +512,7 @@ static constexpr NativeDef pollMethods[] = {
     PY_METHOD("register", pollRegister, "($self, fd, eventmask=select.POLLIN | select.POLLPRI | select.POLLOUT, /)"),
     PY_METHOD("modify", pollModify, "($self, fd, eventmask, /)"),
     PY_METHOD("unregister", pollUnregister, "($self, fd, /)"),
-    PY_METHOD("poll", pollPoll, "($self, timeout=None, /)"),
+    PY_WAITING_METHOD("poll", pollPoll, "($self, timeout=None, /)"),
 };
 
 static constexpr TypeDef pollTypeDef { "select.poll"_s, { TypeFlag::DisallowInstantiation }, pollMethods, { }, { } };
@@ -580,7 +637,7 @@ static JSValue epollPoll(JSGlobalObject* globalObject, JSValue self, JSValue tim
     if (object->number < 0)
         RELEASE_AND_RETURN(scope, epollClosedError(globalObject));
     int64_t timeout;
-    if (!selectOptionalTimeout(globalObject, timeoutValue, waitNanosecondsPerSecond, timeout))
+    if (failed(scope, selectOptionalTimeout(globalObject, timeoutValue, waitNanosecondsPerSecond, timeout)))
         return { };
     int64_t milliseconds = divideRoundingUp(timeout, 1000000);
     if (milliseconds < INT_MIN || milliseconds > INT_MAX)
@@ -628,7 +685,7 @@ static constexpr NativeDef epollMethods[] = {
     PY_METHOD("register", epollRegister, "($self, /, fd, eventmask=select.EPOLLIN | select.EPOLLPRI | select.EPOLLOUT)"),
     PY_METHOD("modify", epollModify, "($self, /, fd, eventmask)"),
     PY_METHOD("unregister", epollUnregister, "($self, /, fd)"),
-    PY_METHOD("poll", epollPoll, "($self, /, timeout=None, maxevents=-1)"),
+    PY_WAITING_METHOD("poll", epollPoll, "($self, /, timeout=None, maxevents=-1)"),
     PY_METHOD("__enter__", epollEnter, "($self, /)"),
     PY_METHOD("__exit__", queueExit, "($self, exc_type=None, exc_value=None, exc_tb=None, /)"),
 };
@@ -713,7 +770,7 @@ static JSValue keventInit(JSGlobalObject* globalObject, JSValue self, JSValue id
         || (flags && !keventToField<decltype(layout.flags)>(globalObject, flags, values[KeventFlags]))
         || (fflags && !keventToField<decltype(layout.fflags)>(globalObject, fflags, values[KeventFFlags]))
         || (data && !keventToField<decltype(layout.data)>(globalObject, data, values[KeventData]))
-        || (udata && !keventToField<uintptr_t>(globalObject, udata, values[KeventUData])))
+        || (udata && failed(scope, keventToField<uintptr_t>(globalObject, udata, values[KeventUData]))))
         return { };
     if (hasIndex(globalObject, ident)) {
         JSValue index = toIndex(globalObject, ident);

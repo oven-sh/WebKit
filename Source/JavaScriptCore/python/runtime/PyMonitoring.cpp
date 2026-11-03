@@ -796,7 +796,7 @@ void Monitoring::noteWhereFramesAre()
     VM& vm = m_runtime.vm();
     EntryFrame* entryFrame = vm.topEntryFrame;
     for (CallFrame* callFrame = vm.topCallFrame; callFrame; callFrame = callFrame->callerFrame(entryFrame)) {
-        if (callFrame->isNativeCalleeFrame() || !callFrame->codeBlock() || !callFrame->codeBlock()->unlinkedCodeBlock()->isPython())
+        if (callFrame->isNativeCalleeFrame() || !callFrame->codeBlock() || !callFrame->codeBlock()->unlinkedCodeBlock()->isPython() || callFrame->isZombieFrame())
             continue;
         if (!monitorFor(callFrame->codeBlock()))
             continue;
@@ -1594,6 +1594,10 @@ static JSValue tellOfException(JSGlobalObject* globalObject, JSValue thrown, Cal
     scope.clearException();
     // The frames it has left are still there.
     SetForScope topCallFrame(vm.topCallFrame, callFrame);
+    rt.framesToldOfException.append(callFrame);
+    auto isTold = makeScopeExit([&] {
+        rt.framesToldOfException.removeLast(callFrame);
+    });
     JSValue exception = exceptionFromThrownValue(globalObject, thrown);
     if (exception && rt.monitoring().exceptionEvent(globalObject, callFrame, offset, event, exception)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -1624,7 +1628,8 @@ JSValue exceptionStaysOrLeaves(JSGlobalObject* globalObject, JSValue exception, 
     if (!runtime(globalObject).monitoring().wantsExceptions()) [[likely]]
         return exception;
     CodeBlock* codeBlock = callFrame->codeBlock();
-    if (codeBlock->instructionAt(index)->opcodeID() == op_py_bind_args)
+    // The call never began: its arguments do not fit, or there was no room on the stack for its frame.
+    if (codeBlock->instructionAt(index)->opcodeID() == op_py_bind_args || callFrame->isZombieFrame())
         return exception;
     unsigned offset = index.offset();
     if (isCaught) {
@@ -1947,7 +1952,7 @@ static JSValue monitoringRegisterCallback(JSGlobalObject* globalObject, JSValue 
     unsigned index = std::countr_zero(static_cast<unsigned>(event));
     if (index >= Event::count)
         return raiseValueError(globalObject, scope, "invalid event "_s, event);
-    if (!audit(globalObject, "sys.monitoring.register_callback"_s, function))
+    if (failed(scope, audit(globalObject, "sys.monitoring.register_callback"_s, function)))
         return { };
     JSValue callback = isNone(function) ? JSValue() : function;
     JSValue previous;
@@ -2161,7 +2166,9 @@ PyModule* makeMonitoringModule(JSGlobalObject* globalObject)
 
 JSValue sysSetTrace(JSGlobalObject* globalObject, JSValue function)
 {
-    if (!audit(globalObject, "sys.settrace"_s))
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, audit(globalObject, "sys.settrace"_s)))
         return { };
     runtime(globalObject).monitoring().setTraceFunction(isNone(function) ? JSValue() : function);
     return jsUndefined();
@@ -2175,7 +2182,9 @@ JSValue sysGetTrace(JSGlobalObject* globalObject)
 
 JSValue sysSetProfile(JSGlobalObject* globalObject, JSValue function)
 {
-    if (!audit(globalObject, "sys.setprofile"_s))
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, audit(globalObject, "sys.setprofile"_s)))
         return { };
     runtime(globalObject).monitoring().setProfileFunction(isNone(function) ? JSValue() : function);
     return jsUndefined();

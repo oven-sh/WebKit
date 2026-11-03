@@ -688,7 +688,7 @@ static JSValue mathLogOf(JSGlobalObject* globalObject, JSValue argument, double 
     if (isInt(argument))
         RELEASE_AND_RETURN(scope, mathLogOfInt(globalObject, intValue(argument), function));
     JSValue result = mathCall1(globalObject, argument, function, false, "expected a positive input"_s);
-    if (result) [[likely]]
+    if (!failed(scope, result)) [[likely]]
         return result;
     // An object whose __index__() is too large for a float.
     if (!pendingExceptionMatches(globalObject, runtime(globalObject).OverflowError()) || !hasIndex(globalObject, argument))

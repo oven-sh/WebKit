@@ -269,11 +269,11 @@ static JSValue timeOfDayNew(JSGlobalObject* globalObject, JSValue cls, const Cal
         return { };
     int numbers[4] = { 0, 0, 0, 0 };
     for (unsigned i = 0; i < 4; ++i) {
-        if (values[i] && !intArgument(globalObject, values[i], numbers[i]))
+        if (values[i] && failed(scope, intArgument(globalObject, values[i], numbers[i])))
             return { };
     }
     int fold = 0;
-    if (values[5] && !intArgument(globalObject, values[5], fold))
+    if (values[5] && failed(scope, intArgument(globalObject, values[5], fold)))
         return { };
     RELEASE_AND_RETURN(scope, newTime(globalObject, state, type, numbers[0], numbers[1], numbers[2], numbers[3], values[4] ? values[4] : none(), fold));
 }
@@ -457,19 +457,21 @@ static constexpr Parameters timeReplaceParameters { "replace"_s, timeParameterNa
 // Also __replace__(), which complains under the same name.
 static JSValue timeOfDayReplace(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* time = PyTimeOfDay::from(self);
     int numbers[] = { time->hour(), time->minute(), time->second(), time->microsecond() };
     JSValue values[6];
     if (!bindArguments(globalObject, timeReplaceParameters, args, values))
         return { };
     for (unsigned i = 0; i < 4; ++i) {
-        if (values[i] && !intArgument(globalObject, values[i], numbers[i]))
+        if (values[i] && failed(scope, intArgument(globalObject, values[i], numbers[i])))
             return { };
     }
     int fold = time->fold();
-    if (values[5] && !intArgument(globalObject, values[5], fold))
+    if (values[5] && failed(scope, intArgument(globalObject, values[5], fold)))
         return { };
-    return makeTime(globalObject, stateOf(globalObject, time), time->type(), numbers[0], numbers[1], numbers[2], numbers[3], values[4] ? values[4] : time->tzinfo(), fold);
+    RELEASE_AND_RETURN(scope, makeTime(globalObject, stateOf(globalObject, time), time->type(), numbers[0], numbers[1], numbers[2], numbers[3], values[4] ? values[4] : time->tzinfo(), fold));
 }
 
 static JSValue timeOfDayReduceFor(JSGlobalObject* globalObject, PyTimeOfDay* time, int protocol)
@@ -485,10 +487,12 @@ static JSValue timeOfDayReduceFor(JSGlobalObject* globalObject, PyTimeOfDay* tim
 
 static JSValue timeOfDayReduceEx(JSGlobalObject* globalObject, JSValue self, JSValue protocolValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int protocol;
-    if (!intArgument(globalObject, protocolValue, protocol))
+    if (failed(scope, intArgument(globalObject, protocolValue, protocol)))
         return { };
-    return timeOfDayReduceFor(globalObject, PyTimeOfDay::from(self), protocol);
+    RELEASE_AND_RETURN(scope, timeOfDayReduceFor(globalObject, PyTimeOfDay::from(self), protocol));
 }
 
 static JSValue timeOfDayReduce(JSGlobalObject* globalObject, JSValue self) { return timeOfDayReduceFor(globalObject, PyTimeOfDay::from(self), 2); }

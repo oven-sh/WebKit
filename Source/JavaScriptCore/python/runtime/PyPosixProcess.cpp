@@ -9,6 +9,7 @@
 #if !OS(WINDOWS)
 
 #include "JSCInlines.h"
+#include "PyEventWait.h"
 #include "PySet.h"
 #include <dlfcn.h>
 #include <grp.h>
@@ -688,7 +689,7 @@ static JSValue posixKill(JSGlobalObject* globalObject, JSValue pidValue, JSValue
     int64_t signal;
     if (failed(scope, posixToPid(globalObject, pidValue, pid)) || failed(scope, posixToSsize(globalObject, signalValue, signal)))
         return { };
-    if (!audit(globalObject, "os.kill"_s, jsNumber(pid), signalValue))
+    if (failed(scope, audit(globalObject, "os.kill"_s, jsNumber(pid), signalValue)))
         return { };
     // A program that sends itself a signal counts on it having arrived, or being pending if it is blocked, when this returns.
     // The system might hand the signal to one of the threads that the program knows nothing of (see PySignal.cpp).
@@ -718,7 +719,7 @@ static JSValue posixKillpg(JSGlobalObject* globalObject, JSValue groupValue, JSV
     int signal;
     if (failed(scope, posixToPid(globalObject, groupValue, group)) || failed(scope, posixToInt(globalObject, signalValue, signal)))
         return { };
-    if (!audit(globalObject, "os.killpg"_s, jsNumber(group), jsNumber(signal)))
+    if (failed(scope, audit(globalObject, "os.killpg"_s, jsNumber(group), jsNumber(signal))))
         return { };
     if (killpg(group, signal) == -1)
         RELEASE_AND_RETURN(scope, posixError(globalObject));
@@ -752,11 +753,13 @@ static JSValue posixUmask(JSGlobalObject* globalObject, JSValue maskValue)
 
 static JSValue posixSystem(JSGlobalObject* globalObject, JSValue commandValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     writeOutPendingOutput(globalObject);
     PosixBytes command;
     if (!posixToFSBytes(globalObject, commandValue, command))
         return { };
-    if (isAudited(globalObject) && !audit(globalObject, "os.system"_s, PyBytes::create(globalObject, command.span())))
+    if (isAudited(globalObject) && failed(scope, audit(globalObject, "os.system"_s, PyBytes::create(globalObject, command.span()))))
         return { };
     int status;
     {
@@ -896,7 +899,7 @@ static JSValue posixExecv(JSGlobalObject* globalObject, JSValue pathValue, JSVal
         return { };
     if (!arguments.at(0)[0])
         return raiseValueError(globalObject, scope, "execv() arg 2 first element cannot be empty"_s);
-    if (!audit(globalObject, "os.exec"_s, path.object(), argv, jsUndefined()))
+    if (failed(scope, audit(globalObject, "os.exec"_s, path.object(), argv, jsUndefined())))
         return { };
     execv(path.narrow(), arguments.pointers());
     RELEASE_AND_RETURN(scope, posixError(globalObject));
@@ -930,7 +933,7 @@ static JSValue posixExecve(JSGlobalObject* globalObject, JSValue pathValue, JSVa
     PosixStringArray environment;
     if (!posixParseEnvironment(globalObject, env, environment))
         return { };
-    if (!audit(globalObject, "os.exec"_s, path.object(), argv, env))
+    if (failed(scope, audit(globalObject, "os.exec"_s, path.object(), argv, env)))
         return { };
 #if OS(LINUX)
     if (path.isFd())
@@ -1044,7 +1047,7 @@ public:
                 unsigned mode;
                 PosixBytes path;
                 if (!hasLength(5, "open"_s) || failed(scope, posixToInt(globalObject, action->at(1), fd)) || !posixToFSBytes(globalObject, action->at(2), path)
-                    || !posixToInt(globalObject, action->at(3), flags) || !posixToUnsignedMask(globalObject, action->at(4), mode))
+                    || failed(scope, posixToInt(globalObject, action->at(3), flags)) || !posixToUnsignedMask(globalObject, action->at(4), mode))
                     return false;
                 error = posix_spawn_file_actions_addopen(&m_actions, fd, path.characters(), flags, static_cast<mode_t>(mode));
                 break;
@@ -1177,7 +1180,7 @@ static JSValue posixSpawnNamed(JSGlobalObject* globalObject, ASCIILiteral functi
     PosixPath path(function, PosixPath::VirtualUnsupported);
     bool resetids;
     bool setsid;
-    if (!path.convert(globalObject, args[0]) || !posixToBool(globalObject, resetidsValue, false, resetids) || !posixToBool(globalObject, setsidValue, false, setsid))
+    if (!path.convert(globalObject, args[0]) || failed(scope, posixToBool(globalObject, resetidsValue, false, resetids)) || failed(scope, posixToBool(globalObject, setsidValue, false, setsid)))
         return { };
     JSValue argv = args[1];
     JSValue env = args[2];
@@ -1214,7 +1217,7 @@ static JSValue posixSpawnNamed(JSGlobalObject* globalObject, ASCIILiteral functi
         return { };
     if (!settings.parseFlags(globalObject, function, setpgroup, resetids, setsid, setsigmask, setsigdef, scheduler))
         return { };
-    if (!audit(globalObject, "os.posix_spawn"_s, path.object(), argv, env))
+    if (failed(scope, audit(globalObject, "os.posix_spawn"_s, path.object(), argv, env)))
         return { };
     pid_t pid;
     int error = searchPath
@@ -1253,7 +1256,7 @@ static JSValue posixSpawnFamily(JSGlobalObject* globalObject, JSValue modeValue,
     }
     if (firstIsEmpty)
         return raiseValueError(globalObject, scope, "argv first element cannot be empty"_s);
-    if (!audit(globalObject, "os.spawn"_s, jsNumber(mode), file, argv, env))
+    if (failed(scope, audit(globalObject, "os.spawn"_s, jsNumber(mode), file, argv, env)))
         return { };
     // What exec() would not take is found out by the child of os.py, which then exits like one that found no program.
     PosixBytes program;
@@ -1372,6 +1375,20 @@ static JSValue posixWaitpid(JSGlobalObject* globalObject, JSValue pidValue, JSVa
         return { };
     int status = 0;
     pid_t result;
+#if OS(LINUX)
+    // A descriptor for the process can be waited for like any other: see waitUntilReadable().
+    if (pid > 0 && !(options & (WNOHANG | WUNTRACED | WCONTINUED))) {
+        result = waitpid(pid, &status, options | WNOHANG);
+        if (result > 0)
+            RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { jsNumber(result), jsNumber(status) }));
+        if (int descriptor = result ? -1 : static_cast<int>(syscall(SYS_pidfd_open, pid, 0)); descriptor >= 0) {
+            bool succeeded = waitUntilReadable(globalObject, descriptor);
+            close(descriptor);
+            if (failed(scope, succeeded))
+                return { };
+        }
+    }
+#endif
     do {
         AllowThreads allow(globalObject);
         result = waitpid(pid, &status, options);
@@ -1566,7 +1583,7 @@ static constexpr NativeDef posixProcessFunctions[] = {
     PY_FUNCTION("posix_spawn", posixSpawn, "(path, argv, env, /, *args, file_actions=(), setpgroup=None, resetids=False, setsid=False, setsigmask=(), setsigdef=(), scheduler=None)"),
     PY_FUNCTION("posix_spawnp", posixSpawnp, "(path, argv, env, /, *args, file_actions=(), setpgroup=None, resetids=False, setsid=False, setsigmask=(), setsigdef=(), scheduler=None)"),
     PY_FUNCTION("wait", posixWait, "()"),
-    PY_FUNCTION("waitpid", posixWaitpid, "(pid, options, /)"),
+    NativeDef(NativeKind::Function, "waitpid"_s, posixWaitpid, "(pid, options, /)"_s, MayWait),
     PY_FUNCTION("wait3", posixWait3, "(options)"),
     PY_FUNCTION("wait4", posixWait4, "(pid, options)"),
     PY_FUNCTION("waitid", posixWaitid, "(idtype, id, options, /)"),
@@ -1649,7 +1666,9 @@ static bool resourceToLimits(JSGlobalObject* globalObject, JSValue value, struct
         raiseValueError(globalObject, scope, "expected a tuple of 2 integers"_s);
         return false;
     }
-    RELEASE_AND_RETURN(scope, resourceToLimit(globalObject, limits->at(0), result.rlim_cur) && resourceToLimit(globalObject, limits->at(1), result.rlim_max));
+    if (failed(scope, resourceToLimit(globalObject, limits->at(0), result.rlim_cur)))
+        return false;
+    RELEASE_AND_RETURN(scope, resourceToLimit(globalObject, limits->at(1), result.rlim_max));
 }
 
 static JSValue resourceFromLimits(JSGlobalObject* globalObject, const struct rlimit& limits)
@@ -1691,7 +1710,7 @@ static JSValue resourceSetrlimit(JSGlobalObject* globalObject, JSValue resourceV
     struct rlimit limits;
     if (failed(scope, resourceToResource(globalObject, resourceValue, resource)) || !resourceToLimits(globalObject, limitsValue, limits))
         return { };
-    if (!audit(globalObject, "resource.setrlimit"_s, jsNumber(resource), limitsValue))
+    if (failed(scope, audit(globalObject, "resource.setrlimit"_s, jsNumber(resource), limitsValue)))
         return { };
     if (setrlimit(static_cast<decltype(RLIMIT_CPU)>(resource), &limits) == -1) {
         if (errno == EINVAL)
@@ -1712,7 +1731,7 @@ static JSValue resourcePrlimit(JSGlobalObject* globalObject, JSValue pidValue, J
     int resource;
     if (failed(scope, posixToPid(globalObject, pidValue, pid)) || failed(scope, resourceToResource(globalObject, resourceValue, resource)))
         return { };
-    if (!audit(globalObject, "resource.prlimit"_s, jsNumber(pid), jsNumber(resource), limitsValue))
+    if (failed(scope, audit(globalObject, "resource.prlimit"_s, jsNumber(pid), jsNumber(resource), limitsValue)))
         return { };
     struct rlimit newLimits;
     struct rlimit oldLimits;
@@ -1773,6 +1792,8 @@ static constexpr PosixConstant resourceConstants[] = {
 
 void initializeResourceModule(JSGlobalObject* globalObject, PyModule* module)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     module->addFunctions(globalObject, resourceFunctions);
     addPosixConstants(globalObject, module, resourceConstants);
     module->add(globalObject, "RLIM_INFINITY"_s, makeInt(globalObject, static_cast<uint64_t>(RLIM_INFINITY)));
@@ -1781,6 +1802,7 @@ void initializeResourceModule(JSGlobalObject* globalObject, PyModule* module)
 #endif
 #ifdef RLIM_SAVED_MAX
     module->add(globalObject, "RLIM_SAVED_MAX"_s, makeInt(globalObject, static_cast<uint64_t>(RLIM_SAVED_MAX)));
+    RETURN_IF_EXCEPTION(scope, void());
 #endif
     module->add(globalObject, "error"_s, runtime(globalObject).OSError());
     module->add(globalObject, "struct_rusage"_s, posixRusageType(globalObject));

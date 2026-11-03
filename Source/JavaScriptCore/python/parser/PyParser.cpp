@@ -273,6 +273,15 @@ std::nullptr_t Parser::invalidSyntax()
     return invalidSyntaxAtLastTokenSeen();
 }
 
+// An attempt to explain the error has come to nothing.
+std::nullptr_t Parser::invalidSyntaxAfterAttempt()
+{
+    if (m_errorIsFatal)
+        return nullptr;
+    m_error = { };
+    return invalidSyntaxAtLastTokenSeen();
+}
+
 std::nullptr_t Parser::invalidSyntaxAtLastTokenSeen()
 {
     auto& last = m_tokens[m_tokensSeen - 1];
@@ -862,7 +871,7 @@ Stmt* Parser::parseExpressionStatement()
             if ((value->is<Yield>() || value->is<YieldFrom>()) && !value->parenthesized)
                 return syntaxErrorAt(value->range, "assignment to yield expression not possible"_s);
             if (findInvalidTarget(value, TargetKind::Star))
-                return diagnoseInvalidAssignment(value, firstKind, targets.isEmpty(), statementStart);
+                return diagnoseInvalidAssignment(value, targets.isEmpty(), statementStart);
             advance();
             targets.append(value);
             value = parseAnnotatedRHS();
@@ -952,15 +961,12 @@ bool Parser::diagnoseNamedExpressions(const Checkpoint& statementStart)
     return true;
 }
 
-// `target`, which cannot be assigned to, is followed by '='. `firstKind`: the token the statement starts with.
-std::nullptr_t Parser::diagnoseInvalidAssignment(Expr* target, TokenKind firstKind, bool isFirstTarget, const Checkpoint& statementStart)
+// `target`, which cannot be assigned to, is followed by '='.
+std::nullptr_t Parser::diagnoseInvalidAssignment(Expr* target, bool isFirstTarget, const Checkpoint& statementStart)
 {
     SetForScope diagnosing(m_diagnosing, true);
     // A lone '=' after something that can be compared was probably meant as '=='.
-    bool startsLikeATarget = firstKind == TokenKind::KwTrue || firstKind == TokenKind::KwFalse || firstKind == TokenKind::KwNone
-        || (firstKind == TokenKind::LSqb && !target->is<ListComp>())
-        || (firstKind == TokenKind::LPar && !(target->parenthesized && !target->is<Tuple>() && !target->is<GeneratorExp>()));
-    if (isFirstTarget && !startsLikeATarget && isAtBitwiseOrLevel(target)) {
+    if (isFirstTarget && isAtBitwiseOrLevel(target) && !startsLikeATarget(target, m_tokens[statementStart.index].startPosition)) {
         advance();
         if (atStartOfExpression() && !at(TokenKind::KwNot) && !at(TokenKind::KwLambda)) {
             auto saved = checkpoint();
@@ -1692,12 +1698,22 @@ Stmt* Parser::parseTry()
         if (at(TokenKind::Star)) {
             const Token starToken = advance();
             handlerIsStar = true;
-            if (!handlers.isEmpty() && !isStar)
-                return syntaxErrorAt(rangeBetween(rangeOf(exceptToken), rangeOf(starToken)), "cannot have both 'except' and 'except*' on the same 'try'"_s);
+            if (!handlers.isEmpty() && !isStar) {
+                SetForScope diagnosing(m_diagnosing, true);
+                SetForScope acceptsPrefix(m_acceptsPrefix, true);
+                if (parseExpression() && (!accept(TokenKind::KwAs) || accept(TokenKind::Name)) && at(TokenKind::Colon))
+                    return syntaxErrorAt(rangeBetween(rangeOf(exceptToken), rangeOf(starToken)), "cannot have both 'except' and 'except*' on the same 'try'"_s);
+                return failed() && !m_errorIsGeneric ? nullptr : invalidSyntaxAfterAttempt();
+            }
             if (at(TokenKind::Newline) || at(TokenKind::Colon))
                 return syntaxError("expected one or more exception types"_s);
-        } else if (!handlers.isEmpty() && isStar)
-            return syntaxErrorAt(exceptToken, "cannot have both 'except' and 'except*' on the same 'try'"_s);
+        } else if (!handlers.isEmpty() && isStar) {
+            SetForScope diagnosing(m_diagnosing, true);
+            SetForScope acceptsPrefix(m_acceptsPrefix, true);
+            if (at(TokenKind::Colon) || (parseExpression() && (!accept(TokenKind::KwAs) || accept(TokenKind::Name)) && at(TokenKind::Colon)))
+                return syntaxErrorAt(exceptToken, "cannot have both 'except' and 'except*' on the same 'try'"_s);
+            return failed() && !m_errorIsGeneric ? nullptr : invalidSyntaxAfterAttempt();
+        }
         isStar = handlerIsStar;
 
         Expr* type = nullptr;
@@ -1738,8 +1754,11 @@ Stmt* Parser::parseTry()
                     Expr* target = parseExpression();
                     if (!target)
                         return nullptr;
-                    if (!at(TokenKind::Colon))
+                    if (!accept(TokenKind::Colon))
                         return invalidSyntax();
+                    Seq<Stmt*> ignored;
+                    if (!parseBlock(ignored, { }, exceptToken))
+                        return nullptr;
                     return syntaxErrorAt(target->range, makeString("cannot use except"_s, handlerIsStar ? "*"_s : ""_s, " statement with "_s, describe(target)));
                 }
             }
@@ -2119,8 +2138,11 @@ Arguments* Parser::parseParameters(bool isLambda)
         } else {
             if (defaultValue)
                 defaults.append(defaultValue);
-            else if (!defaults.isEmpty())
+            else if (!defaults.isEmpty()) {
+                if (!at(TokenKind::Comma) && !at(close) && !at(TokenKind::TypeComment))
+                    return invalidSyntax();
                 return syntaxErrorAt(arg->range, "parameter without a default follows parameter with a default"_s);
+            }
             positional.append(arg);
         }
         if (!finishParameter(arg))
@@ -2296,6 +2318,41 @@ ASCIILiteral Parser::describe(Expr* expression)
 }
 
 // Whether the grammar's bitwise_or derives the expression as it was written.
+// Of an expression at that level, which starts at `start`: its text starts with a list, a tuple, a generator expression,
+// True, False or None. (invalid_named_expression: `!(list|tuple|genexp|'True'|'None'|'False') bitwise_or '='`)
+bool Parser::startsLikeATarget(Expr* expression, Position start)
+{
+    for (;;) {
+        if (expression->parenthesized) {
+            // In parentheses of its own besides, it is a group.
+            bool isGroup = expression->range.lineno != start.line || expression->range.colOffset != start.column;
+            return !isGroup && (expression->is<Tuple>() || expression->is<GeneratorExp>());
+        }
+        switch (expression->kind) {
+        case ExprKind::Attribute:
+            expression = expression->as<Attribute>()->value;
+            break;
+        case ExprKind::Subscript:
+            expression = expression->as<Subscript>()->value;
+            break;
+        case ExprKind::Call:
+            expression = expression->as<Call>()->func;
+            break;
+        case ExprKind::BinOp:
+            expression = expression->as<BinOp>()->left;
+            break;
+        case ExprKind::List:
+            return true;
+        case ExprKind::Constant: {
+            auto kind = expression->as<Constant>()->value.kind;
+            return kind == ConstantValue::Kind::True || kind == ConstantValue::Kind::False || kind == ConstantValue::Kind::None;
+        }
+        default:
+            return false;
+        }
+    }
+}
+
 bool Parser::isAtBitwiseOrLevel(Expr* expression)
 {
     if (expression->parenthesized)

@@ -170,6 +170,9 @@ void printInternal(PrintStream& out, UseKind useKind)
     case NotSymbolUse:
         out.print("NotSymbol");
         return;
+    case NotPyObjectUse:
+        out.print("NotPyObject");
+        return;
     case NotCellUse:
         out.print("NotCell");
         return;

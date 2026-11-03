@@ -88,7 +88,8 @@ bool liveLocalsOfFrame(CallFrame* callFrame, CodeBlock* codeBlock, bool isCallin
 
 // Where the frame ends that the instruction makes for what it calls: it lies in the registers of the caller, at a place that the
 // instruction names. Null: it makes none, or where is not known beforehand.
-static Register* endOfFrameMadeBy(CallFrame* callFrame, const JSInstruction* instruction)
+// `hasCalled`: the callee has run. Otherwise the instruction may still be about to call it, or be doing its work in some other way.
+static Register* endOfFrameMadeBy(CallFrame* callFrame, const JSInstruction* instruction, bool hasCalled)
 {
     auto end = [&](unsigned stackOffset, unsigned argumentCountIncludingThis) {
         return callFrame->registers() - stackOffset + CallFrame::headerSizeInRegisters + argumentCountIncludingThis;
@@ -101,13 +102,22 @@ static Register* endOfFrameMadeBy(CallFrame* callFrame, const JSInstruction* ins
         return end(instruction->as<OpCallIgnoreResult>().m_argv, instruction->as<OpCallIgnoreResult>().m_argc);
     case op_construct:
         return end(instruction->as<OpConstruct>().m_argv, instruction->as<OpConstruct>().m_argc);
+    // These fill the frame and call the body of the generator in one go, or leave it all to C++, which makes a frame elsewhere:
+    // then what is in those registers is what an earlier call left there.
     case op_py_for_iter:
-        return end(instruction->as<OpPyForIter>().m_stackOffset, argumentsOfGeneratorBody);
+        return hasCalled ? end(instruction->as<OpPyForIter>().m_stackOffset, argumentsOfGeneratorBody) : nullptr;
     case op_py_send:
-        return end(instruction->as<OpPySend>().m_stackOffset, argumentsOfGeneratorBody);
+        return hasCalled ? end(instruction->as<OpPySend>().m_stackOffset, argumentsOfGeneratorBody) : nullptr;
     default:
         return nullptr;
     }
+}
+
+// A frame for which there was no room on the stack still has its code block, but neither its function nor its registers: where those
+// would be is what C++ is using to throw the error.
+static ALWAYS_INLINE bool isPythonFrame(CallFrame* callFrame)
+{
+    return !callFrame->isNativeCalleeFrame() && isPythonCodeBlock(callFrame->codeBlock()) && !callFrame->isZombieFrame();
 }
 
 // `callee`: the frame of what this one is calling, if that is known.
@@ -121,7 +131,8 @@ static void clearDeadTemporariesOf(CallFrame* callFrame, CodeBlock* codeBlock, C
     // A frame that is at a call has one there even if no callee is known: while an exception unwinds the stack, whoever traces
     // the program is told with this frame as the topmost (tellOfException() in PyMonitoring.cpp), and the frames that the
     // exception has left are still there. The machine code that goes on to the handler reads the one it was thrown from.
-    Register* endOfCallee = endOfFrameMadeBy(callFrame, codeBlock->instructions().at(callFrame->bytecodeIndex()).ptr());
+    bool isToldOfException = !callee && codeBlock->globalObject()->pythonRuntime()->framesToldOfException.contains(callFrame);
+    Register* endOfCallee = endOfFrameMadeBy(callFrame, codeBlock->instructions().at(callFrame->bytecodeIndex()).ptr(), isToldOfException);
     if (callee) {
         unsigned argumentCount = callee->argumentCountIncludingThis();
         if (!callee->isNativeCalleeFrame() && callee->codeBlock())
@@ -141,7 +152,7 @@ static void clearDeadTemporariesFrom(CallFrame* topCallFrame, EntryFrame* entryF
 {
     CallFrame* callee = nullptr;
     for (CallFrame* callFrame = topCallFrame; callFrame;) {
-        if (!callFrame->isNativeCalleeFrame() && isPythonCodeBlock(callFrame->codeBlock()))
+        if (isPythonFrame(callFrame))
             clearDeadTemporariesOf(callFrame, callFrame->codeBlock(), callee);
         EntryFrame* entryFrameOfCallee = entryFrame;
         callee = callFrame;
@@ -165,14 +176,30 @@ void clearDeadTemporaries(VM& vm)
     }
 }
 
-static ALWAYS_INLINE bool isPythonFrame(CallFrame* callFrame)
-{
-    return !callFrame->isNativeCalleeFrame() && isPythonCodeBlock(callFrame->codeBlock());
-}
-
 static ALWAYS_INLINE bool isGeneratorBody(CallFrame* callFrame)
 {
     return callFrame->codeBlock()->unlinkedCodeBlock()->parseMode() == SourceParseMode::GeneratorBodyMode;
+}
+
+void forEachVariableOfRunningGenerators(VM& vm, const ScopedLambda<void(PyGenerator*, JSValue)>& function)
+{
+    auto walk = [&](CallFrame* callFrame, EntryFrame* entryFrame) {
+        for (; callFrame; callFrame = callFrame->callerFrame(entryFrame)) {
+            if (!isPythonFrame(callFrame) || !isGeneratorBody(callFrame))
+                continue;
+            auto* generator = uncheckedDowncast<PyGenerator>(callFrame->uncheckedArgument(0).asCell());
+            for (auto& variable : generator->function()->codeInfo().variables) {
+                if (JSValue value = callFrame->r(variable.reg).jsValue())
+                    function(generator, value);
+            }
+        }
+    };
+    walk(vm.topCallFrame, vm.topEntryFrame);
+    if (vm.apiLock().hasParkedThreads()) {
+        vm.apiLock().forEachParkedThread([&](JSLock::ParkedThread& parked) {
+            walk(parked.topCallFrame(), parked.topEntryFrame());
+        });
+    }
 }
 
 static CallFrame* pythonCallFrame(VM& vm, unsigned depth)
@@ -732,6 +759,8 @@ void PyFrame::clear()
 
 void Runtime::frameIsEnding(CallFrame* callFrame)
 {
+    if (!isPythonFrame(callFrame)) [[unlikely]]
+        return;
     PyFrame* frame = frameObjectIfAny(callFrame);
     // That of a generator may be from before it was last resumed.
     if (!frame && isGeneratorBody(callFrame))
@@ -1076,7 +1105,11 @@ static JSValue proxyList(JSGlobalObject* globalObject, JSValue self)
 
 static JSValue proxyIter(JSGlobalObject* globalObject, JSValue self)
 {
-    return getIter(globalObject, proxyList<ProxyList::Keys>(globalObject, self));
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue keys = proxyList<ProxyList::Keys>(globalObject, self);
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, getIter(globalObject, keys));
 }
 
 static JSValue proxyReversed(JSGlobalObject* globalObject, JSValue self)

@@ -325,8 +325,9 @@ private:
 
     bool convertFields(AstClass id, const AstClassInfo& info, JSValue object, Slot* slots)
     {
+        auto scope = DECLARE_THROW_SCOPE(getVM(m_globalObject));
         for (unsigned i = 0; i < info.fields.size(); ++i) {
-            if (!convertField(info, info.fields[i], m_state.field(id, i), object, slots[i]))
+            if (failed(scope, convertField(info, info.fields[i], m_state.field(id, i), object, slots[i])))
                 return false;
         }
         return true;
@@ -417,7 +418,7 @@ private:
         Range range;
 
         if (info.kind == AstClassKind::Product) {
-            if (!convertFields(id, info, object, slots))
+            if (failed(scope, convertFields(id, info, object, slots)))
                 return false;
             if (info.attributes != AstAttributes::None && !convertAttributes(info, object, range))
                 return false;
@@ -431,7 +432,7 @@ private:
         if (!info.isSimpleSum) {
             if (isNone(object))
                 return true;
-            if (info.attributes != AstAttributes::None && !convertAttributes(info, object, range))
+            if (info.attributes != AstAttributes::None && failed(scope, convertAttributes(info, object, range)))
                 return false;
         }
         AstClass constructor = classify(id, info, object);

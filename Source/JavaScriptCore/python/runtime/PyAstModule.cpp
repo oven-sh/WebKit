@@ -201,7 +201,7 @@ static JSValue astInit(JSGlobalObject* globalObject, JSValue self, const CallArg
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     AstState state(globalObject);
-    if (!state)
+    if (failed(scope, !!state))
         return { };
 
     PyType* type = typeOf(globalObject, self);
@@ -634,10 +634,15 @@ static PyTuple* astMakeClasses(JSGlobalObject* globalObject, PyType* base)
 
 AstState::AstState(JSGlobalObject* globalObject)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PyType* base = runtime(globalObject).typeFor(astTypeDef);
+    RETURN_IF_EXCEPTION(scope, );
     JSValue table = hiddenField(globalObject, base, astStateField);
     if (!table) [[unlikely]] {
         m_table = astMakeClasses(globalObject, base);
+        RETURN_IF_EXCEPTION(scope, );
+        scope.release();
         if (m_table)
             setHiddenField(globalObject, base, astStateField, m_table);
         return;
@@ -656,9 +661,12 @@ bool AstState::isAbstract(PyType* type) const
 
 bool isAST(JSGlobalObject* globalObject, JSValue value)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     // Nothing is a node before the classes are made.
     PyType* base = runtime(globalObject).typeFor(astTypeDef);
-    return isInstance(globalObject, value, base);
+    RETURN_IF_EXCEPTION(scope, false);
+    RELEASE_AND_RETURN(scope, isInstance(globalObject, value, base));
 }
 
 // ---- The module ----

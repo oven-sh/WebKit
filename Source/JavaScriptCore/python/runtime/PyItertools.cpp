@@ -705,6 +705,7 @@ static JSValue itertoolsStarMapNext(JSGlobalObject* globalObject, JSValue self)
         arguments = tupleFromIterable(globalObject, item);
         RETURN_IF_EXCEPTION(scope, { });
     }
+    scope.release();
     JSValue result = call(globalObject, record->get(ItertoolsFunctional::Function), CallArgs(arguments->span()));
     ensureStillAliveHere(arguments);
     return result;
@@ -833,13 +834,16 @@ static JSValue itertoolsISliceNext(JSGlobalObject* globalObject, JSValue self)
     };
     int64_t stop = itertoolsGetInt64(record, ItertoolsISlice::Stop);
     while (record->number < itertoolsGetInt64(record, ItertoolsISlice::Next)) {
-        if (!iterNext(globalObject, iterator))
+        JSValue skipped = iterNext(globalObject, iterator);
+        EXCEPTION_ASSERT(!scope.exception() || !skipped);
+        if (!skipped)
             return finish();
         ++record->number;
     }
     if (stop != -1 && record->number >= stop)
         return finish();
     JSValue item = iterNext(globalObject, iterator);
+    RETURN_IF_EXCEPTION(scope, finish());
     if (!item)
         return finish();
     ++record->number;
@@ -897,13 +901,14 @@ static JSValue itertoolsChainNext(JSGlobalObject* globalObject, JSValue self)
         JSValue active = record->get(ItertoolsChain::Active);
         if (!active) {
             JSValue iterable = iterNext(globalObject, source);
+            EXCEPTION_ASSERT(!scope.exception() || !iterable);
             if (!iterable) {
                 record->set(vm, ItertoolsChain::Source, { });
                 RETURN_IF_EXCEPTION(scope, { });
                 break;
             }
             active = getIter(globalObject, iterable);
-            if (!active) {
+            if (failed(scope, active)) {
                 record->set(vm, ItertoolsChain::Source, { });
                 return { };
             }

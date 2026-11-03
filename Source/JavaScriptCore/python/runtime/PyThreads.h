@@ -163,6 +163,10 @@ public:
     // arguments are such that looking at them a second time runs no code of the program.
     void willCallFunctionThatMayWait(CallFrame*);
     bool takeRequestToCallAgain(JSGlobalObject*);
+    // For such a function, when it finds that it has to wait and has done nothing yet that must not be done twice.
+    // True: that has been thrown, and it is to return at once.
+    bool beginsCallAgain(JSGlobalObject*);
+    bool mayBeginCallAgain() { return !!current().callThatMayBeginAgain; }
     void wakeOne(const void* address);
     void wakeAll(const void* address);
 
@@ -203,6 +207,7 @@ public:
 
 private:
     friend class AllowThreads;
+    friend class IdleWait;
 
     explicit Threads(VM&);
     JS_EXPORT_PRIVATE bool isMainThreadSlow() const;
@@ -229,6 +234,7 @@ private:
     Vector<Ref<ThreadState>> m_threads;
     UncheckedKeyHashMap<const void*, Deque<ThreadState*>> m_waiters;
     uint64_t m_bytesAllocatedAtIdleCollection { 0 };
+    int64_t m_timeForIdleCollectionWithoutCause { 0 };
     bool m_didTellMainThreadOfFinalizers { false };
 
     Lock m_gilLock;
@@ -278,6 +284,24 @@ private:
     ThreadState* m_thread { nullptr };
     // Made only if there is something to put in it.
     alignas(Luggage) std::byte m_luggage[sizeof(Luggage)];
+};
+
+// A thread that waits collects (Threads::collectWhileIdle()), also if it is the kernel that it waits for. So a system call that may
+// take long is made piece by piece: sleep, wait until a descriptor is ready. With the GIL.
+class IdleWait {
+public:
+    static constexpr int64_t firstInterval = 50000000;
+
+    explicit IdleWait(JSGlobalObject*);
+    // For how many nanoseconds to wait next, at most, if so many are left to wait (negative: there is no end).
+    int64_t nextPiece(int64_t remaining) const;
+    // That is over, and what was waited for has not come. False: there is an exception.
+    bool didWait();
+
+private:
+    JSGlobalObject* m_globalObject;
+    int64_t m_interval { firstInterval };
+    int64_t m_timeToCollect;
 };
 
 // False, with a RuntimeError: this is not the main thread, and what is about to happen would run code of JS, or of the host.

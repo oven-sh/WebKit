@@ -373,13 +373,16 @@ static void installImportlib(JSGlobalObject* globalObject)
 
     // Archives come before directories among sys.path_hooks. Without zipimport there are none.
     JSValue zipimport = importModule(globalObject, "zipimport"_s);
+    EXCEPTION_ASSERT(!!scope.exception() == !zipimport);
     JSValue zipimporter = zipimport ? getAttr(globalObject, zipimport, internString(vm, "zipimporter"_s)) : JSValue();
     if (scope.exception()) [[unlikely]] {
         takePendingException(globalObject);
         return;
     }
-    if (JSArray* hooks = tryAsList(rt.sysDict()->get(internString(vm, "path_hooks"_s))))
+    if (JSArray* hooks = tryAsList(rt.sysDict()->get(internString(vm, "path_hooks"_s)))) {
         listInsert(globalObject, hooks, 0, zipimporter);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
 }
 
 static ASCIILiteral s_importSystemModule;
@@ -665,6 +668,7 @@ static void handleFromList(JSGlobalObject* globalObject, JSValue module, JSValue
         takePendingException(globalObject);
         return true;
     });
+    scope.release();
 }
 
 // Null: an exception.
@@ -831,7 +835,7 @@ void importStar(JSGlobalObject* globalObject, JSValue module, JSValue locals)
     // As a sequence, by index, until an IndexError.
     for (int64_t position = 0;; ++position) {
         JSValue item = getItem(globalObject, names, jsNumber(static_cast<double>(position)));
-        if (!item) {
+        if (failed(scope, item)) {
             clearPendingExceptionIfMatches(globalObject, rt.IndexError());
             return;
         }
@@ -966,7 +970,16 @@ static bool moduleIsInitializing(JSGlobalObject* globalObject, JSValue module)
 {
     // Not through getattr: that would have the __spec__ of a module written in C++ made.
     auto* object = PyModule::tryFrom(module);
-    return object && specIsInitializing(globalObject, object->dict()->get(runtime(globalObject).names.dSpec()));
+    if (!object)
+        return false;
+    // What the spec raises when asked is lost.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(globalObject));
+    bool result = specIsInitializing(globalObject, object->dict()->get(runtime(globalObject).names.dSpec()));
+    if (scope.exception()) [[unlikely]] {
+        takePendingException(globalObject);
+        return false;
+    }
+    return result;
 }
 
 // An attribute of a module that has been imported and has finished running, found without running anything. Empty: none.
@@ -1088,7 +1101,7 @@ void didImportLazyModule(JSGlobalObject* globalObject, JSString* name)
         modules->remove(globalObject, name);
         RETURN_IF_EXCEPTION(scope, void());
     }
-    clearLazySubmodule(globalObject, name, false);
+    RELEASE_AND_RETURN(scope, clearLazySubmodule(globalObject, name, false));
 }
 
 // -- Making placeholders --
@@ -1361,6 +1374,7 @@ static JSValue resolveLazyImport(JSGlobalObject* globalObject, PyRecord* lazy, J
     uncheckedDowncast<JSWeakMap>(rt.threadLocals().asCell())->remove(lazy);
     rt.leaveFrame();
     if (scope.exception()) {
+        scope.release();
         addLazyImportToPendingException(globalObject, lazy);
         return { };
     }

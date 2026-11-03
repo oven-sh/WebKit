@@ -94,8 +94,9 @@ public:
     WarningResult warn(const Warning& warning) final
     {
         Runtime& rt = runtime(m_globalObject);
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(rt.vm());
         PyType* category = warning.category == WarningCategory::SyntaxWarning ? rt.SyntaxWarning() : rt.DeprecationWarning();
-        if (warnExplicit(m_globalObject, category, warning.message, m_filename, warning.lineno, m_module))
+        if (!failed(scope, warnExplicit(m_globalObject, category, warning.message, m_filename, warning.lineno, m_module)))
             return WarningResult::Reported;
         if (clearPendingExceptionIfMatches(m_globalObject, category))
             return WarningResult::BecameException;
@@ -207,6 +208,7 @@ JSValue raiseSyntaxErrorInfo(JSGlobalObject* globalObject, const SyntaxErrorInfo
     JSValue file = makeStr(vm, filename);
     if (info.locationIsNotAnArgument) {
         PyException* exception = newException(globalObject, type, info.message);
+        RETURN_IF_EXCEPTION(scope, { });
         auto set = [&](ASCIILiteral name, JSValue value) {
             setAttr(globalObject, exception, internString(vm, name), value);
             if (scope.exception())
@@ -252,6 +254,7 @@ bool parseSource(JSGlobalObject* globalObject, ParseTree& tree, ParserHost& host
     if (parsed)
         return true;
     raiseSyntaxErrorInfo(globalObject, error, filename);
+    EXCEPTION_ASSERT(scope.exception());
     if (error.hasMetadata) {
         // The text, unless it came from a file, where whoever wants it can read it.
         JSValue text = jsUndefined();
@@ -262,6 +265,7 @@ bool parseSource(JSGlobalObject* globalObject, ParseTree& tree, ParserHost& host
         if (auto* exception = PyException::tryFrom(pendingException(globalObject)))
             exception->setField(vm, ExceptionField::syntaxErrorMetadata, PyTuple::create(globalObject, { jsNumber(error.metadataLineno), jsNumber(error.metadataColOffset), text }));
     }
+    scope.release();
     return false;
 }
 
@@ -287,6 +291,7 @@ JSValue compileTree(JSGlobalObject* globalObject, ParseTree& tree, ParserHost& h
     options.futureBarryAsBDFL = flags & static_cast<int>(CodeFlag::FutureBarryAsBDFL);
     Compiler compiler(globalObject, tree, host, sourceCode, filename, options);
     UnlinkedFunctionExecutable* unlinked = compiler.compile();
+    RETURN_IF_EXCEPTION(scope, { });
     if (!unlinked)
         RELEASE_AND_RETURN(scope, raiseSyntaxErrorInfo(globalObject, compiler.error(), filename));
     RELEASE_AND_RETURN(scope, PyCode::of(globalObject, unlinked->link(vm, nullptr, sourceCode)));
@@ -294,11 +299,13 @@ JSValue compileTree(JSGlobalObject* globalObject, ParseTree& tree, ParserHost& h
 
 JSValue compileSource(JSGlobalObject* globalObject, std::span<const uint8_t> source, const String& filename, ASCIILiteral mode, int flags, int optimize, JSValue module)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     RuntimeParserHost host(globalObject, filename, module);
     ParseTree tree;
-    if (!parseSource(globalObject, tree, host, source, filename, mode, flags))
+    if (failed(scope, parseSource(globalObject, tree, host, source, filename, mode, flags)))
         return { };
-    return compileTree(globalObject, tree, host, filename, flags, optimize);
+    RELEASE_AND_RETURN(scope, compileTree(globalObject, tree, host, filename, flags, optimize));
 }
 
 // ---- Running ----
@@ -424,7 +431,7 @@ int handleUncaughtException(JSGlobalObject* globalObject)
     rt.sysDict()->set(vm, internString(vm, "last_value"_s), exception);
     rt.sysDict()->set(vm, internString(vm, "last_traceback"_s), traceback ? traceback : jsUndefined());
     JSValue hook = rt.sysDict()->get(internString(vm, "excepthook"_s));
-    if (!audit(globalObject, "sys.excepthook"_s, hook, rt.typeOf(exception), exception, traceback)) {
+    if (failed(scope, audit(globalObject, "sys.excepthook"_s, hook, rt.typeOf(exception), exception, traceback))) {
         // A hook may have the report suppressed.
         if (clearPendingExceptionIfMatches(globalObject, rt.RuntimeError()))
             return 1;
@@ -560,6 +567,7 @@ bool finalizeInterpreter(JSGlobalObject* globalObject)
         }
         rt.finalizeWhatReferenceCountsWouldHaveFreed();
         runAtexitCallbacks(globalObject);
+        scope.assertNoException();
     } while (hasThreadsOrAtexitCallbacks(globalObject));
     // The threads that are left are daemons. They have run their last.
     rt.threads().didFinalize();
@@ -791,9 +799,11 @@ std::optional<int> mainModuleEnded(JSGlobalObject* globalObject, JSValue excepti
 
 std::optional<int> runMainModule(JSGlobalObject* globalObject, const String& givenPath, std::span<const uint8_t> source, const Vector<String>& arguments, JSValue* unfinished)
 {
-    Runtime& rt = Runtime::ensure(globalObject);
-    VM& vm = rt.vm();
+    VM& vm = getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    Runtime& rt = Runtime::ensure(globalObject);
+    if (scope.exception()) [[unlikely]]
+        return handleUncaughtException(globalObject);
     String path = absolutePath(givenPath);
 
     MarkedArgumentBuffer argv;
@@ -809,6 +819,7 @@ std::optional<int> runMainModule(JSGlobalObject* globalObject, const String& giv
         String real = realPath(path);
         configuration().firstSearchPath = FileSystem::parentPath(real.isEmpty() ? path : real);
         listInsert(globalObject, searchPath, 0, makeStr(vm, configuration().firstSearchPath));
+        scope.assertNoException();
     }
 
     std::optional<int> status;

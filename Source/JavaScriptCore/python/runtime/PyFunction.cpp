@@ -22,6 +22,7 @@
 #include "PyModule.h"
 #include "PyMonitoring.h"
 #include "PyNumbers.h"
+#include "PySet.h"
 #include "PyStr.h"
 #include "PyTypes.h"
 
@@ -175,10 +176,11 @@ static JSValue builtinsFromGlobals(JSGlobalObject* globalObject, PyDict* globals
 static JSValue getOptionalItem(JSGlobalObject* globalObject, JSValue mapping, JSString* name)
 {
     Runtime& rt = runtime(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(rt.vm());
     if (auto* dict = PyDict::tryFrom(mapping); dict && isExactDict(rt, dict)) [[likely]]
         return dict->get(name);
     JSValue value = getItem(globalObject, mapping, name);
-    if (!value)
+    if (failed(scope, value))
         clearPendingExceptionIfMatches(globalObject, rt.KeyError());
     return value;
 }
@@ -313,12 +315,11 @@ static String qualnameForMessage(JSGlobalObject* globalObject, PyFunction* funct
 {
     JSValue qualname = function->qualname();
     if (qualname.isString()) {
-        VM& vm = getVM(globalObject);
-        auto scope = DECLARE_THROW_SCOPE(vm);
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(globalObject));
         String text = asString(qualname)->value(globalObject);
-        if (!scope.exception())
+        if (!scope.exception()) [[likely]]
             return text;
-        takePendingException(globalObject);
+        scope.clearException();
     }
     return function->codeInfo().qualname;
 }
@@ -555,6 +556,7 @@ static NEVER_INLINE bool bindArgumentsSlow(JSGlobalObject* globalObject, CallFra
     }
 
     if (positionalCount > argCount && !hasVarArgs) {
+        scope.release();
         raiseTooManyPositional(globalObject, function, slots, positionalCount);
         return false;
     }
@@ -565,6 +567,7 @@ static NEVER_INLINE bool bindArgumentsSlow(JSGlobalObject* globalObject, CallFra
         unsigned required = argCount - std::min(defaultCount, argCount);
         for (unsigned i = positionalCount; i < required; ++i) {
             if (!slots[i]) {
+                scope.release();
                 raiseMissingArguments(globalObject, function, slots, 0, required, "positional"_s);
                 return false;
             }
@@ -592,6 +595,7 @@ static NEVER_INLINE bool bindArgumentsSlow(JSGlobalObject* globalObject, CallFra
             isMissing = true;
         }
         if (isMissing) {
+            scope.release();
             raiseMissingArguments(globalObject, function, slots, argCount, namedCount, "keyword-only"_s);
             return false;
         }
@@ -698,7 +702,7 @@ static bool auditFunctionAttribute(JSGlobalObject* globalObject, ASCIILiteral ev
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (failed(scope, isAudited(globalObject))) [[likely]]
+    if (!isAudited(globalObject)) [[likely]]
         return true;
     JSString* nameString = makeStr(getVM(globalObject), name);
     RELEASE_AND_RETURN(scope, value ? audit(globalObject, event, self, nameString, value) : audit(globalObject, event, self, nameString));
@@ -763,7 +767,7 @@ static void functionSetDefaults(JSGlobalObject* globalObject, JSValue self, JSVa
         raiseTypeError(globalObject, scope, "__defaults__ must be set to a tuple object"_s);
         return;
     }
-    if (!auditFunctionAttribute(globalObject, value ? "object.__setattr__"_s : "object.__delattr__"_s, self, "__defaults__"_s, value))
+    if (failed(scope, auditFunctionAttribute(globalObject, value ? "object.__setattr__"_s : "object.__delattr__"_s, self, "__defaults__"_s, value)))
         return;
     if (!value || isNone(value))
         return PyFunction::from(self)->setDefaults(vm, nullptr);
@@ -778,7 +782,7 @@ static void functionSetKwDefaults(JSGlobalObject* globalObject, JSValue self, JS
         raiseTypeError(globalObject, scope, "__kwdefaults__ must be set to a dict object"_s);
         return;
     }
-    if (!auditFunctionAttribute(globalObject, value ? "object.__setattr__"_s : "object.__delattr__"_s, self, "__kwdefaults__"_s, value))
+    if (failed(scope, auditFunctionAttribute(globalObject, value ? "object.__setattr__"_s : "object.__delattr__"_s, self, "__kwdefaults__"_s, value)))
         return;
     if (!value || isNone(value))
         return PyFunction::from(self)->setKwDefaults(vm, nullptr);
@@ -795,7 +799,7 @@ static void functionSetCode(JSGlobalObject* globalObject, JSValue self, JSValue 
         raiseTypeError(globalObject, scope, "__code__ must be set to a code object"_s);
         return;
     }
-    if (!auditFunctionAttribute(globalObject, "object.__setattr__"_s, self, "__code__"_s, value))
+    if (failed(scope, auditFunctionAttribute(globalObject, "object.__setattr__"_s, self, "__code__"_s, value)))
         return;
     size_t freeCount = code->codeInfo().freeVariables.size();
     size_t closureCount = function->closure() ? function->closure()->length() : 0;
@@ -807,7 +811,7 @@ static void functionSetCode(JSGlobalObject* globalObject, JSValue self, JSValue 
     }
     constexpr OptionSet<CodeFlag> kinds { CodeFlag::Generator, CodeFlag::Coroutine, CodeFlag::AsyncGenerator };
     if ((codeOf(globalObject, function)->flags() & kinds) != (code->flags() & kinds)) {
-        if (!warn(globalObject, runtime(globalObject).DeprecationWarning(), "Assigning a code object of non-matching type is deprecated (e.g., from a generator to a plain function)"_s))
+        if (failed(scope, warn(globalObject, runtime(globalObject).DeprecationWarning(), "Assigning a code object of non-matching type is deprecated (e.g., from a generator to a plain function)"_s)))
             return;
     }
     function->setCode(vm, code);
@@ -1315,8 +1319,59 @@ static unsigned codeStartColumn(const SourceCode& source)
     return column;
 }
 
+static bool codesAreEqual(JSGlobalObject*, PyCode*, PyCode*);
+static JSValue codePositions(JSGlobalObject*, JSValue self);
+
+// Equal, of the same type, and so for what they contain: 0, 0.0, -0.0 and False are four constants.
+static bool constantsAreTheSame(JSGlobalObject* globalObject, JSValue a, JSValue b)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (a == b)
+        return true;
+    if (typeOf(globalObject, a) != typeOf(globalObject, b))
+        return false;
+    auto sameBits = [](double x, double y) { return std::bit_cast<uint64_t>(x) == std::bit_cast<uint64_t>(y); };
+    if (auto* code = PyCode::tryFrom(a))
+        RELEASE_AND_RETURN(scope, codesAreEqual(globalObject, code, PyCode::from(b)));
+    if (isFloat(a))
+        return sameBits(floatValue(a), floatValue(b));
+    if (auto* complex = PyComplex::tryFrom(a))
+        return sameBits(complex->real(), PyComplex::from(b)->real()) && sameBits(complex->imaginary(), PyComplex::from(b)->imaginary());
+    if (auto* tuple = PyTuple::tryFrom(a)) {
+        auto* other = PyTuple::from(b);
+        if (tuple->length() != other->length())
+            return false;
+        for (unsigned i = 0; i < tuple->length(); ++i) {
+            bool same = constantsAreTheSame(globalObject, tuple->at(i), other->at(i));
+            RETURN_IF_EXCEPTION(scope, false);
+            if (!same)
+                return false;
+        }
+        return true;
+    }
+    if (auto* set = PySet::tryFrom(a)) {
+        auto* other = PySet::from(b);
+        if (set->size() != other->size())
+            return false;
+        JSValue item;
+        for (size_t position = 0; set->next(position, item);) {
+            bool found = false;
+            JSValue candidate;
+            for (size_t otherPosition = 0; !found && other->next(otherPosition, candidate);) {
+                found = constantsAreTheSame(globalObject, item, candidate);
+                RETURN_IF_EXCEPTION(scope, false);
+            }
+            if (!found)
+                return false;
+        }
+        return true;
+    }
+    RELEASE_AND_RETURN(scope, isEqual(globalObject, a, b));
+}
+
 // Codes are equal if they do the same and say the same of where they come from, but for the name of the file. That the text is the
-// same stands for the constants, the code within and the positions being the same.
+// same stands for the constants, the code within and the positions being the same. Code made from a tree has no text.
 static bool codesAreEqual(JSGlobalObject* globalObject, PyCode* a, PyCode* b)
 {
     VM& vm = getVM(globalObject);
@@ -1338,17 +1393,47 @@ static bool codesAreEqual(JSGlobalObject* globalObject, PyCode* a, PyCode* b)
         if (first.variables[i].name != second.variables[i].name || first.variables[i].kind != second.variables[i].kind)
             return false;
     }
-    const SourceCode& firstSource = a->executable()->source();
-    const SourceCode& secondSource = b->executable()->source();
-    if (firstSource.view() != secondSource.view() || codeStartColumn(firstSource) != codeStartColumn(secondSource))
-        return false;
     CodeBlock* firstBlock = codeBlockOf(globalObject, a);
     RETURN_IF_EXCEPTION(scope, false);
     CodeBlock* secondBlock = codeBlockOf(globalObject, b);
     RETURN_IF_EXCEPTION(scope, false);
     auto& firstInstructions = firstBlock->instructions();
     auto& secondInstructions = secondBlock->instructions();
-    return firstInstructions.sizeInBytes() == secondInstructions.sizeInBytes() && !memcmp(firstInstructions.rawPointer(), secondInstructions.rawPointer(), firstInstructions.sizeInBytes());
+    if (firstInstructions.sizeInBytes() != secondInstructions.sizeInBytes())
+        return false;
+    {
+        Monitoring::OriginalInstructions originalInstructions(runtime(globalObject).monitoring());
+        if (memcmp(firstInstructions.rawPointer(), secondInstructions.rawPointer(), firstInstructions.sizeInBytes()))
+            return false;
+    }
+    const SourceCode& firstSource = a->executable()->source();
+    const SourceCode& secondSource = b->executable()->source();
+    bool sameColumn = codeStartColumn(firstSource) == codeStartColumn(secondSource);
+    if (firstSource.view() == secondSource.view() && sameColumn)
+        return true;
+    // Not every instruction has its place recorded. Where the code starts tells two lambdas of a line apart. (The text of code made from a tree is blank.)
+    auto hasText = [](const SourceCode& source) {
+        return source.view().find([](char16_t character) { return character != ' ' && character != '\n'; }) != notFound;
+    };
+    if (!sameColumn && hasText(firstSource) && hasText(secondSource))
+        return false;
+
+    if (first.constants.size() != second.constants.size())
+        return false;
+    for (unsigned i = 0; i < first.constants.size(); ++i) {
+        auto valueOf = [&](CodeBlock* block, auto& constant) {
+            return constant.reg.isValid() ? block->getConstant(constant.reg) : JSValue(PyCode::of(globalObject, block->functionExpr(constant.functionIndex)));
+        };
+        bool same = constantsAreTheSame(globalObject, valueOf(firstBlock, first.constants[i]), valueOf(secondBlock, second.constants[i]));
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!same)
+            return false;
+    }
+    codePositions(globalObject, a);
+    RETURN_IF_EXCEPTION(scope, false);
+    codePositions(globalObject, b);
+    RETURN_IF_EXCEPTION(scope, false);
+    RELEASE_AND_RETURN(scope, isEqual(globalObject, hiddenField(globalObject, a, codePositionsField), hiddenField(globalObject, b, codePositionsField)));
 }
 
 static JSValue codeEq(JSGlobalObject* globalObject, JSValue self, JSValue other)
@@ -1376,7 +1461,10 @@ static JSValue codeHash(JSGlobalObject* globalObject, JSValue self)
     RETURN_IF_EXCEPTION(scope, { });
     uint64_t result = static_cast<uint64_t>(nameHash) * 1000003 ^ code->flags().toRaw();
     result = result * 1000003 ^ static_cast<uint64_t>(codeGetFirstLineNo(globalObject, self).asInt32());
-    result = result * 1000003 ^ code->executable()->source().view().toString().hash();
+    // Not the instructions: tools change them where they stand, and debuggers keep code objects in dictionaries.
+    CodeInfo& info = code->codeInfo();
+    for (uint64_t count : { static_cast<uint64_t>(info.argCount), static_cast<uint64_t>(info.kwOnlyCount), static_cast<uint64_t>(info.names.size()), static_cast<uint64_t>(info.variables.size()), static_cast<uint64_t>(info.constants.size()) })
+        result = result * 1000003 ^ count;
     RELEASE_AND_RETURN(scope, makeInt(globalObject, static_cast<int64_t>(result >> 2)));
 }
 
@@ -1491,6 +1579,8 @@ static JSValue codeReplace(JSGlobalObject* globalObject, JSValue self, const Cal
             RETURN_IF_EXCEPTION(scope, { });
             bool same = isEqual(globalObject, current, value);
             RETURN_IF_EXCEPTION(scope, { });
+            if (!same && field.name == "co_nlocals"_s)
+                return raiseValueError(globalObject, scope, "code: co_nlocals != len(co_varnames)"_s);
             if (!same)
                 return raiseNotImplementedError(globalObject, scope, "code.replace() cannot change "_s, field.name);
         }
@@ -1533,6 +1623,8 @@ static JSValue codeNew(JSGlobalObject* globalObject, JSValue, const CallArgs& ar
         toCInt(globalObject, args[index]);
         RETURN_IF_EXCEPTION(scope, { });
     }
+    if (auto* variableNames = PyTuple::tryFrom(args[9]); variableNames && toCInt(globalObject, args[3]) != static_cast<int>(variableNames->length()))
+        return raiseValueError(globalObject, scope, "code: co_nlocals != len(co_varnames)"_s);
     auto* lineTable = PyBytes::tryFrom(args[14]);
     PyCode* code = lineTable ? codeFromLineTable(globalObject, lineTable->span()) : nullptr;
     if (!code)
@@ -1589,6 +1681,7 @@ static JSValue makeCodeIterator(JSGlobalObject* globalObject, const TypeDef& def
     JSValue iterator = getIter(globalObject, items);
     RETURN_IF_EXCEPTION(scope, { });
     PyRecord* result = PyRecord::create(globalObject, runtime(globalObject).typeFor(def), 1);
+    RETURN_IF_EXCEPTION(scope, { });
     result->set(vm, 0, iterator);
     return result;
 }
@@ -1647,8 +1740,10 @@ static JSValue codeLines(JSGlobalObject* globalObject, JSValue self)
     RETURN_IF_EXCEPTION(scope, { });
     JSArray* lines = newList(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
-    for (auto& run : lineRunsOf(PyCode::from(self)->codeInfo(), codeBlock))
+    for (auto& run : lineRunsOf(PyCode::from(self)->codeInfo(), codeBlock)) {
         listAppend(globalObject, lines, PyTuple::create(globalObject, { jsNumber(shownOffset(run.start)), jsNumber(shownOffset(run.end)), run.line >= 0 ? jsNumber(run.line) : jsUndefined() }));
+        RETURN_IF_EXCEPTION(scope, { });
+    }
     RELEASE_AND_RETURN(scope, makeCodeIterator(globalObject, lineIteratorTypeDef, lines));
 }
 
@@ -1705,6 +1800,8 @@ static JSValue codePositions(JSGlobalObject* globalObject, JSValue self)
         }
         // Only what may raise an exception has a place in the source recorded. What has none is given that of whatever comes before.
         auto info = codeBlock->expressionInfoForBytecodeIndex(BytecodeIndex(instruction.offset()));
+        // With nothing before it either, it goes with what sets up the frame, as the first instructions of a class body do in CPython.
+        bool hasPlace = info.startOffset || info.endOffset;
         int line, column, endLine, endColumn;
         locate(info.divot - info.startOffset, line, column);
         locate(info.divot + info.endOffset, endLine, endColumn);
@@ -1715,11 +1812,13 @@ static JSValue codePositions(JSGlobalObject* globalObject, JSValue self)
             while (runIndex + 1 < runs.size() && runs[runIndex].end <= offset)
                 ++runIndex;
             int lineOfByte = runs[runIndex].line;
-            if (lineOfByte == line && hasColumns) {
+            if (lineOfByte == line && hasColumns && hasPlace) {
                 if (!exact)
                     exact = PyTuple::create(globalObject, { jsNumber(line), jsNumber(endLine), jsNumber(column), jsNumber(endColumn) });
                 listAppend(globalObject, positions, exact);
-            } else {
+            } else if (!hasPlace && prologue && lineOfByte == runs[0].line)
+                listAppend(globalObject, positions, prologue);
+            else {
                 if (lineOfByte != std::exchange(lineOfLast, lineOfByte)) {
                     JSValue number = lineOfByte >= 0 ? jsNumber(lineOfByte) : jsUndefined();
                     last = PyTuple::create(globalObject, { number, number, jsUndefined(), jsUndefined() });

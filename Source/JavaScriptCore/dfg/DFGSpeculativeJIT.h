@@ -1877,6 +1877,7 @@ public:
     void speculateStringOrOther(Edge);
     void speculateNotStringVar(Edge);
     void speculateNotSymbol(Edge);
+    void speculateNotPyObject(Edge);
     void speculateStringObject(Edge, GPRReg);
     void speculateStringObject(Edge);
     void speculateStringOrStringObject(Edge);

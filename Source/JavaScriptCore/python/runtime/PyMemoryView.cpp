@@ -1081,6 +1081,7 @@ static bool bufferGetFromPythonMethod(JSGlobalObject* globalObject, JSValue obje
     RETURN_IF_EXCEPTION(scope, false);
     ASSERT_UNUSED(ok, ok);
     PyRecord* wrapper = PyRecord::create(globalObject, rt.typeFor(bufferWrapperTypeDef), BufferWrapperFieldCount);
+    RETURN_IF_EXCEPTION(scope, false);
     wrapper->set(vm, BufferWrapperView, view);
     wrapper->set(vm, BufferWrapperExporter, object);
     buffer.object = wrapper;
@@ -1198,6 +1199,8 @@ static void bufferKeepMemoryForNow(JSGlobalObject* globalObject, JSCell* owner)
 
 bool getBytesLikeSlow(JSGlobalObject* globalObject, JSValue value, std::span<const uint8_t>& result)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     if (auto* array = PyByteArray::tryFrom(value); array && !array->type()->has(TypeFlag::Heap)) {
         result = array->span();
         bufferKeepMemoryForNow(globalObject, array);
@@ -1205,7 +1208,7 @@ bool getBytesLikeSlow(JSGlobalObject* globalObject, JSValue value, std::span<con
     }
     result = { };
     Buffer buffer;
-    if (!bufferGet(globalObject, value, buffer, BufferSimple))
+    if (failed(scope, bufferGet(globalObject, value, buffer, BufferSimple)))
         return false;
     result = buffer.span();
     bufferKeepMemoryForNow(globalObject, buffer.owner);
@@ -1934,7 +1937,7 @@ static JSValue memoryViewGetItem(JSGlobalObject* globalObject, JSValue self, JSV
             return { };
         PyMemoryView* result = memoryViewCopy(globalObject, view);
         PySlice::Indices indices;
-        if (!slice->indices(globalObject, result->shape()[0], indices)) {
+        if (failed(scope, slice->indices(globalObject, result->shape()[0], indices))) {
             SuspendExceptionScope suspended(vm);
             result->release(globalObject);
             return { };
@@ -2001,11 +2004,11 @@ static JSValue memoryViewAssign(JSGlobalObject* globalObject, JSValue self, JSVa
 
     if (auto* slice = PySlice::tryFrom(key); slice && view->dimensions() == 1) {
         BufferHolder source(globalObject);
-        if (!source.get(value, BufferFullRO))
+        if (failed(scope, source.get(value, BufferFullRO)))
             return { };
         const Buffer& buffer = source.buffer;
         PySlice::Indices indices;
-        if (!slice->indices(globalObject, view->shape()[0], indices))
+        if (failed(scope, slice->indices(globalObject, view->shape()[0], indices)))
             return { };
         // That may have run code.
         if (failed(scope, memoryViewCheckReleased(globalObject, scope, view)))
@@ -2298,7 +2301,7 @@ static std::optional<bool> memoryViewEquals(JSGlobalObject* globalObject, PyMemo
         RETURN_IF_EXCEPTION(scope, std::nullopt);
         memoryViewMakeOperand(otherView, data, w);
     } else {
-        if (!holder.get(other, BufferFullRO)) {
+        if (failed(scope, holder.get(other, BufferFullRO))) {
             takePendingException(globalObject);
             return std::nullopt;
         }

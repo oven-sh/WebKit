@@ -10,6 +10,7 @@
 #include "PyAbstract.h"
 #include "PyRuntime.h"
 #include "PyTuple.h"
+#include "TopExceptionScope.h"
 #include <wtf/text/MakeString.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -172,6 +173,7 @@ void Unit::patternSequence(MatchSequence* node, RegisterID* subject, PatternCont
 
 void Unit::patternMapping(MatchMapping* node, RegisterID* subject, PatternContext& context)
 {
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm());
     unsigned size = node->keys.size();
     if (size != node->patterns.size()) {
         fail(node->range, makeString("keys ("_s, size, ") / patterns ("_s, node->patterns.size(), ") length mismatch in mapping pattern"_s));
@@ -204,7 +206,10 @@ void Unit::patternMapping(MatchMapping* node, RegisterID* subject, PatternContex
             JSValue value;
             if (tryConstantValue(key, value)) {
                 for (JSValue other : seen) {
-                    if (isEqual(globalObject(), other, value)) {
+                    bool isDuplicate = isEqual(globalObject(), other, value);
+                    if (scope.exception()) [[unlikely]]
+                        return;
+                    if (isDuplicate) {
                         fail(node->range, makeString("mapping pattern checks duplicate key ("_s, reprForMessage(globalObject(), value), ')'));
                         return;
                     }
@@ -368,7 +373,7 @@ void Unit::pattern(Pattern* node, RegisterID* subject, PatternContext& context)
     }
 }
 
-void Unit::matchStatement(Match* node)
+void Unit::matchStatement(Match* node, bool isLast)
 {
     Reg subject = newTemporary();
     expr(node->subject, subject.get());
@@ -392,9 +397,10 @@ void Unit::matchStatement(Match* node)
         if (matchCase->guard)
             jumpIf(matchCase->guard, next.get(), false);
         popBlock();
-        statements(matchCase->body);
-        g.emitJump(end.get());
+        statements(matchCase->body, 0, isLast);
+        leaveStatement(end.get(), isLast, JumpIs::OfTheProgram);
         g.emitLabel(next.get());
+        lineOfImplicitReturn(matchCase->pattern->range.lineno, isLast && i + 1 == count);
     }
     g.emitLabel(end.get());
 }

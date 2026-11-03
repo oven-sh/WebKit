@@ -49,6 +49,7 @@
 #include "JSWeakMap.h"
 #include "JSWeakSet.h"
 #include "ProxyObject.h"
+#include "PyObject.h"
 #include "RegExpObject.h"
 #include "ScopedArguments.h"
 #include "StringObject.h"
@@ -246,6 +247,11 @@ void dumpSpeculation(PrintStream& outStream, SpeculatedType value)
 
             if (value & SpecDataViewObject)
                 strOut.print("DataView");
+            else
+                isTop = false;
+
+            if (value & SpecPyObject)
+                strOut.print("PyObject");
             else
                 isTop = false;
         }
@@ -561,6 +567,9 @@ SpeculatedType speculationFromClassInfoInheritance(const ClassInfo* classInfo)
     FOR_EACH_TYPED_ARRAY_TYPE_EXCLUDING_DATA_VIEW(JSC_TYPED_ARRAY_CHECK)
 #undef JSC_TYPED_ARRAY_CHECK
 
+    if (classInfo->isSubClassOf(Python::PyObject::info()))
+        return SpecPyObject;
+
     if (classInfo->isSubClassOf(JSObject::info()))
         return SpecObjectOther;
     
@@ -814,6 +823,10 @@ bool valuesCouldBeEqual(SpeculatedType a, SpeculatedType b)
     if (b & SpecString)
         return true;
     
+    // The class of a Python object says what it is equal to.
+    if ((a | b) & SpecPyObject)
+        return true;
+
     // If both sides are definitely only objects, then equality is fairly sane.
     if (isObjectSpeculation(a) && isObjectSpeculation(b))
         return !!(a & b);
@@ -1012,6 +1025,7 @@ SpeculatedType speculationFromString(StringView speculation)
         { "SpecPrimitive"_s, SpecPrimitive },
         { "SpecPromiseObject"_s, SpecPromiseObject },
         { "SpecProxyObject"_s, SpecProxyObject },
+        { "SpecPyObject"_s, SpecPyObject },
         { "SpecRegExpObject"_s, SpecRegExpObject },
         { "SpecScopedArguments"_s, SpecScopedArguments },
         { "SpecSetObject"_s, SpecSetObject },

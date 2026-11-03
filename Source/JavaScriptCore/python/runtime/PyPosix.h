@@ -39,6 +39,8 @@ namespace Python {
 
 // OSError(errno, strerror(errno)), or the subclass that goes with the number.
 JSValue posixError(JSGlobalObject*);
+// The current directory of the process is another: the host is told (setDidChangeDirectoryFunction). May throw.
+void posixDidChangeDirectory(JSGlobalObject*);
 JSValue posixError(JSGlobalObject*, int errorNumber);
 
 // ---- Results ----

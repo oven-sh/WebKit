@@ -6,6 +6,7 @@
 #include "config.h"
 #include "PyAsyncio.h"
 
+#include "CodeBlock.h"
 #include "JSCInlines.h"
 #include "PyAbstract.h"
 #include "PyBytes.h"
@@ -66,7 +67,6 @@ enum StateField : unsigned {
     StateTaskType,
     StateFutureIterType,
     StateStepWrapperType,
-    StateGuardType,
     StateWakeupMethod, // What a task gives the future it waits for is this, bound to the task.
     StateContextKeyword, // The names of the keywords of f(..., context=c).
 
@@ -85,10 +85,6 @@ enum StateField : unsigned {
     StateForeignEagerTasks, // A set: likewise, those that are running eagerly.
     StateCoroutineTypes, // A set: types that asyncio.iscoroutine() has accepted instances of.
     StateTaskNameCounter,
-
-    // The scheduled tasks that are instances of Task: see registerTask().
-    StateTasks, // A PyByteStorage, of PyRecord*.
-    StateTaskCount,
 
     // What belongs to a thread: of the thread whose ThreadState::serial is `number`,
     StateRunningLoop, // Empty: none.
@@ -122,10 +118,9 @@ enum FutureField : unsigned {
     TaskCoroutine,
     TaskName, // An int until somebody asks: the number in "Task-1".
     TaskContext,
-    TaskIndex, // Where it is in StateTasks. Empty: it is not there.
+    TaskIndex, // Where it is in Runtime::scheduledTasks. Empty: it is not there.
     TaskWakeup, // The callables the task hands to the loop and to futures, which are made once.
     TaskStep,
-    TaskGuard, // See registerTask().
     TaskFieldCount
 };
 
@@ -137,7 +132,6 @@ enum FutureFlag : int64_t {
     FlagAwaitedByIsSet = 1 << 4,
     FlagMustCancel = 1 << 5,
     FlagLogDestroyPending = 1 << 6,
-    FlagWasFinalized = 1 << 7, // See taskDel().
 };
 enum FutureState : int64_t { StatePending, StateCancelled, StateFinished };
 
@@ -199,6 +193,19 @@ static const TypeDef& futureTypeDefinition();
 static PyRecord* moduleState(JSGlobalObject* globalObject)
 {
     return recordOf(hiddenField(globalObject, runtime(globalObject).typeFor(futureTypeDefinition()), 0));
+}
+
+// Whether what the module takes from Lib is there. Before that, and if that has failed, its types and functions can be had all the
+// same, because asyncio, which this imports, imports this. False: an exception.
+static bool ensureIsInitialized(JSGlobalObject* globalObject, PyRecord* state)
+{
+    // The last that initializeAsyncioModule() sets.
+    if (state->get(StateForeignTasks)) [[likely]]
+        return true;
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    raiseRuntimeError(globalObject, scope, "the module _asyncio has not been initialized"_s);
+    return false;
 }
 
 static JSValue raiseInvalidState(JSGlobalObject* globalObject, ThrowScope& scope, PyRecord* state, const String& message)
@@ -263,77 +270,24 @@ static ALWAYS_INLINE void useThisThread(JSGlobalObject* globalObject, PyRecord* 
 // ---- The scheduled tasks ----
 //
 // all_tasks() finds them, and they are not kept alive by that: a task that nothing else refers to is garbage ("Task was destroyed
-// but it is pending!"). They are in an array that the collector does not look at. What makes that safe is that a task in the
-// array, before it can be freed, is finalized, and that takes it out:
-//   - an instance of Task itself is registered with the runtime for finalization as long as it is in the array, and its
-//     __del__ is taskDel(), which nothing can change;
-//   - of a class derived from Task nothing of the kind can be said, so such a task has a guard: an object that only the task
-//     refers to, out of sight, which goes when the task goes and has the finalizer.
+// but it is pending!"). It leaves the table when it is done, or else when the collector frees it, as it leaves CPython's list.
 
-static void removeFromTasks(VM& vm, PyRecord* state, PyRecord* task)
-{
-    JSValue index = task->get(TaskIndex);
-    if (!index)
-        return;
-    auto** tasks = reinterpret_cast<PyRecord**>(uncheckedDowncast<PyByteStorage>(state->get(StateTasks).asCell())->data());
-    int32_t last = state->get(StateTaskCount).asInt32() - 1;
-    PyRecord* moved = tasks[last];
-    tasks[index.asInt32()] = moved;
-    moved->set(vm, TaskIndex, index);
-    task->set(vm, TaskIndex, { });
-    state->set(vm, StateTaskCount, jsNumber(last));
-}
-
-static JSValue guardDel(JSGlobalObject* globalObject, JSValue self)
-{
-    PyRecord* task = recordOf(recordOf(self)->get(0));
-    removeFromTasks(getVM(globalObject), stateOf(task), task);
-    return jsUndefined();
-}
-
-static constexpr NativeDef guardMethods[] = {
-    PY_SLOT("__del__", guardDel, "($self, /)"),
-};
-static constexpr TypeDef guardTypeDef { "_asyncio.guard"_s, { TypeFlag::DisallowInstantiation, TypeFlag::Internal }, guardMethods, { }, { } };
-
-static void registerTask(JSGlobalObject* globalObject, PyRecord* state, PyRecord* task)
+static void registerTask(JSGlobalObject* globalObject, PyRecord* task)
 {
     if (task->get(TaskIndex))
         return;
     Runtime& rt = runtime(globalObject);
-    VM& vm = rt.vm();
-    int32_t count = state->get(StateTaskCount).asInt32();
-    auto* storage = state->get(StateTasks) ? uncheckedDowncast<PyByteStorage>(state->get(StateTasks).asCell()) : nullptr;
-    if (!storage || storage->capacity() < (static_cast<size_t>(count) + 1) * sizeof(PyRecord*)) {
-        PyByteStorage* larger = PyByteStorage::create(vm, rt.structure<PyByteStorage>(), std::max<size_t>(64, 2 * static_cast<size_t>(count)) * sizeof(PyRecord*));
-        if (count)
-            memcpy(larger->data(), storage->data(), count * sizeof(PyRecord*));
-        state->set(vm, StateTasks, larger);
-        storage = larger;
-    }
-    if (task->type() == typeIn(state, StateTaskType))
-        rt.registerFinalizable(task);
-    else {
-        PyRecord* guard = PyRecord::create(globalObject, typeIn(state, StateGuardType), 1);
-        guard->set(vm, 0, task);
-        task->set(vm, TaskGuard, guard);
-        rt.registerFinalizable(guard);
-    }
-    reinterpret_cast<PyRecord**>(storage->data())[count] = task;
-    task->set(vm, TaskIndex, jsNumber(count));
-    state->set(vm, StateTaskCount, jsNumber(count + 1));
+    task->set(rt.vm(), TaskIndex, jsNumber(rt.scheduledTasks.add(task)));
 }
 
-static void unregisterTask(JSGlobalObject* globalObject, PyRecord* state, PyRecord* task)
+static void unregisterTask(JSGlobalObject* globalObject, PyRecord* task)
 {
-    if (!task->get(TaskIndex))
+    JSValue index = task->get(TaskIndex);
+    if (!index)
         return;
-    VM& vm = getVM(globalObject);
-    removeFromTasks(vm, state, task);
-    if (JSValue guard = task->get(TaskGuard)) {
-        runtime(globalObject).unregisterFinalizable(guard.asCell());
-        task->set(vm, TaskGuard, { });
-    }
+    Runtime& rt = runtime(globalObject);
+    rt.scheduledTasks.remove(index.asUInt32(), task);
+    task->set(rt.vm(), TaskIndex, { });
 }
 
 // ---- Finalization ----
@@ -401,17 +355,7 @@ static JSValue taskDel(JSGlobalObject* globalObject, JSValue self)
     PyRecord* task = recordOf(self);
     VM& vm = getVM(globalObject);
     PyRecord* state = stateOf(task);
-    // What the handler is given may keep the task, which is then still scheduled, as it is in CPython (where a task leaves the list
-    // when it is freed). So it stays in the array for now, and is finalized once more, when it is garbage again or still.
-    bool staysScheduled = task->get(TaskIndex) && !task->get(TaskGuard);
-    if (staysScheduled) {
-        if (hasFlag(task, FlagWasFinalized)) {
-            removeFromTasks(vm, state, task);
-            return jsUndefined();
-        }
-        setFlag(task, FlagWasFinalized, true);
-        finalizerHasSomethingToDo(globalObject, task);
-    }
+    // What the handler is given may keep the task, which is then still scheduled.
     if (futureState(task) == StatePending && hasFlag(task, FlagLogDestroyPending) && isAlive(task)) {
         PyDict* context = PyDict::create(globalObject);
         context->set(vm, nameIn(state, StateNameMessage), makeStr(vm, "Task was destroyed but it is pending!"_s));
@@ -437,6 +381,31 @@ static JSValue loopOfFuture(JSGlobalObject* globalObject, PyRecord* state, JSVal
     RELEASE_AND_RETURN(scope, getAttr(globalObject, future, nameIn(state, StateNameLoop)));
 }
 
+// No loop of asyncio's is running, and yet the code may be running in an event loop: the host's, which runs the code of JS. For
+// what JS calls, however indirectly, the loop by which the host's event loop module runs coroutines for JS is the running one:
+// asyncio.gather(), create_task() and Future() are as good there as in a coroutine. (Not to asyncio.run(), which asks
+// _get_running_loop(): it may run a loop of its own, as it may in a program that is all Python.) Empty: there is none.
+static JSValue loopOfHost(JSGlobalObject* globalObject)
+{
+    VM& vm = getVM(globalObject);
+    bool isCalledFromJS = false;
+    EntryFrame* entryFrame = vm.topEntryFrame;
+    for (CallFrame* callFrame = vm.topCallFrame; callFrame && !isCalledFromJS; callFrame = callFrame->callerFrame(entryFrame)) {
+        if (callFrame->isNativeCalleeFrame())
+            continue;
+        CodeBlock* codeBlock = callFrame->codeBlock();
+        isCalledFromJS = codeBlock && !codeBlock->unlinkedCodeBlock()->isPython();
+    }
+    if (!isCalledFromJS)
+        return { };
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue loop = eventLoopFunction(globalObject, "loop"_s);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!loop)
+        return { };
+    RELEASE_AND_RETURN(scope, call(globalObject, loop));
+}
+
 static JSValue getEventLoop(JSGlobalObject* globalObject, PyRecord* state)
 {
     VM& vm = getVM(globalObject);
@@ -444,6 +413,12 @@ static JSValue getEventLoop(JSGlobalObject* globalObject, PyRecord* state)
     useThisThread(globalObject, state);
     if (JSValue loop = state->get(StateRunningLoop))
         return loop;
+    JSValue hostLoop = loopOfHost(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (hostLoop)
+        return hostLoop;
+    if (failed(scope, ensureIsInitialized(globalObject, state)))
+        return { };
     JSValue policy = call(globalObject, state->get(StateGetEventLoopPolicy));
     RETURN_IF_EXCEPTION(scope, { });
     RELEASE_AND_RETURN(scope, callMethod(globalObject, policy, nameIn(state, StateNameGetEventLoop)));
@@ -473,7 +448,7 @@ static bool scheduleCallbacks(JSGlobalObject* globalObject, PyRecord* state, PyR
     VM& vm = getVM(globalObject);
     ASSERT(futureState(future) != StatePending);
     if (isTaskRecord(future))
-        unregisterTask(globalObject, state, future);
+        unregisterTask(globalObject, future);
 
     // They are taken out of the future first: what call_soon() runs may be anything.
     if (JSValue callback = future->get(FutureCallback0)) {
@@ -581,7 +556,7 @@ static bool setFutureResult(JSGlobalObject* globalObject, PyRecord* state, PyRec
     future->set(vm, FutureResult, result);
     setFutureState(future, StateFinished);
     if (isTaskRecord(future)) {
-        unregisterTask(globalObject, state, future);
+        unregisterTask(globalObject, future);
         finalizerHasNothingToDo(globalObject, state, future);
     }
     RELEASE_AND_RETURN(scope, scheduleCallbacks(globalObject, state, future));
@@ -712,7 +687,7 @@ static JSValue cancelFuture(JSGlobalObject* globalObject, PyRecord* state, PyRec
     setFutureState(future, StateCancelled);
     future->set(getVM(globalObject), FutureCancelMessage, message);
     if (isTaskRecord(future)) {
-        unregisterTask(globalObject, state, future);
+        unregisterTask(globalObject, future);
         finalizerHasNothingToDo(globalObject, state, future);
     }
     if (!scheduleCallbacks(globalObject, state, future))
@@ -731,6 +706,8 @@ static JSValue futureNew(JSGlobalObject* globalObject, JSValue cls, const CallAr
     PyType* type = PyType::from(cls);
     JSValue stateValue = hiddenField(globalObject, type, 0);
     PyRecord* state = stateValue ? recordOf(stateValue) : moduleState(globalObject);
+    if (!ensureIsInitialized(globalObject, state))
+        return { };
     PyType* taskType = typeIn(state, StateTaskType);
     bool isTask = type == taskType || type->isSubtypeOf(taskType);
     PyRecord* future = PyRecord::create(globalObject, type, isTask ? TaskFieldCount : FutureFieldCount);
@@ -1614,14 +1591,14 @@ static bool startEagerly(JSGlobalObject* globalObject, PyRecord* state, PyRecord
     JSValue previous = swapCurrentTask(globalObject, state, loop, task);
     RETURN_IF_EXCEPTION(scope, false);
     // If it comes to its end without suspending, that takes it out again; otherwise it goes on as any task.
-    registerTask(globalObject, state, task);
+    registerTask(globalObject, task);
     if (failed(scope, enterContext(globalObject, task->get(TaskContext)))) {
         JSValue raised = takePendingException(globalObject);
         setFlag(task, FlagLogDestroyPending, false);
         swapCurrentTask(globalObject, state, loop, previous);
         if (scope.exception())
             takePendingException(globalObject);
-        unregisterTask(globalObject, state, task);
+        unregisterTask(globalObject, task);
         throwPythonException(globalObject, scope, raised);
         return false;
     }
@@ -1695,9 +1672,9 @@ static JSValue taskInit(JSGlobalObject* globalObject, JSValue self, JSValue coro
             RELEASE_AND_RETURN(scope, startEagerly(globalObject, state, task) ? jsUndefined() : JSValue());
         }
     }
-    if (!callStepSoon(globalObject, state, task, { }))
+    if (failed(scope, callStepSoon(globalObject, state, task, { })))
         return { };
-    registerTask(globalObject, state, task);
+    registerTask(globalObject, task);
     return jsUndefined();
 }
 
@@ -1893,6 +1870,10 @@ static JSValue runningLoop(JSGlobalObject* globalObject, PyRecord* state)
         return loop;
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue hostLoop = loopOfHost(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (hostLoop)
+        return hostLoop;
     return raiseRuntimeError(globalObject, scope, "no running event loop"_s);
 }
 
@@ -1902,9 +1883,11 @@ static JSValue asyncioRegisterTask(JSGlobalObject* globalObject, JSValue taskVal
 {
     PyRecord* state = moduleState(globalObject);
     if (PyRecord* task = asTask(state, taskValue)) {
-        registerTask(globalObject, state, task);
+        registerTask(globalObject, task);
         return jsUndefined();
     }
+    if (!ensureIsInitialized(globalObject, state))
+        return { };
     return callMethod(globalObject, state->get(StateForeignTasks), nameIn(state, StateNameAdd), taskValue) ? jsUndefined() : JSValue();
 }
 
@@ -1914,7 +1897,7 @@ static JSValue asyncioRegisterEagerTask(JSGlobalObject* globalObject, JSValue ta
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyRecord* state = moduleState(globalObject);
     if (PyRecord* task = asTask(state, taskValue)) {
-        registerTask(globalObject, state, task);
+        registerTask(globalObject, task);
         return jsUndefined();
     }
     PySet::from(state->get(StateForeignEagerTasks))->add(globalObject, taskValue);
@@ -1926,9 +1909,11 @@ static JSValue asyncioUnregisterTask(JSGlobalObject* globalObject, JSValue taskV
 {
     PyRecord* state = moduleState(globalObject);
     if (PyRecord* task = asTask(state, taskValue)) {
-        unregisterTask(globalObject, state, task);
+        unregisterTask(globalObject, task);
         return jsUndefined();
     }
+    if (!ensureIsInitialized(globalObject, state))
+        return { };
     return callMethod(globalObject, state->get(StateForeignTasks), nameIn(state, StateNameDiscard), taskValue) ? jsUndefined() : JSValue();
 }
 
@@ -1938,7 +1923,7 @@ static JSValue asyncioUnregisterEagerTask(JSGlobalObject* globalObject, JSValue 
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyRecord* state = moduleState(globalObject);
     if (PyRecord* task = asTask(state, taskValue)) {
-        unregisterTask(globalObject, state, task);
+        unregisterTask(globalObject, task);
         return jsUndefined();
     }
     PySet::from(state->get(StateForeignEagerTasks))->remove(globalObject, taskValue);
@@ -1989,6 +1974,8 @@ static JSValue asyncioAllTasks(JSGlobalObject* globalObject, JSValue loop)
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyRecord* state = moduleState(globalObject);
+    if (failed(scope, ensureIsInitialized(globalObject, state)))
+        return { };
     if (!loop || isNone(loop)) {
         loop = runningLoop(globalObject, state);
         RETURN_IF_EXCEPTION(scope, { });
@@ -2002,11 +1989,10 @@ static JSValue asyncioAllTasks(JSGlobalObject* globalObject, JSValue loop)
     RETURN_IF_EXCEPTION(scope, { });
 
     PySet* result = PySet::create(globalObject);
-    // Nothing runs, and so nothing leaves the array, while these are copied.
-    if (int32_t count = state->get(StateTaskCount).asInt32()) {
-        for (int32_t i = 0; i < count; ++i) {
-            // A collection may come in between, which moves nothing.
-            PyRecord* task = reinterpret_cast<PyRecord**>(uncheckedDowncast<PyByteStorage>(state->get(StateTasks).asCell())->data())[i];
+    // Nothing runs while these are copied. A collection may come in between, which takes out what is dead.
+    auto& scheduled = runtime(globalObject).scheduledTasks;
+    for (unsigned i = 0; i < scheduled.size(); ++i) {
+        if (JSCell* task = scheduled.at(i)) {
             listAppend(globalObject, tasks, task);
             RETURN_IF_EXCEPTION(scope, { });
         }
@@ -2049,9 +2035,11 @@ static JSValue asyncioFutureAddToAwaitedBy(JSGlobalObject* globalObject, JSValue
 
 static JSValue asyncioFutureDiscardFromAwaitedBy(JSGlobalObject* globalObject, JSValue futureValue, JSValue waiter)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PyRecord* state = moduleState(globalObject);
     PyRecord* future = asFuture(state, futureValue);
-    if (future && asFuture(state, waiter) && !discardFromAwaitedBy(globalObject, future, waiter))
+    if (future && asFuture(state, waiter) && failed(scope, discardFromAwaitedBy(globalObject, future, waiter)))
         return { };
     return jsUndefined();
 }
@@ -2091,7 +2079,7 @@ void initializeAsyncioModule(JSGlobalObject* globalObject, PyModule* module)
         state->set(vm, StateTaskType, taskType);
         state->set(vm, StateFutureIterType, rt.typeFor(futureIterTypeDef));
         state->set(vm, StateStepWrapperType, rt.typeFor(stepWrapperTypeDef));
-        state->set(vm, StateGuardType, rt.typeFor(guardTypeDef));
+        RETURN_IF_EXCEPTION(scope, void());
         state->set(vm, StateWakeupMethod, PyNativeFunction::create(globalObject, taskWakeupDef, NativeKind::Method, { }, taskType));
         PyTuple* keyword = PyTuple::createUninitialized(vm, rt.keywordNamesStructure(), rt.tupleType(), 1);
         keyword->initializeAt(vm, 0, internString(vm, "context"_s));
@@ -2099,7 +2087,6 @@ void initializeAsyncioModule(JSGlobalObject* globalObject, PyModule* module)
         state->set(vm, StateForeignEagerTasks, PySet::create(globalObject));
         state->set(vm, StateCoroutineTypes, PySet::create(globalObject));
         state->set(vm, StateTaskNameCounter, jsNumber(0));
-        state->set(vm, StateTaskCount, jsNumber(0));
 #define ASYNCIO_INTERN_NAME(id, text) state->set(vm, StateName##id, internString(vm, text ""_s));
         FOR_EACH_ASYNCIO_NAME(ASYNCIO_INTERN_NAME)
 #undef ASYNCIO_INTERN_NAME
@@ -2139,6 +2126,12 @@ void initializeAsyncioModule(JSGlobalObject* globalObject, PyModule* module)
         if (import.field == StateForeignTasks) {
             value = call(globalObject, value);
             RETURN_IF_EXCEPTION(scope, void());
+        }
+        if (import.field == StateInvalidStateError || import.field == StateCancelledError) {
+            if (auto* type = PyType::tryFrom(value); !type || !type->has(TypeFlag::ExceptionSubclass)) {
+                raiseTypeError(globalObject, scope, import.module, '.', import.name, " must be an exception class, not "_s, typeNameForMessage(globalObject, typeOf(globalObject, value)));
+                return;
+            }
         }
         state->set(vm, import.field, value);
     }

@@ -480,8 +480,8 @@ JSValue newDateTime(JSGlobalObject* globalObject, State& state, PyType* type, co
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (failed(scope, checkDateFields(globalObject, fields.year, fields.month, fields.day))
-        || !checkTimeFields(globalObject, fields.hour, fields.minute, fields.second, fields.microsecond, fields.fold)
-        || !checkTzInfo(globalObject, state, tzinfo)) [[unlikely]]
+        || failed(scope, checkTimeFields(globalObject, fields.hour, fields.minute, fields.second, fields.microsecond, fields.fold))
+        || failed(scope, checkTzInfo(globalObject, state, tzinfo))) [[unlikely]]
         return { };
     RELEASE_AND_RETURN(scope, PyDateTime::create(getVM(globalObject), state.dateTimeStructure.get(), type, Packed::all(fields), tzinfo));
 }

@@ -176,9 +176,11 @@ static bool warningsSearchFilters(JSGlobalObject* globalObject, JSValue category
             return false;
         }
         Matched message = warningsCheckMatched(globalObject, filter->at(1), text, { });
+        EXCEPTION_ASSERT(!!scope.exception() == (message == Matched::Error));
         if (message == Matched::Error)
             return false;
         Matched moduleMatch = warningsCheckMatched(globalObject, filter->at(3), module, filename);
+        EXCEPTION_ASSERT(!!scope.exception() == (moduleMatch == Matched::Error));
         if (moduleMatch == Matched::Error)
             return false;
         bool categoryMatches = isSubclass(globalObject, category, filter->at(2));
@@ -225,7 +227,7 @@ static JSValue warningsGetFilter(JSGlobalObject* globalObject, JSValue category,
         JSArray* list = tryAsList(listGet(state, WarningsFilters));
         if (!list)
             return raiseValueError(globalObject, scope, "_warnings.filters must be a list"_s);
-        if (!warningsSearchFilters(globalObject, category, text, lineno, module, filename, "filters"_s, list, item, action))
+        if (failed(scope, warningsSearchFilters(globalObject, category, text, lineno, module, filename, "filters"_s, list, item, action)))
             return { };
         if (action)
             return action;
@@ -373,6 +375,7 @@ static bool warningsWarnExplicit(JSGlobalObject* globalObject, JSValue category,
     JSValue key = PyTuple::create(globalObject, { text, category, jsNumber(lineno) });
     if (registry) {
         int seen = warningsAlreadyWarned(globalObject, registry, key, false);
+        EXCEPTION_ASSERT(!!scope.exception() == (seen < 0));
         if (seen < 0)
             return false;
         if (seen)
@@ -505,10 +508,11 @@ bool warnAbout(JSGlobalObject* globalObject, PyType* category, const String& mes
 bool warnExplicit(JSGlobalObject* globalObject, PyType* category, const String& message, const String& filename, int lineno, JSValue module)
 {
     VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     WarningsLocker locker(globalObject);
     if (!locker)
         return false;
-    return warningsWarnExplicit(globalObject, category, makeStr(vm, message), makeStr(vm, filename), lineno, module && !isNone(module) ? module : JSValue(), { }, { }, { });
+    RELEASE_AND_RETURN(scope, warningsWarnExplicit(globalObject, category, makeStr(vm, message), makeStr(vm, filename), lineno, module && !isNone(module) ? module : JSValue(), { }, { }, { }));
 }
 
 // ---- The module ----
@@ -659,12 +663,17 @@ static constexpr NativeDef warningsFunctions[] = {
 
 void initializeWarningsModule(JSGlobalObject* globalObject, PyModule* module)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     module->addFunctions(globalObject, warningsFunctions);
     JSArray* state = warningsState(globalObject);
+    RETURN_IF_EXCEPTION(scope, void());
     module->add(globalObject, "filters"_s, listGet(state, WarningsFilters));
     module->add(globalObject, "_onceregistry"_s, listGet(state, WarningsOnceRegistry));
     module->add(globalObject, "_defaultaction"_s, listGet(state, WarningsDefaultAction));
-    if (JSValue variable = warningsContextVariable(globalObject))
+    JSValue variable = warningsContextVariable(globalObject);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (variable)
         module->add(globalObject, "_warnings_context"_s, variable);
 }
 

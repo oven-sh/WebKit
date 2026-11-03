@@ -471,7 +471,7 @@ static JSValue impSourceHash(JSGlobalObject* globalObject, JSValue key, JSValue 
     int64_t seed = toInt64(globalObject, key);
     RETURN_IF_EXCEPTION(scope, { });
     std::span<const uint8_t> bytes;
-    if (!getBytesLike(globalObject, source, bytes))
+    if (failed(scope, getBytesLike(globalObject, source, bytes)))
         return { };
     uint64_t hash = hashOfSource(static_cast<uint64_t>(seed), bytes);
     uint8_t result[8];

@@ -93,6 +93,7 @@ public:
         case StringOrStringObjectUse:
         case NotStringVarUse:
         case NotSymbolUse:
+        case NotPyObjectUse:
         case NotCellUse:
         case NotCellNorBigIntUse:
         case OtherUse:

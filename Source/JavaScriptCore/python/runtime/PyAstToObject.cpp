@@ -53,9 +53,12 @@ private:
     {
         if (m_failed)
             return { };
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(m_vm);
         PyTuple* names = m_state.fields(id);
         ASSERT(names->length() == fields.size());
         PyDict* dict = PyDict::createWithCapacity(m_globalObject, fields.size() + (range ? 4 : 0));
+        if (noteFailure(scope))
+            return { };
         unsigned index = 0;
         for (JSValue value : fields)
             dict->set(m_vm, asString(names->at(index++)), value);
@@ -67,7 +70,18 @@ private:
         }
         PyInstance* instance = PyInstance::create(m_vm, m_state.type(id));
         instance->setDict(m_globalObject, dict);
+        if (noteFailure(scope))
+            return { };
         return instance;
+    }
+
+    // What goes wrong is remembered in m_failed, which is what the builder looks at. The exception stays pending for whoever
+    // called build().
+    bool noteFailure(TopExceptionScope& scope)
+    {
+        if (scope.exception()) [[unlikely]]
+            m_failed = true;
+        return m_failed;
     }
 
     template<typename T, typename Function>
@@ -75,16 +89,17 @@ private:
     {
         if (m_failed)
             return { };
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(m_vm);
         JSArray* result = newList(m_globalObject, items.size());
-        if (!result) {
-            m_failed = true;
+        if (noteFailure(scope))
             return { };
-        }
         for (T item : items) {
             JSValue value = convert(item);
             if (m_failed)
                 return { };
             listAppend(m_globalObject, result, value);
+            if (noteFailure(scope))
+                return { };
         }
         return result;
     }

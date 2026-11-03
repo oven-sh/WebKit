@@ -489,6 +489,7 @@ static JSValue functoolsCacheNew(JSGlobalObject* globalObject, JSValue cls, cons
     record->set(vm, FunctoolsCache::CacheInfoType, values[3]);
     record->set(vm, FunctoolsCache::KeywordMark, keywordMark);
     record->set(vm, FunctoolsCache::LinkType, rt.typeFor(functoolsLinkTypeDef));
+    RETURN_IF_EXCEPTION(scope, { });
     record->set(vm, FunctoolsCache::IsTyped, jsBoolean(isTyped));
     record->set(vm, FunctoolsCache::Hits, jsNumber(0));
     record->set(vm, FunctoolsCache::Misses, jsNumber(0));

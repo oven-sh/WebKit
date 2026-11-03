@@ -4959,6 +4959,7 @@ void initializeExpatModule(JSGlobalObject* globalObject, PyModule* module)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     module->add(globalObject, "__doc__"_s, makeStr(vm, "Python wrapper for Expat parser."_s));
     module->addFunctions(globalObject, expatFunctions);
     module->add(globalObject, "error"_s, expatErrorType(globalObject));
@@ -4980,8 +4981,10 @@ void initializeExpatModule(JSGlobalObject* globalObject, PyModule* module)
         { "XML_BLAP_MAX_AMP"_s, 100 }, { "XML_BLAP_ACT_THRES"_s, 8388608 }, { "XML_GE"_s, 0 }, { "XML_AT_MAX_AMP"_s, 100 }, { "XML_AT_ACT_THRES"_s, 67108864 },
     };
     JSArray* featureList = newList(globalObject);
-    for (auto& feature : features)
+    for (auto& feature : features) {
         listAppend(globalObject, featureList, PyTuple::create(globalObject, { makeStr(vm, feature.name), jsNumber(feature.value) }));
+        RETURN_IF_EXCEPTION(scope, void());
+    }
     module->add(globalObject, "features"_s, featureList);
 
     PyModule* errors = PyModule::create(globalObject, "pyexpat.errors"_s);
@@ -4992,12 +4995,15 @@ void initializeExpatModule(JSGlobalObject* globalObject, PyModule* module)
         JSValue message = makeStr(vm, expatErrors[code].message);
         errors->add(globalObject, expatErrors[code].name, message);
         codes->set(globalObject, message, jsNumber(code));
+        RETURN_IF_EXCEPTION(scope, void());
         messages->set(globalObject, jsNumber(code), message);
+        RETURN_IF_EXCEPTION(scope, void());
     }
     errors->add(globalObject, "codes"_s, codes);
     errors->add(globalObject, "messages"_s, messages);
     module->add(globalObject, "errors"_s, errors);
     rt.modules()->set(globalObject, makeStr(vm, "pyexpat.errors"_s), errors);
+    RETURN_IF_EXCEPTION(scope, void());
 
     PyModule* model = PyModule::create(globalObject, "pyexpat.model"_s);
     model->add(globalObject, "__doc__"_s, makeStr(vm, "Constants used to interpret content model information."_s));
@@ -5010,6 +5016,7 @@ void initializeExpatModule(JSGlobalObject* globalObject, PyModule* module)
     for (int i = 0; i < 4; ++i)
         model->add(globalObject, modelNames[6 + i], jsNumber(i));
     module->add(globalObject, "model"_s, model);
+    scope.release();
     rt.modules()->set(globalObject, makeStr(vm, "pyexpat.model"_s), model);
 }
 

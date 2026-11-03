@@ -253,7 +253,7 @@ static JSValue rangeGetItem(JSGlobalObject* globalObject, JSValue self, JSValue 
     if (!slice)
         return raiseTypeError(globalObject, scope, "range indices must be integers or slices, not "_s, typeName(globalObject, key));
     JSValue start, stop, step;
-    if (!longSliceIndices(globalObject, slice, range->length(), start, stop, step))
+    if (failed(scope, longSliceIndices(globalObject, slice, range->length(), start, stop, step)))
         return { };
     JSValue newStep = intMultiply(globalObject, range->step(), step);
     RETURN_IF_EXCEPTION(scope, { });
@@ -347,6 +347,7 @@ static int64_t findByIteration(JSGlobalObject* globalObject, JSValue sequence, J
         ++index;
         return true;
     });
+    scope.release();
     return found;
 }
 
@@ -613,7 +614,7 @@ static JSValue sliceIndices(JSGlobalObject* globalObject, JSValue self, JSValue 
     if (intSign(length) < 0)
         return raiseValueError(globalObject, scope, "length should not be negative"_s);
     JSValue start, stop, step;
-    if (!longSliceIndices(globalObject, PySlice::from(self), length, start, stop, step))
+    if (failed(scope, longSliceIndices(globalObject, PySlice::from(self), length, start, stop, step)))
         return { };
     RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { start, stop, step }));
 }

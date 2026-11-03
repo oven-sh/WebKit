@@ -93,7 +93,8 @@ PyBytes* PyBytes::create(JSGlobalObject* globalObject, std::span<const uint8_t> 
 
 bool ByteBuilder::makeRoomSlow(size_t count)
 {
-    static constexpr size_t limit = std::numeric_limits<unsigned>::max(); // Of a Vector.
+    static constexpr size_t limit = std::numeric_limits<int32_t>::max(); // Of a Vector.
+    static_assert(WTF::isValidCapacityForVector<uint8_t>(limit) && !WTF::isValidCapacityForVector<uint8_t>(limit + 1));
     size_t size = m_bytes.size();
     if (m_hasOverflowed || count > limit - size) {
         m_hasOverflowed = true;
@@ -643,7 +644,7 @@ static JSValue bytesFromBufferOrIterable(JSGlobalObject* globalObject, JSValue o
     if (isBytesLike(object)) {
         // The items of a memoryview need not follow one another.
         BufferHolder holder(globalObject);
-        if (!holder.get(object, BufferFullRO))
+        if (failed(scope, holder.get(object, BufferFullRO)))
             return { };
         JSValue result;
         uint8_t* data;
@@ -674,7 +675,7 @@ static JSValue bytesFromBufferOrIterable(JSGlobalObject* globalObject, JSValue o
     }
     if (!isStr(object)) {
         JSValue iterator = getIter(globalObject, object);
-        if (iterator) {
+        if (!failed(scope, iterator)) {
             int64_t hint = lengthHint(globalObject, object, 64);
             RETURN_IF_EXCEPTION(scope, { });
             if (static_cast<uint64_t>(hint) > maxLengthOfBytes)
@@ -777,7 +778,9 @@ static bool bytesParseConstructorArguments(JSGlobalObject* globalObject, ASCIILi
         return false;
     }
     result.source = values[0];
-    RELEASE_AND_RETURN(scope, bytesOptionalStr(globalObject, values[1], function, "encoding"_s, result.encoding) && bytesOptionalStr(globalObject, values[2], function, "errors"_s, result.errors));
+    if (failed(scope, bytesOptionalStr(globalObject, values[1], function, "encoding"_s, result.encoding)))
+        return false;
+    RELEASE_AND_RETURN(scope, bytesOptionalStr(globalObject, values[2], function, "errors"_s, result.errors));
 }
 
 static JSValue bytesNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs& args)
@@ -787,7 +790,7 @@ static JSValue bytesNew(JSGlobalObject* globalObject, JSValue cls, const CallArg
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyType* type = PyType::from(cls);
     BytesConstructorArguments arguments;
-    if (!bytesParseConstructorArguments(globalObject, "bytes"_s, args, arguments))
+    if (failed(scope, bytesParseConstructorArguments(globalObject, "bytes"_s, args, arguments)))
         return { };
     JSValue source = arguments.source;
 
@@ -860,7 +863,7 @@ static bool byteArrayInitialize(JSGlobalObject* globalObject, PyByteArray* array
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (failed(scope, byteArrayCanResize(globalObject, array)) || !array->resize(globalObject, 0))
+    if (failed(scope, byteArrayCanResize(globalObject, array)) || failed(scope, array->resize(globalObject, 0)))
         return false;
 
     auto raiseWithoutString = [&] {
@@ -900,7 +903,7 @@ static bool byteArrayInitialize(JSGlobalObject* globalObject, PyByteArray* array
 
     if (isBytesLike(source)) {
         BufferHolder holder(globalObject);
-        if (!holder.get(source, BufferFullRO) || !array->resize(globalObject, holder.buffer.length))
+        if (failed(scope, holder.get(source, BufferFullRO)) || failed(scope, array->resize(globalObject, holder.buffer.length)))
             return false;
         copyBufferToContiguous(array->mutableSpan().data(), holder.buffer, 'C');
         return true;
@@ -929,7 +932,7 @@ static bool byteArrayInitialize(JSGlobalObject* globalObject, PyByteArray* array
     }
 
     JSValue iterator = getIter(globalObject, source);
-    if (!iterator) {
+    if (failed(scope, iterator)) {
         if (clearPendingExceptionIfMatches(globalObject, rt.TypeError()))
             raiseTypeError(globalObject, scope, "cannot convert '"_s, typeName(globalObject, source), "' object to bytearray"_s);
         return false;
@@ -943,7 +946,7 @@ static bool byteArrayInitialize(JSGlobalObject* globalObject, PyByteArray* array
         if (failed(scope, bytesByteValue(globalObject, item, byte)))
             return false;
         // What is iterated over may be looking at the array, so it grows as it goes.
-        if (!array->resize(globalObject, array->length() + 1))
+        if (failed(scope, array->resize(globalObject, array->length() + 1)))
             return false;
         array->mutableSpan().back() = byte;
     }
@@ -957,10 +960,12 @@ static JSValue byteArrayNew(JSGlobalObject* globalObject, JSValue cls, const Cal
 
 static JSValue byteArrayInit(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     BytesConstructorArguments arguments;
-    if (!bytesParseConstructorArguments(globalObject, "bytearray"_s, args, arguments))
+    if (failed(scope, bytesParseConstructorArguments(globalObject, "bytearray"_s, args, arguments)))
         return { };
-    if (!byteArrayInitialize(globalObject, PyByteArray::from(self), arguments.source, arguments.encoding, arguments.errors))
+    if (failed(scope, byteArrayInitialize(globalObject, PyByteArray::from(self), arguments.source, arguments.encoding, arguments.errors)))
         return { };
     return jsUndefined();
 }
@@ -989,15 +994,17 @@ static JSValue bytesHashMethod(JSGlobalObject* globalObject, JSValue self)
 template<CompareOperator op>
 static JSValue bytesCompareMethod(JSGlobalObject* globalObject, JSValue self, JSValue other)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     // bytes are compared with bytes; a bytearray, with anything that has bytes to show.
     if (bytesIsArray(self) ? !isBytesLike(other) : !PyBytes::is(other))
-        return runtime(globalObject).notImplemented();
+        RELEASE_AND_RETURN(scope, runtime(globalObject).notImplemented());
     std::span<const uint8_t> a;
     std::span<const uint8_t> b;
     bool selfRunsCode = bytesIsArray(self) && getBufferRunsCode(self);
-    if ((selfRunsCode && !getBytesLike(globalObject, self, a)) || !getBytesLike(globalObject, other, b)) {
+    if ((selfRunsCode && failed(scope, getBytesLike(globalObject, self, a))) || failed(scope, getBytesLike(globalObject, other, b))) {
         takePendingException(globalObject);
-        return runtime(globalObject).notImplemented();
+        RELEASE_AND_RETURN(scope, runtime(globalObject).notImplemented());
     }
     if (!selfRunsCode)
         a = bytesSpanOf(self);
@@ -1050,7 +1057,7 @@ static JSValue bytesGetItem(JSGlobalObject* globalObject, JSValue self, JSValue 
     if (!slice)
         return raiseTypeError(globalObject, scope, isArray ? "bytearray"_s : "byte"_s, " indices must be integers or slices, not "_s, typeName(globalObject, key));
     PySlice::Indices indices;
-    if (!bytesSliceIndices(globalObject, self, slice, indices))
+    if (failed(scope, bytesSliceIndices(globalObject, self, slice, indices)))
         return { };
     if (indices.length <= 0)
         RELEASE_AND_RETURN(scope, bytesMake(globalObject, isArray, { }));
@@ -1083,7 +1090,7 @@ static JSValue bytesContains(JSGlobalObject* globalObject, JSValue self, JSValue
         takePendingException(globalObject);
     }
     std::span<const uint8_t> needle;
-    if (!getBytesLike(globalObject, item, needle))
+    if (failed(scope, getBytesLike(globalObject, item, needle)))
         return { };
     return jsBoolean(bytesSearch(bytesSpanOf(self), needle) != notFound);
 }
@@ -1095,7 +1102,7 @@ static JSValue bytesAdd(JSGlobalObject* globalObject, JSValue self, JSValue othe
     std::span<const uint8_t> a;
     std::span<const uint8_t> b;
     bool selfRunsCode = getBufferRunsCode(self);
-    if ((selfRunsCode && !getBytesLike(globalObject, self, a)) || !isBytesLike(other) || !getBytesLike(globalObject, other, b)) {
+    if ((selfRunsCode && failed(scope, getBytesLike(globalObject, self, a))) || !isBytesLike(other) || failed(scope, getBytesLike(globalObject, other, b))) {
         takePendingException(globalObject);
         return raiseTypeError(globalObject, scope, "can't concat "_s, typeName(globalObject, other), " to "_s, typeName(globalObject, self));
     }
@@ -1207,11 +1214,11 @@ static JSValue bytesFindMethod(JSGlobalObject* globalObject, JSValue self, JSVal
     auto scope = DECLARE_THROW_SCOPE(vm);
     int64_t from;
     int64_t to;
-    if (!unpackSliceBounds(globalObject, start, end, from, to))
+    if (failed(scope, unpackSliceBounds(globalObject, start, end, from, to)))
         return { };
     std::span<const uint8_t> sub;
     uint8_t byte;
-    if (!bytesSubArgument(globalObject, self, subValue, sub, byte))
+    if (failed(scope, bytesSubArgument(globalObject, self, subValue, sub, byte)))
         return { };
     auto whole = bytesSpanOf(self);
     adjustSliceBounds(whole.size(), from, to);
@@ -1229,13 +1236,15 @@ static JSValue bytesFindMethod(JSGlobalObject* globalObject, JSValue self, JSVal
 
 static JSValue bytesCount(JSGlobalObject* globalObject, JSValue self, JSValue subValue, JSValue start, JSValue end)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int64_t from;
     int64_t to;
-    if (!unpackSliceBounds(globalObject, start, end, from, to))
+    if (failed(scope, unpackSliceBounds(globalObject, start, end, from, to)))
         return { };
     std::span<const uint8_t> sub;
     uint8_t byte;
-    if (!bytesSubArgument(globalObject, self, subValue, sub, byte))
+    if (failed(scope, bytesSubArgument(globalObject, self, subValue, sub, byte)))
         return { };
     auto whole = bytesSpanOf(self);
     adjustSliceBounds(whole.size(), from, to);
@@ -1279,7 +1288,7 @@ static JSValue bytesStartsOrEndsWith(JSGlobalObject* globalObject, JSValue self,
     auto scope = DECLARE_THROW_SCOPE(vm);
     int64_t from;
     int64_t to;
-    if (!unpackSliceBounds(globalObject, start, end, from, to))
+    if (failed(scope, unpackSliceBounds(globalObject, start, end, from, to)))
         return { };
     // The bounds are good for as long as the size stays what it is, whatever a __buffer__() tries.
     BytesExportScope exportScope(self);
@@ -1287,7 +1296,7 @@ static JSValue bytesStartsOrEndsWith(JSGlobalObject* globalObject, JSValue self,
     std::span<const uint8_t> affix;
     if (auto* tuple = PyTuple::tryFrom(affixValue)) {
         for (unsigned i = 0; i < tuple->length(); ++i) {
-            if (!getBytesLike(globalObject, tuple->at(i), affix))
+            if (failed(scope, getBytesLike(globalObject, tuple->at(i), affix)))
                 return { };
             if (bytesTailMatches<atEnd>(bytesSpanOf(self), affix, from, to))
                 return jsBoolean(true);
@@ -1296,31 +1305,35 @@ static JSValue bytesStartsOrEndsWith(JSGlobalObject* globalObject, JSValue self,
     }
     if (!isBytesLike(affixValue))
         return raiseTypeError(globalObject, scope, atEnd ? "endswith"_s : "startswith"_s, " first arg must be bytes or a tuple of bytes, not "_s, typeName(globalObject, affixValue));
-    if (!getBytesLike(globalObject, affixValue, affix))
+    if (failed(scope, getBytesLike(globalObject, affixValue, affix)))
         return { };
     return jsBoolean(bytesTailMatches<atEnd>(bytesSpanOf(self), affix, from, to));
 }
 
 static JSValue bytesRemovePrefix(JSGlobalObject* globalObject, JSValue self, JSValue prefixValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     std::span<const uint8_t> prefix;
-    if (!getBytesLike(globalObject, prefixValue, prefix))
+    if (failed(scope, getBytesLike(globalObject, prefixValue, prefix)))
         return { };
     auto span = bytesSpanOf(self);
     if (span.size() >= prefix.size() && (prefix.empty() || !memcmp(span.data(), prefix.data(), prefix.size())))
-        return bytesPart(globalObject, self, prefix.size(), span.size());
-    return bytesSelfOrCopy(globalObject, self);
+        RELEASE_AND_RETURN(scope, bytesPart(globalObject, self, prefix.size(), span.size()));
+    RELEASE_AND_RETURN(scope, bytesSelfOrCopy(globalObject, self));
 }
 
 static JSValue bytesRemoveSuffix(JSGlobalObject* globalObject, JSValue self, JSValue suffixValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     std::span<const uint8_t> suffix;
-    if (!getBytesLike(globalObject, suffixValue, suffix))
+    if (failed(scope, getBytesLike(globalObject, suffixValue, suffix)))
         return { };
     auto span = bytesSpanOf(self);
     if (span.size() >= suffix.size() && (suffix.empty() || !memcmp(span.data() + span.size() - suffix.size(), suffix.data(), suffix.size())))
-        return bytesPart(globalObject, self, 0, span.size() - suffix.size());
-    return bytesSelfOrCopy(globalObject, self);
+        RELEASE_AND_RETURN(scope, bytesPart(globalObject, self, 0, span.size() - suffix.size()));
+    RELEASE_AND_RETURN(scope, bytesSelfOrCopy(globalObject, self));
 }
 
 // ---- Splitting and joining ----
@@ -1364,7 +1377,7 @@ static bool bytesSeparatorArgument(JSGlobalObject* globalObject, JSValue separat
     onWhitespace = !separatorValue || isNone(separatorValue);
     if (onWhitespace)
         return true;
-    if (!getBytesLike(globalObject, separatorValue, separator))
+    if (failed(scope, getBytesLike(globalObject, separatorValue, separator)))
         return false;
     if (separator.empty()) {
         raiseValueError(globalObject, scope, "empty separator"_s);
@@ -1383,7 +1396,7 @@ static JSValue bytesSplit(JSGlobalObject* globalObject, JSValue self, JSValue se
     if (failed(scope, bytesMaxSplitArgument(globalObject, maxSplitValue, maxSplit)))
         return { };
     BytesExportScope exportScope(self);
-    if (!bytesSeparatorArgument(globalObject, separatorValue, onWhitespace, separator))
+    if (failed(scope, bytesSeparatorArgument(globalObject, separatorValue, onWhitespace, separator)))
         return { };
     auto span = bytesSpanOf(self);
     size_t length = span.size();
@@ -1430,7 +1443,7 @@ static JSValue bytesRSplit(JSGlobalObject* globalObject, JSValue self, JSValue s
     if (failed(scope, bytesMaxSplitArgument(globalObject, maxSplitValue, maxSplit)))
         return { };
     BytesExportScope exportScope(self);
-    if (!bytesSeparatorArgument(globalObject, separatorValue, onWhitespace, separator))
+    if (failed(scope, bytesSeparatorArgument(globalObject, separatorValue, onWhitespace, separator)))
         return { };
     auto span = bytesSpanOf(self);
     BytesRanges ranges;
@@ -1498,7 +1511,7 @@ static JSValue bytesPartition(JSGlobalObject* globalObject, JSValue self, JSValu
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     std::span<const uint8_t> separator;
-    if (!getBytesLike(globalObject, separatorValue, separator))
+    if (failed(scope, getBytesLike(globalObject, separatorValue, separator)))
         return { };
     if (separator.empty())
         return raiseValueError(globalObject, scope, "empty separator"_s);
@@ -1612,7 +1625,7 @@ static JSValue bytesJoin(JSGlobalObject* globalObject, JSValue self, JSValue ite
     JSArray* list = isExactList(iterable) ? asList(iterable) : nullptr;
     if (!tuple && !list) {
         JSValue iterator = getIter(globalObject, iterable);
-        if (!iterator) {
+        if (failed(scope, iterator)) {
             if (clearPendingExceptionIfMatches(globalObject, rt.TypeError()))
                 raiseTypeError(globalObject, scope, "can only join an iterable"_s);
             return { };
@@ -1642,7 +1655,7 @@ static JSValue bytesJoin(JSGlobalObject* globalObject, JSValue self, JSValue ite
     for (unsigned i = 0; i < count; ++i) {
         JSValue item = itemAt(i);
         std::span<const uint8_t> span;
-        if (!isBytesLike(item) || !getBytesLike(globalObject, item, span))
+        if (!isBytesLike(item) || failed(scope, getBytesLike(globalObject, item, span)))
             return raiseNotBytesLike(i, item);
         total += span.size() + (i ? separator.size() : 0);
         if (total > static_cast<uint64_t>(bytesMaxSsize))
@@ -1659,7 +1672,7 @@ static JSValue bytesJoin(JSGlobalObject* globalObject, JSValue self, JSValue ite
         }
         std::span<const uint8_t> span;
         bool ok = getBytesLike(globalObject, itemAt(i), span);
-        ASSERT_UNUSED(ok, ok);
+        EXCEPTION_ASSERT_UNUSED(ok, ok && !scope.exception());
         if (!span.empty()) {
             memcpy(data, span.data(), span.size());
             data += span.size();
@@ -1676,14 +1689,14 @@ static JSValue bytesReplace(JSGlobalObject* globalObject, JSValue self, JSValue 
     auto scope = DECLARE_THROW_SCOPE(vm);
     std::span<const uint8_t> from;
     std::span<const uint8_t> to;
-    if (!getBytesLike(globalObject, oldValue, from) || !getBytesLike(globalObject, newValue, to))
+    if (failed(scope, getBytesLike(globalObject, oldValue, from)) || failed(scope, getBytesLike(globalObject, newValue, to)))
         return { };
     int64_t maxCount = -1;
     if (countValue) {
         if (failed(scope, bytesSsizeArgument(globalObject, countValue, maxCount)))
             return { };
         // That may have run code.
-        if (!getBytesLike(globalObject, oldValue, from) || !getBytesLike(globalObject, newValue, to))
+        if (failed(scope, getBytesLike(globalObject, oldValue, from)) || failed(scope, getBytesLike(globalObject, newValue, to)))
             return { };
     }
     bool isArray = bytesIsArray(self);
@@ -1752,7 +1765,7 @@ static JSValue bytesTranslate(JSGlobalObject* globalObject, JSValue self, JSValu
             map[i] = i;
     } else {
         std::span<const uint8_t> table;
-        if (!getBytesLike(globalObject, tableValue, table))
+        if (failed(scope, getBytesLike(globalObject, tableValue, table)))
             return { };
         if (table.size() != 256)
             return raiseValueError(globalObject, scope, "translation table must be 256 characters long"_s);
@@ -1761,7 +1774,7 @@ static JSValue bytesTranslate(JSGlobalObject* globalObject, JSValue self, JSValu
     }
     if (deleteValue) {
         std::span<const uint8_t> deleted;
-        if (!getBytesLike(globalObject, deleteValue, deleted))
+        if (failed(scope, getBytesLike(globalObject, deleteValue, deleted)))
             return { };
         for (uint8_t byte : deleted)
             map[byte] = -1;
@@ -1793,7 +1806,7 @@ static JSValue bytesMakeTrans(JSGlobalObject* globalObject, JSValue fromValue, J
     auto scope = DECLARE_THROW_SCOPE(vm);
     std::span<const uint8_t> from;
     std::span<const uint8_t> to;
-    if (!getBytesLike(globalObject, fromValue, from) || !getBytesLike(globalObject, toValue, to))
+    if (failed(scope, getBytesLike(globalObject, fromValue, from)) || failed(scope, getBytesLike(globalObject, toValue, to)))
         return { };
     if (from.size() != to.size())
         return raiseValueError(globalObject, scope, "maketrans arguments must have same length"_s);
@@ -1815,13 +1828,15 @@ enum class BytesStripSide : uint8_t { Left, Right, Both };
 template<BytesStripSide side>
 static JSValue bytesStrip(JSGlobalObject* globalObject, JSValue self, JSValue bytesValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     std::array<bool, 256> strips { };
     if (!bytesValue || isNone(bytesValue)) {
         for (unsigned i = 0; i < 256; ++i)
             strips[i] = bytesIsSpace(i);
     } else {
         std::span<const uint8_t> bytes;
-        if (!getBytesLike(globalObject, bytesValue, bytes))
+        if (failed(scope, getBytesLike(globalObject, bytesValue, bytes)))
             return { };
         for (uint8_t byte : bytes)
             strips[byte] = true;
@@ -1837,7 +1852,7 @@ static JSValue bytesStrip(JSGlobalObject* globalObject, JSValue self, JSValue by
         while (to > from && strips[span[to - 1]])
             --to;
     }
-    return bytesPart(globalObject, self, from, to);
+    RELEASE_AND_RETURN(scope, bytesPart(globalObject, self, from, to));
 }
 
 static JSValue bytesPad(JSGlobalObject* globalObject, JSValue self, int64_t left, int64_t right, uint8_t fill)
@@ -2067,11 +2082,13 @@ static JSValue bytesIsTitle(JSGlobalObject*, JSValue self)
 
 static JSValue bytesDecodeMethod(JSGlobalObject* globalObject, JSValue self, JSValue encodingValue, JSValue errorsValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSString* encoding;
     JSString* errors;
-    if (!bytesOptionalStr(globalObject, encodingValue, "decode"_s, "encoding"_s, encoding) || !bytesOptionalStr(globalObject, errorsValue, "decode"_s, "errors"_s, errors))
+    if (failed(scope, bytesOptionalStr(globalObject, encodingValue, "decode"_s, "encoding"_s, encoding)) || failed(scope, bytesOptionalStr(globalObject, errorsValue, "decode"_s, "errors"_s, errors)))
         return { };
-    return bytesDecode(globalObject, self, encoding, errors);
+    RELEASE_AND_RETURN(scope, bytesDecode(globalObject, self, encoding, errors));
 }
 
 static JSValue bytesHex(JSGlobalObject* globalObject, JSValue self, JSValue separatorValue, JSValue bytesPerSeparatorValue)
@@ -2154,7 +2171,7 @@ static JSValue bytesFromHexText(JSGlobalObject* globalObject, JSValue source, bo
         }
         input = text.span();
     } else if (isBytesLike(source)) {
-        if (!getBytesLike(globalObject, source, input))
+        if (failed(scope, getBytesLike(globalObject, source, input)))
             return { };
     } else
         return raiseTypeError(globalObject, scope, "fromhex() argument must be str or bytes-like, not "_s, bytesFullTypeName(globalObject, source));
@@ -2270,6 +2287,7 @@ static String bytesFormatInteger(BytesFormatter& f, JSValue value, bool alternat
         integer = intValue(value);
     else if (bytesIsNumberLike(globalObject, value)) {
         integer = needsInteger ? toIndex(globalObject, value) : toInt(globalObject, value);
+        EXCEPTION_ASSERT(!!scope.exception() == !integer);
         if (!integer && !clearPendingExceptionIfMatches(globalObject, rt.TypeError()))
             return { };
     }
@@ -2342,14 +2360,13 @@ JSValue bytesFormatPercent(JSGlobalObject* globalObject, std::span<const uint8_t
     // What is formatted runs code, which may change the bytearray the format is.
     Vector<uint8_t, 128> format;
     format.append(formatBytes);
-    Vector<uint8_t, 256> out;
+    ByteBuilder out;
     auto appendFill = [&](uint8_t fill, int64_t count) {
-        size_t size = out.size();
-        if (static_cast<uint64_t>(count) > bytesMaxLength || !out.tryGrow(size + count)) {
+        out.appendRepeated(fill, count);
+        if (out.hasOverflowed()) {
             raiseMemoryError(globalObject, scope, String());
             return false;
         }
-        memset(out.mutableSpan().data() + size, fill, count);
         return true;
     };
 
@@ -2628,6 +2645,8 @@ JSValue bytesFormatPercent(JSGlobalObject* globalObject, std::span<const uint8_t
 
     if (f.argumentIndex < f.argumentCount && !mapping)
         return raiseTypeError(globalObject, scope, "not all arguments converted during bytes formatting (required "_s, f.argumentCount < 0 ? 0 : f.argumentIndex, ", got "_s, f.argumentCount < 0 ? 1 : f.argumentCount, ')');
+    if (out.hasOverflowed())
+        return raiseMemoryError(globalObject, scope, String());
     RELEASE_AND_RETURN(scope, bytesMake(globalObject, makeByteArray, out.span()));
 }
 
@@ -2649,10 +2668,10 @@ static bool byteArrayReplaceRange(JSGlobalObject* globalObject, PyByteArray* arr
             return false;
         uint8_t* data = array->mutableSpan().data();
         memmove(data + lo + bytes.size(), data + hi, size - hi);
-        if (!array->resize(globalObject, size - (removed - bytes.size())))
+        if (failed(scope, array->resize(globalObject, size - (removed - bytes.size()))))
             return false;
     } else if (bytes.size() > removed) {
-        if (!array->resize(globalObject, size + (bytes.size() - removed)))
+        if (failed(scope, array->resize(globalObject, size + (bytes.size() - removed))))
             return false;
         uint8_t* data = array->mutableSpan().data();
         memmove(data + lo + bytes.size(), data + hi, size - hi);
@@ -2690,7 +2709,7 @@ static JSValue byteArrayAssign(JSGlobalObject* globalObject, JSValue self, JSVal
         }
         indices = { index, index + 1, 1, 1 };
     } else if (slice) {
-        if (!bytesSliceIndices(globalObject, self, slice, indices))
+        if (failed(scope, bytesSliceIndices(globalObject, self, slice, indices)))
             return { };
     } else
         return raiseTypeError(globalObject, scope, "bytearray indices must be integers or slices, not "_s, typeName(globalObject, key));
@@ -2704,10 +2723,10 @@ static JSValue byteArrayAssign(JSGlobalObject* globalObject, JSValue self, JSVal
                 return raiseTypeError(globalObject, scope, "can assign only bytes, buffers, or iterables of ints in range(0, 256)"_s);
             PyByteArray* copy = PyByteArray::create(vm, rt.structure<PyByteArray>(), rt.bytearrayType());
             holder = copy;
-            if (!byteArrayInitialize(globalObject, copy, values, nullptr, nullptr))
+            if (failed(scope, byteArrayInitialize(globalObject, copy, values, nullptr, nullptr)))
                 return { };
             // Iterating may have resized the array.
-            if (!bytesSliceIndices(globalObject, self, slice, indices))
+            if (failed(scope, bytesSliceIndices(globalObject, self, slice, indices)))
                 return { };
         }
         bytes = PyByteArray::from(holder)->span();
@@ -2722,7 +2741,7 @@ static JSValue byteArrayAssign(JSGlobalObject* globalObject, JSValue self, JSVal
         stop = start;
 
     if (step == 1) {
-        bool done = byteArrayReplaceRange(globalObject, array, start, stop, bytes);
+        bool done = !failed(scope, byteArrayReplaceRange(globalObject, array, start, stop, bytes));
         ensureStillAliveHere(holder);
         return done ? jsUndefined() : JSValue();
     }
@@ -2746,7 +2765,7 @@ static JSValue byteArrayAssign(JSGlobalObject* globalObject, JSValue self, JSVal
             int64_t run = i + 1 < count ? step - 1 : size - current - 1;
             memmove(data + current - i, data + current + 1, run);
         }
-        if (!array->resize(globalObject, size - count))
+        if (failed(scope, array->resize(globalObject, size - count)))
             return { };
         return jsUndefined();
     }
@@ -2768,7 +2787,7 @@ static JSValue byteArrayIAdd(JSGlobalObject* globalObject, JSValue self, JSValue
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     std::span<const uint8_t> bytes;
-    if (!isBytesLike(other) || !getBytesLike(globalObject, other, bytes)) {
+    if (!isBytesLike(other) || failed(scope, getBytesLike(globalObject, other, bytes))) {
         takePendingException(globalObject);
         return raiseTypeError(globalObject, scope, "can't concat "_s, typeName(globalObject, other), " to "_s, typeName(globalObject, self));
     }
@@ -2795,7 +2814,7 @@ static JSValue byteArrayIMul(JSGlobalObject* globalObject, JSValue self, JSValue
     size_t size = array->length();
     if (count && size > static_cast<uint64_t>(bytesMaxSsize / count))
         RELEASE_AND_RETURN(scope, bytesRaiseNoMemory(globalObject));
-    if (!array->resize(globalObject, size * count))
+    if (failed(scope, array->resize(globalObject, size * count)))
         return { };
     if (count) {
         uint8_t* data = array->mutableSpan().data();
@@ -2812,7 +2831,7 @@ static JSValue byteArrayAppend(JSGlobalObject* globalObject, JSValue self, JSVal
     if (failed(scope, bytesByteValue(globalObject, item, byte)))
         return { };
     auto* array = PyByteArray::from(self);
-    if (!array->resize(globalObject, array->length() + 1))
+    if (failed(scope, array->resize(globalObject, array->length() + 1)))
         return { };
     array->mutableSpan().back() = byte;
     return jsUndefined();
@@ -2828,7 +2847,7 @@ static JSValue byteArrayInsert(JSGlobalObject* globalObject, JSValue self, JSVal
         return { };
     auto* array = PyByteArray::from(self);
     int64_t size = array->length();
-    if (!array->resize(globalObject, size + 1))
+    if (failed(scope, array->resize(globalObject, size + 1)))
         return { };
     if (index < 0)
         index = std::max<int64_t>(index + size, 0);
@@ -2849,7 +2868,7 @@ static JSValue byteArrayExtend(JSGlobalObject* globalObject, JSValue self, JSVal
         // array[end:end] = iterable, where the end is what it is now: a __buffer__() may resize the array.
         size_t end = array->length();
         std::span<const uint8_t> bytes;
-        if (!getBytesLike(globalObject, iterable, bytes)) {
+        if (failed(scope, getBytesLike(globalObject, iterable, bytes))) {
             takePendingException(globalObject);
             return raiseTypeError(globalObject, scope, "can't set bytearray slice from "_s, typeName(globalObject, iterable));
         }
@@ -2861,7 +2880,7 @@ static JSValue byteArrayExtend(JSGlobalObject* globalObject, JSValue self, JSVal
         return jsUndefined();
     }
     JSValue iterator = getIter(globalObject, iterable);
-    if (!iterator) {
+    if (failed(scope, iterator)) {
         if (clearPendingExceptionIfMatches(globalObject, rt.TypeError()))
             raiseTypeError(globalObject, scope, "can't extend bytearray with "_s, typeName(globalObject, iterable));
         return { };
@@ -2952,7 +2971,7 @@ static JSValue byteArrayResize(JSGlobalObject* globalObject, JSValue self, JSVal
         return { };
     if (size < 0)
         return raiseValueError(globalObject, scope, "Can only resize to positive sizes, got "_s, size);
-    if (!PyByteArray::from(self)->resize(globalObject, size))
+    if (failed(scope, PyByteArray::from(self)->resize(globalObject, size)))
         return { };
     return jsUndefined();
 }

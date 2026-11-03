@@ -261,7 +261,7 @@ static JSValue csvDialectNew(JSGlobalObject* globalObject, JSValue cls, const Ca
     int quoting = CsvQuoteMinimal;
     if (failed(scope, csvSetCharacter(globalObject, "delimiter"_s, delimiterValue, ',', false, delimiter)))
         return { };
-    if (!csvSetBool(globalObject, doubleQuoteValue, true, doubleQuote))
+    if (failed(scope, csvSetBool(globalObject, doubleQuoteValue, true, doubleQuote)))
         return { };
     if (failed(scope, csvSetCharacter(globalObject, "escapechar"_s, escapeCharValue, csvNotSet, true, escapeChar)))
         return { };
@@ -279,9 +279,9 @@ static JSValue csvDialectNew(JSGlobalObject* globalObject, JSValue cls, const Ca
             return raiseOverflowError(globalObject, scope, "Python int too large to convert to C int"_s);
         quoting = static_cast<int>(*value);
     }
-    if (!csvSetBool(globalObject, skipInitialSpaceValue, false, skipInitialSpace))
+    if (failed(scope, csvSetBool(globalObject, skipInitialSpaceValue, false, skipInitialSpace)))
         return { };
-    if (!csvSetBool(globalObject, strictValue, false, strict))
+    if (failed(scope, csvSetBool(globalObject, strictValue, false, strict)))
         return { };
 
     if (quoting < CsvQuoteMinimal || quoting > CsvQuoteNotNull)
@@ -293,11 +293,11 @@ static JSValue csvDialectNew(JSGlobalObject* globalObject, JSValue cls, const Ca
     String lineTerminator = strValue(lineTerminatorValue)->value(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
     if (failed(scope, csvCheckCharacter(globalObject, "delimiter"_s, delimiter, lineTerminator, true))
-        || !csvCheckCharacter(globalObject, "escapechar"_s, escapeChar, lineTerminator, !skipInitialSpace)
-        || !csvCheckCharacter(globalObject, "quotechar"_s, quoteChar, lineTerminator, !skipInitialSpace)
-        || !csvCheckCharacters(globalObject, "delimiter"_s, "escapechar"_s, delimiter, escapeChar)
-        || !csvCheckCharacters(globalObject, "delimiter"_s, "quotechar"_s, delimiter, quoteChar)
-        || !csvCheckCharacters(globalObject, "escapechar"_s, "quotechar"_s, escapeChar, quoteChar))
+        || failed(scope, csvCheckCharacter(globalObject, "escapechar"_s, escapeChar, lineTerminator, !skipInitialSpace))
+        || failed(scope, csvCheckCharacter(globalObject, "quotechar"_s, quoteChar, lineTerminator, !skipInitialSpace))
+        || failed(scope, csvCheckCharacters(globalObject, "delimiter"_s, "escapechar"_s, delimiter, escapeChar))
+        || failed(scope, csvCheckCharacters(globalObject, "delimiter"_s, "quotechar"_s, delimiter, quoteChar))
+        || failed(scope, csvCheckCharacters(globalObject, "escapechar"_s, "quotechar"_s, escapeChar, quoteChar)))
         return { };
 
     PyRecord* self = PyRecord::create(globalObject, PyType::from(cls), CsvDialectFieldCount);

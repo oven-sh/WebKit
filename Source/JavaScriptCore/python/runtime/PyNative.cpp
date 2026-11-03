@@ -324,13 +324,15 @@ static NEVER_INLINE JSValue raiseNativeStackOverflow(JSGlobalObject* globalObjec
 
 static ALWAYS_INLINE JSValue invokeNativeImpl(JSGlobalObject* globalObject, const NativeDef& def, PyNativeFunction* function, JSValue self, const CallArgs& args)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     // Whatever recursion there is among functions written in C++ (the hash of a tuple of tuples...) comes through here.
     if (!getVM(globalObject).isSafeToRecurseSoft()) [[unlikely]]
-        return raiseNativeStackOverflow(globalObject);
+        RELEASE_AND_RETURN(scope, raiseNativeStackOverflow(globalObject));
 
     auto& signature = def.signature;
     if (signature.isVariadic)
-        return signature.hasSelf ? def.pointer.variadicWithSelf(globalObject, self, args) : def.pointer.variadic(globalObject, args);
+        RELEASE_AND_RETURN(scope, signature.hasSelf ? def.pointer.variadicWithSelf(globalObject, self, args) : def.pointer.variadic(globalObject, args));
 
     JSValue values[NativeDef::maxArity + 1];
     unsigned offset = signature.hasSelf;
@@ -341,31 +343,28 @@ static ALWAYS_INLINE JSValue invokeNativeImpl(JSGlobalObject* globalObject, cons
             values[offset + i] = args[i];
     } else if (!bindNativeArgumentsSlow(globalObject, def, function, args, values + offset))
         return { };
-    if ((def.flags & DescriptorGet) && isNone(values[1]) && (!values[2] || isNone(values[2]))) [[unlikely]] {
-        VM& vm = getVM(globalObject);
-        auto scope = DECLARE_THROW_SCOPE(vm);
+    if ((def.flags & DescriptorGet) && isNone(values[1]) && (!values[2] || isNone(values[2]))) [[unlikely]]
         return raiseTypeError(globalObject, scope, "__get__(None, None) is invalid"_s);
-    }
 
     switch (signature.parameterCount + offset) {
     case 0:
-        return def.pointer.f0(globalObject);
+        RELEASE_AND_RETURN(scope, def.pointer.f0(globalObject));
     case 1:
-        return def.pointer.f1(globalObject, values[0]);
+        RELEASE_AND_RETURN(scope, def.pointer.f1(globalObject, values[0]));
     case 2:
-        return def.pointer.f2(globalObject, values[0], values[1]);
+        RELEASE_AND_RETURN(scope, def.pointer.f2(globalObject, values[0], values[1]));
     case 3:
-        return def.pointer.f3(globalObject, values[0], values[1], values[2]);
+        RELEASE_AND_RETURN(scope, def.pointer.f3(globalObject, values[0], values[1], values[2]));
     case 4:
-        return def.pointer.f4(globalObject, values[0], values[1], values[2], values[3]);
+        RELEASE_AND_RETURN(scope, def.pointer.f4(globalObject, values[0], values[1], values[2], values[3]));
     case 5:
-        return def.pointer.f5(globalObject, values[0], values[1], values[2], values[3], values[4]);
+        RELEASE_AND_RETURN(scope, def.pointer.f5(globalObject, values[0], values[1], values[2], values[3], values[4]));
     case 6:
-        return def.pointer.f6(globalObject, values[0], values[1], values[2], values[3], values[4], values[5]);
+        RELEASE_AND_RETURN(scope, def.pointer.f6(globalObject, values[0], values[1], values[2], values[3], values[4], values[5]));
     case 7:
-        return def.pointer.f7(globalObject, values[0], values[1], values[2], values[3], values[4], values[5], values[6]);
+        RELEASE_AND_RETURN(scope, def.pointer.f7(globalObject, values[0], values[1], values[2], values[3], values[4], values[5], values[6]));
     case 8:
-        return def.pointer.f8(globalObject, values[0], values[1], values[2], values[3], values[4], values[5], values[6], values[7]);
+        RELEASE_AND_RETURN(scope, def.pointer.f8(globalObject, values[0], values[1], values[2], values[3], values[4], values[5], values[6], values[7]));
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

@@ -87,6 +87,7 @@ enum UseKind : uint8_t {
     StringOrStringObjectUse,
     NotStringVarUse,
     NotSymbolUse,
+    NotPyObjectUse,
     NotCellUse,
     NotCellNorBigIntUse,
     NotDoubleUse,
@@ -197,6 +198,8 @@ inline SpeculatedType typeFilterFor(UseKind useKind)
         return ~SpecStringVar;
     case NotSymbolUse:
         return ~SpecSymbol;
+    case NotPyObjectUse:
+        return ~SpecPyObject;
     case NotCellUse:
         return ~SpecCellCheck;
     case NotCellNorBigIntUse:

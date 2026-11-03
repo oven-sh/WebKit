@@ -219,8 +219,10 @@ Expr* Parser::parseExpressionOnce()
         if (!test)
             return endsBeforeOperator(beforeIf) ? body : nullptr;
         if (!at(TokenKind::KwElse)) {
-            if (at(TokenKind::Colon))
-                return invalidSyntax();
+            if (m_quiet || at(TokenKind::Colon)) {
+                invalidSyntax();
+                return endsBeforeOperator(beforeIf) ? body : nullptr;
+            }
             return syntaxErrorAt(rangeBetween(body->range, test->range), "expected 'else' after 'if' expression"_s);
         }
         advance();
@@ -357,7 +359,7 @@ Expr* Parser::parseNamedExpression()
         return named;
     }
 
-    TokenKind firstKind = kind();
+    Position start = startPosition();
     Expr* expression = parseExpression();
     if (!expression)
         return nullptr;
@@ -374,9 +376,7 @@ Expr* Parser::parseNamedExpression()
         // `if x = 3:`
         SetForScope diagnosing(m_diagnosing, true);
         bool isName = expression->is<NameExpr>() && !expression->parenthesized;
-        bool startsLikeATarget = firstKind == TokenKind::LSqb || firstKind == TokenKind::KwTrue || firstKind == TokenKind::KwFalse || firstKind == TokenKind::KwNone
-            || (firstKind == TokenKind::LPar && !(expression->parenthesized && !expression->is<Tuple>() && !expression->is<GeneratorExp>()));
-        if (isName || !startsLikeATarget) {
+        if (isName || !startsLikeATarget(expression, start)) {
             auto saved = checkpoint();
             advance();
             Expr* value = parseBitwiseOr();
@@ -1522,6 +1522,11 @@ Expr* Parser::parseBraceDisplay()
         return dict;
     };
 
+    // A group's parentheses are not part of the operand.
+    auto rangeUpTo = [](Position start, Expr* operand) -> Range {
+        return { start.line, start.column, operand->range.endLineno, operand->range.endColOffset };
+    };
+
     // After the ':' of a pair.
     auto parseValue = [&](const Token& colon) -> Expr* {
         if (at(TokenKind::RBrace) || at(TokenKind::Comma))
@@ -1531,11 +1536,12 @@ Expr* Parser::parseBraceDisplay()
             bool isDouble = at(TokenKind::DoubleStar);
             Position starStart = startPosition();
             advance();
-            if (!parseBitwiseOr())
+            Expr* operand = parseBitwiseOr();
+            if (!operand)
                 return nullptr;
             auto message = isDouble ? "cannot use dict unpacking in a dictionary value"_s : "cannot use a starred expression in a dictionary value"_s;
             if (keys.isEmpty())
-                return dictError([&] { syntaxErrorAt(rangeFrom(starStart), message); });
+                return dictError([&] { syntaxErrorAt(rangeUpTo(starStart, operand), message); });
             peek();
             return dictError([&] { syntaxErrorStartingFrom(starStart, message); });
         }
@@ -1556,7 +1562,7 @@ Expr* Parser::parseBraceDisplay()
         }
         if (at(TokenKind::Colon)) {
             DIAGNOSE_UNLESS_FIRST_ITEM();
-            Range range = rangeFrom(doubleStar.startPosition);
+            Range range = rangeUpTo(doubleStar.startPosition, value);
             advance();
             if (!parseExpression())
                 return nullptr;
@@ -1582,9 +1588,10 @@ Expr* Parser::parseBraceDisplay()
                 DIAGNOSE_UNLESS_FIRST_ITEM();
                 Position starStart = startPosition();
                 advance();
-                if (!parseBitwiseOr())
+                Expr* operand = parseBitwiseOr();
+                if (!operand)
                     return nullptr;
-                Range range = rangeFrom(starStart);
+                Range range = rangeUpTo(starStart, operand);
                 if (accept(TokenKind::Colon) && parseExpression())
                     return dictError([&] { syntaxErrorAt(range, "cannot use a starred expression in a dictionary key"_s); });
                 return failed() ? nullptr : invalidSyntax();
@@ -1662,7 +1669,7 @@ Expr* Parser::parseBraceDisplay()
             advance();
             if (!parseExpression())
                 return nullptr;
-            return dictError([&] { syntaxErrorAt(first->range, "cannot use a starred expression in a dictionary key"_s); });
+            return dictError([&] { syntaxErrorAt(rangeBetween(first->range, first->as<Starred>()->value->range), "cannot use a starred expression in a dictionary key"_s); });
         }
         if (first->is<NamedExpr>() && !first->parenthesized)
             return invalidSyntax();

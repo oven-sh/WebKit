@@ -467,9 +467,9 @@ static JSValue subprocessForkExec(JSGlobalObject* globalObject, const CallArgs& 
     if (!passFds)
         return raiseTypeError(globalObject, scope, "fork_exec() argument 4 must be tuple, not "_s, posixTypeNameOfArgument(globalObject, args[ArgumentPassFds]));
     if (failed(scope, posixToInt(globalObject, args[ArgumentP2CRead], request.p2cRead)) || failed(scope, posixToInt(globalObject, args[ArgumentP2CWrite], request.p2cWrite))
-        || !posixToInt(globalObject, args[ArgumentC2PRead], request.c2pRead) || !posixToInt(globalObject, args[ArgumentC2PWrite], request.c2pWrite)
-        || !posixToInt(globalObject, args[ArgumentErrRead], request.errRead) || !posixToInt(globalObject, args[ArgumentErrWrite], request.errWrite)
-        || !posixToInt(globalObject, args[ArgumentErrPipeRead], request.errorPipeRead) || !posixToInt(globalObject, args[ArgumentErrPipeWrite], request.errorPipeWrite))
+        || failed(scope, posixToInt(globalObject, args[ArgumentC2PRead], request.c2pRead)) || failed(scope, posixToInt(globalObject, args[ArgumentC2PWrite], request.c2pWrite))
+        || failed(scope, posixToInt(globalObject, args[ArgumentErrRead], request.errRead)) || failed(scope, posixToInt(globalObject, args[ArgumentErrWrite], request.errWrite))
+        || failed(scope, posixToInt(globalObject, args[ArgumentErrPipeRead], request.errorPipeRead)) || failed(scope, posixToInt(globalObject, args[ArgumentErrPipeWrite], request.errorPipeWrite)))
         return { };
     request.restoresSignals = isTrue(globalObject, args[ArgumentRestoreSignals]);
     RETURN_IF_EXCEPTION(scope, { });
@@ -519,7 +519,7 @@ static JSValue subprocessForkExec(JSGlobalObject* globalObject, const CallArgs& 
             if (list && listLength(list) != count)
                 return raiseRuntimeError(globalObject, scope, "args changed during iteration"_s);
             PosixBytes argument;
-            if (!posixToFSBytes(globalObject, list ? listGet(list, i) : tuple->at(i), argument))
+            if (failed(scope, posixToFSBytes(globalObject, list ? listGet(list, i) : tuple->at(i), argument)))
                 return { };
             arguments.append(byteCast<uint8_t>(argument.span()));
         }
@@ -565,7 +565,7 @@ static JSValue subprocessForkExec(JSGlobalObject* globalObject, const CallArgs& 
     if (!isNone(args[ArgumentUid]) && failed(scope, posixToUid(globalObject, args[ArgumentUid], request.uid)))
         return { };
 
-    if (!audit(globalObject, "_posixsubprocess.fork_exec"_s, args[ArgumentExecutableList], args[ArgumentArgs], args[ArgumentEnv]))
+    if (failed(scope, audit(globalObject, "_posixsubprocess.fork_exec"_s, args[ArgumentExecutableList], args[ArgumentArgs], args[ArgumentEnv])))
         return { };
 
     request.descriptorLimit = sysconf(_SC_OPEN_MAX);

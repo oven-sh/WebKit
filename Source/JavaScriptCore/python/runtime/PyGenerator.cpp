@@ -186,6 +186,8 @@ void PyGenerator::returnFromBody(JSGlobalObject* globalObject)
 
 void PyGenerator::bodyIsUnwinding(JSGlobalObject* globalObject, bool isTermination)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     // The exception may come from before the body's first instruction.
     if (!isRunning())
         return;
@@ -196,7 +198,9 @@ void PyGenerator::bodyIsUnwinding(JSGlobalObject* globalObject, bool isTerminati
     if (isTermination)
         return;
     replaceStopIteration(globalObject, m_kind);
+    EXCEPTION_ASSERT(scope.exception());
     unwrapPendingException(globalObject);
+    EXCEPTION_ASSERT_UNUSED(scope, scope.exception());
 }
 
 void generatorBodyIsUnwinding(JSGlobalObject* globalObject, CallFrame* callFrame, bool isTermination)
@@ -323,7 +327,9 @@ static JSValue generatorCloseWithResult(JSGlobalObject* globalObject, PyGenerato
     if (JSValue handled = rt.handledException())
         exit->setContext(vm, handled);
     JSValue out;
-    switch (generator->resume(globalObject, exit, throwAndClose, out)) {
+    PyGenerator::Outcome outcome = generator->resume(globalObject, exit, throwAndClose, out);
+    EXCEPTION_ASSERT(!!scope.exception() == (outcome == PyGenerator::Outcome::Threw));
+    switch (outcome) {
     case PyGenerator::Outcome::Returned:
         return out;
     case PyGenerator::Outcome::Yielded:
@@ -447,6 +453,7 @@ JSValue sendToDelegate(JSGlobalObject* globalObject, JSValue iterator, JSValue v
         }
     }
 
+EXCEPTION_ASSERT(!scope.exception() || !yielded);
     if (yielded) {
         waiting->setDelegate(vm, visible);
         return yielded;
@@ -486,6 +493,7 @@ JSValue getYieldFromIter(JSGlobalObject* globalObject, JSValue iterable, bool in
     if (type != rt.listType() && type != rt.tupleType() && type != rt.strType() && type != rt.bytesType())
         return iterator;
     PyRecord* delegate = PyRecord::create(globalObject, rt.typeFor(sequenceDelegateTypeDef), 2);
+    RETURN_IF_EXCEPTION(scope, { });
     delegate->set(vm, 0, iterable);
     delegate->set(vm, 1, iterator);
     return delegate;
@@ -564,6 +572,7 @@ static JSValue anextAwaitableNext(JSGlobalObject* globalObject, JSValue selfValu
     RETURN_IF_EXCEPTION(scope, { });
     JSValue method = typeOf(globalObject, iterator)->lookup(Special::Next);
     JSValue result = callSpecial(globalObject, method, iterator);
+    EXCEPTION_ASSERT(!!scope.exception() == !result);
     RELEASE_AND_RETURN(scope, anextAwaitableFinish(globalObject, self, result));
 }
 
@@ -577,6 +586,7 @@ static JSValue anextAwaitableProxy(JSGlobalObject* globalObject, JSValue selfVal
     JSValue method = getAttr(globalObject, iterator, name);
     RETURN_IF_EXCEPTION(scope, { });
     JSValue result = call(globalObject, method, args);
+    EXCEPTION_ASSERT(!!scope.exception() == !result);
     RELEASE_AND_RETURN(scope, anextAwaitableFinish(globalObject, self, result));
 }
 
@@ -608,9 +618,12 @@ static constexpr TypeDef anextAwaitableTypeDef { "anext_awaitable"_s, { }, anext
 
 JSValue makeANextAwaitable(JSGlobalObject* globalObject, JSValue awaitable, JSValue defaultValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PyRecord* result = PyRecord::create(globalObject, runtime(globalObject).typeFor(anextAwaitableTypeDef), 2);
-    result->set(getVM(globalObject), 0, awaitable);
-    result->set(getVM(globalObject), 1, defaultValue);
+    RETURN_IF_EXCEPTION(scope, { });
+    result->set(vm, 0, awaitable);
+    result->set(vm, 1, defaultValue);
     return result;
 }
 
@@ -620,7 +633,7 @@ JSValue getAwaitable(JSGlobalObject* globalObject, JSValue object, int where)
     auto scope = DECLARE_THROW_SCOPE(vm);
     bool hasAwait;
     JSValue iterator = awaitableIterator(globalObject, object, &hasAwait);
-    if (!iterator) {
+    if (failed(scope, iterator)) {
         if (!hasAwait && where) {
             takePendingException(globalObject);
             return raiseTypeError(globalObject, scope, "'async with' received an object from "_s, where == 1 ? "__aenter__"_s : "__aexit__"_s, " that does not implement __await__: "_s, typeName(globalObject, object));
@@ -665,7 +678,7 @@ JSValue getANext(JSGlobalObject* globalObject, JSValue iterator)
     JSValue next = callSpecial(globalObject, method, iterator);
     RETURN_IF_EXCEPTION(scope, { });
     JSValue awaitable = awaitableIterator(globalObject, next);
-    if (awaitable)
+    if (!failed(scope, awaitable))
         return awaitable;
     JSValue cause = takePendingException(globalObject);
     PyException* error = newException(globalObject, rt.TypeError(), makeString("'async for' received an invalid object from __anext__: "_s, typeName(globalObject, next)));
@@ -774,7 +787,10 @@ static JSValue throwInto(JSGlobalObject* globalObject, PyGenerator* generator, J
 
 static JSValue generatorThrowMethod(JSGlobalObject* globalObject, JSValue selfValue, const CallArgs& args)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue exception = exceptionForThrow(globalObject, "throw"_s, args);
+    RETURN_IF_EXCEPTION(scope, { });
     if (!exception)
         return { };
     Runtime& rt = runtime(globalObject);
@@ -782,6 +798,7 @@ static JSValue generatorThrowMethod(JSGlobalObject* globalObject, JSValue selfVa
     JSValue outerArguments = rt.slot(Runtime::Slot::ThrowArguments);
     rt.setSlot(Runtime::Slot::ThrownException, exception);
     rt.setSlot(Runtime::Slot::ThrowArguments, PyTuple::create(globalObject, args.positional()));
+    scope.release();
     JSValue result = throwInto(globalObject, generatorOf(selfValue), exception, throwAndClose);
     rt.setSlot(Runtime::Slot::ThrownException, outerException);
     rt.setSlot(Runtime::Slot::ThrowArguments, outerArguments);
@@ -1013,7 +1030,7 @@ static JSValue asyncGeneratorAThrow(JSGlobalObject* globalObject, JSValue selfVa
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (failed(scope, rejectKeywords(globalObject, "athrow"_s, args)) || failed(scope, checkPositional(globalObject, "athrow"_s, args, 1, 3)))
         return { };
-    if (args.size() > 1 && !warn(globalObject, runtime(globalObject).DeprecationWarning(), "the (type, exc, tb) signature of athrow() is deprecated, use the single-arg signature instead."_s))
+    if (args.size() > 1 && failed(scope, warn(globalObject, runtime(globalObject).DeprecationWarning(), "the (type, exc, tb) signature of athrow() is deprecated, use the single-arg signature instead."_s)))
         return { };
     RELEASE_AND_RETURN(scope, makeAwaitable(globalObject, selfValue, PyAsyncGenAwaitable::Kind::Throw, PyTuple::create(globalObject, args.positional())));
 }
@@ -1059,6 +1076,7 @@ static JSValue asendSend(JSGlobalObject* globalObject, JSValue selfValue, JSValu
     }
     generator->isRunningAsync = true;
     JSValue result = generatorSendMethod(globalObject, generator, value);
+    EXCEPTION_ASSERT(!!scope.exception() == !result);
     scope.release();
     result = unwrapResult(globalObject, generator, result);
     if (!result)
@@ -1085,6 +1103,7 @@ static JSValue asendThrow(JSGlobalObject* globalObject, JSValue selfValue, const
         generator->isRunningAsync = true;
     }
     JSValue result = generatorThrowMethod(globalObject, generator, args);
+    EXCEPTION_ASSERT(!!scope.exception() == !result);
     scope.release();
     result = unwrapResult(globalObject, generator, result);
     if (!result) {
@@ -1105,7 +1124,7 @@ static JSValue awaitableClose(JSGlobalObject* globalObject, JSValue selfValue)
         return jsUndefined();
     JSValue exit = rt.GeneratorExit();
     JSValue result = throwMethod(globalObject, selfValue, CallArgs(&exit, 1));
-    if (result)
+    if (!failed(scope, result))
         return raiseRuntimeError(globalObject, scope, "coroutine ignored GeneratorExit"_s);
     scope.release();
     if (clearPendingExceptionIfMatches(globalObject, rt.StopIteration()) || clearPendingExceptionIfMatches(globalObject, rt.StopAsyncIteration()) || clearPendingExceptionIfMatches(globalObject, rt.GeneratorExit()))
@@ -1186,11 +1205,12 @@ static JSValue athrowSend(JSGlobalObject* globalObject, JSValue selfValue, JSVal
             exception = newException(globalObject, rt.GeneratorExit(), std::span<const JSValue> { });
         } else
             exception = exceptionForThrow(globalObject, "athrow"_s, CallArgs(PyTuple::from(awaitable->value())->span()), false);
+        EXCEPTION_ASSERT(!!scope.exception() == !exception);
         if (exception)
             result = throwInto(globalObject, generator, exception, throwThrough);
     } else
         result = generatorSendMethod(globalObject, generator, value);
-
+EXCEPTION_ASSERT(!!scope.exception() == !result);
     scope.release();
     if (isClose) {
         if (!result)
@@ -1200,7 +1220,7 @@ static JSValue athrowSend(JSGlobalObject* globalObject, JSValue selfValue, JSVal
         return result;
     }
     result = unwrapResult(globalObject, generator, result);
-    if (!result)
+    if (failed(scope, result))
         RELEASE_AND_RETURN(scope, finishAThrow(globalObject, awaitable));
     return result;
 }
@@ -1222,6 +1242,7 @@ static JSValue athrowThrow(JSGlobalObject* globalObject, JSValue selfValue, cons
         generator->isRunningAsync = true;
     }
     JSValue result = generatorThrowMethod(globalObject, generator, args);
+    EXCEPTION_ASSERT(!!scope.exception() == !result);
     scope.release();
     if (awaitable->kind() == PyAsyncGenAwaitable::Kind::Close) {
         if (!result)

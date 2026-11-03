@@ -43,7 +43,7 @@ static bool fcntlToBytes(JSGlobalObject* globalObject, JSValue value, Vector<uin
         bytes = PyBytes::from(encoded)->span();
         result.append(bytes);
     } else {
-        if (!getBytesLike(globalObject, value, bytes))
+        if (failed(scope, getBytesLike(globalObject, value, bytes)))
             return false;
         result.append(bytes);
     }
@@ -57,8 +57,10 @@ static bool fcntlIsBuffer(JSValue value) { return isStr(value) || hasBuffer(valu
 template<typename Function>
 static JSValue fcntlCallWithBytes(JSGlobalObject* globalObject, JSValue argument, ASCIILiteral function, const Function& call)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     Vector<uint8_t, fcntlInlineSize + sizeof(fcntlGuard)> buffer;
-    if (!fcntlToBytes(globalObject, argument, buffer))
+    if (failed(scope, fcntlToBytes(globalObject, argument, buffer)))
         return { };
     size_t length = buffer.size() - sizeof(fcntlGuard);
     int result;
@@ -67,14 +69,12 @@ static JSValue fcntlCallWithBytes(JSGlobalObject* globalObject, JSValue argument
         result = call(buffer.mutableSpan().data());
     } while (result == -1 && errno == EINTR && checkSignals(globalObject));
     if (result < 0)
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     if (memcmp(buffer.span().data() + length, fcntlGuard, sizeof(fcntlGuard))) {
-        VM& vm = getVM(globalObject);
-        auto scope = DECLARE_THROW_SCOPE(vm);
         return raiseSystemError(globalObject, scope, length <= fcntlInlineSize ? "Possible stack corruption in "_s : "Memory corruption in "_s, function,
             "() due to buffer overflow. Provide an argument of sufficient size as determined by the operation."_s);
     }
-    return PyBytes::create(globalObject, buffer.span().first(length));
+    RELEASE_AND_RETURN(scope, PyBytes::create(globalObject, buffer.span().first(length)));
 }
 
 template<typename Function>
@@ -128,7 +128,7 @@ static JSValue fcntlFcntl(JSGlobalObject* globalObject, JSValue fdValue, JSValue
     int command;
     if (!posixToFileDescriptor(globalObject, fdValue, fd) || failed(scope, posixToInt(globalObject, commandValue, command)))
         return { };
-    if (!audit(globalObject, "fcntl.fcntl"_s, jsNumber(fd), jsNumber(command), argument))
+    if (failed(scope, audit(globalObject, "fcntl.fcntl"_s, jsNumber(fd), jsNumber(command), argument)))
         return { };
     if (!argument || hasIndex(globalObject, argument)) {
         uint64_t bits = 0;
@@ -155,12 +155,12 @@ static JSValue fcntlIoctl(JSGlobalObject* globalObject, JSValue fdValue, JSValue
     bool fits;
     if (failed(scope, fcntlToBits(globalObject, requestValue, request, fits)))
         return { };
-    if (!audit(globalObject, "fcntl.ioctl"_s, jsNumber(fd), requestValue, argument))
+    if (failed(scope, audit(globalObject, "fcntl.ioctl"_s, jsNumber(fd), requestValue, argument)))
         return { };
     if (!fits && !warn(globalObject, runtime(globalObject).DeprecationWarning(), "integer value out of range"_s))
         return { };
     bool mutate;
-    if (!posixToBool(globalObject, mutateValue, true, mutate))
+    if (failed(scope, posixToBool(globalObject, mutateValue, true, mutate)))
         return { };
 
     if (!argument || hasIndex(globalObject, argument)) {
@@ -225,7 +225,7 @@ static JSValue fcntlFlock(JSGlobalObject* globalObject, JSValue fdValue, JSValue
     int operation;
     if (!posixToFileDescriptor(globalObject, fdValue, fd) || failed(scope, posixToInt(globalObject, operationValue, operation)))
         return { };
-    if (!audit(globalObject, "fcntl.flock"_s, jsNumber(fd), jsNumber(operation)))
+    if (failed(scope, audit(globalObject, "fcntl.flock"_s, jsNumber(fd), jsNumber(operation))))
         return { };
     int result;
     do {
@@ -244,7 +244,7 @@ static JSValue fcntlLockf(JSGlobalObject* globalObject, JSValue fdValue, JSValue
     int whence = 0;
     if (!posixToFileDescriptor(globalObject, fdValue, fd) || failed(scope, posixToInt(globalObject, commandValue, command)) || (whenceValue && failed(scope, posixToInt(globalObject, whenceValue, whence))))
         return { };
-    if (!audit(globalObject, "fcntl.lockf"_s, jsNumber(fd), jsNumber(command), lengthValue, startValue, jsNumber(whence)))
+    if (failed(scope, audit(globalObject, "fcntl.lockf"_s, jsNumber(fd), jsNumber(command), lengthValue, startValue, jsNumber(whence))))
         return { };
     struct flock lock { };
     if (command == LOCK_UN)

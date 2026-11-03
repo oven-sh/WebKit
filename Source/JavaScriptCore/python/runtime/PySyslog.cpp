@@ -62,9 +62,11 @@ static JSString* syslogDefaultIdent(JSGlobalObject* globalObject)
 
 static bool syslogOpen(JSGlobalObject* globalObject, JSString* ident, int64_t options, int64_t facility)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     if (!ident)
         ident = syslogDefaultIdent(globalObject);
-    if (!audit(globalObject, "syslog.openlog"_s, ident, posixMakeInt(globalObject, options), posixMakeInt(globalObject, facility)))
+    if (failed(scope, audit(globalObject, "syslog.openlog"_s, ident, posixMakeInt(globalObject, options), posixMakeInt(globalObject, facility))))
         return false;
     PosixBytes encoded;
     if (ident && !syslogToUTF8(globalObject, ident, encoded))
@@ -123,7 +125,7 @@ static JSValue syslogSyslog(JSGlobalObject* globalObject, const CallArgs& args)
         return { };
     if (message.contains('\0'))
         return raiseValueError(globalObject, scope, "embedded null character"_s);
-    if (!audit(globalObject, "syslog.syslog"_s, jsNumber(priority), messageValue))
+    if (failed(scope, audit(globalObject, "syslog.syslog"_s, jsNumber(priority), messageValue)))
         return { };
     bool isOpen;
     {
@@ -138,7 +140,9 @@ static JSValue syslogSyslog(JSGlobalObject* globalObject, const CallArgs& args)
 
 static JSValue syslogCloseLog(JSGlobalObject* globalObject)
 {
-    if (!audit(globalObject, "syslog.closelog"_s))
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, audit(globalObject, "syslog.closelog"_s)))
         return { };
     Locker locker { s_syslogLock };
     if (std::exchange(s_syslogIsOpen, false))
@@ -153,7 +157,7 @@ static JSValue syslogSetLogMask(JSGlobalObject* globalObject, JSValue value)
     int64_t mask;
     if (failed(scope, posixToLong(globalObject, value, mask)))
         return { };
-    if (!audit(globalObject, "syslog.setlogmask"_s, posixMakeInt(globalObject, mask)))
+    if (failed(scope, audit(globalObject, "syslog.setlogmask"_s, posixMakeInt(globalObject, mask))))
         return { };
     Locker locker { s_syslogLock };
     return jsNumber(setlogmask(static_cast<int>(mask)));

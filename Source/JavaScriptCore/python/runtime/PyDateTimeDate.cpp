@@ -129,8 +129,8 @@ static JSValue dateNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs
     int year;
     int month;
     int day;
-    if (!bindArguments(globalObject, dateParameters, args, values) || !intArgument(globalObject, values[0], year)
-        || !intArgument(globalObject, values[1], month) || !intArgument(globalObject, values[2], day))
+    if (!bindArguments(globalObject, dateParameters, args, values) || failed(scope, intArgument(globalObject, values[0], year))
+        || failed(scope, intArgument(globalObject, values[1], month)) || failed(scope, intArgument(globalObject, values[2], day)))
         return { };
     RELEASE_AND_RETURN(scope, newDate(globalObject, state, type, year, month, day));
 }
@@ -173,7 +173,7 @@ static JSValue dateFromOrdinal(JSGlobalObject* globalObject, JSValue cls, JSValu
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyType* type = PyType::from(cls);
     int ordinal;
-    if (!intArgument(globalObject, ordinalValue, ordinal))
+    if (failed(scope, intArgument(globalObject, ordinalValue, ordinal)))
         return { };
     if (ordinal < 1)
         return raiseValueError(globalObject, scope, "ordinal must be >= 1"_s);
@@ -210,7 +210,7 @@ static JSValue dateFromIsoCalendar(JSGlobalObject* globalObject, JSValue cls, JS
     int isoYear;
     int isoWeek;
     int isoDay;
-    if (!intArgument(globalObject, yearValue, isoYear) || !intArgument(globalObject, weekValue, isoWeek) || !intArgument(globalObject, dayValue, isoDay))
+    if (failed(scope, intArgument(globalObject, yearValue, isoYear)) || failed(scope, intArgument(globalObject, weekValue, isoWeek)) || failed(scope, intArgument(globalObject, dayValue, isoDay)))
         return { };
     int year;
     int month;
@@ -378,15 +378,17 @@ static constexpr Parameters dateReplaceParameters { "replace"_s, dateParameterNa
 // Also __replace__(), which complains under the same name.
 static JSValue dateReplace(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* date = PyDate::from(self);
     int year = date->year();
     int month = date->month();
     int day = date->day();
     JSValue values[3];
-    if (!bindArguments(globalObject, dateReplaceParameters, args, values) || (values[0] && !intArgument(globalObject, values[0], year))
-        || (values[1] && !intArgument(globalObject, values[1], month)) || (values[2] && !intArgument(globalObject, values[2], day)))
+    if (!bindArguments(globalObject, dateReplaceParameters, args, values) || (values[0] && failed(scope, intArgument(globalObject, values[0], year)))
+        || (values[1] && failed(scope, intArgument(globalObject, values[1], month))) || (values[2] && failed(scope, intArgument(globalObject, values[2], day))))
         return { };
-    return makeDate(globalObject, stateOf(globalObject, date), date->type(), year, month, day);
+    RELEASE_AND_RETURN(scope, makeDate(globalObject, stateOf(globalObject, date), date->type(), year, month, day));
 }
 
 static JSValue dateReduce(JSGlobalObject* globalObject, JSValue self)
@@ -443,12 +445,14 @@ constexpr TypeDef dateTypeDef { "datetime.date"_s, { TypeFlag::Base, TypeFlag::O
 
 static JSValue isoCalendarDateNew(JSGlobalObject* globalObject, JSValue cls, JSValue yearValue, JSValue weekValue, JSValue weekdayValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int year;
     int week;
     int weekday;
-    if (!intArgument(globalObject, yearValue, year) || !intArgument(globalObject, weekValue, week) || !intArgument(globalObject, weekdayValue, weekday))
+    if (failed(scope, intArgument(globalObject, yearValue, year)) || failed(scope, intArgument(globalObject, weekValue, week)) || failed(scope, intArgument(globalObject, weekdayValue, weekday)))
         return { };
-    return makeIsoCalendarDate(globalObject, PyType::from(cls), year, week, weekday);
+    RELEASE_AND_RETURN(scope, makeIsoCalendarDate(globalObject, PyType::from(cls), year, week, weekday));
 }
 
 static JSValue isoCalendarDateRepr(JSGlobalObject* globalObject, JSValue self)

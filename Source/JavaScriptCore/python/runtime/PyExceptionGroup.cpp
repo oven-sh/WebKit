@@ -572,7 +572,11 @@ void initializeExceptionGroupTypes(JSGlobalObject* globalObject)
         rt.setSlot(Runtime::Slot::InstanceWeakrefDescriptor, weakrefDescriptor);
     }
     group->dict()->set(vm, rt.names.dWeakref(), weakrefDescriptor);
-    rt.Exception()->addSubclass(globalObject, group);
+    {
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        rt.Exception()->addSubclass(globalObject, group);
+        scope.assertNoException();
+    }
     group->didChange(vm);
 }
 

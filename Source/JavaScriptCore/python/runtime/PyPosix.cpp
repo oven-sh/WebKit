@@ -719,42 +719,45 @@ static JSValue posixCreateEnviron(JSGlobalObject* globalObject)
 
 static JSValue posixPutenv(JSGlobalObject* globalObject, JSValue nameValue, JSValue valueValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PosixBytes name;
     PosixBytes value;
     if (!posixToFSBytes(globalObject, nameValue, name) || !posixToFSBytes(globalObject, valueValue, value))
         return { };
-    if (isAudited(globalObject) && !audit(globalObject, "os.putenv"_s, PyBytes::create(globalObject, name.span()), PyBytes::create(globalObject, value.span())))
+    if (isAudited(globalObject) && failed(scope, audit(globalObject, "os.putenv"_s, PyBytes::create(globalObject, name.span()), PyBytes::create(globalObject, value.span()))))
         return { };
-    if (name.contains('=')) {
-        VM& vm = getVM(globalObject);
-        auto scope = DECLARE_THROW_SCOPE(vm);
+    if (name.contains('='))
         return raiseValueError(globalObject, scope, "illegal environment variable name"_s);
-    }
     if (setenv(name.characters(), value.characters(), 1))
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     return jsUndefined();
 }
 
 static JSValue posixUnsetenv(JSGlobalObject* globalObject, JSValue nameValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PosixBytes name;
     if (!posixToFSBytes(globalObject, nameValue, name))
         return { };
-    if (isAudited(globalObject) && !audit(globalObject, "os.unsetenv"_s, PyBytes::create(globalObject, name.span())))
+    if (isAudited(globalObject) && failed(scope, audit(globalObject, "os.unsetenv"_s, PyBytes::create(globalObject, name.span()))))
         return { };
     if (unsetenv(name.characters()))
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     return jsUndefined();
 }
 
 #if OS(LINUX)
 static JSValue posixClearenv(JSGlobalObject* globalObject)
 {
-    if (!audit(globalObject, "os._clearenv"_s))
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, audit(globalObject, "os._clearenv"_s)))
         return { };
     errno = 0;
     if (clearenv())
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     return jsUndefined();
 }
 #endif
@@ -831,7 +834,7 @@ static JSValue posixPathNormpath(JSGlobalObject* globalObject, JSValue pathValue
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     PosixPath path("_path_normpath"_s, PosixPath::Nonstrict | PosixPath::AllowVirtual);
-    if (!path.convert(globalObject, pathValue))
+    if (failed(scope, path.convert(globalObject, pathValue)))
         return { };
     if (path.isBytes())
         RELEASE_AND_RETURN(scope, PyBytes::create(globalObject, posixNormalizedPath(path.span()).span()));
@@ -1200,6 +1203,7 @@ void initializePosixModule(JSGlobalObject* globalObject, PyModule* module)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     module->addFunctions(globalObject, posixFunctions);
     addPosixFileFunctions(globalObject, module);
     addPosixDescriptorFunctions(globalObject, module);
@@ -1207,15 +1211,19 @@ void initializePosixModule(JSGlobalObject* globalObject, PyModule* module)
     addPosixConstants(globalObject, module);
 
     module->add(globalObject, "environ"_s, posixCreateEnviron(globalObject));
+    RETURN_IF_EXCEPTION(scope, void());
     module->add(globalObject, "error"_s, rt.OSError());
     module->add(globalObject, "stat_result"_s, posixStatResultType(globalObject));
     module->add(globalObject, "uname_result"_s, cachedStructSeqType(globalObject, posixUnameResultDef));
     module->add(globalObject, "times_result"_s, cachedStructSeqType(globalObject, posixTimesResultDef));
     module->add(globalObject, "terminal_size"_s, cachedStructSeqType(globalObject, posixTerminalSizeDef));
+    RETURN_IF_EXCEPTION(scope, void());
 
     JSArray* have = newList(globalObject);
-    for (auto name : posixHaveFunctions)
+    for (auto name : posixHaveFunctions) {
         listAppend(globalObject, have, makeStr(vm, name));
+        RETURN_IF_EXCEPTION(scope, void());
+    }
     module->add(globalObject, "_have_functions"_s, have);
 }
 

@@ -237,7 +237,7 @@ static JSValue localeStrcoll(JSGlobalObject* globalObject, JSValue first, JSValu
     Vector<wchar_t, 64> wideFirst;
     Vector<wchar_t, 64> wideSecond;
     if (failed(scope, localeRequireStr(globalObject, first, "strcoll"_s, 1)) || failed(scope, localeRequireStr(globalObject, second, "strcoll"_s, 2))
-        || !localeToWide(globalObject, first, wideFirst) || !localeToWide(globalObject, second, wideSecond))
+        || failed(scope, localeToWide(globalObject, first, wideFirst)) || failed(scope, localeToWide(globalObject, second, wideSecond)))
         return { };
     return jsNumber(wcscoll(wideFirst.span().data(), wideSecond.span().data()));
 }
@@ -388,7 +388,7 @@ static JSValue localeDcgettext(JSGlobalObject* globalObject, JSValue domainValue
     LocaleText message;
     int category;
     if (failed(scope, localeToText(globalObject, domainValue, "dcgettext"_s, 1, true, domain)) || failed(scope, localeToText(globalObject, messageValue, "dcgettext"_s, 2, false, message))
-        || !posixToInt(globalObject, categoryValue, category))
+        || failed(scope, posixToInt(globalObject, categoryValue, category)))
         return { };
     RELEASE_AND_RETURN(scope, localeDecode(globalObject, dcgettext(domain.characters(), message.characters(), category)));
 }

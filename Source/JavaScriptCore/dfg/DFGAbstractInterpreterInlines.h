@@ -2347,7 +2347,7 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
         if (node->op() == CompareEq) {
             SpeculatedType leftType = forNode(node->child1()).m_type;
             SpeculatedType rightType = forNode(node->child2()).m_type;
-            if (!valuesCouldBeEqual(leftType, rightType) && !m_graph.mayOverloadOperators(leftType | rightType)) {
+            if (!valuesCouldBeEqual(leftType, rightType)) {
                 setConstant(node, jsBoolean(false));
                 break;
             }

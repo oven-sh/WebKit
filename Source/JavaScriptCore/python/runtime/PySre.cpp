@@ -297,7 +297,7 @@ static bool sreGetText(JSGlobalObject* globalObject, JSValue value, SreText& tex
     }
 
     JSValue exporter = scanner ? scanner->get(SreScanner::Kept) : JSValue();
-    if (getBuffer(globalObject, exporter ? exporter : value, text.buffer, BufferSimple)) {
+    if (!failed(scope, getBuffer(globalObject, exporter ? exporter : value, text.buffer, BufferSimple))) {
         text.isBytes = true;
         text.characterSize = 1;
         sreSetCharactersFromBuffer(text);

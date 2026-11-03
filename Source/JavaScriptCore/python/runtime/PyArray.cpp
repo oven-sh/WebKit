@@ -382,7 +382,7 @@ static bool arrayConvert(JSGlobalObject* globalObject, ArrayKind kind, JSValue v
     case ArrayKind::SignedChar:
         scope.release();
         if (failed(scope, arrayConvertNarrow(globalObject, value, std::numeric_limits<short>::min(), std::numeric_limits<short>::max(), shortName, integer))
-            || !arrayConvertNarrow(globalObject, jsNumber(static_cast<int32_t>(integer)), -128, 127, "signed char"_s, integer))
+            || failed(scope, arrayConvertNarrow(globalObject, jsNumber(static_cast<int32_t>(integer)), -128, 127, "signed char"_s, integer)))
             return false;
         arrayStore<int8_t>(item, integer);
         return true;
@@ -425,7 +425,7 @@ static bool arrayConvert(JSGlobalObject* globalObject, ArrayKind kind, JSValue v
     case ArrayKind::UnsignedShort:
         scope.release();
         if (failed(scope, arrayConvertNarrow(globalObject, value, std::numeric_limits<int>::min(), std::numeric_limits<int>::max(), intName, integer))
-            || !arrayConvertNarrow(globalObject, jsNumber(static_cast<int32_t>(integer)), 0, std::numeric_limits<unsigned short>::max(), "unsigned short"_s, integer))
+            || failed(scope, arrayConvertNarrow(globalObject, jsNumber(static_cast<int32_t>(integer)), 0, std::numeric_limits<unsigned short>::max(), "unsigned short"_s, integer)))
             return false;
         arrayStore<unsigned short>(item, integer);
         return true;
@@ -722,7 +722,7 @@ static JSValue arrayConstruct(JSGlobalObject* globalObject, PyType* type, JSValu
     RETURN_IF_EXCEPTION(scope, { });
     if (typecode.contains(static_cast<char16_t>(0)))
         return raiseValueError(globalObject, scope, "embedded null character"_s);
-    if (!audit(globalObject, "array.__new__"_s, typecodeValue, initial))
+    if (failed(scope, audit(globalObject, "array.__new__"_s, typecodeValue, initial)))
         return { };
 
     if (typecode == "u"_s) {
@@ -774,7 +774,7 @@ static JSValue arrayConstruct(JSGlobalObject* globalObject, PyType* type, JSValu
         for (int64_t i = 0; i < length; ++i) {
             JSValue item = getItem(globalObject, initial, jsNumber(static_cast<int32_t>(i)));
             RETURN_IF_EXCEPTION(scope, { });
-            if (!arraySet(globalObject, array, i, item))
+            if (failed(scope, arraySet(globalObject, array, i, item)))
                 return { };
         }
     } else if (isBytes) {

@@ -241,7 +241,7 @@ JSValue PyIterator::next(JSGlobalObject* globalObject)
     }
     case Kind::Sequence: {
         JSValue item = getItem(globalObject, target, makeInt(globalObject, position));
-        if (item) {
+        if (!failed(scope, item)) {
             ++position;
             return item;
         }
@@ -252,7 +252,7 @@ JSValue PyIterator::next(JSGlobalObject* globalObject)
     case Kind::Callable: {
         JSValue sentinel = m_extra.get();
         JSValue result = call(globalObject, target);
-        if (!result) {
+        if (failed(scope, result)) {
             if (clearPendingExceptionIfMatches(globalObject, rt.StopIteration()))
                 return exhaust();
             return { };
@@ -272,20 +272,22 @@ JSValue PyIterator::next(JSGlobalObject* globalObject)
 
 static JSValue iteratorSelf(JSGlobalObject*, JSValue self) { return self; }
 
-// What __next__ returns, from what next() does.
-static JSValue nextOrStopIteration(JSGlobalObject* globalObject, JSValue result)
+// __next__, from next().
+template<typename Iterator>
+static JSValue nextOrStopIteration(JSGlobalObject* globalObject, Iterator* iterator)
 {
-    if (result)
-        return result;
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue result = iterator->next(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
+    if (result)
+        return result;
     return raiseStopIteration(globalObject, scope);
 }
 
 static JSValue iteratorNext(JSGlobalObject* globalObject, JSValue self)
 {
-    return nextOrStopIteration(globalObject, PyIterator::from(self)->next(globalObject));
+    return nextOrStopIteration(globalObject, PyIterator::from(self));
 }
 
 static JSValue iteratorLengthHint(JSGlobalObject* globalObject, JSValue self)
@@ -705,7 +707,7 @@ JSValue PyMultiIterator::next(JSGlobalObject* globalObject)
         if (position < 0 || !first)
             return { };
         JSValue item = getItem(globalObject, first.get(), makeInt(globalObject, position));
-        if (item) {
+        if (!failed(scope, item)) {
             --position;
             return item;
         }
@@ -722,7 +724,7 @@ JSValue PyMultiIterator::next(JSGlobalObject* globalObject)
 
 static JSValue multiIteratorNext(JSGlobalObject* globalObject, JSValue self)
 {
-    return nextOrStopIteration(globalObject, PyMultiIterator::from(self)->next(globalObject));
+    return nextOrStopIteration(globalObject, PyMultiIterator::from(self));
 }
 
 static PyMultiIterator* newMultiIterator(JSGlobalObject* globalObject, JSValue cls, PyMultiIterator::Kind kind)
@@ -839,7 +841,7 @@ static JSValue mapNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs&
     if (failed(scope, parseStrict(globalObject, "map"_s, args, strict)))
         return { };
     if (args.size() < 2)
-        return raiseTypeError(globalObject, scope, "map() must have at least two arguments."_s);
+        RELEASE_AND_RETURN(scope, raiseTypeError(globalObject, scope, "map() must have at least two arguments."_s));
     PyTuple* iterators = iteratorsOf(globalObject, args.positional().subspan(1));
     RETURN_IF_EXCEPTION(scope, { });
     auto* result = newMultiIterator(globalObject, cls, PyMultiIterator::Kind::Map);

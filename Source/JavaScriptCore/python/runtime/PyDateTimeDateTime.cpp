@@ -27,14 +27,16 @@ static constexpr Parameters dateTimeReplaceParameters { "replace"_s, dateTimePar
 // What was given replaces what `fields` and `tzinfo` have. False: an exception.
 static bool dateTimeTakeArguments(JSGlobalObject* globalObject, const JSValue* values, Fields& fields, JSValue& tzinfo)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int* numbers[] = { &fields.year, &fields.month, &fields.day, &fields.hour, &fields.minute, &fields.second, &fields.microsecond };
     for (unsigned i = 0; i < 7; ++i) {
-        if (values[i] && !intArgument(globalObject, values[i], *numbers[i]))
+        if (values[i] && failed(scope, intArgument(globalObject, values[i], *numbers[i])))
             return false;
     }
     if (values[7])
         tzinfo = values[7];
-    return !values[8] || intArgument(globalObject, values[8], fields.fold);
+    RELEASE_AND_RETURN(scope, !values[8] || intArgument(globalObject, values[8], fields.fold));
 }
 
 static JSValue dateTimeNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs& args)
@@ -793,10 +795,12 @@ static JSValue dateTimeReduceFor(JSGlobalObject* globalObject, PyDateTime* dateT
 
 static JSValue dateTimeReduceEx(JSGlobalObject* globalObject, JSValue self, JSValue protocolValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int protocol;
-    if (!intArgument(globalObject, protocolValue, protocol))
+    if (failed(scope, intArgument(globalObject, protocolValue, protocol)))
         return { };
-    return dateTimeReduceFor(globalObject, PyDateTime::from(self), protocol);
+    RELEASE_AND_RETURN(scope, dateTimeReduceFor(globalObject, PyDateTime::from(self), protocol));
 }
 
 static JSValue dateTimeReduce(JSGlobalObject* globalObject, JSValue self) { return dateTimeReduceFor(globalObject, PyDateTime::from(self), 2); }

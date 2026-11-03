@@ -6,6 +6,7 @@
 #include "config.h"
 #include "PyAbstract.h"
 
+#include "FrameTracers.h"
 #include "FunctionCodeBlock.h"
 #include "JSCInlines.h"
 #include "LLIntThunks.h"
@@ -262,16 +263,15 @@ JSValue bindDescriptor(JSGlobalObject* globalObject, JSValue descriptor, JSValue
 
 // ---- Attributes ----
 
-static NEVER_INLINE JSValue raiseNoAttribute(JSGlobalObject* globalObject, JSValue object, JSString* name)
+static NEVER_INLINE JSValue raiseNoAttribute(JSGlobalObject* globalObject, ThrowScope& scope, JSValue object, JSString* name)
 {
-    VM& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
     return raiseAttributeError(globalObject, scope, object, name, makeString('\'', typeName(globalObject, object), "' object has no attribute '"_s, stringOf(name), '\''));
 }
 
 JSValue genericGetAttr(JSGlobalObject* globalObject, JSValue object, JSString* name, bool suppress)
 {
     Runtime& rt = runtime(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(rt.vm());
     PyType* type = rt.typeOf(object);
     JSValue descriptor = type->lookup(name);
     JSValue getter;
@@ -287,38 +287,39 @@ JSValue genericGetAttr(JSGlobalObject* globalObject, JSValue object, JSString* n
                 if (info == PyGetSetDescriptor::info()) {
                     auto* getSet = uncheckedDowncast<PyGetSetDescriptor>(cell);
                     if (type != getSet->owner() && !type->isSubtypeOf(getSet->owner())) [[unlikely]]
-                        return raiseDescriptorDoesNotApply(globalObject, getSet->def().name, getSet->owner(), object);
-                    return getSet->def().getter(globalObject, object);
+                        RELEASE_AND_RETURN(scope, raiseDescriptorDoesNotApply(globalObject, getSet->def().name, getSet->owner(), object));
+                    RELEASE_AND_RETURN(scope, getSet->def().getter(globalObject, object));
                 }
                 if (info == PyMemberDescriptor::info()) {
                     auto* member = uncheckedDowncast<PyMemberDescriptor>(cell);
                     if (type != member->owner() && !type->isSubtypeOf(member->owner())) [[unlikely]]
-                        return raiseDescriptorDoesNotApply(globalObject, stringOf(member->name()), member->owner(), object);
-                    return memberDescriptorGet(globalObject, member, object);
+                        RELEASE_AND_RETURN(scope, raiseDescriptorDoesNotApply(globalObject, stringOf(member->name()), member->owner(), object));
+                    RELEASE_AND_RETURN(scope, memberDescriptorGet(globalObject, member, object));
                 }
             }
             PyType* descriptorType = uncheckedDowncast<PyObject>(cell)->type();
             getter = descriptorType->lookup(Special::Get);
             if (getter && (descriptorType->lookup(Special::Set) || descriptorType->lookup(Special::Delete)))
-                return callSpecial(globalObject, getter, descriptor, object, type);
+                RELEASE_AND_RETURN(scope, callSpecial(globalObject, getter, descriptor, object, type));
         } else if (descriptor.isCell() && descriptor.asCell()->type() == InternalFunctionType)
             bindsDirectly = true; // A class method, or nothing to bind.
     }
 
-    if (JSValue value = instanceAttribute(globalObject, object, name))
+    JSValue value = instanceAttribute(globalObject, object, name);
+    EXCEPTION_ASSERT(!scope.exception() || !value);
+    if (value)
         return value;
-    if (rt.vm().exceptionForInspection()) [[unlikely]]
-        return { };
+    RETURN_IF_EXCEPTION(scope, { });
 
     if (bindsDirectly)
-        return bindDescriptor(globalObject, descriptor, object, type);
+        RELEASE_AND_RETURN(scope, bindDescriptor(globalObject, descriptor, object, type));
     if (getter)
-        return callSpecial(globalObject, getter, descriptor, object, type);
+        RELEASE_AND_RETURN(scope, callSpecial(globalObject, getter, descriptor, object, type));
     if (descriptor)
         return descriptor;
     if (suppress)
         return { };
-    return raiseNoAttribute(globalObject, object, name);
+    return raiseNoAttribute(globalObject, scope, object, name);
 }
 
 void genericSetAttr(JSGlobalObject* globalObject, JSValue object, JSString* name, JSValue value, JSValue key)
@@ -383,9 +384,11 @@ void genericSetAttr(JSGlobalObject* globalObject, JSValue object, JSString* name
 
     if (auto* instance = PyInstance::tryFrom(object); instance && !key && instance->type()->has(TypeFlag::HasDict) && (!instance->dict() || instance->dict()->hasOnlyStringKeys())) [[likely]] {
         if (value)
-            instance->setAttribute(globalObject, name, value);
-        else if (!instance->deleteAttribute(globalObject, name))
-            raiseNoAttribute(globalObject, object, name);
+            RELEASE_AND_RETURN(scope, instance->setAttribute(globalObject, name, value));
+        bool deleted = instance->deleteAttribute(globalObject, name);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (!deleted)
+            raiseNoAttribute(globalObject, scope, object, name);
         return;
     }
 
@@ -416,7 +419,7 @@ void genericSetAttr(JSGlobalObject* globalObject, JSValue object, JSString* name
         RETURN_IF_EXCEPTION(scope, void());
     }
     if (!removed)
-        raiseNoAttribute(globalObject, object, name);
+        raiseNoAttribute(globalObject, scope, object, name);
 }
 
 static ALWAYS_INLINE bool isNative(JSValue method, NativeDef::F2 function)
@@ -469,6 +472,7 @@ static JSValue getAttrImpl(JSGlobalObject* globalObject, JSValue object, JSStrin
         result = moduleGetAttr(globalObject, PyModule::from(object), name, suppress || fallback);
     else
         result = callSpecial(globalObject, getAttribute, object, name);
+    EXCEPTION_ASSERT(!scope.exception() || !result);
     if (result) [[likely]]
         return result;
 
@@ -483,7 +487,7 @@ static JSValue getAttrImpl(JSGlobalObject* globalObject, JSValue object, JSStrin
     if (!fallback)
         return { };
     result = callSpecial(globalObject, fallback, object, name);
-    if (!result) [[unlikely]] {
+    if (failed(scope, result)) [[unlikely]] {
         if (suppress)
             clearPendingExceptionIfMatches(globalObject, rt.AttributeError());
         else
@@ -943,7 +947,7 @@ JSValue callOperatorMethod(JSGlobalObject* globalObject, JSValue method, JSValue
     Runtime& rt = runtime(globalObject);
     auto scope = DECLARE_THROW_SCOPE(rt.vm());
     JSValue bound = bindDescriptor(globalObject, method, self, rt.typeOf(self));
-    if (!bound) [[unlikely]]
+    if (failed(scope, bound)) [[unlikely]]
         RELEASE_AND_RETURN(scope, clearPendingExceptionIfMatches(globalObject, rt.AttributeError()) ? rt.notImplemented() : JSValue());
     if (failed(scope, rt.tryEnterFrame())) [[unlikely]]
         return { };
@@ -961,13 +965,14 @@ static JSValue callSpecialIfThere(JSGlobalObject* globalObject, JSValue& method,
     if (isMethodDescriptor(method)) [[likely]]
         return callSpecial(globalObject, method, self, arguments...);
     Runtime& rt = runtime(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(rt.vm());
     JSValue bound = bindDescriptor(globalObject, method, self, rt.typeOf(self));
-    if (!bound) {
+    if (failed(scope, bound)) {
         if (clearPendingExceptionIfMatches(globalObject, rt.AttributeError()))
             method = { };
         return { };
     }
-    return call(globalObject, bound, arguments...);
+    RELEASE_AND_RETURN(scope, call(globalObject, bound, arguments...));
 }
 
 JSValue callWithTupleAndDict(JSGlobalObject* globalObject, JSValue callable, PyTuple* positional, PyDict* keywords)
@@ -1106,23 +1111,15 @@ String reprForMessage(JSGlobalObject* globalObject, JSValue value)
 {
     VM& vm = getVM(globalObject);
     // The message may be about an exception that is propagating, which is set aside: nothing runs while one is.
-    Exception* propagating = nullptr;
+    SuspendExceptionScope suspended(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     String result;
-    {
-        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        propagating = scope.exception();
+    JSString* text = repr(globalObject, value);
+    if (!scope.exception())
+        result = text->value(globalObject);
+    if (scope.exception()) {
         scope.clearException();
-        JSString* text = repr(globalObject, value);
-        if (!scope.exception())
-            result = text->value(globalObject);
-        if (scope.exception()) {
-            scope.clearException();
-            result = "<?>"_s;
-        }
-    }
-    if (propagating) {
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        scope.throwException(globalObject, propagating);
+        result = "<?>"_s;
     }
     return result;
 }
@@ -1487,6 +1484,7 @@ int64_t lengthHint(JSGlobalObject* globalObject, JSValue value, int64_t defaultV
     PyType* type = rt.typeOf(value);
     if (type->lookup(Special::Len)) {
         int64_t size = length(globalObject, value);
+        EXCEPTION_ASSERT(!!scope.exception() == (size < 0));
         if (size >= 0)
             return size;
         if (!clearPendingExceptionIfMatches(globalObject, rt.TypeError()))
@@ -1496,7 +1494,7 @@ int64_t lengthHint(JSGlobalObject* globalObject, JSValue value, int64_t defaultV
     if (!method)
         return defaultValue;
     JSValue result = callSpecial(globalObject, method, value);
-    if (!result) {
+    if (failed(scope, result)) {
         if (clearPendingExceptionIfMatches(globalObject, rt.TypeError()))
             return defaultValue;
         return -1;
@@ -1714,7 +1712,7 @@ bool contains(JSGlobalObject* globalObject, JSValue container, JSValue item)
         return false;
     }
     JSValue iterator = getIter(globalObject, container);
-    if (!iterator) {
+    if (failed(scope, iterator)) {
         if (clearPendingExceptionIfMatches(globalObject, rt.TypeError()))
             raiseTypeError(globalObject, scope, "argument of type '"_s, type->nameInMessages(), "' is not a container or iterable"_s);
         return false;
@@ -1756,7 +1754,7 @@ JSValue getIter(JSGlobalObject* globalObject, JSValue value)
     if (!method && isIterableThroughGetItem(type)) {
         // After an __iter__ that was not there, the same goes for __getitem__, which is only asked for.
         if (JSValue getItem = type->lookup(Special::GetItem); hadMethod && !isMethodDescriptor(getItem)) [[unlikely]] {
-            if (!bindDescriptor(globalObject, getItem, value, type)) {
+            if (failed(scope, bindDescriptor(globalObject, getItem, value, type))) {
                 takePendingException(globalObject);
                 return raiseTypeError(globalObject, scope, '\'', type->nameInMessages(), "' object is not iterable"_s);
             }
@@ -1786,6 +1784,7 @@ JSValue iterNext(JSGlobalObject* globalObject, JSValue iterator)
                 RELEASE_AND_RETURN(scope, uncheckedDowncast<PyIterator>(cell)->next(globalObject));
             if (info == PyMultiIterator::info() && !uncheckedDowncast<PyMultiIterator>(cell)->type()->isHeapType()) {
                 JSValue result = uncheckedDowncast<PyMultiIterator>(cell)->next(globalObject);
+                EXCEPTION_ASSERT(!scope.exception() || !result);
                 // A StopIteration out of the function of a map or a filter ends the iteration like any other.
                 if (!result) [[unlikely]]
                     clearPendingExceptionIfMatches(globalObject, rt.StopIteration());
@@ -1796,7 +1795,6 @@ JSValue iterNext(JSGlobalObject* globalObject, JSValue iterator)
             if (generator->kind() == PyGenerator::Kind::Generator) {
                 JSValue result;
                 if (generator->state() >= 0) [[likely]] {
-                    scope.release();
                     RELEASE_AND_RETURN(scope, generator->resume(globalObject, jsUndefined(), JSGenerator::ResumeMode::NormalMode, result) == PyGenerator::Outcome::Yielded ? result : JSValue());
                 }
                 RELEASE_AND_RETURN(scope, generatorSend(globalObject, generator, jsUndefined(), result));
@@ -1809,6 +1807,7 @@ JSValue iterNext(JSGlobalObject* globalObject, JSValue iterator)
     if (!method || isNone(method))
         return raiseTypeError(globalObject, scope, '\'', type->name(), "' object is not an iterator"_s);
     JSValue result = callSpecial(globalObject, method, iterator);
+    EXCEPTION_ASSERT(!scope.exception() || !result);
     if (result) [[likely]]
         return result;
     clearPendingExceptionIfMatches(globalObject, rt.StopIteration());

@@ -646,6 +646,7 @@ CapabilityLevel canCompile(Graph& graph)
                 case StringIdentUse:
                 case NotStringVarUse:
                 case NotSymbolUse:
+                case NotPyObjectUse:
                 case AnyIntUse:
                 case DoubleRepAnyIntUse:
                 case NotDoubleUse:

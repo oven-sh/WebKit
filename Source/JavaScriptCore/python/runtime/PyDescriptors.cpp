@@ -648,7 +648,7 @@ static JSValue superInit(JSGlobalObject* globalObject, JSValue self, const CallA
     JSValue instance = args.get(1);
     if (!typeValue) {
         // super(): the class being defined and the first argument of the method that is running.
-        if (!findSuperArguments(globalObject, typeValue, instance))
+        if (failed(scope, findSuperArguments(globalObject, typeValue, instance)))
             return { };
     }
     PyType* type = PyType::tryFrom(typeValue);

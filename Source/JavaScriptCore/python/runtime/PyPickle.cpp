@@ -902,11 +902,12 @@ private:
             header[i] = static_cast<uint8_t>(size >> (8 * (i - 1)));
         if (failed(scope, writeBytes({ header, headerSize }, data, { })))
             return false;
-        return memoPut(object);
+        RELEASE_AND_RETURN(scope, memoPut(object));
     }
 
     bool saveTuple(JSValue object)
     {
+        auto scope = DECLARE_THROW_SCOPE(m_vm);
         auto* tuple = PyTuple::from(object);
         unsigned length = tuple->length();
         if (!length) {
@@ -924,8 +925,8 @@ private:
         if (!isShort)
             writeOp(PickleOpMark);
         for (unsigned i = 0; i < length; ++i) {
-            if (!save(tuple->at(i)))
-                return noteItem(object, i);
+            if (failed(scope, save(tuple->at(i))))
+                RELEASE_AND_RETURN(scope, noteItem(object, i));
         }
         if (memoLookup(object)) {
             if (!isShort && m_bin)
@@ -934,11 +935,11 @@ private:
                 for (unsigned i = 0; i < length + !isShort; ++i)
                     writeOp(PickleOpPop);
             }
-            return memoGet(object);
+            RELEASE_AND_RETURN(scope, memoGet(object));
         }
         static constexpr uint8_t opcodes[] = { PickleOpEmptyTuple, PickleOpTuple1, PickleOpTuple2, PickleOpTuple3 };
         writeOp(isShort ? opcodes[length] : PickleOpTuple);
-        return memoPut(object);
+        RELEASE_AND_RETURN(scope, memoPut(object));
     }
 
     // The items an iterator gives, appended in batches to what is on the stack.
@@ -1010,7 +1011,7 @@ private:
             unsigned count = 0;
             writeOp(PickleOpMark);
             while (total < listLength(list)) {
-                if (!save(listGet(list, total)))
+                if (failed(scope, save(listGet(list, total))))
                     RELEASE_AND_RETURN(scope, noteItem(list, total));
                 ++total;
                 if (++count == pickleBatchSize)
@@ -1037,14 +1038,13 @@ private:
             writeOp(PickleOpMark);
             writeOp(PickleOpList);
         }
-        memoPut(object);
-        bool ok = true;
-        if (listLength(list)) {
+        bool ok = !failed(scope, memoPut(object));
+        if (ok && listLength(list)) {
             if (m_proto > 0)
-                ok = batchListExact(list);
+                ok = !failed(scope, batchListExact(list));
             else {
                 JSValue iterator = getIter(m_globalObject, object);
-                ok = !scope.exception() && batchList(iterator, object);
+                ok = !scope.exception() && !failed(scope, batchList(iterator, object));
             }
         }
         if (m_fast)
@@ -1138,9 +1138,9 @@ private:
             unsigned count = 0;
             writeOp(PickleOpMark);
             while (dict->next(position, key, value)) {
-                if (!save(key))
+                if (failed(scope, save(key)))
                     return false;
-                if (!save(value))
+                if (failed(scope, save(value)))
                     RELEASE_AND_RETURN(scope, noteKey(dict, key));
                 ++total;
                 if (++count == pickleBatchSize)
@@ -1167,15 +1167,14 @@ private:
             writeOp(PickleOpMark);
             writeOp(PickleOpDict);
         }
-        memoPut(object);
-        bool ok = true;
-        if (dict->size()) {
+        bool ok = !failed(scope, memoPut(object));
+        if (ok && dict->size()) {
             if (m_proto > 0)
-                ok = batchDictExact(dict);
+                ok = !failed(scope, batchDictExact(dict));
             else {
                 JSValue items = callMethod(m_globalObject, object, m_rt.names.items());
                 JSValue iterator = scope.exception() ? JSValue() : getIter(m_globalObject, items);
-                ok = !scope.exception() && batchDict(iterator, object);
+                ok = !scope.exception() && !failed(scope, batchDict(iterator, object));
             }
         }
         if (m_fast)
@@ -1486,7 +1485,7 @@ private:
         }
 
         if (m_proto >= 4) {
-            if (!save(moduleName) || !save(globalName))
+            if (failed(scope, save(moduleName)) || failed(scope, save(globalName)))
                 return false;
             writeOp(PickleOpStackGlobal);
             RELEASE_AND_RETURN(scope, memoPut(object));
@@ -1661,9 +1660,9 @@ private:
                 RELEASE_AND_RETURN(scope, note(object, "__new__ arguments"_s));
             writeOp(PickleOpNewObj);
         } else {
-            if (!save(callable))
+            if (failed(scope, save(callable)))
                 RELEASE_AND_RETURN(scope, note(object, "reconstructor"_s));
-            if (!save(argumentTuple))
+            if (failed(scope, save(argumentTuple)))
                 RELEASE_AND_RETURN(scope, note(object, "reconstructor arguments"_s));
             writeOp(PickleOpReduce);
         }
@@ -1674,24 +1673,25 @@ private:
                 writeOp(PickleOpPop);
                 RELEASE_AND_RETURN(scope, memoGet(object));
             }
-            memoPut(object);
+            if (failed(scope, memoPut(object)))
+                return false;
         }
-        if (listItems && !batchList(listItems, object))
+        if (listItems && failed(scope, batchList(listItems, object)))
             return false;
-        if (dictItems && !batchDict(dictItems, object))
+        if (dictItems && failed(scope, batchDict(dictItems, object)))
             return false;
         if (state) {
             if (!stateSetter) {
-                if (!save(state))
+                if (failed(scope, save(state)))
                     RELEASE_AND_RETURN(scope, note(object, "state"_s));
                 writeOp(PickleOpBuild);
             } else {
                 // state_setter(object, state), the result of which is dropped.
-                if (!save(stateSetter))
+                if (failed(scope, save(stateSetter)))
                     RELEASE_AND_RETURN(scope, note(object, "state setter"_s));
-                if (!save(object))
+                if (failed(scope, save(object)))
                     return false;
-                if (!save(state))
+                if (failed(scope, save(state)))
                     RELEASE_AND_RETURN(scope, note(object, "state"_s));
                 writeOp(PickleOpTuple2);
                 writeOp(PickleOpReduce);
@@ -1804,9 +1804,10 @@ private:
         if (isStr(reduced))
             RELEASE_AND_RETURN(scope, saveGlobal(object, reduced));
         auto* tuple = PyTuple::tryFrom(reduced);
-        if (!tuple)
+        if (!tuple) {
             pickleRaise(m_globalObject, PickleStatePicklingError, "__reduce__ must return a string or tuple, not "_s, pickleTypeName(m_globalObject, reduced));
-        else if (saveReduce(tuple, object))
+            EXCEPTION_ASSERT(scope.exception());
+        } else if (!failed(scope, saveReduce(tuple, object)))
             return true;
         RELEASE_AND_RETURN(scope, note(object, "object"_s));
     }
@@ -1871,8 +1872,8 @@ static JSValue picklerInit(JSGlobalObject* globalObject, JSValue self, const Cal
         picklerClearMemo(globalObject, pickler);
     }
     if (failed(scope, picklerSetProtocol(globalObject, pickler, values[1], fixImports))
-        || !picklerSetOutputStream(globalObject, pickler, values[0])
-        || !picklerSetBufferCallback(globalObject, pickler, values[3]))
+        || failed(scope, picklerSetOutputStream(globalObject, pickler, values[0]))
+        || failed(scope, picklerSetBufferCallback(globalObject, pickler, values[3])))
         return { };
     pickler->set(vm, PicklerFast, jsNumber(0));
     if (!pickler->get(PicklerDispatchTable)) {
@@ -1924,8 +1925,10 @@ static bool pickleIsName(JSValue name, ASCIILiteral expected) { return isStr(nam
 
 static JSValue pickleGenericGetAttr(JSGlobalObject* globalObject, JSValue self, JSValue name)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSString* nameString = attributeName(globalObject, name);
-    return nameString ? genericGetAttr(globalObject, self, nameString) : JSValue();
+    RELEASE_AND_RETURN(scope, nameString ? genericGetAttr(globalObject, self, nameString) : JSValue());
 }
 
 // An empty value deletes.
@@ -2339,14 +2342,14 @@ public:
 
         while (true) {
             const uint8_t* op = read(1);
-            if (!op) {
+            if (failed(scope, op)) {
                 if (clearPendingExceptionIfMatches(m_globalObject, unpicklingError()))
                     raiseEOFError(m_globalObject, scope, "Ran out of input"_s);
                 return { };
             }
             if (*op == PickleOpStop)
                 break;
-            if (!dispatch(*op))
+            if (failed(scope, dispatch(*op)))
                 return { };
         }
         RELEASE_AND_RETURN(scope, pop());
@@ -2383,9 +2386,11 @@ private:
     // What the file returned becomes the input. -1: an exception.
     int64_t setFileInput(JSValue data)
     {
+        VM& vm = getVM(m_globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
         if (!PyBytes::is(data)) {
             std::span<const uint8_t> span;
-            if (!getBytesLike(m_globalObject, data, span))
+            if (failed(scope, getBytesLike(m_globalObject, data, span)))
                 return -1;
             data = PyBytes::create(m_globalObject, span);
         }
@@ -2424,7 +2429,7 @@ private:
         if (size == count)
             RELEASE_AND_RETURN(scope, setFileInput(data));
         std::span<const uint8_t> first;
-        if (!getBytesLike(m_globalObject, data, first))
+        if (failed(scope, getBytesLike(m_globalObject, data, first)))
             return -1;
         if (static_cast<int64_t>(first.size()) < size)
             RELEASE_AND_RETURN(scope, setFileInput(data));
@@ -2434,7 +2439,7 @@ private:
             int64_t previous = size;
             size += std::min(size, count - size);
             all.grow(size);
-            if (!readIntoFromFile(all.mutableSpan().data() + previous, size - previous))
+            if (failed(scope, readIntoFromFile(all.mutableSpan().data() + previous, size - previous)))
                 return -1;
         }
         RELEASE_AND_RETURN(scope, setFileInput(PyBytes::create(m_globalObject, all.span())));
@@ -2453,12 +2458,14 @@ private:
 
     NEVER_INLINE const uint8_t* readSlow(int64_t count)
     {
+        auto scope = DECLARE_THROW_SCOPE(m_vm);
         if (m_next > std::numeric_limits<int64_t>::max() - count) {
+            scope.release();
             fail("read would overflow (invalid bytecode)"_s);
             return nullptr;
         }
         if (m_frameEnd >= 0) {
-            if (!leaveFrame(m_next < m_frameEnd))
+            if (failed(scope, leaveFrame(m_next < m_frameEnd)))
                 return nullptr;
             if (count <= m_inputLength - m_next) {
                 const uint8_t* result = m_input + m_next;
@@ -2467,13 +2474,15 @@ private:
             }
         }
         if (!m_read) {
+            scope.release();
             truncated();
             return nullptr;
         }
         int64_t found = readFromFile(count);
-        if (found < 0)
+        if (failed(scope, found >= 0))
             return nullptr;
         if (found < count) {
+            scope.release();
             truncated();
             return nullptr;
         }
@@ -3430,6 +3439,7 @@ private:
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
         const uint8_t* bytes = read(1);
+        RETURN_IF_EXCEPTION(scope, false);
         if (!bytes)
             return false;
         if (*bytes > pickleHighestProtocol) {
@@ -3456,7 +3466,7 @@ private:
             raiseOverflowError(m_globalObject, scope, "FRAME length exceeds system's maximum of "_s, std::numeric_limits<int64_t>::max(), " bytes"_s);
             return false;
         }
-        if (!read(length))
+        if (failed(scope, read(length)))
             return false;
         // All of it is there. Nothing in it may reach beyond its end.
         m_next -= length;
@@ -3468,6 +3478,8 @@ private:
 
     bool dispatch(uint8_t op)
     {
+        VM& vm = getVM(m_globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
         switch (op) {
         case PickleOpNone:
             return push(jsUndefined());
@@ -3529,15 +3541,15 @@ private:
         case PickleOpTuple:
             return loadTuple();
         case PickleOpEmptyList:
-            return push(newList(m_globalObject));
+            RELEASE_AND_RETURN(scope, push(newList(m_globalObject)));
         case PickleOpList:
             return loadList();
         case PickleOpEmptyDict:
-            return push(PyDict::create(m_globalObject));
+            RELEASE_AND_RETURN(scope, push(PyDict::create(m_globalObject)));
         case PickleOpDict:
             return loadDict();
         case PickleOpEmptySet:
-            return push(PySet::create(m_globalObject));
+            RELEASE_AND_RETURN(scope, push(PySet::create(m_globalObject)));
         case PickleOpAddItems:
             return loadAddItems();
         case PickleOpFrozenSet:
@@ -3641,9 +3653,14 @@ static JSValue unpicklerNew(JSGlobalObject* globalObject, JSValue cls, const Cal
 static bool unpicklerSetOptions(JSGlobalObject* globalObject, ASCIILiteral function, PyRecord* unpickler, const JSValue* values)
 {
     VM& vm = getVM(globalObject);
-    unpickler->set(vm, UnpicklerEncoding, pickleStringArgument(globalObject, function, "encoding"_s, values[1], "ASCII"_s));
-    unpickler->set(vm, UnpicklerErrors, pickleStringArgument(globalObject, function, "errors"_s, values[2], "strict"_s));
-    return unpicklerSetBuffers(globalObject, unpickler, values[3]);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSString* encoding = pickleStringArgument(globalObject, function, "encoding"_s, values[1], "ASCII"_s);
+    RETURN_IF_EXCEPTION(scope, false);
+    unpickler->set(vm, UnpicklerEncoding, encoding);
+    JSString* errors = pickleStringArgument(globalObject, function, "errors"_s, values[2], "strict"_s);
+    RETURN_IF_EXCEPTION(scope, false);
+    unpickler->set(vm, UnpicklerErrors, errors);
+    RELEASE_AND_RETURN(scope, unpicklerSetBuffers(globalObject, unpickler, values[3]));
 }
 
 // Converts the options, in the order of the parameters, before anything is done with any.
@@ -3653,7 +3670,9 @@ static bool unpicklerCheckOptions(JSGlobalObject* globalObject, ASCIILiteral fun
     auto scope = DECLARE_THROW_SCOPE(vm);
     fixImports = !values[0] || isTrue(globalObject, values[0]);
     RETURN_IF_EXCEPTION(scope, false);
-    RELEASE_AND_RETURN(scope, pickleStringArgument(globalObject, function, "encoding"_s, values[1], "ASCII"_s) && pickleStringArgument(globalObject, function, "errors"_s, values[2], "strict"_s));
+    pickleStringArgument(globalObject, function, "encoding"_s, values[1], "ASCII"_s);
+    RETURN_IF_EXCEPTION(scope, false);
+    RELEASE_AND_RETURN(scope, !!pickleStringArgument(globalObject, function, "errors"_s, values[2], "strict"_s));
 }
 
 static JSValue unpicklerInit(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
@@ -3718,7 +3737,7 @@ static JSValue unpicklerFindClass(JSGlobalObject* globalObject, JSValue self, JS
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* unpickler = PyRecord::from(self);
     int proto = static_cast<int>(unpickler->number & 0xff);
-    if (!audit(globalObject, "pickle.find_class"_s, moduleName, globalName))
+    if (failed(scope, audit(globalObject, "pickle.find_class"_s, moduleName, globalName)))
         return { };
 
     // What Python 2 called otherwise.
@@ -3947,8 +3966,8 @@ static JSValue pickleDump(JSGlobalObject* globalObject, JSValue object, JSValue 
     RETURN_IF_EXCEPTION(scope, { });
     PyRecord* pickler = picklerCreate(globalObject, pickleStateType(globalObject, PickleStatePicklerType));
     if (failed(scope, picklerSetProtocol(globalObject, pickler, protocol, fixImports))
-        || !picklerSetOutputStream(globalObject, pickler, file)
-        || !picklerSetBufferCallback(globalObject, pickler, bufferCallback))
+        || failed(scope, picklerSetOutputStream(globalObject, pickler, file))
+        || failed(scope, picklerSetBufferCallback(globalObject, pickler, bufferCallback)))
         return { };
     PicklerRun run(globalObject, pickler);
     run.dump(object);
@@ -3979,7 +3998,7 @@ static JSValue pickleLoad(JSGlobalObject* globalObject, JSValue file, JSValue fi
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue options[] = { fixImportsValue, encoding, errors, buffers };
     bool fixImports;
-    if (!unpicklerCheckOptions(globalObject, "load"_s, options, fixImports))
+    if (failed(scope, unpicklerCheckOptions(globalObject, "load"_s, options, fixImports)))
         return { };
     PyRecord* unpickler = unpicklerCreate(globalObject, pickleStateType(globalObject, PickleStateUnpicklerType));
     if (failed(scope, unpicklerSetInputStream(globalObject, unpickler, file)) || failed(scope, unpicklerSetOptions(globalObject, "load"_s, unpickler, options)))
@@ -3995,11 +4014,11 @@ static JSValue pickleLoads(JSGlobalObject* globalObject, JSValue data, JSValue f
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue options[] = { fixImportsValue, encoding, errors, buffers };
     bool fixImports;
-    if (!unpicklerCheckOptions(globalObject, "loads"_s, options, fixImports))
+    if (failed(scope, unpicklerCheckOptions(globalObject, "loads"_s, options, fixImports)))
         return { };
     PyRecord* unpickler = unpicklerCreate(globalObject, pickleStateType(globalObject, PickleStateUnpicklerType));
     BufferHolder holder(globalObject);
-    if (!holder.get(data, BufferContigRO))
+    if (failed(scope, holder.get(data, BufferContigRO)))
         return { };
     if (failed(scope, unpicklerSetOptions(globalObject, "loads"_s, unpickler, options)))
         return { };
@@ -4045,6 +4064,7 @@ void initializePickleModule(JSGlobalObject* globalObject, PyModule* module)
     module->add(globalObject, "__doc__"_s, makeStr(vm, "Optimized C implementation for the Python pickle module."_s));
     module->addFunctions(globalObject, pickleFunctions);
     module->add(globalObject, "PickleBuffer"_s, rt.typeFor(pickleBufferTypeDef));
+    RETURN_IF_EXCEPTION(scope, void());
     module->add(globalObject, "Pickler"_s, state->get(PickleStatePicklerType));
     module->add(globalObject, "Unpickler"_s, state->get(PickleStateUnpicklerType));
     module->add(globalObject, "PickleError"_s, pickleError);
@@ -4052,6 +4072,7 @@ void initializePickleModule(JSGlobalObject* globalObject, PyModule* module)
     module->add(globalObject, "UnpicklingError"_s, state->get(PickleStateUnpicklingError));
 
     state->set(vm, PickleStateGetAttr, builtinNamed(globalObject, "getattr"_s));
+    RETURN_IF_EXCEPTION(scope, void());
     struct Import {
         ASCIILiteral module;
         ASCIILiteral name;

@@ -349,7 +349,7 @@ static JSValue structNew(JSGlobalObject* globalObject, JSValue cls, const CallAr
             return { };
     }
     PyRecord* object = structAllocate(globalObject, type);
-    if (format && !structSetFormat(globalObject, object, format)) {
+    if (format && failed(scope, structSetFormat(globalObject, object, format))) {
         if (!hasOwnInit)
             return { };
         JSValue exception = takePendingException(globalObject);
@@ -655,11 +655,13 @@ static bool structPackItem(JSGlobalObject* globalObject, const StructFormat& for
     }
     case StructKind::Signed: {
         JSValue integer = structToInt(globalObject, value);
+        EXCEPTION_ASSERT(!!scope.exception() == !integer);
         if (!integer && !overflowMeansOutOfRange())
             return false;
         int64_t largest = static_cast<int64_t>(std::numeric_limits<uint64_t>::max() >> (65 - 8 * size));
         auto converted = integer ? tryInt64(integer) : std::nullopt;
         if (!converted || *converted > largest || *converted < ~largest) {
+            scope.release();
             structRaise(globalObject, '\'', format.code, "' format requires "_s, ~largest, " <= number <= "_s, largest);
             return false;
         }
@@ -668,11 +670,13 @@ static bool structPackItem(JSGlobalObject* globalObject, const StructFormat& for
     }
     case StructKind::Unsigned: {
         JSValue integer = structToInt(globalObject, value);
+        EXCEPTION_ASSERT(!!scope.exception() == !integer);
         if (!integer && !overflowMeansOutOfRange())
             return false;
         uint64_t largest = std::numeric_limits<uint64_t>::max() >> (64 - 8 * size);
         auto converted = !integer || intSign(integer) < 0 ? std::nullopt : tryUInt64(integer);
         if (!converted || *converted > largest) {
+            scope.release();
             structRaise(globalObject, '\'', format.code, "' format requires 0 <= number <= "_s, largest);
             return false;
         }
@@ -975,7 +979,7 @@ static JSValue structModulePack(JSGlobalObject* globalObject, const CallArgs& ar
     if (failed(scope, rejectKeywords(globalObject, "_struct.pack"_s, args)) || failed(scope, checkPositional(globalObject, "pack"_s, args, 1, std::numeric_limits<unsigned>::max())))
         return { };
     JSValue object = structForFormat(globalObject, args[0]);
-    if (!object)
+    if (failed(scope, object))
         return { };
     RELEASE_AND_RETURN(scope, structPackImpl(globalObject, object, args.positional().subspan(1)));
 }

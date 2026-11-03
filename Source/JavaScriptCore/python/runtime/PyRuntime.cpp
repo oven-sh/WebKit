@@ -45,8 +45,6 @@ Runtime& Runtime::ensure(JSGlobalObject* globalObject)
 {
     if (auto* existing = globalObject->pythonRuntime())
         return *existing;
-    // From here on there are objects that say what + and == do to them, which optimized JS code took to be impossible.
-    globalObject->vm().operatorOverloadingWatchpointSet().fireAll(globalObject->vm(), "Python objects overload operators");
     auto created = makeUnique<Runtime>(globalObject);
     Runtime& runtime = *created;
     globalObject->setPythonRuntime(WTF::move(created));
@@ -73,10 +71,6 @@ Runtime::Runtime(JSGlobalObject* globalObject)
     , m_instanceKeys { PrivateName(PrivateName::PrivateSymbol, "type"_s), PrivateName(PrivateName::PrivateSymbol, "dict"_s), PrivateName(PrivateName::PrivateSymbol, "hasDict"_s) }
 {
     m_threads = Threads::sharedFor(m_vm);
-#if ENABLE(AOT)
-    // A program can use up, or lower, the limit on threads (resource.setrlimit). The collector does without helpers then.
-    Thread::setSurvivesFailedCreation();
-#endif
     m_monitoring = makeUnique<Monitoring>(*this);
     m_vm.heap.addPythonRuntime(this);
 }
@@ -137,13 +131,16 @@ template void Runtime::visit(SlotVisitor&);
 
 void Runtime::initialize()
 {
+    VM& vm = getVM(m_globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     optimizationLevel = configuration().optimizationLevel;
     maxStrDigits = configuration().intMaxStrDigits;
     initializeStructures();
     initializeNames();
     initializeTypes();
     initializeModules();
-    startImportSystem(m_globalObject);
+    RETURN_IF_EXCEPTION(scope, void());
+    RELEASE_AND_RETURN(scope, startImportSystem(m_globalObject));
 }
 
 void Runtime::initializeStructures()
@@ -229,6 +226,7 @@ void Runtime::initializeTypes()
 void Runtime::initializeModules()
 {
     VM& vm = m_vm;
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSGlobalObject* globalObject = m_globalObject;
 
     m_modules.set(vm, globalObject, PyDict::create(globalObject));
@@ -246,7 +244,8 @@ void Runtime::initializeModules()
     m_modules->set(vm, internString(vm, "js"_s), globalObject->globalThis());
 
     initializeBuiltinsModule(globalObject, builtins);
-    initializeSysModule(globalObject, sys);
+    RETURN_IF_EXCEPTION(scope, void());
+    RELEASE_AND_RETURN(scope, initializeSysModule(globalObject, sys));
 }
 
 PyType* Runtime::typeFor(const TypeDef& def, PyType* base)
@@ -268,6 +267,8 @@ PyType* Runtime::typeFor(const TypeDef& def, PyType* base)
 }
 
 PyType* jsSymbolType(Runtime&);
+PyType* jsIteratorObjectType(Runtime&);
+PyType* jsGeneratorType(Runtime&);
 
 PyType* Runtime::typeOf(JSValue value) const
 {
@@ -307,6 +308,16 @@ PyType* Runtime::typeOf(JSValue value) const
             return jsPromiseType();
         case SymbolType:
             return jsSymbolType(const_cast<Runtime&>(*this));
+        case JSGeneratorType:
+            return jsGeneratorType(const_cast<Runtime&>(*this));
+        case JSArrayIteratorType:
+        case JSMapIteratorType:
+        case JSSetIteratorType:
+        case JSStringIteratorType:
+        case JSRegExpStringIteratorType:
+        case JSIteratorHelperType:
+        case JSWrapForValidIteratorType:
+            return jsIteratorObjectType(const_cast<Runtime&>(*this));
         case DerivedArrayType:
             if (PyListObject::is(cell))
                 return uncheckedDowncast<PyListObject>(cell)->type();

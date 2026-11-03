@@ -54,6 +54,7 @@ void Runtime::unregisterFinalizable(JSCell* cell)
 void Runtime::registerNotedGenerators()
 {
     for (PyGenerator* generator : m_newFinalizableGenerators) {
+        ASSERT(generator->JSCell::type() == PyGeneratorType);
         if (generator->finalization() != PyGenerator::Finalization::Noted)
             continue;
         generator->setFinalization(PyGenerator::Finalization::Registered);
@@ -62,15 +63,35 @@ void Runtime::registerNotedGenerators()
     m_newFinalizableGenerators.shrink(0);
 }
 
+// A generator that has not begun has nothing to end. (A coroutine that has not begun is complained about.)
+static bool hasNothingToFinalize(JSCell* cell)
+{
+    if (cell->type() != PyGeneratorType)
+        return false;
+    auto* generator = uncheckedDowncast<PyGenerator>(cell);
+    return !generator->isStarted() && generator->kind() != PyGenerator::Kind::Coroutine && !generator->finalizer();
+}
+
+// Its finalizer is code of the program, or may be. What the finalizers of the built-in types do (close a file) looks the same in any
+// order, as long as an object comes before what it refers to.
+static bool hasFinalizerOfProgram(Runtime& rt, JSCell* cell)
+{
+    return cell->type() == PyGeneratorType || rt.typeOf(cell)->isHeapType();
+}
+
 bool Runtime::keepUnreachableObjectsToFinalize(SlotVisitor& visitor)
 {
     Locker locker { m_finalizationLock };
     registerNotedGenerators();
     // All of them are found before any is marked.
     Vector<JSCell*> candidates;
+    unsigned finalizersOfProgram = 0;
     for (JSCell* cell : m_finalizable) {
-        if (!visitor.isMarked(cell))
-            candidates.append(cell);
+        // What has nothing to finalize is left to die, unless one of the others reaches it: see didMarkAll().
+        if (visitor.isMarked(cell) || hasNothingToFinalize(cell))
+            continue;
+        candidates.append(cell);
+        finalizersOfProgram += hasFinalizerOfProgram(*this, cell);
     }
     auto finish = [&]() WTF_REQUIRES_LOCK(m_finalizationLock) {
         if (m_markingObserver && m_markingObserver->didFinishMarking(visitor))
@@ -79,8 +100,10 @@ bool Runtime::keepUnreachableObjectsToFinalize(SlotVisitor& visitor)
         return false;
     };
     // A collection that was under way when the program asked for one is finished first.
-    bool looksAtAllThatDied = m_collectionWasAskedFor && m_vm.heap.collectionScope() == CollectionScope::Full;
-    bool wantsGarbage = looksAtAllThatDied && m_markingObserver && m_markingObserver->wantsGarbage();
+    bool wasAskedFor = m_collectionWasAskedFor && m_vm.heap.collectionScope() == CollectionScope::Full;
+    bool wantsGarbage = wasAskedFor && m_markingObserver && m_markingObserver->wantsGarbage();
+    // That takes time for every dead cell, which at exit is every cell there is.
+    bool looksAtAllThatDied = wasAskedFor && (wantsGarbage || finalizersOfProgram > 1);
     if (candidates.isEmpty() && !wantsGarbage)
         return finish();
 
@@ -167,6 +190,15 @@ Vector<PyWeakRef*> Runtime::weakRefsWithCallbacksToUnmarkedObjects(SlotVisitor& 
 // The collection will mark no more.
 void Runtime::didMarkAll(SlotVisitor& visitor)
 {
+    // What had nothing to finalize was not kept.
+    Vector<JSCell*> gone;
+    for (JSCell* cell : m_finalizable) {
+        if (!visitor.isMarked(cell) && hasNothingToFinalize(cell))
+            gone.append(cell);
+    }
+    for (JSCell* cell : gone)
+        m_finalizable.remove(cell);
+
 #if ASSERT_ENABLED
     // What is registered and was not reachable has been kept. Anything else would be freed now and still be in the list.
     for (JSCell* cell : m_finalizable) {
@@ -175,6 +207,22 @@ void Runtime::didMarkAll(SlotVisitor& visitor)
             RELEASE_ASSERT_NOT_REACHED();
         }
     }
+    // No collection ends, and so nothing is freed, while a generator is only noted.
+    ASSERT(m_newFinalizableGenerators.isEmpty());
+    // A generator that is running is referred to by the frame of its body, in whatever thread.
+    auto assertAreMarked = [&](PyGenerator* running) {
+        for (PyGenerator* generator = running; generator; generator = generator->resumedBy())
+            ASSERT(visitor.isMarked(generator) && generator->isRunning());
+    };
+    assertAreMarked(m_runningGenerator);
+    threads().forEachThread([&](ThreadState& thread) {
+        if (!thread.saved)
+            return;
+        for (auto& entry : thread.saved->entries) {
+            if (entry.runtime == this)
+                assertAreMarked(entry.state.runningGenerator);
+        }
+    });
 #endif
     m_finalized.removeIf([&](JSCell* cell) {
         return !visitor.isMarked(cell);
@@ -192,6 +240,25 @@ void Runtime::didMarkAll(SlotVisitor& visitor)
         m_collectionsToTellOf.append({ generation, duration });
         didQueueCalls();
     }
+}
+
+void Runtime::WeakCellTable::removeUnmarked(JSC::Heap& heap)
+{
+    for (unsigned i = 0; i < m_cells.size(); ++i) {
+        if (m_cells[i] && !heap.isMarked(m_cells[i])) {
+            m_cells[i] = nullptr;
+            m_free.append(i);
+        }
+    }
+    if (m_free.size() == m_cells.size()) {
+        m_cells.clear();
+        m_free.clear();
+    }
+}
+
+void Runtime::reconcileWeakReferencesAtGCEnd()
+{
+    scheduledTasks.removeUnmarked(m_vm.heap);
 }
 
 bool Runtime::hasBeenFinalized(JSCell* cell)
@@ -247,7 +314,7 @@ void reportUnraisable(JSGlobalObject* globalObject, const String& message, JSVal
         message.isNull() ? jsUndefined() : JSValue(makeStr(vm, message)), object ? object : jsUndefined() });
 
     JSValue hook = rt.sysDict()->get(internString(vm, "unraisablehook"_s));
-    if (hook && !audit(globalObject, "sys.unraisablehook"_s, hook, arguments)) {
+    if (hook && failed(scope, audit(globalObject, "sys.unraisablehook"_s, hook, arguments))) {
         JSValue second = takePendingException(globalObject);
         writeToStderr(globalObject, "Exception ignored in audit hook:\n"_s);
         printException(globalObject, second);
@@ -284,6 +351,7 @@ void warnOfUnawaitedCoroutine(JSGlobalObject* globalObject, PyGenerator* corouti
     if (scope.exception() && clearPendingExceptionIfMatches(globalObject, rt.ImportError()))
         module = { };
     JSValue function = module ? getAttrIfPresent(globalObject, module, internString(vm, "_warn_unawaited_coroutine"_s)) : JSValue();
+    EXCEPTION_ASSERT(!scope.exception() || !function);
     if (function) {
         call(globalObject, function, coroutine);
         hasWarned = !scope.exception() || pendingExceptionMatches(globalObject, rt.RuntimeWarning());
@@ -394,26 +462,47 @@ void makeCallsOwed(VM& vm)
         if (!checkSignals(runtime->globalObject()))
             return;
         if (runtime->hasPendingCalls())
-            runtime->runPendingCalls();
+            runtime->runPendingCalls(true);
     }
 }
 
-void Runtime::runPendingCalls()
+void Runtime::runPendingCalls(bool mayPutOff)
 {
     // What is queued while these run is run by the loop below, not within one of the calls.
     if (m_isRunningPendingCalls)
         return;
+
+    // With reference counts a finalizer runs where its object is dropped. Here it runs wherever the program happens to be when the
+    // collector has come, which may be at the recursion limit, where every call fails, and its effect would be lost. So what is
+    // called here has this many frames to itself, whatever the depth. (The depth is lowered and the limit left alone:
+    // sys.getrecursionlimit() says what the program set.) The stack has a limit of its own. Near that, this waits for better times.
+    constexpr int framesForPendingCalls = 200;
+#if ASAN_ENABLED || ASSERT_ENABLED
+    constexpr size_t stackForPendingCalls = 2 * MB;
+#else
+    constexpr size_t stackForPendingCalls = 256 * KB;
+#endif
+    if (mayPutOff && !isSafeToRecurseWithMargin(m_vm, std::min(stackForPendingCalls, Thread::currentSingleton().stack().size() / 4))) [[unlikely]] {
+        m_vm.traps().fireTrap(VMTraps::NeedPythonCalls);
+        return;
+    }
+    SetForScope loweredDepth(frameDepth, std::min(frameDepth, std::max(recursionLimit - framesForPendingCalls, 0)));
+
     SetForScope isRunning(m_isRunningPendingCalls, true);
     JSGlobalObject* globalObject = m_globalObject;
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(m_vm);
     SetForScope savedFrame(reraisingFrame, nullptr);
     // For finalizers that make new garbage with such finalizers for ever.
     unsigned collectionsLeft = 8;
-    // A collection of the engine's own that gc.callbacks have been told the start of. They hear of the end when what it found has
-    // been dealt with.
-    std::optional<CollectionNotice> collection;
+    auto& collection = m_collectionBeingToldOf;
 
     while (true) {
+        // A long queue does not hold up Ctrl-C, and a handler is called with the frame of the program, not with that of a finalizer
+        // that happens to come next.
+        if (!isFinalized && !checkSignals(globalObject)) [[unlikely]] {
+            m_vm.traps().fireTrap(VMTraps::NeedPythonCalls);
+            return;
+        }
         // Once out of the queue, only the stack holds it.
         JSCell* object = nullptr;
         PyWeakRef* weakRef = nullptr;
@@ -487,7 +576,7 @@ void Runtime::finalizeAllAtExit()
     }
     auto isDone = [&] {
         Locker locker { m_finalizationLock };
-        return m_finalizable.isEmpty() && m_pendingFinalization.isEmpty() && m_pendingWeakRefCallbacks.isEmpty();
+        return m_pendingFinalization.isEmpty() && m_pendingWeakRefCallbacks.isEmpty() && std::ranges::all_of(m_finalizable, hasNothingToFinalize);
     };
     auto collect = [&] {
         for (unsigned round = 0; round < 64 && !isDone(); ++round) {
@@ -558,7 +647,10 @@ void Runtime::finalizeWhatReferenceCountsWouldHaveFreed()
         {
             Locker locker { m_finalizationLock };
             registerNotedGenerators();
-            if (m_finalizable.isEmpty() && m_pendingFinalization.isEmpty() && m_pendingWeakRefCallbacks.isEmpty())
+            bool hasSomethingToDo = !m_pendingFinalization.isEmpty() || !m_pendingWeakRefCallbacks.isEmpty() || std::ranges::any_of(m_finalizable, [&](JSCell* cell) {
+                return hasFinalizerOfProgram(*this, cell) && !hasNothingToFinalize(cell);
+            });
+            if (!hasSomethingToDo)
                 return;
         }
         {
@@ -594,8 +686,10 @@ void collectAndFinalize(JSGlobalObject* globalObject, Runtime::MarkingObserver* 
         }
         if (!rt.hasPendingCalls())
             break;
+        // What the handler of a signal that came meanwhile raises is for whoever waits for this. The calls that are left are made
+        // at the next safe point then.
         rt.runPendingCalls();
-        if (vm.hasPendingTerminationException()) [[unlikely]]
+        if (vm.exceptionForInspection()) [[unlikely]]
             break;
     }
 }

@@ -130,6 +130,7 @@ private:
     // What no message explains. An enclosing production that knows better may replace it.
     std::nullptr_t invalidSyntax();
     std::nullptr_t invalidSyntaxAtLastTokenSeen();
+    std::nullptr_t invalidSyntaxAfterAttempt();
     std::nullptr_t stackOverflow();
     // For ast.parse(feature_version=...). False: what has just been parsed came with a later version, which is an error.
     bool checkVersion(int version, ASCIILiteral what)
@@ -163,7 +164,7 @@ private:
 
     Stmt* parseExpressionStatement();
     Stmt* parseAnnotatedAssignment(Position start, Expr* target, bool startsWithName);
-    std::nullptr_t diagnoseInvalidAssignment(Expr* target, TokenKind firstKind, bool isFirstTarget, const Checkpoint& statementStart);
+    std::nullptr_t diagnoseInvalidAssignment(Expr* target, bool isFirstTarget, const Checkpoint& statementStart);
     bool diagnoseNamedExpressions(const Checkpoint& statementStart);
     std::nullptr_t diagnoseStatementBeforeIf();
     Stmt* parseReturn();
@@ -283,6 +284,7 @@ private:
     void setContext(Expr*, AST::ExprContext);
     static ASCIILiteral describe(Expr*);
     static bool isAtBitwiseOrLevel(Expr*);
+    static bool startsLikeATarget(Expr*, Position start);
 
     template<typename T, typename... Arguments>
     T* make(Arguments&&... arguments) { return m_arena.create<T>(std::forward<Arguments>(arguments)...); }

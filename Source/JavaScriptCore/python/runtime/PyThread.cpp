@@ -465,7 +465,7 @@ static JSValue localSetAttr(JSGlobalObject* globalObject, JSValue self, JSValue 
     RETURN_IF_EXCEPTION(scope, { });
     if (isDict)
         return raise(globalObject, scope, rt.AttributeError(), makeString('\'', rt.typeOf(self)->nameInMessages(), "' object attribute '__dict__' is read-only"_s));
-    if (!localSwitchToCurrentThread(globalObject, self))
+    if (failed(scope, localSwitchToCurrentThread(globalObject, self)))
         return { };
     genericSetAttr(globalObject, self, string, value, !value || name.isString() ? JSValue() : name);
     RETURN_IF_EXCEPTION(scope, { });
@@ -698,6 +698,7 @@ static void threadRun(JSGlobalObject* globalObject, JSValue function, PyTuple* a
     }
     localForgetThisThread(globalObject);
     threadRemoveShutdownHandle(globalObject, handle);
+    scope.assertNoException();
     handle->number = ThreadDone;
     rt.threads().wakeAll(handle);
 }
@@ -762,7 +763,7 @@ static JSValue threadStartNew(JSGlobalObject* globalObject, const CallArgs& args
         return raiseTypeError(globalObject, scope, "2nd arg must be a tuple"_s);
     if (args.size() == 3 && !PyDict::tryFrom(args[2]))
         return raiseTypeError(globalObject, scope, "optional 3rd arg must be a dictionary"_s);
-    if (!audit(globalObject, "_thread.start_new_thread"_s, args[0], args[1], args.get(2)))
+    if (failed(scope, audit(globalObject, "_thread.start_new_thread"_s, args[0], args[1], args.get(2))))
         return { };
     PyRecord* handle = threadMakeHandle(globalObject, rt.typeFor(threadHandleTypeDef), ThreadNotStarted, jsNumber(0));
     if (failed(scope, threadStart(globalObject, args[0], PyTuple::from(args[1]), args.size() == 3 ? PyDict::from(args[2]) : nullptr, handle, true)))
@@ -785,7 +786,7 @@ static JSValue threadStartJoinable(JSGlobalObject* globalObject, JSValue functio
         if (!handle)
             return raiseTypeError(globalObject, scope, "'handle' must be a _ThreadHandle"_s);
     }
-    if (!audit(globalObject, "_thread.start_joinable_thread"_s, function, jsNumber(isDaemon), handle))
+    if (failed(scope, audit(globalObject, "_thread.start_joinable_thread"_s, function, jsNumber(isDaemon), handle)))
         return { };
     if (!handle)
         handle = threadMakeHandle(globalObject, rt.typeFor(threadHandleTypeDef), ThreadNotStarted, jsNumber(0));

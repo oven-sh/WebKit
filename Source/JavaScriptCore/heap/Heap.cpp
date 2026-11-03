@@ -812,6 +812,8 @@ void Heap::reconcileWeakReferencesAtGCEnd()
         reconcileWeakReferencesInMarkedCells<JSWeakObjectRef>(*m_weakObjectRefSpace, collectionScope);
     if (m_pyWeakRefSpace)
         reconcileWeakReferencesInMarkedCells<Python::PyWeakRef>(*m_pyWeakRefSpace, collectionScope);
+    for (auto* runtime : m_pythonRuntimes)
+        runtime->reconcileWeakReferencesAtGCEnd();
     if (m_errorInstanceSpace)
         reconcileWeakReferencesInMarkedCells<ErrorInstance>(*m_errorInstanceSpace, collectionScope);
 

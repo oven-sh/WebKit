@@ -112,6 +112,11 @@ static constexpr int waitRaised = -2;
 // The result is as above, or waitRaised if there is an exception: the handler's.
 int waitForEvents(JSGlobalObject*, WaitRequest&);
 
+// Before a system call that reads from a descriptor and may wait for long: a pipe, a terminal, a socket. If it would wait, and the
+// descriptor is one that blocks, this waits instead, until there is something to read: in waitForEvents(), where a thread that
+// is idle collects and a host's event loop turns. False: an exception.
+bool waitUntilReadable(JSGlobalObject*, int fd);
+
 // The clock that timeouts are measured by, in nanoseconds.
 int64_t monotonicNanoseconds();
 

@@ -105,8 +105,11 @@ JSValue identityOf(JSGlobalObject* globalObject, JSValue value)
 
 String addressForRepr(JSGlobalObject* globalObject, JSValue value)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue identity = identityOf(globalObject, value);
-    return makeString("0x"_s, intToString(globalObject, identity, 16));
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, makeString("0x"_s, intToString(globalObject, identity, 16)));
 }
 
 static JSValue typeModule(JSGlobalObject* globalObject, PyType* type)
@@ -275,10 +278,13 @@ static JSValue objectNotComparable(JSGlobalObject* globalObject, JSValue, JSValu
 
 JSValue objectGetAttribute(JSGlobalObject* globalObject, JSValue self, JSValue name)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSString* string = attributeName(globalObject, name);
+    RETURN_IF_EXCEPTION(scope, { });
     if (!string)
         return { };
-    return genericGetAttr(globalObject, self, string);
+    RELEASE_AND_RETURN(scope, genericGetAttr(globalObject, self, string));
 }
 
 // object.__setattr__(int, ...) would get around what type.__setattr__ forbids: a method written in C++ is not for the instances
@@ -339,7 +345,7 @@ static JSValue objectFormat(JSGlobalObject* globalObject, JSValue self, JSValue 
         return raiseTypeError(globalObject, scope, "__format__() argument must be str, not "_s, typeNameOfArgument(globalObject, spec));
     if (strValue(spec)->length())
         return raiseTypeError(globalObject, scope, "unsupported format string passed to "_s, typeName(globalObject, self), ".__format__"_s);
-    RELEASE_AND_RETURN(scope, str(globalObject, self));
+    RELEASE_AND_RETURN(scope, strObject(globalObject, self));
 }
 
 static JSValue objectSizeOf(JSGlobalObject*, JSValue self)
@@ -380,6 +386,7 @@ static void mergeClassDict(JSGlobalObject* globalObject, PyDict* names, JSValue 
     if (!bases)
         return;
     int64_t count = length(globalObject, bases);
+    EXCEPTION_ASSERT(!!scope.exception() == (count < 0));
     if (count < 0) {
         takePendingException(globalObject);
         return;
@@ -506,7 +513,7 @@ static void objectSetClass(JSGlobalObject* globalObject, JSValue self, JSValue v
         raiseTypeError(globalObject, scope, "__class__ must be set to a class, not '"_s, typeName(globalObject, value), "' object"_s);
         return;
     }
-    if (isAudited(globalObject) && !audit(globalObject, "object.__setattr__"_s, self, makeStr(vm, "__class__"_s), value))
+    if (isAudited(globalObject) && failed(scope, audit(globalObject, "object.__setattr__"_s, self, makeStr(vm, "__class__"_s), value)))
         return;
     PyType* oldType = rt.typeOf(self);
     bool areModules = oldType->isSubtypeOf(rt.moduleType()) && newType->isSubtypeOf(rt.moduleType());
@@ -708,10 +715,13 @@ JSValue typeGetAttr(JSGlobalObject* globalObject, PyType* type, JSString* name, 
 
 JSValue typeGetAttribute(JSGlobalObject* globalObject, JSValue self, JSValue name)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSString* string = attributeName(globalObject, name);
+    RETURN_IF_EXCEPTION(scope, { });
     if (!string)
         return { };
-    return typeGetAttr(globalObject, PyType::from(self), string);
+    RELEASE_AND_RETURN(scope, typeGetAttr(globalObject, PyType::from(self), string));
 }
 
 static void typeSetAttrImpl(JSGlobalObject* globalObject, PyType* type, JSString* name, JSValue value)
@@ -993,8 +1003,10 @@ static MROResult resolveMRO(JSGlobalObject* globalObject, PyType* type)
             bool isAncestor = entry == type;
             for (unsigned j = 0; !isAncestor && j < bases->length(); ++j)
                 isAncestor = PyType::from(bases->at(j))->isSubtypeOf(entry);
-            if (!isAncestor)
+            if (!isAncestor) {
                 entry->addDependent(globalObject, type);
+                RETURN_IF_EXCEPTION(scope, MROResult::Raised);
+            }
         }
     }
     return MROResult::Set;
@@ -1022,9 +1034,11 @@ static void raiseWithNote(JSGlobalObject* globalObject, JSValue exception, const
 // The name and the docstring of a class are kept as UTF-8 in CPython, which not every str has. False: a UnicodeEncodeError.
 static bool checkEncodable(JSGlobalObject* globalObject, JSString* string)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     if (StringImpl* impl = string->tryGetValueImpl(); impl && impl->is8Bit()) [[likely]]
         return true;
-    return !!codecEncodeUTF8(globalObject, string, "strict"_s);
+    RELEASE_AND_RETURN(scope, !!codecEncodeUTF8(globalObject, string, "strict"_s));
 }
 
 static JSValue typeNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs& args)
@@ -1048,7 +1062,7 @@ static JSValue typeNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs
     String nameText = stringOf(name);
     if (nameText.contains('\0'))
         return raiseValueError(globalObject, scope, "type name must not contain null characters"_s);
-    if (!checkEncodable(globalObject, name))
+    if (failed(scope, checkEncodable(globalObject, name)))
         return { };
 
     // ---- The bases ----
@@ -1089,7 +1103,7 @@ static JSValue typeNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs
     PyDict* dict = PyDict::create(globalObject);
     dictUpdateFromMapping(globalObject, dict, args[2]);
     RETURN_IF_EXCEPTION(scope, { });
-    if (JSValue doc = dict->get(rt.names.dDoc()); doc && doc.isString() && !checkEncodable(globalObject, asString(doc)))
+    if (JSValue doc = dict->get(rt.names.dDoc()); doc && doc.isString() && failed(scope, checkEncodable(globalObject, asString(doc))))
         return { };
 
     // ---- __slots__ ----
@@ -1267,15 +1281,17 @@ static JSValue typeNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs
             }
         }
     }
-    for (unsigned i = 0; i < bases->length(); ++i)
+    for (unsigned i = 0; i < bases->length(); ++i) {
         PyType::from(bases->at(i))->addSubclass(globalObject, type);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
 
     if (!dict->hasOnlyStringKeys()) [[unlikely]] {
         bool allAreStrs = true;
         JSValue key, value;
         for (unsigned position = 0; allAreStrs && dict->next(position, key, value);)
             allAreStrs = isStr(key);
-        if (!allAreStrs && !warn(globalObject, rt.RuntimeWarning(), makeString("non-string key in the __dict__ of class "_s, nameText)))
+        if (!allAreStrs && failed(scope, warn(globalObject, rt.RuntimeWarning(), makeString("non-string key in the __dict__ of class "_s, nameText))))
             return { };
     }
 
@@ -1293,6 +1309,7 @@ static JSValue typeNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs
             if (scope.exception()) [[unlikely]] {
                 // Nothing else can run while it propagates.
                 JSValue exception = takePendingException(globalObject);
+                scope.release();
                 raiseWithNote(globalObject, exception, makeString("Error calling __set_name__ on '"_s, valueType->name(), "' instance "_s, reprForMessage(globalObject, key), " in '"_s, nameText, '\''));
                 return { };
             }
@@ -1403,12 +1420,12 @@ static bool checkMutable(JSGlobalObject* globalObject, PyType* type, JSValue val
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!type->isHeapType() && !type->has(TypeFlag::Mutable)) {
-        raiseTypeError(globalObject, scope, "cannot set '"_s, name, "' attribute of immutable type '"_s, type->nameInMessages(), '\'');
+    if (!value) {
+        raiseTypeError(globalObject, scope, "cannot delete '"_s, name, "' attribute of type '"_s, type->nameInMessages(), '\'');
         return false;
     }
-    if (!value) {
-        raiseTypeError(globalObject, scope, "cannot delete '"_s, name, "' attribute of type '"_s, type->name(), '\'');
+    if (!type->isHeapType() && !type->has(TypeFlag::Mutable)) {
+        raiseTypeError(globalObject, scope, "cannot set '"_s, name, "' attribute of immutable type '"_s, type->nameInMessages(), '\'');
         return false;
     }
     if (isAudited(globalObject))
@@ -1423,7 +1440,7 @@ static void typeSetName(JSGlobalObject* globalObject, JSValue self, JSValue valu
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyType* type = PyType::from(self);
-    if (!checkMutable(globalObject, type, value, "__name__"_s))
+    if (failed(scope, checkMutable(globalObject, type, value, "__name__"_s)))
         return;
     if (!isStr(value)) {
         raiseTypeError(globalObject, scope, "can only assign string to "_s, type->name(), ".__name__, not '"_s, typeName(globalObject, value), '\'');
@@ -1435,7 +1452,7 @@ static void typeSetName(JSGlobalObject* globalObject, JSValue self, JSValue valu
         raiseValueError(globalObject, scope, "type name must not contain null characters"_s);
         return;
     }
-    if (!checkEncodable(globalObject, name))
+    if (failed(scope, checkEncodable(globalObject, name)))
         return;
     if (!type->qualname() || type->qualname() == type->nameString())
         type->setQualname(vm, type->nameString());
@@ -1449,7 +1466,7 @@ static void typeSetQualname(JSGlobalObject* globalObject, JSValue self, JSValue 
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyType* type = PyType::from(self);
-    if (!checkMutable(globalObject, type, value, "__qualname__"_s))
+    if (failed(scope, checkMutable(globalObject, type, value, "__qualname__"_s)))
         return;
     if (!isStr(value)) {
         raiseTypeError(globalObject, scope, "can only assign string to "_s, type->name(), ".__qualname__, not '"_s, typeName(globalObject, value), '\'');
@@ -1472,8 +1489,10 @@ static JSValue typeGetModule(JSGlobalObject* globalObject, JSValue self)
 
 static void typeSetModule(JSGlobalObject* globalObject, JSValue self, JSValue value)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PyType* type = PyType::from(self);
-    if (!checkMutable(globalObject, type, value, "__module__"_s))
+    if (failed(scope, checkMutable(globalObject, type, value, "__module__"_s)))
         return;
     Runtime& rt = runtime(globalObject);
     type->dict()->set(rt.vm(), rt.names.dModule(), value);
@@ -1497,8 +1516,11 @@ static JSValue typeGetBase(JSGlobalObject*, JSValue self)
 // one: the type, the new MRO, the old one. False: an exception.
 static bool updateMROs(JSGlobalObject* globalObject, PyType* type, MarkedArgumentBuffer& changes)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PyTuple* oldMRO = type->mro();
     MROResult result = resolveMRO(globalObject, type);
+    EXCEPTION_ASSERT_UNUSED(scope, !!scope.exception() == (result == MROResult::Raised));
     if (result != MROResult::Set)
         return result == MROResult::Superseded;
     changes.append(type);
@@ -1508,7 +1530,7 @@ static bool updateMROs(JSGlobalObject* globalObject, PyType* type, MarkedArgumen
     MarkedArgumentBuffer subclasses;
     type->appendSubclassesTo(subclasses);
     for (unsigned i = 0; i < subclasses.size(); ++i) {
-        if (!updateMROs(globalObject, PyType::from(subclasses.at(i)), changes))
+        if (failed(scope, updateMROs(globalObject, PyType::from(subclasses.at(i)), changes)))
             return false;
     }
     return true;
@@ -1530,7 +1552,7 @@ static void typeSetBases(JSGlobalObject* globalObject, JSValue self, JSValue val
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyType* type = PyType::from(self);
-    if (!checkMutable(globalObject, type, value, "__bases__"_s))
+    if (failed(scope, checkMutable(globalObject, type, value, "__bases__"_s)))
         return;
     PyTuple* bases = PyTuple::tryFrom(value);
     if (!bases) {
@@ -1574,7 +1596,7 @@ static void typeSetBases(JSGlobalObject* globalObject, JSValue self, JSValue val
     bool succeeded = updateMROs(globalObject, type, changes);
     // An mro() that ran may itself have assigned to __bases__. Then what it assigned stays, and has been seen to.
     bool isCurrent = type->bases() == bases;
-    if (!succeeded) {
+    if (failed(scope, succeeded)) {
         for (unsigned i = changes.size(); i; i -= 3) {
             PyType* changed = PyType::from(changes.at(i - 3));
             if (changed->mro() != changes.at(i - 2).asCell())
@@ -1592,10 +1614,14 @@ static void typeSetBases(JSGlobalObject* globalObject, JSValue self, JSValue val
     }
     if (!isCurrent)
         return;
-    for (unsigned i = 0; i < oldBases->length(); ++i)
+    for (unsigned i = 0; i < oldBases->length(); ++i) {
         PyType::from(oldBases->at(i))->removeSubclass(globalObject, type);
-    for (unsigned i = 0; i < bases->length(); ++i)
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+    for (unsigned i = 0; i < bases->length(); ++i) {
         PyType::from(bases->at(i))->addSubclass(globalObject, type);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
     type->didChange(vm);
     if (!hadFinalizer && type->lookup(Special::Del)) [[unlikely]]
         registerInstancesForFinalization(globalObject, type);
@@ -1626,8 +1652,10 @@ static JSValue typeGetDoc(JSGlobalObject* globalObject, JSValue self)
 
 static void typeSetDoc(JSGlobalObject* globalObject, JSValue self, JSValue value)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PyType* type = PyType::from(self);
-    if (!checkMutable(globalObject, type, value, "__doc__"_s))
+    if (failed(scope, checkMutable(globalObject, type, value, "__doc__"_s)))
         return;
     Runtime& rt = runtime(globalObject);
     type->dict()->set(rt.vm(), rt.names.dDoc(), value);
@@ -1783,8 +1811,10 @@ static JSValue typeGetTypeParams(JSGlobalObject* globalObject, JSValue self)
 
 static void typeSetTypeParams(JSGlobalObject* globalObject, JSValue self, JSValue value)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PyType* type = PyType::from(self);
-    if (!checkMutable(globalObject, type, value, "__type_params__"_s))
+    if (failed(scope, checkMutable(globalObject, type, value, "__type_params__"_s)))
         return;
     Runtime& rt = runtime(globalObject);
     type->dict()->set(rt.vm(), rt.names.dTypeParams(), value);
@@ -2042,8 +2072,10 @@ static PyTuple* updateBases(JSGlobalObject* globalObject, PyTuple* bases)
             RETURN_IF_EXCEPTION(scope, nullptr);
         }
         if (!method) {
-            if (replaced)
+            if (replaced) {
                 listAppend(globalObject, replaced, base);
+                RETURN_IF_EXCEPTION(scope, nullptr);
+            }
             continue;
         }
         JSValue entries = call(globalObject, method, bases);
@@ -2054,11 +2086,15 @@ static PyTuple* updateBases(JSGlobalObject* globalObject, PyTuple* bases)
         }
         if (!replaced) {
             replaced = newList(globalObject);
-            for (unsigned j = 0; j < i; ++j)
+            for (unsigned j = 0; j < i; ++j) {
                 listAppend(globalObject, replaced, bases->at(j));
+                RETURN_IF_EXCEPTION(scope, nullptr);
+            }
         }
-        for (JSValue entry : PyTuple::from(entries)->span())
+        for (JSValue entry : PyTuple::from(entries)->span()) {
             listAppend(globalObject, replaced, entry);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+        }
     }
     RELEASE_AND_RETURN(scope, replaced ? tupleFromList(globalObject, replaced) : bases);
 }

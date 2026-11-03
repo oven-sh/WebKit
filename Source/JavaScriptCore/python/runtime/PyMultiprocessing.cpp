@@ -197,7 +197,7 @@ static JSValue semLockAcquire(JSGlobalObject* globalObject, JSValue self, JSValu
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* lock = PyRecord::from(self);
     bool blocks;
-    if (!posixToBool(globalObject, blockValue, true, blocks))
+    if (failed(scope, posixToBool(globalObject, blockValue, true, blocks)))
         return { };
     if (lock->get(SemLockKindField).asInt32() == SemLockRecursiveMutex && semLockIsMine(globalObject, lock)) {
         semLockSetCount(globalObject, lock, semLockCount(lock) + 1);

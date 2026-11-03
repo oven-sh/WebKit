@@ -953,7 +953,7 @@ static JSValue signalPthreadKill(JSGlobalObject* globalObject, JSValue threadVal
         return raiseTypeError(globalObject, scope, "pthread_kill() argument 1 must be int, not "_s, isNone(threadValue) ? String("None"_s) : typeName(globalObject, threadValue));
     int number = toCInt(globalObject, numberValue);
     RETURN_IF_EXCEPTION(scope, { });
-    if (!audit(globalObject, "signal.pthread_kill"_s, threadValue, jsNumber(number)))
+    if (failed(scope, audit(globalObject, "signal.pthread_kill"_s, threadValue, jsNumber(number))))
         return { };
     auto thread = tryUInt64(intValue(threadValue));
     if (!thread || !runtime(globalObject).threads().hasThread(*thread))

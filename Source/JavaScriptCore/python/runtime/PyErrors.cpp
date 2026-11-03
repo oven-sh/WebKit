@@ -7,6 +7,7 @@
 #include "PyErrors.h"
 
 #include "Exception.h"
+#include "FrameTracers.h"
 #include "JSCInlines.h"
 #include "PyAbstract.h"
 #include "PyException.h"
@@ -174,12 +175,10 @@ JSValue pendingException(JSGlobalObject* globalObject)
     if (vm.isTerminationException(exception))
         return { };
     // Wrapping it needs the way clear. Then it goes on as it came.
+    SuspendExceptionScope suspended(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    scope.clearException();
     JSValue wrapped = exceptionFromThrownValue(globalObject, value);
     scope.clearException();
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    throwScope.throwException(globalObject, exception);
     return wrapped;
 }
 

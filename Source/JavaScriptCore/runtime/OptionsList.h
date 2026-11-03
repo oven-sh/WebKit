@@ -567,6 +567,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, validateDFGExceptionHandling, ASSERT_ENABLED, Normal, "Causes the DFG to emit code validating exception handling for each node that can exit"_s) \
     v(Bool, dumpSimulatedThrows, false, Normal, "Dumps the call stack of the last simulated throw if exception scope verification fails"_s) \
     v(Bool, validateExceptionChecks, false, Normal, "Verifies that needed exception checks are performed."_s) \
+    v(OptionString, uncheckedExceptionsLog, nullptr, Normal, "With validateExceptionChecks: each missing exception check is appended to this file, once, and the program goes on instead of crashing. See UncheckedExceptionLog.h."_s) \
     v(Unsigned, unexpectedExceptionStackTraceLimit, 100, Normal, "Stack trace limit for debugging unexpected exceptions observed in the VM"_s) \
     \
     v(Bool, validateDFGClobberize, false, Normal, "Emits code in the DFG/FTL to validate the Clobberize phase"_s) \

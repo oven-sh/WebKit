@@ -9,6 +9,7 @@
 #if !OS(WINDOWS)
 
 #include "JSCInlines.h"
+#include "PyEventWait.h"
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -63,7 +64,7 @@ static JSValue posixOpen(JSGlobalObject* globalObject, JSValue pathValue, JSValu
         || !posixToDirFd(globalObject, dirFdValue, dirFd))
         return { };
     flags |= O_CLOEXEC;
-    if (!audit(globalObject, "open"_s, path.object(), jsUndefined(), jsNumber(flags)))
+    if (failed(scope, audit(globalObject, "open"_s, path.object(), jsUndefined(), jsNumber(flags))))
         return { };
     writeOutPendingOutput(globalObject);
     int fd;
@@ -147,7 +148,7 @@ static JSValue posixDup2(JSGlobalObject* globalObject, JSValue fdValue, JSValue 
     int fd;
     int fd2;
     bool inheritable;
-    if (failed(scope, posixToInt(globalObject, fdValue, fd)) || failed(scope, posixToInt(globalObject, fd2Value, fd2)) || !posixToBool(globalObject, inheritableValue, true, inheritable))
+    if (failed(scope, posixToInt(globalObject, fdValue, fd)) || failed(scope, posixToInt(globalObject, fd2Value, fd2)) || failed(scope, posixToBool(globalObject, inheritableValue, true, inheritable)))
         return { };
 #if OS(LINUX)
     int result = inheritable ? dup2(fd, fd2) : dup3(fd, fd2, O_CLOEXEC);
@@ -259,6 +260,11 @@ static JSValue posixRead(JSGlobalObject* globalObject, JSValue fdValue, JSValue 
         return { };
     if (length > 0 && static_cast<size_t>(length) > posixMaxTransfer)
         length = static_cast<int64_t>(posixMaxTransfer);
+    if (length >= 0) {
+        writeOutPendingOutput(globalObject);
+        if (failed(scope, waitUntilReadable(globalObject, fd)))
+            return { };
+    }
     RELEASE_AND_RETURN(scope, posixReadBytes(globalObject, length, [&](uint8_t* buffer, size_t size) { return read(fd, buffer, size); }));
 }
 
@@ -524,7 +530,7 @@ static JSValue posixSendfile(JSGlobalObject* globalObject, JSValue outValue, JSV
     off_t storage;
     off_t* offset;
     if (failed(scope, posixToInt(globalObject, outValue, out)) || failed(scope, posixToInt(globalObject, inValue, in)) || failed(scope, posixToCount(globalObject, countValue, "count"_s, count))
-        || !posixToOptionalOffset(globalObject, offsetValue, storage, offset))
+        || failed(scope, posixToOptionalOffset(globalObject, offsetValue, storage, offset)))
         return { };
     RELEASE_AND_RETURN(scope, posixTransfer(globalObject, [&] { return sendfile(out, in, offset, static_cast<size_t>(count)); }));
 }
@@ -541,7 +547,7 @@ static JSValue posixCopyFileRange(JSGlobalObject* globalObject, JSValue sourceVa
     off_t* sourceOffset;
     off_t* destinationOffset;
     if (failed(scope, posixToInt(globalObject, sourceValue, source)) || failed(scope, posixToInt(globalObject, destinationValue, destination)) || failed(scope, posixToCount(globalObject, countValue, "count"_s, count))
-        || !posixToOptionalOffset(globalObject, sourceOffsetValue, sourceStorage, sourceOffset) || !posixToOptionalOffset(globalObject, destinationOffsetValue, destinationStorage, destinationOffset))
+        || failed(scope, posixToOptionalOffset(globalObject, sourceOffsetValue, sourceStorage, sourceOffset)) || failed(scope, posixToOptionalOffset(globalObject, destinationOffsetValue, destinationStorage, destinationOffset)))
         return { };
     RELEASE_AND_RETURN(scope, posixTransfer(globalObject, [&] { return static_cast<ssize_t>(syscall(SYS_copy_file_range, source, sourceOffset, destination, destinationOffset, static_cast<size_t>(count), 0u)); }));
 }
@@ -559,8 +565,8 @@ static JSValue posixSplice(JSGlobalObject* globalObject, JSValue sourceValue, JS
     off_t* destinationOffset;
     unsigned flags = 0;
     if (failed(scope, posixToInt(globalObject, sourceValue, source)) || failed(scope, posixToInt(globalObject, destinationValue, destination)) || failed(scope, posixToCount(globalObject, countValue, "count"_s, count))
-        || (flagsValue && !posixToUnsigned(globalObject, flagsValue, flags))
-        || !posixToOptionalOffset(globalObject, sourceOffsetValue, sourceStorage, sourceOffset) || !posixToOptionalOffset(globalObject, destinationOffsetValue, destinationStorage, destinationOffset))
+        || (flagsValue && failed(scope, posixToUnsigned(globalObject, flagsValue, flags)))
+        || failed(scope, posixToOptionalOffset(globalObject, sourceOffsetValue, sourceStorage, sourceOffset)) || failed(scope, posixToOptionalOffset(globalObject, destinationOffsetValue, destinationStorage, destinationOffset)))
         return { };
     RELEASE_AND_RETURN(scope, posixTransfer(globalObject, [&] { return splice(source, sourceOffset, destination, destinationOffset, static_cast<size_t>(count), flags); }));
 }
@@ -578,7 +584,7 @@ static JSValue posixSendfile(JSGlobalObject* globalObject, JSValue outValue, JSV
     off_t byteCount;
     int flags = 0;
     if (failed(scope, posixToInt(globalObject, outValue, out)) || failed(scope, posixToInt(globalObject, inValue, in)) || failed(scope, posixToOffset(globalObject, offsetValue, offset))
-        || !posixToOffset(globalObject, countValue, byteCount) || (flagsValue && !posixToInt(globalObject, flagsValue, flags)))
+        || failed(scope, posixToOffset(globalObject, countValue, byteCount)) || (flagsValue && failed(scope, posixToInt(globalObject, flagsValue, flags))))
         return { };
     if (byteCount < 0)
         return raiseValueError(globalObject, scope, "count cannot be negative"_s);
@@ -684,12 +690,18 @@ static JSValue posixFdatasync(JSGlobalObject* globalObject, JSValue fdValue)
 
 static JSValue posixFchdir(JSGlobalObject* globalObject, JSValue fdValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int fd;
     if (!posixToFileDescriptor(globalObject, fdValue, fd))
         return { };
-    if (!audit(globalObject, "os.chdir"_s, jsNumber(fd)))
+    if (failed(scope, audit(globalObject, "os.chdir"_s, jsNumber(fd))))
         return { };
-    return posixCallWithDescriptor(globalObject, [&] { return fchdir(fd); });
+    JSValue result = posixCallWithDescriptor(globalObject, [&] { return fchdir(fd); });
+    RETURN_IF_EXCEPTION(scope, { });
+    posixDidChangeDirectory(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    return result;
 }
 
 static JSValue posixFchmod(JSGlobalObject* globalObject, JSValue fdValue, JSValue modeValue)
@@ -700,7 +712,7 @@ static JSValue posixFchmod(JSGlobalObject* globalObject, JSValue fdValue, JSValu
     int mode;
     if (failed(scope, posixToInt(globalObject, fdValue, fd)) || failed(scope, posixToInt(globalObject, modeValue, mode)))
         return { };
-    if (!audit(globalObject, "os.chmod"_s, jsNumber(fd), jsNumber(mode), jsNumber(-1)))
+    if (failed(scope, audit(globalObject, "os.chmod"_s, jsNumber(fd), jsNumber(mode), jsNumber(-1))))
         return { };
     RELEASE_AND_RETURN(scope, posixCallWithDescriptor(globalObject, [&] { return fchmod(fd, static_cast<mode_t>(mode)); }));
 }
@@ -714,7 +726,7 @@ static JSValue posixFchown(JSGlobalObject* globalObject, JSValue fdValue, JSValu
     gid_t gid;
     if (failed(scope, posixToInt(globalObject, fdValue, fd)) || failed(scope, posixToUid(globalObject, uidValue, uid)) || failed(scope, posixToGid(globalObject, gidValue, gid)))
         return { };
-    if (!audit(globalObject, "os.chown"_s, jsNumber(fd), jsNumber(static_cast<uint32_t>(uid)), jsNumber(static_cast<uint32_t>(gid)), jsNumber(-1)))
+    if (failed(scope, audit(globalObject, "os.chown"_s, jsNumber(fd), jsNumber(static_cast<uint32_t>(uid)), jsNumber(static_cast<uint32_t>(gid)), jsNumber(-1))))
         return { };
     RELEASE_AND_RETURN(scope, posixCallWithDescriptor(globalObject, [&] { return fchown(fd, uid, gid); }));
 }
@@ -728,7 +740,7 @@ static JSValue posixFtruncate(JSGlobalObject* globalObject, JSValue fdValue, JSV
     off_t length;
     if (failed(scope, posixToInt(globalObject, fdValue, fd)) || failed(scope, posixToOffset(globalObject, lengthValue, length)))
         return { };
-    if (!audit(globalObject, "os.truncate"_s, jsNumber(fd), lengthValue))
+    if (failed(scope, audit(globalObject, "os.truncate"_s, jsNumber(fd), lengthValue)))
         return { };
     RELEASE_AND_RETURN(scope, posixCallWithDescriptor(globalObject, [&] { return ftruncate(fd, length); }));
 }
@@ -742,7 +754,7 @@ static JSValue posixLockf(JSGlobalObject* globalObject, JSValue fdValue, JSValue
     off_t length;
     if (failed(scope, posixToInt(globalObject, fdValue, fd)) || failed(scope, posixToInt(globalObject, commandValue, command)) || failed(scope, posixToOffset(globalObject, lengthValue, length)))
         return { };
-    if (!audit(globalObject, "os.lockf"_s, jsNumber(fd), jsNumber(command), lengthValue))
+    if (failed(scope, audit(globalObject, "os.lockf"_s, jsNumber(fd), jsNumber(command), lengthValue)))
         return { };
     int result;
     {
@@ -793,7 +805,7 @@ static JSValue posixFadvise(JSGlobalObject* globalObject, JSValue fdValue, JSVal
     off_t length;
     int advice;
     if (failed(scope, posixToInt(globalObject, fdValue, fd)) || failed(scope, posixToOffset(globalObject, offsetValue, offset)) || failed(scope, posixToOffset(globalObject, lengthValue, length))
-        || !posixToInt(globalObject, adviceValue, advice))
+        || failed(scope, posixToInt(globalObject, adviceValue, advice)))
         return { };
     RELEASE_AND_RETURN(scope, posixCallReturningError(globalObject, [&] { return posix_fadvise(fd, offset, length, advice); }));
 }
@@ -846,7 +858,7 @@ static JSValue posixSetBlocking(JSGlobalObject* globalObject, JSValue fdValue, J
     auto scope = DECLARE_THROW_SCOPE(vm);
     int fd;
     bool blocking;
-    if (failed(scope, posixToInt(globalObject, fdValue, fd)) || !posixToBool(globalObject, blockingValue, true, blocking))
+    if (failed(scope, posixToInt(globalObject, fdValue, fd)) || failed(scope, posixToBool(globalObject, blockingValue, true, blocking)))
         return { };
     int flags = fcntl(fd, F_GETFL, 0);
     if (flags < 0)
@@ -1141,7 +1153,7 @@ static JSValue posixTimerfdSettime(JSGlobalObject* globalObject, JSValue fdValue
     struct itimerspec newSpec;
     struct itimerspec oldSpec;
     if (!posixToFileDescriptor(globalObject, fdValue, fd) || (flagsValue && failed(scope, posixToInt(globalObject, flagsValue, flags)))
-        || !posixSecondsToTimespec(globalObject, initialValue, newSpec.it_value) || !posixSecondsToTimespec(globalObject, intervalValue, newSpec.it_interval))
+        || failed(scope, posixSecondsToTimespec(globalObject, initialValue, newSpec.it_value)) || failed(scope, posixSecondsToTimespec(globalObject, intervalValue, newSpec.it_interval)))
         return { };
     if (timerfd_settime(fd, flags, &newSpec, &oldSpec) == -1)
         RELEASE_AND_RETURN(scope, posixError(globalObject));
@@ -1157,7 +1169,7 @@ static JSValue posixTimerfdSettimeNs(JSGlobalObject* globalObject, JSValue fdVal
     int64_t initial = 0;
     int64_t interval = 0;
     if (!posixToFileDescriptor(globalObject, fdValue, fd) || (flagsValue && failed(scope, posixToInt(globalObject, flagsValue, flags)))
-        || (initialValue && !posixToLongLong(globalObject, initialValue, initial)) || (intervalValue && !posixToLongLong(globalObject, intervalValue, interval)))
+        || (initialValue && failed(scope, posixToLongLong(globalObject, initialValue, initial))) || (intervalValue && failed(scope, posixToLongLong(globalObject, intervalValue, interval))))
         return { };
     struct itimerspec newSpec { posixTimespecFromNanoseconds(interval), posixTimespecFromNanoseconds(initial) };
     struct itimerspec oldSpec;
@@ -1202,7 +1214,7 @@ static constexpr NativeDef posixDescriptorFunctions[] = {
     PY_FUNCTION("pipe2", posixPipe2, "(flags, /)"),
 #endif
     PY_FUNCTION("lseek", posixLseek, "(fd, position, whence, /)"),
-    PY_FUNCTION("read", posixRead, "(fd, length, /)"),
+    NativeDef(NativeKind::Function, "read"_s, posixRead, "(fd, length, /)"_s, MayWait),
     PY_FUNCTION("pread", posixPread, "(fd, length, offset, /)"),
     PY_FUNCTION("readinto", posixReadinto, "(fd, buffer, /)"),
     PY_FUNCTION("write", posixWrite, "(fd, data, /)"),

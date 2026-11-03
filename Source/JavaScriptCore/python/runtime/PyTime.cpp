@@ -370,7 +370,7 @@ static JSValue timeSleep(JSGlobalObject* globalObject, JSValue seconds)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!audit(globalObject, "time.sleep"_s, seconds))
+    if (failed(scope, audit(globalObject, "time.sleep"_s, seconds)))
         return { };
     int64_t timeout;
     if (failed(scope, timeGetNanoseconds(globalObject, seconds, true, timeout)))
@@ -383,33 +383,46 @@ static JSValue timeSleep(JSGlobalObject* globalObject, JSValue seconds)
     int64_t deadline;
     if (__builtin_add_overflow(now, timeout, &deadline))
         deadline = std::numeric_limits<int64_t>::max();
+    // (A hook is not to hear of the same sleep twice.)
+    if (timeout > IdleWait::firstInterval && !isAudited(globalObject) && runtime(globalObject).threads().beginsCallAgain(globalObject))
+        return { };
 
-    // A signal does not cut the sleep short, unless its handler raises.
+    // A signal does not cut the sleep short, unless its handler raises. A long sleep is made piece by piece.
+    IdleWait idle(globalObject);
     while (true) {
         int error;
+        int64_t piece = idle.nextPiece(timeout);
         {
             AllowThreads allow(globalObject);
 #if OS(LINUX)
-            struct timespec until = timeToTimespec(deadline);
+            struct timespec until = timeToTimespec(piece == timeout ? deadline : now + piece);
             error = clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &until, nullptr);
 #else
-            struct timespec remaining = timeToTimespec(timeout);
+            struct timespec remaining = timeToTimespec(piece);
             error = nanosleep(&remaining, nullptr) ? errno : 0;
 #endif
         }
-        if (!error)
+        if (!error && piece == timeout)
             return none();
+        if (!error) {
+            if (!idle.didWait())
+                return { };
+            if (failed(scope, timeReadClock(globalObject, CLOCK_MONOTONIC, now)))
+                return { };
+            timeout = deadline - now;
+            if (timeout <= 0)
+                return none();
+            continue;
+        }
         if (error != EINTR)
             return raiseOSError(globalObject, scope, error);
         if (!checkSignals(globalObject))
             return { };
-#if !OS(LINUX)
         if (failed(scope, timeReadClock(globalObject, CLOCK_MONOTONIC, now)))
             return { };
         timeout = deadline - now;
         if (timeout < 0)
             return none();
-#endif
     }
 }
 
@@ -793,7 +806,7 @@ static constexpr NativeDef timeFunctions[] = {
 #if !OS(DARWIN)
     PY_FUNCTION("pthread_getcpuclockid", timePthreadGetCpuClockID, "(*args)"),
 #endif
-    PY_FUNCTION("sleep", timeSleep, "(seconds, /)"),
+    NativeDef(NativeKind::Function, "sleep"_s, timeSleep, "(seconds, /)"_s, MayWait),
     PY_FUNCTION("gmtime", timeGmTime, "(*args)"),
     PY_FUNCTION("localtime", timeLocalTime, "(*args)"),
     PY_FUNCTION("asctime", timeAscTime, "(*args)"),

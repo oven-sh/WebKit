@@ -45,7 +45,7 @@ static void addStandardStreams(JSGlobalObject* globalObject, PyModule* module)
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(globalObject));
     auto add = [&](int fd, ASCIILiteral attribute, ASCIILiteral original, ASCIILiteral name, ASCIILiteral errors) {
         JSValue stream = makeStandardStream(globalObject, fd, fd != STDIN_FILENO, name, errors);
-        if (!stream) {
+        if (failed(scope, stream)) {
             // A directory, say.
             scope.clearException();
             stream = jsUndefined();
@@ -219,7 +219,7 @@ static JSValue sysGetFrame(JSGlobalObject* globalObject, JSValue depthValue)
     PyFrame* frame = currentFrame(globalObject, depth > 0 ? depth : 0);
     if (!frame)
         return raiseValueError(globalObject, scope, "call stack is not deep enough"_s);
-    if (!audit(globalObject, "sys._getframe"_s, frame))
+    if (failed(scope, audit(globalObject, "sys._getframe"_s, frame)))
         return { };
     return frame;
 }
@@ -231,7 +231,7 @@ static JSValue sysGetFrameModuleName(JSGlobalObject* globalObject, JSValue depth
     auto scope = DECLARE_THROW_SCOPE(vm);
     int depth = depthValue ? toCInt(globalObject, depthValue) : 0;
     RETURN_IF_EXCEPTION(scope, { });
-    if (!audit(globalObject, "sys._getframemodulename"_s, jsNumber(depth)))
+    if (failed(scope, audit(globalObject, "sys._getframemodulename"_s, jsNumber(depth))))
         return { };
     PyFrame* frame = currentFrame(globalObject, depth > 0 ? depth : 0);
     if (!frame)
@@ -315,6 +315,7 @@ static JSValue sysGetSizeOf(JSGlobalObject* globalObject, JSValue object, JSValu
         return raiseTypeError(globalObject, scope, "Type "_s, typeName(globalObject, object), " doesn't define __sizeof__"_s);
     }
     JSValue size = callSpecial(globalObject, method, object);
+    EXCEPTION_ASSERT(!!scope.exception() == !size);
     if (size && !isInt(size)) {
         raiseTypeError(globalObject, scope, "an integer is required"_s);
         size = JSValue();
@@ -387,13 +388,13 @@ static JSValue sysAddAuditHook(JSGlobalObject* globalObject, JSValue hook)
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     Runtime& rt = runtime(globalObject);
-    if (!audit(globalObject, "sys.addaudithook"_s)) {
+    if (failed(scope, audit(globalObject, "sys.addaudithook"_s))) {
         // The hooks there are may refuse another, and then nothing is said about it.
         if (clearPendingExceptionIfMatches(globalObject, rt.Exception()))
             return jsUndefined();
         return { };
     }
-    if (failed(scope, isAudited(globalObject)))
+    if (!isAudited(globalObject))
         rt.setSlot(Runtime::Slot::AuditHooks, newList(globalObject));
     listAppend(globalObject, asList(rt.slot(Runtime::Slot::AuditHooks)), hook);
     return jsUndefined();
@@ -497,7 +498,8 @@ static JSValue sysCurrentFrames(JSGlobalObject* globalObject)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
-    if (!audit(globalObject, "sys._current_frames"_s))
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, audit(globalObject, "sys._current_frames"_s)))
         return { };
     PyDict* frames = PyDict::create(globalObject);
     if (PyFrame* frame = currentFrame(globalObject))
@@ -515,8 +517,10 @@ static JSValue sysCurrentFrames(JSGlobalObject* globalObject)
 // { ident: the exception the thread is handling, or None }
 static JSValue sysCurrentExceptions(JSGlobalObject* globalObject)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     Runtime& rt = runtime(globalObject);
-    if (!audit(globalObject, "sys._current_exceptions"_s))
+    if (failed(scope, audit(globalObject, "sys._current_exceptions"_s)))
         return { };
     PyDict* exceptions = PyDict::create(globalObject);
     JSValue mine = rt.handledException();
@@ -580,12 +584,12 @@ static JSValue sysSetAsyncGenHooks(JSGlobalObject* globalObject, JSValue firstIt
     if (firstIter && !isNone(firstIter) && !isCallable(globalObject, firstIter))
         return raiseTypeError(globalObject, scope, "callable firstiter expected, got "_s, typeName(globalObject, firstIter));
     if (finalizer) {
-        if (!audit(globalObject, "sys.set_asyncgen_hook_finalizer"_s))
+        if (failed(scope, audit(globalObject, "sys.set_asyncgen_hook_finalizer"_s)))
             return { };
         rt.setAsyncGenFinalizer(isNone(finalizer) ? JSValue() : finalizer);
     }
     if (firstIter) {
-        if (!audit(globalObject, "sys.set_asyncgen_hook_firstiter"_s))
+        if (failed(scope, audit(globalObject, "sys.set_asyncgen_hook_firstiter"_s)))
             return { };
         rt.setAsyncGenFirstIter(isNone(firstIter) ? JSValue() : firstIter);
     }
@@ -780,11 +784,13 @@ void initializeSysModule(JSGlobalObject* globalObject, PyModule* module)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     Vector<String> pathFromFile;
     String directoryOfPathFile = readPathFile(Python::configuration(), pathFromFile);
     const Configuration& configuration = Python::configuration();
     module->addFunctions(globalObject, sysFunctions);
     addSysExtras(globalObject, module);
+    RETURN_IF_EXCEPTION(scope, void());
     module->add(globalObject, "__doc__"_s, docstringFor(globalObject, "module sys"_s));
     module->add(globalObject, "__package__"_s, rt.names.empty());
     PyDict* dict = module->dict();
@@ -800,8 +806,10 @@ void initializeSysModule(JSGlobalObject* globalObject, PyModule* module)
     module->add(globalObject, "modules"_s, rt.modules());
     auto listOf = [&](const Vector<String>& strings) {
         JSArray* list = newList(globalObject);
-        for (auto& string : strings)
+        for (auto& string : strings) {
             listAppend(globalObject, list, text(string));
+            scope.assertNoException();
+        }
         return list;
     };
     module->add(globalObject, "argv"_s, listOf(configuration.arguments));
@@ -833,8 +841,10 @@ void initializeSysModule(JSGlobalObject* globalObject, PyModule* module)
             for (auto& part : configuration.pythonPath.splitAllowingEmptyEntries(':'))
                 listAppend(globalObject, path, text(absolutePath(part)));
         }
-        if (!library.isNull())
+        if (!library.isNull()) {
             listAppend(globalObject, path, text(library));
+            RETURN_IF_EXCEPTION(scope, void());
+        }
     }
     module->add(globalObject, "path"_s, path);
     module->add(globalObject, "_stdlib_dir"_s, library.isNull() ? jsUndefined() : text(library));
@@ -864,6 +874,7 @@ void initializeSysModule(JSGlobalObject* globalObject, PyModule* module)
     module->add(globalObject, "dont_write_bytecode"_s, jsBoolean(!configuration.writeBytecode));
 
     JSValue versionInfo = makeStructSeq(globalObject, makeStructSeqType(globalObject, versionInfoDef), { jsNumber(versionMajor), jsNumber(versionMinor), jsNumber(versionMicro), text("final"_s), jsNumber(0) });
+    RETURN_IF_EXCEPTION(scope, void());
     module->add(globalObject, "version_info"_s, versionInfo);
     module->add(globalObject, "hexversion"_s, jsNumber(versionHex));
     module->add(globalObject, "version"_s, text(versionText()));
@@ -883,6 +894,7 @@ void initializeSysModule(JSGlobalObject* globalObject, PyModule* module)
     module->add(globalObject, "platform"_s, text(platformText()));
     module->add(globalObject, "byteorder"_s, text("little"_s));
     module->add(globalObject, "maxsize"_s, makeInt(globalObject, std::numeric_limits<int64_t>::max()));
+    RETURN_IF_EXCEPTION(scope, void());
     module->add(globalObject, "maxunicode"_s, jsNumber(0x10ffff));
     module->add(globalObject, "float_repr_style"_s, text("short"_s));
 
@@ -908,6 +920,7 @@ void initializeSysModule(JSGlobalObject* globalObject, PyModule* module)
         JSValue name = text("pthread"_s);
 #endif
         module->add(globalObject, "thread_info"_s, makeStructSeq(globalObject, makeStructSeqType(globalObject, threadInfoDef), { name, text("pymutex"_s), version }));
+        RETURN_IF_EXCEPTION(scope, void());
     }
 
     MarkedArgumentBuffer names;
@@ -919,8 +932,10 @@ void initializeSysModule(JSGlobalObject* globalObject, PyModule* module)
         names.append(internString(vm, def.name));
     module->add(globalObject, "builtin_module_names"_s, PyTuple::create(globalObject, spanOf(names)));
     PySet* stdlibNames = PySet::createFrozen(globalObject);
-    for (ASCIILiteral name : stdlibModuleNames)
+    for (ASCIILiteral name : stdlibModuleNames) {
         stdlibNames->add(globalObject, internString(vm, name));
+        RETURN_IF_EXCEPTION(scope, void());
+    }
     module->add(globalObject, "stdlib_module_names"_s, stdlibNames);
 }
 

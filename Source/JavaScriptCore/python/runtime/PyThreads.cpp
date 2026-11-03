@@ -452,11 +452,18 @@ int Threads::start(size_t stackSize, Function<void()>&& body, uint64_t& ident)
 void Threads::collectWhileIdle(JSGlobalObject* globalObject, bool isLastResort)
 {
     Runtime& rt = runtime(globalObject);
-    // (The count moves in steps: it may stand still though a little has been allocated.)
-    if (rt.isRunningPendingCalls() || (!isLastResort && m_vm.heap.totalBytesAllocated() == m_bytesAllocatedAtIdleCollection))
+    if (rt.isRunningPendingCalls())
+        return;
+    // If nothing has been allocated since the last time, there is little to find. But the count moves in steps: it may stand still
+    // though a little has been allocated, and to drop something takes no allocation at all. So without that sign this still
+    // collects, as often as costs a program that wakes up every now and then for nothing a fiftieth of its time.
+    int64_t start = monotonicNanoseconds();
+    if (!isLastResort && m_vm.heap.totalBytesAllocated() == m_bytesAllocatedAtIdleCollection && start < m_timeForIdleCollectionWithoutCause)
         return;
     collectAndFinalize(globalObject);
     m_bytesAllocatedAtIdleCollection = m_vm.heap.totalBytesAllocated();
+    int64_t end = monotonicNanoseconds();
+    m_timeForIdleCollectionWithoutCause = end + 50 * (end - start);
 }
 
 NEVER_INLINE void Threads::willCallFunctionThatMayWait(CallFrame* callFrame)
@@ -480,6 +487,49 @@ NEVER_INLINE bool Threads::takeRequestToCallAgain(JSGlobalObject*)
     return true;
 }
 
+bool Threads::beginsCallAgain(JSGlobalObject* globalObject)
+{
+    VM& vm = m_vm;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // What is noted may be left from a call that did not have to wait, and the frame of the next call is where that one's was.
+    auto isOfFunctionThatMayWait = [](CallFrame* call) {
+        JSCell* callee = call->jsCallee();
+        return PyNativeFunction::is(callee) && (uncheckedDowncast<PyNativeFunction>(callee)->def().flags & MayWait);
+    };
+    CallFrame* call = std::exchange(current().callThatMayBeginAgain, nullptr);
+    if (!call || call != vm.topCallFrame || !isOfFunctionThatMayWait(call))
+        return false;
+    current().wantsCallToBeginAgain = true;
+    throwException(globalObject, scope, Exception::create(vm, jsNull(), Exception::StackCaptureAction::DoNotCaptureStack));
+    return true;
+}
+
+IdleWait::IdleWait(JSGlobalObject* globalObject)
+    : m_globalObject(globalObject)
+    , m_timeToCollect(monotonicNanoseconds() + firstInterval)
+{
+}
+
+int64_t IdleWait::nextPiece(int64_t remaining) const
+{
+    int64_t piece = std::max<int64_t>(m_timeToCollect - monotonicNanoseconds(), 0);
+    return remaining < 0 ? piece : std::min(piece, remaining);
+}
+
+bool IdleWait::didWait()
+{
+    if (monotonicNanoseconds() < m_timeToCollect)
+        return true;
+    VM& vm = getVM(m_globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    runtime(m_globalObject).threads().collectWhileIdle(m_globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+    // Less and less often: nothing happens while this waits, unless other threads run, and they collect as they allocate.
+    m_interval *= 4;
+    m_timeToCollect = monotonicNanoseconds() + m_interval;
+    return true;
+}
+
 bool Threads::waitUntil(JSGlobalObject* globalObject, const void* address, int64_t timeout, ASCIILiteral whatIsWaitedFor, ASCIILiteral whatCannotBeDone, const ScopedLambda<bool()>& isOver)
 {
     VM& vm = m_vm;
@@ -488,16 +538,10 @@ bool Threads::waitUntil(JSGlobalObject* globalObject, const void* address, int64
         return true;
     if (!timeout)
         return false;
-    // What is noted may be left from a call that did not have to wait, and the frame of the next call is where that one's was.
-    auto isOfFunctionThatMayWait = [](CallFrame* call) {
-        JSCell* callee = call->jsCallee();
-        return PyNativeFunction::is(callee) && (uncheckedDowncast<PyNativeFunction>(callee)->def().flags & MayWait);
-    };
-    if (CallFrame* call = std::exchange(current().callThatMayBeginAgain, nullptr); call && call == vm.topCallFrame && isOfFunctionThatMayWait(call)) {
-        current().wantsCallToBeginAgain = true;
-        throwException(globalObject, scope, Exception::create(vm, jsNull(), Exception::StackCaptureAction::DoNotCaptureStack));
+    bool beginsAgain = beginsCallAgain(globalObject);
+    EXCEPTION_ASSERT(!!scope.exception() == beginsAgain);
+    if (beginsAgain)
         return false;
-    }
     if (isFinalized()) {
         // The other threads never run again.
         raise(globalObject, scope, runtime(globalObject).PythonFinalizationError(), makeString("cannot "_s, whatCannotBeDone));

@@ -187,6 +187,7 @@ static void bufferedNotePendingOutput(BufferedStream& stream)
 
 void bufferedWriteOutPending(JSGlobalObject* globalObject, PyRecord* record)
 {
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(globalObject));
     BufferedStream stream(globalObject, record);
     auto& s = stream.s;
     s.isListedForPendingOutput = false;
@@ -194,7 +195,7 @@ void bufferedWriteOutPending(JSGlobalObject* globalObject, PyRecord* record)
     if (!s.isInitialized || s.isDetached || s.lock.isHeld() || !bufferedHasPendingOutput(record) || stream.isClosed())
         return;
     BufferedLock lock(stream);
-    if (!lock || !stream.flushAndRewind())
+    if (failed(scope, !!lock) || failed(scope, stream.flushAndRewind()))
         reportUnraisable(globalObject, makeString("Exception ignored while flushing "_s, reprForMessage(globalObject, record)), { });
 }
 
@@ -308,11 +309,11 @@ bool BufferedStream::initialize(JSValue raw, int64_t bufferSize, bool readable, 
     s.isInitialized = false;
     s.isDetached = false;
 
-    if (readable && writable && !ioCheckSeekable(globalObject, raw))
+    if (readable && writable && failed(scope, ioCheckSeekable(globalObject, raw)))
         return false;
-    if (readable && !ioCheckReadable(globalObject, raw))
+    if (readable && failed(scope, ioCheckReadable(globalObject, raw)))
         return false;
-    if (writable && !ioCheckWritable(globalObject, raw))
+    if (writable && failed(scope, ioCheckWritable(globalObject, raw)))
         return false;
 
     if (JSValue previous = this->raw(); previous && previous != raw)
@@ -332,7 +333,7 @@ bool BufferedStream::initialize(JSValue raw, int64_t bufferSize, bool readable, 
     RETURN_IF_EXCEPTION(scope, false);
     record->set(vm, BufferedBufferField, storage);
     s.bufferMask = !(bufferSize & (bufferSize - 1)) ? bufferSize - 1 : 0;
-    if (rawTell() == -1) {
+    if (failed(scope, rawTell() != -1)) {
         takePendingException(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
     }
@@ -527,7 +528,7 @@ JSValue BufferedStream::readGeneric(int64_t size)
     // Once there is enough, nothing more is read: that might wait forever.
     while (remaining > 0 && s.readEnd < s.bufferSize) {
         int64_t count = fillBuffer();
-        if (count == -1)
+        if (failed(scope, count != -1))
             return { };
         if (!count || count == -2)
             return stopShort(count);
@@ -755,13 +756,14 @@ bool BufferedStream::flushWrites()
 
 bool BufferedStream::flushAndRewind()
 {
-    if (!flushWrites())
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, flushWrites()))
         return false;
     if (s.readable) {
         // The raw stream goes back to where the program thinks it is.
         int64_t position = rawSeek(-rawOffset(), SEEK_CUR);
         resetReadBuffer();
-        if (position == -1)
+        if (failed(scope, position != -1))
             return false;
     }
     return true;
@@ -805,9 +807,10 @@ static JSValue bufferedSizeOf(JSGlobalObject* globalObject, JSValue self)
 
 static JSValue bufferedDeallocWarn(JSGlobalObject* globalObject, JSValue self, JSValue source)
 {
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(globalObject));
     BufferedStream stream(globalObject, self);
     if (stream.s.isInitialized && stream.raw()) {
-        if (!callMethod(globalObject, stream.raw(), ioName(globalObject, IOName::deallocWarn), source))
+        if (failed(scope, callMethod(globalObject, stream.raw(), ioName(globalObject, IOName::deallocWarn), source)))
             takePendingException(globalObject);
     }
     return jsUndefined();
@@ -862,10 +865,10 @@ static JSValue bufferedClose(JSGlobalObject* globalObject, JSValue self)
     if (failed(scope, stream.checkInitialized()))
         return { };
     BufferedLock lock(stream);
-    if (!lock)
+    if (failed(scope, !!lock))
         return { };
     int closed = stream.isClosed();
-    if (closed < 0)
+    if (failed(scope, closed >= 0))
         return { };
     if (closed)
         return jsUndefined();
@@ -875,9 +878,10 @@ static JSValue bufferedClose(JSGlobalObject* globalObject, JSValue self)
 
     // flush() takes the lock itself.
     lock.release();
-    ioFlush(globalObject, self);
-    JSValue flushError = takePendingException(globalObject);
-    if (!lock.acquire())
+    JSValue flushError;
+    if (failed(scope, ioFlush(globalObject, self)))
+        flushError = takePendingException(globalObject);
+    if (failed(scope, lock.acquire()))
         return { };
 
     JSValue result;
@@ -885,8 +889,10 @@ static JSValue bufferedClose(JSGlobalObject* globalObject, JSValue self)
         result = callMethod(globalObject, stream.raw(), runtime(globalObject).names.close());
     else
         stream.checkInitialized();
+    EXCEPTION_ASSERT(!!scope.exception() == !result);
     stream.record->set(stream.vm, BufferedBufferField, JSValue());
     ioDidClose(globalObject, stream.record);
+    scope.release();
     if (flushError) {
         ioChainExceptions(globalObject, flushError);
         result = JSValue();
@@ -903,7 +909,7 @@ static JSValue bufferedDetach(JSGlobalObject* globalObject, JSValue self)
     BufferedStream stream(globalObject, self);
     if (failed(scope, stream.checkInitialized()))
         return { };
-    if (!ioFlush(globalObject, self))
+    if (failed(scope, ioFlush(globalObject, self)))
         return { };
     // Flushing may have run anything.
     if (failed(scope, stream.checkInitialized()))
@@ -1005,7 +1011,7 @@ static JSValue bufferedRead1(JSGlobalObject* globalObject, JSValue self, JSValue
     PyBytes* result = ioTryNewBytes(globalObject, size);
     RETURN_IF_EXCEPTION(scope, { });
     int64_t count = stream.rawRead(result, 0, result->mutableData(), size);
-    if (count == -1)
+    if (failed(scope, count != -1))
         return { };
     if (count == -2)
         count = 0;
@@ -1067,7 +1073,7 @@ static JSValue bufferedSeek(JSGlobalObject* globalObject, JSValue self, JSValue 
 
     if (!stream.checkClosed("seek of closed file"_s))
         return { };
-    if (!ioCheckSeekable(globalObject, stream.raw()))
+    if (failed(scope, ioCheckSeekable(globalObject, stream.raw())))
         return { };
     int64_t target = ioToOffset(globalObject, targetValue, runtime(globalObject).ValueError());
     RETURN_IF_EXCEPTION(scope, { });
@@ -1181,7 +1187,7 @@ static JSValue bufferedWrite(JSGlobalObject* globalObject, JSValue self, JSValue
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     IOBuffer data;
-    if (!data.acquire(globalObject, dataValue))
+    if (failed(scope, data.acquire(globalObject, dataValue)))
         return { };
     BufferedStream stream(globalObject, self);
     auto& s = stream.s;
@@ -1216,11 +1222,11 @@ static JSValue bufferedWrite(JSGlobalObject* globalObject, JSValue self, JSValue
         RELEASE_AND_RETURN(scope, makeInt(globalObject, length));
     }
 
-    bool flushed = stream.flushWrites();
+    bool flushed = !failed(scope, stream.flushWrites());
     {
         // That may have run anything.
         JSValue error = takePendingException(globalObject);
-        if (!data.refresh())
+        if (failed(scope, data.refresh()))
             return { };
         source = data.data();
         if (error)
@@ -1268,9 +1274,9 @@ static JSValue bufferedWrite(JSGlobalObject* globalObject, JSValue self, JSValue
     int64_t written = 0;
     while (remaining >= s.bufferSize) {
         int64_t count = stream.rawWrite(data.owner(), data.offset() + written, source + written, length - written);
-        if (count == -1)
+        if (failed(scope, count != -1))
             return { };
-        if (!data.refresh())
+        if (failed(scope, data.refresh()))
             return { };
         source = data.data();
         if (count == -2) {
@@ -1429,7 +1435,7 @@ static JSValue bufferedRWPairInit(JSGlobalObject* globalObject, JSValue self, co
     int64_t bufferSize = ioDefaultBufferSize;
     if (args.size() > 2 && failed(scope, ssizeArgument(globalObject, args[2], bufferSize)))
         return { };
-    if (!ioCheckReadable(globalObject, args[0]) || !ioCheckWritable(globalObject, args[1]))
+    if (failed(scope, ioCheckReadable(globalObject, args[0])) || failed(scope, ioCheckWritable(globalObject, args[1])))
         return { };
 
     PyRecord* pair = PyRecord::from(self);

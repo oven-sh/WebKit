@@ -896,11 +896,31 @@ private:
                 node->clearFlags(NodeMustGenerate);
                 break;
             }
-            // ObjectUse lets any object through, so == is a comparison of pointers only if no object at all overloads it.
-            auto objectsAreEqualIfSame = [&] { return m_graph.isWatchingOperatorOverloadingWatchpoint(); };
-            if (node->child1()->shouldSpeculateObject() && node->child2()->shouldSpeculateObject() && objectsAreEqualIfSame()) {
-                fixEdge<ObjectUse>(node->child1());
-                fixEdge<ObjectUse>(node->child2());
+            // Two objects are equal if they are the same object, unless one is a Python object: its class says what it is equal to.
+            bool mayBePyObject = (node->child1()->prediction() | node->child2()->prediction()) & SpecPyObject;
+            // To check for one kind of object of JS costs what it costs to check for an object, and tells both.
+            bool mayExpectOneKind = !m_graph.hasExitSite(node->origin.semantic, BadType);
+            auto fixObjectEdge = [&](Edge& edge) {
+                if (mayExpectOneKind && edge->shouldSpeculateFinalObject())
+                    insertCheck<FinalObjectUse>(edge.node());
+                else if (mayExpectOneKind && edge->shouldSpeculateArray())
+                    insertCheck<ArrayUse>(edge.node());
+                else if (mayExpectOneKind && edge->shouldSpeculateFunction())
+                    insertCheck<FunctionUse>(edge.node());
+                else {
+                    // On its own and first, so that the next check need not ask whether this is a cell.
+                    insertCheck<ObjectUse>(edge.node());
+                    insertCheck<NotPyObjectUse>(edge.node());
+                }
+                fixEdge<ObjectUse>(edge);
+            };
+            auto fixObjectOrOtherEdge = [&](Edge& edge) {
+                insertCheck<NotPyObjectUse>(edge.node());
+                fixEdge<ObjectOrOtherUse>(edge);
+            };
+            if (node->child1()->shouldSpeculateObject() && node->child2()->shouldSpeculateObject() && !mayBePyObject) {
+                fixObjectEdge(node->child1());
+                fixObjectEdge(node->child2());
                 node->clearFlags(NodeMustGenerate);
                 break;
             }
@@ -947,15 +967,15 @@ private:
                 break;
             }
 
-            if (node->child1()->shouldSpeculateObject() && node->child2()->shouldSpeculateObjectOrOther() && objectsAreEqualIfSame()) {
-                fixEdge<ObjectUse>(node->child1());
-                fixEdge<ObjectOrOtherUse>(node->child2());
+            if (node->child1()->shouldSpeculateObject() && node->child2()->shouldSpeculateObjectOrOther() && !mayBePyObject) {
+                fixObjectEdge(node->child1());
+                fixObjectOrOtherEdge(node->child2());
                 node->clearFlags(NodeMustGenerate);
                 break;
             }
-            if (node->child1()->shouldSpeculateObjectOrOther() && node->child2()->shouldSpeculateObject() && objectsAreEqualIfSame()) {
-                fixEdge<ObjectOrOtherUse>(node->child1());
-                fixEdge<ObjectUse>(node->child2());
+            if (node->child1()->shouldSpeculateObjectOrOther() && node->child2()->shouldSpeculateObject() && !mayBePyObject) {
+                fixObjectOrOtherEdge(node->child1());
+                fixObjectEdge(node->child2());
                 node->clearFlags(NodeMustGenerate);
                 break;
             }

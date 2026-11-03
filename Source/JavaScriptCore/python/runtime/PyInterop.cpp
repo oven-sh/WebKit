@@ -10,7 +10,9 @@
 #include "IteratorOperations.h"
 #include "JSBoundFunction.h"
 #include "JSCInlines.h"
+#include "JSMapInlines.h"
 #include "JSPromise.h"
+#include "JSSetInlines.h"
 #include "NumberConstructor.h"
 #include "ObjectConstructor.h"
 #include "PropertyNameArray.h"
@@ -35,7 +37,8 @@ namespace Python {
 // What the objects and functions of JS are to Python.
 //
 // Numbers, strings, booleans, arrays, undefined and null are Python values as they are. Any other object is an instance of
-// JSObject, or of JSFunction if it can be called: its properties are its attributes, and also its items.
+// JSObject, or of JSFunction if it can be called: its properties are its attributes, and also its items. (JSPromise, JSIterator
+// and JSGenerator are JSObjects that can also be awaited, asked for the next item, sent to and closed.)
 
 static Identifier propertyKeyFor(JSGlobalObject* globalObject, JSString* name)
 {
@@ -146,12 +149,20 @@ static bool propertyKeyForItem(JSGlobalObject* globalObject, JSValue key, Identi
     return false;
 }
 
+// The items of an object are its properties. Those of a Map are its entries: that is the mapping of JS whose keys can be anything.
 static JSValue jsObjectGetItem(JSGlobalObject* globalObject, JSValue self, JSValue key)
 {
     if (!ensureMainThreadForJS(globalObject))
         return { };
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (auto* map = dynamicDowncast<JSMap>(self)) {
+        bool found = map->has(globalObject, valueForJS(key));
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!found)
+            return raiseKeyError(globalObject, scope, key);
+        RELEASE_AND_RETURN(scope, map->get(globalObject, valueForJS(key)));
+    }
     Identifier name;
     if (failed(scope, propertyKeyForItem(globalObject, key, name)))
         return { };
@@ -170,6 +181,11 @@ static JSValue jsObjectSetItem(JSGlobalObject* globalObject, JSValue self, JSVal
         return { };
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (auto* map = dynamicDowncast<JSMap>(self)) {
+        map->set(globalObject, valueForJS(key), valueForJS(value));
+        RETURN_IF_EXCEPTION(scope, { });
+        return jsUndefined();
+    }
     Identifier name;
     if (failed(scope, propertyKeyForItem(globalObject, key, name)))
         return { };
@@ -185,6 +201,13 @@ static JSValue jsObjectDelItem(JSGlobalObject* globalObject, JSValue self, JSVal
         return { };
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (auto* map = dynamicDowncast<JSMap>(self)) {
+        bool had = map->remove(globalObject, valueForJS(key));
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!had)
+            return raiseKeyError(globalObject, scope, key);
+        return jsUndefined();
+    }
     Identifier name;
     if (failed(scope, propertyKeyForItem(globalObject, key, name)))
         return { };
@@ -204,6 +227,10 @@ static JSValue jsObjectContains(JSGlobalObject* globalObject, JSValue self, JSVa
         return { };
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (auto* map = dynamicDowncast<JSMap>(self))
+        RELEASE_AND_RETURN(scope, jsBoolean(map->has(globalObject, valueForJS(key))));
+    if (auto* set = dynamicDowncast<JSSet>(self))
+        RELEASE_AND_RETURN(scope, jsBoolean(set->has(globalObject, valueForJS(key))));
     Identifier name;
     if (failed(scope, propertyKeyForItem(globalObject, key, name))) {
         takePendingException(globalObject);
@@ -385,6 +412,12 @@ static JSValue jsObjectLen(JSGlobalObject* globalObject, JSValue self)
         if (isSmallInt(value) && smallIntValue(value) >= 0)
             return value;
     }
+    // As in jsObjectIter(): it is the object's properties that are counted only if it is they that are iterated over. A generator
+    // has no length, and code that asks for one to see whether there is one must be told so.
+    bool isIterable = hasIteratorMethod(globalObject, object);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (isIterable)
+        return raiseTypeError(globalObject, scope, "object of type '"_s, typeName(globalObject, self), "' has no len()"_s);
     JSArray* names = ownPropertyNames(globalObject, object, DontEnumPropertiesMode::Exclude);
     RETURN_IF_EXCEPTION(scope, { });
     return jsNumber(listLength(names));
@@ -633,12 +666,133 @@ static constexpr NativeDef jsObjectMethods[] = {
     PY_METHOD("items", jsObjectItems, "($self, /)"),
 };
 
+// function.__name__ and __qualname__, which decorators copy and messages show: function.name
+static JSValue jsFunctionName(JSGlobalObject* globalObject, JSValue self)
+{
+    if (!ensureMainThreadForJS(globalObject))
+        return { };
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue name = asObject(self)->get(globalObject, vm.propertyNames->name);
+    RETURN_IF_EXCEPTION(scope, { });
+    return name.isString() ? name : JSValue(jsEmptyString(vm));
+}
+
+static constexpr NativeGetSet jsFunctionGetSets[] = {
+    { "__name__"_s, jsFunctionName },
+    { "__qualname__"_s, jsFunctionName },
+};
+
+// copy.copy() and copy.deepcopy() of a function give the function, as for those of Python.
+static JSValue jsFunctionCopy(JSGlobalObject*, JSValue self) { return self; }
+static JSValue jsFunctionDeepCopy(JSGlobalObject*, JSValue self, JSValue) { return self; }
+
 static constexpr NativeDef jsFunctionMethods[] = {
     PY_SLOT("__call__", callForeignFunction, "($self, *args, **kwargs)"),
     PY_SLOT("__repr__", jsFunctionRepr, "($self, /)"),
+    PY_METHOD("__copy__", jsFunctionCopy, "($self, /)"),
+    PY_METHOD("__deepcopy__", jsFunctionDeepCopy, "($self, memo, /)"),
     PY_METHOD("new", jsFunctionNew, "($self, *args, **kwargs)"),
     PY_METHOD("__instancecheck__", jsFunctionInstanceCheck, "($self, instance, /)"),
 };
+
+// ---- The iterators and generators of JS are iterators and generators ----
+
+// iterator.method([argument]), and of the { value, done } that gives the value, or StopIteration(value).
+static JSValue stepIteratorOfJS(JSGlobalObject* globalObject, JSValue self, const Identifier& method, JSValue argument = { })
+{
+    if (!ensureMainThreadForJS(globalObject))
+        return { };
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue function = asObject(self)->get(globalObject, method);
+    RETURN_IF_EXCEPTION(scope, { });
+    CallData callData = JSC::getCallData(function);
+    if (callData.type == CallData::Type::None)
+        return raiseTypeError(globalObject, scope, "this JavaScript iterator has no "_s, method.string(), "()"_s);
+    MarkedArgumentBuffer arguments;
+    if (argument)
+        arguments.append(valueForJS(argument));
+    JSValue result = JSC::call(globalObject, function, callData, self, arguments);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!result.isObject())
+        return raiseTypeError(globalObject, scope, "Iterator result interface is not an object."_s);
+    bool isDone = iteratorComplete(globalObject, result);
+    RETURN_IF_EXCEPTION(scope, { });
+    JSValue value = iteratorValue(globalObject, result);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (isDone)
+        return raiseStopIteration(globalObject, scope, value);
+    return value;
+}
+
+static JSValue jsIteratorObjectNext(JSGlobalObject* globalObject, JSValue self)
+{
+    return stepIteratorOfJS(globalObject, self, getVM(globalObject).propertyNames->next);
+}
+
+static JSValue jsGeneratorSend(JSGlobalObject* globalObject, JSValue self, JSValue value)
+{
+    return stepIteratorOfJS(globalObject, self, getVM(globalObject).propertyNames->next, value);
+}
+
+// generator.throw(exception), or throw(type[, value]) as `raise type(value)`. What JS catches is what it would if Python raised it.
+static JSValue jsGeneratorThrow(JSGlobalObject* globalObject, JSValue self, JSValue exception, JSValue value, JSValue)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (auto* type = PyType::tryFrom(exception); type && type->has(TypeFlag::ExceptionSubclass)) {
+        exception = value && !isNone(value) ? call(globalObject, type, value) : call(globalObject, type);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    if (!PyException::is(exception))
+        return raiseTypeError(globalObject, scope, "exceptions must be classes or instances deriving from BaseException, not "_s, typeName(globalObject, exception));
+    throwPythonException(globalObject, scope, exception);
+    JSValue thrown = scope.exception()->value();
+    (void)scope.tryClearException();
+    RELEASE_AND_RETURN(scope, stepIteratorOfJS(globalObject, self, vm.propertyNames->throwKeyword, thrown));
+}
+
+// generator.return(), which runs what `finally` holds as GeneratorExit does in Python.
+static JSValue jsGeneratorClose(JSGlobalObject* globalObject, JSValue self)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    stepIteratorOfJS(globalObject, self, vm.propertyNames->returnKeyword);
+    if (!scope.exception())
+        return raiseRuntimeError(globalObject, scope, "generator ignored GeneratorExit"_s);
+    if (!clearPendingExceptionIfMatches(globalObject, runtime(globalObject).StopIteration()))
+        return { };
+    return jsUndefined();
+}
+
+// The properties of an object of JS come before what its type has in Python, and throw() is both.
+static JSValue jsGeneratorGetAttribute(JSGlobalObject* globalObject, JSValue self, JSValue nameValue)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSString* name = attributeName(globalObject, nameValue);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (stringOf(name) == "throw"_s)
+        RELEASE_AND_RETURN(scope, genericGetAttr(globalObject, self, name));
+    RELEASE_AND_RETURN(scope, jsObjectGetAttribute(globalObject, self, nameValue));
+}
+
+static constexpr NativeDef jsIteratorObjectMethods[] = {
+    PY_SLOT("__iter__", jsIteratorSelf, "($self, /)"),
+    PY_SLOT("__next__", jsIteratorObjectNext, "($self, /)"),
+};
+static constexpr TypeDef jsIteratorObjectTypeDef { "_js.JSIterator"_s, { TypeFlag::DisallowInstantiation }, jsIteratorObjectMethods, { }, { } };
+PyType* jsIteratorObjectType(Runtime& rt) { return rt.typeFor(jsIteratorObjectTypeDef, rt.jsObjectType()); }
+
+static constexpr NativeDef jsGeneratorMethods[] = {
+    PY_SLOT("__getattribute__", jsGeneratorGetAttribute, "($self, name, /)"),
+    PY_METHOD("send", jsGeneratorSend, "($self, value, /)"),
+    PY_METHOD("throw", jsGeneratorThrow, "($self, typ, val=None, tb=None, /)"),
+    PY_METHOD("close", jsGeneratorClose, "($self, /)"),
+};
+static constexpr TypeDef jsGeneratorTypeDef { "_js.JSGenerator"_s, { TypeFlag::DisallowInstantiation }, jsGeneratorMethods, { }, { } };
+PyType* jsGeneratorType(Runtime& rt) { return rt.typeFor(jsGeneratorTypeDef, jsIteratorObjectType(rt)); }
 
 // `await promise`
 static JSValue jsPromiseAwait(JSGlobalObject* globalObject, JSValue self)
@@ -676,6 +830,8 @@ void initializeJSModule(JSGlobalObject* globalObject, PyModule* module)
     module->add(globalObject, "JSObject"_s, rt.jsObjectType());
     module->add(globalObject, "JSFunction"_s, rt.jsFunctionType());
     module->add(globalObject, "JSPromise"_s, rt.jsPromiseType());
+    module->add(globalObject, "JSIterator"_s, jsIteratorObjectType(rt));
+    module->add(globalObject, "JSGenerator"_s, jsGeneratorType(rt));
     module->addFunctions(globalObject, jsModuleFunctions);
 }
 
@@ -683,7 +839,7 @@ void initializeInteropTypes(JSGlobalObject* globalObject)
 {
     Runtime& rt = runtime(globalObject);
     rt.jsObjectType()->initializeBuiltin(globalObject, { "JSObject"_s, { TypeFlag::DisallowInstantiation }, jsObjectMethods, { }, { } }, rt.typeType(), rt.objectType());
-    rt.jsFunctionType()->initializeBuiltin(globalObject, { "JSFunction"_s, { TypeFlag::DisallowInstantiation }, jsFunctionMethods, { }, { } }, rt.typeType(), rt.jsObjectType());
+    rt.jsFunctionType()->initializeBuiltin(globalObject, { "JSFunction"_s, { TypeFlag::DisallowInstantiation }, jsFunctionMethods, jsFunctionGetSets, { } }, rt.typeType(), rt.jsObjectType());
     rt.jsPromiseType()->initializeBuiltin(globalObject, { "JSPromise"_s, { TypeFlag::DisallowInstantiation }, jsPromiseMethods, { }, { } }, rt.typeType(), rt.jsObjectType());
 }
 

@@ -94,26 +94,30 @@ JSValue exceptionFromThrownValue(JSGlobalObject* globalObject, JSValue thrown)
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    if (auto* error = dynamicDowncast<ErrorInstance>(thrown)) {
-        if (error->isStackOverflowError())
-            return newException(globalObject, rt.RecursionError(), "maximum recursion depth exceeded"_s);
-        if (error->isOutOfMemoryError())
-            return newException(globalObject, rt.MemoryError(), std::span<const JSValue> { });
-    }
-    // An object of JS keeps its JSError. (Not one of Python's: the hidden fields of those belong to their types.)
+    // An object of JS keeps its exception. (Not one of Python's: the hidden fields of those belong to their types.)
     PyType* thrownType = rt.typeOf(thrown);
     bool remembers = thrownType == rt.jsObjectType() || thrownType == rt.jsFunctionType();
     if (remembers) {
         if (JSValue existing = hiddenField(globalObject, thrown, jsErrorHiddenField))
             return existing;
     }
-    String message = thrown.toWTFString(globalObject);
-    if (scope.exception()) {
-        scope.clearException();
-        message = "<exception>"_s;
+    PyException* exception;
+    auto* error = dynamicDowncast<ErrorInstance>(thrown);
+    if (error && error->isStackOverflowError())
+        exception = newException(globalObject, rt.RecursionError(), "maximum recursion depth exceeded"_s);
+    else if (error && error->isOutOfMemoryError()) {
+        exception = newException(globalObject, rt.MemoryError(), std::span<const JSValue> { });
+        if (!exception) [[unlikely]]
+            return { };
+    } else {
+        String message = thrown.toWTFString(globalObject);
+        if (scope.exception()) {
+            scope.clearException();
+            message = "<exception>"_s;
+        }
+        exception = newException(globalObject, rt.JSError(), message);
+        exception->setField(vm, ExceptionField::jsErrorValue, thrown);
     }
-    PyException* exception = newException(globalObject, rt.JSError(), message);
-    exception->setField(vm, ExceptionField::jsErrorValue, thrown);
     if (remembers) {
         setHiddenField(globalObject, thrown, jsErrorHiddenField, exception);
         if (JSValue traceback = hiddenField(globalObject, thrown, jsErrorTracebackHiddenField))
@@ -897,7 +901,7 @@ static JSValue syntaxErrorInit(JSGlobalObject* globalObject, JSValue object, con
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!baseExceptionInit(globalObject, object, args))
+    if (failed(scope, baseExceptionInit(globalObject, object, args)))
         return { };
     PyException* exception = self(object);
     if (args.size() >= 1)
@@ -975,7 +979,7 @@ static JSValue unicodeErrorInitCommon(JSGlobalObject* globalObject, JSValue obje
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!baseExceptionInit(globalObject, object, args))
+    if (failed(scope, baseExceptionInit(globalObject, object, args)))
         return { };
     unsigned expected = hasEncoding ? 5 : 4;
     if (args.size() != expected)
@@ -1009,7 +1013,7 @@ static JSValue unicodeErrorInitCommon(JSGlobalObject* globalObject, JSValue obje
     if (isDecoding && !PyBytes::is(target)) {
         // What could change is copied.
         std::span<const uint8_t> bytes;
-        if (!getBytesLike(globalObject, target, bytes))
+        if (failed(scope, getBytesLike(globalObject, target, bytes)))
             return { };
         target = PyBytes::create(globalObject, bytes);
     }
@@ -1078,7 +1082,7 @@ static JSValue unicodeErrorStrCommon(JSGlobalObject* globalObject, JSValue objec
 
     if (kind == 1) {
         std::span<const uint8_t> bytes;
-        if (!getBytesLike(globalObject, target, bytes))
+        if (failed(scope, getBytesLike(globalObject, target, bytes)))
             return { };
         if (start >= 0 && start < static_cast<int64_t>(bytes.size()) && end == start + 1)
             return makeStr(vm, makeString('\'', encoding, "' codec can't decode byte 0x"_s, hex(bytes[start], 2, Lowercase), " in position "_s, start, ": "_s, reason));

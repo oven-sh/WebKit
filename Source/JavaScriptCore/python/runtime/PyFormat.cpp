@@ -155,6 +155,7 @@ static bool parseFormatSpec(JSGlobalObject* globalObject, const CodePoints& text
         ++position;
     }
     int consumed = readInteger(globalObject, text, position, end, spec.width);
+    EXCEPTION_ASSERT(!!scope.exception() == (consumed < 0));
     if (consumed < 0)
         return false;
     if (!consumed)
@@ -175,6 +176,7 @@ static bool parseFormatSpec(JSGlobalObject* globalObject, const CodePoints& text
     if (at('.')) {
         ++position;
         consumed = readInteger(globalObject, text, position, end, spec.precision);
+        EXCEPTION_ASSERT(!!scope.exception() == (consumed < 0));
         if (consumed < 0)
             return false;
         if (at(',')) {
@@ -256,39 +258,54 @@ static JSString* raiseUnknownFormatCode(JSGlobalObject* globalObject, char32_t t
 
 static void appendFill(StringBuilder& builder, char32_t fill, int64_t count) { appendRepeated(builder, fill, count); }
 
-// The digits in groups, with zeros on the left up to the width. Both grow from the right.
-static Vector<char, 64> groupDigits(std::span<const Latin1Character> digits, int64_t minWidth, unsigned groupSize, char separator)
+// The groups of so many digits, with zeros on the left up to the width, from the right: function(whether a separator comes
+// first, how many digits, how many zeros).
+template<typename Function>
+static void forEachGroupOfDigits(int64_t remaining, int64_t minWidth, unsigned groupSize, bool hasSeparator, const Function& function)
 {
-    Vector<char, 64> reversed;
     minWidth = std::max<int64_t>(minWidth, 0);
-    int64_t remaining = digits.size();
-    int64_t separatorLength = separator ? 1 : 0;
     bool useSeparator = false;
     auto emit = [&](int64_t length) {
         int64_t zeros = std::max<int64_t>(0, length - remaining);
         int64_t count = std::max<int64_t>(0, std::min(remaining, length));
-        if (useSeparator && separator)
-            reversed.append(separator);
-        for (int64_t i = 0; i < count; ++i)
-            reversed.append(static_cast<char>(digits[--remaining]));
-        for (int64_t i = 0; i < zeros; ++i)
-            reversed.append('0');
+        function(useSeparator && hasSeparator, count, zeros);
+        remaining -= count;
         useSeparator = true;
     };
-    if (!groupSize)
+    if (!groupSize) {
         emit(std::max<int64_t>(std::max(remaining, minWidth), 1));
-    else {
-        while (true) {
-            int64_t length = std::min<int64_t>(groupSize, std::max<int64_t>(std::max(remaining, minWidth), 1));
-            emit(length);
-            minWidth -= length;
-            if (remaining <= 0 && minWidth <= 0)
-                break;
-            minWidth -= separatorLength;
-        }
+        return;
     }
-    reversed.reverse();
-    return reversed;
+    while (true) {
+        int64_t length = std::min<int64_t>(groupSize, std::max<int64_t>(std::max(remaining, minWidth), 1));
+        emit(length);
+        minWidth -= length;
+        if (remaining <= 0 && minWidth <= 0)
+            break;
+        minWidth -= hasSeparator;
+    }
+}
+
+// False: there is no room for so many.
+static bool groupDigits(Vector<char, 64>& result, std::span<const Latin1Character> digits, int64_t minWidth, unsigned groupSize, char separator)
+{
+    size_t length = 0;
+    forEachGroupOfDigits(digits.size(), minWidth, groupSize, separator, [&](bool hasSeparator, int64_t count, int64_t zeros) {
+        length += hasSeparator + count + zeros;
+    });
+    if (!result.tryReserveInitialCapacity(length))
+        return false;
+    size_t remaining = digits.size();
+    forEachGroupOfDigits(digits.size(), minWidth, groupSize, separator, [&](bool hasSeparator, int64_t count, int64_t zeros) {
+        if (hasSeparator)
+            result.append(separator);
+        for (int64_t i = 0; i < count; ++i)
+            result.append(static_cast<char>(digits[--remaining]));
+        for (int64_t i = 0; i < zeros; ++i)
+            result.append('0');
+    });
+    result.reverse();
+    return true;
 }
 
 namespace {
@@ -334,7 +351,10 @@ static void appendNumber(StringBuilder& builder, const FormatSpec& spec, const N
     Vector<char, 64> digits;
     if (!parts.digits.empty()) {
         unsigned groupSize = spec.thousands == '4' ? 4 : spec.thousands || spec.fractionThousands ? 3 : 0;
-        digits = groupDigits(parts.digits, minWidth, groupSize, spec.thousands == '4' ? '_' : spec.thousands);
+        if (!groupDigits(digits, parts.digits, minWidth, groupSize, spec.thousands == '4' ? '_' : spec.thousands)) {
+            builder.didOverflow();
+            return;
+        }
     }
 
     int64_t padding = std::max<int64_t>(spec.width - (other + static_cast<int64_t>(digits.size())), 0);
@@ -393,7 +413,7 @@ JSString* formatStr(JSGlobalObject* globalObject, JSValue self, JSString* specSt
     String specText = specString->value(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
     FormatSpec spec;
-    if (!parseFormatSpec(globalObject, CodePoints(specText), self, 's', '<', spec))
+    if (failed(scope, parseFormatSpec(globalObject, CodePoints(specText), self, 's', '<', spec)))
         return nullptr;
     if (spec.type != 's')
         RELEASE_AND_RETURN(scope, raiseUnknownFormatCode(globalObject, spec.type, self));
@@ -526,7 +546,7 @@ JSString* formatFloat(JSGlobalObject* globalObject, JSValue self, JSString* spec
     String specText = specString->value(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
     FormatSpec spec;
-    if (!parseFormatSpec(globalObject, CodePoints(specText), self, 0, '>', spec))
+    if (failed(scope, parseFormatSpec(globalObject, CodePoints(specText), self, 0, '>', spec)))
         return nullptr;
     switch (spec.type) {
     case 0:
@@ -555,7 +575,7 @@ JSString* formatInt(JSGlobalObject* globalObject, JSValue self, JSString* specSt
     String specText = specString->value(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
     FormatSpec spec;
-    if (!parseFormatSpec(globalObject, CodePoints(specText), self, 'd', '>', spec))
+    if (failed(scope, parseFormatSpec(globalObject, CodePoints(specText), self, 'd', '>', spec)))
         return nullptr;
     JSValue value = intValue(self);
 
@@ -649,7 +669,7 @@ JSString* formatComplex(JSGlobalObject* globalObject, JSValue self, JSString* sp
     String specText = specString->value(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
     FormatSpec spec;
-    if (!parseFormatSpec(globalObject, CodePoints(specText), self, 0, '>', spec))
+    if (failed(scope, parseFormatSpec(globalObject, CodePoints(specText), self, 0, '>', spec)))
         return nullptr;
     switch (spec.type) {
     case 0:
@@ -861,7 +881,7 @@ static int nextMarkup(JSGlobalObject* globalObject, const CodePoints& text, unsi
     if (!markupFollows)
         return 2;
     markup.hasField = true;
-    if (!parseField(globalObject, text, position, end, markup))
+    if (failed(scope, parseField(globalObject, text, position, end, markup)))
         return 0;
     return 2;
 }
@@ -930,6 +950,7 @@ static int nextFieldNamePart(JSGlobalObject* globalObject, const CodePoints& tex
         }
         part.end = position - 1;
         part.index = parseIndex(globalObject, text, part.start, part.end);
+        EXCEPTION_ASSERT(!!scope.exception() == (part.index == -2));
         if (part.index == -2)
             return 0;
     } else {
@@ -952,6 +973,7 @@ static JSValue fieldObject(JSGlobalObject* globalObject, const CodePoints& text,
     while (firstEnd < end && text[firstEnd] != '[' && text[firstEnd] != '.')
         ++firstEnd;
     int64_t index = parseIndex(globalObject, text, start, firstEnd);
+    EXCEPTION_ASSERT(!!scope.exception() == (index == -2));
     if (index == -2)
         return { };
     bool isEmpty = start >= firstEnd;
@@ -987,8 +1009,11 @@ static JSValue fieldObject(JSGlobalObject* globalObject, const CodePoints& text,
 
     unsigned position = firstEnd;
     FieldNamePart part;
-    int status;
-    while ((status = nextFieldNamePart(globalObject, text, position, end, part)) == 2) {
+    while (true) {
+        int status = nextFieldNamePart(globalObject, text, position, end, part);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (status != 2)
+            return object;
         if (part.isAttribute)
             object = getAttr(globalObject, object, internString(vm, text.substring(part.start, part.end)));
         else if (part.index == -1)
@@ -997,9 +1022,6 @@ static JSValue fieldObject(JSGlobalObject* globalObject, const CodePoints& text,
             object = getItem(globalObject, object, makeInt(globalObject, part.index));
         RETURN_IF_EXCEPTION(scope, { });
     }
-    if (!status)
-        return { };
-    return object;
 }
 
 static bool expandFormat(JSGlobalObject*, const CodePoints&, unsigned start, unsigned end, FormatArguments&, int depth, StringBuilder&);
@@ -1033,7 +1055,7 @@ static bool appendField(JSGlobalObject* globalObject, const CodePoints& text, co
     String spec;
     if (markup.specNeedsExpanding) {
         StrBuilder expanded;
-        if (!expandFormat(globalObject, text, markup.specStart, markup.specEnd, arguments, depth - 1, expanded))
+        if (failed(scope, expandFormat(globalObject, text, markup.specStart, markup.specEnd, arguments, depth - 1, expanded)))
             return false;
         if (expanded.hasOverflowed()) {
             raiseMemoryError(globalObject, scope, String());
@@ -1064,16 +1086,18 @@ static bool expandFormat(JSGlobalObject* globalObject, const CodePoints& text, u
     }
     unsigned position = start;
     Markup markup;
-    int status;
-    while ((status = nextMarkup(globalObject, text, position, end, markup)) == 2) {
+    while (true) {
+        int status = nextMarkup(globalObject, text, position, end, markup);
+        EXCEPTION_ASSERT(!!scope.exception() == !status);
+        if (status != 2)
+            return status == 1;
         text.appendTo(builder, markup.literalStart, markup.literalEnd);
         if (markup.hasField) {
             arguments.isAtLastField = depth == 2 && position == end;
-            if (!appendField(globalObject, text, markup, arguments, depth, builder))
+            if (failed(scope, appendField(globalObject, text, markup, arguments, depth, builder)))
                 return false;
         }
     }
-    return status == 1;
 }
 
 static JSValue formatWith(JSGlobalObject* globalObject, JSValue self, FormatArguments& arguments)
@@ -1085,7 +1109,7 @@ static JSValue formatWith(JSGlobalObject* globalObject, JSValue self, FormatArgu
     CodePoints text(string);
     StrBuilder builder;
     // A field may be nested in the format spec of another, and no deeper.
-    if (!expandFormat(globalObject, text, 0, text.length(), arguments, 2, builder))
+    if (failed(scope, expandFormat(globalObject, text, 0, text.length(), arguments, 2, builder)))
         return { };
     if (builder.hasOverflowed())
         return raiseMemoryError(globalObject, scope, String());
@@ -1457,7 +1481,7 @@ static bool convertPercentArgument(PercentFormatter& f, PercentArgument& argumen
             integer = intValue(value);
         else {
             integer = needsInteger ? toIndex(globalObject, value) : toInt(globalObject, value);
-            if (!integer) {
+            if (failed(scope, integer)) {
                 if (clearPendingExceptionIfMatches(globalObject, rt.TypeError()))
                     return wrongType();
                 return false;
@@ -1506,7 +1530,7 @@ static bool convertPercentArgument(PercentFormatter& f, PercentArgument& argumen
             return false;
         }
         JSValue index = toIndex(globalObject, value);
-        if (!index) {
+        if (failed(scope, index)) {
             // Whatever TypeError __index__() ends in.
             if (clearPendingExceptionIfMatches(globalObject, rt.TypeError()))
                 raiseTypeError(globalObject, scope, f.errorPrefix(argument), "%c requires an integer or a unicode character, not "_s, typeNameForMessage(globalObject, typeOf(globalObject, value)));
@@ -1634,10 +1658,10 @@ JSValue strFormatPercent(JSGlobalObject* globalObject, JSString* formatString, J
             f.builder.append('%');
             continue;
         }
-        if (!parsePercentArgument(f, argument))
+        if (failed(scope, parsePercentArgument(f, argument)))
             return { };
         String converted;
-        if (!convertPercentArgument(f, argument, converted))
+        if (failed(scope, convertPercentArgument(f, argument, converted)))
             return { };
         // See FormatArguments::whole.
         if (argument.object && f.position >= end && f.builder.isEmpty() && !converted.isEmpty() && !(argument.flags & (AlwaysSign | BlankSign))) [[unlikely]] {

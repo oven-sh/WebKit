@@ -316,7 +316,7 @@ static JSValue operatorCompareDigest(JSGlobalObject* globalObject, JSValue a, JS
         return raiseTypeError(globalObject, scope, "unsupported operand types(s) or combination of types: '"_s, typeName(globalObject, a), "' and '"_s, typeName(globalObject, b), '\'');
     std::span<const uint8_t> left;
     std::span<const uint8_t> right;
-    if (!getBytesLike(globalObject, a, left) || !getBytesLike(globalObject, b, right))
+    if (failed(scope, getBytesLike(globalObject, a, left)) || failed(scope, getBytesLike(globalObject, b, right)))
         return { };
     return jsBoolean(operatorCompareInConstantTime(left, right));
 }

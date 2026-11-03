@@ -176,12 +176,10 @@ bool specIsInitializing(JSGlobalObject* globalObject, JSValue spec)
     if (!spec || isNone(spec))
         return false;
     JSValue value = getAttrIfPresent(globalObject, spec, internString(vm, "_initializing"_s));
-    bool result = !scope.exception() && value && isTrue(globalObject, value);
-    if (scope.exception()) {
-        takePendingException(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!value)
         return false;
-    }
-    return result;
+    RELEASE_AND_RETURN(scope, isTrue(globalObject, value));
 }
 
 // ---- What to say of a module that lacks a name ----
@@ -349,6 +347,7 @@ JSValue moduleGetAttr(JSGlobalObject* globalObject, PyModule* module, JSString* 
     }
     if (getter) {
         JSValue result = call(globalObject, getter, name);
+        EXCEPTION_ASSERT(!!scope.exception() == !result);
         if (!result && suppress)
             clearPendingExceptionIfMatches(globalObject, rt.AttributeError());
         return result;
@@ -421,6 +420,7 @@ static JSValue moduleGetAnnotations(JSGlobalObject* globalObject, JSValue self)
     if (JSValue annotations = dict->get(rt.names.dAnnotations()))
         return annotations;
     bool isInitializing = specIsInitializing(globalObject, dict->get(rt.names.dSpec()));
+    RETURN_IF_EXCEPTION(scope, { });
     JSValue annotations;
     JSValue annotate = dict->get(rt.names.dAnnotate());
     if (annotate && !isNone(annotate)) {

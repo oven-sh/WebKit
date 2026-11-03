@@ -12149,6 +12149,27 @@ void SpeculativeJIT::speculateNotSymbol(Edge edge)
     m_interpreter.filter(edge, ~SpecSymbol);
 }
 
+void SpeculativeJIT::speculateNotPyObject(Edge edge)
+{
+    if (!needsTypeCheck(edge, ~SpecPyObject))
+        return;
+
+    JSValueOperand operand(this, edge, ManualOperandSpeculation);
+    GPRReg valueGPR = operand.gpr();
+    Jump notCell;
+
+    bool needsCellCheck = needsTypeCheck(edge, SpecCell);
+    if (needsCellCheck)
+        notCell = branchIfNotCell(valueGPR);
+
+    speculationCheck(BadType, JSValueSource(valueGPR), edge.node(), branchIfType(valueGPR, pyObjectTypes));
+
+    if (needsCellCheck)
+        notCell.link(this);
+
+    m_interpreter.filter(edge, ~SpecPyObject);
+}
+
 void SpeculativeJIT::speculateSymbol(Edge edge, GPRReg cell)
 {
     DFG_TYPE_CHECK(JSValueSource(cell), edge, ~SpecCellCheck | SpecSymbol, branchIfNotSymbol(cell));
@@ -12449,6 +12470,9 @@ void SpeculativeJIT::speculate(Node*, Edge edge)
         break;
     case NotSymbolUse:
         speculateNotSymbol(edge);
+        break;
+    case NotPyObjectUse:
+        speculateNotPyObject(edge);
         break;
     case NotCellUse:
         speculateNotCell(edge);

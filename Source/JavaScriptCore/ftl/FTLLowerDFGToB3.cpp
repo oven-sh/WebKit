@@ -26922,6 +26922,9 @@ IGNORE_CLANG_WARNINGS_END
         case NotSymbolUse:
             speculateNotSymbol(edge);
             break;
+        case NotPyObjectUse:
+            speculateNotPyObject(edge);
+            break;
         case NotCellUse:
             speculateNotCell(edge);
             break;
@@ -27373,7 +27376,7 @@ IGNORE_CLANG_WARNINGS_END
 
     LValue isExoticForTypeof(LValue cell, SpeculatedType type = SpecFullTop)
     {
-        if (!(type & (SpecObjectOther | SpecProxyObject)))
+        if (!(type & (SpecObjectOther | SpecProxyObject | SpecPyObject)))
             return m_out.booleanFalse;
         return m_out.testNonZero32(
             m_out.load8ZeroExt32(cell, m_heaps.JSCell_typeInfoFlags),
@@ -27863,6 +27866,28 @@ IGNORE_CLANG_WARNINGS_END
         m_out.appendTo(continuation, lastNext);
 
         m_interpreter.filter(edge, ~SpecSymbol);
+    }
+
+    void speculateNotPyObject(Edge edge)
+    {
+        if (!m_interpreter.needsTypeCheck(edge, ~SpecPyObject))
+            return;
+
+        ASSERT(mayHaveTypeCheck(edge.useKind()));
+        LValue value = lowJSValue(edge, ManualOperandSpeculation);
+
+        LBasicBlock isCellCase = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+
+        m_out.branch(isCell(value, provenType(edge)), unsure(isCellCase), unsure(continuation));
+
+        LBasicBlock lastNext = m_out.appendTo(isCellCase, continuation);
+        speculate(BadType, jsValueValue(value), edge.node(), isType(value, pyObjectTypes));
+        m_out.jump(continuation);
+
+        m_out.appendTo(continuation, lastNext);
+
+        m_interpreter.filter(edge, ~SpecPyObject);
     }
 
     void speculateOther(Edge edge)

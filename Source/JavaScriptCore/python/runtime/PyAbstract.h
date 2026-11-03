@@ -117,13 +117,14 @@ JSValue callWithTupleAndDict(JSGlobalObject*, JSValue callable, PyTuple* args, P
 template<typename... Arguments>
 JSValue callMethod(JSGlobalObject* globalObject, JSValue object, JSString* name, Arguments... arguments)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue values[] = { JSValue(), JSValue(arguments)... };
     JSValue method = getMethod(globalObject, object, name, values[0]);
-    if (!method)
-        return { };
+    RETURN_IF_EXCEPTION(scope, { });
     if (values[0])
-        return call(globalObject, method, CallArgs(values, sizeof...(Arguments) + 1));
-    return call(globalObject, method, CallArgs(values + 1, sizeof...(Arguments)));
+        RELEASE_AND_RETURN(scope, call(globalObject, method, CallArgs(values, sizeof...(Arguments) + 1)));
+    RELEASE_AND_RETURN(scope, call(globalObject, method, CallArgs(values + 1, sizeof...(Arguments))));
 }
 bool isCallable(JSGlobalObject*, JSValue);
 

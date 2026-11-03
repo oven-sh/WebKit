@@ -7,21 +7,23 @@
 
 #include "PyRuntime.h"
 #include "ThrowScope.h"
+#include "TopExceptionScope.h"
 #include <wtf/text/MakeString.h>
 
 namespace JSC {
 namespace Python {
 
-// Many functions here have nothing to return but whether they succeeded: false means that they have raised. To test that is to
-// check for the exception, and exception scope verification (Options::validateExceptionChecks()) has to be told so:
+// Many functions here say in what they return that they have raised: false, an empty value, null. To test that is to check for
+// the exception, and exception scope verification (Options::validateExceptionChecks()) has to be told so:
 //     if (failed(scope, parseArguments(globalObject, args, count)))
 //         return { };
-// It also verifies that false and an exception go together.
-template<typename Scope>
-ALWAYS_INLINE bool failed(Scope& scope, bool succeeded)
+// It also verifies that such a result and an exception go together. Where an empty result may also mean that there is nothing
+// to return, this is not the test: see RETURN_IF_EXCEPTION, or EXCEPTION_ASSERT(!scope.exception() || !result).
+template<typename Scope, typename Result>
+ALWAYS_INLINE bool failed(Scope& scope, Result result)
 {
-    EXCEPTION_ASSERT_UNUSED(scope, !!scope.exception() == !succeeded);
-    return !succeeded;
+    EXCEPTION_ASSERT_UNUSED(scope, !!scope.exception() == !result);
+    return !result;
 }
 
 // Raising from C++. All return an empty value, to be returned in turn.

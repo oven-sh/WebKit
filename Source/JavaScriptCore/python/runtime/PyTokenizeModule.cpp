@@ -57,15 +57,18 @@ public:
     // The next token, as a tuple. `isLast`: nothing follows it. Empty: an exception.
     JSValue next(bool& isLast)
     {
+        auto scope = DECLARE_THROW_SCOPE(m_vm);
         SetForScope running(m_isRunning, true);
         Token token;
         m_lexer.lex(token);
+        EXCEPTION_ASSERT(!scope.exception() || token.kind == TokenKind::ErrorToken);
         if (token.kind == TokenKind::ErrorToken) {
+            scope.release();
             raiseError();
             return { };
         }
         isLast = token.kind == TokenKind::EndMarker;
-        return makeToken(token);
+        RELEASE_AND_RETURN(scope, makeToken(token));
     }
 
 private:
@@ -245,6 +248,7 @@ private:
             return;
         case Lexer::Status::EndOfFile: {
             PyException* exception = newException(m_globalObject, type, "unexpected EOF in multi-line statement"_s);
+            RETURN_IF_EXCEPTION(scope, void());
             auto set = [&](ASCIILiteral name, JSValue value) {
                 setAttr(m_globalObject, exception, internString(m_vm, name), value);
                 if (scope.exception())

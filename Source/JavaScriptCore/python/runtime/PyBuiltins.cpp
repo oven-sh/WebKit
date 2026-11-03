@@ -76,8 +76,10 @@ static JSValue builtinCallable(JSGlobalObject* globalObject, JSValue value) { re
 static JSValue builtinDivmod(JSGlobalObject* globalObject, JSValue a, JSValue b) { return divmod(globalObject, a, b); }
 static JSValue builtinId(JSGlobalObject* globalObject, JSValue value)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue identity = identityOf(globalObject, value);
-    if (identity && !audit(globalObject, "builtins.id"_s, identity))
+    if (identity && failed(scope, audit(globalObject, "builtins.id"_s, identity)))
         return { };
     return identity;
 }
@@ -298,7 +300,7 @@ static JSValue builtinOrd(JSGlobalObject* globalObject, JSValue value)
     }
     if (PyBytes::is(value) || PyByteArray::is(value)) {
         std::span<const uint8_t> bytes;
-        if (!getBytesLike(globalObject, value, bytes))
+        if (failed(scope, getBytesLike(globalObject, value, bytes)))
             return { };
         if (bytes.size() != 1)
             return raiseTypeError(globalObject, scope, "ord() expected a character, but string of length "_s, bytes.size(), " found"_s);
@@ -356,6 +358,7 @@ static JSValue builtinNext(JSGlobalObject* globalObject, const CallArgs& args)
         return raiseTypeError(globalObject, scope, '\'', type->name(), "' object is not an iterator"_s);
     // Through the method, and not iterNext(): a StopIteration keeps its value.
     JSValue item = callSpecial(globalObject, method, iterator);
+    EXCEPTION_ASSERT(!!scope.exception() == !item);
     if (item || args.size() == 1)
         return item;
     scope.release();
@@ -701,7 +704,7 @@ static JSValue builtinInput(JSGlobalObject* globalObject, JSValue prompt)
     RETURN_IF_EXCEPTION(scope, { });
     JSValue errors = stream(rt.names.stderr_(), "lost sys.stderr"_s);
     RETURN_IF_EXCEPTION(scope, { });
-    if (!audit(globalObject, "builtins.input"_s, prompt))
+    if (failed(scope, audit(globalObject, "builtins.input"_s, prompt)))
         return { };
 
     callMethod(globalObject, errors, rt.names.flush());
@@ -738,7 +741,7 @@ static JSValue builtinBreakpoint(JSGlobalObject* globalObject, const CallArgs& a
     JSValue hook = rt.sysDict()->get(internString(vm, "breakpointhook"_s));
     if (!hook)
         return raiseRuntimeError(globalObject, scope, "lost sys.breakpointhook"_s);
-    if (!audit(globalObject, "builtins.breakpoint"_s, hook))
+    if (failed(scope, audit(globalObject, "builtins.breakpoint"_s, hook)))
         return { };
     RELEASE_AND_RETURN(scope, call(globalObject, hook, args));
 }
@@ -774,7 +777,7 @@ bool sourceBytes(JSGlobalObject* globalObject, JSValue source, ASCIILiteral func
         flags |= CompileIgnoreCookie;
     } else if (isBytesLike(source)) {
         std::span<const uint8_t> span;
-        if (!getBytesLike(globalObject, source, span))
+        if (failed(scope, getBytesLike(globalObject, source, span)))
             return false;
         bytes.append(span);
     } else {
@@ -872,15 +875,15 @@ static JSValue builtinCompile(JSGlobalObject* globalObject, JSValue source, JSVa
     bool sourceIsTree = isAST(globalObject, source);
     RETURN_IF_EXCEPTION(scope, { });
     if (sourceIsTree) {
-        if (!audit(globalObject, "compile"_s, source, jsUndefined()))
+        if (failed(scope, audit(globalObject, "compile"_s, source, jsUndefined())))
             return { };
         RELEASE_AND_RETURN(scope, compileAST(globalObject, source, filename, compileMode, flags, optimize, module));
     }
 
     Vector<uint8_t> bytes;
-    if (!sourceBytes(globalObject, source, "compile"_s, "string, bytes or AST"_s, bytes, flags))
+    if (failed(scope, sourceBytes(globalObject, source, "compile"_s, "string, bytes or AST"_s, bytes, flags)))
         return { };
-    if (isAudited(globalObject) && !audit(globalObject, "compile"_s, PyBytes::create(globalObject, bytes.span()), makeStr(vm, filename)))
+    if (isAudited(globalObject) && failed(scope, audit(globalObject, "compile"_s, PyBytes::create(globalObject, bytes.span()), makeStr(vm, filename))))
         return { };
     if (flags & CompileOnlyAST)
         RELEASE_AND_RETURN(scope, parseToAST(globalObject, bytes.span(), filename, compileMode, flags, optimize, featureVersion, module));
@@ -952,19 +955,19 @@ static JSValue evaluate(JSGlobalObject* globalObject, bool isEval, JSValue sourc
             return raiseTypeError(globalObject, scope, "closure can only be used when source is a code object"_s);
         Vector<uint8_t> bytes;
         int flags = CompileSourceIsUTF8 | inheritedCompileFlags(globalObject);
-        if (!sourceBytes(globalObject, source, isEval ? "eval"_s : "exec"_s, "string, bytes or code"_s, bytes, flags))
+        if (failed(scope, sourceBytes(globalObject, source, isEval ? "eval"_s : "exec"_s, "string, bytes or code"_s, bytes, flags)))
             return { };
         std::span<const uint8_t> text = bytes.span();
         if (isEval) {
             while (!text.empty() && (text[0] == ' ' || text[0] == '\t'))
                 text = text.subspan(1);
         }
-        if (isAudited(globalObject) && !audit(globalObject, "compile"_s, PyBytes::create(globalObject, text), makeStr(vm, "<string>"_s)))
+        if (isAudited(globalObject) && failed(scope, audit(globalObject, "compile"_s, PyBytes::create(globalObject, text), makeStr(vm, "<string>"_s))))
             return { };
         code = compileSource(globalObject, text, "<string>"_s, isEval ? "eval"_s : "exec"_s, flags, -1, globals->get(rt.names.dName()));
         RETURN_IF_EXCEPTION(scope, { });
     }
-    if (!audit(globalObject, "exec"_s, code))
+    if (failed(scope, audit(globalObject, "exec"_s, code)))
         return { };
     RELEASE_AND_RETURN(scope, runCode(globalObject, code, globals, locals, closure ? PyTuple::from(closure) : nullptr));
 }

@@ -107,6 +107,7 @@ static JSValue contextRun(JSGlobalObject* globalObject, JSValue self, const Call
     if (failed(scope, enterContext(globalObject, self)))
         return { };
     auto* context = PyRecord::from(self);
+    scope.release();
     JSValue result = call(globalObject, args[0], args.withoutFirst());
     rt.setCurrentContext(context->get(ContextPrevious));
     context->set(vm, ContextPrevious, { });

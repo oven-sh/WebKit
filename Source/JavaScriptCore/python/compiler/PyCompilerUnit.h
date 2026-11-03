@@ -52,7 +52,8 @@ public:
     void compileModule(AST::Mod*);
     void compileFunctionBody(Seq<Stmt*>);
     void compileClassBody(AST::ClassDef*, int firstLineNumber);
-    void statements(Seq<Stmt*>, unsigned first = 0);
+    // `isLast`: after them the function ends. See leaveStatement().
+    void statements(Seq<Stmt*>, unsigned first = 0, bool isLast = false);
     void statement(Stmt*);
 
     // ---- Expressions ----
@@ -133,6 +134,7 @@ private:
         Range range { }; // With
         Scope* comprehension { nullptr }; // InlinedComprehension
         unsigned number { 0 }; // For PythonMark.
+        bool isLast { false }; // A loop: after it the function ends.
     };
 
     struct PatternContext {
@@ -180,7 +182,11 @@ private:
     void silentLine(int lineno);
     // A jump that is there because of how the code is laid out here. In CPython there is none, or one that nobody is told of:
     // what handles exceptions is out of the way, at the end of the code.
+    static Range rangeOfAttributeName(AST::Attribute*);
     void hiddenJump(Label&);
+    enum class JumpIs : uint8_t { OfTheProgram, Hidden };
+    void leaveStatement(Label& end, bool isLast, JumpIs);
+    void lineOfImplicitReturn(int lineno, bool isLast);
     // Whatever follows it is never run.
     bool neverGetsPast(Stmt*);
     bool neverGetsPast(Seq<Stmt*>);
@@ -213,6 +219,7 @@ private:
     RegisterID* stringConstant(const String&);
     RegisterID* load(RegisterID* dst, JSValue);
     JSValue constantValue(const AST::ConstantValue&);
+    JSValue makeConstantValue(const AST::ConstantValue&);
     Vector<CodeInfo::Constant> m_foldedConstants;
     bool tryConstantValue(Expr*, JSValue&);
     JSValue valueCPythonsCompilerWorksOut(Expr*);
@@ -282,22 +289,22 @@ private:
     void augmentedAssign(AST::AugAssign*);
     void annotatedAssign(AST::AnnAssign*);
     void checkAnnotationTarget(Expr*);
-    void ifStatement(AST::If*);
-    void whileLoop(AST::While*);
-    void forLoop(AST::For*);
-    void asyncForLoop(AST::For*);
+    void ifStatement(AST::If*, bool isLast);
+    void whileLoop(AST::While*, bool isLast);
+    void forLoop(AST::For*, bool isLast);
+    void asyncForLoop(AST::For*, bool isLast);
     void returnStatement(AST::Return*);
     void breakOrContinue(Stmt*, bool isBreak);
     void raiseStatement(AST::Raise*);
-    void tryStatement(AST::Try*);
-    void tryFinally(AST::Try*);
-    void tryExcept(AST::Try*);
-    void tryStarExcept(AST::Try*);
-    void withStatement(AST::With*, unsigned index);
+    void tryStatement(AST::Try*, bool isLast);
+    void tryFinally(AST::Try*, bool isLast);
+    void tryExcept(AST::Try*, bool isLast);
+    void tryStarExcept(AST::Try*, bool isLast);
+    void withStatement(AST::With*, unsigned index, bool isLast);
     void assertStatement(AST::Assert*);
     void importStatement(AST::Import*);
     void importFrom(AST::ImportFrom*);
-    void matchStatement(AST::Match*);
+    void matchStatement(AST::Match*, bool isLast);
     ImportMode importMode(bool isLazy, bool isStar);
 
     // ---- Blocks ----
@@ -416,6 +423,7 @@ private:
     size_t m_markedPosition { 0 };
     unsigned m_sameLineDepth { 0 };
     size_t m_statementStart { std::numeric_limits<size_t>::max() }; // Where in the instructions the last statement begins.
+    bool m_statementIsLast { false }; // For statement(): after the statement the function ends.
     unsigned m_blockCount { 0 };
 
     Vector<Block, 8> m_blocks;

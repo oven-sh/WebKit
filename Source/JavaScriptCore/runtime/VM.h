@@ -1178,8 +1178,6 @@ public:
     JS_EXPORT_PRIVATE void addImpureProperty(UniquedStringImpl*);
     
     InlineWatchpointSet& primitiveGigacageEnabled() LIFETIME_BOUND { return m_primitiveGigacageEnabled; }
-    // Valid for as long as no object overloads the operators of JS (mayOverloadOperators()): until Python starts.
-    InlineWatchpointSet& operatorOverloadingWatchpointSet() LIFETIME_BOUND { return m_operatorOverloadingWatchpointSet; }
 
     BuiltinExecutables* builtinExecutables() LIFETIME_BOUND { return m_builtinExecutables.get(); }
 
@@ -1511,7 +1509,6 @@ private:
     size_t m_sizeOfLastScratchBuffer { 0 };
     Vector<std::unique_ptr<CheckpointOSRExitSideState>, expectedMaxActiveSideStateCount> m_checkpointSideState;
     InlineWatchpointSet m_primitiveGigacageEnabled { IsWatched };
-    InlineWatchpointSet m_operatorOverloadingWatchpointSet { IsWatched };
     FunctionHasExecutedCache m_functionHasExecutedCache;
     std::unique_ptr<ControlFlowProfiler> m_controlFlowProfiler;
     unsigned m_controlFlowProfilerEnabledCount { 0 };

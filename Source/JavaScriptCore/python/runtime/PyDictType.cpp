@@ -135,6 +135,7 @@ static void mergePairs(JSGlobalObject* globalObject, PyDict* dict, JSValue pairs
         ++index;
         return true;
     });
+    scope.release();
 }
 
 void dictUpdate(JSGlobalObject* globalObject, PyDict* dict, JSValue other)
@@ -163,28 +164,28 @@ static String functionNameForMessage(JSGlobalObject* globalObject, JSValue funct
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto textOf = [&](JSValue value) -> String {
         JSString* string = str(globalObject, value);
         if (scope.exception()) {
-            takePendingException(globalObject);
+            scope.clearException();
             return "?"_s;
         }
         String text = string->value(globalObject);
         if (scope.exception()) {
-            takePendingException(globalObject);
+            scope.clearException();
             return "?"_s;
         }
         return text;
     };
     JSValue qualname = getAttrIfPresent(globalObject, function, rt.names.dQualname());
     if (scope.exception())
-        takePendingException(globalObject);
+        scope.clearException();
     if (!qualname)
         return textOf(function);
     JSValue module = getAttrIfPresent(globalObject, function, rt.names.dModule());
     if (scope.exception())
-        takePendingException(globalObject);
+        scope.clearException();
     if (module && !isNone(module)) {
         String moduleName = textOf(module);
         if (moduleName != "builtins"_s)
@@ -201,6 +202,7 @@ void dictMergeForCall(JSGlobalObject* globalObject, PyDict* dict, JSValue mappin
     JSValue duplicate;
     mergeMapping(globalObject, dict, mapping, &duplicate);
     if (duplicate) [[unlikely]] {
+        scope.assertNoException();
         String functionName = functionNameForMessage(globalObject, function);
         JSString* name = str(globalObject, duplicate);
         RETURN_IF_EXCEPTION(scope, void());

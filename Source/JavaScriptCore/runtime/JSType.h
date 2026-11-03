@@ -167,25 +167,25 @@ namespace JSC {
     /* End StringObjectType types. */ \
     macro(InternalFieldTupleType, SpecCellOther) \
     /* Start Python::PyObject types. What has no type of its own here is a PyObjectType. */ \
-    macro(PyObjectType, SpecObjectOther) \
-    macro(PyInstanceType, SpecObjectOther) \
-    macro(PyTupleType, SpecObjectOther) \
-    macro(PyKwNamesType, SpecObjectOther) \
-    macro(PyDictType, SpecObjectOther) \
-    macro(PySetType, SpecObjectOther) \
-    macro(PyBytesType, SpecObjectOther) \
-    macro(PyByteArrayType, SpecObjectOther) \
-    macro(PyIntType, SpecObjectOther) \
-    macro(PyFloatType, SpecObjectOther) \
-    macro(PyComplexType, SpecObjectOther) \
-    macro(PyStrType, SpecObjectOther) \
-    macro(PyRangeType, SpecObjectOther) \
-    macro(PySliceType, SpecObjectOther) \
-    macro(PyCellType, SpecObjectOther) \
-    macro(PyMethodType, SpecObjectOther) \
-    macro(PyGeneratorType, SpecObjectOther) \
-    macro(PyModuleType, SpecObjectOther) \
-    macro(PyExceptionType, SpecObjectOther) \
+    macro(PyObjectType, SpecPyObject) \
+    macro(PyInstanceType, SpecPyObject) \
+    macro(PyTupleType, SpecPyObject) \
+    macro(PyKwNamesType, SpecPyObject) \
+    macro(PyDictType, SpecPyObject) \
+    macro(PySetType, SpecPyObject) \
+    macro(PyBytesType, SpecPyObject) \
+    macro(PyByteArrayType, SpecPyObject) \
+    macro(PyIntType, SpecPyObject) \
+    macro(PyFloatType, SpecPyObject) \
+    macro(PyComplexType, SpecPyObject) \
+    macro(PyStrType, SpecPyObject) \
+    macro(PyRangeType, SpecPyObject) \
+    macro(PySliceType, SpecPyObject) \
+    macro(PyCellType, SpecPyObject) \
+    macro(PyMethodType, SpecPyObject) \
+    macro(PyGeneratorType, SpecPyObject) \
+    macro(PyModuleType, SpecPyObject) \
+    macro(PyExceptionType, SpecPyObject) \
     /* End Python::PyObject types. */ \
 
 enum JSType : uint8_t {

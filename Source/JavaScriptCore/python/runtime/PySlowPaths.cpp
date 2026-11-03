@@ -118,10 +118,11 @@ static NEVER_INLINE JSValue raiseUnbound(JSGlobalObject* globalObject, const Str
 static JSValue getOptionalItem(JSGlobalObject* globalObject, JSValue mapping, JSString* name)
 {
     Runtime& rt = runtime(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(rt.vm());
     if (auto* dict = PyDict::tryFrom(mapping); dict && isExactDict(rt, dict)) [[likely]]
         return dict->get(name);
     JSValue value = getItem(globalObject, mapping, name);
-    if (!value)
+    if (failed(scope, value))
         clearPendingExceptionIfMatches(globalObject, rt.KeyError());
     return value;
 }
@@ -423,6 +424,7 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_prepare_construct)
     auto bytecode = pc->as<OpPyPrepareConstruct>();
     JSValue self;
     JSValue init = prepareConstruct(globalObject, GET_C(bytecode.m_callee).jsValue(), self);
+    CHECK_EXCEPTION();
     GET(bytecode.m_self) = self;
     GET(bytecode.m_dst) = init;
     END_IMPL();
@@ -653,7 +655,7 @@ static void unpackIterable(JSGlobalObject* globalObject, CallFrame* callFrame, J
     }
 
     JSValue iterator = getIter(globalObject, iterable);
-    if (!iterator) {
+    if (failed(scope, iterator)) {
         PyType* type = rt.typeOf(iterable);
         if (pendingExceptionMatches(globalObject, rt.TypeError()) && !type->lookup(Special::Iter) && !type->lookup(Special::GetItem)) {
             takePendingException(globalObject);
@@ -705,6 +707,7 @@ static void unpackIterable(JSGlobalObject* globalObject, CallFrame* callFrame, J
     target(before) = rest;
     for (unsigned i = 0; i < trailing; ++i)
         target(before + 1 + i) = listGet(rest, length - trailing + i);
+    scope.release();
     listTruncate(globalObject, rest, length - trailing);
 }
 
@@ -1094,6 +1097,7 @@ static JSValue runRuntimeFunction(JSGlobalObject* globalObject, CallFrame* callF
     case RuntimeFunction::BuildSlice:
         RELEASE_AND_RETURN(scope, PySlice::create(globalObject, args[0], args[1], args[2]));
     case RuntimeFunction::ListAppend:
+        scope.release();
         listAppend(globalObject, asList(args[0]), args[1]);
         return jsUndefined();
     case RuntimeFunction::ListExtend: {
@@ -1114,13 +1118,16 @@ static JSValue runRuntimeFunction(JSGlobalObject* globalObject, CallFrame* callF
         auto* set = PySet::tryFrom(args[0]);
         if (!set || set->type() != rt.setType()) [[unlikely]]
             return raiseTypeError(globalObject, scope, '\'', typeNameForMessage(globalObject, rt.typeOf(args[0])), "' object is not a set"_s);
+        scope.release();
         set->add(globalObject, args[1]);
         return jsUndefined();
     }
     case RuntimeFunction::SetUpdate:
+        scope.release();
         setUpdate(globalObject, args[0], args[1]);
         return jsUndefined();
     case RuntimeFunction::MapAdd:
+        scope.release();
         PyDict::from(args[0])->set(globalObject, args[1], args[2]);
         return jsUndefined();
     case RuntimeFunction::DictUpdate: {
@@ -1138,6 +1145,7 @@ static JSValue runRuntimeFunction(JSGlobalObject* globalObject, CallFrame* callF
         return jsUndefined();
     }
     case RuntimeFunction::DictMerge:
+        scope.release();
         dictMergeForCall(globalObject, PyDict::from(args[0]), args[1], args[2]);
         return jsUndefined();
     case RuntimeFunction::FormatValue:
@@ -1178,9 +1186,11 @@ static JSValue runRuntimeFunction(JSGlobalObject* globalObject, CallFrame* callF
         return jsUndefined();
     }
     case RuntimeFunction::DeleteAttr:
+        scope.release();
         delAttr(globalObject, args[0], asString(args[1]));
         return jsUndefined();
     case RuntimeFunction::DeleteItem:
+        scope.release();
         delItem(globalObject, args[0], args[1]);
         return jsUndefined();
     case RuntimeFunction::LoadFromDictOrGlobals: {
@@ -1237,6 +1247,7 @@ static JSValue runRuntimeFunction(JSGlobalObject* globalObject, CallFrame* callF
     case RuntimeFunction::ImportStar:
         if (!args[1])
             return raiseSystemError(globalObject, scope, "no locals found during 'import *'"_s);
+        scope.release();
         importStar(globalObject, args[0], args[1]);
         return jsUndefined();
 
@@ -1245,6 +1256,7 @@ static JSValue runRuntimeFunction(JSGlobalObject* globalObject, CallFrame* callF
         // `raise` alone raises again what has been through this frame already.
         if (!args[0] && rt.handledException())
             rt.reraisingFrame = callFrame;
+        scope.release();
         raiseStatement(globalObject, args[0], args[1]);
         return { };
     case RuntimeFunction::Reraise:
@@ -1344,8 +1356,10 @@ static JSValue runRuntimeFunction(JSGlobalObject* globalObject, CallFrame* callF
     case RuntimeFunction::SetupAnnotations: {
         JSValue annotations = getOptionalItem(globalObject, args[0], rt.names.dAnnotations());
         RETURN_IF_EXCEPTION(scope, { });
-        if (!annotations)
+        if (!annotations) {
             setItem(globalObject, args[0], rt.names.dAnnotations(), PyDict::create(globalObject));
+            RETURN_IF_EXCEPTION(scope, { });
+        }
         return jsUndefined();
     }
     }

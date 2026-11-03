@@ -30,8 +30,20 @@ static constexpr unsigned maxItemsInRegisters = 64;
 
 // ---- Constants ----
 
+// The values are made by functions of the run time, which can raise, if only for lack of memory. What they raise stays pending until
+// Compiler::compile() returns. Until then every constant is None, and nothing above has to know.
 JSValue Unit::constantValue(const ConstantValue& value)
 {
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm());
+    if (scope.exception()) [[unlikely]]
+        return jsUndefined();
+    JSValue result = makeConstantValue(value);
+    return scope.exception() ? jsUndefined() : result;
+}
+
+JSValue Unit::makeConstantValue(const ConstantValue& value)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm());
     switch (value.kind) {
     case ConstantValue::Kind::None:
         return jsUndefined();
@@ -44,27 +56,37 @@ JSValue Unit::constantValue(const ConstantValue& value)
     case ConstantValue::Kind::Str:
         return g.addStringConstant(*c.name(String(value.string)));
     case ConstantValue::Kind::Bytes:
-        return PyBytes::create(globalObject(), std::span<const uint8_t> { value.bytes.data, value.bytes.size });
+        RELEASE_AND_RETURN(scope, PyBytes::create(globalObject(), std::span<const uint8_t> { value.bytes.data, value.bytes.size }));
     case ConstantValue::Kind::Int:
-        return makeInt(globalObject(), value.integer);
+        RELEASE_AND_RETURN(scope, makeInt(globalObject(), value.integer));
     case ConstantValue::Kind::BigInt: {
         JSValue result = intFromDigits(globalObject(), StringView(std::span<const char> { value.digits.data, value.digits.size }), value.radix);
-        return value.isNegative ? intNegate(globalObject(), result) : result;
+        RETURN_IF_EXCEPTION(scope, { });
+        RELEASE_AND_RETURN(scope, value.isNegative ? intNegate(globalObject(), result) : result);
     }
     case ConstantValue::Kind::Float:
-        return makeFloat(globalObject(), value.number);
+        RELEASE_AND_RETURN(scope, makeFloat(globalObject(), value.number));
     case ConstantValue::Kind::Complex:
-        return PyComplex::create(globalObject(), value.complex.real, value.complex.imaginary);
+        RELEASE_AND_RETURN(scope, PyComplex::create(globalObject(), value.complex.real, value.complex.imaginary));
     case ConstantValue::Kind::Tuple: {
         PyTuple* tuple = PyTuple::create(globalObject(), static_cast<unsigned>(value.items.size));
-        for (size_t i = 0; i < value.items.size; ++i)
-            tuple->initializeAt(vm(), i, constantValue(value.items.data[i]));
+        RETURN_IF_EXCEPTION(scope, { });
+        for (size_t i = 0; i < value.items.size; ++i) {
+            JSValue item = makeConstantValue(value.items.data[i]);
+            RETURN_IF_EXCEPTION(scope, { });
+            tuple->initializeAt(vm(), i, item);
+        }
         return tuple;
     }
     case ConstantValue::Kind::FrozenSet: {
         PySet* set = PySet::createFrozen(globalObject());
-        for (size_t i = 0; i < value.items.size; ++i)
-            set->add(globalObject(), constantValue(value.items.data[i]));
+        RETURN_IF_EXCEPTION(scope, { });
+        for (size_t i = 0; i < value.items.size; ++i) {
+            JSValue item = makeConstantValue(value.items.data[i]);
+            RETURN_IF_EXCEPTION(scope, { });
+            set->add(globalObject(), item);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
         return set;
     }
     }
@@ -74,10 +96,15 @@ JSValue Unit::constantValue(const ConstantValue& value)
 // Literals, signed numbers, complex numbers written as a sum, and tuples of those.
 bool Unit::tryConstantValue(Expr* node, JSValue& result)
 {
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm());
+    // As in constantValue().
+    auto made = [&](JSValue value) {
+        result = scope.exception() ? jsUndefined() : value;
+        return true;
+    };
     switch (node->kind) {
     case ExprKind::Constant:
-        result = constantValue(node->as<Constant>()->value);
-        return true;
+        return made(constantValue(node->as<Constant>()->value));
     case ExprKind::UnaryOp: {
         auto* unary = node->as<UnaryOp>();
         if (unary->op != AST::UnaryKind::USub && unary->op != AST::UnaryKind::UAdd)
@@ -90,15 +117,13 @@ bool Unit::tryConstantValue(Expr* node, JSValue& result)
         case ConstantValue::Kind::Int:
         case ConstantValue::Kind::BigInt:
             result = constantValue(operand->value);
-            if (negate)
-                result = intNegate(globalObject(), result);
+            if (negate && !scope.exception())
+                return made(intNegate(globalObject(), result));
             return true;
         case ConstantValue::Kind::Float:
-            result = makeFloat(globalObject(), negate ? -operand->value.number : operand->value.number);
-            return true;
+            return made(makeFloat(globalObject(), negate ? -operand->value.number : operand->value.number));
         case ConstantValue::Kind::Complex:
-            result = negate ? PyComplex::create(globalObject(), -operand->value.complex.real, -operand->value.complex.imaginary) : constantValue(operand->value);
-            return true;
+            return made(negate ? PyComplex::create(globalObject(), -operand->value.complex.real, -operand->value.complex.imaginary) : constantValue(operand->value));
         default:
             return false;
         }
@@ -121,8 +146,7 @@ bool Unit::tryConstantValue(Expr* node, JSValue& result)
         else
             return false;
         double sign = binary->op == Operator::Add ? 1 : -1;
-        result = PyComplex::create(globalObject(), real + sign * right->value.complex.real, sign * right->value.complex.imaginary);
-        return true;
+        return made(PyComplex::create(globalObject(), real + sign * right->value.complex.real, sign * right->value.complex.imaginary));
     }
     case ExprKind::Tuple: {
         auto* tuple = node->as<Tuple>();
@@ -135,8 +159,7 @@ bool Unit::tryConstantValue(Expr* node, JSValue& result)
                 return false;
             items.append(value);
         }
-        result = PyTuple::create(globalObject(), items.span());
-        return true;
+        return made(PyTuple::create(globalObject(), items.span()));
     }
     default:
         return false;
@@ -184,6 +207,9 @@ std::optional<bool> Unit::constantTruth(Expr* node)
 // safe_multiply() and the like, in its flowgraph.c).
 JSValue Unit::valueCPythonsCompilerWorksOut(Expr* node)
 {
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm());
+    if (scope.exception()) [[unlikely]]
+        return { };
     static constexpr uint64_t maxIntBits = 128;
     static constexpr uint64_t maxStrSize = 4096;
 
@@ -193,8 +219,10 @@ JSValue Unit::valueCPythonsCompilerWorksOut(Expr* node)
         node = operation->left;
     }
     auto finish = [&](JSValue result) {
-        if (!result)
-            takePendingException(globalObject());
+        if (scope.exception()) {
+            scope.clearException();
+            return JSValue();
+        }
         return result;
     };
 
@@ -409,7 +437,6 @@ void Unit::boolOperand(Expr* node, RegisterID* result, Label* ifTrue, Label* ifF
     g.emitLabel(next.get());
 }
 
-static Range rangeOfAttributeName(Attribute*);
 
 // a + b + c, a.b.c and a[b][c] nest to the left, as deep as they are long. So that is a loop: down to what is evaluated first,
 // and back up.
@@ -752,7 +779,7 @@ void Unit::jumpIf(Expr* node, Label& target, bool condition)
 
 // ---- Attributes and items ----
 
-static Range rangeOfAttributeName(Attribute* node)
+Range Unit::rangeOfAttributeName(Attribute* node)
 {
     // For an access that spans lines, where the name is.
     Range range = node->range;

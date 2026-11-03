@@ -1182,6 +1182,7 @@ private:
         VM& vm = m_runtime.vm();
         auto scope = DECLARE_THROW_SCOPE(vm);
         int code = readByte();
+        EXCEPTION_ASSERT(!!scope.exception() == (code < 0));
         if (code < 0 && clearPendingExceptionIfMatches(m_globalObject, m_runtime.EOFError()))
             raiseEOFError(m_globalObject, scope, "EOF read where object expected"_s);
         return code;
@@ -1192,12 +1193,14 @@ private:
     // debug build too.
     JSValue readObject()
     {
+        auto scope = DECLARE_THROW_SCOPE(m_runtime.vm());
         int code = readTypeCode();
-        if (code < 0)
+        if (failed(scope, code >= 0))
             return { };
         if (m_depth >= marshalMaxDepth || !m_runtime.vm().isSafeToRecurseSoft())
-            return raiseBadData("recursion limit exceeded"_s);
+            RELEASE_AND_RETURN(scope, raiseBadData("recursion limit exceeded"_s));
         ++m_depth;
+        scope.release();
         JSValue result = readObjectOfType(code & ~marshalFlagRef, code & marshalFlagRef);
         --m_depth;
         return result;
@@ -1298,7 +1301,7 @@ static JSValue marshalDumps(JSGlobalObject* globalObject, JSValue value, JSValue
     bool allowCode;
     if (failed(scope, marshalOptions(globalObject, versionValue, allowCodeValue, version, allowCode)))
         return { };
-    if (!audit(globalObject, "marshal.dumps"_s, value, jsNumber(version)))
+    if (failed(scope, audit(globalObject, "marshal.dumps"_s, value, jsNumber(version))))
         return { };
     MarshalWriter writer(globalObject, version, allowCode);
     if (!writer.write(value))
@@ -1324,7 +1327,7 @@ static JSValue marshalLoads(JSGlobalObject* globalObject, JSValue bytes, JSValue
         return { };
     bool allowCode = !allowCodeValue || isTrue(globalObject, allowCodeValue);
     RETURN_IF_EXCEPTION(scope, { });
-    if (isAudited(globalObject) && !audit(globalObject, "marshal.loads"_s, PyBytes::create(globalObject, holder.buffer.span())))
+    if (isAudited(globalObject) && failed(scope, audit(globalObject, "marshal.loads"_s, PyBytes::create(globalObject, holder.buffer.span()))))
         return { };
     MarshalReader reader(globalObject, holder.buffer.span(), allowCode);
     RELEASE_AND_RETURN(scope, reader.read());
@@ -1348,7 +1351,7 @@ static JSValue marshalLoad(JSGlobalObject* globalObject, JSValue file, JSValue a
     RETURN_IF_EXCEPTION(scope, { });
     if (!PyBytes::is(nothing))
         return raiseTypeError(globalObject, scope, "file.read() returned not bytes but "_s, typeName(globalObject, nothing));
-    if (!audit(globalObject, "marshal.load"_s))
+    if (failed(scope, audit(globalObject, "marshal.load"_s)))
         return { };
     MarshalReader reader(globalObject, file, allowCode);
     RELEASE_AND_RETURN(scope, reader.read());

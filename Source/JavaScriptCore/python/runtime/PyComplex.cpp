@@ -274,8 +274,10 @@ static JSValue complexArithmetic(JSGlobalObject* globalObject, BinaryOperator op
             }
         } else {
             double a;
-            if (!realOperand(globalObject, v, a, failure))
-                RELEASE_AND_RETURN(scope, failure);
+            bool isReal = realOperand(globalObject, v, a, failure);
+            RETURN_IF_EXCEPTION(scope, { });
+            if (!isReal)
+                return failure;
             switch (op) {
             case BinaryOperator::Add:
                 r = { b.real + a, b.imaginary };
@@ -294,8 +296,10 @@ static JSValue complexArithmetic(JSGlobalObject* globalObject, BinaryOperator op
     } else {
         Complex a = valueOf(v);
         double b;
-        if (!realOperand(globalObject, w, b, failure))
-            RELEASE_AND_RETURN(scope, failure);
+        bool isReal = realOperand(globalObject, w, b, failure);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!isReal)
+            return failure;
         switch (op) {
         case BinaryOperator::Add:
             r = { a.real + b, a.imaginary };
@@ -340,8 +344,14 @@ static JSValue complexPowOf(JSGlobalObject* globalObject, JSValue v, JSValue w, 
     auto scope = DECLARE_THROW_SCOPE(vm);
     Complex a, b;
     JSValue failure;
-    if (!complexOperand(globalObject, v, a, failure) || !complexOperand(globalObject, w, b, failure))
-        RELEASE_AND_RETURN(scope, failure);
+    bool areNumbers = complexOperand(globalObject, v, a, failure);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (areNumbers) {
+        areNumbers = complexOperand(globalObject, w, b, failure);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    if (!areNumbers)
+        return failure;
     if (modulus && !isNone(modulus))
         return raiseValueError(globalObject, scope, "complex modulo"_s);
     RELEASE_AND_RETURN(scope, complexPower(globalObject, a.real, a.imaginary, b.real, b.imaginary));
@@ -531,7 +541,7 @@ static JSValue tryComplexMethod(JSGlobalObject* globalObject, JSValue value)
     if (!PyComplex::is(result))
         return raiseTypeError(globalObject, scope, message);
     if (PyComplex::from(result)->type() != rt.complexType()
-        && !warn(globalObject, rt.DeprecationWarning(), makeString(message, ".  The ability to return an instance of a strict subclass of complex is deprecated, and may be removed in a future version of Python."_s)))
+        && failed(scope, warn(globalObject, rt.DeprecationWarning(), makeString(message, ".  The ability to return an instance of a strict subclass of complex is deprecated, and may be removed in a future version of Python."_s))))
         return { };
     return result;
 }
@@ -596,7 +606,7 @@ static JSValue complexNew(JSGlobalObject* globalObject, JSValue cls, const CallA
             RELEASE_AND_RETURN(scope, makeComplex(globalObject, type, value.real, value.imaginary));
         }
         if (!isRealNumber(globalObject, argument))
-            return raiseTypeError(globalObject, scope, "complex() argument must be a string or a number, not "_s, typeName(globalObject, argument));
+            return raiseTypeError(globalObject, scope, "complex() argument must be a string or a number, not "_s, typeNameForMessage(globalObject, typeOf(globalObject, argument)));
         double real = toDouble(globalObject, argument);
         RETURN_IF_EXCEPTION(scope, { });
         RELEASE_AND_RETURN(scope, makeComplex(globalObject, type, real, 0.0));
@@ -631,9 +641,9 @@ static JSValue complexNew(JSGlobalObject* globalObject, JSValue cls, const CallA
     if (i && !PyComplex::is(i) && !isRealNumber(globalObject, i))
         return raiseTypeError(globalObject, scope, mustBeReal("imag"_s, i));
     // Parts that are themselves complex still work, for now.
-    if (PyComplex::is(r) && !isRealNumber(globalObject, originalReal) && !warn(globalObject, rt.DeprecationWarning(), mustBeReal("real"_s, originalReal)))
+    if (PyComplex::is(r) && !isRealNumber(globalObject, originalReal) && failed(scope, warn(globalObject, rt.DeprecationWarning(), mustBeReal("real"_s, originalReal))))
         return { };
-    if (i && PyComplex::is(i) && !warn(globalObject, rt.DeprecationWarning(), mustBeReal("imag"_s, i)))
+    if (i && PyComplex::is(i) && failed(scope, warn(globalObject, rt.DeprecationWarning(), mustBeReal("imag"_s, i))))
         return { };
 
     // real + imag*1j, where either may itself be complex.

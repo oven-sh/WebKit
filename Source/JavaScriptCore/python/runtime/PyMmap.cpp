@@ -149,7 +149,7 @@ static JSValue mmapNew(JSGlobalObject* globalObject, JSValue type, JSValue filen
     int64_t offset = 0;
     bool tracksFd = true;
     if (failed(scope, mmapToInt(globalObject, fileno, fd)) || failed(scope, posixToSsize(globalObject, lengthValue, size)) || (flagsValue && failed(scope, mmapToInt(globalObject, flagsValue, flags))) || (protValue && failed(scope, mmapToInt(globalObject, protValue, protection)))
-        || (accessValue && !mmapToInt(globalObject, accessValue, access)) || (offsetValue && !posixToLong(globalObject, offsetValue, offset)) || !posixToBool(globalObject, trackFdValue, true, tracksFd))
+        || (accessValue && failed(scope, mmapToInt(globalObject, accessValue, access))) || (offsetValue && failed(scope, posixToLong(globalObject, offsetValue, offset))) || failed(scope, posixToBool(globalObject, trackFdValue, true, tracksFd)))
         return { };
     if (size < 0)
         return raiseOverflowError(globalObject, scope, "memory mapped length must be positive"_s);
@@ -177,7 +177,7 @@ static JSValue mmapNew(JSGlobalObject* globalObject, JSValue type, JSValue filen
     default:
         return raiseValueError(globalObject, scope, "mmap invalid access parameter."_s);
     }
-    if (!audit(globalObject, "mmap.__new__"_s, jsNumber(fd), posixMakeInt(globalObject, size), jsNumber(access), posixMakeInt(globalObject, offset)))
+    if (failed(scope, audit(globalObject, "mmap.__new__"_s, jsNumber(fd), posixMakeInt(globalObject, size), jsNumber(access), posixMakeInt(globalObject, offset))))
         return { };
 
 #if OS(DARWIN)
@@ -464,7 +464,7 @@ static JSValue mmapFlush(JSGlobalObject* globalObject, JSValue self, JSValue off
     int64_t size = -1;
     int flags = 0;
     if ((offsetValue && failed(scope, posixToSsize(globalObject, offsetValue, offset))) || (sizeValue && failed(scope, posixToSsize(globalObject, sizeValue, size))) || (flagsValue && failed(scope, posixToInt(globalObject, flagsValue, flags)))
-        || !mmapCheckOpen(globalObject, map))
+        || failed(scope, mmapCheckOpen(globalObject, map)))
         return { };
     if (size == -1)
         size = mmapSize(map) - offset;
@@ -539,7 +539,7 @@ static JSValue mmapMove(JSGlobalObject* globalObject, JSValue self, JSValue dest
     int64_t source;
     int64_t count;
     if (failed(scope, posixToSsize(globalObject, destinationValue, destination)) || failed(scope, posixToSsize(globalObject, sourceValue, source)) || failed(scope, posixToSsize(globalObject, countValue, count))
-        || !mmapCheckOpen(globalObject, map) || !mmapCheckWritable(globalObject, map))
+        || failed(scope, mmapCheckOpen(globalObject, map)) || failed(scope, mmapCheckWritable(globalObject, map)))
         return { };
     int64_t size = mmapSize(map);
     if (destination < 0 || source < 0 || count < 0 || size - destination < count || size - source < count)

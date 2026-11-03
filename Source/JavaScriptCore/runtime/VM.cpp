@@ -2029,9 +2029,8 @@ SUPPRESS_ASAN NEVER_INLINE void recordStack(RecordedStack& stack)
 
 FILE* fileOfUncheckedExceptionLog()
 {
-    // FIXME: This is to be Options::uncheckedExceptionsLog().
     static FILE* const file = [] {
-        const char* path = getenv("JSC_uncheckedExceptionsLog");
+        const char* path = byteCast<char>(Options::uncheckedExceptionsLog());
         return path && *path ? fopen(path, "a") : nullptr;
     }();
     return file;

@@ -477,6 +477,7 @@ JSValue importModule(JSGlobalObject*, JSString* absoluteName);
 JSValue importModule(JSGlobalObject*, ASCIILiteral absoluteName);
 JSValue importFrom(JSGlobalObject*, JSValue module, JSString* name);
 void importStar(JSGlobalObject*, JSValue module, JSValue locals);
+// spec._initializing, which may raise.
 bool specIsInitializing(JSGlobalObject*, JSValue spec);
 // For a module written in C++ that has no __spec__ and __loader__ yet: has importlib make them. False: an exception.
 bool ensureNativeModuleSpec(JSGlobalObject*, PyModule*);
@@ -508,6 +509,10 @@ struct FinalizationOrder {
     Vector<JSCell*> garbage;
 };
 FinalizationOrder finalizationOrder(JSC::Heap&, SlotVisitor&, std::span<JSCell* const> candidates, const FinalizationQuestions&);
+
+// function(generator, value) for what is in the variables of the generators, coroutines and async generators that are running, in
+// whatever thread: while one runs they are in the frame of its body, not in the generator.
+void forEachVariableOfRunningGenerators(VM&, const ScopedLambda<void(PyGenerator*, JSValue)>&);
 
 // Which of the locals of a frame of the LLInt or the Baseline JIT hold values that the code may still read. `isCalling`: there is a
 // frame that this one called. False: there is no telling.

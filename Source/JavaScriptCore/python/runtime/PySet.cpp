@@ -512,7 +512,7 @@ static bool hashForLookup(JSGlobalObject* globalObject, JSValue key, int64_t& ha
     if (!scope.exception()) [[likely]]
         return true;
     auto* set = PySet::tryFrom(key);
-    if (!set || failed(scope, isMutableSet(globalObject, set)) || !clearPendingExceptionIfMatches(globalObject, rt.TypeError()))
+    if (!set || !isMutableSet(globalObject, set) || !clearPendingExceptionIfMatches(globalObject, rt.TypeError()))
         return false;
     hash = hashOfSet(set);
     return true;
@@ -576,6 +576,7 @@ static void differenceUpdate(JSGlobalObject* globalObject, PySet* set, JSValue o
     } else {
         forEach(globalObject, other, [&](JSValue key) {
             set->remove(globalObject, key);
+            RETURN_IF_EXCEPTION(scope, false);
             return true;
         });
         RETURN_IF_EXCEPTION(scope, void());
@@ -594,6 +595,7 @@ static PySet* difference(JSGlobalObject* globalObject, PySet* set, JSValue other
     // Against something much smaller, or of unknown size: copy, then take away.
     if ((!otherSet && !otherDict) || (set->size() >> 2) > otherSize) {
         PySet* result = copyAsBaseType(globalObject, set);
+        RETURN_IF_EXCEPTION(scope, nullptr);
         differenceUpdate(globalObject, result, other);
         RETURN_IF_EXCEPTION(scope, nullptr);
         return result;
@@ -784,7 +786,7 @@ static JSValue setContains(JSGlobalObject* globalObject, JSValue self, JSValue k
 {
     PY_SET_PROLOGUE();
     int64_t hash;
-    if (!hashForLookup(globalObject, key, hash))
+    if (failed(scope, hashForLookup(globalObject, key, hash)))
         return { };
     bool found = set->contains(globalObject, key, hash);
     RETURN_IF_EXCEPTION(scope, { });
@@ -846,7 +848,7 @@ static JSValue setRemove(JSGlobalObject* globalObject, JSValue self, JSValue key
 {
     PY_SET_PROLOGUE();
     int64_t hash;
-    if (!hashForLookup(globalObject, key, hash))
+    if (failed(scope, hashForLookup(globalObject, key, hash)))
         return { };
     bool removed = set->remove(globalObject, key, hash);
     RETURN_IF_EXCEPTION(scope, { });
@@ -859,7 +861,7 @@ static JSValue setDiscard(JSGlobalObject* globalObject, JSValue self, JSValue ke
 {
     PY_SET_PROLOGUE();
     int64_t hash;
-    if (!hashForLookup(globalObject, key, hash))
+    if (failed(scope, hashForLookup(globalObject, key, hash)))
         return { };
     set->remove(globalObject, key, hash);
     RETURN_IF_EXCEPTION(scope, { });
@@ -909,6 +911,7 @@ static JSValue setUnion(JSGlobalObject* globalObject, JSValue self, const CallAr
     if (failed(scope, rejectKeywords(globalObject, "union"_s, args)))
         return { };
     PySet* result = copyAsBaseType(globalObject, set);
+    RETURN_IF_EXCEPTION(scope, { });
     for (JSValue other : args.positional()) {
         if (other == self)
             continue;
@@ -1057,6 +1060,7 @@ static JSValue setOperation(JSGlobalObject* globalObject, SetOperator op, JSValu
     switch (op) {
     case SetOperator::Or: {
         PySet* result = copyAsBaseType(globalObject, a);
+        RETURN_IF_EXCEPTION(scope, { });
         if (a != b) {
             result->merge(globalObject, b);
             RETURN_IF_EXCEPTION(scope, { });

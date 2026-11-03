@@ -1,0 +1,148 @@
+#!/usr/bin/env python3
+"""Reads what JSC writes with --validateExceptionChecks=1 --uncheckedExceptionsLog=FILE (runtime/UncheckedExceptionLog.h) and says
+which function lacks which exception check.
+
+    unchecked-exceptions --binary PROGRAM [--file SUBSTRING] [--summary] [--json OUT] LOG...
+
+PROGRAM is the program that wrote the logs, with debug information, not position independent (or run without address space
+randomization). For every distinct site: the function that lacks the check, the line of the call whose exception went unchecked
+and what was called, and the line at which that was found out, which is the next call that can throw or the end of the function's
+own scope. Sites are grouped by the file of the function, the file with most of them first."""
+import argparse, collections, json, os, subprocess, sys
+
+SYMBOLIZER = os.environ.get("LLVM_SYMBOLIZER", "llvm-symbolizer")
+
+
+def parse_stack(text):
+    out = []
+    for pair in text.split(","):
+        if pair:
+            frame, address = pair.split(":")
+            out.append((int(frame, 16), int(address, 16)))
+    return out
+
+
+INFRASTRUCTURE = ("recordStack", "UncheckedExceptionLog::", "ThrowScope::simulateThrow", "ThrowScope::~ThrowScope", "ThrowScope::ThrowScope", "VM::verifyExceptionCheckNeedIsSatisfied",
+                  "TopExceptionScope::~TopExceptionScope", "TopExceptionScope::TopExceptionScope", "ThrowScope::throwException", "ThrowScope::release")
+
+
+def culprit(there, here, function_at):
+    """Indices, in the two stacks, of the frame of the function that lacks the check, or None."""
+    # Frame k belongs to the function that the return address of frame k - 1 is in. The first that is not of the machinery is that of
+    # the scope that ended: it is dead by now, though a new frame may be in its place.
+    ended = 1
+    while ended < len(there) and any(part in function_at(there[ended - 1][1]) for part in INFRASTRUCTURE):
+        ended += 1
+    index = {frame: i for i, (frame, _) in enumerate(there)}
+    for j, (frame, address) in enumerate(here):
+        i = index.get(frame)
+        if i is None or there[i][1] != address or i <= ended or j == 0:
+            continue
+        return i, j
+    return None
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--binary", required=True)
+    parser.add_argument("--file")
+    parser.add_argument("--summary", action="store_true")
+    parser.add_argument("--json")
+    parser.add_argument("logs", nargs="+")
+    options = parser.parse_args()
+
+    raw = {}
+    for log in options.logs:
+        for line in open(log, errors="replace"):
+            parts = line.rstrip("\n").split("\t")
+            if len(parts) != 6:
+                continue
+            key = (parts[0], parts[2], parts[4][:400], parts[5][:400])
+            if key in raw:
+                raw[key][0] += 1
+                continue
+            try:
+                raw[key] = [1, parts[0], parts[1], parts[2], parts[3], parse_stack(parts[4]), parse_stack(parts[5])]
+            except ValueError:
+                continue
+
+    addresses = set()
+    for record in raw.values():
+        for stack in record[5:7]:
+            for _, address in stack[:16]:
+                addresses.add(address - 1)
+
+    cache = {}
+    missing = [a for a in addresses if hex(a) not in cache]
+    if missing:
+        process = subprocess.run([SYMBOLIZER, "--obj=" + options.binary, "--output-style=JSON", "--inlines"], input="\n".join(hex(a) for a in missing) + "\n", capture_output=True, text=True)
+        for line in process.stdout.splitlines():
+            try:
+                item = json.loads(line)
+            except ValueError:
+                continue
+            cache[hex(int(item["Address"], 16))] = [(s.get("FunctionName", "?"), s.get("FileName", "?"), s.get("Line", 0)) for s in item.get("Symbol", [])]
+
+    def function_at(address):
+        symbols = cache.get(hex(address - 1))
+        return symbols[-1][0] if symbols else "?"
+
+    records = {}
+    for count, thrower_at, thrower, finder_at, finder, there, here in raw.values():
+        found = culprit(there, here, function_at)
+        if not found:
+            key = ("?", thrower_at, finder_at)
+            records.setdefault(key, [0, thrower_at, thrower, finder_at, finder, None, None, there, here, 0, 0])[0] += count
+            continue
+        i, j = found
+        key = (there[i - 1][1], here[j - 1][1])
+        records.setdefault(key, [0, thrower_at, thrower, finder_at, finder, there[i - 1][1], here[j - 1][1], there, here, i, j])[0] += count
+
+    def where(address):
+        symbols = cache.get(hex(address - 1)) or [("?", "?", 0)]
+        return symbols
+
+    def short(path):
+        for marker in ("/Source/JavaScriptCore/", "/Source/"):
+            if marker in path:
+                return path.split(marker, 1)[1]
+        return path
+
+    def name(function):
+        return function.replace("(anonymous namespace)::", "").split("(")[0].replace("JSC::", "")
+
+    sites = collections.defaultdict(list)
+    machine = []
+    for key, record in records.items():
+        count, thrower_at, thrower, finder_at, finder, unchecked, found, there, here, i, j = record
+        if unchecked is None:
+            sites["?"].append((0, "?", 0, "%s (%s) -> %s (%s): no common frame" % (thrower, short(thrower_at), finder, short(finder_at)), count))
+            continue
+        a, b = where(unchecked), where(found)
+        # The innermost inlined function is where the text of the call is.
+        function, path, line = a[0]
+        callee = name(where(there[i - 2][1])[-1][0]) if i >= 2 else "?"
+        next_callee = name(where(here[j - 2][1])[-1][0]) if j >= 2 else "?"
+        outer = "" if len(a) == 1 else "  [inlined into %s]" % name(a[-1][0])
+        caller = name(where(there[i][1])[-1][0])
+        text = "%s: line %d calls %s (throws in %s); found at line %s%d by %s (%s)%s  <- %s" % (
+            name(function), line, callee, thrower, "" if b[0][1] == path else short(b[0][1]) + ":", b[0][2], next_callee, finder, outer, caller)
+        sites[short(path)].append((line, name(function), b[0][2], text, count))
+        machine.append({"file": path, "function": name(function), "line": line, "found_file": b[0][1], "found": b[0][2], "callee": callee, "thrower": thrower, "finder": finder, "next": next_callee,
+                        "inlined_into": name(a[-1][0]) if len(a) > 1 else None, "caller": caller, "count": count})
+
+    total = sum(len(v) for v in sites.values())
+    print("%d distinct sites in %d files" % (total, len(sites)))
+    for path, items in sorted(sites.items(), key=lambda kv: -len(kv[1])):
+        if options.file and options.file not in path:
+            continue
+        print("== %s: %d" % (path, len(items)))
+        if options.summary:
+            continue
+        for line, function, found, text, count in sorted(items):
+            print("   %s  (x%d)" % (text, count))
+    if options.json:
+        json.dump(machine, open(options.json, "w"))
+
+
+main()

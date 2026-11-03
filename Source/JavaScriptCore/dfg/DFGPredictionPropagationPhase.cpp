@@ -202,8 +202,8 @@ private:
             SpeculatedType operands = node->child1()->prediction();
             if (node->child2())
                 operands |= node->child2()->prediction();
-            if (m_graph.mayOverloadOperators(operands))
-                changed |= mergePrediction(SpecObjectOther);
+            if (operands & SpecPyObject)
+                changed |= mergePrediction(SpecPyObject);
             break;
         }
         default:

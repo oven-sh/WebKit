@@ -265,6 +265,7 @@ static bool dequeExtendWith(JSGlobalObject* globalObject, PyRecord* deque, JSVal
         if (!maxLen)
             continue;
         bool pushed = toTheLeft ? dequePushLeft(globalObject, deque, item, maxLen) : dequePushRight(globalObject, deque, item, maxLen);
+        RETURN_IF_EXCEPTION(scope, false);
         if (!pushed)
             return false;
     }

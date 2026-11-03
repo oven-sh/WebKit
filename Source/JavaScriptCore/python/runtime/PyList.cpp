@@ -557,10 +557,11 @@ private:
         return x.length() < y.length();
     }
 
-    // These say whether a < b. After a failure they say no, and m_failed is set.
+    // These say whether a < b. After a failure they say no, and m_failed is set. That is what the sorter looks at: the exception
+    // stays pending for whoever called sort(), and nothing else runs before it gets there.
     bool genericLess(JSValue a, JSValue b)
     {
-        auto scope = DECLARE_THROW_SCOPE(m_vm);
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(m_vm);
         bool result = richCompareBool(m_globalObject, a, b, CompareOperator::Lt);
         if (scope.exception()) [[unlikely]] {
             m_failed = true;
@@ -578,7 +579,7 @@ private:
             return stringLess(asString(a), asString(b));
         case Comparison::SameType: {
             // There is no reflected method to think of, unless this one declines.
-            auto scope = DECLARE_THROW_SCOPE(m_vm);
+            auto scope = DECLARE_TOP_EXCEPTION_SCOPE(m_vm);
             Runtime& rt = runtime(m_globalObject);
             JSValue method = rt.typeOf(a)->lookup(Special::Lt);
             if (!method)
@@ -606,7 +607,7 @@ private:
         if (!m_keysAreTuples)
             return itemLess(a, b);
 
-        auto scope = DECLARE_THROW_SCOPE(m_vm);
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(m_vm);
         auto* first = PyTuple::from(a);
         auto* second = PyTuple::from(b);
         unsigned common = std::min(first->length(), second->length());
@@ -622,7 +623,7 @@ private:
         }
         if (i == common)
             return first->length() < second->length();
-        RELEASE_AND_RETURN(scope, i ? genericLess(first->at(i), second->at(i)) : itemLess(first->at(i), second->at(i)));
+        return i ? genericLess(first->at(i), second->at(i)) : itemLess(first->at(i), second->at(i));
     }
 
     // Sorts the first n items, of which the first `sorted` are in order already.
@@ -1119,12 +1120,13 @@ void listSort(JSGlobalObject* globalObject, JSArray* list, JSValue key, bool rev
     if (failed)
         pending = takePendingException(globalObject);
     listTruncate(globalObject, list, 0);
+    RETURN_IF_EXCEPTION(scope, void());
     listAppendSpan(globalObject, list, { valueData, count });
+    RETURN_IF_EXCEPTION(scope, void());
     if (pending) {
         raiseException(globalObject, scope, pending);
         return;
     }
-    RETURN_IF_EXCEPTION(scope, void());
     if (wasModified)
         raiseValueError(globalObject, scope, "list modified during sort"_s);
 }
@@ -1330,7 +1332,7 @@ static JSValue listGetItemMethod(JSGlobalObject* globalObject, JSValue self, JSV
     if (!slice)
         return raiseTypeError(globalObject, scope, "list indices must be integers or slices, not "_s, typeName(globalObject, key));
     PySlice::Indices indices;
-    if (!listSliceIndices(globalObject, list, slice, indices))
+    if (failed(scope, listSliceIndices(globalObject, list, slice, indices)))
         return { };
     RELEASE_AND_RETURN(scope, listSlice(globalObject, list, indices));
 }
@@ -1375,7 +1377,7 @@ static void listAssignSubscript(JSGlobalObject* globalObject, JSArray* list, JSV
     }
 
     PySlice::Indices indices;
-    if (!slice->unpack(globalObject, indices))
+    if (failed(scope, slice->unpack(globalObject, indices)))
         return;
 
     // The items are collected before the length of the list is looked at: working them out may change the list, and they may be the list.
@@ -1383,7 +1385,7 @@ static void listAssignSubscript(JSGlobalObject* globalObject, JSArray* list, JSV
     if (value) {
         // Whatever TypeError asking for the iterator ends in. (A list or a tuple is not asked.)
         JSValue iterator = isExactList(value) || typeOf(globalObject, value) == runtime(globalObject).tupleType() ? value : getIter(globalObject, value);
-        if (!iterator) {
+        if (failed(scope, iterator)) {
             if (clearPendingExceptionIfMatches(globalObject, runtime(globalObject).TypeError()))
                 raiseTypeError(globalObject, scope, "must assign iterable to extended slice"_s);
             return;
@@ -1881,7 +1883,7 @@ static JSValue tupleGetItem(JSGlobalObject* globalObject, JSValue self, JSValue 
     if (!slice)
         return raiseTypeError(globalObject, scope, "tuple indices must be integers or slices, not "_s, typeName(globalObject, key));
     PySlice::Indices indices;
-    if (!slice->indices(globalObject, tuple->length(), indices))
+    if (failed(scope, slice->indices(globalObject, tuple->length(), indices)))
         return { };
     if (indices.length <= 0)
         return rt.emptyTuple();

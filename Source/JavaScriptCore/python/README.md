@@ -38,6 +38,7 @@ value goes from one language to the other.
 | instance of a class    | `PyInstance`: its attributes are the properties of the JS object, laid out by Structures         |
 | anything else          | `PyObject : JSNonFinalObject`, with a pointer to its `PyType`                                    |
 | any other JS object    | an instance of the Python type `JSObject` / `JSFunction`: properties are attributes and items    |
+| JS iterator, generator | `JSIterator`, `JSGenerator` (subtypes of `JSObject`): an iterator, a generator                   |
 
 **int.** Arithmetic that leaves the range of exact doubles continues in `JSBigInt` and comes back when the result fits, so
 Python sees one unbounded `int` type. JS sees a number or a BigInt.
@@ -130,7 +131,39 @@ become a trailing object, whole floats become numbers.
   (`noteFinalizableGenerator`), and those still unfinished when a collection comes are registered then.
 
 **Exceptions** are JSC exceptions whose value is a `PyException`. The unwinder tells the runtime about each Python frame it
-passes (`addTracebackEntry`), which is how tracebacks are built.
+passes (`addTracebackEntry`), which is how tracebacks are built. A frame that has not got as far as the program's own code
+(`PythonMark::Start`) is not in the traceback: arguments that do not fit, the first iterable of a generator expression.
+
+**Printing them.** As in CPython, `sys.excepthook`, `sys.unraisablehook` and `threading.excepthook` have `Lib/traceback.py` do it
+(`traceback._print_exception_bltin`, called by `printException` in `PyFrame.cpp`): carets, suggestions, colours, groups and notes are its
+business. What it goes by comes from here: `co_positions()` (columns in bytes of UTF-8; none with `-X no_debug_ranges`), `tb_lasti`, `name` and `obj` of an `AttributeError`
+(filled in by `getAttrImpl` when whoever raised it did not), `_suggestions._generate_suggestions`, `SyntaxError._metadata`,
+`_missing_stdlib_info`. If it cannot be imported or fails, `formatException` prints the traceback natively, without carets. That is also what the JS view of an
+exception shows, and what is used before there is a `sys.stderr`.
+
+## Syntax errors
+
+CPython's parser is generated from a PEG. It goes over the text once; if that fails, it goes over it again with extra rules (`invalid_*`) that
+match common mistakes and say what is wrong; if none does, the error is "invalid syntax" at the last token the *first* pass looked at. The
+parser here is written by hand and goes over the text once, so type, message, position and text of every error are the same only because it keeps to that
+order of events. What that takes (`parser/PyParser.h`):
+
+- _An error nothing explains_ (`invalidSyntax()`, `m_errorIsGeneric`) is only a failure. It can be taken back (`rewind()`), and is worded last of all, in `parse()`: at
+  `m_tokens[m_tokensSeen - 1]`, with the line as the lexer has it by then, or as "unexpected indent".
+- _Explaining_ (`m_diagnosing`): code that stands for an `invalid_*` rule reads on past the mistake. The tokens it reads do not count as seen. The first
+  explanation found stays (`m_errorWasFoundDiagnosing`), whatever is tried afterwards: in CPython raising ends the parse.
+- _Prefixes_ (`m_acceptsPrefix`): to a parser that backtracks, `a +` is `a` with a `+` left over. Rules such as `disjunction expression_without_invalid`
+  ("Perhaps you forgot a comma?") see such prefixes, so an expression that fails without explanation is parsed again in that mode (`parseExpression()`).
+- _Quiet_ (`m_quiet`): under `expression_without_invalid` no `invalid_*` rule is tried, so nothing is explained and nothing is read on that account (`DIAGNOSE()`).
+  CPython memoizes what came of a rule at a token, so what was first tried there quietly stays quiet (`m_parsedQuietly`).
+- _Rules that are always tried_: a forced token in an ordinary rule (`else` `:`), and the rules about the first item of a dict, raise in the first pass. Nothing is tried
+  after them (`errorIsOfARuleThatIsAlwaysTried()`).
+- After any error of the parser the rest of the text is lexed, and an error of the lexer there replaces it (`checkRestOfSourceForLexerErrors()`).
+- `SyntaxError._metadata` is where the last compound statement began that the second pass got through, for `traceback.py` to look for misspelt keywords
+  from there on (`didParseCompoundStatement()`). A `def` does not count, a statement whose optional clause fails does.
+
+The text of the line comes from the source, or from the file when the source is a file or the error is the compiler's (`lineOfFile`, `lineOfProgramText`: CPython's
+1000 bytes, the declared encoding). `differential/crashers/fuzz_syntax_errors.py` damages statements of the standard library in one place and compares all of that, and the warnings, with CPython.
 
 ## The collector, finalizers and weak references
 
@@ -143,6 +176,10 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
 - **The queue is served at a safe point**: a place in Python code where any code may run. The collector sets a trap bit,
   `VMTraps::NeedPythonCalls`; Python's loops (`op_py_check_traps`) and function entries poll it. JS code and C++ do not service it:
   the optimizing JITs take a poll to change nothing. A host may serve it between turns of its event loop (`makeCallsOwed`).
+  With reference counts a finalizer runs where its object is dropped; here it runs wherever the program is when the collector has
+  come, and it is not to fail for that. So what is called from the queue has 200 frames to itself even at the recursion limit
+  (the depth is lowered meanwhile; `sys.getrecursionlimit()` says what the program set), and near the end of the stack itself the
+  queue waits for a safe point with more room. Signals are looked at first and between the calls: a long queue does not hold up Ctrl-C.
 - **Each finalizer runs once.** An object that is still unreachable at the next collection is freed.
 - **An object registers when it is made**, if its class has a `__del__` then. A class that gets one later, by assignment to the
   attribute or to `__bases__`, has the heap searched for its instances (`registerInstancesForFinalization`), once; an object
@@ -158,8 +195,10 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
   - What is in a cycle or hangs off one comes after the rest and is finalized in one go, in the order in which the objects were
     made, whatever refers to what: that is what CPython's collector does with it.
   - A collection that the program waits for (`gc.collect()`, the exit, a thread that is idle: `Runtime::collectAsAskedFor`) looks at
-    all that died in it, about 120 ns for a dead cell. One of the engine's own looks only at what the objects with finalizers
-    reach, and at nothing if there is but one: it does not see the list that held them, and takes siblings in the order they were made.
+    all that died in it, about 120 ns for a dead cell, if there is something to tell by it: `gc.collect()` wants the count, or two of
+    the finalizers are code of the program (what those of built-in types do, closing a file, looks the same in any order). Any
+    other collection looks only at what the objects with finalizers reach, and at nothing if there is but one: it does not see
+    the list that held them, and takes siblings in the order they were made.
   - Some objects are several cells here that refer to one another: a generator and its frame object, a generator function and the
     function that runs the body, an object of a module written in C++ and its guard. Those are no cycles
     (`wholeThatPartRefersTo`, `TypeFlag::Internal`). A cache that would make one is to be weak.
@@ -173,9 +212,11 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
   if a finalizer brings the object back; those without are cleared afterwards. A callback is called only if the weak reference
   is itself reachable.
 - **At exit**, when the threads are joined and before `atexit`'s callbacks, what is unreachable by then and reference counts would
-  have freed is finalized: in CPython it would have been long ago. After the callbacks, if there is anything left to finalize,
-  `sys.modules` is emptied as CPython empties it, and collections find and order what only the modules held. What is then still
-  held (by JS, by a frame on the stack) is finalized in the order it was made.
+  have freed is finalized: in CPython it would have been long ago. (Only if an object is registered whose finalizer is code of the
+  program.) After the callbacks, if there is anything left to finalize, `sys.modules` is emptied as CPython empties it, and
+  collections find and order what only the modules held. What is then still held (by JS, by a frame on the stack) is finalized in
+  the order it was made. A program that leaves nothing to finalize exits without a collection; a generator that has not begun is
+  nothing to finalize.
 - **`gc.collect()`** collects, serves the queue, and repeats until nothing is left to do, so `del x; gc.collect()` does what it does in
   CPython. For that to be true the stack scan must not see stale values: before it, the temporaries of Python frames that liveness
   analysis says are dead are emptied (`clearDeadTemporaries`). Variables are not: an object lives while a variable names it.
@@ -188,18 +229,25 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
 - **What the module `gc` hands out** (`get_objects`, `get_referrers`, `get_referents`, `garbage`) is decided in one place, at the top
   of `PyGC.cpp`: a cell is given to the program if it is an object of Python of this realm, of a kind that programs see, whole (no
   tuple that is still being filled), and not a part of something else (the table of a dict, the namespace of a class, the values
-  of a frame, what a module written in C++ keeps under a hidden key or in a slot of the runtime). A reference held by a part counts as
-  held by its owner.
+  of a frame, the memory of a deque (`TypeFlag::OwnsContainers`), what a module written in C++ keeps under a hidden key or in a slot
+  of the runtime). A reference held by a part counts as held by its owner. A generator or coroutine that is running refers to its
+  variables, as in CPython, though they are in a frame on the stack meanwhile (`forEachVariableOfRunningGenerators`); the variables
+  of a function that is running belong to nobody, as in CPython.
 - **The engine collects when it sees fit.** `gc.disable()`, `set_threshold()` and `freeze()` do not change that: the collector is the
   only thing that frees memory. A collection of the engine's own is told to `gc.callbacks` and counted in `get_stats()` at the next
   safe point: "start", then what it found (callbacks of weak references, finalizers), then "stop"; a collection of the young
   generation as generation 0, a full one as generation 2. Not while the collector is "disabled".
 - **A thread that waits collects.** A program may wait for what only a finalizer brings about: it has dropped a response without
   closing it, and waits for a server in another thread that waits for the end of the connection. A thread that has waited for
-  another for 50 ms collects and finalizes (`Threads::collectWhileIdle`), then less and less often; so does one that would
-  otherwise be told that it waits for ever. A native function that finds that it has to wait is begun again on a wiped stack, for
-  the same reason as `gc.collect()` (`NativeFlag::MayWait`, `Threads::willCallFunctionThatMayWait`). A thread that is blocked
-  in a system call does not collect.
+  50 ms collects and finalizes (`Threads::collectWhileIdle`), then less and less often; so does one that would otherwise be told
+  that it waits for ever. (If nothing seems to have been allocated since the last such collection, it is skipped, but not more
+  often than keeps these collections below a fiftieth of the time: to drop something takes no allocation.) That goes for waiting for another thread (`Threads::waitUntil`) and for waiting for the kernel, which is
+  done piece by piece (`IdleWait`): `time.sleep`, everything in `select` and every socket call that goes through
+  `waitForEvents` (with a timeout, or on the main thread of a host with an event loop), reads from what is not a regular file
+  (`waitUntilReadable`: `os.read`, `FileIO`, so `input()` too), `os.waitpid` for one process on Linux. A native function that
+  finds that it has to wait is begun again on a wiped stack, for the same reason as `gc.collect()` (`NativeFlag::MayWait`,
+  `Threads::willCallFunctionThatMayWait`). Not covered: `recv` and the like on a blocking socket in a thread other than the main
+  one, writes, `connect`, `flock`, `wait()` for any child, `sigwait`.
 - **Files that are dropped** without being closed are closed by a finalizer, some time later, where CPython closes them at once.
   Two things make up for most of that. Streams as `open()` makes them that hold output are in a list
   (`ioNotePendingOutput`), and `writeOutPendingOutput()`, one load and a branch when the list is empty, writes them out before
@@ -252,6 +300,16 @@ without source. What the runtime supplies is `marshal` for code objects (`runtim
 - Nothing can be written beside the files a host has inside itself (`PyVirtualFiles.h`). The `__pycache__` directories there are
   real directories elsewhere: in a cache directory of the user's that the host names, one for each build (`toCachePath`).
 
+**From JavaScript.** A host imports a module by name for JS with `importModuleFromJS` (`PyExec.h`). Bun does for the specifier
+`python:json`, as `node:fs` names a module of Node's: in `import`, `import()` and `require()`, with dots for a module in a package
+(`python:os.path`). It is `importlib.import_module()`, so the module is the one in `sys.modules`, and whatever Python can import by
+name can be imported so, not only the standard library. The default export is the module; the named exports are its attributes at
+that time, but for the `__dunder__` names, as for a `.py` file. What JS catches when the import fails is the exception. A
+`ModuleNotFoundError` for the module that was asked for, or for a package it is in, has the `code` that programs in JS look
+for: `ERR_MODULE_NOT_FOUND`, or `MODULE_NOT_FOUND` from `require()`. Such a specifier resolves to itself. It is never looked for
+among files or packages and never installed. `module.isBuiltin("python:x")` says whether `x` is in the standard library
+(`isStandardLibraryModuleName`). The bundler leaves it in place, and refuses it for a target other than Bun.
+
 ## Codecs
 
 What CPython has in C is in C++ here: UTF-8, 16, 32 and 7, ASCII, Latin-1, the escapes, charmap, the registry and the error handlers
@@ -281,7 +339,12 @@ The event loop is the host's, and there are three ways to it (`PyExec.h`, `PyEve
 - **Coroutines without a loop of their own**: a module that awaits at the top level, a coroutine that JS awaits, an async generator
   that JS iterates over. They are tasks of one more asyncio loop, which never sleeps: the host's loop calls it when a descriptor
   is ready, a timer is due or a callback has been scheduled (`src/python/_bun_asyncio.py` in Bun). To JS they are promises.
+  For what JS calls, that loop is the running loop where no other is: `get_running_loop()` and `get_event_loop()` give it if a
+  frame of JS is on the stack (`loopOfHost`), so `gather()`, `ensure_future()`, `Future()` and `loop.call_later()` work from JS.
+  (`_get_running_loop()` does not, so `asyncio.run()` can still be called.)
 - **`await promise`** in Python, for a JS promise (type `JSPromise`), is a future of the running loop that the promise settles.
+  The promise of a coroutine that JS has called is awaited as the task it is, so to cancel who waits cancels the coroutine:
+  `wait_for(queue.get(), 1)` from JS, and `ensure_future(queue.get()).cancel()`. An async function of JS cannot be cancelled.
 - **Futures and tasks** are native: the module `_asyncio` (`runtime/PyAsyncio.cpp`), which Lib/asyncio takes in place of its own classes.
   A step of a task resumes the coroutine from C++, outside any handler, and `await future` gets the result without a `StopIteration`
   (`PyAsyncio.h`). The loop stays asyncio's: callbacks go through its `call_soon()`. `all_tasks()` reads an array that the collector
@@ -345,6 +408,8 @@ of no line; here the program's own code starts; here a block begins or ends that
 compiler location by location, artificial code included: operations on constants that it works out are of one line, statements that cannot be reached are of none. A line of which no instruction came (`pass`, `try:`, `x = (` over `1)`) has a mark on
 whatever comes next, which costs nothing; only where that can be reached from elsewhere is there an `op_nop`, as in CPython.
 `f_lineno`, tracebacks, `co_lines()` and `LINE` events all go by the marks.
+A function that falls off its end returns on the line of whatever ran last. CPython gets there by copying the implicit `return` for each block that leads to it; here a compound statement
+that is the last of the function is told so (`isLast`), and each of its ways out returns for itself (`Unit::leaveStatement()`) or marks the line it leaves on (`Unit::lineOfImplicitReturn()`).
 A line is news if the frame was on another line before. For nearly every mark that is plain from the code (`CodeMonitor::findPoints`).
 Where the frame may come from the same line or from another, the jumps and branches that lead there say which: those from other lines tell of the line
 (the head of a `for` loop), or those from the same line say that it is not news (`return (a and` over `b)`). In what is left, one code object in 200 of the
@@ -357,6 +422,9 @@ an exception handler, which CPython moves out of the way; between the two ways a
 **Offsets.** What a program is given for a place in the code (`f_lasti`, `tb_lasti`, `co_lines()`, `co_positions()`, `co_branches()`, the arguments of callbacks) is twice the offset
 in JSC's instructions (`shownOffset()`): in CPython code is made of units of two bytes, and `traceback.py` and `dis` count on it. `co_code` is an outline in those
 units: a `NOP` for each byte, and `RESUME` before the program's own code, which is how `pdb` finds the first line of a function.
+
+**Comparing code.** Code objects are equal if their names, flags, first lines, variables and instructions (as the compiler left them) are, and then their text, or, for code made from a tree,
+their constants (by type and bits: `0`, `0.0`, `-0.0` and `False` are four) and `co_positions()`. The hash leaves the instructions out: `bdb` keeps code objects in dictionaries while it traces them.
 
 **Frames.** While something is told of an event, `f_lineno` of that frame is the line CPython would show. `f_locals` reads and writes the registers.
 `f_lineno = n`, in a trace function, goes where CPython goes and refuses what it refuses, with its messages: the target must be the beginning of a statement whose blocks the
@@ -383,10 +451,70 @@ while any thread has a function. The side tables are only touched with the GIL; 
 - Keyword arguments for a JS function are a trailing object. A dict iterates in JS as a `Map` does, by `[key, value]`.
 - **Operators.** `a + b`, `-a`, `a < b`, `a == b` and so on ask the classes of the Python objects among the operands
   (`__add__`, `__radd__`, ...), in the slow paths that all tiers share (`OperationsInlines.h`, `JSValue::equalSlowCaseInline`). If
-  neither class answers, JS does what it does with any object. The DFG and FTL used to know that an arithmetic operator returns a
-  primitive and that two objects are `==` only if identical; they now know it only while
-  `VM::operatorOverloadingWatchpointSet()` is valid, and starting Python fires it. A VM that never runs Python compiles what it
-  always did.
+  neither class answers, JS does what it does with any object. `a == a` is true and `a == null` false without asking.
+  The parser does not make `+a` of `a * 1`, which it did.
+  `===`, `Object.is`, `switch`, `includes`, `indexOf` and the keys of a `Map` or `Set` go by identity.
+  To the DFG and FTL a Python object has a type of its own, `SpecPyObject`. An arithmetic operator returns a primitive unless an
+  operand may be of that type. `==` on two objects is a comparison of pointers behind a check that neither is of that type
+  (`NotPyObjectUse`, in `DFGFixupPhase.cpp`); a site that has seen a Python object calls the slow path instead.
+
+## Python sees JavaScript objects
+
+`runtime/PyInterop.cpp`. Properties are attributes and items, those of JS before what the Python type has. Besides:
+
+- `len()` is `length`, or `size`, or the number of own properties. Of what can be iterated over and has neither it is a `TypeError`.
+- The items of a `Map` are its entries (`m[key]`, `m[key] = v`, `del m[key]`, `key in m`), so `dict(m)` copies it. `in` asks a `Set`.
+  Iterating over them is what it is in JS: pairs, for a `Map`.
+- An iterator that the engine makes (of arrays, maps, sets, strings, matches; iterator helpers) is an iterator: `next()`, and
+  `__iter__` may return it. A generator is a generator: `send()`, `throw()`, `close()` (which is `return()`), `yield from`, so
+  `contextlib.contextmanager` takes a `function*`. Any other object with a `next` method can be iterated over if it has
+  `Symbol.iterator`.
+- A function has `__name__` and `__qualname__`, which decorators copy. `copy.copy()` and `copy.deepcopy()` give the function itself.
+- The working directory is one: `os.chdir()` and `os.fchdir()` tell the host (`setDidChangeDirectoryFunction`), which keeps its own
+  copy of it for `process.cwd()` and for resolving modules.
+
+## JavaScript without Python
+
+JSC and WTF work the same whether or not Python has started: there is no switch, for the process or for a VM, that Python flips.
+What code outside `python/` asks is one of these, and the answer is the same in every program:
+
+- **What is this cell?** `isPyObjectType()`, a range of `JSType`; `SpecPyObject` in the optimizing JITs. The operators, above.
+- **Is this code block Python's?** `UnlinkedCodeBlock::isPython()`: it is never compiled, its call sites are never virtual, unwinding
+  tells the Python runtime of each of its frames, its generators are laid out differently.
+- **Which runtimes does this heap have?** `Heap::pythonRuntimes()`, empty without Python. They are asked at three points, none of
+  which touches a value of JS: before the stack is scanned (dead temporaries in frames of Python code are cleared), when
+  marking has converged (Python objects to finalize are kept), and by the host before `console.log` writes (Python's `stdout` is flushed).
+- **Is this the embedder's thread?** `Heap::mayRunEmbedderFinalizers()`: false only while a thread that Python started has the VM.
+  See Threads. A program without such threads runs on one thread, and the answer is yes.
+
+One thing that Python needs of WTF is a setting of the process, `Thread::setSurvivesFailedCreation()`: a program may lower its own
+limit on threads (`resource.setrlimit`) and go on, and the collector then does without the threads it cannot start. Bun makes that setting
+for every process, as it starts (`JSCInitialize`).
+
+What every program pays, with the sizes of a release build for x86-64:
+
+| Where | What |
+| --- | --- |
+| `VM` (one) | 72 bytes of 110,984: 56 in `Heap` (the list of runtimes, two more owners of finalizers, a subspace pointer), 8 in `VMTraps`, 8 of padding |
+| `JSLock` (one per VM) | 72 bytes: the list of parked threads |
+| `JSGlobalObject` | 8 bytes: the pointer to the runtime |
+| `UnlinkedCodeBlock::RareData`, `UnlinkedFunctionExecutable::RareData` | 8 bytes each, where there is rare data. `CodeBlock`, `UnlinkedCodeBlock`, `UnlinkedFunctionExecutable`, `CallLinkInfo`, `Structure`, `JSString`, `JSArray`, `JSFunction`: nothing |
+| `JSType`, opcodes, `SpeculatedType`, `UseKind`, `VMTraps` | 19 of the 256 cell types, 55 of the 255 opcodes, 1 of 64 bits, 1 of 64 kinds, 1 of 32 bits |
+| `==` on two objects, DFG and FTL | for each operand not known to be something else: load the type, subtract, compare, branch |
+| `==`, `<`, `+`, `-`... in the slow paths | for each operand that is a cell: the same test, before the conversion to a primitive |
+| Untyped arithmetic, DFG and FTL | the result is known to be a primitive only if the operands are known not to be Python objects |
+| `x * 1`, `1 * x` | a multiplication: the parser no longer makes it `+x` |
+| A block or large allocation is swept | one load and branch (`mayRunEmbedderFinalizers()`) |
+| A call is linked, or is virtual and not to compiled JS | is the caller Python code: three loads and a branch |
+| An exception passes a frame | the same, twice |
+| Bytecode is generated, a code block is linked or asks to be compiled | a look at `isPython()`: for each loop and jump, each call site, each code block |
+| `Instruction::opcodeID()` in C++ | a compare with `op_py_instrumented`. The interpreter itself does not look |
+| A collection | three walks over an empty list; four more kinds of metadata looked for in each code block that is visited |
+| The mutator leaves a collection to the collector's thread | a lock, and a look whether that thread is there |
+| No thread can be started | helpers of the collector are done without, and so is its thread; for any other thread, up to 2 s of waiting for room, a line that names it, and the crash that used to come at once |
+| The lock of the VM is taken, released | a store; two loads and branches |
+| A tick of the event loop that waits, a turn of it | a call that finds no other threads; a load of a flag |
+| The executable | about 10 MB of 134: 4.1 the standard library (compressed), the rest code |
 
 ## The command line
 

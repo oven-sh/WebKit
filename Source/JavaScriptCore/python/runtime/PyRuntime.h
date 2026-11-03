@@ -508,8 +508,10 @@ public:
     void queueWeakRefCallback(PyWeakRef*);
 
     ALWAYS_INLINE bool hasPendingCalls() const { return m_hasPendingCalls; }
-    // At a safe point. What the calls raise is reported and goes no further.
-    void runPendingCalls();
+    // At a safe point. What the calls raise is reported and goes no further. But signals are looked at between the calls, and what
+    // a handler raises is thrown: what is left in the queue then is left for the next safe point.
+    // `mayPutOff`: nobody asked for it or waits for it. Then it is put off if the stack is nearly used up.
+    void runPendingCalls(bool mayPutOff = false);
     // One of those calls is running, in this thread. What it queues waits for it to return.
     bool isRunningPendingCalls() const { return m_isRunningPendingCalls; }
     // gc.collect() in one of those calls: there is a collection when all that are queued have been made.
@@ -545,6 +547,45 @@ public:
     void finalizeWhatReferenceCountsWouldHaveFreed();
     // Its finalizer has been called, and yet it is still there.
     bool hasBeenFinalized(JSCell*);
+
+    // ---- Cells that can be found again and are not kept alive by that ----
+
+    // The collector does not visit what is in such a table. When a collection has marked all that it will, it takes out what it
+    // has not marked. So the table never refers to a cell that has been freed, whatever else is or is not done about the cell.
+    class WeakCellTable {
+        WTF_MAKE_NONCOPYABLE(WeakCellTable);
+    public:
+        WeakCellTable() = default;
+
+        // Where it is, until it is removed or dies. Nothing moves.
+        unsigned add(JSCell* cell)
+        {
+            if (m_free.isEmpty()) {
+                m_cells.append(cell);
+                return m_cells.size() - 1;
+            }
+            unsigned index = m_free.takeLast();
+            ASSERT(!m_cells[index]);
+            m_cells[index] = cell;
+            return index;
+        }
+        void remove(unsigned index, JSCell* cell)
+        {
+            ASSERT_UNUSED(cell, m_cells[index] == cell);
+            m_cells[index] = nullptr;
+            m_free.append(index);
+        }
+        unsigned size() const { return m_cells.size(); }
+        JSCell* at(unsigned index) const { return m_cells[index]; } // Null: nothing is there.
+        void removeUnmarked(JSC::Heap&);
+
+    private:
+        Vector<JSCell*> m_cells;
+        Vector<unsigned> m_free;
+    };
+    // For the collector, with the world stopped, when marking is over and nothing has been freed yet.
+    void reconcileWeakReferencesAtGCEnd();
+    WeakCellTable scheduledTasks; // See registerTask() in PyAsyncio.cpp.
 
     // ---- The module gc (PyGC.cpp) ----
 
@@ -611,6 +652,9 @@ public:
     // False: there are as many as there may be, and a RecursionError is raised. Otherwise leaveFrame() has to follow.
     bool tryEnterFrame();
     void leaveFrame() { --frameDepth; }
+    // The frames that whoever traces the program is being told about while an exception unwinds the stack. The frames that the
+    // exception has left are still there below them, and still needed: see clearDeadTemporariesOf().
+    Vector<CallFrame*, 2> framesToldOfException;
     // The call is about to end, by a return or an exception. Its frame object, if it has one, takes over what the frame holds.
     // (A generator that yields, or ends without an exception, tells its frame object itself.)
     void frameIsEnding(CallFrame*);
@@ -696,6 +740,8 @@ private:
         double duration;
     };
     Deque<CollectionNotice> m_collectionsToTellOf WTF_GUARDED_BY_LOCK(m_finalizationLock);
+    // gc.callbacks have been told the start of it. They hear of the end when what it found has been dealt with.
+    std::optional<CollectionNotice> m_collectionBeingToldOf;
     MonotonicTime m_collectionBegan;
     Vector<PyWeakRef*> weakRefsWithCallbacksToUnmarkedObjects(SlotVisitor&);
     void didMarkAll(SlotVisitor&) WTF_REQUIRES_LOCK(m_finalizationLock);
