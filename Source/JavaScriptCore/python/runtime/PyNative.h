@@ -92,6 +92,7 @@ private:
 // the function is JSValue f(JSGlobalObject*, JSValue self, JSValue sep, JSValue maxsplit): one parameter for each in the
 // signature, which is empty if the caller left it out. The caller's arguments are checked against the signature.
 // With *args or **kwargs in the signature, it is JSValue f(JSGlobalObject*, JSValue self, const CallArgs&), and nothing is checked.
+// The same with a ! before the signature, which then is only what __text_signature__ shows: "!(iterable, /, *, key=None)".
 // (`self` is there only if the signature starts with a $ parameter.)
 // What throws returns an empty value.
 
@@ -110,6 +111,11 @@ struct NativeSignature {
 constexpr NativeSignature parseNativeSignature(const char* text, size_t length)
 {
     NativeSignature result;
+    if (length && text[0] == '!') {
+        result.isVariadic = true;
+        ++text;
+        --length;
+    }
     if (length < 2 || text[0] != '(' || text[length - 1] != ')') {
         result.isValid = false;
         return result;
@@ -200,6 +206,9 @@ enum NativeFlag : uint8_t {
     DescriptorGet = 1 << 1,
     // See wipeStackBelow().
     OnWipedStack = 1 << 2,
+    // It may wait for other threads, in Threads::waitUntil(), which then has it begun again on a wiped stack: see there. It does
+    // nothing that shows before it waits.
+    MayWait = 1 << 3,
 };
 
 class NativeDef {
@@ -279,6 +288,7 @@ private:
 
 #define PY_FUNCTION(name, function, signature) NativeDef(NativeKind::Function, name ""_s, function, signature ""_s)
 #define PY_METHOD(name, function, signature) NativeDef(NativeKind::Method, name ""_s, function, signature ""_s)
+#define PY_WAITING_METHOD(name, function, signature) NativeDef(NativeKind::Method, name ""_s, function, signature ""_s, MayWait)
 #define PY_SLOT(name, function, signature) NativeDef(NativeKind::SlotWrapper, name ""_s, function, signature ""_s)
 #define PY_SEQUENCE_SLOT(name, function, signature) NativeDef(NativeKind::SlotWrapper, name ""_s, function, signature ""_s, SequenceOperation)
 #define PY_CLASSMETHOD(name, function, signature) NativeDef(NativeKind::ClassMethod, name ""_s, function, signature ""_s)

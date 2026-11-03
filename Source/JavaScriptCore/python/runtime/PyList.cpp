@@ -1741,6 +1741,8 @@ void initializeListTypes(JSGlobalObject* globalObject)
 
 int64_t hashOfTuple(JSGlobalObject* globalObject, PyTuple* tuple)
 {
+    if (int64_t cached = tuple->cachedHash(); cached != -1)
+        return cached;
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!isSafeToRecurseWithMargin(vm, 64 * KB)) [[unlikely]] {
@@ -1762,7 +1764,8 @@ int64_t hashOfTuple(JSGlobalObject* globalObject, PyTuple* tuple)
     }
     accumulator += length ^ (prime5 ^ 3527539UL);
     if (accumulator == static_cast<uint64_t>(-1))
-        return 1546275796;
+        accumulator = 1546275796;
+    tuple->setCachedHash(static_cast<int64_t>(accumulator));
     return static_cast<int64_t>(accumulator);
 }
 

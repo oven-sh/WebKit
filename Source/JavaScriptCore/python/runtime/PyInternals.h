@@ -10,6 +10,7 @@
 #include "PyDescriptors.h"
 #include "PyUnicode.h"
 #include <wtf/FastBitVector.h>
+#include <wtf/HashSet.h>
 #include <wtf/ScopedLambda.h>
 #include <wtf/text/StringBuilder.h>
 
@@ -55,15 +56,29 @@ JSValue typeGetAttr(JSGlobalObject*, PyType*, JSString* name, bool suppress = fa
 JSValue typeCall(JSGlobalObject*, PyType*, const CallArgs&);
 // An instance of the type with nothing set: what object.__new__ makes, given how the type's instances are laid out.
 JSValue allocateInstance(JSGlobalObject*, PyType*);
+// For PyGenerator::resume().
+JSValue callBodyOfGenerator(JSGlobalObject*, PyFunction* body, std::span<const JSValue> arguments);
 // What gc.collect() does: collects, runs the finalizers of what was found, and so on until there is nothing left to do. Not from
 // a finalizer. Throws nothing but the host's termination.
-void collectAndFinalize(JSGlobalObject*);
+void collectAndFinalize(JSGlobalObject*, Runtime::MarkingObserver* = nullptr);
 // In CPython a file that is dropped is closed at once, and programs count on it: open(path, "w").write(text), and whoever opens the
 // file next finds the text. Here it would be closed after some collection. So the streams over files that hold output are kept in
-// a list, and what they hold is written before the program, or anyone it starts, can look at a file. (When a buffer is written is
-// up to the implementation, so this is never wrong.) Does not raise.
-void writeOutPendingOutput(JSGlobalObject*);
-void wipeStackBelow(VM&);
+// a list, and what they hold is written before the program, or anyone it starts, can look at a file, and before it does anything
+// to a file or a descriptor that would come out differently afterwards (truncating, closing, writing). (When a buffer is written
+// is up to the implementation, so this is never wrong.) Not sys.stdout and sys.stderr, which nobody drops. Does not raise.
+void writeOutPendingOutputSlow(JSGlobalObject*);
+ALWAYS_INLINE void writeOutPendingOutput(JSGlobalObject* globalObject)
+{
+    if (runtime(globalObject).mayHavePendingOutput()) [[unlikely]]
+        writeOutPendingOutputSlow(globalObject);
+}
+void wipeStackBelow(VM&, size_t = 128 * KB);
+// Room for the frames from a native function down to where Threads::waitUntil() sleeps or collects.
+#if ASAN_ENABLED || ASSERT_ENABLED
+constexpr size_t stackBytesWipedForWaiting = 64 * KB;
+#else
+constexpr size_t stackBytesWipedForWaiting = 16 * KB;
+#endif
 // If all that callee(...) does is self = object.__new__(callee), then callee.__init__(self, ...), and that is a function written
 // in Python: the function, and a new `self`. Otherwise the empty value.
 JSValue prepareConstruct(JSGlobalObject*, JSValue callee, JSValue& self);
@@ -122,25 +137,32 @@ bool findSuperArguments(JSGlobalObject*, JSValue& type, JSValue& instance);
 inline JSValue* valuesOf(MarkedArgumentBuffer& buffer) { return reinterpret_cast<JSValue*>(buffer.data()); }
 inline std::span<const JSValue> spanOf(MarkedArgumentBuffer& buffer) { return { valuesOf(buffer), buffer.size() }; }
 
-// function(CallArgs) with `first` before the positional arguments.
+// Apart, so that the frame of whoever uses withFirstArgument() has no room for a buffer that it seldom writes: see callJSFunction().
 template<typename Function>
-ALWAYS_INLINE JSValue withFirstArgument(JSValue first, const CallArgs& args, const Function& function)
+NEVER_INLINE JSValue withFirstOfManyArguments(JSValue first, const CallArgs& args, const Function& function)
 {
     unsigned total = args.totalCount() + 1;
-    static constexpr unsigned inlineCapacity = 12;
-    if (total <= inlineCapacity) [[likely]] {
-        JSValue buffer[inlineCapacity];
-        buffer[0] = first;
-        for (unsigned i = 1; i < total; ++i)
-            buffer[i] = args.values()[i - 1];
-        return function(CallArgs(buffer, args.size() + 1, args.keywordNames()));
-    }
     MarkedArgumentBuffer buffer;
     buffer.ensureCapacity(total);
     buffer.append(first);
     for (unsigned i = 1; i < total; ++i)
         buffer.append(args.values()[i - 1]);
     return function(CallArgs(reinterpret_cast<const JSValue*>(ArgList(buffer).data()), args.size() + 1, args.keywordNames()));
+}
+
+// function(CallArgs) with `first` before the positional arguments.
+template<typename Function>
+ALWAYS_INLINE JSValue withFirstArgument(JSValue first, const CallArgs& args, const Function& function)
+{
+    unsigned total = args.totalCount() + 1;
+    static constexpr unsigned inlineCapacity = 12;
+    if (total > inlineCapacity) [[unlikely]]
+        return withFirstOfManyArguments(first, args, function);
+    JSValue buffer[inlineCapacity];
+    buffer[0] = first;
+    for (unsigned i = 1; i < total; ++i)
+        buffer[i] = args.values()[i - 1];
+    return function(CallArgs(buffer, args.size() + 1, args.keywordNames()));
 }
 
 // The name as a str that is not a rope and is the one of its kind. Null: a TypeError, "attribute name must be string, not 'x'".
@@ -247,6 +269,7 @@ JSValue dictSubscript(JSGlobalObject*, PyDict*, JSValue key);
 JSValue makeMappingProxy(JSGlobalObject*, JSValue mapping);
 void setUpdate(JSGlobalObject*, JSValue set, JSValue iterable);
 int64_t hashOfTuple(JSGlobalObject*, PyTuple*);
+PyType* orderedDictType(JSGlobalObject*); // collections.OrderedDict (PyOrderedDict.cpp)
 JSValue makeRangeIterator(JSGlobalObject*, JSValue range);
 
 // ---- Signals, the thread (PySignal.cpp, PyThread.cpp) ----
@@ -338,7 +361,7 @@ JSValue frameLocals(JSGlobalObject*, PyFrame*);
 
 // The name among the candidates that is closest to the one given. Null: none is close.
 String calculateSuggestion(const Vector<String>& candidates, const String& name);
-// What printException() prints.
+// The exception and its traceback as text, without running Lib/traceback.py: see printException().
 String formatException(JSGlobalObject*, JSValue exception);
 
 // ---- Exception groups (PyExceptionGroup.cpp) ----
@@ -441,9 +464,15 @@ void importStar(JSGlobalObject*, JSValue module, JSValue locals);
 bool specIsInitializing(JSGlobalObject*, JSValue spec);
 // For a module written in C++ that has no __spec__ and __loader__ yet: has importlib make them. False: an exception.
 bool ensureNativeModuleSpec(JSGlobalObject*, PyModule*);
-// For the collector, when all that is reachable is marked. For each of the candidates, which are not marked: how many rounds of
-// finalizers come before its own, 0 for one that no other candidate reaches. (PyFinalizationOrder.cpp)
-Vector<unsigned> finalizationRanks(SlotVisitor&, std::span<JSCell* const> candidates);
+// For the collector, when all that is reachable is marked, about the candidates, which are not marked. (PyFinalizationOrder.cpp)
+struct FinalizationOrder {
+    // Which of the candidates to finalize now, and which when those are gone. Each in the order in which to take them.
+    Vector<unsigned> now;
+    Vector<unsigned> later;
+    // If it was asked for: the cells that are in a cycle with one of the first, or that such a cycle reaches.
+    UncheckedKeyHashSet<JSCell*> cyclicGarbage;
+};
+FinalizationOrder finalizationOrder(SlotVisitor&, std::span<JSCell* const> candidates, bool wantsCyclicGarbage);
 
 // Which of the locals of a frame of the LLInt or the Baseline JIT hold values that the code may still read. `isCalling`: there is a
 // frame that this one called. False: there is no telling.

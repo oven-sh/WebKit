@@ -125,6 +125,9 @@ public:
     bool needsClassClosure : 1 { false }; // Class: a method refers to __class__, as super() does.
     bool needsClassDict : 1 { false }; // Class: an enclosed scope looks names up in the namespace of the class.
     bool canSeeClassScope : 1 { false };
+    // The class has a variable called __classdict__, so to the analysis the name is no free variable here. The cell is read all the same.
+    bool classDictIsShadowed : 1 { false };
+    bool readsClassDictCellAnyway() const { return classDictIsShadowed; }
     bool isInlinedComprehension : 1 { false }; // Compiled as part of the enclosing scope, with variables of its own.
     bool hasDocstring : 1 { false };
     bool isMethod : 1 { false };

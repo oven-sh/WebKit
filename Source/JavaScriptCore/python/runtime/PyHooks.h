@@ -44,6 +44,9 @@ void didCreateCodeBlock(CodeBlock*);
 // again: `del x; gc.collect()` would not free what x was. So the temporaries of Python frames that are dead are emptied.
 // (Variables are left alone: an object lives as long as a variable names it, whether the code goes on to use it or not.)
 void clearDeadTemporaries(VM&);
+// An exception is about to leave the frame of the body of a generator. The generator is done, and the exception that is pending
+// afterwards may be another.
+void generatorBodyIsUnwinding(JSGlobalObject*, CallFrame*, bool isTermination);
 
 // A constant of compiled code that is an object of Python's, as what it is made of, which is how the bytecode cache keeps it
 // (runtime/CachedTypes.cpp).

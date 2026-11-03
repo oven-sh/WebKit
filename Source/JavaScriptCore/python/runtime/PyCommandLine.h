@@ -44,6 +44,7 @@ struct Configuration {
     int threadInheritContext { 0 };
     int contextAwareWarnings { 0 };
     int lazyImports { -1 }; // -X lazy_imports: 1 is "all".
+    bool useFrozenModules { true }; // -X frozen_modules
 
     // ---- What else there is an option for ----
     bool bufferedStdio { true }; // -u
@@ -51,6 +52,7 @@ struct Configuration {
     bool faulthandler { false }; // -X faulthandler
     int tracemalloc { 0 }; // -X tracemalloc
     int importTime { 0 }; // -X importtime
+    bool codeDebugRanges { true }; // -X no_debug_ranges: co_positions() has lines and no columns.
     int cpuCount { -1 }; // -X cpu_count. Negative: what the system says.
     String pycachePrefix; // -X pycache_prefix. Null: none.
     String checkHashPycsMode { "default"_s };
@@ -67,6 +69,7 @@ struct Configuration {
     String executable; // sys.executable. Empty: there is no way to start the interpreter as a program.
     String baseExecutable; // sys._base_executable
     Vector<String> originalArguments; // sys.orig_argv
+    String firstSearchPath; // What was put first on sys.path before the program ran. Null: nothing.
     String interactiveModule { "_pyrepl.main"_s }; // Its interactive_console() is the interactive interpreter on a terminal.
 
     // ---- What to run: at most one of these is not null. None: standard input. ----

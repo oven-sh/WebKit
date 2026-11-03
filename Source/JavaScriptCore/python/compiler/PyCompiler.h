@@ -63,7 +63,7 @@ private:
 
     // Compiles a function, a class body or the like. `emitBody` emits what follows the binding of the arguments.
     UnlinkedFunctionExecutable* compileCode(Unit* parent, const CodeSpec&, const SourceCode& parentSource, const Function<void(Unit&)>& emitBody);
-    UnlinkedFunctionExecutable* generate(const SourceCode& parentSource, const SourceCode&, SourceParseMode, Ref<CodeInfo>&&, unsigned parameterCount, bool isGeneratorBody, Function<void(BytecodeGenerator&)>&&);
+    UnlinkedFunctionExecutable* generate(const SourceCode& parentSource, const SourceCode&, SourceParseMode, Ref<CodeInfo>&&, unsigned parameterCount, bool isGeneratorBody, Function<void(BytecodeGenerator&)>&&, unsigned* generatorSlotCount = nullptr);
 
     void fail(const Range&, const String& message);
     void failWithoutLocation(SyntaxErrorInfo::Type, const String& message);

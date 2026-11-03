@@ -81,6 +81,7 @@ static JSValue posixOpen(JSGlobalObject* globalObject, JSValue pathValue, JSValu
 
 static JSValue posixClose(JSGlobalObject* globalObject, JSValue fdValue)
 {
+    writeOutPendingOutput(globalObject);
     int fd;
     if (!posixToInt(globalObject, fdValue, fd))
         return { };
@@ -97,6 +98,7 @@ static JSValue posixClose(JSGlobalObject* globalObject, JSValue fdValue)
 
 static JSValue posixCloserange(JSGlobalObject* globalObject, JSValue lowValue, JSValue highValue)
 {
+    writeOutPendingOutput(globalObject);
     int low;
     int high;
     if (!posixToInt(globalObject, lowValue, low) || !posixToInt(globalObject, highValue, high))
@@ -131,6 +133,7 @@ static JSValue posixDup(JSGlobalObject* globalObject, JSValue fdValue)
 
 static JSValue posixDup2(JSGlobalObject* globalObject, JSValue fdValue, JSValue fd2Value, JSValue inheritableValue)
 {
+    writeOutPendingOutput(globalObject);
     int fd;
     int fd2;
     bool inheritable;
@@ -189,6 +192,7 @@ static JSValue posixPipe2(JSGlobalObject* globalObject, JSValue flagsValue)
 
 static JSValue posixLseek(JSGlobalObject* globalObject, JSValue fdValue, JSValue positionValue, JSValue whenceValue)
 {
+    writeOutPendingOutput(globalObject);
     int fd;
     off_t position;
     int whence;
@@ -215,6 +219,7 @@ static JSValue posixLseek(JSGlobalObject* globalObject, JSValue fdValue, JSValue
 template<typename Function>
 static JSValue posixReadBytes(JSGlobalObject* globalObject, int64_t length, const Function& function)
 {
+    writeOutPendingOutput(globalObject);
     if (length < 0)
         return posixError(globalObject, EINVAL);
     Vector<uint8_t, 8192> buffer;
@@ -253,6 +258,7 @@ static JSValue posixPread(JSGlobalObject* globalObject, JSValue fdValue, JSValue
 
 static JSValue posixReadinto(JSGlobalObject* globalObject, JSValue fdValue, JSValue bufferValue)
 {
+    writeOutPendingOutput(globalObject);
     int fd;
     BufferHolder holder(globalObject);
     if (!posixToInt(globalObject, fdValue, fd) || !posixGetWritableBuffer(globalObject, bufferValue, "readinto"_s, 2, holder))
@@ -270,6 +276,7 @@ static JSValue posixReadinto(JSGlobalObject* globalObject, JSValue fdValue, JSVa
 
 static JSValue posixWrite(JSGlobalObject* globalObject, JSValue fdValue, JSValue data)
 {
+    writeOutPendingOutput(globalObject);
     int fd;
     BufferHolder holder(globalObject);
     if (!posixToInt(globalObject, fdValue, fd) || !holder.get(data))
@@ -287,6 +294,7 @@ static JSValue posixWrite(JSGlobalObject* globalObject, JSValue fdValue, JSValue
 
 static JSValue posixPwrite(JSGlobalObject* globalObject, JSValue fdValue, JSValue data, JSValue offsetValue)
 {
+    writeOutPendingOutput(globalObject);
     int fd;
     BufferHolder holder(globalObject);
     off_t offset;
@@ -372,6 +380,7 @@ private:
 template<typename Function>
 static JSValue posixTransfer(JSGlobalObject* globalObject, const Function& function)
 {
+    writeOutPendingOutput(globalObject);
     ssize_t count;
     do {
         AllowThreads allow(globalObject);
@@ -520,6 +529,7 @@ static JSValue posixSplice(JSGlobalObject* globalObject, JSValue sourceValue, JS
 #if OS(DARWIN)
 static JSValue posixSendfile(JSGlobalObject* globalObject, JSValue outValue, JSValue inValue, JSValue offsetValue, JSValue countValue, JSValue headersValue, JSValue trailersValue, JSValue flagsValue)
 {
+    writeOutPendingOutput(globalObject);
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     int out;
@@ -565,6 +575,7 @@ static JSValue posixSendfile(JSGlobalObject* globalObject, JSValue outValue, JSV
 
 static JSValue posixFcopyfile(JSGlobalObject* globalObject, JSValue inValue, JSValue outValue, JSValue flagsValue)
 {
+    writeOutPendingOutput(globalObject);
     int in;
     int out;
     int flags;
@@ -580,6 +591,7 @@ static JSValue posixFcopyfile(JSGlobalObject* globalObject, JSValue inValue, JSV
 
 static JSValue posixFstat(JSGlobalObject* globalObject, JSValue fdValue)
 {
+    writeOutPendingOutput(globalObject);
     int fd;
     if (!posixToInt(globalObject, fdValue, fd))
         return { };
@@ -597,6 +609,7 @@ static JSValue posixFstat(JSGlobalObject* globalObject, JSValue fdValue)
 template<typename Function>
 static JSValue posixCallWithDescriptor(JSGlobalObject* globalObject, const Function& function)
 {
+    writeOutPendingOutput(globalObject);
     int result;
     do {
         AllowThreads allow(globalObject);
@@ -660,6 +673,7 @@ static JSValue posixFchown(JSGlobalObject* globalObject, JSValue fdValue, JSValu
 
 static JSValue posixFtruncate(JSGlobalObject* globalObject, JSValue fdValue, JSValue lengthValue)
 {
+    writeOutPendingOutput(globalObject);
     int fd;
     off_t length;
     if (!posixToInt(globalObject, fdValue, fd) || !posixToOffset(globalObject, lengthValue, length))
@@ -693,6 +707,7 @@ static JSValue posixLockf(JSGlobalObject* globalObject, JSValue fdValue, JSValue
 template<typename Function>
 static JSValue posixCallReturningError(JSGlobalObject* globalObject, const Function& function)
 {
+    writeOutPendingOutput(globalObject);
     int result;
     do {
         AllowThreads allow(globalObject);

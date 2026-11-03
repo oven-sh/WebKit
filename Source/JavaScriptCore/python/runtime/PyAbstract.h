@@ -35,6 +35,8 @@ void genericSetAttr(JSGlobalObject*, JSValue object, JSString* name, JSValue val
 
 // For object.name(...): the function and, in `self`, what to pass it first; or the attribute, and an empty `self`.
 JSValue getMethod(JSGlobalObject*, JSValue object, JSString* name, JSValue& self);
+// The same for a method that the language itself calls, which is looked for in the class alone. Empty, and no exception: there is none.
+JSValue getSpecialMethod(JSGlobalObject*, JSValue object, Special, JSValue& self);
 
 // The __dict__ of the object. Null: it has none, or, unless `create`, has had no use for one yet.
 PyDict* instanceDict(JSGlobalObject*, JSValue object, bool create);
@@ -56,6 +58,8 @@ struct AttributeCache {
 };
 // False: there is nothing to remember. The object has the attribute.
 bool describeAttribute(JSGlobalObject*, JSValue object, JSString* name, bool forCall, AttributeCache&);
+// For getSpecialMethod().
+bool describeSpecialMethod(JSGlobalObject*, JSValue object, Special, AttributeCache&);
 
 // The same for op_py_set_attr, which has just set the attribute of an object that had the Structure.
 struct SetAttributeCache {
@@ -67,7 +71,7 @@ struct SetAttributeCache {
 bool describeSetAttribute(JSGlobalObject*, JSValue object, JSString* name, Structure* oldStructure, SetAttributeCache&);
 
 // What object.__dict__[name] is, without asking for the dict, which costs an instance of a class its layout: see PyInstance.
-// Empty: there is no such item, or no dict.
+// Empty: there is no such item, or no dict; or an exception, which only the __eq__ of a key that is not a str can raise.
 JSValue instanceAttribute(JSGlobalObject*, JSValue object, JSString* name);
 bool setInstanceDict(JSGlobalObject*, JSValue object, PyDict*);
 
@@ -80,6 +84,15 @@ JSValue bindDescriptor(JSGlobalObject*, JSValue descriptor, JSValue object, PyTy
 JSValue lookupSpecial(JSGlobalObject*, JSValue object, Special);
 // `method` is what type(self).lookup() found.
 JSValue callSpecial(JSGlobalObject*, JSValue method, JSValue self, const CallArgs&);
+// The same for a method that an operator calls if there is one (__eq__, __add__). What is found under the name may be a descriptor
+// whose __get__ raises AttributeError: that counts as no method, and the result is NotImplemented.
+JSValue callOperatorMethod(JSGlobalObject*, JSValue method, JSValue self, const CallArgs&);
+inline JSValue callOperatorMethod(JSGlobalObject* globalObject, JSValue method, JSValue self, JSValue argument) { return callOperatorMethod(globalObject, method, self, CallArgs(&argument, 1)); }
+inline JSValue callOperatorMethod(JSGlobalObject* globalObject, JSValue method, JSValue self, JSValue first, JSValue second)
+{
+    JSValue arguments[] = { first, second };
+    return callOperatorMethod(globalObject, method, self, CallArgs(arguments, 2));
+}
 inline JSValue callSpecial(JSGlobalObject* globalObject, JSValue method, JSValue self) { return callSpecial(globalObject, method, self, CallArgs()); }
 inline JSValue callSpecial(JSGlobalObject* globalObject, JSValue method, JSValue self, JSValue argument) { return callSpecial(globalObject, method, self, CallArgs(&argument, 1)); }
 inline JSValue callSpecial(JSGlobalObject* globalObject, JSValue method, JSValue self, JSValue first, JSValue second)

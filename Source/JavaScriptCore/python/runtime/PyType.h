@@ -163,6 +163,7 @@ public:
 
     // The classes derived directly from this one, oldest first. It does not keep them alive.
     void appendSubclassesTo(MarkedArgumentBuffer&) const;
+    JSValue subclasses() const { return m_subclasses.get(); } // The list they are kept in, which is for nobody else. Empty: there is none.
     void addSubclass(JSGlobalObject*, PyType*);
     void removeSubclass(JSGlobalObject*, PyType*);
 

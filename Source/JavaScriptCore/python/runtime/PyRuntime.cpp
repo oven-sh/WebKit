@@ -118,7 +118,6 @@ void Runtime::visit(Visitor& visitor)
     for (auto& slot : m_slots)
         visitor.append(slot);
     visitor.append(m_handledException);
-    visitor.append(m_runningGenerator);
     visitor.append(m_asyncGenFirstIter);
     visitor.append(m_asyncGenFinalizer);
     visitor.append(m_threadLocals);
@@ -163,6 +162,7 @@ void Runtime::initializeStructures()
     m_typeStructure.set(vm, globalObject, PyType::createStructure(vm, globalObject, functionPrototype));
     m_nativeFunctionStructure.set(vm, globalObject, PyNativeFunction::createStructure(vm, globalObject, functionPrototype));
     m_functionStructure.set(vm, globalObject, PyFunction::createStructure(vm, globalObject, functionPrototype));
+    functionStructureID = m_functionStructure->id();
     m_listSubclassStructure.set(vm, globalObject, PyListObject::createStructure(vm, globalObject, globalObject->arrayPrototype()));
     m_weakRefStructure.set(vm, globalObject, PyWeakRef::createStructure(vm, globalObject));
 }
@@ -327,14 +327,14 @@ PyType* Runtime::typeOf(JSValue value) const
 
 JSValue Runtime::handledExceptionInTopSlot() const
 {
-    if (PyGenerator* generator = m_runningGenerator.get())
+    if (PyGenerator* generator = m_runningGenerator)
         return generator->handledException();
     return m_handledException.get();
 }
 
 JSValue Runtime::setHandledExceptionInTopSlot(JSValue value)
 {
-    if (PyGenerator* generator = m_runningGenerator.get()) {
+    if (PyGenerator* generator = m_runningGenerator) {
         JSValue previous = generator->handledException();
         generator->setHandledException(m_vm, value);
         return previous;
@@ -346,16 +346,11 @@ JSValue Runtime::setHandledExceptionInTopSlot(JSValue value)
 
 JSValue Runtime::handledException() const
 {
-    for (PyGenerator* generator = m_runningGenerator.get(); generator; generator = generator->resumedBy()) {
+    for (PyGenerator* generator = m_runningGenerator; generator; generator = generator->resumedBy()) {
         if (JSValue value = generator->handledException())
             return value;
     }
     return m_handledException.get();
-}
-
-void Runtime::setRunningGenerator(PyGenerator* generator)
-{
-    m_runningGenerator.setMayBeNull(m_vm, m_globalObject, generator);
 }
 
 void Runtime::takeThreadLocalState(ThreadLocalState& state)
@@ -364,8 +359,7 @@ void Runtime::takeThreadLocalState(ThreadLocalState& state)
     auto& throwArguments = m_slots[static_cast<unsigned>(Slot::ThrowArguments)];
     state.currentContext = take(m_slots[static_cast<unsigned>(Slot::CurrentContext)]);
     state.handledException = take(m_handledException);
-    state.runningGenerator = m_runningGenerator.get();
-    m_runningGenerator.clear();
+    state.runningGenerator = std::exchange(m_runningGenerator, nullptr);
     state.asyncGenFirstIter = take(m_asyncGenFirstIter);
     state.asyncGenFinalizer = take(m_asyncGenFinalizer);
     state.pendingKeywordNames = take(m_pendingKeywordNames);
@@ -399,7 +393,7 @@ void Runtime::putThreadLocalState(ThreadLocalState& state)
     };
     put(m_slots[static_cast<unsigned>(Slot::CurrentContext)], state.currentContext);
     put(m_handledException, state.handledException);
-    m_runningGenerator.setMayBeNull(m_vm, m_globalObject, state.runningGenerator);
+    m_runningGenerator = state.runningGenerator;
     put(m_asyncGenFirstIter, state.asyncGenFirstIter);
     put(m_asyncGenFinalizer, state.asyncGenFinalizer);
     put(m_pendingKeywordNames, state.pendingKeywordNames);

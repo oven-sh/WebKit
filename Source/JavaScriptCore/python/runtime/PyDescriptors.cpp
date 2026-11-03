@@ -92,9 +92,11 @@ static JSValue propertyInit(JSGlobalObject* globalObject, JSValue self, JSValue 
         property->doc.set(vm, property, propertyDoc ? propertyDoc : jsUndefined());
         return jsUndefined();
     }
-    // In a subclass, __doc__ is an ordinary attribute.
+    // In a subclass, __doc__ is an ordinary attribute. One with __slots__ may have no place for it: that is not an error, unless
+    // it is the getter's docstring that is lost.
     setAttr(globalObject, self, rt.names.dDoc(), propertyDoc ? propertyDoc : jsUndefined());
-    RETURN_IF_EXCEPTION(scope, { });
+    if (scope.exception() && (property->docIsFromGetter || !clearPendingExceptionIfMatches(globalObject, rt.AttributeError()))) [[unlikely]]
+        return { };
     return jsUndefined();
 }
 
@@ -180,10 +182,16 @@ static JSValue propertyGetter(JSGlobalObject* globalObject, JSValue self, JSValu
 static JSValue propertySetter(JSGlobalObject* globalObject, JSValue self, JSValue function) { return propertyCopy(globalObject, self, { }, function, { }); }
 static JSValue propertyDeleter(JSGlobalObject* globalObject, JSValue self, JSValue function) { return propertyCopy(globalObject, self, { }, { }, function); }
 
-static JSValue propertySetName(JSGlobalObject* globalObject, JSValue self, JSValue, JSValue name)
+static JSValue propertySetName(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!rejectKeywords(globalObject, "property.__set_name__"_s, args))
+        return { };
+    if (args.size() != 2)
+        return raiseTypeError(globalObject, scope, "__set_name__() takes 2 positional arguments but "_s, args.size(), " were given"_s);
     auto* property = PyProperty::from(self);
-    property->name.set(getVM(globalObject), property, name);
+    property->name.set(vm, property, args[1]);
     return jsUndefined();
 }
 
@@ -250,7 +258,7 @@ static constexpr NativeDef propertyMethods[] = {
     PY_METHOD("getter", propertyGetter, "($self, fget, /)"),
     PY_METHOD("setter", propertySetter, "($self, fset, /)"),
     PY_METHOD("deleter", propertyDeleter, "($self, fdel, /)"),
-    PY_METHOD("__set_name__", propertySetName, "($self, owner, name, /)"),
+    PY_METHOD("__set_name__", propertySetName, "!($self, owner, name, /)"),
 };
 
 static constexpr NativeGetSet propertyGetSets[] = {
@@ -294,27 +302,66 @@ void PyWrapperObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(PyWrapperObject);
 
-static JSValue wrapperNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs&)
-{
-    return PyWrapperObject::create(globalObject, PyType::from(cls), jsUndefined());
-}
-
-// As functools.wraps(): the wrapper passes for what it wraps.
-static JSValue wrapperInit(JSGlobalObject* globalObject, JSValue self, JSValue function)
+// As functools.wraps(): the wrapper passes for what it wraps. False: an exception.
+static bool wrapperSetCallable(JSGlobalObject* globalObject, PyWrapperObject* wrapper, JSValue function)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    PyWrapperObject::from(self)->setWrapped(vm, function);
+    wrapper->setWrapped(vm, function);
     for (JSString* name : { rt.names.dModule(), rt.names.dName(), rt.names.dQualname(), rt.names.dDoc() }) {
         JSValue value = getAttrIfPresent(globalObject, function, name);
-        RETURN_IF_EXCEPTION(scope, { });
+        RETURN_IF_EXCEPTION(scope, false);
         if (!value)
             continue;
-        setAttr(globalObject, self, name, value);
-        RETURN_IF_EXCEPTION(scope, { });
+        setAttr(globalObject, wrapper, name, value);
+        RETURN_IF_EXCEPTION(scope, false);
     }
-    return jsUndefined();
+    return true;
+}
+
+void copyAttributesOfWrapped(JSGlobalObject* globalObject, PyWrapperObject* wrapper)
+{
+    wrapper->setCopiesAttributesLater(false);
+    if (!wrapperSetCallable(globalObject, wrapper, wrapper->wrapped()))
+        takePendingException(globalObject);
+}
+
+JSValue makeStaticMethod(JSGlobalObject* globalObject, JSValue function)
+{
+    auto* wrapper = PyWrapperObject::create(globalObject, runtime(globalObject).staticmethodType(), jsUndefined());
+    return wrapperSetCallable(globalObject, wrapper, function) ? JSValue(wrapper) : JSValue();
+}
+
+JSValue makeClassMethod(JSGlobalObject* globalObject, JSValue function)
+{
+    auto* wrapper = PyWrapperObject::create(globalObject, runtime(globalObject).classmethodType(), jsUndefined());
+    return wrapperSetCallable(globalObject, wrapper, function) ? JSValue(wrapper) : JSValue();
+}
+
+// Both __new__ and __init__ take the function.
+template<bool isStatic>
+static bool wrapperCheckArguments(JSGlobalObject* globalObject, const CallArgs& args)
+{
+    constexpr ASCIILiteral name = isStatic ? "staticmethod"_s : "classmethod"_s;
+    return rejectKeywords(globalObject, name, args) && checkPositional(globalObject, name, args, 1, 1);
+}
+
+template<bool isStatic>
+static JSValue wrapperNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs& args)
+{
+    if (!wrapperCheckArguments<isStatic>(globalObject, args))
+        return { };
+    auto* wrapper = PyWrapperObject::create(globalObject, PyType::from(cls), jsUndefined());
+    return wrapperSetCallable(globalObject, wrapper, args[0]) ? JSValue(wrapper) : JSValue();
+}
+
+template<bool isStatic>
+static JSValue wrapperInit(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
+{
+    if (!wrapperCheckArguments<isStatic>(globalObject, args))
+        return { };
+    return wrapperSetCallable(globalObject, PyWrapperObject::from(self), args[0]) ? jsUndefined() : JSValue();
 }
 
 static JSValue classmethodGet(JSGlobalObject* globalObject, JSValue self, JSValue instance, JSValue owner)
@@ -341,15 +388,18 @@ static JSValue wrapperRepr(JSGlobalObject* globalObject, JSValue self)
 static JSValue wrapperGetWrapped(JSGlobalObject*, JSValue self) { return PyWrapperObject::from(self)->wrapped(); }
 static JSValue wrapperGetIsAbstract(JSGlobalObject* globalObject, JSValue self) { return anyIsAbstract(globalObject, { PyWrapperObject::from(self)->wrapped() }); }
 
-// __annotations__ and __annotate__ are those of what is wrapped, unless they have been set.
+// __annotations__ and __annotate__ are those of what is wrapped, unless they have been set. Once asked for, they are kept.
 static JSValue wrapperGetFromWrapped(JSGlobalObject* globalObject, JSValue self, JSString* name)
 {
-    auto* wrapper = PyWrapperObject::from(self);
-    if (PyDict* dict = wrapper->dict()) {
-        if (JSValue value = dict->get(name))
-            return value;
-    }
-    return getAttr(globalObject, wrapper->wrapped(), name);
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PyDict* dict = instanceDict(globalObject, self, true);
+    if (JSValue value = dict->get(name))
+        return value;
+    JSValue value = getAttr(globalObject, PyWrapperObject::from(self)->wrapped(), name);
+    RETURN_IF_EXCEPTION(scope, { });
+    dict->set(vm, name, value);
+    return value;
 }
 
 static void wrapperSetInDict(JSGlobalObject* globalObject, JSValue self, JSString* name, JSValue value)
@@ -360,8 +410,10 @@ static void wrapperSetInDict(JSGlobalObject* globalObject, JSValue self, JSStrin
     PyDict* dict = instanceDict(globalObject, self, true);
     if (value)
         dict->set(vm, name, value);
-    else if (!dict->remove(vm, name))
-        raise(globalObject, scope, rt.AttributeError(), stringOf(name));
+    else if (!dict->remove(vm, name)) {
+        bool isStatic = rt.typeOf(self)->isSubtypeOf(rt.staticmethodType());
+        raise(globalObject, scope, rt.AttributeError(), makeString('\'', isStatic ? "staticmethod"_s : "classmethod"_s, "' object has no attribute '"_s, stringOf(name), '\''));
+    }
 }
 
 static JSValue wrapperGetAnnotations(JSGlobalObject* globalObject, JSValue self) { return wrapperGetFromWrapped(globalObject, self, runtime(globalObject).names.dAnnotations()); }
@@ -370,16 +422,16 @@ static JSValue wrapperGetAnnotate(JSGlobalObject* globalObject, JSValue self) { 
 static void wrapperSetAnnotate(JSGlobalObject* globalObject, JSValue self, JSValue value) { wrapperSetInDict(globalObject, self, runtime(globalObject).names.dAnnotate(), value); }
 
 static constexpr NativeDef classmethodMethods[] = {
-    PY_NEW(wrapperNew, "($type, *args, **kwargs)"),
-    PY_SLOT("__init__", wrapperInit, "($self, function, /)"),
+    PY_NEW(wrapperNew<false>, "($type, *args, **kwargs)"),
+    PY_SLOT("__init__", wrapperInit<false>, "($self, *args, **kwargs)"),
     PY_SLOT("__get__", classmethodGet, "($self, instance, owner=None, /)"),
     PY_SLOT("__repr__", wrapperRepr, "($self, /)"),
     PY_CLASSMETHOD("__class_getitem__", classGetItem, "($type, object, /)"),
 };
 
 static constexpr NativeDef staticmethodMethods[] = {
-    PY_NEW(wrapperNew, "($type, *args, **kwargs)"),
-    PY_SLOT("__init__", wrapperInit, "($self, function, /)"),
+    PY_NEW(wrapperNew<true>, "($type, *args, **kwargs)"),
+    PY_SLOT("__init__", wrapperInit<true>, "($self, *args, **kwargs)"),
     PY_SLOT("__get__", staticmethodGet, "($self, instance, owner=None, /)"),
     PY_SLOT("__call__", staticmethodCall, "($self, *args, **kwargs)"),
     PY_SLOT("__repr__", wrapperRepr, "($self, /)"),
@@ -446,7 +498,21 @@ static JSValue mappingProxyRepr(JSGlobalObject* globalObject, JSValue self)
 }
 
 template<CompareOperator op>
-static JSValue mappingProxyCompare(JSGlobalObject* globalObject, JSValue self, JSValue other) { return richCompare(globalObject, proxied(self), other, op); }
+static JSValue mappingProxyCompare(JSGlobalObject* globalObject, JSValue self, JSValue other)
+{
+    Runtime& rt = runtime(globalObject);
+    if constexpr (op != CompareOperator::Eq && op != CompareOperator::NotEq)
+        return rt.notImplemented();
+    JSValue mapping = proxied(self);
+    // The __eq__ of the other gets to see what it is compared with. A dict that the proxy is there to protect (the namespace of a
+    // class, for one) must not get out that way: what gets out is a copy.
+    if (auto* dict = PyDict::tryFrom(mapping); dict && dict->type() == rt.dictType()) {
+        PyType* otherType = rt.typeOf(other);
+        if (otherType != rt.dictType() && otherType != rt.frozendictType() && otherType != rt.mappingProxyType() && otherType != orderedDictType(globalObject))
+            mapping = dict->copy(globalObject);
+    }
+    return richCompare(globalObject, mapping, other, op);
+}
 
 static JSValue mappingProxyHash(JSGlobalObject* globalObject, JSValue self)
 {

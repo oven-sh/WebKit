@@ -7,6 +7,7 @@
 #include "PyModule.h"
 
 #include "JSCInlines.h"
+#include "JSWeakMapInlines.h"
 #include "PyAbstract.h"
 #include "PyCodeCache.h"
 #include "PyCommandLine.h"
@@ -26,10 +27,6 @@ namespace JSC {
 namespace Python {
 
 // The import statement. (Python/import.c and Lib/importlib/_bootstrap.py in CPython are the reference.)
-//
-// FIXME: Finding and loading is done here, for modules written in C++ and for source files on sys.path. It is to be handed
-// over to importlib, unchanged, once the modules importlib itself needs are there; until then modules have no __spec__,
-// and sys.meta_path and sys.path_hooks are not consulted.
 
 // ---- Modules written in C++ ----
 
@@ -292,7 +289,7 @@ static JSValue importModuleOrNone(JSGlobalObject*, JSString* name, bool missingI
 // from then on only serves to find them. Without a standard library it remains the import system.
 
 // Empty without an exception: there is no such file.
-static JSValue loadFrozenModule(JSGlobalObject* globalObject, ASCIILiteral nameText, ASCIILiteral fileName, ASCIILiteral shownFileName)
+static JSValue loadFrozenModule(JSGlobalObject* globalObject, ASCIILiteral nameText, ASCIILiteral fileName, ASCIILiteral originalName)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
@@ -310,12 +307,14 @@ static JSValue loadFrozenModule(JSGlobalObject* globalObject, ASCIILiteral nameT
         String directory = strValue(entry)->value(globalObject);
         RETURN_IF_EXCEPTION(scope, { });
         // Tracebacks and warnings know the frames of the import system by the name that is shown.
-        JSValue code = codeOfSourceFile(globalObject, FileSystem::pathByAppendingComponent(FileSystem::pathByAppendingComponent(directory, "importlib"_s), fileName), shownFileName);
+        JSValue code = codeOfSourceFile(globalObject, FileSystem::pathByAppendingComponent(FileSystem::pathByAppendingComponent(directory, "importlib"_s), fileName), makeString("<frozen "_s, originalName, '>'));
         RETURN_IF_EXCEPTION(scope, { });
         if (!code)
             continue;
         PyModule* module = PyModule::create(globalObject, name);
         module->dict()->set(vm, rt.names.dPackage(), rt.names.empty());
+        // For FrozenImporter._fix_up_module(), which makes the __spec__ of a frozen module that was loaded without it.
+        module->dict()->set(vm, internString(vm, "__origname__"_s), makeStr(vm, originalName));
         rt.modules()->set(vm, name, module);
         runCode(globalObject, code, module->dict(), module->dict());
         if (scope.exception()) {
@@ -334,7 +333,7 @@ static JSValue loadImportlibBootstrap(JSGlobalObject* globalObject, JSString* na
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue imp = importModule(globalObject, "_imp"_s);
     RETURN_IF_EXCEPTION(scope, { });
-    JSValue module = loadFrozenModule(globalObject, "_frozen_importlib"_s, "_bootstrap.py"_s, "<frozen importlib._bootstrap>"_s);
+    JSValue module = loadFrozenModule(globalObject, "_frozen_importlib"_s, "_bootstrap.py"_s, "importlib._bootstrap"_s);
     RETURN_IF_EXCEPTION(scope, { });
     if (!module)
         return { };
@@ -355,15 +354,13 @@ static void installImportlib(JSGlobalObject* globalObject)
     RETURN_IF_EXCEPTION(scope, void());
     if (isNone(bootstrap))
         return;
-    JSValue external = loadFrozenModule(globalObject, "_frozen_importlib_external"_s, "_bootstrap_external.py"_s, "<frozen importlib._bootstrap_external>"_s);
-    RETURN_IF_EXCEPTION(scope, void());
-    if (!external)
-        return;
-    callMethod(globalObject, bootstrap, internString(vm, "_install_external_importers"_s));
-    RETURN_IF_EXCEPTION(scope, void());
+    // From here on importlib does the importing: first of its other half, which is a frozen module (PyImp.cpp).
     JSValue findAndLoad = getAttr(globalObject, bootstrap, internString(vm, "_find_and_load"_s));
     RETURN_IF_EXCEPTION(scope, void());
     rt.setSlot(Runtime::Slot::FindAndLoad, findAndLoad);
+    callMethod(globalObject, bootstrap, internString(vm, "_install_external_importers"_s));
+    if (scope.exception()) [[unlikely]]
+        rt.setSlot(Runtime::Slot::FindAndLoad, JSValue());
 }
 
 static ASCIILiteral s_importSystemModule;
@@ -650,6 +647,9 @@ static void handleFromList(JSGlobalObject* globalObject, JSValue module, JSValue
         JSValue missing = PyException::from(pendingException(globalObject))->field(ExceptionField::importErrorName);
         if (!missing || !isStr(missing) || !WTF::equal(strValue(missing)->tryGetValueImpl(), fullName->tryGetValueImpl()))
             return false;
+        // None in sys.modules: it is not to be imported, which is something else.
+        if (JSValue blocked = rt.modules()->get(fullName); blocked && isNone(blocked))
+            return false;
         takePendingException(globalObject);
         return true;
     });
@@ -744,18 +744,47 @@ JSValue importFrom(JSGlobalObject* globalObject, JSValue module, JSString* name)
             return submodule;
     }
 
-    String shownName = moduleText.isNull() ? "<unknown module name>"_str : moduleText;
-    JSValue file = getAttrIfPresent(globalObject, module, rt.names.dFile());
+    if (moduleText.isNull())
+        moduleName = { };
+    String shownName = strRepr(moduleText.isNull() ? "<unknown module name>"_str : moduleText);
+    String start = makeString("cannot import name "_s, strRepr(stringOf(name)), " from "_s);
+    JSValue spec = getAttrIfPresent(globalObject, module, rt.names.dSpec());
     RETURN_IF_EXCEPTION(scope, { });
-    String location = "unknown location"_s;
-    if (file && isStr(file)) {
-        location = strValue(file)->value(globalObject);
-        RETURN_IF_EXCEPTION(scope, { });
+    ModuleDiagnosis diagnosis;
+    String message;
+    if (!spec)
+        message = makeString(start, shownName, " (unknown location)"_s);
+    else {
+        if (!diagnoseModule(globalObject, spec, moduleName ? moduleName : JSValue(makeStr(vm, "<unknown module name>"_s)), diagnosis))
+            return { };
+        if (auto* object = PyModule::tryFrom(module); object && !diagnosis.origin) {
+            if (JSValue file = object->dict()->get(rt.names.dFile()); file && isStr(file))
+                diagnosis.origin = file;
+        }
+        String origin;
+        if (diagnosis.origin) {
+            origin = strValue(diagnosis.origin)->value(globalObject);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
+        if (diagnosis.hidesStandardLibrary)
+            message = makeString(start, shownName, " (consider renaming "_s, strRepr(origin), " since it has the same name as the standard library module named "_s, shownName, " and prevents importing that standard library module)"_s);
+        else {
+            JSValue isInitializingValue = getAttrIfPresent(globalObject, spec, internString(vm, "_initializing"_s));
+            RETURN_IF_EXCEPTION(scope, { });
+            bool isInitializing = isInitializingValue && isTrue(globalObject, isInitializingValue);
+            RETURN_IF_EXCEPTION(scope, { });
+            if (isInitializing && diagnosis.mayHideAnother)
+                message = makeString(start, shownName, " (consider renaming "_s, strRepr(origin), " if it has the same name as a library you intended to import)"_s);
+            else if (isInitializing)
+                message = makeString(start, "partially initialized module "_s, shownName, " (most likely due to a circular import)"_s, origin.isNull() ? ""_s : " ("_s, origin, origin.isNull() ? ""_s : ")"_s);
+            else
+                message = makeString(start, shownName, " ("_s, origin.isNull() ? "unknown location"_str : origin, ')');
+        }
     }
-    PyException* exception = newException(globalObject, rt.ImportError(), makeString("cannot import name "_s, strRepr(stringOf(name)), " from "_s, strRepr(shownName), " ("_s, location, ')'));
+    PyException* exception = newException(globalObject, rt.ImportError(), message);
     RETURN_IF_EXCEPTION(scope, { });
     exception->setField(vm, ExceptionField::importErrorName, moduleName ? moduleName : jsUndefined());
-    exception->setField(vm, ExceptionField::importErrorPath, file ? file : jsUndefined());
+    exception->setField(vm, ExceptionField::importErrorPath, diagnosis.origin ? diagnosis.origin : jsUndefined());
     exception->setField(vm, ExceptionField::importErrorNameFrom, name);
     return raiseException(globalObject, scope, exception);
 }
@@ -836,8 +865,7 @@ enum LazyImportField : unsigned {
     LazyImportSource, // The name of the module, or the placeholder this is an attribute of.
     LazyImportAttribute, // Of a root: the `from` list, a tuple, or empty. Of a projection: the name.
     LazyImportFunction, // The code the statement is in, or empty. The `number` of the record is the line.
-    LazyImportIsBeingResolved, // Empty: no. So for the next.
-    LazyImportIsActive, // Of the root of `import a.b`: a has been used, so a.b is to behave as if it had been imported.
+    LazyImportIsActive, // Of the root of `import a.b`: a has been used, so a.b is to behave as if it had been imported. Empty: no.
     LazyImportFieldCount
 };
 
@@ -848,7 +876,14 @@ PyRecord* asLazyImportSlow(JSGlobalObject* globalObject, JSCell* cell)
     return PyRecord::tryFrom(cell, lazyImportType(globalObject));
 }
 
-bool lazyImportIsBeingResolved(PyRecord* lazy) { return !!lazy->get(LazyImportIsBeingResolved); }
+// By this thread, that is: to come upon it again is to have gone round in a circle. Another thread may well be resolving it at the
+// same time, and both get what they want, because importlib imports a module once. So what a thread is resolving is kept with
+// what else is the thread's own.
+bool lazyImportIsBeingResolved(PyRecord* lazy)
+{
+    JSValue map = lazy->structure()->realm()->pythonRuntime()->threadLocals();
+    return map && map.isCell() && uncheckedDowncast<JSWeakMap>(map.asCell())->has(lazy);
+}
 
 static PyRecord* lazyImportSource(JSGlobalObject* globalObject, PyRecord* lazy) { return asLazyImport(globalObject, lazy->get(LazyImportSource)); }
 
@@ -954,12 +989,21 @@ static PyDict* lazyPendingSubmodules(JSGlobalObject* globalObject)
 // Adds the name to sys.lazy_modules, unless the module is there already. `existing`: what sys.modules has for it.
 static void addToLazyModules(JSGlobalObject* globalObject, JSString* name, JSValue* existing = nullptr)
 {
-    JSValue module = runtime(globalObject).modules()->get(name);
+    Runtime& rt = runtime(globalObject);
+    JSValue module = rt.modules()->get(name);
     if (existing)
         *existing = module;
-    if (module && !isNone(module) && !moduleIsInitializing(globalObject, module))
-        return;
-    lazyModules(globalObject)->add(globalObject, name);
+    bool isLoaded = module && !isNone(module);
+    if (auto* object = isLoaded ? PyModule::tryFrom(module) : nullptr) {
+        // Nothing of the program's is to run here. A spec that does not say in the usual way that it is done is taken not to be.
+        if (JSValue spec = object->dict()->get(rt.names.dSpec()); spec && !isNone(spec)) {
+            auto* instance = PyInstance::tryFrom(spec);
+            JSValue isInitializing = instance ? instance->getAttribute(rt.vm(), internString(rt.vm(), "_initializing"_s)) : JSValue();
+            isLoaded = instance && (!isInitializing || isInitializing == jsBoolean(false));
+        }
+    }
+    if (!isLoaded)
+        lazyModules(globalObject)->add(globalObject, name);
 }
 
 // Using the a of `lazy import a.b.c` imports a alone; a.b is imported when that attribute of a is first asked for and found
@@ -1298,9 +1342,11 @@ static JSValue resolveLazyImport(JSGlobalObject* globalObject, PyRecord* lazy, J
     }
     if (!rt.tryEnterFrame())
         return { };
-    lazy->set(vm, LazyImportIsBeingResolved, jsBoolean(true));
+    if (!rt.threadLocals() || !rt.threadLocals().isCell())
+        rt.setThreadLocals(JSWeakMap::create(vm, globalObject->weakMapStructure()));
+    uncheckedDowncast<JSWeakMap>(rt.threadLocals().asCell())->set(vm, lazy, jsBoolean(true));
     JSValue result = carryOutLazyImport(globalObject, lazy, importedModule);
-    lazy->set(vm, LazyImportIsBeingResolved, { });
+    uncheckedDowncast<JSWeakMap>(rt.threadLocals().asCell())->remove(lazy);
     rt.leaveFrame();
     if (scope.exception()) {
         addLazyImportToPendingException(globalObject, lazy);

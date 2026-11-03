@@ -134,6 +134,7 @@ void Label::setLocation(BytecodeGenerator& generator, unsigned location)
         CASE(OpPyJtrue)
         CASE(OpPyJfalse)
         CASE(OpPyForIter)
+        CASE(OpPySend)
         CASE(OpPyJeq)
         CASE(OpPyJne)
         CASE(OpPyJlt)
@@ -1068,15 +1069,10 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, PythonCodeNode* node, UnlinkedFunct
     RELEASE_ASSERT(frameObject->virtualRegister() == Python::frameObjectRegister());
 
     if (node->isGeneratorBody()) {
-        // As for a JS generator: the registers that are live across a yield are kept in an environment, the frame.
+        // As for a JS generator, but that the registers that are live across a yield are kept in the generator itself.
         ASSERT(node->parameterCount() == static_cast<unsigned>(JSGenerator::Argument::Frame));
         m_needsGeneratorification = true;
         m_generatorRegister = &m_parameters[static_cast<unsigned>(JSGenerator::Argument::Generator)];
-        SymbolTable* frameSymbolTable = SymbolTable::create(m_vm);
-        m_generatorFrameSymbolTable.set(m_vm, frameSymbolTable);
-        m_generatorFrameSymbolTableIndex = addConstantValue(frameSymbolTable)->index();
-        OpCreateGeneratorFrameEnvironment::emit(this, generatorFrameRegister(), scopeRegister(), VirtualRegister { m_generatorFrameSymbolTableIndex }, addConstantValue(jsUndefined()));
-        emitPutInternalField(generatorRegister(), Python::generatorFrameField, generatorFrameRegister());
     }
     m_firstPythonVariable = m_calleeLocals.size();
 }
@@ -1086,7 +1082,9 @@ ParserError BytecodeGenerator::generatePython(VM& vm, PythonCodeNode* node, Unli
     DeferGC deferGC(vm);
     auto generator = makeUnique<BytecodeGenerator>(vm, node, codeBlock);
     unsigned size;
-    return generator->generate(size);
+    ParserError error = generator->generate(size);
+    node->setGeneratorSlotCount(generator->m_pythonGeneratorSlotCount);
+    return error;
 }
 
 Vector<TryContext> BytecodeGenerator::suspendTryContexts(size_t depth)
@@ -1391,9 +1389,29 @@ RegisterID* BytecodeGenerator::emitPyGetIter(RegisterID* dst, RegisterID* iterab
     return dst;
 }
 
+// Where the frame of the body of a generator goes, for an instruction that calls it: after everything that is in use.
+unsigned BytecodeGenerator::stackOffsetForGeneratorBody()
+{
+    CallArguments arguments(*this, nullptr, static_cast<unsigned>(JSGenerator::Argument::Frame));
+    Vector<RefPtr<RegisterID>, CallFrame::headerSizeInRegisters, UnsafeVectorOverflow> callFrame;
+    for (int i = 0; i < CallFrame::headerSizeInRegisters; ++i)
+        callFrame.append(newTemporary());
+    return arguments.stackOffset();
+}
+
 void BytecodeGenerator::emitPyForIter(RegisterID* dst, RegisterID* iterator, Label& exhausted)
 {
-    OpPyForIter::emit(this, dst, iterator, bindLabel(exhausted));
+    OpPyForIter::emit(this, dst, iterator, bindLabel(exhausted), stackOffsetForGeneratorBody());
+}
+
+void BytecodeGenerator::emitPyRestoreRegisters(RegisterID* first, unsigned count, unsigned offset)
+{
+    OpPyGeneratorRegisters::emit(this, first, count, offset, false);
+}
+
+void BytecodeGenerator::emitPySend(RegisterID* dst, RegisterID* iterator, RegisterID* value, RegisterID* mode, Label& returned)
+{
+    OpPySend::emit(this, dst, iterator, value, mode, bindLabel(returned), stackOffsetForGeneratorBody());
 }
 
 void BytecodeGenerator::emitPyUnpack(RegisterID* argv, RegisterID* iterable, unsigned before, int after)
@@ -1447,7 +1465,6 @@ void BytecodeGenerator::emitPythonYieldPoint(RegisterID* argument)
 {
     Ref<Label> mergePoint = newLabel();
     unsigned yieldPointIndex = m_yieldPoints++;
-    emitPutInternalField(generatorRegister(), Python::generatorStateField, emitLoad(nullptr, jsNumber(yieldPointIndex + 1)));
 
     // No try block covers the instructions that save and restore the registers.
     Ref<Label> savePoint = newEmittedLabel();
@@ -1456,6 +1473,9 @@ void BytecodeGenerator::emitPythonYieldPoint(RegisterID* argument)
         m_tryRanges.append(TryRange { context.start.copyRef(), savePoint.copyRef(), context.tryData });
         context.start = mergePoint.get();
     }
+    // BytecodeGeneratorification puts what saves the registers in the place of the first and what restores them in the place of the
+    // second. They are two because what jumps here has to find the one, and what resumes the generator the other.
+    OpNop::emit(this);
     OpYield::emit(this, yieldPointIndex, argument);
     emitLabel(mergePoint.get());
 }
@@ -4682,10 +4702,12 @@ RegisterID* BytecodeGenerator::emitReturn(RegisterID* src)
         }
     }
 
-    // The body of a generator returns to PyGenerator::resume().
-    if (m_codeBlock->isPython() && !m_needsGeneratorification)
-        OpPyRet::emit(this, src);
-    else
+    if (m_codeBlock->isPython()) {
+        if (m_needsGeneratorification)
+            OpPyGeneratorReturn::emit(this, src);
+        else
+            OpPyRet::emit(this, src);
+    } else
         OpRet::emit(this, src);
     return src;
 }

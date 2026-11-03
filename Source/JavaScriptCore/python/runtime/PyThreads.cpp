@@ -13,6 +13,7 @@
 #include "PyHooks.h"
 #include "PyInternals.h"
 #include "PyMonitoring.h"
+#include "TopExceptionScope.h"
 #include "VMTrapsInlines.h"
 #include <wtf/Threading.h>
 
@@ -457,6 +458,27 @@ void Threads::collectWhileIdle(JSGlobalObject* globalObject)
     m_bytesAllocatedAtIdleCollection = m_vm.heap.totalBytesAllocated();
 }
 
+NEVER_INLINE void Threads::willCallFunctionThatMayWait(CallFrame* callFrame)
+{
+    // The first may be the object whose method it is.
+    for (unsigned i = 1; i < callFrame->argumentCount(); ++i) {
+        if (callFrame->uncheckedArgument(i).isCell())
+            callFrame = nullptr;
+        if (!callFrame)
+            break;
+    }
+    current().callThatMayBeginAgain = callFrame;
+}
+
+NEVER_INLINE bool Threads::takeRequestToCallAgain(JSGlobalObject*)
+{
+    if (!std::exchange(current().wantsCallToBeginAgain, false))
+        return false;
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(m_vm);
+    scope.clearException();
+    return true;
+}
+
 bool Threads::waitUntil(JSGlobalObject* globalObject, const void* address, int64_t timeout, ASCIILiteral whatIsWaitedFor, ASCIILiteral whatCannotBeDone, const ScopedLambda<bool()>& isOver)
 {
     VM& vm = m_vm;
@@ -465,6 +487,11 @@ bool Threads::waitUntil(JSGlobalObject* globalObject, const void* address, int64
         return true;
     if (!timeout)
         return false;
+    if (CallFrame* call = std::exchange(current().callThatMayBeginAgain, nullptr); call && call == vm.topCallFrame) {
+        current().wantsCallToBeginAgain = true;
+        throwException(globalObject, scope, Exception::create(vm, jsNull(), Exception::StackCaptureAction::DoNotCaptureStack));
+        return false;
+    }
     if (isFinalized()) {
         // The other threads never run again.
         raise(globalObject, scope, runtime(globalObject).PythonFinalizationError(), makeString("cannot "_s, whatCannotBeDone));
@@ -481,6 +508,11 @@ bool Threads::waitUntil(JSGlobalObject* globalObject, const void* address, int64
     ThreadState& thread = current();
     while (true) {
         if (timeout < 0 && !m_runningCount && !signalMayBeHandled(globalObject)) {
+            // Unless it is a finalizer that brings about what is waited for, which in CPython would have run by now.
+            collectWhileIdle(globalObject);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (isOver())
+                return true;
             // CPython would hang until it is interrupted from the keyboard.
             raiseRuntimeError(globalObject, scope, "deadlock: "_s, whatIsWaitedFor, ", and there is no other thread"_s);
             return false;

@@ -121,8 +121,8 @@ static JSValue simpleQueueQSize(JSGlobalObject*, JSValue self) { return jsNumber
 static constexpr NativeDef simpleQueueMethods[] = {
     PY_NEW(simpleQueueNew, "($type, *args, **kwargs)"),
     PY_METHOD("empty", simpleQueueEmpty, "($self, /)"),
-    PY_METHOD("get", simpleQueueGet, "($self, /, block=True, timeout=None)"),
-    PY_METHOD("get_nowait", simpleQueueGetNoWait, "($self, *args, **kwargs)"),
+    PY_WAITING_METHOD("get", simpleQueueGet, "($self, /, block=True, timeout=None)"),
+    PY_METHOD("get_nowait", simpleQueueGetNoWait, "!($self, /)"),
     PY_METHOD("put", simpleQueuePut, "($self, /, item, block=True, timeout=None)"),
     PY_METHOD("put_nowait", simpleQueuePutNoWait, "($self, /, item)"),
     PY_METHOD("qsize", simpleQueueQSize, "($self, /)"),

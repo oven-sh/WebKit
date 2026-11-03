@@ -371,12 +371,28 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_set_attr)
     END();
 }
 
+static JSValue loadSpecialForWith(JSGlobalObject*, JSValue object, SpecialMethodForWith, JSValue& self, AttributeCache&);
+
 JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_get_method)
 {
     BEGIN();
     auto bytecode = pc->as<OpPyGetMethod>();
     JSValue self;
     JSValue base = GET_C(bytecode.m_base).jsValue();
+    if (JSValue which = GET_C(bytecode.m_name).jsValue(); which.isInt32()) [[unlikely]] {
+        AttributeCache cache;
+        JSValue method = loadSpecialForWith(globalObject, base, static_cast<SpecialMethodForWith>(which.asInt32()), self, cache);
+        CHECK_EXCEPTION();
+        auto& metadata = bytecode.metadata(codeBlock);
+        metadata.m_payload = cache.payload;
+        metadata.m_structureID = cache.structureID;
+        metadata.m_typeVersion = cache.typeVersion;
+        metadata.m_offset = cache.offset;
+        metadata.m_jsType = cache.jsType;
+        GET(bytecode.m_self) = self;
+        GET(bytecode.m_dst) = method;
+        END_IMPL();
+    }
     JSString* name = asString(GET_C(bytecode.m_name).jsValue());
     JSValue method = getMethod(globalObject, base, name, self);
     CHECK_EXCEPTION();
@@ -526,6 +542,78 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_for_iter)
     if (item)
         GET(bytecode.m_dst) = item;
     JUMP_IF(!item);
+}
+
+JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_send)
+{
+    BEGIN();
+    auto bytecode = pc->as<OpPySend>();
+    int mode = GET(bytecode.m_mode).jsValue().asInt32();
+    if (mode >= firstSendOfAwait) {
+        JSValue iterator = getAwaitable(globalObject, GET(bytecode.m_iterator).jsValue(), mode - firstSendOfAwait);
+        CHECK_EXCEPTION();
+        GET(bytecode.m_iterator) = iterator;
+        mode = static_cast<int>(JSGenerator::ResumeMode::NormalMode);
+    }
+    JSValue yielded = sendToDelegate(globalObject, GET(bytecode.m_iterator).jsValue(), GET(bytecode.m_value).jsValue(), static_cast<JSGenerator::ResumeMode>(mode));
+    CHECK_EXCEPTION();
+    GET(bytecode.m_dst) = yielded ? yielded : runtime(globalObject).takeSendResult();
+    JUMP_IF(!yielded);
+}
+
+// ---- The body of a generator: see PyGenerator::resume() ----
+
+static_assert(static_cast<int>(JSGenerator::Argument::NumberOfArguments) + 1 == 6); // pyResumeGenerator in LowLevelInterpreter64.asm
+
+static ALWAYS_INLINE PyGenerator* generatorOf(CallFrame* callFrame)
+{
+    return uncheckedDowncast<PyGenerator>(callFrame->uncheckedArgument(0).asCell());
+}
+
+JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_generator_enter)
+{
+    BEGIN();
+    PyGenerator* generator = generatorOf(callFrame);
+    int32_t state = generator->state();
+    generator->enterBody(globalObject);
+    CHECK_EXCEPTION();
+    pc = state ? codeBlock->instructions().at(state).ptr() : reinterpret_cast<const JSInstruction*>(reinterpret_cast<const uint8_t*>(pc) + pc->size());
+    END_IMPL();
+}
+
+JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_generator_suspend)
+{
+    BEGIN();
+    auto bytecode = pc->as<OpPyGeneratorSuspend>();
+    PyGenerator* generator = generatorOf(callFrame);
+    for (unsigned i = 0; i < bytecode.m_count; ++i)
+        generator->setSlot(vm, bytecode.m_offset + i, GET(VirtualRegister(bytecode.m_first.offset() - static_cast<int>(i))).jsValue());
+    // For what the op_py_generator_registers before this one have stored, which the interpreter does without.
+    vm.writeBarrier(generator);
+    generator->suspendBody(globalObject, codeBlock->bytecodeOffset(pc) + pc->size());
+    END_IMPL();
+}
+
+JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_generator_return)
+{
+    BEGIN();
+    runtime(globalObject).frameIsEnding(callFrame);
+    generatorOf(callFrame)->returnFromBody(globalObject);
+    END_IMPL();
+}
+
+JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_generator_registers)
+{
+    BEGIN();
+    auto bytecode = pc->as<OpPyGeneratorRegisters>();
+    PyGenerator* generator = generatorOf(callFrame);
+    for (unsigned i = 0; i < bytecode.m_count; ++i) {
+        Register& reg = GET(VirtualRegister(bytecode.m_first.offset() - static_cast<int>(i)));
+        if (!bytecode.m_isSave)
+            reg = generator->slot(bytecode.m_offset + i);
+        generator->setSlot(vm, bytecode.m_offset + i, bytecode.m_isSave ? reg.jsValue() : JSValue());
+    }
+    END_IMPL();
 }
 
 static void unpackIterable(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue iterable, VirtualRegister first, unsigned before, int after)
@@ -702,17 +790,19 @@ static JSValue makeFunction(JSGlobalObject* globalObject, CallFrame* callFrame, 
 }
 
 // What the body starts with: the values of the parameters, and then `extra` if there is one.
-static JSValue makeGenerator(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue extra)
+static JSValue makeGenerator(JSGlobalObject* globalObject, CallFrame* callFrame, unsigned slotCount, JSValue extra)
 {
+    VM& vm = getVM(globalObject);
     PyFunction* function = calleeOf(callFrame);
     CodeInfo& info = function->codeInfo();
     unsigned count = info.takesNamespace ? 1 : info.parameterCount();
-    PyTuple* arguments = PyTuple::create(globalObject, count + !!extra);
+    ASSERT(count + !!extra <= slotCount);
+    PyGenerator* generator = PyGenerator::create(globalObject, function, function->generatorBody(globalObject, callFrame->codeBlock()), slotCount);
     for (unsigned i = 0; i < count; ++i)
-        arguments->initializeAt(getVM(globalObject), i, callFrame->r(virtualRegisterForArgumentIncludingThis(i + 1)).jsValue()); // There may be fewer arguments than parameters.
+        generator->setSlot(vm, i, callFrame->r(virtualRegisterForArgumentIncludingThis(i + 1)).jsValue()); // There may be fewer arguments than parameters.
     if (extra)
-        arguments->initializeAt(getVM(globalObject), count, extra);
-    return PyGenerator::create(globalObject, function, function->generatorBody(globalObject, callFrame->codeBlock()), arguments);
+        generator->setSlot(vm, count, extra);
+    return generator;
 }
 
 // callee(*args, **kwargs): the arguments in an array, as op_call_varargs takes them. The names of the keywords are set aside.
@@ -809,17 +899,20 @@ static JSValue importNameForInstruction(JSGlobalObject* globalObject, CallFrame*
     RELEASE_AND_RETURN(scope, call(globalObject, importFunction, name, function->globals(), locals, fromList, level));
 }
 
-static JSValue loadSpecialForWith(JSGlobalObject* globalObject, JSValue object, SpecialMethodForWith which)
+static JSValue loadSpecialForWith(JSGlobalObject* globalObject, JSValue object, SpecialMethodForWith which, JSValue& self, AttributeCache& cache)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     static constexpr Special specials[] = { Special::Enter, Special::Exit, Special::AEnter, Special::AExit };
     Special special = specials[static_cast<unsigned>(which)];
-    JSValue method = lookupSpecial(globalObject, object, special);
+    JSValue method = getSpecialMethod(globalObject, object, special, self);
     RETURN_IF_EXCEPTION(scope, { });
-    if (method)
+    if (method) {
+        if (!describeSpecialMethod(globalObject, object, special, cache))
+            cache = { };
         return method;
+    }
 
     PyType* type = rt.typeOf(object);
     bool isAsync = which == SpecialMethodForWith::AEnter || which == SpecialMethodForWith::AExit;
@@ -971,7 +1064,10 @@ static JSValue runRuntimeFunction(JSGlobalObject* globalObject, CallFrame* callF
         return set;
     }
     case RuntimeFunction::BuildMap: {
-        PyDict* dict = PyDict::createWithCapacity(globalObject, args.size() / 2);
+        bool onlyStringKeys = true;
+        for (unsigned i = 0; i + 1 < args.size(); i += 2)
+            onlyStringKeys &= args[i].isString();
+        PyDict* dict = PyDict::createWithCapacity(globalObject, args.size() / 2, onlyStringKeys);
         for (unsigned i = 0; i + 1 < args.size(); i += 2) {
             dict->set(globalObject, args[i], args[i + 1]);
             RETURN_IF_EXCEPTION(scope, { });
@@ -1018,8 +1114,10 @@ static JSValue runRuntimeFunction(JSGlobalObject* globalObject, CallFrame* callF
             JSValue original = takePendingException(globalObject);
             bool hasKeys = hasAttr(globalObject, args[1], rt.names.keys());
             RETURN_IF_EXCEPTION(scope, { });
-            if (hasKeys)
-                return raiseException(globalObject, scope, original);
+            if (hasKeys) {
+                throwPythonException(globalObject, scope, original);
+                return { };
+            }
             return raiseTypeError(globalObject, scope, '\'', typeNameForMessage(globalObject, rt.typeOf(args[1])), "' object is not a mapping"_s);
         }
         return jsUndefined();
@@ -1110,7 +1208,7 @@ static JSValue runRuntimeFunction(JSGlobalObject* globalObject, CallFrame* callF
         PyFunction::from(args[0])->setTypeParams(vm, args[1]);
         return args[0];
     case RuntimeFunction::MakeGenerator:
-        return makeGenerator(globalObject, callFrame, args.size() ? args[0] : JSValue());
+        return makeGenerator(globalObject, callFrame, args[0].asInt32(), args.size() > 1 ? args[1] : JSValue());
     case RuntimeFunction::CallArguments:
         RELEASE_AND_RETURN(scope, callArguments(globalObject, args[0], args[1], args[2]));
     case RuntimeFunction::TakeKeywordNames:
@@ -1155,19 +1253,19 @@ static JSValue runRuntimeFunction(JSGlobalObject* globalObject, CallFrame* callF
         RELEASE_AND_RETURN(scope, prepareReraiseStar(globalObject, args[0], args[1]));
 
     // ---- with ----
-    case RuntimeFunction::LoadSpecial:
-        RELEASE_AND_RETURN(scope, loadSpecialForWith(globalObject, args[0], static_cast<SpecialMethodForWith>(args[1].asInt32())));
     case RuntimeFunction::WithExit: {
-        JSValue exception = args[1];
+        JSValue exception = args[2];
         JSValue traceback = PyException::from(exception)->traceback();
-        RELEASE_AND_RETURN(scope, call(globalObject, args[0], rt.typeOf(exception), exception, traceback ? traceback : jsUndefined()));
+        if (!traceback)
+            traceback = jsUndefined();
+        if (args[1])
+            RELEASE_AND_RETURN(scope, call(globalObject, args[0], args[1], rt.typeOf(exception), exception, traceback));
+        RELEASE_AND_RETURN(scope, call(globalObject, args[0], rt.typeOf(exception), exception, traceback));
     }
 
     // ---- Generators and coroutines ----
     case RuntimeFunction::GetYieldFromIter:
         RELEASE_AND_RETURN(scope, getYieldFromIter(globalObject, args[0], calleeOf(callFrame)->codeOwner()->isIterableCoroutine() || calleeOf(callFrame)->codeInfo().flags.contains(CodeFlag::Coroutine)));
-    case RuntimeFunction::GetAwaitable:
-        RELEASE_AND_RETURN(scope, getAwaitable(globalObject, args[0], args[1].asInt32()));
     case RuntimeFunction::GetAIter:
         RELEASE_AND_RETURN(scope, getAIter(globalObject, args[0]));
     case RuntimeFunction::GetANext:
@@ -1181,16 +1279,10 @@ static JSValue runRuntimeFunction(JSGlobalObject* globalObject, CallFrame* callF
         throwPythonException(globalObject, scope, exception);
         return { };
     }
-    case RuntimeFunction::Send:
-        RELEASE_AND_RETURN(scope, sendToDelegate(globalObject, args[0], args[1], static_cast<JSGenerator::ResumeMode>(args[2].asInt32())));
-    case RuntimeFunction::TakeSendResult:
-        return rt.takeSendResult();
     case RuntimeFunction::AsyncGenWrap:
         return wrapAsyncGeneratorValue(globalObject, args[0]);
     case RuntimeFunction::ThrowIntoGenerator:
-        return raiseException(globalObject, scope, args[0]);
-    case RuntimeFunction::KeepVariables:
-        return jsUndefined();
+        return raiseExceptionThrownIntoGenerator(globalObject, scope, args[0]);
 
     // ---- match ----
     case RuntimeFunction::MatchSequence:

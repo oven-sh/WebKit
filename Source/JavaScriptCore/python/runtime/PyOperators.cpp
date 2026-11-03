@@ -64,20 +64,20 @@ static JSValue numberOperation(JSGlobalObject* globalObject, Special method, Spe
 
     // A subclass that has its own idea of the reflected operation goes first.
     if (right && typeB->isSubtypeOf(typeA) && right != typeA->lookup(reflected)) {
-        JSValue result = callSpecial(globalObject, right, b, a);
+        JSValue result = callOperatorMethod(globalObject, right, b, a);
         RETURN_IF_EXCEPTION(scope, { });
         if (result != notImplemented)
             return result;
         right = JSValue();
     }
     if (left) {
-        JSValue result = callSpecial(globalObject, left, a, b);
+        JSValue result = callOperatorMethod(globalObject, left, a, b);
         RETURN_IF_EXCEPTION(scope, { });
         if (result != notImplemented)
             return result;
     }
     if (right) {
-        JSValue result = callSpecial(globalObject, right, b, a);
+        JSValue result = callOperatorMethod(globalObject, right, b, a);
         RETURN_IF_EXCEPTION(scope, { });
         if (result != notImplemented)
             return result;
@@ -219,19 +219,26 @@ JSValue power(JSGlobalObject* globalObject, JSValue base, JSValue exponent, JSVa
     JSValue notImplemented = rt.notImplemented();
     PyType* typeA = rt.typeOf(base);
     PyType* typeB = rt.typeOf(exponent);
+    JSValue reflected = typeB != typeA ? typeB->lookup(Special::RPow) : JSValue();
+    // As for the binary operators: a subclass that has its own idea of the reflected operation goes first.
+    if (reflected && typeB->isSubtypeOf(typeA) && reflected != typeA->lookup(Special::RPow)) {
+        JSValue result = callOperatorMethod(globalObject, reflected, exponent, base, modulus);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (result != notImplemented)
+            return result;
+        reflected = JSValue();
+    }
     if (JSValue method = typeA->lookup(Special::Pow)) {
-        JSValue result = callSpecial(globalObject, method, base, exponent, modulus);
+        JSValue result = callOperatorMethod(globalObject, method, base, exponent, modulus);
         RETURN_IF_EXCEPTION(scope, { });
         if (result != notImplemented)
             return result;
     }
-    if (typeB != typeA) {
-        if (JSValue method = typeB->lookup(Special::RPow)) {
-            JSValue result = callSpecial(globalObject, method, exponent, base, modulus);
-            RETURN_IF_EXCEPTION(scope, { });
-            if (result != notImplemented)
-                return result;
-        }
+    if (reflected) {
+        JSValue result = callOperatorMethod(globalObject, reflected, exponent, base, modulus);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (result != notImplemented)
+            return result;
     }
     // The type of the third is asked last, and those that are numbers only have this to say.
     PyType* typeC = rt.typeOf(modulus);
@@ -463,7 +470,7 @@ JSValue toInt(JSGlobalObject* globalObject, JSValue value)
     }
     if (type->lookup(Special::Index))
         RELEASE_AND_RETURN(scope, toIndex(globalObject, value));
-    return raiseTypeError(globalObject, scope, "int() argument must be a string, a bytes-like object or a real number, not '"_s, type->name(), '\'');
+    return raiseTypeError(globalObject, scope, "int() argument must be a string, a bytes-like object or a real number, not '"_s, type->nameInMessages(), '\'');
 }
 
 } // namespace Python

@@ -858,10 +858,9 @@ static JSValue syntaxErrorInit(JSGlobalObject* globalObject, JSValue object, con
         exception->setField(vm, ExceptionField::syntaxErrorLineno, info->at(1));
         exception->setField(vm, ExceptionField::syntaxErrorOffset, info->at(2));
         exception->setField(vm, ExceptionField::syntaxErrorText, info->at(3));
-        if (length >= 6) {
-            exception->setField(vm, ExceptionField::syntaxErrorEndLineno, info->at(4));
-            exception->setField(vm, ExceptionField::syntaxErrorEndOffset, info->at(5));
-        }
+        exception->setField(vm, ExceptionField::syntaxErrorEndLineno, length >= 6 ? info->at(4) : JSValue());
+        exception->setField(vm, ExceptionField::syntaxErrorEndOffset, length >= 6 ? info->at(5) : JSValue());
+        exception->setField(vm, ExceptionField::syntaxErrorMetadata, length == 7 ? info->at(6) : JSValue());
     }
     return jsUndefined();
 }
@@ -909,6 +908,7 @@ static constexpr NativeGetSet syntaxErrorGetSets[] = {
     PY_EXCEPTION_FIELD("end_lineno", syntaxErrorEndLineno),
     PY_EXCEPTION_FIELD("end_offset", syntaxErrorEndOffset),
     PY_EXCEPTION_FIELD("print_file_and_line", syntaxErrorPrintFileAndLine),
+    PY_EXCEPTION_FIELD("_metadata", syntaxErrorMetadata),
 };
 
 // ---- UnicodeError ----
@@ -998,6 +998,13 @@ static JSValue unicodeErrorStrCommon(JSGlobalObject* globalObject, JSValue objec
     RETURN_IF_EXCEPTION(scope, { });
     int64_t end = toSsize(globalObject, noneIfEmpty(exception->field(ExceptionField::unicodeErrorEnd)), nullptr);
     RETURN_IF_EXCEPTION(scope, { });
+
+    // A __str__ called above may have done anything to the exception.
+    target = exception->field(ExceptionField::unicodeErrorObject);
+    if (!target)
+        return raiseTypeError(globalObject, scope, "UnicodeError 'object' attribute is not set"_s);
+    if (kind == 1 ? !PyBytes::is(target) : !isStr(target))
+        return raiseTypeError(globalObject, scope, "UnicodeError 'object' attribute must be a "_s, kind == 1 ? "bytes"_s : "string"_s);
 
     if (kind == 1) {
         std::span<const uint8_t> bytes;

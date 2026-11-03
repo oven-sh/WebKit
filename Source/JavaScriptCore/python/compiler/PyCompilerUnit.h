@@ -44,7 +44,7 @@ public:
     // ---- Entry and exit ----
 
     void emitPrologue();
-    void emitMakeGenerator();
+    void emitMakeGenerator(unsigned slotCount);
     void emitReturnNone();
 
     // ---- Bodies ----
@@ -128,6 +128,7 @@ private:
         Label* breakTarget { nullptr };
         Seq<Stmt*> finalBody { }; // FinallyTry
         RegisterID* saved { nullptr }; // Handlers: the exception that was being handled before. With: __exit__. ForLoop: the iterator.
+        RegisterID* savedSelf { nullptr }; // With: what to pass __exit__ first, or the empty value. The register after `saved`.
         Name name { nullptr }; // HandlerCleanup: what follows `as`.
         Range range { }; // With
         Scope* comprehension { nullptr }; // InlinedComprehension
@@ -330,6 +331,7 @@ private:
     // ---- Expressions ----
 
     RegisterID* boolOp(AST::BoolOp*, RegisterID* dst);
+    void boolOperand(Expr*, RegisterID* result, Label* ifTrue, Label* ifFalse, const Range& rangeOfTest);
     RegisterID* chain(AST::Expr*, RegisterID* dst);
     RegisterID* unaryOp(AST::UnaryOp*, RegisterID* dst);
     RegisterID* ifExp(AST::IfExp*, RegisterID* dst);
@@ -340,6 +342,8 @@ private:
     // callee(pushed..., *args, **keywords). `injected`: a variable to pass after the positional arguments.
     RegisterID* emitCall(RegisterID* dst, RegisterID* callee, std::span<RegisterID* const> pushed, Seq<Expr*> args, Seq<AST::Keyword*> keywords, Name injected, const Range&);
     RegisterID* emitSimpleCall(RegisterID* dst, RegisterID* callee, std::initializer_list<RegisterID*> args, const Range&);
+    // What op_py_get_method gave is called: with `self` before the arguments, unless it is the empty value.
+    RegisterID* emitMethodCall(RegisterID* dst, RegisterID* callee, RegisterID* self, std::initializer_list<RegisterID*> args, const Range&);
     void validateKeywords(Seq<AST::Keyword*>);
     JSValue keywordNames(Seq<AST::Keyword*>);
     void checkCaller(Expr*);
@@ -358,13 +362,12 @@ private:
     RegisterID* templateStr(AST::TemplateStr*, RegisterID* dst);
     RegisterID* interpolation(AST::Interpolation*, RegisterID* dst);
     RegisterID* namedExpr(AST::NamedExpr*, RegisterID* dst);
-    RegisterID* yield(AST::Yield*, RegisterID* dst);
+    RegisterID* yield(AST::Yield*, RegisterID* dst, bool isForEffect = false);
     RegisterID* yieldFrom(AST::YieldFrom*, RegisterID* dst);
     RegisterID* await(AST::Await*, RegisterID* dst);
-    RegisterID* emitYield(RegisterID* dst, RegisterID* value);
-    void keepVariablesAcrossYield();
+    RegisterID* emitYield(RegisterID* dst, RegisterID* value); // No `dst`: what is sent is not wanted.
     // `yield from` an iterator, or `await` one: the value it finishes with.
-    RegisterID* emitDelegate(RegisterID* dst, RegisterID* iterator);
+    RegisterID* emitDelegate(RegisterID* dst, RegisterID* iterator, int firstMode = 0);
     RegisterID* emitAwait(RegisterID* dst, RegisterID* awaitable, int where);
     void unpack(Seq<Expr*> targets, RegisterID* value, const Range&);
 

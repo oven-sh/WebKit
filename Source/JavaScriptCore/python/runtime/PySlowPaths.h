@@ -19,6 +19,11 @@ JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_store_name);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_get_attr);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_set_attr);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_get_method);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_send);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_generator_enter);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_generator_suspend);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_generator_return);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_generator_registers);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_instrumented); // In PyMonitoring.cpp.
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_prepare_construct);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_finish_construct);

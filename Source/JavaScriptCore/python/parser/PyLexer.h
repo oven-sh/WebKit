@@ -38,6 +38,9 @@ private:
     ASCIICString m_encoding;
 };
 
+// The encoding a BOM or a coding cookie in the first two lines declares, normalized as SourceText::encoding() is. Null: none.
+ASCIICString declaredEncoding(std::span<const uint8_t> source);
+
 class Lexer {
     WTF_MAKE_NONCOPYABLE(Lexer);
 public:

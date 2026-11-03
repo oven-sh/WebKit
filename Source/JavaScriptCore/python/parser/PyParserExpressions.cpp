@@ -853,6 +853,12 @@ bool Parser::parseArguments(Seq<Expr*>& resultArguments, Seq<Keyword*>& resultKe
             invalidSyntax();
             return false;
         }
+        // CPython's parser has looked at what follows the comma by now: if the lexer cannot read that, it says so first.
+        if (at(TokenKind::Comma)) {
+            peek(1);
+            if (failed())
+                return false;
+        }
         syntaxErrorAt(rangeBetween(element->range, lastItemOf(generators.last())->range), "Generator expression must be parenthesized"_s);
         return false;
     };

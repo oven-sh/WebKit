@@ -13,6 +13,7 @@
 #include "PyAbstract.h"
 #include "PyBytes.h"
 #include "PyCodeCache.h"
+#include "PyCommandLine.h"
 #include "PyErrors.h"
 #include "PyException.h"
 #include "PyInternals.h"
@@ -1666,23 +1667,38 @@ static JSValue codePositions(JSGlobalObject* globalObject, JSValue self)
         if (text[i] == '\n')
             lineStarts.append(i + 1);
     }
-    // Columns count the bytes of UTF-8.
+    // Columns count the bytes of UTF-8, which is what the characters of the text are (compileTree()).
     auto locate = [&](unsigned offset, int& line, int& column) {
         offset = std::min(offset, text.length());
         unsigned index = std::ranges::upper_bound(lineStarts, offset) - lineStarts.begin() - 1;
         line = index + 1;
-        column = 0;
-        for (unsigned i = lineStarts[index]; i < offset; ++i) {
-            char16_t unit = text[i];
-            column += unit < 0x80 ? 1 : unit < 0x800 ? 2 : U16_IS_SURROGATE(unit) ? 2 : 3;
-        }
+        column = offset - lineStarts[index];
     };
-    auto runs = lineRunsOf(PyCode::from(self)->codeInfo(), codeBlock);
-    int lineDelta = PyCode::from(self)->codeInfo().lineDelta;
+    auto& codeInfo = PyCode::from(self)->codeInfo();
+    auto runs = lineRunsOf(codeInfo, codeBlock);
+    int lineDelta = codeInfo.lineDelta;
+    bool hasColumns = configuration().codeDebugRanges;
+    // What sets up the frame is at the very start of the line the code begins on, as RESUME is in CPython.
+    unsigned endOfPrologue = 0;
+    for (auto& mark : codeBlock->unlinkedCodeBlock()->pythonMarks()) {
+        if (mark.kind() == PythonMark::Start) {
+            endOfPrologue = mark.offset;
+            break;
+        }
+    }
+    JSValue prologue;
+    if (hasColumns && endOfPrologue)
+        prologue = PyTuple::create(globalObject, { jsNumber(runs[0].line), jsNumber(std::max(runs[0].line, codeInfo.firstLineNumber)), jsNumber(0), jsNumber(0) });
     unsigned runIndex = 0;
     int lineOfLast = -2;
     JSValue last; // For a byte of which only the line is known.
     for (const auto& instruction : codeBlock->instructions()) {
+        if (prologue && instruction.offset() < endOfPrologue) {
+            for (unsigned i = 0; i < instruction->size(); ++i)
+                listAppend(globalObject, positions, prologue);
+            RETURN_IF_EXCEPTION(scope, { });
+            continue;
+        }
         // Only what may raise an exception has a place in the source recorded. What has none is given that of whatever comes before.
         auto info = codeBlock->expressionInfoForBytecodeIndex(BytecodeIndex(instruction.offset()));
         int line, column, endLine, endColumn;
@@ -1695,7 +1711,7 @@ static JSValue codePositions(JSGlobalObject* globalObject, JSValue self)
             while (runIndex + 1 < runs.size() && runs[runIndex].end <= offset)
                 ++runIndex;
             int lineOfByte = runs[runIndex].line;
-            if (lineOfByte == line) {
+            if (lineOfByte == line && hasColumns) {
                 if (!exact)
                     exact = PyTuple::create(globalObject, { jsNumber(line), jsNumber(endLine), jsNumber(column), jsNumber(endColumn) });
                 listAppend(globalObject, positions, exact);
@@ -1898,10 +1914,16 @@ static JSValue nativeGetTextSignature(JSGlobalObject* globalObject, JSValue self
 {
     auto* native = asNative(self);
     auto& def = native->def();
-    if (def.signature.isVariadic) {
+    // Whatever the type: its own signature says what it takes.
+    if (def.kind == NativeKind::New)
+        return makeStr(getVM(globalObject), "($type, *args, **kwargs)"_s);
+    StringView signatureText = def.signatureText;
+    if (signatureText.startsWith('!'))
+        signatureText = signatureText.substring(1);
+    else if (def.signature.isVariadic) {
         // "(*args, **kwargs)" in a table only says that the function looks at its arguments itself. CPython has no signature for most
         // of those. Anything more than that is meant.
-        StringView text = def.signatureText;
+        StringView text = signatureText;
         for (ASCIILiteral part : { "("_s, "$self"_s, "$type"_s, ", "_s, "*args"_s, ", "_s, "**kwargs"_s, ")"_s }) {
             if (text.startsWith(part))
                 text = text.substring(part.length());
@@ -1910,15 +1932,13 @@ static JSValue nativeGetTextSignature(JSGlobalObject* globalObject, JSValue self
             // Those that stand for an operation have one all the same: __call__, __init__.
             if (def.kind == NativeKind::SlotWrapper)
                 return makeStr(getVM(globalObject), "($self, /, *args, **kwargs)"_s);
-            if (def.kind == NativeKind::New)
-                return makeStr(getVM(globalObject), "($type, *args, **kwargs)"_s);
             return jsUndefined();
         }
     }
     if (def.kind != NativeKind::Function || native->ownerType())
-        return makeStr(getVM(globalObject), def.signatureText);
+        return makeStr(globalObject, signatureText.toString());
     // A function of a module is bound to it, which the tables leave out: "(obj, /)" is "($module, obj, /)".
-    StringView parameters = StringView(def.signatureText).substring(1, def.signatureText.length() - 2);
+    StringView parameters = signatureText.substring(1, signatureText.length() - 2);
     if (parameters.isEmpty())
         return makeStr(getVM(globalObject), "($module, /)"_s);
     bool hasPositionalOnly = parameters == "/"_s || parameters.endsWith(", /"_s) || parameters.contains(", /, "_s);
@@ -2039,14 +2059,14 @@ static JSValue nativeDescriptorGet(JSGlobalObject* globalObject, JSValue self, J
         JSValue cls = owner && !isNone(owner) ? owner : JSValue();
         if (!cls) {
             if (isNone(instance))
-                return raiseTypeError(globalObject, scope, "descriptor '"_s, native->def().name, "' for type '"_s, type->name(), "' needs either an object or a type"_s);
+                return raiseTypeError(globalObject, scope, "descriptor '"_s, native->def().name, "' for type '"_s, type->nameInMessages(), "' needs either an object or a type"_s);
             cls = typeOf(globalObject, instance);
         }
         auto* given = PyType::tryFrom(cls);
         if (!given)
-            return raiseTypeError(globalObject, scope, "descriptor '"_s, native->def().name, "' for type '"_s, type->name(), "' needs a type, not a '"_s, typeName(globalObject, cls), "' as arg 2"_s);
+            return raiseTypeError(globalObject, scope, "descriptor '"_s, native->def().name, "' for type '"_s, type->nameInMessages(), "' needs a type, not a '"_s, typeName(globalObject, cls), "' as arg 2"_s);
         if (!given->isSubtypeOf(type))
-            return raiseTypeError(globalObject, scope, "descriptor '"_s, native->def().name, "' requires a subtype of '"_s, type->name(), "' but received '"_s, given->name(), '\'');
+            return raiseTypeError(globalObject, scope, "descriptor '"_s, native->def().name, "' requires a subtype of '"_s, type->nameInMessages(), "' but received '"_s, given->nameInMessages(), '\'');
         return bindDescriptor(globalObject, self, { }, given);
     }
     if (isNone(instance))

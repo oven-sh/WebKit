@@ -428,6 +428,10 @@ namespace JSC {
         void resumeTryContexts(Vector<TryContext>&&);
         // Returns `argument` to whoever resumed the generator. The next instruction runs when it is resumed again.
         void emitPythonYieldPoint(RegisterID* argument);
+        void emitPySend(RegisterID* dst, RegisterID* iterator, RegisterID* value, RegisterID* mode, Label& returned);
+        void emitPyRestoreRegisters(RegisterID* first, unsigned count, unsigned offset);
+        // How many slots a generator needs for the registers of this code, its body. BytecodeGeneratorification finds out.
+        void setPythonGeneratorSlotCount(unsigned count) { m_pythonGeneratorSlotCount = count; }
         // A set of up to 64 variables, numbered by the compiler, that are known to have a value wherever the next instruction
         // is reached from. The compiler adds a variable when it emits what gives it a value. Where paths meet (a label that
         // was jumped to, an exception handler) what is left is what all of them have. A jump back to a label takes nothing
@@ -1569,6 +1573,8 @@ namespace JSC {
         Vector<TryContext> m_tryContextStack;
 
         BoundLabel bindLabel(Label&);
+        unsigned stackOffsetForGeneratorBody();
+        unsigned m_pythonGeneratorSlotCount { 0 };
         void notePathToLabel(Label&);
         void didEmitLabel(Label&, bool hasJumps);
         uint64_t m_pythonBoundVariables { 0 };

@@ -13,6 +13,7 @@
 #include "PyJSView.h"
 #include "PyRuntime.h"
 #include "PyStr.h"
+#include "PyThreads.h"
 #include "PyType.h"
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -349,12 +350,23 @@ JSValue invokeNative(JSGlobalObject* globalObject, const NativeDef& def, JSValue
 const ClassInfo PyNativeFunction::s_info = { "PyNativeFunction"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(PyNativeFunction) };
 
 static JSC_DECLARE_HOST_FUNCTION(callNativeFunctionWithFrame);
+static JSC_DECLARE_HOST_FUNCTION(callNativeFunctionAgainOnWipedStack);
 
 // This one has no frame to speak of, so that all the frames of the call come after the wiping.
 JSC_DEFINE_HOST_FUNCTION(callNativeFunction, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
-    if (uncheckedDowncast<PyNativeFunction>(callFrame->jsCallee())->def().flags & OnWipedStack) [[unlikely]]
-        wipeStackBelow(getVM(globalObject));
+    if (auto flags = uncheckedDowncast<PyNativeFunction>(callFrame->jsCallee())->def().flags; flags & (OnWipedStack | MayWait)) [[unlikely]] {
+        if (flags & OnWipedStack)
+            wipeStackBelow(getVM(globalObject));
+        else
+            runtime(globalObject).threads().willCallFunctionThatMayWait(callFrame);
+    }
+    [[clang::musttail]] return callNativeFunctionWithFrame(globalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(callNativeFunctionAgainOnWipedStack, static NEVER_INLINE, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    wipeStackBelow(getVM(globalObject), stackBytesWipedForWaiting);
     [[clang::musttail]] return callNativeFunctionWithFrame(globalObject, callFrame);
 }
 
@@ -366,6 +378,9 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(callNativeFunctionWithFrame, static NEV
         return JSValue::encode(resultForCaller(globalObject, callFrame, callWithKeywordMarker(globalObject, callFrame)));
     VM& vm = getVM(globalObject);
     JSValue result = function->invoke(globalObject, args);
+    // The frame of this function is gone when that one runs.
+    if (!result && (function->def().flags & MayWait) && runtime(globalObject).threads().takeRequestToCallAgain(globalObject)) [[unlikely]]
+        [[clang::musttail]] return callNativeFunctionAgainOnWipedStack(globalObject, callFrame);
     // CPython looks for signals after every call. Code counts on it: os.kill(os.getpid(), n), and the handler has run.
     // (Only signals. A finalizer between next(counter) and queue.put() in queue.put(next(counter)) is more than code is used to.)
     if (vm.traps().needHandling(VMTraps::NeedPythonCalls) && result && !checkSignals(globalObject)) [[unlikely]]
@@ -452,8 +467,13 @@ JSValue PyNativeFunction::invokeNew(JSGlobalObject* globalObject, const CallArgs
         auto* native = PyNativeFunction::tryFrom(other);
         return native && !memcmp(&native->def().pointer, &m_def->pointer, sizeof(m_def->pointer));
     };
-    if (staticBase && !isSameFunction(staticBase->lookup(Special::New)))
-        return raiseTypeError(globalObject, scope, type->nameInMessages(), ".__new__("_s, subtype->nameInMessages(), ") is not safe, use "_s, staticBase->nameInMessages(), ".__new__()"_s);
+    if (staticBase && !isSameFunction(staticBase->lookup(Special::New))) {
+        // The first whose __new__ is not written in Python has the one to use.
+        PyType* user = subtype;
+        while (user != staticBase && !PyNativeFunction::tryFrom(user->lookup(Special::New)))
+            user = user->base();
+        return raiseTypeError(globalObject, scope, type->nameInMessages(), ".__new__("_s, subtype->nameInMessages(), ") is not safe, use "_s, user->nameInMessages(), ".__new__()"_s);
+    }
     RELEASE_AND_RETURN(scope, invokeNativeImpl(globalObject, *m_def, this, subtype, args.withoutFirst()));
 }
 

@@ -543,10 +543,10 @@ public:
 
     void addRoot(JSCell* cell) { m_worklist.append(cell); }
 
-    void didFinishMarking() final
+    bool didFinishMarking(SlotVisitor&) final
     {
         if (std::exchange(m_isDone, true))
-            return;
+            return false;
         // The properties and the elements of an object are not reported as it is visited. The collector would ask every
         // object of the heap for them at the end, visited or not.
         Vector<JSCell*> visited = std::exchange(m_visited, { });
@@ -563,6 +563,7 @@ public:
                 m_worklist.append(cell);
         }
         m_vm.heapProfiler()->setActiveHeapAnalyzer(nullptr);
+        return false;
     }
 
     bool isDone() const { return m_isDone; }

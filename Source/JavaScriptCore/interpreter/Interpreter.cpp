@@ -1386,9 +1386,18 @@ public:
             if (m_codeBlock->unlinkedCodeBlock()->isPython()) [[unlikely]] {
                 Python::Runtime* runtime = m_codeBlock->globalObject()->pythonRuntime();
                 runtime->frameIsEnding(m_callFrame);
-                // op_py_bind_args counts a frame in. Before it comes op_enter, which polls for traps.
-                if (m_codeBlock->unlinkedCodeBlock()->parseMode() != SourceParseMode::GeneratorBodyMode && visitor->bytecodeIndex().offset())
-                    runtime->leaveFrame();
+                if (m_codeBlock->unlinkedCodeBlock()->parseMode() != SourceParseMode::GeneratorBodyMode) {
+                    // op_py_bind_args counts a frame in. Before it comes op_enter, which polls for traps.
+                    if (visitor->bytecodeIndex().offset())
+                        runtime->leaveFrame();
+                } else {
+                    Python::generatorBodyIsUnwinding(m_codeBlock->globalObject(), m_callFrame, m_isTermination);
+                    Exception* exception = m_vm.exceptionForInspection();
+                    m_thrownValue = exception->value();
+#if ENABLE(WEBASSEMBLY)
+                    m_exception = exception;
+#endif
+                }
             }
         }
 
@@ -1452,7 +1461,7 @@ private:
     mutable JSValue m_thrownValue;
 
 #if ENABLE(WEBASSEMBLY)
-    Exception* m_exception;
+    mutable Exception* m_exception;
     mutable RefPtr<const Wasm::Tag> m_wasmTag;
     bool m_catchableFromWasm { false };
 #endif

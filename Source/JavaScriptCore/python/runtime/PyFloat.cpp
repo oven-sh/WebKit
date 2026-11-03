@@ -1096,7 +1096,7 @@ static bool floatFromNumber(JSGlobalObject* globalObject, JSValue source, double
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyType* type = typeOf(globalObject, source);
     if (!isFloat(source) && !isInt(source) && !type->lookup(Special::Float) && !type->lookup(Special::Index)) {
-        raiseTypeError(globalObject, scope, "float() argument must be a string or a real number, not '"_s, type->name(), '\'');
+        raiseTypeError(globalObject, scope, "float() argument must be a string or a real number, not '"_s, type->nameInMessages(), '\'');
         return false;
     }
     value = toDoubleAsFloatDoes(globalObject, source);

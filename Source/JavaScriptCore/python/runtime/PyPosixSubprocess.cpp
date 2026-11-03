@@ -596,7 +596,7 @@ pid_t posixSpawnChild(char* const* executables, char* const* arguments, char* co
 }
 
 static constexpr NativeDef subprocessFunctions[] = {
-    PY_FUNCTION("fork_exec", subprocessForkExec, "(*args)"),
+    PY_FUNCTION("fork_exec", subprocessForkExec, "!(args, executable_list, close_fds, pass_fds, cwd, env, p2cread, p2cwrite, c2pread, c2pwrite, errread, errwrite, errpipe_read, errpipe_write, restore_signals, call_setsid, pgid_to_set, gid, extra_groups, uid, child_umask, preexec_fn, /)"),
 };
 
 void initializePosixSubprocessModule(JSGlobalObject* globalObject, PyModule* module)

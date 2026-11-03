@@ -197,13 +197,13 @@ static JSValue lockRepr(JSGlobalObject* globalObject, JSValue self)
 static constexpr NativeDef lockMethods[] = {
     PY_NEW(lockNew, "($type, *args, **kwargs)"),
     PY_SLOT("__repr__", lockRepr, "($self, /)"),
-    PY_METHOD("acquire", lockAcquire, "($self, /, blocking=True, timeout=-1)"),
-    PY_METHOD("acquire_lock", lockAcquire, "($self, /, blocking=True, timeout=-1)"),
+    PY_WAITING_METHOD("acquire", lockAcquire, "($self, /, blocking=True, timeout=-1)"),
+    PY_WAITING_METHOD("acquire_lock", lockAcquire, "($self, /, blocking=True, timeout=-1)"),
     PY_METHOD("release", lockRelease, "($self, /)"),
     PY_METHOD("release_lock", lockRelease, "($self, /)"),
     PY_METHOD("locked", lockLocked, "($self, /)"),
     PY_METHOD("locked_lock", lockLocked, "($self, /)"),
-    PY_METHOD("__enter__", lockEnter, "($self, /)"),
+    PY_WAITING_METHOD("__enter__", lockEnter, "($self, /)"),
     PY_METHOD("__exit__", lockExit, "($self, exc_type, exc_value, exc_tb, /)"),
     PY_METHOD("_at_fork_reinit", lockReinit, "($self, /)"),
 };
@@ -315,10 +315,10 @@ static JSValue rlockRepr(JSGlobalObject* globalObject, JSValue self)
 static constexpr NativeDef rlockMethods[] = {
     PY_NEW(rlockNew, "($type, *args, **kwargs)"),
     PY_SLOT("__repr__", rlockRepr, "($self, /)"),
-    PY_METHOD("acquire", rlockAcquire, "($self, /, blocking=True, timeout=-1)"),
+    PY_WAITING_METHOD("acquire", rlockAcquire, "($self, /, blocking=True, timeout=-1)"),
     PY_METHOD("release", rlockRelease, "($self, /)"),
     PY_METHOD("locked", rlockLocked, "($self, /)"),
-    PY_METHOD("__enter__", rlockEnter, "($self, /)"),
+    PY_WAITING_METHOD("__enter__", rlockEnter, "($self, /)"),
     PY_METHOD("__exit__", rlockExit, "($self, exc_type, exc_value, exc_tb, /)"),
     PY_METHOD("_is_owned", rlockIsOwned, "($self, /)"),
     PY_METHOD("_recursion_count", rlockRecursionCount, "($self, /)"),
@@ -409,8 +409,8 @@ static void localForgetThisThread(JSGlobalObject* globalObject)
     MarkedArgumentBuffer keysAndValues;
     uncheckedDowncast<JSWeakMap>(map.asCell())->takeSnapshot(keysAndValues);
     for (unsigned i = 0; i < keysAndValues.size(); i += 2) {
-        auto* self = PyInstance::from(keysAndValues.at(i));
-        if (hiddenField(globalObject, self, LocalCurrentThread) != thisThread)
+        auto* self = PyInstance::tryFrom(keysAndValues.at(i));
+        if (!self || hiddenField(globalObject, self, LocalCurrentThread) != thisThread)
             continue;
         self->replaceDict(vm, nullptr);
         setHiddenField(globalObject, self, LocalCurrentThread, jsNumber(0));
@@ -551,7 +551,7 @@ static constexpr NativeDef threadHandleMethods[] = {
     PY_NEW(threadHandleNew, "($type, *args, **kwargs)"),
     PY_SLOT("__repr__", threadHandleRepr, "($self, /)"),
     PY_METHOD("is_done", threadHandleIsDone, "($self, /)"),
-    PY_METHOD("join", threadHandleJoin, "($self, *args, **kwargs)"),
+    PY_WAITING_METHOD("join", threadHandleJoin, "($self, *args, **kwargs)"),
     PY_METHOD("_set_done", threadHandleSetDone, "($self, /)"),
 };
 
@@ -897,10 +897,13 @@ static JSValue threadExceptHook(JSGlobalObject* globalObject, JSValue args)
     }
     JSString* nameText = name ? str(globalObject, name) : makeStr(globalObject, String::number(currentThreadIdent()));
     RETURN_IF_EXCEPTION(scope, { });
-    String text = makeString("Exception in thread "_s, nameText->value(globalObject).data, ":\n"_s, formatException(globalObject, tuple->at(1)));
+    String text = makeString("Exception in thread "_s, nameText->value(globalObject).data, ":\n"_s);
     RETURN_IF_EXCEPTION(scope, { });
     writeToFile(globalObject, file, makeStr(globalObject, text));
     RETURN_IF_EXCEPTION(scope, { });
+    if (auto* exception = PyException::tryFrom(tuple->at(1)); exception && !exception->traceback() && PyTraceback::is(tuple->at(2)))
+        exception->setTraceback(vm, tuple->at(2));
+    printException(globalObject, tuple->at(1), file, false);
     callMethod(globalObject, file, internString(vm, "flush"_s));
     RETURN_IF_EXCEPTION(scope, { });
     return jsUndefined();
@@ -922,9 +925,9 @@ static constexpr NativeDef threadFunctions[] = {
     PY_FUNCTION("_get_name", threadGetName, "()"),
     PY_FUNCTION("set_name", threadSetName, "(name)"),
 #endif
-    PY_FUNCTION("stack_size", threadStackSize, "(*args, **kwargs)"),
-    PY_FUNCTION("start_new_thread", threadStartNew, "(*args, **kwargs)"),
-    PY_FUNCTION("start_new", threadStartNew, "(*args, **kwargs)"),
+    PY_FUNCTION("stack_size", threadStackSize, "!(size=0, /)"),
+    PY_FUNCTION("start_new_thread", threadStartNew, "!(function, args, kwargs={}, /)"),
+    PY_FUNCTION("start_new", threadStartNew, "!(function, args, kwargs={}, /)"),
     PY_FUNCTION("start_joinable_thread", threadStartJoinable, "(function, handle=None, daemon=True)"),
     PY_FUNCTION("exit", threadExit, "()"),
     PY_FUNCTION("exit_thread", threadExit, "()"),
@@ -1048,7 +1051,7 @@ static JSValue atexitClear(JSGlobalObject* globalObject)
 static JSValue atexitNCallbacks(JSGlobalObject* globalObject) { return jsNumber(listLength(atexitCallbacks(globalObject))); }
 
 static constexpr NativeDef atexitFunctions[] = {
-    PY_FUNCTION("register", atexitRegister, "(*args, **kwargs)"),
+    PY_FUNCTION("register", atexitRegister, "(func, /, *args, **kwargs)"),
     PY_FUNCTION("unregister", atexitUnregister, "(func, /)"),
     PY_FUNCTION("_run_exitfuncs", atexitRunExitFuncs, "()"),
     PY_FUNCTION("_clear", atexitClear, "()"),

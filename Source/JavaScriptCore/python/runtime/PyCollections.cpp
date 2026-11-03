@@ -1216,6 +1216,7 @@ void initializeCollectionsModule(JSGlobalObject* globalObject, PyModule* module)
     }
     module->add(globalObject, "deque"_s, deque);
     module->add(globalObject, "defaultdict"_s, defaultDictType(globalObject));
+    module->add(globalObject, "OrderedDict"_s, orderedDictType(globalObject));
     module->add(globalObject, "_deque_iterator"_s, rt.typeFor(dequeIteratorTypeDef));
     module->add(globalObject, "_deque_reverse_iterator"_s, rt.typeFor(dequeReverseIteratorTypeDef));
     module->add(globalObject, "_tuplegetter"_s, rt.typeFor(tupleGetterTypeDef));

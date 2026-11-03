@@ -248,6 +248,7 @@ static State* createState(JSGlobalObject* globalObject, PyType* holder)
         { "utc"_s, state->utc.get() },
         { "min"_s, zone(delta(-1, 60, 0)) },
         { "max"_s, zone(delta(0, secondsPerDay - 60, 0)) } });
+    setAttributes(state->isoCalendarDateType.get(), { { "__module__"_s, internString(vm, "datetime"_s) } });
     return state;
 }
 
@@ -639,6 +640,11 @@ bool timeSpecArgument(JSGlobalObject* globalObject, JSValue value, int microseco
     RETURN_IF_EXCEPTION(scope, false);
     String text = string->value(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
+    if (!text.is8Bit() && !tryEncodeUTF8(text)) {
+        // Which raises.
+        strEncode(globalObject, string, makeStr(vm, "utf-8"_s), makeStr(vm, "strict"_s));
+        return false;
+    }
     if (text.contains('\0')) {
         raiseValueError(globalObject, scope, "embedded null character"_s);
         return false;
@@ -851,6 +857,8 @@ JSValue wrapStrftime(JSGlobalObject* globalObject, State& state, JSValue object,
             digits.append(microsecond, 6);
             replaceWith(digits.span());
         } else if ((directive == 'Y' || directive == 'G' || directive == 'F' || directive == 'C') && libraryLeavesYearsUnpadded()) {
+            if (!PyTuple::is(timeTuple) && !typeOf(globalObject, timeTuple)->lookup(Special::GetItem))
+                return raiseTypeError(globalObject, scope, '\'', typeName(globalObject, timeTuple), "' object does not support indexing"_s);
             JSValue item = getItem(globalObject, timeTuple, jsNumber(0));
             RETURN_IF_EXCEPTION(scope, { });
             int64_t year = toInt64(globalObject, item);
@@ -860,7 +868,7 @@ JSValue wrapStrftime(JSGlobalObject* globalObject, State& state, JSValue object,
             if (directive == 'G') {
                 JSValue isoYearText = call(globalObject, strftimeFunction, makeStr(vm, "%G"_s), timeTuple);
                 RETURN_IF_EXCEPTION(scope, { });
-                JSValue isoYear = toInt(globalObject, isoYearText);
+                JSValue isoYear = call(globalObject, runtime(globalObject).intType(), isoYearText);
                 RETURN_IF_EXCEPTION(scope, { });
                 year = toInt64(globalObject, isoYear);
                 RETURN_IF_EXCEPTION(scope, { });

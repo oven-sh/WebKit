@@ -2118,7 +2118,7 @@ static constexpr NativeDef picklerMethods[] = {
     PY_SLOT("__getattribute__", picklerGetAttribute, "($self, name, /)"),
     PY_SLOT("__setattr__", picklerSetAttr, "($self, name, value, /)"),
     PY_SLOT("__delattr__", picklerDelAttr, "($self, name, /)"),
-    PY_METHOD("dump", picklerDump, "($self, *args, **kwargs)"),
+    PY_METHOD("dump", picklerDump, "!($self, obj, /)"),
     PY_METHOD("clear_memo", picklerClearMemoMethod, "($self, /)"),
     PY_METHOD("__sizeof__", picklerSizeOf, "($self, /)"),
 };
@@ -3902,9 +3902,9 @@ static constexpr NativeDef unpicklerMethods[] = {
     PY_SLOT("__getattribute__", unpicklerGetAttribute, "($self, name, /)"),
     PY_SLOT("__setattr__", unpicklerSetAttr, "($self, name, value, /)"),
     PY_SLOT("__delattr__", unpicklerDelAttr, "($self, name, /)"),
-    PY_METHOD("persistent_load", unpicklerPersistentLoad, "($self, *args, **kwargs)"),
-    PY_METHOD("load", unpicklerLoad, "($self, *args, **kwargs)"),
-    PY_METHOD("find_class", unpicklerFindClassMethod, "($self, *args, **kwargs)"),
+    PY_METHOD("persistent_load", unpicklerPersistentLoad, "!($self, pid, /)"),
+    PY_METHOD("load", unpicklerLoad, "!($self, /)"),
+    PY_METHOD("find_class", unpicklerFindClassMethod, "!($self, module_name, global_name, /)"),
     PY_METHOD("__sizeof__", unpicklerSizeOf, "($self, /)"),
 };
 

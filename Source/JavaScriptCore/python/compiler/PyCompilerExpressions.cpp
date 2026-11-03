@@ -270,6 +270,10 @@ void Unit::exprForEffect(Expr* node)
 {
     if (node->is<Constant>())
         return line(node->range.lineno);
+    if (auto* yielding = node->tryAs<Yield>(); yielding && isSafeToRecurse()) {
+        Reg ignored = yield(yielding, nullptr, true);
+        return;
+    }
     Reg ignored = expr(node);
 }
 
@@ -369,17 +373,40 @@ RegisterID* Unit::boolOp(BoolOp* node, RegisterID* dst)
     Reg result = g.tempDestination(dst);
     Ref<Label> end = g.newLabel();
     unsigned last = node->values.size() - 1;
-    for (unsigned i = 0; i < last; ++i) {
-        expr(node->values[i], result.get());
-        loc(node->range);
-        if (node->op == BoolOperator::And)
-            g.emitPyJumpIfFalse(result.get(), end.get());
-        else
-            g.emitPyJumpIfTrue(result.get(), end.get());
-    }
+    bool isAnd = node->op == BoolOperator::And;
+    for (unsigned i = 0; i < last; ++i)
+        boolOperand(node->values[i], result.get(), isAnd ? nullptr : end.ptr(), isAnd ? end.ptr() : nullptr, node->range);
     expr(node->values[last], result.get());
     g.emitLabel(end.get());
     return dst ? g.move(dst, result.get()) : result.get();
+}
+
+// The value goes in `result`, and then, by its truth, control to one of the labels. One of them is null: straight on.
+// No object is asked twice whether it is true: in `a and b or c`, an `a` that is false is the value of `a and b`, known to be false.
+void Unit::boolOperand(Expr* node, RegisterID* result, Label* ifTrue, Label* ifFalse, const Range& rangeOfTest)
+{
+    ASSERT(!ifTrue != !ifFalse);
+    auto* nested = node->tryAs<BoolOp>();
+    if (!nested || !isSafeToRecurse()) {
+        expr(node, result);
+        loc(rangeOfTest);
+        if (ifTrue)
+            g.emitPyJumpIfTrue(result, *ifTrue);
+        else
+            g.emitPyJumpIfFalse(result, *ifFalse);
+        return;
+    }
+    Ref<Label> next = g.newLabel();
+    unsigned last = nested->values.size() - 1;
+    bool isAnd = nested->op == BoolOperator::And;
+    // What settles the nested expression early settles the test as well.
+    Label* whenSettled = isAnd ? ifFalse : ifTrue;
+    if (!whenSettled)
+        whenSettled = next.ptr();
+    for (unsigned i = 0; i < last; ++i)
+        boolOperand(nested->values[i], result, isAnd ? nullptr : whenSettled, isAnd ? whenSettled : nullptr, nested->range);
+    boolOperand(nested->values[last], result, ifTrue, ifFalse, rangeOfTest);
+    g.emitLabel(next.get());
 }
 
 static Range rangeOfAttributeName(Attribute*);
@@ -1223,6 +1250,40 @@ RegisterID* Unit::emitSimpleCall(RegisterID* dst, RegisterID* callee, std::initi
     return g.emitPyCall(dst, callee, arguments, args.size());
 }
 
+RegisterID* Unit::emitMethodCall(RegisterID* dst, RegisterID* callee, RegisterID* self, std::initializer_list<RegisterID*> args, const Range& range)
+{
+    Reg heldCallee = callee;
+    Reg heldSelf = self;
+    Vector<Reg, 4> held;
+    for (RegisterID* argument : args)
+        held.append(argument);
+    unsigned count = args.size();
+    CallArguments arguments(g, nullptr, count + 1);
+    load(arguments.thisRegister(), jsUndefined());
+    g.move(arguments.argumentRegister(0), self);
+    unsigned next = 1;
+    for (RegisterID* argument : args)
+        g.move(arguments.argumentRegister(next++), argument);
+
+    Ref<Label> notMethod = g.newLabel();
+    Ref<Label> done = g.newLabel();
+    {
+        Reg isEmpty = newTemporary();
+        g.emitIsEmpty(isEmpty.get(), self);
+        g.emitJumpIfTrue(isEmpty.get(), notMethod.get());
+    }
+    loc(range);
+    g.emitPyCall(dst, callee, arguments, count + 1);
+    hiddenJump(done.get());
+    g.emitLabel(notMethod.get());
+    for (unsigned i = 0; i < count; ++i)
+        g.move(arguments.argumentRegister(i), arguments.argumentRegister(i + 1));
+    loc(range);
+    g.emitPyCall(dst, callee, arguments, count);
+    g.emitLabel(done.get());
+    return dst;
+}
+
 static bool isSimpleCall(Seq<Expr*> args, Seq<Keyword*> keywords, unsigned extra)
 {
     if (args.size() + keywords.size() + extra > maxItemsInRegisters)
@@ -1425,21 +1486,6 @@ RegisterID* Unit::call(Call* node, RegisterID* dst)
 
 // ---- Generators and coroutines ----
 
-// A suspended generator keeps the registers that are still needed, which is worked out from the code that can follow. But
-// gi_frame.f_locals shows all the variables, needed or not. So on a path out of every yield that is seldom taken, this is
-// emitted: an instruction that reads them all.
-void Unit::keepVariablesAcrossYield()
-{
-    int first = g.firstPythonVariable();
-    int end = first;
-    for (auto& variable : m_info.variables) {
-        if (variable.reg.isLocal())
-            end = std::max(end, variable.reg.toLocal() + 1);
-    }
-    if (end > first)
-        g.emitPyRuntime(newTemporary().get(), RuntimeFunction::KeepVariables, g.pythonRegister(virtualRegisterForLocal(first)), end - first);
-}
-
 RegisterID* Unit::emitYield(RegisterID* dst, RegisterID* value)
 {
     Reg held = value;
@@ -1447,13 +1493,12 @@ RegisterID* Unit::emitYield(RegisterID* dst, RegisterID* value)
     // Resumed: by send(), or by throw().
     Ref<Label> normal = g.newLabel();
     g.emitPyJumpIfFalse(g.generatorResumeModeRegister(), normal.get());
-    keepVariablesAcrossYield();
     callRuntimeForEffect(RuntimeFunction::ThrowIntoGenerator, { g.generatorValueRegister() });
     g.emitLabel(normal.get());
-    return g.move(dst, g.generatorValueRegister());
+    return dst ? g.move(dst, g.generatorValueRegister()) : nullptr;
 }
 
-RegisterID* Unit::yield(Yield* node, RegisterID* dst)
+RegisterID* Unit::yield(Yield* node, RegisterID* dst, bool isForEffect)
 {
     if (!isFunctionLike()) {
         fail(node->range, "'yield' outside function"_s);
@@ -1467,37 +1512,32 @@ RegisterID* Unit::yield(Yield* node, RegisterID* dst)
     loc(node->range);
     if (isAsyncGenerator())
         callRuntime(result.get(), RuntimeFunction::AsyncGenWrap, { result.get() });
-    emitYield(result.get(), result.get());
+    emitYield(isForEffect ? nullptr : result.get(), result.get());
     return dst ? g.move(dst, result.get()) : result.get();
 }
 
-RegisterID* Unit::emitDelegate(RegisterID* dst, RegisterID* iterator)
+RegisterID* Unit::emitDelegate(RegisterID* dst, RegisterID* iterator, int firstMode)
 {
     Reg heldResult = dst;
-    Arguments arguments(*this, 3);
-    g.move(arguments[0], iterator);
-    load(arguments[1], jsUndefined());
-    load(arguments[2], jsNumber(static_cast<int>(JSGenerator::ResumeMode::NormalMode)));
-
-    Ref<Label> loop = g.newLabel();
-    Ref<Label> done = g.newLabel();
+    Reg delegate = newTemporary();
     Reg yielded = newTemporary();
-    Reg isDone = newTemporary();
-    g.emitLabel(loop.get());
-    callRuntime(yielded.get(), RuntimeFunction::Send, arguments);
-    g.emitIsEmpty(isDone.get(), yielded.get());
-    g.emitJumpIfTrue(isDone.get(), done.get());
+    g.move(delegate.get(), iterator);
+    Ref<Label> suspend = g.newLabel();
+    Ref<Label> done = g.newLabel();
+    {
+        Reg value = newTemporary();
+        Reg mode = newTemporary();
+        load(value.get(), jsUndefined());
+        load(mode.get(), jsNumber(firstMode));
+        g.emitPySend(yielded.get(), delegate.get(), value.get(), mode.get(), done.get());
+    }
+    g.emitLabel(suspend.get());
     g.emitPythonYieldPoint(yielded.get());
-    Ref<Label> normal = g.newLabel();
-    g.emitPyJumpIfFalse(g.generatorResumeModeRegister(), normal.get());
-    keepVariablesAcrossYield();
-    g.emitLabel(normal.get());
     // Whatever comes in goes on to the iterator.
-    g.move(arguments[1], g.generatorValueRegister());
-    g.move(arguments[2], g.generatorResumeModeRegister());
-    hiddenJump(loop.get());
+    g.emitPySend(yielded.get(), delegate.get(), g.generatorValueRegister(), g.generatorResumeModeRegister(), done.get());
+    hiddenJump(suspend.get());
     g.emitLabel(done.get());
-    return callRuntime(dst, RuntimeFunction::TakeSendResult, { arguments[0] });
+    return g.move(dst, yielded.get());
 }
 
 RegisterID* Unit::yieldFrom(YieldFrom* node, RegisterID* dst)
@@ -1530,9 +1570,7 @@ RegisterID* Unit::yieldFrom(YieldFrom* node, RegisterID* dst)
 
 RegisterID* Unit::emitAwait(RegisterID* dst, RegisterID* awaitable, int where)
 {
-    Reg iterator = newTemporary();
-    callRuntime(iterator.get(), RuntimeFunction::GetAwaitable, { awaitable, constant(jsNumber(where)) });
-    return emitDelegate(dst, iterator.get());
+    return emitDelegate(dst, awaitable, firstSendOfAwait + where);
 }
 
 RegisterID* Unit::await(Await* node, RegisterID* dst)

@@ -1326,6 +1326,13 @@ static JSValue marshalLoads(JSGlobalObject* globalObject, JSValue bytes, JSValue
     RELEASE_AND_RETURN(scope, reader.read());
 }
 
+// For the runtime's own use: nobody is told.
+JSValue readMarshalled(JSGlobalObject* globalObject, std::span<const uint8_t> bytes)
+{
+    MarshalReader reader(globalObject, bytes, true);
+    return reader.read();
+}
+
 static JSValue marshalLoad(JSGlobalObject* globalObject, JSValue file, JSValue allowCodeValue)
 {
     VM& vm = getVM(globalObject);

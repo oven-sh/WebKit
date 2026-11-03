@@ -112,14 +112,14 @@ static JSValue tzinfoReduce(JSGlobalObject* globalObject, JSValue self)
 
 static constexpr NativeDef tzinfoMethods[] = {
     PY_NEW(tzinfoNew, "($type, *args, **kwargs)"),
-    PY_METHOD("tzname", tzinfoTzName, "($self, dt, /)"),
-    PY_METHOD("utcoffset", tzinfoUtcOffset, "($self, dt, /)"),
-    PY_METHOD("dst", tzinfoDst, "($self, dt, /)"),
-    PY_METHOD("fromutc", tzinfoFromUtc, "($self, dt, /)"),
+    PY_METHOD("tzname", tzinfoTzName, "($self, object, /)"),
+    PY_METHOD("utcoffset", tzinfoUtcOffset, "($self, object, /)"),
+    PY_METHOD("dst", tzinfoDst, "($self, object, /)"),
+    PY_METHOD("fromutc", tzinfoFromUtc, "($self, object, /)"),
     PY_METHOD("__reduce__", tzinfoReduce, "($self, /)"),
 };
 
-constexpr TypeDef tzinfoTypeDef { "datetime.tzinfo"_s, { TypeFlag::Base }, tzinfoMethods, { }, "Abstract base class for time zone info objects."_s };
+constexpr TypeDef tzinfoTypeDef { "datetime.tzinfo"_s, { TypeFlag::Base }, tzinfoMethods, { }, { } };
 
 // ---- timezone ----
 
@@ -227,14 +227,14 @@ static constexpr NativeDef zoneMethods[] = {
     PY_SLOT("__str__", zoneStr, "($self, /)"),
     PY_SLOT("__hash__", zoneHash, "($self, /)"),
     PY_DATETIME_COMPARISONS(zoneCompare),
-    PY_METHOD("tzname", zoneTzName, "($self, dt, /)"),
-    PY_METHOD("utcoffset", zoneUtcOffset, "($self, dt, /)"),
-    PY_METHOD("dst", zoneDst, "($self, dt, /)"),
-    PY_METHOD("fromutc", zoneFromUtc, "($self, dt, /)"),
+    PY_METHOD("tzname", zoneTzName, "($self, object, /)"),
+    PY_METHOD("utcoffset", zoneUtcOffset, "($self, object, /)"),
+    PY_METHOD("dst", zoneDst, "($self, object, /)"),
+    PY_METHOD("fromutc", zoneFromUtc, "($self, object, /)"),
     PY_METHOD("__getinitargs__", zoneGetInitArgs, "($self, /)"),
 };
 
-constexpr TypeDef timeZoneTypeDef { "datetime.timezone"_s, { TypeFlag::OwnLayout }, zoneMethods, { }, "Fixed offset from UTC implementation of tzinfo."_s };
+constexpr TypeDef timeZoneTypeDef { "datetime.timezone"_s, { TypeFlag::OwnLayout }, zoneMethods, { }, { } };
 
 // ---- time ----
 
@@ -444,19 +444,24 @@ static JSValue timeOfDayHash(JSGlobalObject* globalObject, JSValue self)
     return smallInt(time->cachedHash);
 }
 
-static JSValue timeOfDayReplace(JSGlobalObject* globalObject, JSValue self, JSValue hour, JSValue minute, JSValue second, JSValue microsecond, JSValue tzinfo, JSValue foldValue)
+static constexpr Parameters timeReplaceParameters { "replace"_s, timeParameterNames, 0, 5 };
+
+// Also __replace__(), which complains under the same name.
+static JSValue timeOfDayReplace(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
 {
     auto* time = PyTimeOfDay::from(self);
     int numbers[] = { time->hour(), time->minute(), time->second(), time->microsecond() };
-    JSValue values[] = { hour, minute, second, microsecond };
+    JSValue values[6];
+    if (!bindArguments(globalObject, timeReplaceParameters, args, values))
+        return { };
     for (unsigned i = 0; i < 4; ++i) {
         if (values[i] && !intArgument(globalObject, values[i], numbers[i]))
             return { };
     }
     int fold = time->fold();
-    if (foldValue && !intArgument(globalObject, foldValue, fold))
+    if (values[5] && !intArgument(globalObject, values[5], fold))
         return { };
-    return makeTime(globalObject, stateOf(globalObject, time), time->type(), numbers[0], numbers[1], numbers[2], numbers[3], tzinfo ? tzinfo : time->tzinfo(), fold);
+    return makeTime(globalObject, stateOf(globalObject, time), time->type(), numbers[0], numbers[1], numbers[2], numbers[3], values[4] ? values[4] : time->tzinfo(), fold);
 }
 
 static JSValue timeOfDayReduceFor(JSGlobalObject* globalObject, PyTimeOfDay* time, int protocol)
@@ -501,8 +506,8 @@ static constexpr NativeDef timeOfDayMethods[] = {
     PY_METHOD("utcoffset", timeOfDayUtcOffset, "($self, /)"),
     PY_METHOD("tzname", timeOfDayTzName, "($self, /)"),
     PY_METHOD("dst", timeOfDayDst, "($self, /)"),
-    PY_METHOD("replace", timeOfDayReplace, "($self, /, hour=unchanged, minute=unchanged, second=unchanged, microsecond=unchanged, tzinfo=unchanged, *, fold=unchanged)"),
-    PY_METHOD("__replace__", timeOfDayReplace, "($self, /, hour=unchanged, minute=unchanged, second=unchanged, microsecond=unchanged, tzinfo=unchanged, *, fold=unchanged)"),
+    PY_METHOD("replace", timeOfDayReplace, "!($self, /, hour=unchanged, minute=unchanged, second=unchanged,\n        microsecond=unchanged, tzinfo=unchanged, *, fold=unchanged)"),
+    PY_METHOD("__replace__", timeOfDayReplace, "!($self, /, **changes)"),
     PY_METHOD("__reduce_ex__", timeOfDayReduceEx, "($self, proto, /)"),
     PY_METHOD("__reduce__", timeOfDayReduce, "($self, /)"),
 };
@@ -517,8 +522,7 @@ static constexpr NativeGetSet timeOfDayGetSets[] = {
 };
 
 constexpr TypeDef timeTypeDef {
-    "datetime.time"_s, { TypeFlag::Base, TypeFlag::OwnLayout }, timeOfDayMethods, timeOfDayGetSets,
-    "Time with time zone.\n\nAll arguments are optional. tzinfo may be None, or an instance of\na tzinfo subclass. The remaining arguments may be ints."_s
+    "datetime.time"_s, { TypeFlag::Base, TypeFlag::OwnLayout }, timeOfDayMethods, timeOfDayGetSets, { }
 };
 
 } // namespace DateTime

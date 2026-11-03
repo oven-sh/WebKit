@@ -137,13 +137,15 @@ UnlinkedFunctionExecutable* Compiler::compile()
     return failed() ? nullptr : executable;
 }
 
-UnlinkedFunctionExecutable* Compiler::generate(const SourceCode& parentSource, const SourceCode& source, SourceParseMode parseMode, Ref<CodeInfo>&& info, unsigned parameterCount, bool isGeneratorBody, Function<void(BytecodeGenerator&)>&& emitter)
+UnlinkedFunctionExecutable* Compiler::generate(const SourceCode& parentSource, const SourceCode& source, SourceParseMode parseMode, Ref<CodeInfo>&& info, unsigned parameterCount, bool isGeneratorBody, Function<void(BytecodeGenerator&)>&& emitter, unsigned* generatorSlotCount)
 {
     ExecutableInfo executableInfo(false, PrivateBrandRequirement::None, false, ConstructorKind::None, JSParserScriptMode::Classic, SuperBinding::NotNeeded, parseMode, DerivedContextType::None, NeedsClassFieldInitializer::No, false, false, EvalContextType::None);
     auto* codeBlock = UnlinkedFunctionCodeBlock::create(m_vm, FunctionCode, executableInfo, { });
     ParserArena arena;
     PythonCodeNode node(arena, source, parameterCount, isGeneratorBody, WTF::move(emitter));
     ParserError error = BytecodeGenerator::generatePython(m_vm, &node, codeBlock);
+    if (generatorSlotCount)
+        *generatorSlotCount = node.generatorSlotCount();
     if (error.isValid())
         failWithoutLocation(SyntaxErrorInfo::Type::MemoryError, "the code is too large to compile"_s);
     return UnlinkedFunctionExecutable::createForPython(m_vm, parentSource, source, parseMode, WTF::move(info), parameterCount, codeBlock);
@@ -251,15 +253,16 @@ UnlinkedFunctionExecutable* Compiler::compileCode(Unit* parent, const CodeSpec& 
     return generate(parentSource, source, SourceParseMode::MethodMode, info.copyRef(), parameterCount, false, [&](BytecodeGenerator& generator) {
         Unit binder(*this, parent, spec, generator, info.get(), source, Unit::Part::GeneratorBinder);
         binder.emitPrologue();
+        unsigned slotCount = 0;
         auto* body = generate(source, source, SourceParseMode::GeneratorBodyMode, info.copyRef(), static_cast<unsigned>(JSGenerator::Argument::Frame), true, [&](BytecodeGenerator& bodyGenerator) {
             Unit unit(*this, parent, spec, bodyGenerator, info.get(), source, Unit::Part::GeneratorBody);
             unit.emitPrologue();
             emitBody(unit);
             unit.finishConstants();
-        });
+        }, &slotCount);
         unsigned index = generator.addPythonFunction(body);
         ASSERT_UNUSED(index, index == CodeInfo::generatorBodyIndex);
-        binder.emitMakeGenerator();
+        binder.emitMakeGenerator(slotCount);
     });
 }
 
@@ -469,6 +472,8 @@ Vector<AST::Name> Unit::freeVariablesOf(Scope* scope)
     }
     if (scope->readsConditionalAnnotationsCell && !result.contains(names().conditionalAnnotations))
         result.append(names().conditionalAnnotations);
+    if (scope->readsClassDictCellAnyway())
+        result.append(names().classDict);
     std::ranges::sort(result, [](Name a, Name b) { return codePointCompareLessThan(a->string(), b->string()); });
     return result;
 }
@@ -591,10 +596,7 @@ void Unit::emitPrologue()
         if (count) {
             // The first variable declared is the first parameter.
             RegisterID* first = isFunctionLike() ? g.pythonRegister(virtualRegisterForLocal(g.firstPythonVariable())) : m_namespace;
-            Reg arguments = newTemporary();
-            g.emitGetInternalField(arguments.get(), g.generatorRegister(), generatorArgumentsField);
-            g.emitPyUnpack(first, arguments.get(), count, -1);
-            g.emitPutInternalField(g.generatorRegister(), generatorArgumentsField, constant(jsUndefined()));
+            g.emitPyRestoreRegisters(first, count, 0);
         }
     }
 
@@ -654,7 +656,7 @@ bool Unit::isParameterRegister(RegisterID* reg)
     return local >= first && local < first + static_cast<int>(m_scope->parameters.size());
 }
 
-void Unit::emitMakeGenerator()
+void Unit::emitMakeGenerator(unsigned slotCount)
 {
     ASSERT(m_part == Part::GeneratorBinder);
     Reg result = newTemporary();
@@ -668,9 +670,9 @@ void Unit::emitMakeGenerator()
             callRuntime(iterator.get(), RuntimeFunction::GetAIter, { parameter });
         else
             g.emitPyGetIter(iterator.get(), parameter);
-        callRuntime(result.get(), RuntimeFunction::MakeGenerator, { iterator.get() });
+        callRuntime(result.get(), RuntimeFunction::MakeGenerator, { constant(jsNumber(slotCount)), iterator.get() });
     } else
-        callRuntime(result.get(), RuntimeFunction::MakeGenerator);
+        callRuntime(result.get(), RuntimeFunction::MakeGenerator, { constant(jsNumber(slotCount)) });
     g.emitReturn(result.get());
 }
 
@@ -1011,7 +1013,7 @@ void Unit::unwindBlock(const Block& block, Vector<TryContext>& suspended)
     case BlockKind::AsyncWith: {
         Reg result = newTemporary();
         RegisterID* none = constant(jsUndefined());
-        emitSimpleCall(result.get(), block.saved, { none, none, none }, block.range);
+        emitMethodCall(result.get(), block.saved, block.savedSelf, { none, none, none }, block.range);
         if (block.kind == BlockKind::AsyncWith)
             emitAwait(result.get(), result.get(), 2);
         return;
@@ -1813,20 +1815,26 @@ void Unit::withStatement(With* node, unsigned index)
     const Range& range = item->contextExpr->range;
     Ref<Label> end = g.newLabel();
 
+    // No bound methods are made: the functions are called with the manager as their first argument.
     Reg exit = newTemporary();
+    Reg exitSelf = newTemporary();
+    ASSERT(exitSelf->index() == exit->index() - 1); // TracedBlock::With
     Reg value = newTemporary();
     {
-        Reg manager = expr(item->contextExpr);
-        loc(range);
-        callRuntime(exit.get(), RuntimeFunction::LoadSpecial, { manager.get(), constant(jsNumber(static_cast<int>(isAsync ? SpecialMethodForWith::AExit : SpecialMethodForWith::Exit))) });
-        callRuntime(value.get(), RuntimeFunction::LoadSpecial, { manager.get(), constant(jsNumber(static_cast<int>(isAsync ? SpecialMethodForWith::AEnter : SpecialMethodForWith::Enter))) });
+        Reg enterSelf = newTemporary();
+        {
+            Reg manager = expr(item->contextExpr);
+            loc(range);
+            g.emitPyGetMethod(exit.get(), exitSelf.get(), manager.get(), constant(jsNumber(static_cast<int>(isAsync ? SpecialMethodForWith::AExit : SpecialMethodForWith::Exit))));
+            g.emitPyGetMethod(value.get(), enterSelf.get(), manager.get(), constant(jsNumber(static_cast<int>(isAsync ? SpecialMethodForWith::AEnter : SpecialMethodForWith::Enter))));
+        }
+        emitMethodCall(value.get(), value.get(), enterSelf.get(), { }, range);
     }
-    emitSimpleCall(value.get(), value.get(), { }, range);
     if (isAsync)
         emitAwait(value.get(), value.get(), 1);
 
     Try body = beginTry();
-    pushBlock({ .kind = isAsync ? BlockKind::AsyncWith : BlockKind::With, .tryDepth = body.depthBefore, .saved = exit.get(), .range = range });
+    pushBlock({ .kind = isAsync ? BlockKind::AsyncWith : BlockKind::With, .tryDepth = body.depthBefore, .saved = exit.get(), .savedSelf = exitSelf.get(), .range = range });
     if (item->optionalVars)
         store(item->optionalVars, value.get());
     value = nullptr;
@@ -1840,7 +1848,7 @@ void Unit::withStatement(With* node, unsigned index)
     {
         Reg result = newTemporary();
         RegisterID* none = constant(jsUndefined());
-        emitSimpleCall(result.get(), exit.get(), { none, none, none }, range);
+        emitMethodCall(result.get(), exit.get(), exitSelf.get(), { none, none, none }, range);
         if (isAsync)
             emitAwait(result.get(), result.get(), 2);
     }
@@ -1852,7 +1860,7 @@ void Unit::withStatement(With* node, unsigned index)
     Try cleanup = beginTry();
     Reg result = newTemporary();
     loc(range);
-    callRuntime(result.get(), RuntimeFunction::WithExit, { exit.get(), exception.get() });
+    callRuntime(result.get(), RuntimeFunction::WithExit, { exit.get(), exitSelf.get(), exception.get() });
     if (isAsync)
         emitAwait(result.get(), result.get(), 2);
     Ref<Label> suppress = g.newLabel();

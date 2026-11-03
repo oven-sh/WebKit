@@ -48,6 +48,10 @@ public:
     }
     std::span<const JSValue> span() const { return { reinterpret_cast<const JSValue*>(items()), m_length }; }
 
+    // hash(tuple), once it has been worked out; -1 until then. (The items do not change, and what is hashable keeps its hash.)
+    int64_t cachedHash() const { return m_hash; }
+    void setCachedHash(int64_t hash) { m_hash = hash; }
+
     static constexpr ptrdiff_t offsetOfLength() { return OBJECT_OFFSETOF(PyTuple, m_length); }
     static constexpr ptrdiff_t offsetOfItems() { return sizeof(PyTuple); }
 
@@ -58,6 +62,7 @@ protected:
     const WriteBarrier<Unknown>* items() const { return reinterpret_cast<const WriteBarrier<Unknown>*>(this + 1); }
 
     unsigned m_length;
+    int64_t m_hash { -1 };
 };
 
 } // namespace Python

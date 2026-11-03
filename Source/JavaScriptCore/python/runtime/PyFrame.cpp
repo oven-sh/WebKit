@@ -72,6 +72,9 @@ bool liveLocalsOfFrame(CallFrame* callFrame, CodeBlock* codeBlock, bool isCallin
     case op_call_varargs:
     case op_construct:
     case op_construct_varargs:
+    // These call the body of a generator. (What else op_py_send sets, the iterator, it sets before that. It reads it too, so it is live.)
+    case op_py_for_iter:
+    case op_py_send:
         return true;
     default:
         break;
@@ -83,7 +86,31 @@ bool liveLocalsOfFrame(CallFrame* callFrame, CodeBlock* codeBlock, bool isCallin
     return true;
 }
 
-// `callee`: the frame of what this one is calling, if it is calling something.
+// Where the frame ends that the instruction makes for what it calls: it lies in the registers of the caller, at a place that the
+// instruction names. Null: it makes none, or where is not known beforehand.
+static Register* endOfFrameMadeBy(CallFrame* callFrame, const JSInstruction* instruction)
+{
+    auto end = [&](unsigned stackOffset, unsigned argumentCountIncludingThis) {
+        return callFrame->registers() - stackOffset + CallFrame::headerSizeInRegisters + argumentCountIncludingThis;
+    };
+    constexpr unsigned argumentsOfGeneratorBody = static_cast<unsigned>(JSGenerator::Argument::NumberOfArguments) + 1;
+    switch (instruction->opcodeID()) {
+    case op_call:
+        return end(instruction->as<OpCall>().m_argv, instruction->as<OpCall>().m_argc);
+    case op_call_ignore_result:
+        return end(instruction->as<OpCallIgnoreResult>().m_argv, instruction->as<OpCallIgnoreResult>().m_argc);
+    case op_construct:
+        return end(instruction->as<OpConstruct>().m_argv, instruction->as<OpConstruct>().m_argc);
+    case op_py_for_iter:
+        return end(instruction->as<OpPyForIter>().m_stackOffset, argumentsOfGeneratorBody);
+    case op_py_send:
+        return end(instruction->as<OpPySend>().m_stackOffset, argumentsOfGeneratorBody);
+    default:
+        return nullptr;
+    }
+}
+
+// `callee`: the frame of what this one is calling, if that is known.
 static void clearDeadTemporariesOf(CallFrame* callFrame, CodeBlock* codeBlock, CallFrame* callee)
 {
     FastBitVector live;
@@ -91,12 +118,15 @@ static void clearDeadTemporariesOf(CallFrame* callFrame, CodeBlock* codeBlock, C
         return;
 
     // The frame of the callee lies in the registers of the caller. It has room for all the parameters, given or not.
-    Register* endOfCallee = nullptr;
+    // A frame that is at a call has one there even if no callee is known: while an exception unwinds the stack, whoever traces
+    // the program is told with this frame as the topmost (tellOfException() in PyMonitoring.cpp), and the frames that the
+    // exception has left are still there. The machine code that goes on to the handler reads the one it was thrown from.
+    Register* endOfCallee = endOfFrameMadeBy(callFrame, codeBlock->instructions().at(callFrame->bytecodeIndex()).ptr());
     if (callee) {
         unsigned argumentCount = callee->argumentCountIncludingThis();
         if (!callee->isNativeCalleeFrame() && callee->codeBlock())
             argumentCount = std::max(argumentCount, callee->codeBlock()->numParameters());
-        endOfCallee = callee->registers() + CallFrame::headerSizeInRegisters + argumentCount;
+        endOfCallee = std::max(endOfCallee, callee->registers() + CallFrame::headerSizeInRegisters + argumentCount);
     }
     for (unsigned local = codeBlock->numVars(); local < codeBlock->numCalleeLocals(); ++local) {
         Register* slot = &callFrame->r(virtualRegisterForLocal(local));
@@ -110,15 +140,22 @@ static void clearDeadTemporariesOf(CallFrame* callFrame, CodeBlock* codeBlock, C
 static void clearDeadTemporariesFrom(CallFrame* topCallFrame, EntryFrame* entryFrame)
 {
     CallFrame* callee = nullptr;
-    for (CallFrame* callFrame = topCallFrame; callFrame; callFrame = callFrame->callerFrame(entryFrame)) {
+    for (CallFrame* callFrame = topCallFrame; callFrame;) {
         if (!callFrame->isNativeCalleeFrame() && isPythonCodeBlock(callFrame->codeBlock()))
             clearDeadTemporariesOf(callFrame, callFrame->codeBlock(), callee);
+        EntryFrame* entryFrameOfCallee = entryFrame;
         callee = callFrame;
+        callFrame = callFrame->callerFrame(entryFrame);
+        // What entered the VM anew is C++, not the frame that comes next.
+        if (entryFrame != entryFrameOfCallee)
+            callee = nullptr;
     }
 }
 
 void clearDeadTemporaries(VM& vm)
 {
+    for (Runtime* runtime : vm.heap.pythonRuntimes())
+        runtime->collectionIsBeginning();
     clearDeadTemporariesFrom(vm.topCallFrame, vm.topEntryFrame);
     // A thread that is parked does not touch its frames before it has the VM again, which it cannot have during a collection.
     if (vm.apiLock().hasParkedThreads()) {
@@ -310,10 +347,21 @@ public:
         PyGenerator* generator = frame->generator();
         if (!generator)
             return;
-        if (generator->isStarted())
-            m_environment = dynamicDowncast<JSLexicalEnvironment>(generator->frame());
-        else
-            m_arguments = PyTuple::tryFrom(generator->arguments());
+        m_generator = generator;
+        m_holdsArguments = !generator->isStarted();
+        if (m_holdsArguments)
+            return;
+        // Which slot belongs to which register is in the instructions that save and restore them.
+        auto note = [&](const auto& bytecode) {
+            for (unsigned i = 0; i < bytecode.m_count; ++i)
+                m_slots.append({ VirtualRegister(bytecode.m_first.offset() - static_cast<int>(i)), bytecode.m_offset + i });
+        };
+        for (const auto& instruction : generator->body()->functionExecutable()->codeBlockForCall()->instructions()) {
+            if (instruction->opcodeID() == op_py_generator_registers)
+                note(instruction->as<OpPyGeneratorRegisters>());
+            else if (instruction->opcodeID() == op_py_generator_suspend)
+                note(instruction->as<OpPyGeneratorSuspend>());
+        }
     }
 
     const CodeInfo& info() const { return m_info; }
@@ -325,7 +373,7 @@ public:
     {
         JSValue held = registerOf(index);
         // The cells of a generator are made when it starts.
-        if (!held || at(index).kind == CodeInfo::VariableKind::Local || m_arguments)
+        if (!held || at(index).kind == CodeInfo::VariableKind::Local || m_holdsArguments)
             return held;
         // So are those of a function, and something may look at the frame before that.
         auto* cell = PyCell::tryFrom(held);
@@ -336,7 +384,7 @@ public:
     bool setValue(unsigned index, JSValue value)
     {
         auto& variable = at(index);
-        if (variable.kind != CodeInfo::VariableKind::Local && !m_arguments) {
+        if (variable.kind != CodeInfo::VariableKind::Local && !m_holdsArguments) {
             auto* cell = PyCell::tryFrom(registerOf(index));
             if (!cell)
                 return false;
@@ -351,16 +399,9 @@ public:
             m_values->initializeAt(m_vm, index, value);
             return true;
         }
-        if (m_environment) {
-            ScopeOffset offset = offsetInEnvironment(variable.reg);
-            if (!offset)
-                return false;
-            m_environment->variableAt(offset).set(m_vm, m_environment, value);
-            return true;
-        }
-        if (m_arguments) {
-            if (auto parameter = parameterOf(variable)) {
-                m_arguments->initializeAt(m_vm, *parameter, value);
+        if (m_generator) {
+            if (auto slot = slotOf(variable)) {
+                m_generator->setSlot(m_vm, *slot, value);
                 return true;
             }
         }
@@ -381,11 +422,12 @@ public:
             return m_callFrame->r(m_info.namespaceRegister).jsValue();
         if (m_names)
             return m_names;
-        if (m_environment) {
-            ScopeOffset offset = offsetInEnvironment(m_info.namespaceRegister);
-            return !offset ? JSValue() : m_environment->variableAt(offset).get();
-        }
-        return m_arguments ? m_arguments->at(0) : JSValue();
+        if (!m_generator)
+            return { };
+        if (m_holdsArguments)
+            return m_generator->slot(0);
+        auto slot = slotOf(m_info.namespaceRegister);
+        return slot ? m_generator->slot(*slot) : JSValue();
     }
 
     // Those that have a value, in a new dict.
@@ -419,31 +461,29 @@ private:
             return m_callFrame->r(variable.reg).jsValue();
         if (m_values)
             return m_values->at(index);
-        if (m_environment) {
-            ScopeOffset offset = offsetInEnvironment(variable.reg);
-            return !offset ? JSValue() : m_environment->variableAt(offset).get();
-        }
-        if (m_arguments) {
-            if (auto parameter = parameterOf(variable))
-                return m_arguments->at(*parameter);
+        if (m_generator) {
+            if (auto slot = slotOf(variable))
+                return m_generator->slot(*slot);
         }
         return { };
     }
 
-    // The pass that makes a function resumable (BytecodeGeneratorification) names the place of a register after its number.
-    ScopeOffset offsetInEnvironment(VirtualRegister reg) const
+    std::optional<unsigned> slotOf(VirtualRegister reg) const
     {
-        if (!reg.isLocal())
-            return { };
-        auto entry = m_environment->symbolTable()->get(Identifier::from(m_vm, static_cast<unsigned>(reg.toLocal())).impl());
-        return entry.isNull() ? ScopeOffset() : entry.scopeOffset();
+        for (auto& entry : m_slots) {
+            if (entry.first == reg)
+                return entry.second;
+        }
+        return std::nullopt;
     }
 
-    std::optional<unsigned> parameterOf(const CodeInfo::Variable& variable) const
+    std::optional<unsigned> slotOf(const CodeInfo::Variable& variable) const
     {
+        if (!m_holdsArguments)
+            return slotOf(variable.reg);
         if (variable.isHidden)
             return std::nullopt;
-        for (unsigned i = 0; i < m_info.parameterNames.size() && i < m_arguments->length(); ++i) {
+        for (unsigned i = 0; i < m_info.parameterNames.size() && i < m_generator->slotCount(); ++i) {
             if (m_info.parameterNames[i] == variable.name)
                 return i;
         }
@@ -454,8 +494,9 @@ private:
     const CodeInfo& m_info;
     CallFrame* m_callFrame; // In progress: in its registers.
     PyTuple* m_values { nullptr }; // Ended: the frame object has what the registers held.
-    JSLexicalEnvironment* m_environment { nullptr }; // A suspended generator: where it keeps its registers meanwhile.
-    PyTuple* m_arguments { nullptr }; // A generator that has not started: all there is are the values of the parameters.
+    PyGenerator* m_generator { nullptr }; // A suspended generator: in its slots.
+    Vector<std::pair<VirtualRegister, unsigned>, 16> m_slots;
+    bool m_holdsArguments { false }; // It has not started: all there is are the values of the parameters, in the first slots.
     JSValue m_names;
 };
 
@@ -537,21 +578,10 @@ PyFrame* PyFrame::of(JSGlobalObject* globalObject, PyGenerator* generator)
 // Where a generator in that state goes on. False: at the start.
 static bool bytecodeOffsetOfState(PyFunction* body, int32_t state, unsigned& result)
 {
-    // The state is an index in the table of the switch the body starts with.
-    CodeBlock* codeBlock = state > 0 ? body->functionExecutable()->codeBlockForCall() : nullptr;
-    if (!codeBlock)
+    if (state <= 0 || !body->functionExecutable()->codeBlockForCall())
         return false;
-    for (const auto& instruction : codeBlock->instructions()) {
-        if (instruction->opcodeID() != op_switch_imm)
-            continue;
-        auto bytecode = instruction->as<OpSwitchImm>();
-        int32_t offset = codeBlock->unlinkedSwitchJumpTable(bytecode.m_tableIndex).offsetForValue(state);
-        if (!offset)
-            return false;
-        result = instruction.offset() + offset;
-        return true;
-    }
-    return false;
+    result = state;
+    return true;
 }
 
 PyFrame* PyFrame::createSuspended(JSGlobalObject* globalObject, PyFunction* function, int32_t state)
@@ -672,7 +702,6 @@ void PyFrame::callIsEnding(JSGlobalObject* globalObject, CallFrame* callFrame)
 void PyFrame::generatorHasStopped(bool isCompleted)
 {
     m_callFrame = nullptr;
-    // FIXME: What the variables held when it returned is lost: op_ret does not say that the frame ends.
     if (isCompleted)
         m_generator.clear();
 }
@@ -784,7 +813,11 @@ static void frameSetTraceOpcodes(JSGlobalObject* globalObject, JSValue self, JSV
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!value || !value.isBoolean()) {
+    if (!value) {
+        raise(globalObject, scope, runtime(globalObject).AttributeError(), "attribute 'f_trace_opcodes' of 'frame' objects cannot be deleted"_s);
+        return;
+    }
+    if (!value.isBoolean()) {
         raiseTypeError(globalObject, scope, "attribute value type must be bool"_s);
         return;
     }
@@ -1256,7 +1289,7 @@ JSValue addTracebackEntry(JSGlobalObject* globalObject, JSValue exceptionValue, 
     bool isRaisedAgain = std::exchange(rt.reraisingFrame, nullptr) == callFrame;
     // A call whose arguments do not fit never began.
     CodeBlock* codeBlock = callFrame->codeBlock();
-    if (codeBlock->instructionAt(index)->opcodeID() == op_py_bind_args)
+    if (OpcodeID opcodeID = codeBlock->instructionAt(index)->opcodeID(); opcodeID == op_py_bind_args || opcodeID == op_py_generator_enter)
         return exceptionValue;
     if (!isRaisedAgain) {
         DeferGC deferGC(vm);
@@ -1983,9 +2016,53 @@ String formatException(JSGlobalObject* globalObject, JSValue exception)
     return ExceptionPrinter(globalObject).print(exception);
 }
 
+// traceback._print_exception_bltin(exception[, file]). False: there is no such thing, or it failed. Nothing is left pending.
+static bool printWithTracebackModule(JSGlobalObject* globalObject, JSValue exception, JSValue file)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto hasFailed = [&] {
+        if (!scope.exception()) [[likely]]
+            return false;
+        if (!vm.hasPendingTerminationException())
+            scope.clearException();
+        return true;
+    };
+    JSValue module = importModule(globalObject, "traceback"_s);
+    if (hasFailed())
+        return false;
+    JSValue function = getAttrIfPresent(globalObject, module, internString(vm, "_print_exception_bltin"_s));
+    if (hasFailed() || !function || !isCallable(globalObject, function))
+        return false;
+    if (file)
+        call(globalObject, function, exception, file);
+    else
+        call(globalObject, function, exception);
+    return !hasFailed();
+}
+
+void printException(JSGlobalObject* globalObject, JSValue exception, JSValue file, bool tracebackModuleIsToldTheFile)
+{
+    VM& vm = getVM(globalObject);
+    if (printWithTracebackModule(globalObject, exception, tracebackModuleIsToldTheFile ? file : JSValue()) || vm.hasPendingTerminationException())
+        return;
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    writeToFile(globalObject, file, makeStr(globalObject, formatException(globalObject, exception)));
+    if (!scope.exception())
+        callMethod(globalObject, file, runtime(globalObject).names.flush());
+    if (scope.exception() && !vm.hasPendingTerminationException())
+        scope.clearException();
+}
+
 void printException(JSGlobalObject* globalObject, JSValue exception)
 {
-    writeToStderr(globalObject, formatException(globalObject, exception));
+    Runtime& rt = runtime(globalObject);
+    JSValue file = rt.sysDict()->get(rt.names.stderr_());
+    // There is none before the interpreter has started, and what goes wrong until then has to be said all the same.
+    if (!file)
+        return writeToStderr(globalObject, formatException(globalObject, exception));
+    if (!isNone(file))
+        printException(globalObject, exception, file, false);
 }
 
 } // namespace Python

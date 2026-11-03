@@ -1061,12 +1061,9 @@ static JSValue bytesContains(JSGlobalObject* globalObject, JSValue self, JSValue
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    BytesExportScope exportScope(self);
     if (hasIndex(globalObject, item)) {
-        int64_t value;
-        {
-            BytesExportScope exportScope(self);
-            value = toSsize(globalObject, item, nullptr);
-        }
+        int64_t value = toSsize(globalObject, item, nullptr);
         if (!scope.exception()) {
             if (value < 0 || value >= 256)
                 return raiseValueError(globalObject, scope, "byte must be in range(0, 256)"_s);
@@ -1139,8 +1136,10 @@ static JSValue bytesMul(JSGlobalObject* globalObject, JSValue self, JSValue coun
     return result;
 }
 
+// What formats the arguments may run anything, and the format is read as it goes.
 static JSValue bytesMod(JSGlobalObject* globalObject, JSValue self, JSValue arguments)
 {
+    BytesExportScope exportScope(self);
     return bytesFormatPercent(globalObject, bytesSpanOf(self), arguments, bytesIsArray(self));
 }
 
@@ -1149,6 +1148,7 @@ static JSValue bytesRMod(JSGlobalObject* globalObject, JSValue self, JSValue oth
     bool isArray = bytesIsArray(self);
     if (isArray ? !PyByteArray::is(other) : !PyBytes::is(other))
         return runtime(globalObject).notImplemented();
+    BytesExportScope exportScope(other);
     return bytesFormatPercent(globalObject, bytesSpanOf(other), self, isArray);
 }
 
@@ -1358,6 +1358,7 @@ static JSValue bytesSplit(JSGlobalObject* globalObject, JSValue self, JSValue se
     bool onWhitespace;
     std::span<const uint8_t> separator;
     int64_t maxSplit;
+    BytesExportScope exportScope(self);
     if (!bytesSplitArguments(globalObject, separatorValue, maxSplitValue, onWhitespace, separator, maxSplit))
         return { };
     auto span = bytesSpanOf(self);
@@ -1400,6 +1401,7 @@ static JSValue bytesRSplit(JSGlobalObject* globalObject, JSValue self, JSValue s
     bool onWhitespace;
     std::span<const uint8_t> separator;
     int64_t maxSplit;
+    BytesExportScope exportScope(self);
     if (!bytesSplitArguments(globalObject, separatorValue, maxSplitValue, onWhitespace, separator, maxSplit))
         return { };
     auto span = bytesSpanOf(self);
@@ -1501,12 +1503,12 @@ static JSValue bytesPartition(JSGlobalObject* globalObject, JSValue self, JSValu
 }
 
 // For when the __buffer__() of an item is written in Python. It may do anything to the other items, so the memory of each is
-// held until the end.
-static JSValue bytesJoinHoldingBuffers(JSGlobalObject* globalObject, JSValue self, const MarkedArgumentBuffer& items)
+// held until the end; and to the sequence, a tuple or a list, of which each item is taken when its turn comes.
+static JSValue bytesJoinHoldingBuffers(JSGlobalObject* globalObject, JSValue self, PyTuple* tuple, JSArray* list)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    unsigned count = items.size();
+    unsigned count = tuple ? tuple->length() : listLength(list);
     Vector<Buffer> buffers(count);
     // What the buffers refer to: the collector does not look into the vector.
     MarkedArgumentBuffer referents;
@@ -1516,10 +1518,15 @@ static JSValue bytesJoinHoldingBuffers(JSGlobalObject* globalObject, JSValue sel
     };
     for (unsigned i = 0; i < count; ++i) {
         Buffer& buffer = buffers[i];
-        if (!getBuffer(globalObject, items.at(i), buffer)) {
+        JSValue item = tuple ? tuple->at(i) : listGet(list, i);
+        if (!getBuffer(globalObject, item, buffer)) {
             takePendingException(globalObject);
             releaseAll();
-            return raiseTypeError(globalObject, scope, "sequence item "_s, i, ": expected a bytes-like object, "_s, typeName(globalObject, items.at(i)), " found"_s);
+            return raiseTypeError(globalObject, scope, "sequence item "_s, i, ": expected a bytes-like object, "_s, typeName(globalObject, item), " found"_s);
+        }
+        if (list && listLength(list) != count) {
+            releaseAll();
+            return raiseRuntimeError(globalObject, scope, "sequence changed size during iteration"_s);
         }
         referents.append(buffer.object);
         referents.append(buffer.view ? buffer.view : jsUndefined());
@@ -1594,12 +1601,8 @@ static JSValue bytesJoin(JSGlobalObject* globalObject, JSValue self, JSValue ite
     bool runsCode = false;
     for (unsigned i = 0; i < count && !runsCode; ++i)
         runsCode = getBufferRunsCode(itemAt(i));
-    if (runsCode) {
-        MarkedArgumentBuffer items;
-        for (unsigned i = 0; i < count; ++i)
-            items.append(itemAt(i));
-        RELEASE_AND_RETURN(scope, bytesJoinHoldingBuffers(globalObject, self, items));
-    }
+    if (runsCode)
+        RELEASE_AND_RETURN(scope, bytesJoinHoldingBuffers(globalObject, self, tuple, list));
     // Nothing from here on runs any code, so neither the items nor their bytes change.
     if (!count)
         RELEASE_AND_RETURN(scope, bytesMake(globalObject, isArray, { }));
@@ -2046,7 +2049,9 @@ static JSValue bytesHex(JSGlobalObject* globalObject, JSValue self, JSValue sepa
     if (bytesPerSeparatorValue && !bytesSsizeArgument(globalObject, bytesPerSeparatorValue, group))
         return { };
     uint8_t separator = 0;
+    BytesExportScope exportScope(self);
     if (separatorValue) {
+        // The __len__ of a class derived from str or bytes may say anything, and do anything.
         int64_t separatorLength = length(globalObject, separatorValue);
         RETURN_IF_EXCEPTION(scope, { });
         if (separatorLength != 1)
@@ -2055,9 +2060,9 @@ static JSValue bytesHex(JSGlobalObject* globalObject, JSValue self, JSValue sepa
         if (isStr(separatorValue)) {
             StrView view(globalObject, strValue(separatorValue));
             RETURN_IF_EXCEPTION(scope, { });
-            character = view.at(0);
+            character = view.length() ? view.at(0) : 0;
         } else if (PyBytes::is(separatorValue))
-            character = PyBytes::from(separatorValue)->span()[0];
+            character = *PyBytes::from(separatorValue)->data();
         else
             return raiseTypeError(globalObject, scope, "sep must be str or bytes."_s);
         if (character > 127)
@@ -2804,12 +2809,17 @@ static JSValue byteArrayExtend(JSGlobalObject* globalObject, JSValue self, JSVal
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* array = PyByteArray::from(self);
     if (isBytesLike(iterable)) {
+        // array[end:end] = iterable, where the end is what it is now: a __buffer__() may resize the array.
+        size_t end = array->length();
         std::span<const uint8_t> bytes;
         if (!getBytesLike(globalObject, iterable, bytes)) {
             takePendingException(globalObject);
             return raiseTypeError(globalObject, scope, "can't set bytearray slice from "_s, typeName(globalObject, iterable));
         }
-        array->append(globalObject, bytes);
+        if (end < array->length()) [[unlikely]]
+            byteArrayReplaceRange(globalObject, array, end, end, bytes);
+        else
+            array->append(globalObject, bytes);
         RETURN_IF_EXCEPTION(scope, { });
         return jsUndefined();
     }

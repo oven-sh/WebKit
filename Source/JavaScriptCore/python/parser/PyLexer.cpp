@@ -169,6 +169,23 @@ static ASCIICString codingCookie(std::span<const uint8_t> line, bool& lineIsBlan
     return { };
 }
 
+ASCIICString declaredEncoding(std::span<const uint8_t> source)
+{
+    if (source.size() >= 3 && source[0] == 0xEF && source[1] == 0xBB && source[2] == 0xBF)
+        return "utf-8"_s;
+    for (int lineno = 1; lineno <= 2 && !source.empty(); ++lineno) {
+        size_t length = 0;
+        while (length < source.size() && source[length] != '\n' && source[length] != '\r')
+            ++length;
+        bool lineIsBlankOrComment;
+        ASCIICString cookie = codingCookie(source.first(length), lineIsBlankOrComment);
+        if (!cookie.isNull() || !lineIsBlankOrComment || length == source.size())
+            return cookie;
+        source = source.subspan(length + (source[length] == '\r' && length + 1 < source.size() && source[length + 1] == '\n' ? 2 : 1));
+    }
+    return { };
+}
+
 bool SourceText::initialize(std::span<const uint8_t> input, OptionSet<Flag> flags, const String& filename, ParserHost& host, SyntaxErrorInfo& error)
 {
     auto failAt = [&](int lineno, int offset, int endOffset, std::span<const uint8_t> line, String&& message) {

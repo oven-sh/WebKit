@@ -25,7 +25,7 @@ public:
     DECLARE_VISIT_CHILDREN;
 
     // Some of the built-in classes have attributes of their own, which are kept here: OSError.errno and so on.
-    static constexpr unsigned numberOfFields = 8;
+    static constexpr unsigned numberOfFields = 9;
 
     static PyException* create(VM&, Structure*, PyType*);
 
@@ -65,7 +65,7 @@ static constexpr unsigned nameErrorName = 0;
 static constexpr unsigned attributeErrorName = 0, attributeErrorObj = 1;
 static constexpr unsigned importErrorMsg = 0, importErrorName = 1, importErrorPath = 2, importErrorNameFrom = 3;
 static constexpr unsigned osErrorErrno = 0, osErrorStrerror = 1, osErrorFilename = 2, osErrorFilename2 = 3, osErrorCharactersWritten = 4;
-static constexpr unsigned syntaxErrorMsg = 0, syntaxErrorFilename = 1, syntaxErrorLineno = 2, syntaxErrorOffset = 3, syntaxErrorText = 4, syntaxErrorEndLineno = 5, syntaxErrorEndOffset = 6, syntaxErrorPrintFileAndLine = 7;
+static constexpr unsigned syntaxErrorMsg = 0, syntaxErrorFilename = 1, syntaxErrorLineno = 2, syntaxErrorOffset = 3, syntaxErrorText = 4, syntaxErrorEndLineno = 5, syntaxErrorEndOffset = 6, syntaxErrorPrintFileAndLine = 7, syntaxErrorMetadata = 8;
 static constexpr unsigned unicodeErrorEncoding = 0, unicodeErrorObject = 1, unicodeErrorStart = 2, unicodeErrorEnd = 3, unicodeErrorReason = 4;
 static constexpr unsigned exceptionGroupMessage = 0, exceptionGroupExceptions = 1;
 static constexpr unsigned jsErrorValue = 0;
@@ -187,8 +187,12 @@ PyException* exceptionOfThrownValueIfKnown(JSGlobalObject*, JSValue thrown);
 // The line of the code an instruction comes from.
 int lineNumberForBytecodeIndex(CodeBlock*, BytecodeIndex);
 
-// Prints the exception and its traceback on sys.stderr, as the interpreter does for one nothing caught.
+// Prints the exception and its traceback on sys.stderr, as the interpreter does for one nothing caught: nothing if that is None.
+// As in CPython it is Lib/traceback.py that does it, which underlines what raised, colours what goes to a terminal and has hints
+// to give. What is written in C++ (formatException()) is for when that cannot be imported or fails.
 void printException(JSGlobalObject*, JSValue exception);
+// The same for a file. CPython's callers differ in whether traceback.py hears of it, or writes to sys.stderr whatever it is.
+void printException(JSGlobalObject*, JSValue exception, JSValue file, bool tracebackModuleIsToldTheFile);
 
 } // namespace Python
 } // namespace JSC

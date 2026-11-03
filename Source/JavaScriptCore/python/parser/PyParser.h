@@ -147,7 +147,9 @@ private:
     AST::Mod* parseEval();
     AST::Mod* parseFunctionType();
 
-    bool parseStatement(StmtVector&);
+    // `isCompound`: set if it was a compound statement.
+    bool parseStatement(StmtVector&, bool* isCompound = nullptr);
+    void didParseCompoundStatement(Position start);
     bool parseSimpleStatements(StmtVector&);
     Stmt* parseSimpleStatement();
     Stmt* parseCompoundStatement();
@@ -299,7 +301,9 @@ private:
     bool m_acceptsPrefix { false };
     Vector<uint32_t> m_warnedEscapes;
     Vector<AST::TypeIgnore*> m_typeIgnores;
-    Position m_lastStatementStart;
+    Position m_lastCompoundStatement { 0, 0 }; // See SyntaxErrorInfo::metadataLineno.
+    bool* m_statementIsCompleteSoFar { nullptr }; // Of the compound statement being parsed: it could end here, only optional clauses can follow.
+    bool m_errorIsAboutWhatFollows { false }; // The text parsed. It is what comes after it that is wrong.
 
     const Identifier& m_matchKeyword;
     const Identifier& m_caseKeyword;

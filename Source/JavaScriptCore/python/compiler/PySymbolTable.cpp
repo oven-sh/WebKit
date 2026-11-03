@@ -1287,6 +1287,11 @@ bool SymbolTable::analyzeBlock(Scope* scope, NameSet* bound, NameSet& free, Name
             return false;
         if (child->comprehension != ComprehensionKind::None && !child->isGenerator && !scope->canSeeClassScope)
             inlineComprehension(scope, child, childFree);
+        if (Symbol* symbol = child->canSeeClassScope ? child->find(m_names.classDict->impl()) : nullptr; symbol && symbol->binding == Binding::GlobalImplicit) {
+            child->classDictIsShadowed = true;
+            if (isClass)
+                scope->needsClassDict = true;
+        }
         addAll(newFree, childFree);
     }
 

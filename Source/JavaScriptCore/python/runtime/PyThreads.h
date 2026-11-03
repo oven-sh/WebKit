@@ -71,6 +71,9 @@ public:
     struct SavedStates* saved { nullptr };
     // Whether it is in a queue of Threads::waitUntil().
     bool isQueued { false };
+    // See Threads::willCallFunctionThatMayWait().
+    CallFrame* callThatMayBeginAgain { nullptr };
+    bool wantsCallToBeginAgain { false };
 
 private:
     ThreadState();
@@ -152,6 +155,14 @@ public:
     // The texts are for the exceptions raised where nobody could: "deadlock: <the lock is held>, and there is no other thread",
     // and, once the interpreter is over, "cannot <acquire lock at interpreter finalization>".
     bool waitUntil(JSGlobalObject*, const void* address, int64_t timeout, ASCIILiteral whatIsWaitedFor, ASCIILiteral whatCannotBeDone, const ScopedLambda<bool()>& isOver);
+    // A thread that waits collects after a while (collectWhileIdle()), to find what the program has dropped and what it may be
+    // waiting for the finalizer of. The frames of C++ between the code in Python that waits and the collector lie where the frames
+    // of earlier calls were, and what they do not write still refers to what those dealt with: the very objects that were
+    // dropped last. So a native function that finds that it has to wait gives up (waitUntil() throws something that nobody but
+    // its caller sees), its frames go, the stack below is wiped, and it is called again: NativeFlag::MayWait. Only if its
+    // arguments are such that looking at them a second time runs no code of the program.
+    void willCallFunctionThatMayWait(CallFrame*);
+    bool takeRequestToCallAgain(JSGlobalObject*);
     void wakeOne(const void* address);
     void wakeAll(const void* address);
 

@@ -9,7 +9,8 @@ To be run with the CPython whose standard library is shipped. The text is CPytho
 A key is what the runtime can work out for itself:
 
     module NAME             the docstring of a module
-    TYPE                    that of a type, by the name CPython gives it in C (tp_name): int, collections.deque
+    type TYPE               that of a type, by the name CPython gives it in C (tp_name): int, collections.deque, _md5.md5 (which
+                            is also the name of a function)
     TYPE.NAME               that of a method, slot wrapper, class method, static method, getset or member of the type
     MODULE.NAME             that of a function of a module
 
@@ -111,7 +112,7 @@ def main():
             continue
         name = type_name(cls)
         # What type has under the name is the descriptor that finds the docstrings of all types.
-        add(name, cls.__doc__ if cls is type else vars(cls).get("__doc__"))
+        add("type " + name, cls.__doc__ if cls is type else vars(cls).get("__doc__"))
         for attribute, doc in members.items():
             add("%s.%s" % (name, attribute), doc)
 

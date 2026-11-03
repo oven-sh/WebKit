@@ -77,8 +77,12 @@ PyDict* instanceDict(JSGlobalObject* globalObject, JSValue object, bool create)
 
     if (!rt.typeOf(object)->has(TypeFlag::HasDict))
         return nullptr;
-    if (cell->inherits<PyWrapperObject>())
-        return lazily(uncheckedDowncast<PyWrapperObject>(cell));
+    if (cell->inherits<PyWrapperObject>()) {
+        auto* wrapper = uncheckedDowncast<PyWrapperObject>(cell);
+        if (wrapper->copiesAttributesLater()) [[unlikely]]
+            copyAttributesOfWrapped(globalObject, wrapper);
+        return lazily(wrapper);
+    }
     // An instance of a class that derives from a built-in one. There is no field for the dict.
     JSObject* jsObject = asObject(cell);
     if (JSValue dict = jsObject->getDirect(vm, rt.dictKey()))
@@ -92,10 +96,18 @@ PyDict* instanceDict(JSGlobalObject* globalObject, JSValue object, bool create)
 
 JSValue instanceAttribute(JSGlobalObject* globalObject, JSValue object, JSString* name)
 {
-    if (auto* instance = PyInstance::tryFrom(object)) [[likely]]
-        return instance->getAttribute(getVM(globalObject), name);
-    PyDict* dict = instanceDict(globalObject, object, false);
-    return dict ? dict->get(name) : JSValue();
+    PyDict* dict;
+    if (auto* instance = PyInstance::tryFrom(object)) [[likely]] {
+        dict = instance->dict();
+        if (!dict) [[likely]]
+            return instance->getAttribute(getVM(globalObject), name);
+    } else
+        dict = instanceDict(globalObject, object, false);
+    if (!dict)
+        return { };
+    if (!dict->hasOnlyStringKeys()) [[unlikely]]
+        return dict->get(globalObject, name);
+    return dict->get(name);
 }
 
 bool setInstanceDict(JSGlobalObject* globalObject, JSValue object, PyDict* dict)
@@ -160,7 +172,7 @@ JSValue memberDescriptorGet(JSGlobalObject* globalObject, PyMemberDescriptor* de
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue value = asObject(object)->getDirect(vm, PropertyName(&descriptor->key()->uid()));
     if (!value)
-        return raiseAttributeError(globalObject, scope, object, descriptor->name(), makeString('\'', typeName(globalObject, object), "' object has no attribute '"_s, stringOf(descriptor->name()), '\''));
+        return raiseAttributeError(globalObject, scope, object, descriptor->name(), makeString('\'', typeNameForMessage(globalObject, typeOf(globalObject, object)), "' object has no attribute '"_s, stringOf(descriptor->name()), '\''));
     return value;
 }
 
@@ -295,6 +307,8 @@ JSValue genericGetAttr(JSGlobalObject* globalObject, JSValue object, JSString* n
 
     if (JSValue value = instanceAttribute(globalObject, object, name))
         return value;
+    if (rt.vm().exceptionForInspection()) [[unlikely]]
+        return { };
 
     if (bindsDirectly)
         return bindDescriptor(globalObject, descriptor, object, type);
@@ -367,7 +381,7 @@ void genericSetAttr(JSGlobalObject* globalObject, JSValue object, JSString* name
         }
     }
 
-    if (auto* instance = PyInstance::tryFrom(object); instance && !key && instance->type()->has(TypeFlag::HasDict)) [[likely]] {
+    if (auto* instance = PyInstance::tryFrom(object); instance && !key && instance->type()->has(TypeFlag::HasDict) && (!instance->dict() || instance->dict()->hasOnlyStringKeys())) [[likely]] {
         if (value)
             instance->setAttribute(globalObject, name, value);
         else if (!instance->deleteAttribute(globalObject, name))
@@ -389,12 +403,19 @@ void genericSetAttr(JSGlobalObject* globalObject, JSValue object, JSString* name
         return;
     }
     if (value) {
-        if (key) [[unlikely]]
-            RELEASE_AND_RETURN(scope, dict->set(globalObject, key, value));
+        if (key || !dict->hasOnlyStringKeys()) [[unlikely]]
+            RELEASE_AND_RETURN(scope, dict->set(globalObject, key ? key : JSValue(name), value));
         dict->set(vm, name, value);
         return;
     }
-    if (!dict->remove(vm, name))
+    bool removed;
+    if (dict->hasOnlyStringKeys()) [[likely]]
+        removed = dict->remove(vm, name);
+    else {
+        removed = dict->remove(globalObject, name);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+    if (!removed)
         raiseNoAttribute(globalObject, object, name);
 }
 
@@ -408,6 +429,24 @@ static ALWAYS_INLINE bool isNative(JSValue method, NativeDef::F3 function)
 {
     auto* native = PyNativeFunction::tryFrom(method);
     return native && native->def().pointer.f3 == function;
+}
+
+// An AttributeError that comes out of the lookup of an attribute without saying which (`raise AttributeError` in a __getattr__ or
+// a property) is told, as in CPython: what may have been meant instead is worked out from that.
+static NEVER_INLINE void completeAttributeError(JSGlobalObject* globalObject, JSValue object, JSString* name)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    Exception* thrown = vm.exceptionForInspection();
+    if (!thrown)
+        return;
+    PyException* exception = exceptionOfThrownValueIfKnown(globalObject, thrown->value());
+    if (!exception || !exception->type()->isSubtypeOf(rt.AttributeError()))
+        return;
+    if (exception->field(ExceptionField::attributeErrorName) || exception->field(ExceptionField::attributeErrorObj))
+        return;
+    exception->setField(vm, ExceptionField::attributeErrorName, name);
+    exception->setField(vm, ExceptionField::attributeErrorObj, object);
 }
 
 static JSValue getAttrImpl(JSGlobalObject* globalObject, JSValue object, JSString* name, bool suppress)
@@ -434,16 +473,22 @@ static JSValue getAttrImpl(JSGlobalObject* globalObject, JSValue object, JSStrin
         return result;
 
     if (scope.exception()) {
-        if (!suppress && !fallback)
+        if (!suppress && !fallback) {
+            completeAttributeError(globalObject, object, name);
             return { };
+        }
         if (!clearPendingExceptionIfMatches(globalObject, rt.AttributeError()))
             return { };
     }
     if (!fallback)
         return { };
     result = callSpecial(globalObject, fallback, object, name);
-    if (!result && suppress)
-        clearPendingExceptionIfMatches(globalObject, rt.AttributeError());
+    if (!result) [[unlikely]] {
+        if (suppress)
+            clearPendingExceptionIfMatches(globalObject, rt.AttributeError());
+        else
+            completeAttributeError(globalObject, object, name);
+    }
     return result;
 }
 
@@ -492,6 +537,8 @@ JSValue getMethod(JSGlobalObject* globalObject, JSValue object, JSString* name, 
         return genericGetAttr(globalObject, object, name);
     if (JSValue value = instanceAttribute(globalObject, object, name))
         return value;
+    if (rt.vm().exceptionForInspection()) [[unlikely]]
+        return { };
     self = object;
     return descriptor;
 }
@@ -623,6 +670,22 @@ bool describeAttribute(JSGlobalObject* globalObject, JSValue object, JSString* n
     return true;
 }
 
+bool describeSpecialMethod(JSGlobalObject* globalObject, JSValue object, Special special, AttributeCache& cache)
+{
+    if (!object.isCell() || !isPyObjectType(object.asCell()->type()))
+        return false;
+    Runtime& rt = runtime(globalObject);
+    PyType* type = rt.typeOf(object);
+    JSValue descriptor = type->lookup(special);
+    if (!descriptor || !isMethodDescriptor(descriptor) || mayBecomeAnotherKindOfDescriptor(rt, descriptor))
+        return false;
+    cache.structureID = object.asCell()->structureID();
+    cache.typeVersion = type->version();
+    cache.payload = JSValue::encode(descriptor);
+    cache.offset = AttributeCache::classValue;
+    return true;
+}
+
 bool describeSetAttribute(JSGlobalObject* globalObject, JSValue object, JSString* name, Structure* oldStructure, SetAttributeCache& cache)
 {
     // As in genericSetAttr().
@@ -674,10 +737,28 @@ JSValue lookupSpecial(JSGlobalObject* globalObject, JSValue object, Special spec
     return bindDescriptor(globalObject, method, object, type);
 }
 
+JSValue getSpecialMethod(JSGlobalObject* globalObject, JSValue object, Special special, JSValue& self)
+{
+    PyType* type = typeOf(globalObject, object);
+    JSValue method = type->lookup(special);
+    if (!method)
+        return { };
+    if (isMethodDescriptor(method)) {
+        self = object;
+        return method;
+    }
+    return bindDescriptor(globalObject, method, object, type);
+}
+
 // ---- Calls ----
+
+#if (CPU(ARM64) || CPU(X86_64)) && CPU(ADDRESS64) && !ENABLE(C_LOOP)
+extern "C" void llint_python_generator_resume(); // LowLevelInterpreter64.asm
+#endif
 
 // What Interpreter::executeCall() comes to in the common case. It guards the code it is about to enter against being replaced
 // or thrown away, which does not happen to code that stays in the interpreter. False: this is not the common case.
+template<bool isResumption = false>
 static ALWAYS_INLINE bool tryEnterFunction(VM& vm, PyFunction* function, JSValue thisValue, const JSValue* arguments, size_t count, JSValue& result)
 {
 #if (CPU(ARM64) || CPU(X86_64)) && CPU(ADDRESS64) && !ENABLE(C_LOOP)
@@ -687,6 +768,10 @@ static ALWAYS_INLINE bool tryEnterFunction(VM& vm, PyFunction* function, JSValue
     if (!codeBlock || count > 6 || count + 1 < codeBlock->numParameters() || !vm.entryScope || vm.disallowVMEntryCount || !vm.isSafeToRecurseSoft()) [[unlikely]]
         return false;
     void* entry = executable->generatedJITCodeAddressForCall();
+#if !CPU(ARM64E)
+    if constexpr (isResumption)
+        entry = reinterpret_cast<void*>(llint_python_generator_resume);
+#endif
     vm.clearLastException();
     EncodedJSValue encoded;
     switch (count) {
@@ -726,7 +811,11 @@ static ALWAYS_INLINE bool tryEnterFunction(VM& vm, PyFunction* function, JSValue
 #endif
 }
 
-static ALWAYS_INLINE JSValue callJSFunction(JSGlobalObject* globalObject, JSObject* function, const CallArgs& args)
+// The frame of this function is on the stack for as long as the function it calls runs, and the collector takes every word of it
+// that looks like a reference for one. What such a frame has room for and does not write still holds what earlier calls left
+// there: `del x; gc.collect()` would not free what x was. So this is a function of its own, with room for little, and not a part
+// of call(), which needs buffers for its other cases; and call() is gone from the stack when this runs.
+static NEVER_INLINE JSValue callJSFunction(JSGlobalObject* globalObject, JSObject* function, const CallArgs& args)
 {
     JSValue thisValue = args.hasKeywords() ? JSValue(args.keywordNames()) : jsUndefined();
     Runtime& rt = runtime(globalObject);
@@ -741,6 +830,21 @@ static ALWAYS_INLINE JSValue callJSFunction(JSGlobalObject* globalObject, JSObje
         result = JSC::call(globalObject, function, callData, thisValue, list);
     }
     rt.runtimeCall = record.previous;
+    RETURN_IF_EXCEPTION(scope, { });
+    return result;
+}
+
+JSValue callBodyOfGenerator(JSGlobalObject* globalObject, PyFunction* body, std::span<const JSValue> arguments)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue result;
+    if (!tryEnterFunction<true>(vm, body, jsUndefined(), arguments.data(), arguments.size(), result)) [[unlikely]] {
+        if (!vm.isSafeToRecurseSoft()) [[unlikely]]
+            return raiseRecursionError(globalObject, scope, "maximum recursion depth exceeded"_s);
+        ArgList list(reinterpret_cast<EncodedJSValue*>(const_cast<JSValue*>(arguments.data())), arguments.size());
+        result = JSC::call(globalObject, body, JSC::getCallData(body), jsUndefined(), list);
+    }
     RETURN_IF_EXCEPTION(scope, { });
     return result;
 }
@@ -822,6 +926,23 @@ JSValue callSpecial(JSGlobalObject* globalObject, JSValue method, JSValue self, 
     RETURN_IF_EXCEPTION(scope, { });
     // After A.__call__ = A(), to call an A is to call an A. That has to end, although it may use no stack: these are tail calls.
     Runtime& rt = runtime(globalObject);
+    if (!rt.tryEnterFrame()) [[unlikely]]
+        return { };
+    JSValue result = call(globalObject, bound, args);
+    rt.leaveFrame();
+    scope.release();
+    return result;
+}
+
+JSValue callOperatorMethod(JSGlobalObject* globalObject, JSValue method, JSValue self, const CallArgs& args)
+{
+    if (isMethodDescriptor(method)) [[likely]]
+        return callSpecial(globalObject, method, self, args);
+    Runtime& rt = runtime(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(rt.vm());
+    JSValue bound = bindDescriptor(globalObject, method, self, rt.typeOf(self));
+    if (!bound) [[unlikely]]
+        return clearPendingExceptionIfMatches(globalObject, rt.AttributeError()) ? rt.notImplemented() : JSValue();
     if (!rt.tryEnterFrame()) [[unlikely]]
         return { };
     JSValue result = call(globalObject, bound, args);
@@ -1218,21 +1339,21 @@ static JSValue richCompareOrNotImplemented(JSGlobalObject* globalObject, JSValue
     if (typeA != typeB && typeB->isSubtypeOf(typeA)) {
         if (JSValue method = typeB->lookup(reflected)) {
             checkedReflected = true;
-            JSValue result = callSpecial(globalObject, method, b, a);
+            JSValue result = callOperatorMethod(globalObject, method, b, a);
             RETURN_IF_EXCEPTION(scope, { });
             if (result != notImplemented)
                 return result;
         }
     }
     if (JSValue method = typeA->lookup(comparisonMethods[index])) {
-        JSValue result = callSpecial(globalObject, method, a, b);
+        JSValue result = callOperatorMethod(globalObject, method, a, b);
         RETURN_IF_EXCEPTION(scope, { });
         if (result != notImplemented)
             return result;
     }
     if (!checkedReflected) {
         if (JSValue method = typeB->lookup(reflected)) {
-            JSValue result = callSpecial(globalObject, method, b, a);
+            JSValue result = callOperatorMethod(globalObject, method, b, a);
             RETURN_IF_EXCEPTION(scope, { });
             if (result != notImplemented)
                 return result;
@@ -1577,8 +1698,12 @@ JSValue iterNext(JSGlobalObject* globalObject, JSValue iterator)
         } else if (cell->type() == PyGeneratorType) {
             auto* generator = uncheckedDowncast<PyGenerator>(cell);
             if (generator->kind() == PyGenerator::Kind::Generator) {
-                JSValue ignored;
-                RELEASE_AND_RETURN(scope, generatorSend(globalObject, generator, jsUndefined(), ignored));
+                JSValue result;
+                if (generator->state() >= 0) [[likely]] {
+                    scope.release();
+                    return generator->resume(globalObject, jsUndefined(), JSGenerator::ResumeMode::NormalMode, result) == PyGenerator::Outcome::Yielded ? result : JSValue();
+                }
+                RELEASE_AND_RETURN(scope, generatorSend(globalObject, generator, jsUndefined(), result));
             }
         }
     }

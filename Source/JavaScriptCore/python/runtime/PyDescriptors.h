@@ -44,13 +44,23 @@ public:
     void setWrapped(VM& vm, JSValue value) { m_wrapped.set(vm, this, value); }
     PyDict* dict() const { return m_dict.get(); }
     void setDict(VM& vm, PyDict* dict) { m_dict.setMayBeNull(vm, this, dict); }
+    // A staticmethod of a built-in type is made before there are attributes to copy: see copyAttributesOfWrapped().
+    bool copiesAttributesLater() const { return m_copiesAttributesLater; }
+    void setCopiesAttributesLater(bool value) { m_copiesAttributesLater = value; }
 
 private:
     PyWrapperObject(VM&, Structure*, PyType*);
 
     WriteBarrier<Unknown> m_wrapped;
     WriteBarrier<PyDict> m_dict;
+    bool m_copiesAttributesLater { false };
 };
+
+// staticmethod(function), classmethod(function). Empty: an exception.
+JSValue makeStaticMethod(JSGlobalObject*, JSValue function);
+JSValue makeClassMethod(JSGlobalObject*, JSValue function);
+// What these copy from the function (__name__, __doc__ and so on), for a wrapper that has put it off.
+void copyAttributesOfWrapped(JSGlobalObject*, PyWrapperObject*);
 
 class PySuper final : public PyObject {
 public:

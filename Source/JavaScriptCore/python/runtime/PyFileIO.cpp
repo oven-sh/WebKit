@@ -83,6 +83,7 @@ bool fileIOIsClosed(PyRecord* file) { return ioStateOf<FileIOState>(file).fd < 0
 
 static int64_t fileIOSystemRead(JSGlobalObject* globalObject, int fd, uint8_t* buffer, size_t count)
 {
+    writeOutPendingOutput(globalObject);
     ssize_t result;
     do {
         AllowThreads allow(globalObject);
@@ -100,6 +101,7 @@ static int64_t fileIOSystemRead(JSGlobalObject* globalObject, int fd, uint8_t* b
 
 static int64_t fileIOSystemWrite(JSGlobalObject* globalObject, int fd, const uint8_t* buffer, size_t count)
 {
+    writeOutPendingOutput(globalObject);
     ssize_t result;
     do {
         AllowThreads allow(globalObject);
@@ -118,6 +120,7 @@ static int64_t fileIOSystemWrite(JSGlobalObject* globalObject, int fd, const uin
 // -1: an exception.
 static int64_t fileIOSystemSeek(JSGlobalObject* globalObject, FileIOState& state, int64_t position, int whence, bool pipeIsFine = false)
 {
+    writeOutPendingOutput(globalObject);
     off_t result = lseek(state.fd, position, whence);
     if (state.seekable < 0)
         state.seekable = result >= 0;
@@ -132,6 +135,7 @@ static int64_t fileIOSystemSeek(JSGlobalObject* globalObject, FileIOState& state
 // False: an exception.
 static bool fileIOSystemClose(JSGlobalObject* globalObject, FileIOState& state)
 {
+    writeOutPendingOutput(globalObject);
     int fd = std::exchange(state.fd, -1);
     state.hasStat = false;
     if (fd < 0)
@@ -533,6 +537,7 @@ static JSValue fileIOReadIntoMethod(JSGlobalObject* globalObject, JSValue self, 
 
 static JSValue fileIOReadall(JSGlobalObject* globalObject, JSValue self)
 {
+    writeOutPendingOutput(globalObject);
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto& state = fileIOStateOf(self);
@@ -667,6 +672,7 @@ static JSValue fileIOTell(JSGlobalObject* globalObject, JSValue self)
 
 static JSValue fileIOTruncate(JSGlobalObject* globalObject, JSValue self, JSValue sizeValue)
 {
+    writeOutPendingOutput(globalObject);
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto& state = fileIOStateOf(self);

@@ -49,7 +49,19 @@ bool parseKeywordArguments(JSGlobalObject* globalObject, ASCIILiteral function, 
 // ---- Objects ----
 
 static JSValue builtinAbs(JSGlobalObject* globalObject, JSValue value) { return absolute(globalObject, value); }
-static JSValue builtinAscii(JSGlobalObject* globalObject, JSValue value) { return ascii(globalObject, value); }
+static JSValue builtinAscii(JSGlobalObject* globalObject, JSValue value)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // What __repr__ returned, if there is nothing to escape in it: it may be an instance of a class derived from str.
+    JSValue result = reprObject(globalObject, value);
+    RETURN_IF_EXCEPTION(scope, { });
+    auto view = strValue(result)->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (view->containsOnlyASCII())
+        return result;
+    RELEASE_AND_RETURN(scope, makeStrUnlessTooLong(globalObject, asciiEscape(view)));
+}
 static JSValue builtinRepr(JSGlobalObject* globalObject, JSValue value) { return reprObject(globalObject, value); }
 static JSValue builtinCallable(JSGlobalObject* globalObject, JSValue value) { return jsBoolean(isCallable(globalObject, value)); }
 static JSValue builtinDivmod(JSGlobalObject* globalObject, JSValue a, JSValue b) { return divmod(globalObject, a, b); }
@@ -518,6 +530,12 @@ static JSValue builtinSum(JSGlobalObject* globalObject, JSValue iterable, JSValu
         RETURN_IF_EXCEPTION(scope, { });
         if (!hasItem)
             return result;
+        if (isSmallInt(result) && isSmallInt(item)) [[likely]] {
+            if (int64_t total = smallIntValue(result) + smallIntValue(item); fitsSmallInt(total)) [[likely]] {
+                result = smallInt(total);
+                continue;
+            }
+        }
         bool goesOn = isExactInt(item) || item.isBoolean();
         result = binaryOperation(globalObject, BinaryOperator::Add, result, item);
         RETURN_IF_EXCEPTION(scope, { });
@@ -1037,7 +1055,7 @@ static constexpr NativeDef builtinFunctions[] = {
     PY_FUNCTION("repr", builtinRepr, "(obj, /)"),
     PY_FUNCTION("round", builtinRound, "(number, ndigits=None)"),
     PY_FUNCTION("setattr", builtinSetAttr, "(obj, name, value, /)"),
-    PY_FUNCTION("sorted", builtinSorted, "(*args, **kwargs)"),
+    PY_FUNCTION("sorted", builtinSorted, "!(iterable, /, *, key=None, reverse=False)"),
     PY_FUNCTION("sum", builtinSum, "(iterable, /, start=0)"),
     PY_FUNCTION("vars", builtinVars, "(*args)"),
 };

@@ -39,8 +39,8 @@ public:
     virtual UTF8CString decodeSource(std::span<const uint8_t>, const ASCIICString& encoding, String& error, bool& unknownEncoding);
 
     // A line of the file the source is said to come from, in UTF-8 and with its line ending, if there is such a file:
-    // that, and not the source, is the text a SyntaxError in a module shows.
-    virtual bool lineOfFile(int /* lineno */, Vector<uint8_t>&) { return false; }
+    // that, and not the source, is the text a SyntaxError in a module shows. `encoding`: what the source declares. Null: nothing.
+    virtual bool lineOfFile(int /* lineno */, const ASCIICString& /* encoding */, Vector<uint8_t>&) { return false; }
 
     // sys.get_int_max_str_digits()
     virtual int maxStrDigits() { return 4300; }
@@ -76,7 +76,9 @@ struct SyntaxErrorInfo {
     int endLineno { 0 };
     int endOffset { 0 };
 
-    // SyntaxError._metadata: where the last statement starts, for suggesting keywords.
+    // SyntaxError._metadata, from which Lib/traceback.py works out that a name may be a misspelt keyword: where the last compound
+    // statement that parsed starts (0, 0: there is none), and then the source, which whoever makes the exception adds.
+    bool hasMetadata { false };
     int metadataLineno { 0 };
     int metadataColOffset { 0 };
 

@@ -108,6 +108,7 @@ void computeUsesForBytecodeIndexImpl(const JSInstruction* instruction, Checkpoin
     case op_super_sampler_end:
     case op_get_scope:
     case op_py_bind_args:
+    case op_py_generator_enter:
         return;
 
     USES(OpPyLoadCell, cell)
@@ -154,6 +155,24 @@ void computeUsesForBytecodeIndexImpl(const JSInstruction* instruction, Checkpoin
     USES(OpPyJfalse, condition)
     USES(OpPyGetIter, iterable)
     USES(OpPyForIter, iterator)
+    USES(OpPySend, iterator, value, mode)
+    USES(OpPyGeneratorReturn, value)
+
+    case op_py_generator_suspend: {
+        auto bytecode = instruction->as<OpPyGeneratorSuspend>();
+        functor(bytecode.m_value);
+        for (unsigned i = 0; i < bytecode.m_count; ++i)
+            functor(VirtualRegister { bytecode.m_first.offset() - static_cast<int>(i) });
+        return;
+    }
+
+    case op_py_generator_registers: {
+        auto bytecode = instruction->as<OpPyGeneratorRegisters>();
+        for (unsigned i = 0; bytecode.m_isSave && i < bytecode.m_count; ++i)
+            functor(VirtualRegister { bytecode.m_first.offset() - static_cast<int>(i) });
+        return;
+    }
+
     USES(OpPyUnpack, iterable)
 
     case op_py_runtime:
@@ -466,6 +485,9 @@ void computeDefsForBytecodeIndexImpl(unsigned numVars, const JSInstruction* inst
     case op_jtrue:
     case op_jfalse:
     case op_py_bind_args:
+    case op_py_generator_enter:
+    case op_py_generator_suspend:
+    case op_py_generator_return:
     case op_py_store_cell:
     case op_py_store_global:
     case op_py_store_name:
@@ -750,6 +772,15 @@ void computeDefsForBytecodeIndexImpl(unsigned numVars, const JSInstruction* inst
     DEFS(OpPyCompare, dst)
     DEFS(OpPyGetIter, dst)
     DEFS(OpPyForIter, dst)
+    DEFS(OpPySend, dst, iterator)
+
+    case op_py_generator_registers: {
+        auto bytecode = instruction->as<OpPyGeneratorRegisters>();
+        for (unsigned i = 0; !bytecode.m_isSave && i < bytecode.m_count; ++i)
+            functor(VirtualRegister { bytecode.m_first.offset() - static_cast<int>(i) });
+        return;
+    }
+
     DEFS(OpPyRuntime, dst)
 
     case op_py_unpack: {

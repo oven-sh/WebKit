@@ -36,32 +36,26 @@ static constexpr ResumeMode throwThrough = ResumeMode::ReturnMode;
 PY_DEFINE_CELL(PyGenerator);
 PY_DEFINE_CELL(PyAsyncGenAwaitable);
 
-PyGenerator::PyGenerator(VM& vm, Structure* structure, PyType* type, Kind kind)
+PyGenerator::PyGenerator(VM& vm, Structure* structure, PyType* type, Kind kind, unsigned slotCount)
     : Base(vm, structure, type)
+    , m_slotCount(slotCount)
     , m_kind(kind)
 {
+    for (unsigned i = 0; i < slotCount; ++i)
+        slots()[i].clear();
 }
 
-PyGenerator* PyGenerator::create(JSGlobalObject* globalObject, PyFunction* function, PyFunction* body, PyTuple* arguments)
+PyGenerator* PyGenerator::create(JSGlobalObject* globalObject, PyFunction* function, PyFunction* body, unsigned slotCount)
 {
-    static constexpr size_t fieldsOffset = JSInternalFieldObjectImpl<>::offsetOfInternalFields();
-    static_assert(offsetOfType() == fieldsOffset);
-    static_assert(OBJECT_OFFSETOF(PyGenerator, m_state) == fieldsOffset + generatorStateField * sizeof(WriteBarrier<Unknown>));
-    static_assert(OBJECT_OFFSETOF(PyGenerator, m_body) == fieldsOffset + generatorBodyField * sizeof(WriteBarrier<Unknown>));
-    static_assert(OBJECT_OFFSETOF(PyGenerator, m_frame) == fieldsOffset + generatorFrameField * sizeof(WriteBarrier<Unknown>));
-    static_assert(OBJECT_OFFSETOF(PyGenerator, m_arguments) == fieldsOffset + generatorArgumentsField * sizeof(WriteBarrier<Unknown>));
-
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto flags = function->codeInfo().flags;
     Kind kind = flags.contains(CodeFlag::AsyncGenerator) ? Kind::AsyncGenerator : flags.contains(CodeFlag::Coroutine) ? Kind::Coroutine : Kind::Generator;
     PyType* type = kind == Kind::AsyncGenerator ? rt.asyncGeneratorType() : kind == Kind::Coroutine ? rt.coroutineType() : rt.generatorType();
-    auto* generator = new (NotNull, allocateCell<PyGenerator>(vm)) PyGenerator(vm, rt.structure<PyGenerator>(), type, kind);
+    auto* generator = new (NotNull, allocateCell<PyGenerator>(vm, allocationSize(slotCount))) PyGenerator(vm, rt.structure<PyGenerator>(), type, kind, slotCount);
     generator->finishCreation(vm);
     generator->m_state.setWithoutWriteBarrier(jsNumber(NotStarted));
     generator->m_body.set(vm, generator, body);
-    generator->m_frame.setWithoutWriteBarrier(jsUndefined());
-    generator->m_arguments.set(vm, generator, arguments);
     generator->m_function.set(vm, generator, function);
     generator->m_name.set(vm, generator, function->name());
     generator->m_qualname.set(vm, generator, function->qualname());
@@ -69,11 +63,16 @@ PyGenerator* PyGenerator::create(JSGlobalObject* globalObject, PyFunction* funct
     if (kind == Kind::Coroutine && rt.coroutineOriginTrackingDepth > 0) [[unlikely]]
         generator->m_origin.set(vm, generator, coroutineOrigin(globalObject, rt.coroutineOriginTrackingDepth));
 
-    // One that is dropped before it is done may have something to clean up (a `finally`, a `with`), or to complain of.
     bool hasHandlers = body->functionExecutable()->unlinkedExecutable()->pythonCodeHasExceptionHandlers();
     if (hasHandlers || kind != Kind::Generator) {
-        generator->m_isRegisteredForFinalization = true;
-        rt.registerFinalizable(generator);
+        if (rt.allocationTracebackLimit) [[unlikely]] {
+            // Where it was made is known now only.
+            generator->m_finalization = Finalization::Registered;
+            rt.registerFinalizable(generator);
+        } else {
+            generator->m_finalization = Finalization::Noted;
+            rt.noteFinalizableGenerator(generator);
+        }
     }
     return generator;
 }
@@ -85,14 +84,12 @@ void PyGenerator::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_state);
     visitor.append(thisObject->m_body);
-    visitor.append(thisObject->m_frame);
-    visitor.append(thisObject->m_arguments);
+    visitor.appendValues(thisObject->slots(), thisObject->m_slotCount);
     visitor.append(thisObject->m_function);
     visitor.append(thisObject->m_name);
     visitor.append(thisObject->m_qualname);
     visitor.append(thisObject->m_delegate);
     visitor.append(thisObject->m_handledException);
-    visitor.append(thisObject->m_resumedBy);
     visitor.append(thisObject->m_frameObject);
     visitor.append(thisObject->m_finalizer);
     visitor.append(thisObject->m_origin);
@@ -103,15 +100,13 @@ DEFINE_VISIT_CHILDREN(PyGenerator);
 void PyGenerator::complete()
 {
     setState(Completed);
-    m_frame.setWithoutWriteBarrier(jsUndefined());
-    m_arguments.setWithoutWriteBarrier(jsUndefined());
+    for (unsigned i = 0; i < m_slotCount; ++i)
+        slots()[i].clear();
     m_delegate.clear();
     m_handledException.clear();
     m_frameObject.clear();
-    if (m_isRegisteredForFinalization) {
-        m_isRegisteredForFinalization = false;
+    if (std::exchange(m_finalization, Finalization::None) == Finalization::Registered)
         structure()->realm()->pythonRuntime()->unregisterFinalizable(this);
-    }
 }
 
 static ASCIILiteral describe(PyGenerator::Kind kind)
@@ -149,45 +144,83 @@ static void replaceStopIteration(JSGlobalObject* globalObject, PyGenerator::Kind
     error->setContext(vm, original);
 }
 
-PyGenerator::Outcome PyGenerator::resume(JSGlobalObject* globalObject, JSValue value, ResumeMode mode, JSValue& result)
+bool PyGenerator::enterBody(JSGlobalObject* globalObject)
 {
     Runtime& rt = runtime(globalObject);
-    VM& vm = rt.vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    int32_t resumePoint = state();
-    ASSERT(resumePoint >= 0);
-    ASSERT(resumePoint || mode == ResumeMode::NormalMode);
-
+    ASSERT(state() >= 0);
     setState(Executing);
     m_delegate.clear();
-    PyGenerator* previous = rt.runningGenerator();
-    setResumedBy(vm, previous);
+    m_resumedBy = rt.runningGenerator();
     rt.setRunningGenerator(this);
+    // The unwinder counts the frame out again.
+    if (++rt.frameDepth <= rt.recursionLimit) [[likely]]
+        return true;
+    auto scope = DECLARE_THROW_SCOPE(rt.vm());
+    raiseRecursionError(globalObject, scope, "maximum recursion depth exceeded"_s);
+    return false;
+}
 
-    JSValue returned;
-    if (rt.tryEnterFrame()) {
-        JSValue arguments[] = { this, jsNumber(resumePoint), value, jsNumber(static_cast<int32_t>(mode)), m_frame.get() };
-        returned = call(globalObject, m_body.get(), CallArgs(arguments, std::size(arguments)));
-        rt.leaveFrame();
-    }
+ALWAYS_INLINE void PyGenerator::leaveBody(Runtime& rt)
+{
+    ASSERT(rt.runningGenerator() == this);
+    rt.setRunningGenerator(m_resumedBy);
+    m_resumedBy = nullptr;
+    rt.leaveFrame();
+}
 
-    rt.setRunningGenerator(previous);
-    setResumedBy(vm, nullptr);
-    if (PyFrame* frame = m_frameObject.get()) [[unlikely]]
-        frame->generatorHasStopped(scope.exception() || state() == Executing);
+void PyGenerator::suspendBody(JSGlobalObject* globalObject, unsigned resumeOffset)
+{
+    leaveBody(runtime(globalObject));
+    setState(static_cast<int32_t>(resumeOffset));
+    if (PyFrame* frame = m_frameObject.get())
+        frame->generatorHasStopped(false);
+}
 
+void PyGenerator::returnFromBody(JSGlobalObject* globalObject)
+{
+    leaveBody(runtime(globalObject));
+    if (PyFrame* frame = m_frameObject.get())
+        frame->generatorHasStopped(true);
+    complete();
+}
+
+void PyGenerator::bodyIsUnwinding(JSGlobalObject* globalObject, bool isTermination)
+{
+    // The exception may come from before the body's first instruction.
+    if (!isRunning())
+        return;
+    leaveBody(runtime(globalObject));
+    if (PyFrame* frame = m_frameObject.get())
+        frame->generatorHasStopped(true);
+    complete();
+    if (isTermination)
+        return;
+    replaceStopIteration(globalObject, m_kind);
+    unwrapPendingException(globalObject);
+}
+
+void generatorBodyIsUnwinding(JSGlobalObject* globalObject, CallFrame* callFrame, bool isTermination)
+{
+    uncheckedDowncast<PyGenerator>(callFrame->uncheckedArgument(0).asCell())->bodyIsUnwinding(globalObject, isTermination);
+}
+
+PyGenerator::Outcome PyGenerator::resume(JSGlobalObject* globalObject, JSValue value, ResumeMode mode, JSValue& result)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    ASSERT(state() >= 0);
+    ASSERT(state() || mode == ResumeMode::NormalMode);
+
+    JSValue arguments[] = { this, m_state.get(), value, jsNumber(static_cast<int32_t>(mode)), jsUndefined() };
+    JSValue returned = callBodyOfGenerator(globalObject, body(), arguments);
     if (scope.exception()) [[unlikely]] {
-        complete();
-        scope.release();
-        replaceStopIteration(globalObject, m_kind);
-        unwrapPendingException(globalObject);
+        // It did not get as far as the body: there was no room on the stack for its frame.
+        if (!isCompleted())
+            complete();
         return Outcome::Threw;
     }
     result = returned;
-    if (state() != Executing)
-        return Outcome::Yielded;
-    complete();
-    return Outcome::Returned;
+    return isCompleted() ? Outcome::Returned : Outcome::Yielded;
 }
 
 static JSValue raiseAlreadyExecuting(JSGlobalObject* globalObject, PyGenerator* generator)
@@ -237,14 +270,17 @@ static JSValue generatorThrowWithMode(JSGlobalObject* globalObject, PyGenerator*
     if (generator->isCompleted()) {
         if (generator->kind() == PyGenerator::Kind::Coroutine)
             return raiseRuntimeError(globalObject, scope, "cannot reuse already awaited coroutine"_s);
-        return raiseException(globalObject, scope, exception);
+        // As it is: see raiseExceptionThrownIntoGenerator().
+        throwPythonException(globalObject, scope, exception);
+        return { };
     }
     if (!generator->isStarted()) {
         // There is nothing in it that could catch the exception, which passes through it all the same.
         if (auto* thrown = PyException::tryFrom(exception))
             thrown->setTraceback(vm, PyTraceback::create(globalObject, thrown->traceback(), PyFrame::of(globalObject, generator), generator->function()->codeInfo().firstLineNumber, 0));
         generator->complete();
-        return raiseException(globalObject, scope, exception);
+        throwPythonException(globalObject, scope, exception);
+        return { };
     }
     JSValue out;
     auto outcome = generator->resume(globalObject, exception, mode, out);
@@ -283,6 +319,9 @@ static JSValue generatorCloseWithResult(JSGlobalObject* globalObject, PyGenerato
 
     PyException* exit = newException(globalObject, rt.GeneratorExit(), std::span<const JSValue> { });
     RETURN_IF_EXCEPTION(scope, { });
+    // It is raised here, by whoever closes the generator, and then thrown in.
+    if (JSValue handled = rt.handledException())
+        exit->setContext(vm, handled);
     JSValue out;
     switch (generator->resume(globalObject, exit, throwAndClose, out)) {
     case PyGenerator::Outcome::Returned:
@@ -367,7 +406,7 @@ JSValue sendToDelegate(JSGlobalObject* globalObject, JSValue iterator, JSValue v
     if (auto* delegate = asSequenceDelegate(globalObject, iterator)) {
         visible = delegate->get(0);
         if (mode != ResumeMode::NormalMode)
-            return raiseException(globalObject, scope, value);
+            return raiseExceptionThrownIntoGenerator(globalObject, scope, value);
         if (!isNone(value)) {
             scope.release();
             callMethod(globalObject, visible, rt.names.send(), value);
@@ -391,7 +430,7 @@ JSValue sendToDelegate(JSGlobalObject* globalObject, JSValue iterator, JSValue v
         if (mode == throwAndClose && rt.typeOf(value)->isSubtypeOf(rt.GeneratorExit())) {
             closeDelegate(globalObject, iterator);
             RETURN_IF_EXCEPTION(scope, { });
-            return raiseException(globalObject, scope, value);
+            return raiseExceptionThrownIntoGenerator(globalObject, scope, value);
         }
         if (generator)
             yielded = generatorThrowWithMode(globalObject, generator, value, mode, result);
@@ -399,7 +438,7 @@ JSValue sendToDelegate(JSGlobalObject* globalObject, JSValue iterator, JSValue v
             JSValue method = getAttrIfPresent(globalObject, iterator, rt.names.throw_());
             RETURN_IF_EXCEPTION(scope, { });
             if (!method)
-                return raiseException(globalObject, scope, value);
+                return raiseExceptionThrownIntoGenerator(globalObject, scope, value);
             // It is given what throw() was given, which need not be an exception made already.
             if (auto* given = PyTuple::tryFrom(rt.slot(Runtime::Slot::ThrowArguments)); given && rt.slot(Runtime::Slot::ThrownException) == value)
                 yielded = call(globalObject, method, CallArgs(given->span()));

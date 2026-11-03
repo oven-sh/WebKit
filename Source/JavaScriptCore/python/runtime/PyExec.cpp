@@ -34,6 +34,50 @@ namespace Python {
 
 // ---- Compiling ----
 
+// A line of a file as a SyntaxError shows it (PyErr_ProgramTextObject() in CPython): what fits a buffer of 1000 bytes, decoded as
+// `encoding` says or, if that is null, as the file itself declares. A null string: there is no such line.
+static String lineOfProgramText(JSGlobalObject* globalObject, std::span<const uint8_t> file, int lineno, ASCIICString encoding)
+{
+    static constexpr size_t mostBytes = 999;
+    VM& vm = getVM(globalObject);
+    if (lineno <= 0)
+        return { };
+    Vector<uint8_t> line;
+    std::span<const uint8_t> rest = file;
+    for (int current = 1; current <= lineno; ++current) {
+        if (rest.empty())
+            return { };
+        size_t length = 0;
+        while (length < rest.size() && rest[length] != '\n' && rest[length] != '\r')
+            ++length;
+        bool hasEnding = length < rest.size();
+        if (current == lineno) {
+            line.append(rest.first(std::min(length, mostBytes)));
+            if (hasEnding && length < mostBytes)
+                line.append('\n');
+        }
+        rest = rest.subspan(length + (hasEnding ? (rest[length] == '\r' && length + 1 < rest.size() && rest[length + 1] == '\n' ? 2 : 1) : 0));
+    }
+    std::span<const uint8_t> bytes = line.span();
+    if (lineno == 1 && bytes.size() >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
+        bytes = bytes.subspan(3);
+
+    if (encoding.isNull())
+        encoding = declaredEncoding(file);
+    if (encoding.isNull() || encoding == "utf-8"_s)
+        return String::fromUTF8ReplacingInvalidSequences(bytes);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSValue text = callMethod(globalObject, PyBytes::create(globalObject, bytes), internString(vm, "decode"_s), makeStr(vm, String(byteCast<Latin1Character>(encoding.span()))), makeStr(vm, "replace"_s));
+    String result;
+    if (!scope.exception())
+        result = strValue(text)->value(globalObject);
+    if (scope.exception()) {
+        scope.clearException();
+        return { };
+    }
+    return result;
+}
+
 namespace {
 
 class RuntimeParserHost final : public ParserHost {
@@ -57,7 +101,7 @@ public:
         return WarningResult::OtherException;
     }
 
-    bool lineOfFile(int lineno, Vector<uint8_t>& line) final
+    bool lineOfFile(int lineno, const ASCIICString& encoding, Vector<uint8_t>& line) final
     {
         if (!m_hasReadFile) {
             m_hasReadFile = true;
@@ -66,22 +110,11 @@ public:
         }
         if (!m_file)
             return false;
-        std::span<const uint8_t> rest = m_file->span();
-        for (int current = 1; !rest.empty(); ++current) {
-            size_t length = 0;
-            while (length < rest.size() && rest[length] != '\n' && rest[length] != '\r')
-                ++length;
-            bool hasEnding = length < rest.size();
-            size_t endingLength = hasEnding ? (rest[length] == '\r' && length + 1 < rest.size() && rest[length + 1] == '\n' ? 2 : 1) : 0;
-            if (current == lineno) {
-                line.append(rest.first(length));
-                if (hasEnding)
-                    line.append('\n');
-                return true;
-            }
-            rest = rest.subspan(length + endingLength);
-        }
-        return false;
+        String text = lineOfProgramText(m_globalObject, m_file->span(), lineno, encoding);
+        if (text.isNull())
+            return false;
+        line.append(byteCast<uint8_t>(text.utf8().span()));
+        return true;
     }
 
     int maxStrDigits() final { return runtime(m_globalObject).maxStrDigits; }
@@ -163,7 +196,13 @@ JSValue raiseSyntaxErrorInfo(JSGlobalObject* globalObject, const SyntaxErrorInfo
     JSValue message = makeStr(vm, info.message);
     if (!info.hasLocation)
         return raiseWithArgs(globalObject, scope, type, { message });
-    JSValue text = info.text.isNull() ? jsUndefined() : JSValue(makeStr(vm, info.text));
+    String line = info.text;
+    // What the symbol table and the compiler find wrong: they know where, and the text is looked up in the file, if there is one.
+    if (line.isNull() && !filename.startsWith('<')) {
+        if (auto file = readFile(filename))
+            line = lineOfProgramText(globalObject, file->span(), info.lineno, { });
+    }
+    JSValue text = line.isNull() ? jsUndefined() : JSValue(makeStr(vm, line));
     JSValue file = makeStr(vm, filename);
     if (info.locationIsNotAnArgument) {
         PyException* exception = newException(globalObject, type, info.message);
@@ -177,7 +216,7 @@ JSValue raiseSyntaxErrorInfo(JSGlobalObject* globalObject, const SyntaxErrorInfo
         set("end_lineno"_s, info.hasEnd ? jsNumber(info.endLineno) : jsUndefined());
         set("end_offset"_s, info.hasEnd ? jsNumber(info.endOffset) : jsUndefined());
         set("filename"_s, file);
-        if (!info.text.isNull())
+        if (!line.isNull())
             set("text"_s, text);
         return raiseException(globalObject, scope, exception);
     }
@@ -211,8 +250,17 @@ bool parseSource(JSGlobalObject* globalObject, ParseTree& tree, ParserHost& host
         : parse(vm, tree, host, source, fileToName, parseMode, parserFlags, flags & CompileIgnoreCookie, error, featureVersion);
     if (parsed)
         return true;
-    scope.release();
     raiseSyntaxErrorInfo(globalObject, error, filename);
+    if (error.hasMetadata) {
+        // The text, unless it came from a file, where whoever wants it can read it.
+        JSValue text = jsUndefined();
+        if (!(flags & CompileSourceIsFile)) {
+            if (String decoded = String::fromUTF8(tree.source.bytes()); !decoded.isNull())
+                text = makeStr(vm, decoded);
+        }
+        if (auto* exception = PyException::tryFrom(pendingException(globalObject)))
+            exception->setField(vm, ExceptionField::syntaxErrorMetadata, PyTuple::create(globalObject, { jsNumber(error.metadataLineno), jsNumber(error.metadataColOffset), text }));
+    }
     return false;
 }
 
@@ -721,7 +769,8 @@ std::optional<int> runMainModule(JSGlobalObject* globalObject, const String& giv
     // The directory of the script comes first on sys.path.
     if (auto* searchPath = tryAsList(rt.sysDict()->get(rt.names.path())); searchPath && !configuration().safePath) {
         String real = realPath(path);
-        listInsert(globalObject, searchPath, 0, makeStr(vm, FileSystem::parentPath(real.isEmpty() ? path : real)));
+        configuration().firstSearchPath = FileSystem::parentPath(real.isEmpty() ? path : real);
+        listInsert(globalObject, searchPath, 0, makeStr(vm, configuration().firstSearchPath));
     }
 
     std::optional<int> status;

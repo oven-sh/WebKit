@@ -49,6 +49,15 @@ handed to JS (the result of a call, an argument, an attribute, an operator's res
 (`valueForJS`), so that floatness is lost in JS and nothing else is. Inside a list, which is shared storage, JS can see the cell;
 it behaves as a `Number` object does.
 
+**str.** A `JSString`, so UTF-16 where it is not Latin-1, while Python counts code points. A text without surrogate pairs is indexed
+directly. For one with pairs, `StrIndexCache` (16 entries for each runtime, emptied after each collection, nothing for texts shorter
+than 48 units) remembers the number of pairs and the offset of every 64th code point, so that `s[i]` in a loop does not scan from
+the start each time.
+
+**tuple, dict.** A tuple remembers its hash once it has been asked for. A dict keeps its entries in an array in insertion order, with
+an index beside it; it knows where its first entry is, and can leave room before it, so that taking and adding entries is as cheap at
+the front as at the back. `collections.OrderedDict` (`PyOrderedDict.cpp`) is that and nothing more.
+
 ## Code
 
 The compiler emits ordinary JSC bytecode where the semantics agree (moves, jumps, calls, exception handlers, generators through
@@ -71,6 +80,9 @@ unpacking, cells, the binding of arguments when they are simply the parameters.
   attributes into a real dict, for good, and gives the object a Structure that says so.
 - _Calls_ are JSC's.
 
+`object.name(...)` makes no bound method: `op_py_get_method` gives the function and the object, which is passed as the first argument.
+`with` finds `__enter__` and `__exit__` with the same instruction (a number stands for the name: they are looked for in the class alone).
+
 `Name(...)`, where the name looks like that of a class, is compiled so that, if it is a class with `object.__new__` and an `__init__`
 in Python, the instance is made and `__init__` called without leaving the interpreter (`op_py_prepare_construct`).
 
@@ -80,10 +92,27 @@ Python function, and Python a JS function, with the engine's own call sequence a
 When Python calls what is not Python, the frame is adapted on the way (`prepareForeignCall`, from `linkFor`): keyword arguments
 become a trailing object, whole floats become numbers.
 
-**Generators, coroutines, async generators** are JSC generators: a function that makes the generator object, and a body that the
-generatorification pass turns into a state machine. What that pass saves at a yield is what its analysis finds live, which may be
-more than is in use: a register above the variables may hold the remains of a callee's frame, which the collector must never see
-in the heap. For Python code the pass gives such registers a value where they lose theirs (`findRegistersWithoutValue()`).
+**Generators, coroutines, async generators** are made as JSC makes generators: a function that makes the generator object
+(`PyGenerator`), and a body, a function of its own, that the generatorification pass turns into a state machine.
+
+- _To resume a generator is to call its body_, and the body keeps the books. `op_py_generator_enter`, its first instruction,
+  notes that the generator is running and goes on where it stopped: the state of a suspended generator is the offset of the
+  instruction to go on with. `op_py_generator_suspend` and `op_py_generator_return` note that it no longer runs, and return to
+  the caller. If an exception leaves the body, the unwinder does that (`generatorBodyIsUnwinding`). The caller tells a yield from
+  a return by the state.
+- So anybody can resume one: `PyGenerator::resume()` in C++, and two instructions, which make the frame and call the body without
+  leaving the interpreter: `op_py_for_iter`, and `op_py_send`, which is a step of `yield from` or `await`. Both enter at
+  `llint_python_generator_resume`: the prologue, `op_enter` and `op_py_generator_enter` in one.
+- _The registers_ that are live across a yield, and all the variables (`gi_frame.f_locals` shows them), are kept in slots at the
+  end of the generator object, which is as large as its code needs. Runs of registers are saved and restored by one instruction
+  (`op_py_generator_registers`; the last run is saved by the suspend itself). Until it starts the first slots hold the arguments.
+  While it runs they are empty.
+- What the pass saves at a yield is what its analysis finds live, which may be more than is in use: a register above the
+  variables may hold the remains of a callee's frame, which the collector must never see in the heap. For Python code the pass
+  gives such registers a value where they lose theirs (`findRegistersWithoutValue()`).
+- One that may have something to do when it is dropped (a `finally`, a `with`, a coroutine never awaited) is registered for
+  finalization, but not when it is made: most are done long before the next collection. It is written down
+  (`noteFinalizableGenerator`), and those still unfinished when a collection comes are registered then.
 
 **Exceptions** are JSC exceptions whose value is a `PyException`. The unwinder tells the runtime about each Python frame it
 passes (`addTracebackEntry`), which is how tracebacks are built.
@@ -113,6 +142,20 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
 - **`gc.collect()`** collects, serves the queue, and repeats until nothing is left to do, so `del x; gc.collect()` does what it does in
   CPython. For that to be true the stack scan must not see stale values: before it, the temporaries of Python frames that liveness
   analysis says are dead are emptied (`clearDeadTemporaries`). Variables are not: an object lives while a variable names it.
+  And the frames of C++ between the Python code and the collector must not lie over what earlier calls left on the stack, for what
+  a frame does not write it still holds: the stack below is wiped before the first of them (`NativeFlag::OnWipedStack`).
+- **A thread that waits collects.** A program may wait for what only a finalizer brings about: it has dropped a response without
+  closing it, and waits for a server in another thread that waits for the end of the connection. A thread that has waited for
+  another for 50 ms collects and finalizes (`Threads::collectWhileIdle`), then less and less often; so does one that would
+  otherwise be told that it waits for ever. A native function that finds that it has to wait is begun again on a wiped stack, for
+  the same reason as `gc.collect()` (`NativeFlag::MayWait`, `Threads::willCallFunctionThatMayWait`). A thread that is blocked
+  in a system call does not collect.
+- **Files that are dropped** without being closed are closed by a finalizer, some time later, where CPython closes them at once.
+  Two things make up for most of that. Streams as `open()` makes them that hold output are in a list
+  (`ioNotePendingOutput`), and `writeOutPendingOutput()`, one load and a branch when the list is empty, writes them out before
+  anything that could tell the difference: see its comment in `PyInternals.h`, and call it first in any new function that looks at a
+  file or changes one. And a system call that fails for want of descriptors (`EMFILE`) collects, finalizes and is tried again
+  (`posixFreeDescriptors`).
 
 ## Imports
 

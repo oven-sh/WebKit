@@ -801,7 +801,14 @@ static JSValue strIter(JSGlobalObject* globalObject, JSValue self)
 
 static JSValue strGetNewArgs(JSGlobalObject* globalObject, JSValue self)
 {
-    return PyTuple::create(globalObject, { JSValue(strValue(self)) });
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // A copy: see isIdentical().
+    String text = strValue(self)->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (text.length() < 2)
+        return PyTuple::create(globalObject, { JSValue(strValue(self)) });
+    return PyTuple::create(globalObject, { JSValue(jsNontrivialString(vm, text.is8Bit() ? String(text.span8()) : String(text.span16()))) });
 }
 
 static JSValue strFormatSpecMethod(JSGlobalObject* globalObject, JSValue self, JSValue spec)
@@ -816,10 +823,22 @@ static JSValue strFormatSpecMethod(JSGlobalObject* globalObject, JSValue self, J
     RELEASE_AND_RETURN(scope, formatStr(globalObject, self, strValue(spec)));
 }
 
-static JSValue strSizeOf(JSGlobalObject*, JSValue self)
+// What the text takes in CPython, which stores it in units as wide as its widest character needs.
+static JSValue strSizeOf(JSGlobalObject* globalObject, JSValue self)
 {
-    JSString* string = strValue(self);
-    return jsNumber(static_cast<double>(41 + static_cast<uint64_t>(string->length()) * (string->is8Bit() ? 1 : 2)));
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto view = strValue(self)->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    uint64_t length = 0;
+    char32_t widest = 0;
+    for (char32_t character : view->codePoints()) {
+        widest = std::max(widest, character);
+        ++length;
+    }
+    if (widest < 0x80)
+        return jsNumber(static_cast<double>(40 + length + 1));
+    return jsNumber(static_cast<double>(56 + (length + 1) * (widest < 0x100 ? 1 : widest < 0x10000 ? 2 : 4)));
 }
 
 // ---- Searching ----
@@ -1752,8 +1771,11 @@ static JSValue strNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs&
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyType* type = PyType::from(cls);
 
-    if (args.size() > 3)
-        return raiseTypeError(globalObject, scope, "str expected at most 3 arguments, got "_s, args.size());
+    if (unsigned total = args.size() + args.keywordCount(); total > 3) {
+        if (!args.keywordCount() && type == rt.strType())
+            return raiseTypeError(globalObject, scope, "str expected at most 3 arguments, got "_s, total);
+        return raiseTypeError(globalObject, scope, "str() takes at most 3 "_s, args.size() ? ""_s : "keyword "_s, "arguments ("_s, total, " given)"_s);
+    }
     JSValue values[3] = { args.get(0), args.get(1), args.get(2) };
     static constexpr ASCIILiteral names[] = { "object"_s, "encoding"_s, "errors"_s };
     for (unsigned i = 0; i < args.keywordCount(); ++i) {

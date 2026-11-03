@@ -43,6 +43,7 @@ namespace JSC {
 
 struct YieldData {
     JSInstructionStream::Offset point { 0 };
+    JSInstructionStream::Offset instructionBefore { 0 };
     VirtualRegister argument { 0 };
     FastBitVector liveness;
     bool found { false }; // The bytecode optimizer may have removed an unreachable op_yield, leaving a hole in the numbering.
@@ -68,7 +69,9 @@ public:
         , m_generatorFrameSymbolTable(codeBlock->vm(), generatorFrameSymbolTable)
         , m_generatorFrameSymbolTableIndex(generatorFrameSymbolTableIndex)
     {
+        JSInstructionStream::Offset previous = 0;
         for (const auto& instruction : m_instructions) {
+            JSInstructionStream::Offset instructionBefore = std::exchange(previous, instruction.offset());
             switch (instruction->opcodeID()) {
             case op_enter: {
                 m_enterPoint = instruction.offset();
@@ -82,8 +85,18 @@ public:
                     m_yields.grow(liveCalleeLocalsIndex + 1);
                 YieldData& data = m_yields[liveCalleeLocalsIndex];
                 data.point = instruction.offset();
+                data.instructionBefore = instructionBefore;
                 data.argument = bytecode.m_argument;
                 data.found = true;
+                break;
+            }
+
+            case op_py_generator_registers: {
+                // The one that is there already takes the values of the parameters from the first slots.
+                auto bytecode = instruction->as<OpPyGeneratorRegisters>();
+                ASSERT(!bytecode.m_offset && !bytecode.m_isSave);
+                m_firstPythonParameter = bytecode.m_first;
+                m_pythonParameterCount = bytecode.m_count;
                 break;
             }
 
@@ -181,6 +194,8 @@ private:
     }
 
     BytecodeGenerator& m_bytecodeGenerator;
+    VirtualRegister m_firstPythonParameter;
+    unsigned m_pythonParameterCount { 0 };
     JSInstructionStream::Offset m_enterPoint;
     std::optional<GeneratorFrameData> m_generatorFrameData;
     UnlinkedCodeBlockGenerator* m_codeBlock;
@@ -228,6 +243,10 @@ private:
             return instruction->as<OpCallIgnoreResult>().m_argv - CallFrame::headerSizeInRegisters;
         case op_call_varargs:
             return instruction->as<OpCallVarargs>().m_firstFree.toLocal();
+        case op_py_for_iter:
+            return instruction->as<OpPyForIter>().m_stackOffset - CallFrame::headerSizeInRegisters;
+        case op_py_send:
+            return instruction->as<OpPySend>().m_stackOffset - CallFrame::headerSizeInRegisters;
         case op_tail_call:
         case op_tail_call_varargs:
         case op_call_direct_eval:
@@ -283,6 +302,10 @@ private:
                 result = instruction->as<OpCall>().m_dst;
             else if (instruction->is<OpCallVarargs>())
                 result = instruction->as<OpCallVarargs>().m_dst;
+            else if (instruction->is<OpPyForIter>())
+                result = instruction->as<OpPyForIter>().m_dst;
+            else if (instruction->is<OpPySend>())
+                result = instruction->as<OpPySend>().m_dst;
             resetLiveRegisters(instruction.next().offset(), false, *firstLocal, { result });
         }
 
@@ -309,6 +332,7 @@ void BytecodeGeneratorification::run()
     // We calculate the liveness at each merge point. This gives us the information which registers should be saved and resumed conservatively.
 
     VM& vm = m_bytecodeGenerator.vm();
+    bool isPython = m_codeBlock->isPython();
     {
         GeneratorLivenessAnalysis pass(*this);
         pass.run(m_codeBlock, m_instructions);
@@ -333,15 +357,18 @@ void BytecodeGeneratorification::run()
         jumpTable.m_defaultOffset = nextToEnterPoint.offset();
 
         rewriter.insertFragmentBefore(nextToEnterPoint, [&] (BytecodeRewriter::Fragment& fragment) {
+            if (isPython)
+                fragment.appendInstruction<OpPyGeneratorEnter>();
             fragment.appendInstruction<OpSwitchImm>(switchTableIndex, state);
         });
     }
 
     // Before what follows: where one of these is right before a yield, it has to come before the registers are saved.
+    VirtualRegister anyValue = m_resets.isEmpty() ? VirtualRegister() : m_bytecodeGenerator.pythonConstant(jsUndefined())->virtualRegister();
     for (const Reset& reset : m_resets) {
         auto emitReset = [&] (BytecodeRewriter::Fragment& fragment) {
             for (VirtualRegister local : reset.registers)
-                fragment.appendInstruction<OpMov>(local, m_generatorFrameData->m_initialValue);
+                fragment.appendInstruction<OpMov>(local, anyValue);
         };
         auto instruction = m_instructions.at(reset.point);
         if (reset.isForJumpsToo)
@@ -350,12 +377,86 @@ void BytecodeGeneratorification::run()
             rewriter.insertFragmentBefore(instruction, emitReset);
     }
 
+    // A Python generator has a slot for each register that is ever saved, the parameters first. Registers that follow one another
+    // are saved and restored with one instruction, so their slots follow one another as well.
+    Vector<int> slotOfLocal;
+    if (isPython) {
+        unsigned slotCount = 0;
+        auto allot = [&](size_t local) {
+            while (slotOfLocal.size() <= local)
+                slotOfLocal.append(-1);
+            if (slotOfLocal[local] < 0)
+                slotOfLocal[local] = slotCount++;
+        };
+        for (unsigned i = 0; i < m_pythonParameterCount; ++i)
+            allot(m_firstPythonParameter.toLocal() + i);
+        for (YieldData& data : m_yields) {
+            if (!data.found)
+                continue;
+            // All the variables are kept, needed or not: gi_frame.f_locals shows them. And a generator that is resumed
+            // counts on it (llint_python_generator_resume).
+            for (unsigned local = m_bytecodeGenerator.firstPythonVariable(); local < m_codeBlock->numVars(); ++local)
+                data.liveness[local] = true;
+            data.liveness.forEachSetBit(allot);
+        }
+        // In the order of the registers, whichever yield they were first seen at.
+        unsigned next = m_pythonParameterCount;
+        for (size_t local = 0; local < slotOfLocal.size(); ++local) {
+            if (slotOfLocal[local] >= static_cast<int>(m_pythonParameterCount))
+                slotOfLocal[local] = next++;
+        }
+        ASSERT(next == slotCount);
+        m_bytecodeGenerator.setPythonGeneratorSlotCount(slotCount);
+    }
+    auto forEachRunOfLiveRegisters = [&](const YieldData& data, const auto& function) {
+        size_t first = 0;
+        unsigned count = 0;
+        data.liveness.forEachSetBit([&](size_t index) {
+            if (count && index == first + count && slotOfLocal[index] == slotOfLocal[first] + static_cast<int>(count)) {
+                ++count;
+                return;
+            }
+            if (count)
+                function(virtualRegisterForLocal(first), count, static_cast<unsigned>(slotOfLocal[first]));
+            first = index;
+            count = 1;
+        });
+        if (count)
+            function(virtualRegisterForLocal(first), count, static_cast<unsigned>(slotOfLocal[first]));
+    };
+
     for (const YieldData& data : m_yields) {
         if (!data.found)
             continue;
         VirtualRegister scope = virtualRegisterForArgumentIncludingThis(static_cast<int32_t>(JSGenerator::Argument::Frame));
 
         auto instruction = m_instructions.at(data.point);
+        if (isPython) {
+            // See BytecodeGenerator::emitPythonYieldPoint().
+            auto placeholder = m_instructions.at(data.instructionBefore);
+            RELEASE_ASSERT(placeholder->opcodeID() == op_nop);
+            rewriter.replaceBytecodeWithFragment(placeholder, [&] (BytecodeRewriter::Fragment& fragment) {
+                struct Run {
+                    VirtualRegister first;
+                    unsigned count { 0 };
+                    unsigned offset { 0 };
+                };
+                Run last { data.argument };
+                forEachRunOfLiveRegisters(data, [&](VirtualRegister first, unsigned count, unsigned offset) {
+                    if (last.count)
+                        fragment.appendInstruction<OpPyGeneratorRegisters>(last.first, last.count, last.offset, true);
+                    last = { first, count, offset };
+                });
+                fragment.appendInstruction<OpPyGeneratorSuspend>(data.argument, last.first, last.count, last.offset);
+            });
+            rewriter.replaceBytecodeWithFragment(instruction, [&] (BytecodeRewriter::Fragment& fragment) {
+                forEachRunOfLiveRegisters(data, [&](VirtualRegister first, unsigned count, unsigned offset) {
+                    fragment.appendInstruction<OpPyGeneratorRegisters>(first, count, offset, false);
+                });
+            });
+            continue;
+        }
+
         // Emit save sequence.
         rewriter.insertFragmentBefore(instruction, [&] (BytecodeRewriter::Fragment& fragment) {
             data.liveness.forEachSetBit([&](size_t index) {

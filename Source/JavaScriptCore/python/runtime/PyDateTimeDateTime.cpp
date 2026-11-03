@@ -831,8 +831,8 @@ static constexpr NativeDef dateTimeMethods[] = {
     PY_METHOD("utcoffset", dateTimeUtcOffset, "($self, /)"),
     PY_METHOD("tzname", dateTimeTzName, "($self, /)"),
     PY_METHOD("dst", dateTimeDst, "($self, /)"),
-    PY_METHOD("replace", dateTimeReplace, "($self, *args, **kwargs)"),
-    PY_METHOD("__replace__", dateTimeReplace, "($self, *args, **kwargs)"),
+    PY_METHOD("replace", dateTimeReplace, "!($self, /, year=unchanged, month=unchanged, day=unchanged,\n        hour=unchanged, minute=unchanged, second=unchanged,\n        microsecond=unchanged, tzinfo=unchanged, *, fold=unchanged)"),
+    PY_METHOD("__replace__", dateTimeReplace, "!($self, /, **changes)"),
     PY_METHOD("astimezone", dateTimeAsTimeZone, "($self, /, tz=None)"),
     PY_METHOD("__reduce_ex__", dateTimeReduceEx, "($self, proto, /)"),
     PY_METHOD("__reduce__", dateTimeReduce, "($self, /)"),
@@ -848,8 +848,7 @@ static constexpr NativeGetSet dateTimeGetSets[] = {
 };
 
 constexpr TypeDef dateTimeTypeDef {
-    "datetime.datetime"_s, { TypeFlag::Base, TypeFlag::OwnLayout }, dateTimeMethods, dateTimeGetSets,
-    "A combination of a date and a time.\n\nThe year, month and day arguments are required. tzinfo may be None, or\nan instance of a tzinfo subclass. The remaining arguments may be ints."_s
+    "datetime.datetime"_s, { TypeFlag::Base, TypeFlag::OwnLayout }, dateTimeMethods, dateTimeGetSets, { }
 };
 
 } // namespace DateTime

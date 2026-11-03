@@ -13,8 +13,11 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 namespace JSC {
 namespace Python {
 
-// The table of a dict: the entries in the order they were inserted, and an open-addressed index into them by hash.
-// Its size is fixed, so the collector can visit one while the dict moves on to another.
+// The table of a dict: the entries in the order they were inserted, the hashes of their keys, and an open-addressed index into
+// the entries by hash. Its size is fixed, so the collector can visit one while the dict moves on to another.
+//
+// The hash of a str fits 32 bits. A table that holds other keys has room for 64, so that whoever takes the keys from the dict (a
+// copy, a set) need not ask them for their hashes again, which a program can tell.
 class PyDictStorage final : public JSCell {
 public:
     using Base = JSCell;
@@ -43,13 +46,13 @@ public:
 
     static constexpr unsigned capacityFor(unsigned log2Size) { return static_cast<unsigned>((static_cast<uint64_t>(1) << log2Size) * 2 / 3); }
     static constexpr unsigned indexWidth(unsigned log2Size) { return log2Size < 8 ? 1 : log2Size < 16 ? 2 : 4; }
-    static size_t allocationSize(unsigned log2Size)
+    static size_t allocationSize(unsigned log2Size, bool hasWideHashes)
     {
         size_t capacity = capacityFor(log2Size);
-        return sizeof(PyDictStorage) + capacity * (sizeof(Entry) + sizeof(uint32_t)) + (static_cast<size_t>(indexWidth(log2Size)) << log2Size);
+        return sizeof(PyDictStorage) + capacity * (sizeof(Entry) + (hasWideHashes ? sizeof(int64_t) : sizeof(uint32_t))) + (static_cast<size_t>(indexWidth(log2Size)) << log2Size);
     }
 
-    static PyDictStorage* create(VM&, Structure*, unsigned log2Size);
+    static PyDictStorage* create(VM&, Structure*, unsigned log2Size, bool hasWideHashes);
 
     unsigned log2Size() const { return m_log2Size; }
     uint32_t mask() const { return (1u << m_log2Size) - 1; }
@@ -62,8 +65,18 @@ public:
 
     Entry* entries() { return reinterpret_cast<Entry*>(this + 1); }
     static constexpr ptrdiff_t offsetOfFirstValue() { return sizeof(PyDictStorage) + OBJECT_OFFSETOF(Entry, value); }
-    uint32_t* hashes() { return reinterpret_cast<uint32_t*>(entries() + m_capacity); }
-    void* indices() { return hashes() + m_capacity; }
+    bool hasWideHashes() const { return m_hasWideHashes; }
+    int64_t hashAt(unsigned index) { return m_hasWideHashes ? wideHashes()[index] : static_cast<int64_t>(narrowHashes()[index]); }
+    void setHashAt(unsigned index, int64_t hash)
+    {
+        if (m_hasWideHashes)
+            wideHashes()[index] = hash;
+        else {
+            ASSERT(hash == static_cast<int64_t>(static_cast<uint32_t>(hash)));
+            narrowHashes()[index] = static_cast<uint32_t>(hash);
+        }
+    }
+    void* indices() { return m_hasWideHashes ? static_cast<void*>(wideHashes() + m_capacity) : static_cast<void*>(narrowHashes() + m_capacity); }
 
     int32_t indexAt(uint32_t slot)
     {
@@ -84,8 +97,12 @@ public:
     }
 
 private:
-    PyDictStorage(VM&, Structure*, unsigned log2Size);
+    PyDictStorage(VM&, Structure*, unsigned log2Size, bool hasWideHashes);
 
+    uint32_t* narrowHashes() { return reinterpret_cast<uint32_t*>(entries() + m_capacity); }
+    int64_t* wideHashes() { return reinterpret_cast<int64_t*>(entries() + m_capacity); }
+
+    bool m_hasWideHashes;
     unsigned m_log2Size;
     unsigned m_capacity;
     unsigned m_entryCount { 0 }; // Including the deleted ones.
@@ -99,7 +116,8 @@ public:
 
     static PyDict* create(VM&, Structure*, PyType*);
     static PyDict* create(JSGlobalObject*); // Of type dict.
-    static PyDict* createWithCapacity(JSGlobalObject*, unsigned);
+    // `onlyStringKeys`, here and below: false if some of the keys to come are not strs, which saves making the table twice.
+    static PyDict* createWithCapacity(JSGlobalObject*, unsigned, bool onlyStringKeys = true);
 
     unsigned size() const { return m_used; }
     bool isEmpty() const { return !m_used; }
@@ -116,8 +134,11 @@ public:
     JSValue take(JSGlobalObject*, JSValue key, int64_t hash);
     bool remove(JSGlobalObject* globalObject, JSValue key) { return !!take(globalObject, key); }
 
-    // With a str that is not a rope, nothing else runs.
+    // With a str that is not a rope, nothing else runs. Keys that are neither strs nor instances of classes derived from str are
+    // passed over, though one might say that it equals the str: whoever minds asks hasOnlyStringKeys() first.
 
+    // (False does not say that there is such a key now: there may have been one, or one may have been announced.)
+    bool hasOnlyStringKeys() const { return m_hasOnlyStringKeys; }
     JSValue get(JSString* key);
     void set(VM&, JSString* key, JSValue value);
     JSValue take(VM&, JSString* key);
@@ -127,13 +148,12 @@ public:
     PyDict* copy(JSGlobalObject*); // Of type dict.
     // For a dict that is empty: the items of the other, in their order. Its keys differ from one another, so none is compared.
     void takeItemsOf(VM&, PyDict* other);
-    void reserve(VM&, unsigned additional);
+    void reserve(VM&, unsigned additional, bool onlyStringKeys = true);
 
     // for (unsigned position = 0; dict->next(position, key, value);)
     // Entries added meanwhile may or may not be seen; a position stays valid unless the dict is cleared.
     bool next(unsigned& position, JSValue& key, JSValue& value) const;
-    // With what the dict remembers of the hash of the key, which will do as its hash for get(), set() and take() of any dict: the
-    // __hash__ of the key need not be asked again.
+    // With the hash of the key, as the dict remembers it: its __hash__ need not be asked again.
     bool next(unsigned& position, JSValue& key, JSValue& value, int64_t& hash) const;
     // From the last. Start at endPosition().
     bool previous(unsigned& position, JSValue& key, JSValue& value) const;
@@ -142,6 +162,10 @@ public:
     const void* storageIdentity() const { return m_storage.get(); }
     // Removes the last entry. False: the dict is empty.
     bool takeLast(VM&, JSValue& key, JSValue& value);
+    // The same for the first. Neither takes longer the more entries have been removed: a dict will do as a queue.
+    bool takeFirst(VM&, JSValue& key, JSValue& value);
+    // Makes the entry of the key the last, or the first. False: there is none, or an exception.
+    bool moveToEnd(JSGlobalObject*, JSValue key, int64_t hash, bool last);
 
     // Changes whenever a key is added or removed, or entries move.
     uint32_t keysVersion() const { return m_keysVersion; }
@@ -171,14 +195,18 @@ private:
     using Entry = PyDictStorage::Entry;
 
     int64_t hashKey(JSGlobalObject*, JSValue key);
+    // Where the search of the index starts.
     static uint32_t fold(int64_t hash) { return static_cast<uint32_t>(hash) ^ static_cast<uint32_t>(static_cast<uint64_t>(hash) >> 32); }
 
     // The index of the entry, or -1. `slot`, if not null: where in the index it is.
-    int32_t find(JSGlobalObject*, JSValue key, uint32_t hash, uint32_t* slot = nullptr);
-    int32_t findString(JSString* key, uint32_t hash, uint32_t* slot = nullptr);
-    void insertNew(VM&, JSValue key, uint32_t hash, JSValue value);
+    int32_t find(JSGlobalObject*, JSValue key, int64_t hash, uint32_t* slot = nullptr);
+    int32_t findString(JSString* key, int64_t hash, uint32_t* slot = nullptr);
+    void insertNew(VM&, JSValue key, int64_t hash, JSValue value);
+    void insertFirst(VM&, JSValue key, int64_t hash, JSValue value);
     void removeAt(VM&, int32_t index, uint32_t slot);
-    void resize(VM&, unsigned minimumCapacity);
+    uint32_t slotOfEntry(int32_t index);
+    // `unusedAtFront`: how many entries to leave free before the first.
+    void resize(VM&, unsigned minimumCapacity, unsigned unusedAtFront = 0);
     static uint64_t newWatchedVersion();
     void keysChanged()
     {
@@ -192,6 +220,7 @@ private:
     unsigned m_used { 0 };
     uint32_t m_keysVersion { 0 };
     bool m_hasOnlyStringKeys { true };
+    unsigned m_firstEntry { 0 }; // The entries before this one are deleted, or were never used. Means nothing while the dict is empty.
 };
 
 // hash(str)

@@ -636,23 +636,24 @@ static JSArray* ioStreamsWithPendingOutput(JSGlobalObject* globalObject)
 
 void ioNotePendingOutput(JSGlobalObject* globalObject, PyRecord* stream)
 {
+    JSArray* standardStreams = ioStandardStreams(globalObject);
+    for (unsigned i = 0; i < listLength(standardStreams); ++i) {
+        if (listGet(standardStreams, i) == JSValue(stream))
+            return;
+    }
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(globalObject));
     listAppend(globalObject, ioStreamsWithPendingOutput(globalObject), stream);
     scope.clearException();
+    runtime(globalObject).setMayHavePendingOutput(true);
 }
 
-void writeOutPendingOutput(JSGlobalObject* globalObject)
+void writeOutPendingOutputSlow(JSGlobalObject* globalObject)
 {
     Runtime& rt = runtime(globalObject);
-    // Before _io is there, there is nothing.
-    JSValue state = hiddenField(globalObject, rt.typeFor(ioIOBaseTypeDef), 0);
-    if (!state)
-        return;
-    JSArray* list = ioStreamsWithPendingOutput(globalObject);
-    if (!listLength(list)) [[likely]]
-        return;
     if (rt.vm().exceptionForInspection())
         return;
+    rt.setMayHavePendingOutput(false);
+    JSArray* list = ioStreamsWithPendingOutput(globalObject);
     PyType* textIOWrapper = ioType(globalObject, IOType::TextIOWrapper);
     // What a TextIOWrapper holds goes to its buffer, which then is in the list.
     for (unsigned round = 0; round < 2 && listLength(list); ++round) {

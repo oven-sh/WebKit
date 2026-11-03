@@ -173,7 +173,7 @@ std::nullptr_t Parser::raise(SyntaxErrorInfo::Type type, int lineno, int colOffs
 
     std::span<const uint8_t> line;
     Vector<uint8_t> lineOfFile;
-    if (m_mode == ParseMode::File && m_host.lineOfFile(lineno, lineOfFile))
+    if (m_mode == ParseMode::File && m_host.lineOfFile(lineno, m_tree.source.encoding(), lineOfFile))
         line = lineOfFile.span();
     else if (m_lexer.currentLine() <= lineno && m_lexer.currentLineEnd() > m_lexer.currentLineStart())
         line = m_lexer.source().subspan(m_lexer.currentLineStart(), m_lexer.currentLineEnd() - m_lexer.currentLineStart());
@@ -405,8 +405,15 @@ Mod* Parser::parse()
 
     if (!m_errorIsFatal && !m_errorIsFinal && m_error.isSyntaxError())
         checkRestOfSourceForLexerErrors();
-    m_error.metadataLineno = m_lastStatementStart.line;
-    m_error.metadataColOffset = m_lastStatementStart.column;
+    if (m_error.isSyntaxError() && !m_errorIsAboutWhatFollows) {
+        m_error.hasMetadata = true;
+        // CPython's parser notes the statements when it goes over the text again to explain the error, which it does not do for
+        // an error of the tokenizer.
+        if (!m_errorIsFatal) {
+            m_error.metadataLineno = m_lastCompoundStatement.line;
+            m_error.metadataColOffset = m_lastCompoundStatement.column;
+        }
+    }
     return nullptr;
 }
 
@@ -434,15 +441,13 @@ Mod* Parser::parseInteractive()
     } else if (at(TokenKind::EndMarker)) {
         // Nothing at all: the caller sees the end of its input.
         return invalidSyntax();
-    } else if (atCompoundStatement()) {
-        Stmt* statement = parseCompoundStatement();
-        if (!statement)
+    } else {
+        bool isCompound = false;
+        if (!parseStatement(body, &isCompound))
             return nullptr;
-        body.append(statement);
-        if (!expect(TokenKind::Newline))
+        if (isCompound && !expect(TokenKind::Newline))
             return nullptr;
-    } else if (!parseSimpleStatements(body))
-        return nullptr;
+    }
 
     // Only blanks and comments may follow.
     auto rest = m_lexer.source().subspan(m_lexer.currentOffset());
@@ -452,8 +457,10 @@ Mod* Parser::parseInteractive()
             ++i;
             continue;
         }
-        if (c != '#')
+        if (c != '#') {
+            m_errorIsAboutWhatFollows = true;
             return syntaxError("multiple statements found while compiling a single statement"_s);
+        }
         while (i < rest.size() && rest[i] != '\n')
             ++i;
     }
@@ -536,24 +543,43 @@ bool Parser::atCompoundStatement()
     }
 }
 
-bool Parser::parseStatement(StmtVector& out)
+// What CPython's parser notes while it goes over the text a second time to explain the error.
+void Parser::didParseCompoundStatement(Position start)
 {
-    m_lastStatementStart = startPosition();
-    if (atCompoundStatement()) {
-        Stmt* statement = parseCompoundStatement();
-        if (!statement)
-            return false;
+    if (m_lastCompoundStatement.line <= start.line)
+        m_lastCompoundStatement = start;
+}
+
+bool Parser::parseStatement(StmtVector& out, bool* isCompound)
+{
+    auto finishCompoundStatement = [&](Stmt* statement) {
+        // On that second time a function definition that is in order is matched by a rule that is there to find fault with it, and
+        // which has no statement to give.
+        if (statement->kind != StmtKind::FunctionDef && statement->kind != StmtKind::AsyncFunctionDef)
+            didParseCompoundStatement(statement->range.start());
         out.append(statement);
+        if (isCompound)
+            *isCompound = true;
         return true;
+    };
+    if (atCompoundStatement()) {
+        Position start = startPosition();
+        bool isCompleteSoFar = false;
+        SetForScope scope(m_statementIsCompleteSoFar, &isCompleteSoFar);
+        Stmt* statement = parseCompoundStatement();
+        if (statement)
+            return finishCompoundStatement(statement);
+        // To a parser that backtracks, a clause that does not parse is not there, and the statement ends before it.
+        if (isCompleteSoFar && m_errorIsGeneric && !m_errorIsFatal)
+            didParseCompoundStatement(start);
+        return false;
     }
     if (atSoftKeyword(m_matchKeyword)) {
         // `match` is a keyword only if what follows makes a match statement.
         auto saved = checkpoint();
         std::optional<Token> newlineInsteadOfColon;
-        if (Stmt* statement = parseMatch(newlineInsteadOfColon)) {
-            out.append(statement);
-            return true;
-        }
+        if (Stmt* statement = parseMatch(newlineInsteadOfColon))
+            return finishCompoundStatement(statement);
         if (m_errorIsFatal)
             return false;
         SyntaxErrorInfo matchError = m_error;
@@ -1377,6 +1403,7 @@ Stmt* Parser::parseIf()
     Seq<Stmt*> body;
     if (!parseBlock(body, isElif ? "'elif' statement"_s : "'if' statement"_s, ifToken))
         return nullptr;
+    *m_statementIsCompleteSoFar = true;
     Seq<Stmt*> orelse;
     if (at(TokenKind::KwElif)) {
         Stmt* nested = parseIf();
@@ -1403,6 +1430,7 @@ Stmt* Parser::parseWhile()
     Seq<Stmt*> body;
     if (!parseBlock(body, "'while' statement"_s, whileToken))
         return nullptr;
+    *m_statementIsCompleteSoFar = true;
     Seq<Stmt*> orelse;
     if (at(TokenKind::KwElse) && !parseElse(orelse))
         return nullptr;
@@ -1428,6 +1456,7 @@ Stmt* Parser::parseFor(bool isAsync, Position start)
     Seq<Stmt*> body;
     if (!parseBlock(body, "'for' statement"_s, forToken))
         return nullptr;
+    *m_statementIsCompleteSoFar = true;
     Seq<Stmt*> orelse;
     if (at(TokenKind::KwElse) && !parseElse(orelse))
         return nullptr;
@@ -1617,6 +1646,7 @@ Stmt* Parser::parseTry()
         handler->name = name;
         handler->range = rangeFrom(handlerStart);
         handlers.append(handler);
+        *m_statementIsCompleteSoFar = true;
     }
 
     Seq<Stmt*> orelse;

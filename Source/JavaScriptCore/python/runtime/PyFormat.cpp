@@ -1278,7 +1278,7 @@ static bool parsePercentArgument(PercentFormatter& f, PercentArgument& argument)
 
     if (argument.code == '(') {
         if (!f.mapping) {
-            raiseTypeError(globalObject, scope, "format requires a mapping, not "_s, typeName(globalObject, f.arguments));
+            raiseTypeError(globalObject, scope, "format requires a mapping, not "_s, typeNameForMessage(globalObject, typeOf(globalObject, f.arguments)));
             return false;
         }
         ++f.position;
@@ -1332,7 +1332,7 @@ static bool parsePercentArgument(PercentFormatter& f, PercentArgument& argument)
         JSValue value = f.nextArgument(false);
         RETURN_IF_EXCEPTION(scope, { });
         if (!isInt(value))
-            return raiseTypeError(globalObject, scope, f.errorPrefix(argument), "* requires int, not "_s, typeName(globalObject, value));
+            return raiseTypeError(globalObject, scope, f.errorPrefix(argument), "* requires int, not "_s, typeNameForMessage(globalObject, typeOf(globalObject, value)));
         return intValue(value);
     };
 
@@ -1431,7 +1431,7 @@ static bool convertPercentArgument(PercentFormatter& f, PercentArgument& argumen
     case 'X': {
         bool needsInteger = code == 'o' || code == 'x' || code == 'X';
         auto wrongType = [&] {
-            raiseTypeError(globalObject, scope, f.errorPrefix(argument), '%', static_cast<char>(code), needsInteger ? " requires an integer, not "_s : " requires a real number, not "_s, typeName(globalObject, value));
+            raiseTypeError(globalObject, scope, f.errorPrefix(argument), '%', static_cast<char>(code), needsInteger ? " requires an integer, not "_s : " requires a real number, not "_s, typeNameForMessage(globalObject, typeOf(globalObject, value)));
             return false;
         };
         if (!isNumberLike(globalObject, value))
@@ -1465,7 +1465,7 @@ static bool convertPercentArgument(PercentFormatter& f, PercentArgument& argumen
         double number = toDouble(globalObject, value);
         if (scope.exception()) {
             if (clearPendingExceptionIfMatches(globalObject, rt.TypeError()))
-                raiseTypeError(globalObject, scope, f.errorPrefix(argument), '%', static_cast<char>(code), " requires a real number, not "_s, typeName(globalObject, value));
+                raiseTypeError(globalObject, scope, f.errorPrefix(argument), '%', static_cast<char>(code), " requires a real number, not "_s, typeNameForMessage(globalObject, typeOf(globalObject, value)));
             return false;
         }
         if (!checkPrecision(globalObject, argument.precision))
@@ -1486,7 +1486,7 @@ static bool convertPercentArgument(PercentFormatter& f, PercentArgument& argumen
             return true;
         }
         if (!hasIndex(globalObject, value)) {
-            raiseTypeError(globalObject, scope, f.errorPrefix(argument), "%c requires an integer or a unicode character, not "_s, typeName(globalObject, value));
+            raiseTypeError(globalObject, scope, f.errorPrefix(argument), "%c requires an integer or a unicode character, not "_s, typeNameForMessage(globalObject, typeOf(globalObject, value)));
             return false;
         }
         JSValue index = toIndex(globalObject, value);

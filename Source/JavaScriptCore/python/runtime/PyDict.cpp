@@ -21,8 +21,9 @@ namespace Python {
 
 const ClassInfo PyDictStorage::s_info = { "PyDictStorage"_s, nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(PyDictStorage) };
 
-PyDictStorage::PyDictStorage(VM& vm, Structure* structure, unsigned log2Size)
+PyDictStorage::PyDictStorage(VM& vm, Structure* structure, unsigned log2Size, bool hasWideHashes)
     : Base(vm, structure)
+    , m_hasWideHashes(hasWideHashes)
     , m_log2Size(log2Size)
     , m_capacity(capacityFor(log2Size))
 {
@@ -30,9 +31,9 @@ PyDictStorage::PyDictStorage(VM& vm, Structure* structure, unsigned log2Size)
     memset(indices(), 0xff, static_cast<size_t>(indexWidth(log2Size)) << log2Size);
 }
 
-PyDictStorage* PyDictStorage::create(VM& vm, Structure* structure, unsigned log2Size)
+PyDictStorage* PyDictStorage::create(VM& vm, Structure* structure, unsigned log2Size, bool hasWideHashes)
 {
-    auto* storage = new (NotNull, allocateCell<PyDictStorage>(vm, allocationSize(log2Size))) PyDictStorage(vm, structure, log2Size);
+    auto* storage = new (NotNull, allocateCell<PyDictStorage>(vm, allocationSize(log2Size, hasWideHashes))) PyDictStorage(vm, structure, log2Size, hasWideHashes);
     storage->finishCreation(vm);
     return storage;
 }
@@ -70,9 +71,10 @@ PyDict* PyDict::create(JSGlobalObject* globalObject)
     return create(rt.vm(), rt.structure<PyDict>(), rt.dictType());
 }
 
-PyDict* PyDict::createWithCapacity(JSGlobalObject* globalObject, unsigned capacity)
+PyDict* PyDict::createWithCapacity(JSGlobalObject* globalObject, unsigned capacity, bool onlyStringKeys)
 {
     PyDict* dict = create(globalObject);
+    dict->m_hasOnlyStringKeys = onlyStringKeys;
     if (capacity)
         dict->resize(getVM(globalObject), capacity);
     return dict;
@@ -112,7 +114,7 @@ static ALWAYS_INLINE bool stringsAreEqual(StringImpl* a, StringImpl* b)
     return WTF::equal(a, b);
 }
 
-int32_t PyDict::findString(JSString* key, uint32_t hash, uint32_t* slotResult)
+int32_t PyDict::findString(JSString* key, int64_t hash, uint32_t* slotResult)
 {
     PyDictStorage* storage = m_storage.get();
     if (!storage)
@@ -120,15 +122,14 @@ int32_t PyDict::findString(JSString* key, uint32_t hash, uint32_t* slotResult)
     StringImpl* impl = key->tryGetValueImpl();
     ASSERT(impl);
     Entry* entries = storage->entries();
-    uint32_t* hashes = storage->hashes();
     uint32_t mask = storage->mask();
-    uint32_t perturb = hash;
-    uint32_t slot = hash & mask;
+    uint32_t perturb = fold(hash);
+    uint32_t slot = perturb & mask;
     while (true) {
         int32_t index = storage->indexAt(slot);
         if (index == PyDictStorage::emptyIndex)
             return -1;
-        if (index >= 0 && hashes[index] == hash) {
+        if (index >= 0 && storage->hashAt(index) == hash) {
             JSValue candidate = entries[index].key.get();
             // A key that is an instance of a class derived from str goes by its text here: this is how attributes are found.
             if (candidate.isString() || (candidate.isCell() && candidate.asCell()->type() == PyStrType)) {
@@ -145,7 +146,7 @@ int32_t PyDict::findString(JSString* key, uint32_t hash, uint32_t* slotResult)
     }
 }
 
-int32_t PyDict::find(JSGlobalObject* globalObject, JSValue key, uint32_t hash, uint32_t* slotResult)
+int32_t PyDict::find(JSGlobalObject* globalObject, JSValue key, int64_t hash, uint32_t* slotResult)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -167,15 +168,14 @@ restart:
     if (!storage)
         return -1;
     Entry* entries = storage->entries();
-    uint32_t* hashes = storage->hashes();
     uint32_t mask = storage->mask();
-    uint32_t perturb = hash;
-    uint32_t slot = hash & mask;
+    uint32_t perturb = fold(hash);
+    uint32_t slot = perturb & mask;
     while (true) {
         int32_t index = storage->indexAt(slot);
         if (index == PyDictStorage::emptyIndex)
             return -1;
-        if (index >= 0 && hashes[index] == hash) {
+        if (index >= 0 && storage->hashAt(index) == hash) {
             JSValue candidate = entries[index].key.get();
             bool equal;
             if (isIdentical(candidate, key))
@@ -200,7 +200,7 @@ restart:
     }
 }
 
-void PyDict::resize(VM& vm, unsigned minimumCapacity)
+void PyDict::resize(VM& vm, unsigned minimumCapacity, unsigned unusedAtFront)
 {
     unsigned log2Size = PyDictStorage::minLog2Size;
     while (PyDictStorage::capacityFor(log2Size) < minimumCapacity)
@@ -208,24 +208,22 @@ void PyDict::resize(VM& vm, unsigned minimumCapacity)
     RELEASE_ASSERT(log2Size < 31);
 
     Structure* structure = m_storage ? m_storage->structure() : Runtime::from(this->structure()->realm()).structure<PyDictStorage>();
-    PyDictStorage* newStorage = PyDictStorage::create(vm, structure, log2Size);
+    PyDictStorage* newStorage = PyDictStorage::create(vm, structure, log2Size, !m_hasOnlyStringKeys);
     if (PyDictStorage* old = m_storage.get()) {
         Entry* oldEntries = old->entries();
-        uint32_t* oldHashes = old->hashes();
         Entry* entries = newStorage->entries();
-        uint32_t* hashes = newStorage->hashes();
         uint32_t mask = newStorage->mask();
-        unsigned count = 0;
+        unsigned count = unusedAtFront;
         for (unsigned i = 0; i < old->entryCount(); ++i) {
             if (!oldEntries[i].key)
                 continue;
             // The storage is new, so no barrier is needed.
             entries[count].key.setWithoutWriteBarrier(oldEntries[i].key.get());
             entries[count].value.setWithoutWriteBarrier(oldEntries[i].value.get());
-            uint32_t hash = oldHashes[i];
-            hashes[count] = hash;
-            uint32_t perturb = hash;
-            uint32_t slot = hash & mask;
+            int64_t hash = old->hashAt(i);
+            newStorage->setHashAt(count, hash);
+            uint32_t perturb = fold(hash);
+            uint32_t slot = perturb & mask;
             while (newStorage->indexAt(slot) != PyDictStorage::emptyIndex) {
                 perturb >>= perturbShift;
                 slot = (slot * 5 + perturb + 1) & mask;
@@ -234,35 +232,41 @@ void PyDict::resize(VM& vm, unsigned minimumCapacity)
             ++count;
         }
         newStorage->setEntryCount(count);
-        newStorage->setFilledSlotCount(count);
-        ASSERT(count == m_used);
+        newStorage->setFilledSlotCount(m_used);
+        ASSERT(count == m_used + unusedAtFront);
     }
+    m_firstEntry = unusedAtFront;
     m_storage.set(vm, this, newStorage);
     keysChanged();
 }
 
-void PyDict::reserve(VM& vm, unsigned additional)
+void PyDict::reserve(VM& vm, unsigned additional, bool onlyStringKeys)
 {
+    if (!onlyStringKeys)
+        m_hasOnlyStringKeys = false;
     unsigned needed = m_used + additional;
-    if (!m_storage || m_storage->capacity() < needed)
+    if (!m_storage || m_storage->capacity() < needed || m_storage->hasWideHashes() == m_hasOnlyStringKeys)
         resize(vm, needed);
 }
 
-void PyDict::insertNew(VM& vm, JSValue key, uint32_t hash, JSValue value)
+void PyDict::insertNew(VM& vm, JSValue key, int64_t hash, JSValue value)
 {
     PyDictStorage* storage = m_storage.get();
+    if (!key.isString())
+        m_hasOnlyStringKeys = false;
+    bool needsWiderHashes = storage && storage->hasWideHashes() == m_hasOnlyStringKeys;
     // (popitem() gives back the entry, not the slot.)
-    if (!storage || storage->entryCount() == storage->capacity() || storage->filledSlotCount() >= storage->capacity()) {
+    if (!storage || storage->entryCount() == storage->capacity() || storage->filledSlotCount() >= storage->capacity() || needsWiderHashes) {
         // A table of at least three times what is in use, as CPython grows: that also gets rid of the deleted entries.
         unsigned log2Size = PyDictStorage::minLog2Size;
         while ((static_cast<uint64_t>(1) << log2Size) < static_cast<uint64_t>(m_used) * 3)
             ++log2Size;
-        resize(vm, PyDictStorage::capacityFor(log2Size));
+        resize(vm, std::max(PyDictStorage::capacityFor(log2Size), needsWiderHashes ? storage->capacity() : 0));
         storage = m_storage.get();
     }
     uint32_t mask = storage->mask();
-    uint32_t perturb = hash;
-    uint32_t slot = hash & mask;
+    uint32_t perturb = fold(hash);
+    uint32_t slot = perturb & mask;
     while (storage->indexAt(slot) >= 0) {
         perturb >>= perturbShift;
         slot = (slot * 5 + perturb + 1) & mask;
@@ -272,13 +276,47 @@ void PyDict::insertNew(VM& vm, JSValue key, uint32_t hash, JSValue value)
     unsigned index = storage->entryCount();
     storage->entries()[index].key.set(vm, storage, key);
     storage->entries()[index].value.set(vm, storage, value);
-    storage->hashes()[index] = hash;
+    storage->setHashAt(index, hash);
     storage->setIndexAt(slot, index);
     storage->setEntryCount(index + 1);
+    if (!m_used)
+        m_firstEntry = index;
     ++m_used;
     keysChanged();
+}
+
+void PyDict::insertFirst(VM& vm, JSValue key, int64_t hash, JSValue value)
+{
+    if (!m_used)
+        return insertNew(vm, key, hash, value);
+    PyDictStorage* storage = m_storage.get();
     if (!key.isString())
         m_hasOnlyStringKeys = false;
+    if (!m_firstEntry || storage->filledSlotCount() >= storage->capacity() || storage->hasWideHashes() == m_hasOnlyStringKeys) {
+        // As insertNew() grows it, with half of what is free at either end.
+        unsigned log2Size = PyDictStorage::minLog2Size;
+        while ((static_cast<uint64_t>(1) << log2Size) < static_cast<uint64_t>(m_used) * 3)
+            ++log2Size;
+        unsigned capacity = PyDictStorage::capacityFor(log2Size);
+        resize(vm, capacity, (capacity - m_used + 1) / 2);
+        storage = m_storage.get();
+    }
+    uint32_t mask = storage->mask();
+    uint32_t perturb = fold(hash);
+    uint32_t slot = perturb & mask;
+    while (storage->indexAt(slot) >= 0) {
+        perturb >>= perturbShift;
+        slot = (slot * 5 + perturb + 1) & mask;
+    }
+    if (storage->indexAt(slot) == PyDictStorage::emptyIndex)
+        storage->setFilledSlotCount(storage->filledSlotCount() + 1);
+    unsigned index = --m_firstEntry;
+    storage->entries()[index].key.set(vm, storage, key);
+    storage->entries()[index].value.set(vm, storage, value);
+    storage->setHashAt(index, hash);
+    storage->setIndexAt(slot, index);
+    ++m_used;
+    keysChanged();
 }
 
 void PyDict::removeAt(VM&, int32_t index, uint32_t slot)
@@ -288,12 +326,31 @@ void PyDict::removeAt(VM&, int32_t index, uint32_t slot)
     storage->entries()[index].key.clear();
     storage->entries()[index].value.clear();
     --m_used;
+    if (static_cast<unsigned>(index) == m_firstEntry) {
+        unsigned count = storage->entryCount();
+        while (m_firstEntry < count && !storage->entries()[m_firstEntry].key)
+            ++m_firstEntry;
+    }
     keysChanged();
+}
+
+// Where in the index an entry that is in use is.
+uint32_t PyDict::slotOfEntry(int32_t index)
+{
+    PyDictStorage* storage = m_storage.get();
+    uint32_t mask = storage->mask();
+    uint32_t perturb = fold(storage->hashAt(index));
+    uint32_t slot = perturb & mask;
+    while (storage->indexAt(slot) != index) {
+        perturb >>= perturbShift;
+        slot = (slot * 5 + perturb + 1) & mask;
+    }
+    return slot;
 }
 
 JSValue PyDict::get(JSGlobalObject* globalObject, JSValue key, int64_t hash)
 {
-    int32_t index = find(globalObject, key, fold(hash));
+    int32_t index = find(globalObject, key, hash);
     return index < 0 ? JSValue() : m_storage->entries()[index].value.get();
 }
 
@@ -312,14 +369,13 @@ void PyDict::set(JSGlobalObject* globalObject, JSValue key, int64_t hash, JSValu
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    uint32_t folded = fold(hash);
-    int32_t index = find(globalObject, key, folded);
+    int32_t index = find(globalObject, key, hash);
     RETURN_IF_EXCEPTION(scope, void());
     if (index >= 0) {
         m_storage->entries()[index].value.set(vm, m_storage.get(), value);
         return;
     }
-    insertNew(vm, key, folded, value);
+    insertNew(vm, key, hash, value);
 }
 
 void PyDict::set(JSGlobalObject* globalObject, JSValue key, JSValue value)
@@ -337,12 +393,11 @@ JSValue PyDict::setDefault(JSGlobalObject* globalObject, JSValue key, JSValue va
     auto scope = DECLARE_THROW_SCOPE(vm);
     int64_t hash = hashKey(globalObject, key);
     RETURN_IF_EXCEPTION(scope, { });
-    uint32_t folded = fold(hash);
-    int32_t index = find(globalObject, key, folded);
+    int32_t index = find(globalObject, key, hash);
     RETURN_IF_EXCEPTION(scope, { });
     if (index >= 0)
         return m_storage->entries()[index].value.get();
-    insertNew(vm, key, folded, value);
+    insertNew(vm, key, hash, value);
     return value;
 }
 
@@ -360,7 +415,7 @@ JSValue PyDict::take(JSGlobalObject* globalObject, JSValue key, int64_t hash)
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     uint32_t slot;
-    int32_t index = find(globalObject, key, fold(hash), &slot);
+    int32_t index = find(globalObject, key, hash, &slot);
     RETURN_IF_EXCEPTION(scope, { });
     if (index < 0)
         return { };
@@ -380,20 +435,20 @@ int32_t PyDict::indexOf(JSString* key)
 {
     if (!m_used)
         return -1;
-    return findString(key, fold(hashOfString(key)));
+    return findString(key, hashOfString(key));
 }
 
 JSValue PyDict::get(JSString* key)
 {
     if (!m_used)
         return { };
-    int32_t index = findString(key, fold(hashOfString(key)));
+    int32_t index = findString(key, hashOfString(key));
     return index < 0 ? JSValue() : m_storage->entries()[index].value.get();
 }
 
 void PyDict::set(VM& vm, JSString* key, JSValue value)
 {
-    uint32_t hash = fold(hashOfString(key));
+    int64_t hash = hashOfString(key);
     int32_t index = findString(key, hash);
     if (index >= 0) {
         m_storage->entries()[index].value.set(vm, m_storage.get(), value);
@@ -405,7 +460,7 @@ void PyDict::set(VM& vm, JSString* key, JSValue value)
 JSValue PyDict::take(VM& vm, JSString* key)
 {
     uint32_t slot;
-    int32_t index = findString(key, fold(hashOfString(key)), &slot);
+    int32_t index = findString(key, hashOfString(key), &slot);
     if (index < 0)
         return { };
     JSValue value = m_storage->entries()[index].value.get();
@@ -434,11 +489,11 @@ void PyDict::takeItemsOf(VM& vm, PyDict* other)
     PyDictStorage* storage = other->m_storage.get();
     if (!storage || !other->m_used)
         return;
-    reserve(vm, other->m_used);
+    reserve(vm, other->m_used, other->m_hasOnlyStringKeys);
     for (unsigned i = 0; i < storage->entryCount(); ++i) {
         Entry& entry = storage->entries()[i];
         if (entry.key)
-            insertNew(vm, entry.key.get(), storage->hashes()[i], entry.value.get());
+            insertNew(vm, entry.key.get(), storage->hashAt(i), entry.value.get());
     }
 }
 
@@ -448,6 +503,8 @@ bool PyDict::next(unsigned& position, JSValue& key, JSValue& value) const
     if (!storage)
         return false;
     unsigned count = storage->entryCount();
+    if (position < m_firstEntry && m_used)
+        position = m_firstEntry;
     while (position < count) {
         Entry& entry = storage->entries()[position++];
         if (entry.key) {
@@ -463,7 +520,7 @@ bool PyDict::next(unsigned& position, JSValue& key, JSValue& value, int64_t& has
 {
     if (!next(position, key, value))
         return false;
-    hash = m_storage->hashes()[position - 1];
+    hash = m_storage->hashAt(position - 1);
     return true;
 }
 
@@ -473,7 +530,8 @@ bool PyDict::previous(unsigned& position, JSValue& key, JSValue& value) const
     if (!storage)
         return false;
     position = std::min(position, storage->entryCount());
-    while (position) {
+    unsigned first = m_used ? m_firstEntry : 0;
+    while (position > first) {
         Entry& entry = storage->entries()[--position];
         if (entry.key) {
             key = entry.key.get();
@@ -495,18 +553,55 @@ bool PyDict::takeLast(VM& vm, JSValue& key, JSValue& value)
     --index;
     key = storage->entries()[index].key.get();
     value = storage->entries()[index].value.get();
-
-    uint32_t hash = storage->hashes()[index];
-    uint32_t mask = storage->mask();
-    uint32_t perturb = hash;
-    uint32_t slot = hash & mask;
-    while (storage->indexAt(slot) != static_cast<int32_t>(index)) {
-        perturb >>= perturbShift;
-        slot = (slot * 5 + perturb + 1) & mask;
-    }
-    removeAt(vm, index, slot);
+    removeAt(vm, index, slotOfEntry(index));
     // What follows it is all deleted.
     storage->setEntryCount(index);
+    return true;
+}
+
+bool PyDict::takeFirst(VM& vm, JSValue& key, JSValue& value)
+{
+    if (!m_used)
+        return false;
+    PyDictStorage* storage = m_storage.get();
+    unsigned index = m_firstEntry;
+    ASSERT(storage->entries()[index].key);
+    key = storage->entries()[index].key.get();
+    value = storage->entries()[index].value.get();
+    removeAt(vm, index, slotOfEntry(index));
+    return true;
+}
+
+bool PyDict::moveToEnd(JSGlobalObject* globalObject, JSValue key, int64_t hash, bool last)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!m_used)
+        return false;
+    uint32_t slot;
+    int32_t index = find(globalObject, key, hash, &slot);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (index < 0)
+        return false;
+    PyDictStorage* storage = m_storage.get();
+    if (last) {
+        unsigned end = storage->entryCount();
+        while (!storage->entries()[end - 1].key)
+            --end;
+        storage->setEntryCount(end);
+        if (static_cast<unsigned>(index) == end - 1)
+            return true;
+    } else if (static_cast<unsigned>(index) == m_firstEntry)
+        return true;
+    // The key that is in the dict stays, not the one that is equal to it.
+    JSValue ownKey = storage->entries()[index].key.get();
+    JSValue value = storage->entries()[index].value.get();
+    int64_t ownHash = storage->hashAt(index);
+    removeAt(vm, index, slot);
+    if (last)
+        insertNew(vm, ownKey, ownHash, value);
+    else
+        insertFirst(vm, ownKey, ownHash, value);
     return true;
 }
 

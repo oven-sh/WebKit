@@ -140,15 +140,19 @@ static JSValue sysUnraisableHook(JSGlobalObject* globalObject, JSValue unraisabl
         JSString* string = str(globalObject, message);
         RETURN_IF_EXCEPTION(scope, { });
         text.append(string->value(globalObject).data);
-    } else
+    } else if (!isNone(object))
         text.append("Exception ignored in"_s);
     if (!isNone(object))
         text.append(": "_s, reprForMessage(globalObject, object), '\n');
-    else
+    else if (!isNone(message))
         text.append(":\n"_s);
-    writeToStderr(globalObject, text.toString());
+    JSValue file = runtime(globalObject).sysDict()->get(runtime(globalObject).names.stderr_());
+    if (!file || isNone(file))
+        return jsUndefined();
+    writeToFile(globalObject, file, makeStr(globalObject, text.toString()));
+    RETURN_IF_EXCEPTION(scope, { });
     if (!isNone(exception))
-        printException(globalObject, exception);
+        printException(globalObject, exception, file, true);
     return jsUndefined();
 }
 
@@ -578,7 +582,7 @@ static constexpr NativeDef sysFunctions[] = {
     PY_FUNCTION("_is_gil_enabled", sysIsGILEnabled, "()"),
     PY_FUNCTION("_is_interned", sysIsInterned, "(string, /)"),
     PY_FUNCTION("addaudithook", sysAddAuditHook, "(hook)"),
-    PY_FUNCTION("audit", sysAudit, "(*args)"),
+    PY_FUNCTION("audit", sysAudit, "(event, /, *args)"),
     PY_FUNCTION("breakpointhook", sysBreakpointHook, "(*args, **kws)"),
     PY_FUNCTION("call_tracing", sysCallTracing, "(func, args, /)"),
     PY_FUNCTION("displayhook", sysDisplayHook, "(object, /)"),
@@ -648,7 +652,7 @@ static constexpr ASCIILiteral threadInfoFields[] = { "name"_s, "lock"_s, "versio
 static constexpr StructSeqDef threadInfoDef { "sys.thread_info"_s, threadInfoFields, 3, false };
 
 // Where the standard library is: <prefix>/lib/python3.15, where the prefix is $PYTHONHOME, or else what the host has it under.
-static String standardLibraryDirectory()
+String standardLibraryDirectory()
 {
     if (const char* directory = getenv("BUN_PYTHON_STDLIB"))
         return String::fromUTF8(directory);

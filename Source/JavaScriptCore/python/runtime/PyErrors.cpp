@@ -29,11 +29,9 @@ String typeNameOfArgument(JSGlobalObject* globalObject, JSValue value)
 }
 
 // An exception raised while another is being handled remembers it, as its __context__.
-static void chainContext(JSGlobalObject* globalObject, PyException* exception)
+static void chainContext(JSGlobalObject* globalObject, PyException* exception, JSValue handled)
 {
-    Runtime& rt = runtime(globalObject);
-    VM& vm = rt.vm();
-    JSValue handled = rt.handledException();
+    VM& vm = getVM(globalObject);
     if (!handled || handled.asCell() == exception)
         return;
     // The chain must not come back to the exception. A program may have made it a cycle already, which a second walk at half the
@@ -91,7 +89,15 @@ void unwrapPendingException(JSGlobalObject* globalObject)
 JSValue raiseException(JSGlobalObject* globalObject, ThrowScope& scope, JSValue exception)
 {
     if (auto* pyException = PyException::tryFrom(exception))
-        chainContext(globalObject, pyException);
+        chainContext(globalObject, pyException, runtime(globalObject).handledException());
+    throwPythonException(globalObject, scope, exception);
+    return { };
+}
+
+JSValue raiseExceptionThrownIntoGenerator(JSGlobalObject* globalObject, ThrowScope& scope, JSValue exception)
+{
+    if (auto* pyException = PyException::tryFrom(exception))
+        chainContext(globalObject, pyException, runtime(globalObject).handledExceptionInTopSlot());
     throwPythonException(globalObject, scope, exception);
     return { };
 }

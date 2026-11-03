@@ -93,6 +93,7 @@
 #include "PyAbstract.h"
 #include "PyBytecode.h"
 #include "PyFunction.h"
+#include "PyGenerator.h"
 #include "PyIterators.h"
 #include "PyModule.h"
 #include "PyRuntime.h"

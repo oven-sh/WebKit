@@ -25,6 +25,9 @@ public:
 
     unsigned parameterCount() const { return m_parameterCount; } // Without `this`.
     bool isGeneratorBody() const { return m_isGeneratorBody; }
+    // Known once the code has been generated: see PyGenerator::slots().
+    unsigned generatorSlotCount() const { return m_generatorSlotCount; }
+    void setGeneratorSlotCount(unsigned count) { m_generatorSlotCount = count; }
 
 private:
     static JSTokenLocation locationOf(const SourceCode& source)
@@ -39,6 +42,7 @@ private:
 
     unsigned m_parameterCount;
     bool m_isGeneratorBody;
+    unsigned m_generatorSlotCount { 0 };
     Emitter m_emitter;
 };
 

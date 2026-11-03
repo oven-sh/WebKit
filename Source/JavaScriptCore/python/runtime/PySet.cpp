@@ -448,6 +448,13 @@ static PySet* copyAsBaseType(JSGlobalObject* globalObject, PySet* set)
     return result;
 }
 
+// A dict or a frozendict, not an instance of a class derived from one: its keys come with their hashes.
+static PyDict* exactDict(Runtime& rt, JSValue value)
+{
+    auto* dict = PyDict::tryFrom(value);
+    return dict && (dict->type() == rt.dictType() || dict->type() == rt.frozendictType()) ? dict : nullptr;
+}
+
 static void updateSet(JSGlobalObject* globalObject, PySet* set, JSValue other)
 {
     Runtime& rt = runtime(globalObject);
@@ -455,11 +462,12 @@ static void updateSet(JSGlobalObject* globalObject, PySet* set, JSValue other)
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (auto* otherSet = PySet::tryFrom(other))
         RELEASE_AND_RETURN(scope, set->merge(globalObject, otherSet));
-    if (auto* dict = PyDict::tryFrom(other); dict && dict->type() == rt.dictType()) {
+    if (PyDict* dict = exactDict(rt, other)) {
         set->reserveFor(vm, dict->size());
         JSValue key, value;
-        for (unsigned position = 0; dict->next(position, key, value);) {
-            set->add(globalObject, key);
+        int64_t hash;
+        for (unsigned position = 0; dict->next(position, key, value, hash);) {
+            set->add(globalObject, key, hash);
             RETURN_IF_EXCEPTION(scope, void());
         }
         return;
@@ -581,9 +589,7 @@ static PySet* difference(JSGlobalObject* globalObject, PySet* set, JSValue other
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* otherSet = PySet::tryFrom(other);
-    auto* otherDict = PyDict::tryFrom(other);
-    if (otherDict && otherDict->type() != rt.dictType())
-        otherDict = nullptr;
+    PyDict* otherDict = exactDict(rt, other);
     size_t otherSize = otherSet ? otherSet->size() : otherDict ? otherDict->size() : 0;
     // Against something much smaller, or of unknown size: copy, then take away.
     if ((!otherSet && !otherDict) || (set->size() >> 2) > otherSize) {
@@ -612,6 +618,19 @@ static void symmetricDifferenceUpdate(JSGlobalObject* globalObject, PySet* set, 
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (other == JSValue(set))
         return set->clear(vm);
+    if (PyDict* dict = exactDict(runtime(globalObject), other)) {
+        JSValue key, value;
+        int64_t hash;
+        for (unsigned position = 0; dict->next(position, key, value, hash);) {
+            bool removed = set->remove(globalObject, key, hash);
+            RETURN_IF_EXCEPTION(scope, void());
+            if (!removed) {
+                set->add(globalObject, key, hash);
+                RETURN_IF_EXCEPTION(scope, void());
+            }
+        }
+        return;
+    }
     auto* otherSet = PySet::tryFrom(other);
     if (!otherSet) {
         otherSet = newSetLike(globalObject, set);

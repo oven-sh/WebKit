@@ -232,6 +232,19 @@ static JSValue deltaMultiply(JSGlobalObject* globalObject, JSValue left, JSValue
         RELEASE_AND_RETURN(scope, deltaScaleByFloat(globalObject, state, delta, number, false));
     if (!isInt(number))
         return runtime(globalObject).notImplemented();
+    if (!isExactInt(number) && !number.isBoolean()) [[unlikely]] {
+        // Its class may have a __rmul__ of its own.
+        JSValue total = deltaMakeInt(globalObject, delta->total());
+        RETURN_IF_EXCEPTION(scope, { });
+        JSValue product = binaryOperation(globalObject, BinaryOperator::Mult, total, number);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!isInt(product)) {
+            divmod(globalObject, product, jsNumber(microsecondsPerSecond));
+            RETURN_IF_EXCEPTION(scope, { });
+            return raiseTypeError(globalObject, scope, "an integer is required"_s);
+        }
+        RELEASE_AND_RETURN(scope, deltaFromMicroseconds(globalObject, state, state.deltaType.get(), intValue(product)));
+    }
     JSValue factor = intValue(number);
     auto small = tryInt64(factor);
     if (small && *small > -(1ll << 59) && *small < (1ll << 59)) [[likely]]
@@ -471,8 +484,7 @@ static constexpr NativeGetSet deltaGetSets[] = {
 };
 
 constexpr TypeDef deltaTypeDef {
-    "datetime.timedelta"_s, { TypeFlag::Base, TypeFlag::OwnLayout }, deltaMethods, deltaGetSets,
-    "Difference between two datetime values.\n\nAll arguments are optional and default to 0.\nArguments may be integers or floats, and may be positive or negative."_s
+    "datetime.timedelta"_s, { TypeFlag::Base, TypeFlag::OwnLayout }, deltaMethods, deltaGetSets, { }
 };
 
 } // namespace DateTime

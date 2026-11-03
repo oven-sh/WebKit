@@ -1122,7 +1122,7 @@ static constexpr TypeDef jsonEncoderTypeDef { "_json.Encoder"_s, { }, jsonEncode
 static constexpr NativeDef jsonFunctions[] = {
     PY_FUNCTION("encode_basestring_ascii", jsonEncodeBaseString<true>, "(pystr, /)"),
     PY_FUNCTION("encode_basestring", jsonEncodeBaseString<false>, "(pystr, /)"),
-    PY_FUNCTION("scanstring", jsonScanString, "(*args, **kwargs)"),
+    PY_FUNCTION("scanstring", jsonScanString, "!(pystr, end, strict=True, /)"),
 };
 
 static JSValue jsonEncoderNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs& args)

@@ -15,26 +15,20 @@ namespace Python {
 
 // A generator, a coroutine or an asynchronous generator.
 class PyGenerator final : public PyObject {
-    // The compiled code reads and writes these four as "internal fields", so they come first. See PyBytecode.h.
-    WriteBarrier<Unknown> m_state;
-    WriteBarrier<Unknown> m_body;
-    WriteBarrier<Unknown> m_frame;
-    WriteBarrier<Unknown> m_arguments;
-
 public:
     PY_DECLARE_CELL(PyGenerator, PyObject, PyGeneratorType);
     DECLARE_VISIT_CHILDREN;
 
     enum class Kind : uint8_t { Generator, Coroutine, AsyncGenerator };
 
-    // As JSGenerator::State: a positive state is where to resume.
+    // A positive state is where to resume: the offset of an instruction of the body.
     enum State : int32_t {
         Completed = -1,
         Executing = -2,
         NotStarted = 0,
     };
 
-    static PyGenerator* create(JSGlobalObject*, PyFunction* function, PyFunction* body, PyTuple* arguments);
+    static PyGenerator* create(JSGlobalObject*, PyFunction* function, PyFunction* body, unsigned slotCount);
 
     Kind kind() const { return m_kind; }
     int32_t state() const { return m_state.get().asInt32(); }
@@ -44,9 +38,16 @@ public:
     bool isStarted() const { return state() != NotStarted; }
 
     PyFunction* function() const { return m_function.get(); }
-    PyFunction* body() const { return uncheckedDowncast<PyFunction>(m_body.get().asCell()); }
-    JSValue frame() const { return m_frame.get(); } // Once it has started: a JSLexicalEnvironment, where its registers are while it is suspended.
-    JSValue arguments() const { return m_arguments.get(); } // Until it starts: a tuple, the values of the parameters.
+    PyFunction* body() const { return m_body.get(); }
+
+    // Where the registers of the body are kept while it is suspended: those that hold something that is still needed. Which
+    // slot belongs to which register is in the instructions that save and restore them (op_py_generator_registers,
+    // op_py_generator_suspend). Until it starts, the first slots hold the values of the parameters. While it is running, and
+    // when it is done, they are all empty.
+    unsigned slotCount() const { return m_slotCount; }
+    JSValue slot(unsigned index) const { ASSERT(index < m_slotCount); return slots()[index].get(); }
+    void setSlot(VM& vm, unsigned index, JSValue value) { ASSERT(index < m_slotCount); slots()[index].set(vm, this, value); }
+    static constexpr size_t allocationSize(unsigned slotCount) { return offsetOfSlots() + slotCount * sizeof(WriteBarrier<Unknown>); }
     JSValue name() const { return m_name.get(); }
     void setName(VM& vm, JSValue value) { m_name.set(vm, this, value); }
     JSValue qualname() const { return m_qualname.get(); }
@@ -59,8 +60,8 @@ public:
     // The exception being handled in the generator, which stays with it while it is suspended.
     JSValue handledException() const { return m_handledException.get(); }
     void setHandledException(VM& vm, JSValue value) { m_handledException.set(vm, this, value); }
-    PyGenerator* resumedBy() const { return m_resumedBy.get(); }
-    void setResumedBy(VM& vm, PyGenerator* value) { m_resumedBy.setMayBeNull(vm, this, value); }
+    // While it is running: the generator that was running when it was resumed, Runtime::runningGenerator() then.
+    PyGenerator* resumedBy() const { return m_resumedBy; }
     // gi_frame, once somebody has asked for it. See PyFrame::of().
     PyFrame* frameObject() const { return m_frameObject.get(); }
     void setFrameObject(VM& vm, PyFrame* frame) { m_frameObject.set(vm, this, frame); }
@@ -87,23 +88,63 @@ public:
         Threw,
     };
     // Runs it until it next yields. With ThrowMode, `value` is an exception to raise where it is suspended.
+    // It is neither running nor completed.
+    //
+    // To resume a generator is to call its body, with the arguments JSGenerator::Argument lists. The body does the rest:
+    // op_py_generator_enter, its first instruction, notes that the generator is running; op_py_generator_suspend and
+    // op_py_generator_return, with which it returns, that it no longer is; and the unwinder, if an exception leaves the body
+    // (bodyIsUnwinding()). Whoever called the body tells from isCompleted() whether it has yielded or returned. So
+    // instructions can do it as well as this function: op_py_for_iter and op_py_send do.
     Outcome resume(JSGlobalObject*, JSValue value, JSGenerator::ResumeMode, JSValue& result);
 
-private:
-    PyGenerator(VM&, Structure*, PyType*, Kind);
+    // What those instructions do, when the interpreter leaves it to C++. False: an exception.
+    bool enterBody(JSGlobalObject*);
+    void suspendBody(JSGlobalObject*, unsigned resumeOffset);
+    void returnFromBody(JSGlobalObject*);
+    // An exception is about to leave the frame of the body. It may be replaced by another.
+    void bodyIsUnwinding(JSGlobalObject*, bool isTermination);
 
+    static constexpr ptrdiff_t offsetOfState() { return OBJECT_OFFSETOF(PyGenerator, m_state); }
+    static constexpr ptrdiff_t offsetOfBody() { return OBJECT_OFFSETOF(PyGenerator, m_body); }
+    static constexpr ptrdiff_t offsetOfSlots();
+    static constexpr ptrdiff_t offsetOfDelegate() { return OBJECT_OFFSETOF(PyGenerator, m_delegate); }
+    static constexpr ptrdiff_t offsetOfResumedBy() { return OBJECT_OFFSETOF(PyGenerator, m_resumedBy); }
+    static constexpr ptrdiff_t offsetOfFrameObject() { return OBJECT_OFFSETOF(PyGenerator, m_frameObject); }
+    static constexpr ptrdiff_t offsetOfKind() { return OBJECT_OFFSETOF(PyGenerator, m_kind); }
+    static constexpr ptrdiff_t offsetOfHandledException() { return OBJECT_OFFSETOF(PyGenerator, m_handledException); }
+    static constexpr ptrdiff_t offsetOfFinalization() { return OBJECT_OFFSETOF(PyGenerator, m_finalization); }
+
+    // One that is dropped before it is done may have something to clean up (a `finally`, a `with`), or to complain of.
+    enum class Finalization : uint8_t {
+        None, // It has not, or it is done.
+        Noted, // Runtime::noteFinalizableGenerator() has been told.
+        Registered, // Runtime::registerFinalizable() has.
+    };
+    Finalization finalization() const { return m_finalization; }
+    void setFinalization(Finalization finalization) { m_finalization = finalization; }
+
+private:
+    PyGenerator(VM&, Structure*, PyType*, Kind, unsigned slotCount);
+    void leaveBody(Runtime&);
+    WriteBarrier<Unknown>* slots() const { return std::bit_cast<WriteBarrier<Unknown>*>(std::bit_cast<char*>(this) + offsetOfSlots()); }
+
+    WriteBarrier<Unknown> m_state; // An int32.
+    WriteBarrier<PyFunction> m_body;
     WriteBarrier<PyFunction> m_function;
     WriteBarrier<Unknown> m_name;
     WriteBarrier<Unknown> m_qualname;
     WriteBarrier<Unknown> m_delegate;
     WriteBarrier<Unknown> m_handledException;
-    WriteBarrier<PyGenerator> m_resumedBy;
+    PyGenerator* m_resumedBy { nullptr }; // It is running, so the frame of its body refers to it.
     WriteBarrier<PyFrame> m_frameObject;
     WriteBarrier<Unknown> m_finalizer;
     WriteBarrier<Unknown> m_origin;
+    unsigned m_slotCount;
     Kind m_kind;
-    bool m_isRegisteredForFinalization { false };
+    Finalization m_finalization { Finalization::None };
 };
+
+constexpr ptrdiff_t PyGenerator::offsetOfSlots() { return WTF::roundUpToMultipleOf<sizeof(WriteBarrier<Unknown>)>(sizeof(PyGenerator)); }
 
 // What asend(), athrow() and aclose() return.
 class PyAsyncGenAwaitable final : public PyObject {

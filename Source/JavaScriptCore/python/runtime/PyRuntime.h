@@ -395,6 +395,8 @@ public:
         Pickle, // pickleState() in PyPickle.cpp,
         Expat, // and expatState() in PyExpat.cpp.
         IntactPycFile, // See readPycFile() in PyCodeCache.cpp.
+        GCGarbage, // gc.garbage and gc.callbacks, lists. The program has them too.
+        GCCallbacks,
         Count
     };
     JSValue slot(Slot which) const { return m_slots[static_cast<unsigned>(which)].get(); }
@@ -418,8 +420,9 @@ public:
     JSValue handledExceptionInTopSlot() const;
     JSValue setHandledExceptionInTopSlot(JSValue); // Returns what was there.
     JSValue handledException() const; // In the topmost slot that has one. Empty: none.
-    PyGenerator* runningGenerator() const { return m_runningGenerator.get(); }
-    void setRunningGenerator(PyGenerator*);
+    PyGenerator* runningGenerator() const { return m_runningGenerator; }
+    void setRunningGenerator(PyGenerator* generator) { m_runningGenerator = generator; }
+    static constexpr ptrdiff_t offsetOfRunningGenerator() { return OBJECT_OFFSETOF(Runtime, m_runningGenerator); }
 
     // ---- Threads (PyThreads.h) ----
 
@@ -496,6 +499,9 @@ public:
 
     void registerFinalizable(JSCell*);
     void unregisterFinalizable(JSCell*);
+    // Most generators and coroutines are done long before the next collection. So they are only written down when they are made,
+    // and those that still have PyGenerator::Finalization::Noted when a collection comes are registered then.
+    void noteFinalizableGenerator(PyGenerator* generator) { m_newFinalizableGenerators.append(generator); }
     // For the collector, with the world stopped, once all that is reachable is marked. True: it marked something.
     bool keepUnreachableObjectsToFinalize(SlotVisitor&);
     // For a weak reference whose referent has just died.
@@ -508,6 +514,10 @@ public:
     bool isRunningPendingCalls() const { return m_isRunningPendingCalls; }
     // gc.collect() in one of those calls: there is a collection when all that are queued have been made.
     void collectAfterPendingCalls() { m_shouldCollectAfterPendingCalls = true; }
+
+    // See writeOutPendingOutput().
+    ALWAYS_INLINE bool mayHavePendingOutput() const { return m_mayHavePendingOutput; }
+    void setMayHavePendingOutput(bool value) { m_mayHavePendingOutput = value; }
     void didQueueCalls();
     // When the interpreter exits: whatever is still registered is finalized, reachable or not.
     void finalizeAllAtExit();
@@ -517,8 +527,41 @@ public:
     class MarkingObserver {
     public:
         virtual ~MarkingObserver() = default;
-        virtual void didFinishMarking() = 0;
+        // True: it has marked something itself, so there is more to mark. It is told again when that is done.
+        virtual bool didFinishMarking(SlotVisitor&) = 0;
+        // For collectAndFinalize(): before and after each of its collections, in the thread that asked for them.
+        virtual void willCollect() { }
+        virtual void didCollect() { }
     };
+    void setMarkingObserver(MarkingObserver* observer) { m_markingObserver = observer; }
+    // Its finalizer has been called, and yet it is still there.
+    bool hasBeenFinalized(JSCell*);
+
+    // ---- The module gc (PyGC.cpp) ----
+
+    struct CollectionStats {
+        uint64_t collections { 0 };
+        uint64_t collected { 0 };
+        uint64_t uncollectable { 0 };
+        uint64_t candidates { 0 };
+        double duration { 0 };
+    };
+    struct {
+        bool isEnabled { true };
+        bool isCollecting { false }; // gc.collect() is at work.
+        int debugFlags { 0 };
+        std::array<int, 3> thresholds { 2000, 10, 10 };
+        std::array<CollectionStats, 3> stats;
+    } gc;
+    bool hasCollectionCallbacks() const;
+    // Calls gc.callbacks for a collection of the engine's own, which is over by then.
+    void tellOfCollection(int generation, double duration, bool isOver);
+    // For the collector, when it first looks at the stack.
+    void collectionIsBeginning()
+    {
+        if (!m_collectionBegan)
+            m_collectionBegan = MonotonicTime::now();
+    }
 
     // ---- What an instruction leaves for the next ----
 
@@ -552,7 +595,7 @@ public:
     unsigned allocationTracebackLimit { 0 };
     int coroutineOriginTrackingDepth { 0 }; // sys.set_coroutine_origin_tracking_depth()
     // How many frames of Python code there are. op_py_bind_args counts a frame in; op_py_ret, or the unwinder when an exception
-    // leaves the frame, counts it out. The body of a generator has neither instruction: PyGenerator::resume() counts it.
+    // leaves the frame, counts it out. For the body of a generator: op_py_generator_enter, op_py_generator_suspend and _return.
     int frameDepth { 0 };
     // How many buffers this thread holds of memory that JS could take away if it ran: see PyBuffer.h.
     unsigned buffersThatKeepGIL { 0 };
@@ -566,6 +609,7 @@ public:
     // ---- For the interpreter (LowLevelInterpreter64.asm) ----
 
     StructureID iteratorStructureID; // Of PyIterator.
+    StructureID functionStructureID; // Of PyFunction.
     static constexpr ptrdiff_t offsetOfType(TypeID id) { return OBJECT_OFFSETOF(Runtime, m_types) + static_cast<unsigned>(id) * sizeof(WriteBarrier<PyType>); }
 
 private:
@@ -613,7 +657,7 @@ private:
     std::array<WriteBarrier<Unknown>, static_cast<unsigned>(Slot::Count)> m_slots;
 
     WriteBarrier<Unknown> m_handledException;
-    WriteBarrier<PyGenerator> m_runningGenerator;
+    PyGenerator* m_runningGenerator { nullptr }; // The frame of its body refers to it.
     WriteBarrier<Unknown> m_asyncGenFirstIter;
     WriteBarrier<Unknown> m_asyncGenFinalizer;
     WriteBarrier<Unknown> m_threadLocals;
@@ -630,12 +674,26 @@ private:
 
     Lock m_finalizationLock;
     ListHashSet<JSCell*> m_finalizable WTF_GUARDED_BY_LOCK(m_finalizationLock); // Not visited.
+    // Not visited. All were made since the last collection looked at this, so none has been freed. The thread that runs Python
+    // code adds to it, and the collector takes from it while that thread is stopped.
+    Vector<PyGenerator*> m_newFinalizableGenerators;
+    void registerNotedGenerators() WTF_REQUIRES_LOCK(m_finalizationLock);
     Deque<JSCell*> m_pendingFinalization WTF_GUARDED_BY_LOCK(m_finalizationLock);
     Deque<PyWeakRef*> m_pendingWeakRefCallbacks WTF_GUARDED_BY_LOCK(m_finalizationLock);
     bool m_pendingWeakRefCallbacksAreInOrder WTF_GUARDED_BY_LOCK(m_finalizationLock) { true };
+    UncheckedKeyHashSet<JSCell*> m_finalized WTF_GUARDED_BY_LOCK(m_finalizationLock); // Not visited. A collection takes out what it finds dead.
+    struct CollectionNotice {
+        int generation;
+        double duration;
+    };
+    Deque<CollectionNotice> m_collectionsToTellOf WTF_GUARDED_BY_LOCK(m_finalizationLock);
+    MonotonicTime m_collectionBegan;
+    Vector<PyWeakRef*> weakRefsWithCallbacksToUnmarkedObjects(SlotVisitor&);
+    void didMarkAll(SlotVisitor&) WTF_REQUIRES_LOCK(m_finalizationLock);
     bool m_hasPendingCalls { false };
     bool m_isRunningPendingCalls { false };
     bool m_shouldCollectAfterPendingCalls { false };
+    bool m_mayHavePendingOutput { false };
     MarkingObserver* m_markingObserver { nullptr };
 
     Lock m_moduleTypesLock;

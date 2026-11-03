@@ -42,6 +42,7 @@ namespace JSC {
     CASE_OP(OpPyJtrue) \
     CASE_OP(OpPyJfalse) \
     CASE_OP(OpPyForIter) \
+    CASE_OP(OpPySend) \
     CASE_OP(OpPyJeq) \
     CASE_OP(OpPyJne) \
     CASE_OP(OpPyJlt) \

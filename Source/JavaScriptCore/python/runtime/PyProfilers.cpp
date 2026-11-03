@@ -464,7 +464,7 @@ static constexpr NativeDef profilerMethods[] = {
     PY_METHOD("enable", profilerEnable, "($self, /, subcalls=True, builtins=True)"),
     PY_METHOD("disable", profilerDisable, "($self, /)"),
     PY_METHOD("clear", profilerClear, "($self, /)"),
-    PY_METHOD("getstats", profilerGetStats, "($self, *args, **kwargs)"),
+    PY_METHOD("getstats", profilerGetStats, "!($self, /)"),
     PY_METHOD("_pystart_callback", profilerPyStart, "($self, code, instruction_offset, /)"),
     PY_METHOD("_pythrow_callback", profilerPyThrow, "($self, code, instruction_offset, exception, /)"),
     PY_METHOD("_pyreturn_callback", profilerPyReturn, "($self, code, instruction_offset, retval, /)"),

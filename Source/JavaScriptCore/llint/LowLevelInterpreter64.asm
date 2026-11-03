@@ -2711,8 +2711,21 @@ llintOp(op_py_ret, OpPyRet, macro (size, get, dispatch)
     loadConstantOrVariable(size, t2, r0)
     btqnz r0, notCellMask, .return
     loadb JSCell::m_type[r0], t2
-    bbeq t2, PyFloatType, .slow
+    bbeq t2, PyFloatType, .notForJS
     bbneq t2, PyGeneratorType, .return
+    bbneq (constexpr (Python::PyGenerator::offsetOfKind()))[r0], constexpr Python::PyGenerator::Kind::Coroutine, .return
+.notForJS:
+    # Python::resultForCaller(): Python code gets it as it is.
+    loadp CodeBlock[cfr], t2
+    loadp CodeBlock::m_vm[t2], t2
+    loadp CallerFrame[cfr], t3
+    bpeq t3, VM::topEntryFrame[t2], .slow
+    loadq Callee[t3], t3
+    move t3, t2
+    andq (constexpr JSValue::NativeCalleeMask), t2
+    bqeq t2, (constexpr JSValue::NativeCalleeTag), .slow
+    loadi JSCell::m_structureID[t3], t3
+    bieq t3, Python::Runtime::functionStructureID[t1], .return
 .slow:
     storePC()
     prepareStateForCCall()
@@ -2778,6 +2791,23 @@ slowPathJumpOp(py_jngt)
 slowPathJumpOp(py_jnge)
 slowPathJumpOp(py_for_iter)
 slowPathOp(py_instrumented)
+slowPathJumpOp(py_send)
+slowPathJumpOp(py_generator_enter)
+slowPathOp(py_generator_registers)
+
+llintOp(op_py_generator_suspend, OpPyGeneratorSuspend, macro (size, get, dispatch)
+    callSlowPath(_slow_path_py_generator_suspend)
+    get(m_value, t2)
+    loadConstantOrVariable(size, t2, r0)
+    doReturn()
+end)
+
+llintOp(op_py_generator_return, OpPyGeneratorReturn, macro (size, get, dispatch)
+    callSlowPath(_slow_path_py_generator_return)
+    get(m_value, t2)
+    loadConstantOrVariable(size, t2, r0)
+    doReturn()
+end)
 
 else
 
@@ -3655,7 +3685,42 @@ llintOp(op_py_set_item, OpPySetItem, macro (size, get, dispatch)
 end)
 
 
-# The iterators of range (while the numbers are int32s), list and tuple.
+# Calls the body of the generator in t0, if it can be resumed (see Python::PyGenerator::resume()): the frame is made where
+# m_stackOffset says, as op_call makes one. What the body returns is in r0.
+macro pyResumeGenerator(size, opcodeStruct, loadValueAndMode, slow)
+    if ARM64E
+        jmp slow
+    end
+    loadq (constexpr (Python::PyGenerator::offsetOfState()))[t0], t1
+    bilt t1, 0, slow
+    loadp (constexpr (Python::PyGenerator::offsetOfBody()))[t0], t2
+    loadp JSFunction::m_executableOrRareData[t2], t3
+    btpnz t3, (constexpr JSFunction::rareDataTag), slow
+    loadp FunctionExecutable::m_codeBlockForCall[t3], t3
+    btpz t3, slow
+    loadValueAndMode(t6, t7)
+    getu(size, opcodeStruct, m_stackOffset, t5)
+    lshifti 3, t5
+    negp t5
+    addp cfr, t5
+    storei 6, ArgumentCountIncludingThis + LowWordOffset[t5] # JSGenerator::Argument
+    storeq t2, Callee[t5]
+    storep t3, CodeBlock[t5]
+    storeq ValueUndefined, ThisArgumentOffset[t5]
+    storeq t0, FirstArgumentOffset[t5]
+    storeq t1, FirstArgumentOffset + 8[t5]
+    storeq t6, FirstArgumentOffset + 16[t5]
+    storeq t7, FirstArgumentOffset + 24[t5]
+    storeq ValueUndefined, FirstArgumentOffset + 32[t5]
+    storePC()
+    move t5, sp
+    addp CallerFrameAndPCSize, sp
+    call _llint_python_generator_resume
+    restoreStackPointerAfterCall()
+    loadPC()
+end
+
+# The iterators of range (while the numbers are int32s), list and tuple, and generators.
 llintOpWithJump(op_py_for_iter, OpPyForIter, macro (size, get, jump, dispatch)
     macro storeItem(value)
         get(m_dst, t2)
@@ -3668,7 +3733,7 @@ llintOpWithJump(op_py_for_iter, OpPyForIter, macro (size, get, jump, dispatch)
     btqnz t0, notCellMask, .slow
     loadPythonRuntime(t1)
     loadi Python::Runtime::iteratorStructureID[t1], t1
-    bineq t1, JSCell::m_structureID[t0], .slow
+    bineq t1, JSCell::m_structureID[t0], .notIterator
     loadq (constexpr (Python::PyIterator::offsetOfTarget()))[t0], t1
     btqz t1, .exhausted
     loadq (constexpr (Python::PyIterator::offsetOfPosition()))[t0], t2
@@ -3709,12 +3774,230 @@ llintOpWithJump(op_py_for_iter, OpPyForIter, macro (size, get, jump, dispatch)
     move t2, t3
     storeItem(t3)
 
+.notIterator:
+    bbneq JSCell::m_type[t0], PyGeneratorType, .slow
+    pyResumeGenerator(size, OpPyForIter, macro (value, mode)
+        move ValueUndefined, value
+        move numberTag, mode
+    end, .slow)
+    get(m_iterator, t1)
+    loadq [cfr, t1, 8], t1
+    bieq (constexpr (Python::PyGenerator::offsetOfState()))[t1], constexpr Python::PyGenerator::Completed, .exhausted
+    storeItem(r0)
+
 .exhausted:
     jump(m_targetLabel)
 
 .slow:
     callSlowPath(_slow_path_py_for_iter)
     nextInstruction()
+end)
+
+
+# A generator or a coroutine that is sent a value.
+llintOpWithJump(op_py_send, OpPySend, macro (size, get, jump, dispatch)
+    get(m_iterator, t0)
+    loadq [cfr, t0, 8], t0
+    btqnz t0, notCellMask, .slow
+    bbneq JSCell::m_type[t0], PyGeneratorType, .slow
+    bbeq (constexpr (Python::PyGenerator::offsetOfKind()))[t0], constexpr Python::PyGenerator::Kind::AsyncGenerator, .slow
+    pyResumeGenerator(size, OpPySend, macro (value, mode)
+        get(m_mode, mode)
+        loadq [cfr, mode, 8], mode
+        bqeq mode, numberTag, .normal
+        # `await` of a coroutine that has not started: it is what to iterate over.
+        addq (constexpr Python::firstSendOfAwait), numberTag, value
+        bqb mode, value, .slow
+        bbneq (constexpr (Python::PyGenerator::offsetOfKind()))[t0], constexpr Python::PyGenerator::Kind::Coroutine, .slow
+        btinz t1, .slow
+        move numberTag, mode
+    .normal:
+        get(m_value, value)
+        loadq [cfr, value, 8], value
+        # One that has not started takes nothing but None.
+        btinz t1, .started
+        bqneq value, ValueUndefined, .slow
+    .started:
+    end, .slow)
+    get(m_dst, t2)
+    storeq r0, [cfr, t2, 8]
+    get(m_iterator, t1)
+    loadq [cfr, t1, 8], t1
+    bieq (constexpr (Python::PyGenerator::offsetOfState()))[t1], constexpr Python::PyGenerator::Completed, .returned
+    # The generator that is running this is waiting for that one.
+    loadq FirstArgumentOffset[cfr], t3
+    storeq t1, (constexpr (Python::PyGenerator::offsetOfDelegate()))[t3]
+    pythonWriteBarrier(t3, t1, t2)
+    dispatch()
+
+.returned:
+    jump(m_targetLabel)
+
+.slow:
+    callSlowPath(_slow_path_py_send)
+    nextInstruction()
+end)
+
+
+# See Python::PyGenerator::resume(). `state`: what it was, an int32.
+macro pyEnterGeneratorBody(generator, runtime, state, scratch, slow)
+    loadPythonRuntime(runtime)
+    loadi Python::Runtime::frameDepth[runtime], scratch
+    addi 1, scratch
+    bigt scratch, Python::Runtime::recursionLimit[runtime], slow
+    storei scratch, Python::Runtime::frameDepth[runtime]
+    loadi (constexpr (Python::PyGenerator::offsetOfState()))[generator], state
+    move constexpr Python::PyGenerator::Executing, scratch
+    zxi2q scratch, scratch
+    orq numberTag, scratch
+    storeq scratch, (constexpr (Python::PyGenerator::offsetOfState()))[generator]
+    storeq ValueEmpty, (constexpr (Python::PyGenerator::offsetOfDelegate()))[generator]
+    loadp (constexpr (Python::Runtime::offsetOfRunningGenerator()))[runtime], scratch
+    storep scratch, (constexpr (Python::PyGenerator::offsetOfResumedBy()))[generator]
+    storep generator, (constexpr (Python::Runtime::offsetOfRunningGenerator()))[runtime]
+end
+
+macro pyLeaveGeneratorBody(generator, runtime, scratch)
+    loadPythonRuntime(runtime)
+    loadp (constexpr (Python::PyGenerator::offsetOfResumedBy()))[generator], scratch
+    storep scratch, (constexpr (Python::Runtime::offsetOfRunningGenerator()))[runtime]
+    storep 0, (constexpr (Python::PyGenerator::offsetOfResumedBy()))[generator]
+    loadi Python::Runtime::frameDepth[runtime], scratch
+    subi 1, scratch
+    storei scratch, Python::Runtime::frameDepth[runtime]
+end
+
+llintOp(op_py_generator_enter, OpPyGeneratorEnter, macro (size, get, dispatch)
+    loadq FirstArgumentOffset[cfr], t1
+    pyEnterGeneratorBody(t1, t3, t2, t0, .slow)
+    btiz t2, .start
+    move t2, PC
+    nextInstruction()
+
+.start:
+    dispatch()
+
+.slow:
+    callSlowPath(_slow_path_py_generator_enter)
+    nextInstruction()
+end)
+
+# Where the body of a generator is called to resume it: llint_function_for_call_prologue, op_enter and op_py_generator_enter in
+# one, for the common case. The variables are not given a value: what follows takes them all from the generator.
+    global _llint_python_generator_resume
+_llint_python_generator_resume:
+    prologue(_llint_entry_osr_function_for_call, _llint_trace_prologue_function_for_call)
+    if X86_64 or ARM64
+        loadi CodeBlock::m_numberOfArgumentsToSkipAndCouldBeTainted[t1], t0
+        btis t0, .fromTheTop
+        loadp CodeBlock::m_vm[t1], t0
+        loadb JSCell::m_cellState[t1], t2
+        loadi (constexpr (VM::offsetOfHeapBarrierThreshold()))[t0], t0
+        bibeq t2, t0, .fromTheTop
+        loadq FirstArgumentOffset[cfr], t5
+        btiz (constexpr (Python::PyGenerator::offsetOfState()))[t5], .fromTheTop
+        pyEnterGeneratorBody(t5, t3, t2, t0, .fromTheTop)
+        loadis CodeBlock::m_scopeRegister[t1], t3
+        loadp Callee[cfr], t0
+        loadp JSCallee::m_scope[t0], t0
+        storeq t0, [cfr, t3, 8]
+        # Python::frameObjectRegister()
+        storeq ValueUndefined, -((CalleeSaveSpaceAsVirtualRegisters + 2) * SlotSize)[cfr]
+        move t2, PC
+        nextInstruction()
+    end
+.fromTheTop:
+    dispatch(0)
+
+
+llintOp(op_py_generator_suspend, OpPyGeneratorSuspend, macro (size, get, dispatch)
+    loadq FirstArgumentOffset[cfr], t3
+    btpnz (constexpr (Python::PyGenerator::offsetOfFrameObject()))[t3], .slow
+    getu(size, OpPyGeneratorSuspend, m_count, t5)
+    btiz t5, .saved
+    get(m_first, t1)
+    leap [cfr, t1, 8], t1
+    getu(size, OpPyGeneratorSuspend, m_offset, t2)
+    leap (constexpr (Python::PyGenerator::offsetOfSlots()))[t3, t2, 8], t2
+.loop:
+    loadq [t1], t0
+    storeq t0, [t2]
+    subp 8, t1
+    addp 8, t2
+    subi 1, t5
+    btinz t5, .loop
+.saved:
+    move PC, t0
+    genericDispatchOpJS(macro (length) addp length, t0 end, size, op_py_generator_suspend)
+    orq numberTag, t0
+    storeq t0, (constexpr (Python::PyGenerator::offsetOfState()))[t3]
+    pyLeaveGeneratorBody(t3, t1, t0)
+    # For all that this and op_py_generator_registers have stored, whatever it is: that costs less than to look at it.
+    move t3, t0
+    pythonWriteBarrier(t3, t0, t1)
+.return:
+    get(m_value, t2)
+    loadConstantOrVariable(size, t2, r0)
+    doReturn()
+
+.slow:
+    callSlowPath(_slow_path_py_generator_suspend)
+    jmp .return
+end)
+
+
+llintOp(op_py_generator_return, OpPyGeneratorReturn, macro (size, get, dispatch)
+    loadq FirstArgumentOffset[cfr], t3
+    btpnz (constexpr (Python::PyGenerator::offsetOfFrameObject()))[t3], .slow
+    bbeq (constexpr (Python::PyGenerator::offsetOfFinalization()))[t3], constexpr Python::PyGenerator::Finalization::Registered, .slow
+    # Python::PyGenerator::complete(). Its slots are empty while it runs, and it waits for nothing.
+    move constexpr Python::PyGenerator::Finalization::None, t0
+    storeb t0, (constexpr (Python::PyGenerator::offsetOfFinalization()))[t3]
+    move constexpr Python::PyGenerator::Completed, t0
+    zxi2q t0, t0
+    orq numberTag, t0
+    storeq t0, (constexpr (Python::PyGenerator::offsetOfState()))[t3]
+    storeq ValueEmpty, (constexpr (Python::PyGenerator::offsetOfHandledException()))[t3]
+    pyLeaveGeneratorBody(t3, t1, t0)
+.return:
+    get(m_value, t2)
+    loadConstantOrVariable(size, t2, r0)
+    doReturn()
+
+.slow:
+    callSlowPath(_slow_path_py_generator_return)
+    jmp .return
+end)
+
+
+llintOp(op_py_generator_registers, OpPyGeneratorRegisters, macro (size, get, dispatch)
+    loadq FirstArgumentOffset[cfr], t3
+    get(m_first, t1)
+    leap [cfr, t1, 8], t1
+    getu(size, OpPyGeneratorRegisters, m_offset, t2)
+    leap (constexpr (Python::PyGenerator::offsetOfSlots()))[t3, t2, 8], t2
+    getu(size, OpPyGeneratorRegisters, m_count, t5)
+    getu(size, OpPyGeneratorRegisters, m_isSave, t0)
+    btinz t0, .save
+.restore:
+    loadq [t2], t0
+    storeq t0, [t1]
+    storeq ValueEmpty, [t2]
+    subp 8, t1
+    addp 8, t2
+    subi 1, t5
+    btinz t5, .restore
+    dispatch()
+
+    # The write barrier is left to the op_py_generator_suspend that follows.
+.save:
+    loadq [t1], t0
+    storeq t0, [t2]
+    subp 8, t1
+    addp 8, t2
+    subi 1, t5
+    btinz t5, .save
+    dispatch()
 end)
 
 

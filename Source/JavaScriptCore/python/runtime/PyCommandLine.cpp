@@ -153,6 +153,8 @@ static std::optional<int> readEnvironmentAndXOptions(Configuration& configuratio
         configuration.userSiteDirectory = false;
     }
 
+    if (!xOption(configuration, "no_debug_ranges"_s).isNull() || environmentVariable(configuration, "PYTHONNODEBUGRANGES"))
+        configuration.codeDebugRanges = false;
     if (!xOption(configuration, "dev"_s).isNull() || environmentVariable(configuration, "PYTHONDEVMODE"))
         configuration.devMode = true;
     if (!xOption(configuration, "warn_default_encoding"_s).isNull() || environmentVariable(configuration, "PYTHONWARNDEFAULTENCODING"))
@@ -305,12 +307,17 @@ static std::optional<int> readEnvironmentAndXOptions(Configuration& configuratio
     if (!readSwitch(configuration, ignored, "PYTHON_PATHCONFIG_WARNINGS", "pathconfig_warnings"_s))
         return fatalConfigurationError("config_init_pathconfig_warnings"_s, "-X pathconfig_warnings=n: n is missing or invalid"_s);
 
-    // There are no frozen modules to turn off.
     auto isOnOrOff = [](StringView value) { return value.isEmpty() || value == "on"_s || value == "off"_s; };
-    if (const char* value = environmentVariable(configuration, "PYTHON_FROZEN_MODULES"); value && !isOnOrOff(StringView::fromLatin1(value)))
-        return fatalConfigurationError(""_s, "bad value for PYTHON_FROZEN_MODULES (expected \"on\" or \"off\")"_s);
-    if (String value = xOption(configuration, "frozen_modules"_s); !value.isNull() && !isOnOrOff(value))
-        return fatalConfigurationError(""_s, "bad value for option -X frozen_modules (expected \"on\" or \"off\")"_s);
+    if (const char* value = environmentVariable(configuration, "PYTHON_FROZEN_MODULES")) {
+        if (!isOnOrOff(StringView::fromLatin1(value)))
+            return fatalConfigurationError(""_s, "bad value for PYTHON_FROZEN_MODULES (expected \"on\" or \"off\")"_s);
+        configuration.useFrozenModules = StringView::fromLatin1(value) != "off"_s;
+    }
+    if (String value = xOption(configuration, "frozen_modules"_s); !value.isNull()) {
+        if (!isOnOrOff(value))
+            return fatalConfigurationError(""_s, "bad value for option -X frozen_modules (expected \"on\" or \"off\")"_s);
+        configuration.useFrozenModules = value != "off"_s;
+    }
 
     // encoding:errors, either of which may be left out.
     if (const char* value = environmentVariable(configuration, "PYTHONIOENCODING")) {
@@ -1365,6 +1372,7 @@ std::optional<int> runCommandLine(JSGlobalObject* globalObject, JSValue* unfinis
     else if (!configuration.safePath)
         first = computeFirstSearchPath(configuration.arguments);
     if (!first.isNull()) {
+        configuration.firstSearchPath = first;
         if (auto* searchPath = tryAsList(rt.sysDict()->get(rt.names.path())))
             listInsert(globalObject, searchPath, 0, makeStr(vm, first));
     }

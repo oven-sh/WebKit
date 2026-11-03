@@ -7,7 +7,10 @@
 #include "PyModule.h"
 
 #include "JSCInlines.h"
+#include "PyErrors.h"
 #include "PyInternals.h"
+#include "PyList.h"
+#include "PyStr.h"
 
 namespace JSC {
 namespace Python {
@@ -24,7 +27,41 @@ static void initializeStringModule(JSGlobalObject* globalObject, PyModule* modul
     module->addFunctions(globalObject, stringModuleFunctions);
 }
 
+// _suggestions: Lib/traceback.py asks it what name may have been meant.
+static JSValue generateSuggestions(JSGlobalObject* globalObject, JSValue candidates, JSValue item)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!isStr(item))
+        return raiseTypeError(globalObject, scope, "_generate_suggestions() argument 2 must be str, not "_s, typeNameOfArgument(globalObject, item));
+    if (!isExactList(candidates))
+        return raiseTypeError(globalObject, scope, "candidates must be a list"_s);
+    JSArray* list = asList(candidates);
+    Vector<String> names;
+    for (unsigned i = 0; i < listLength(list); ++i) {
+        JSValue candidate = listGet(list, i);
+        if (!isStr(candidate))
+            return raiseTypeError(globalObject, scope, "all elements in 'candidates' must be strings"_s);
+        names.append(strValue(candidate)->value(globalObject));
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    String name = strValue(item)->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    String suggestion = calculateSuggestion(names, name);
+    return suggestion.isNull() ? jsUndefined() : JSValue(makeStr(vm, suggestion));
+}
+
+static constexpr NativeDef suggestionsModuleFunctions[] = {
+    PY_FUNCTION("_generate_suggestions", generateSuggestions, "(candidates, item, /)"),
+};
+
+static void initializeSuggestionsModule(JSGlobalObject* globalObject, PyModule* module)
+{
+    module->addFunctions(globalObject, suggestionsModuleFunctions);
+}
+
 void initializeAsyncioModule(JSGlobalObject*, PyModule*); // PyAsyncio.cpp
+void initializeDateTimeModule(JSGlobalObject*, PyModule*); // PyDateTime.cpp
 
 static constexpr NativeModuleDef nativeModuleTable[] = {
     { "_abc"_s, initializeAbcModule },
@@ -35,6 +72,7 @@ static constexpr NativeModuleDef nativeModuleTable[] = {
     { "_collections"_s, initializeCollectionsModule },
     { "_contextvars"_s, initializeContextVarsModule },
     { "_csv"_s, initializeCsvModule },
+    { "_datetime"_s, initializeDateTimeModule },
     { "_functools"_s, initializeFunctoolsModule },
     { "_heapq"_s, initializeHeapqModule },
     { "_imp"_s, initializeImpModule },
@@ -53,6 +91,7 @@ static constexpr NativeModuleDef nativeModuleTable[] = {
     { "_statistics"_s, initializeStatisticsModule },
     { "_string"_s, initializeStringModule },
     { "_struct"_s, initializeStructModule },
+    { "_suggestions"_s, initializeSuggestionsModule },
     { "_symtable"_s, initializeSymtableModule },
     { "_sysconfig"_s, initializeSysconfigModule },
     { "_thread"_s, initializeThreadModule },

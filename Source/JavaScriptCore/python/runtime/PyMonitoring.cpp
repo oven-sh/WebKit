@@ -217,6 +217,8 @@ static bool fallsThrough(OpcodeID opcode)
     case op_jmp:
     case op_ret:
     case op_py_ret:
+    case op_py_generator_suspend:
+    case op_py_generator_return:
     case op_throw:
     case op_unreachable:
     case op_switch_imm:
@@ -450,8 +452,6 @@ void CodeMonitor::findPoints(bool everyInstruction)
             jumpsFromSameLine.append({ item.offset, targetOffset });
     };
 
-    VirtualRegister generatorRegister = virtualRegisterForArgumentIncludingThis(static_cast<int>(JSGenerator::Argument::Generator));
-    bool isAboutToYield = false;
     bool isBeingResumed = false;
     bool isExceptionMatch = false;
     for (auto& item : items) {
@@ -468,26 +468,18 @@ void CodeMonitor::findPoints(bool everyInstruction)
             point.kinds |= bit(Event::Instruction);
 
         // The registers are put back first.
-        bool isResumption = isBeingResumed && item.opcode != op_get_from_scope;
+        bool isResumption = isBeingResumed && item.opcode != op_py_generator_registers;
         if (isResumption) {
             point.kinds |= bit(Event::PyResume);
             isBeingResumed = false;
         }
 
-        bool wasAboutToYield = std::exchange(isAboutToYield, false);
         bool previousIsExceptionMatch = std::exchange(isExceptionMatch, item.opcode == op_py_compare && static_cast<CompareOperator>(instructions.at(item.offset)->as<OpPyCompare>().m_operation) == CompareOperator::ExceptionMatch);
         switch (item.opcode) {
-        case op_put_internal_field: {
-            auto bytecode = instructions.at(item.offset)->as<OpPutInternalField>();
-            isAboutToYield = isGeneratorBody && bytecode.m_base == generatorRegister && bytecode.m_index == generatorStateField;
+        case op_py_generator_suspend:
+            point.kinds |= bit(Event::PyYield);
             break;
-        }
-        case op_put_to_scope:
-            isAboutToYield = wasAboutToYield;
-            break;
-        case op_ret:
-            point.kinds |= bit(wasAboutToYield ? Event::PyYield : Event::PyReturn);
-            break;
+        case op_py_generator_return:
         case op_py_ret:
             point.kinds |= bit(Event::PyReturn);
             break;
@@ -498,9 +490,8 @@ void CodeMonitor::findPoints(bool everyInstruction)
         case op_py_prepare_construct:
             point.kinds |= Point::construct;
             break;
-        case op_py_runtime:
-            if (static_cast<RuntimeFunction>(instructions.at(item.offset)->as<OpPyRuntime>().m_function) == RuntimeFunction::TakeSendResult)
-                point.kinds |= bit(Event::StopIteration);
+        case op_py_send:
+            point.kinds |= bit(Event::StopIteration);
             break;
         case op_jmp:
             if (!item.isHiddenJump)
@@ -1380,9 +1371,11 @@ Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject, CallFrame* 
             return threw;
         return runIt;
 
-    case op_ret: {
-        unsigned event = kinds & bit(Event::PyYield) ? Event::PyYield : Event::PyReturn;
-        if (!fire(globalObject, callFrame, monitor, offset, event, wanted(event), callFrame->r(pc->as<OpRet>().m_value).jsValue()))
+    case op_py_generator_suspend:
+    case op_py_generator_return: {
+        unsigned event = opcode == op_py_generator_suspend ? Event::PyYield : Event::PyReturn;
+        VirtualRegister value = opcode == op_py_generator_suspend ? pc->as<OpPyGeneratorSuspend>().m_value : pc->as<OpPyGeneratorReturn>().m_value;
+        if (!fire(globalObject, callFrame, monitor, offset, event, wanted(event), callFrame->r(value).jsValue()))
             return threw;
         if (jumped(elsewhere))
             return elsewhere;
@@ -1463,9 +1456,11 @@ Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject, CallFrame* 
             }
             return threw;
         }
-        callFrame->uncheckedR(dst) = result;
+        // The result goes to its register last. To the collector the frame is still at the call, and what a call sets is dead until
+        // it is over (liveLocalsOfFrame()): a collection while a tool runs would empty the register.
         if (!fire(globalObject, callFrame, monitor, offset, Event::CReturn, listening, callable, first))
             return threw;
+        callFrame->uncheckedR(dst) = result;
         return { next(), goOn };
     }
 
@@ -1502,15 +1497,18 @@ Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject, CallFrame* 
     // `yield from` or `await` is over. If it was a generator, that has returned without raising StopIteration, and is told of as if it had.
     if (kinds & bit(Event::StopIteration)) {
         uint8_t tools = wanted(Event::StopIteration);
-        auto bytecode = pc->as<OpPyRuntime>();
-        if (!tools || !PyGenerator::is(callFrame->uncheckedR(bytecode.m_argv).jsValue()))
+        if (!tools)
             return runIt;
+        auto bytecode = pc->as<OpPySend>();
         const void* target;
         const void* signal;
-        decodeResult(slow_path_py_runtime(callFrame, pc), target, signal);
+        decodeResult(slow_path_py_send(callFrame, pc), target, signal);
         if (signal == LLInt::exceptionSignal())
             return threw;
         callFrame->setCurrentVPC(pc);
+        auto* destination = static_cast<const JSInstruction*>(target);
+        if (destination == next() || !PyGenerator::is(callFrame->uncheckedR(bytecode.m_iterator).jsValue()))
+            return { destination, goOn };
         JSValue value = callFrame->uncheckedR(bytecode.m_dst).jsValue();
         PyException* exception;
         if (auto* tuple = PyTuple::tryFrom(value))
@@ -1521,7 +1519,8 @@ Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject, CallFrame* 
             exception = newException(globalObject, m_runtime.StopIteration(), std::span<const JSValue> { &value, 1 });
         if (!exception || !fire(globalObject, callFrame, monitor, offset, Event::StopIteration, tools, exception))
             return threw;
-        return { next(), goOn };
+        callFrame->uncheckedR(bytecode.m_dst) = value; // Again: see op_call above.
+        return { destination, goOn };
     }
 
     // Which way a branch goes is known once it has gone.
@@ -1529,16 +1528,16 @@ Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject, CallFrame* 
     bool saysSomethingOfTarget = point && point->lineStartOfTarget != CodeMonitor::noLineStart;
     if (kinds & bit(Event::BranchLeft) && (saysSomethingOfTarget || wanted(Event::BranchLeft) | wanted(Event::BranchRight) | (kinds & CodeMonitor::Point::forLoop ? monitor.tools(Event::Raise) : 0))) {
         const JSInstruction* destination;
+        JSValue item;
         if (kinds & CodeMonitor::Point::forLoop) {
             auto bytecode = pc->as<OpPyForIter>();
             JSValue stopIteration;
-            JSValue item = nextOfLoop(globalObject, callFrame->uncheckedR(bytecode.m_iterator).jsValue(), stopIteration);
+            item = nextOfLoop(globalObject, callFrame->uncheckedR(bytecode.m_iterator).jsValue(), stopIteration);
             if (vm.exceptionForInspection())
                 return threw;
-            if (item) {
-                callFrame->uncheckedR(bytecode.m_dst) = item;
+            if (item)
                 destination = next();
-            } else
+            else
                 destination = codeBlock->instructions().at(offset + jumpTargetForInstruction<OpPyForIter>(codeBlock, codeBlock->instructions().at(offset))).ptr();
             if (stopIteration && !fire(globalObject, callFrame, monitor, offset, Event::Raise, monitor.tools(Event::Raise), stopIteration))
                 return threw;
@@ -1559,6 +1558,8 @@ Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject, CallFrame* 
             return threw;
         if (event == Event::BranchRight && !tellOfLineAt(codeBlock->bytecodeOffset(destination), elsewhere))
             return elsewhere;
+        if (item)
+            callFrame->uncheckedR(pc->as<OpPyForIter>().m_dst) = item; // Last: see op_call above.
         return { destination, goOn };
     }
     return runIt;
@@ -1825,12 +1826,20 @@ void Monitoring::jump(JSGlobalObject* globalObject, PyFrame* frame, int requeste
         if (block.kind == TracedBlock::ExceptionHandler || block.kind == TracedBlock::ExceptionHandlerWithMore)
             m_runtime.setHandledExceptionInTopSlot(callFrame->r(block.reg).jsValue());
     }
-    Vector<JSValue, 8> held;
-    for (unsigned i = 0; i < best->blocks.size(); ++i)
-        held.append(from->at(i).reg.isValid() ? callFrame->r(from->at(i).reg).jsValue() : JSValue());
+    // (A `with` holds two registers, other blocks one.)
+    auto next = [](VirtualRegister reg) { return VirtualRegister(reg.offset() - 1); };
+    Vector<std::pair<JSValue, JSValue>, 8> held;
     for (unsigned i = 0; i < best->blocks.size(); ++i) {
-        if (best->blocks[i].reg.isValid() && from->at(i).reg.isValid())
-            callFrame->r(best->blocks[i].reg) = held[i];
+        auto& block = from->at(i);
+        held.append({ block.reg.isValid() ? callFrame->r(block.reg).jsValue() : JSValue(), block.kind == TracedBlock::With ? callFrame->r(next(block.reg)).jsValue() : JSValue() });
+    }
+    for (unsigned i = 0; i < best->blocks.size(); ++i) {
+        auto& block = best->blocks[i];
+        if (!block.reg.isValid() || !from->at(i).reg.isValid())
+            continue;
+        callFrame->r(block.reg) = held[i].first;
+        if (block.kind == TracedBlock::With)
+            callFrame->r(next(block.reg)) = held[i].second;
     }
 
     frame->jumpTarget = best->offset;

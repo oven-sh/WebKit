@@ -8,11 +8,15 @@
 
 #include "JSCInlines.h"
 #include "PyAbstract.h"
+#include "PyCommandLine.h"
 #include "PyErrors.h"
+#include "PyFunction.h"
 #include "PyInternals.h"
 #include "PyList.h"
+#include "PySet.h"
 #include "PyStr.h"
 #include "PyTypes.h"
+#include <unistd.h>
 
 namespace JSC {
 namespace Python {
@@ -108,29 +112,16 @@ static JSValue moduleInit(JSGlobalObject* globalObject, JSValue self, JSValue na
     return jsUndefined();
 }
 
-// The text of a value of the module's dict, if it is a str. Null otherwise.
-static String moduleStringEntry(JSGlobalObject* globalObject, PyDict* dict, JSString* key)
-{
-    JSValue value = dict->get(key);
-    if (!value || !isStr(value))
-        return { };
-    VM& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    String text = strValue(value)->value(globalObject);
-    if (scope.exception()) {
-        takePendingException(globalObject);
-        return { };
-    }
-    return text;
-}
-
-// As importlib._bootstrap._module_repr().
+// importlib._bootstrap._module_repr() says. What follows that is for when there is no importlib.
 static JSValue moduleRepr(JSGlobalObject* globalObject, JSValue self)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // As _module_repr() of importlib has it, which gets attributes: a __getattr__ of the module has its say.
+    if (auto* findAndLoad = PyFunction::tryFrom(rt.slot(Runtime::Slot::FindAndLoad))) {
+        if (JSValue function = findAndLoad->globals()->get(internString(vm, "_module_repr"_s)))
+            RELEASE_AND_RETURN(scope, call(globalObject, function, self));
+    }
     JSValue loader = getAttrIfPresent(globalObject, self, rt.names.dLoader());
     RETURN_IF_EXCEPTION(scope, { });
     JSValue spec = getAttrIfPresent(globalObject, self, rt.names.dSpec());
@@ -193,6 +184,119 @@ bool specIsInitializing(JSGlobalObject* globalObject, JSValue spec)
     return result;
 }
 
+// ---- What to say of a module that lacks a name ----
+
+// spec.origin, if the spec says that that is where the module is from, and it is a str.
+static JSValue fileOriginOfSpec(JSGlobalObject* globalObject, JSValue spec)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue hasLocation = getAttrIfPresent(globalObject, spec, internString(vm, "has_location"_s));
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!hasLocation)
+        return { };
+    bool isLocation = isTrue(globalObject, hasLocation);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!isLocation)
+        return { };
+    JSValue origin = getAttrIfPresent(globalObject, spec, internString(vm, "origin"_s));
+    RETURN_IF_EXCEPTION(scope, { });
+    return origin && isStr(origin) ? origin : JSValue();
+}
+
+// Whether a module in that file may stand in the way of one of the same name further down the path: it is in the directory
+// that was put first on sys.path, that of the script.
+static bool mayHideAnotherModule(const String& origin)
+{
+    const Configuration& configuration = Python::configuration();
+    if (configuration.safePath || configuration.firstSearchPath.isNull())
+        return false;
+    size_t slash = origin.reverseFind('/');
+    if (slash == notFound)
+        return false;
+    if (StringView(origin).substring(slash + 1) == "__init__.py"_s) {
+        if (!slash)
+            return false;
+        slash = origin.reverseFind('/', slash - 1);
+        if (slash == notFound)
+            return false;
+    }
+    StringView directory = StringView(origin).left(slash);
+    if (!configuration.firstSearchPath.isEmpty())
+        return directory == configuration.firstSearchPath;
+    char buffer[PATH_MAX];
+    return getcwd(buffer, sizeof(buffer)) && directory == String::fromUTF8(buffer);
+}
+
+bool diagnoseModule(JSGlobalObject* globalObject, JSValue spec, JSValue moduleName, ModuleDiagnosis& diagnosis)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    diagnosis.origin = fileOriginOfSpec(globalObject, spec);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!diagnosis.origin)
+        return true;
+    String origin = strValue(diagnosis.origin)->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+    diagnosis.mayHideAnother = mayHideAnotherModule(origin);
+    if (!diagnosis.mayHideAnother)
+        return true;
+    if (auto* names = PySet::tryFrom(rt.sysDict()->get(internString(vm, "stdlib_module_names"_s)))) {
+        diagnosis.hidesStandardLibrary = names->contains(globalObject, moduleName);
+        RETURN_IF_EXCEPTION(scope, false);
+    }
+    return true;
+}
+
+static JSValue raiseModuleHasNoAttribute(JSGlobalObject* globalObject, PyModule* module, JSString* name)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PyDict* dict = module->dict();
+    String attribute = stringOf(name);
+    JSValue moduleNameValue = dict->get(rt.names.dName());
+    if (!moduleNameValue || !isStr(moduleNameValue))
+        return raiseAttributeError(globalObject, scope, module, name, makeString("module has no attribute '"_s, attribute, '\''));
+    String moduleName = strValue(moduleNameValue)->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    String plain = makeString("module '"_s, moduleName, "' has no attribute '"_s, attribute, '\'');
+    JSValue spec = dict->get(rt.names.dSpec());
+    if (!spec)
+        return raiseAttributeError(globalObject, scope, module, name, plain);
+
+    ModuleDiagnosis diagnosis;
+    if (!diagnoseModule(globalObject, spec, moduleNameValue, diagnosis))
+        return { };
+    String origin;
+    if (diagnosis.origin) {
+        origin = strValue(diagnosis.origin)->value(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    if (diagnosis.hidesStandardLibrary)
+        return raiseAttributeError(globalObject, scope, module, name, makeString(plain, " (consider renaming '"_s, origin, "' since it has the same name as the standard library module named '"_s, moduleName, "' and prevents importing that standard library module)"_s));
+
+    JSValue isInitializingValue = getAttrIfPresent(globalObject, spec, internString(vm, "_initializing"_s));
+    RETURN_IF_EXCEPTION(scope, { });
+    bool isInitializing = isInitializingValue && isTrue(globalObject, isInitializingValue);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (isInitializing) {
+        if (diagnosis.mayHideAnother)
+            return raiseAttributeError(globalObject, scope, module, name, makeString(plain, " (consider renaming '"_s, origin, "' if it has the same name as a library you intended to import)"_s));
+        return raiseAttributeError(globalObject, scope, module, name, makeString("partially initialized module '"_s, moduleName, '\'', origin.isNull() ? ""_s : " from '"_s, origin, origin.isNull() ? ""_s : "'"_s, " has no attribute '"_s, attribute, "' (most likely due to a circular import)"_s));
+    }
+    JSValue submodules = getAttrIfPresent(globalObject, spec, internString(vm, "_uninitialized_submodules"_s));
+    RETURN_IF_EXCEPTION(scope, { });
+    if (submodules) {
+        bool isSubmodule = contains(globalObject, submodules, name);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (isSubmodule)
+            return raiseAttributeError(globalObject, scope, module, name, makeString("cannot access submodule '"_s, attribute, "' of module '"_s, moduleName, "' (most likely due to a circular import)"_s));
+    }
+    return raiseAttributeError(globalObject, scope, module, name, plain);
+}
+
 JSValue moduleGetAttr(JSGlobalObject* globalObject, PyModule* module, JSString* name, bool suppress)
 {
     Runtime& rt = runtime(globalObject);
@@ -251,13 +355,7 @@ JSValue moduleGetAttr(JSGlobalObject* globalObject, PyModule* module, JSString* 
     }
     if (suppress)
         return { };
-
-    String moduleName = moduleStringEntry(globalObject, dict, rt.names.dName());
-    if (moduleName.isNull())
-        return raiseAttributeError(globalObject, scope, module, name, makeString("module has no attribute '"_s, stringOf(name), '\''));
-    if (specIsInitializing(globalObject, dict->get(rt.names.dSpec())))
-        return raiseAttributeError(globalObject, scope, module, name, makeString("partially initialized module '"_s, moduleName, "' has no attribute '"_s, stringOf(name), "' (most likely due to a circular import)"_s));
-    return raiseAttributeError(globalObject, scope, module, name, makeString("module '"_s, moduleName, "' has no attribute '"_s, stringOf(name), '\''));
+    RELEASE_AND_RETURN(scope, raiseModuleHasNoAttribute(globalObject, module, name));
 }
 
 JSValue moduleGetAttribute(JSGlobalObject* globalObject, JSValue self, JSValue nameValue)

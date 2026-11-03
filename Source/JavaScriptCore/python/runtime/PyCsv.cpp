@@ -934,10 +934,10 @@ static JSValue csvFieldSizeLimit(JSGlobalObject* globalObject, JSValue newLimit)
 }
 
 static constexpr NativeDef csvFunctions[] = {
-    PY_FUNCTION("reader", csvReader, "(*args, **kwargs)"),
-    PY_FUNCTION("writer", csvWriter, "(*args, **kwargs)"),
+    PY_FUNCTION("reader", csvReader, "!(iterable, /, dialect='excel', **fmtparams)"),
+    PY_FUNCTION("writer", csvWriter, "!(fileobj, /, dialect='excel', **fmtparams)"),
     PY_FUNCTION("list_dialects", csvListDialects, "()"),
-    PY_FUNCTION("register_dialect", csvRegisterDialect, "(*args, **kwargs)"),
+    PY_FUNCTION("register_dialect", csvRegisterDialect, "!(name, /, dialect='excel', **fmtparams)"),
     PY_FUNCTION("unregister_dialect", csvUnregisterDialect, "(name)"),
     PY_FUNCTION("get_dialect", csvGetDialect, "(name)"),
     PY_FUNCTION("field_size_limit", csvFieldSizeLimit, "(new_limit=<unrepresentable>)"),

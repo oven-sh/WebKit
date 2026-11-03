@@ -137,7 +137,7 @@ void PyType::initializeBuiltin(JSGlobalObject* globalObject, const TypeDef& def,
     }
 
     m_module.set(vm, this, dot == notFound ? rt.names.builtins() : internString(vm, fullName.left(dot)));
-    m_dict->set(vm, rt.names.dDoc(), def.doc.isNull() ? docstringFor(globalObject, def.name) : JSValue(makeStr(vm, def.doc)));
+    m_dict->set(vm, rt.names.dDoc(), def.doc.isNull() ? docstringFor(globalObject, makeString("type "_s, def.name)) : JSValue(makeStr(vm, def.doc)));
     addMethods(globalObject, def.methods);
     addGetSets(globalObject, def.getsets);
     if (def.flags.contains(TypeFlag::HasDict) && !(base && base->has(TypeFlag::HasDict)) && !m_dict->get(rt.names.dDict()))
@@ -167,9 +167,12 @@ void PyType::addMethods(JSGlobalObject* globalObject, std::span<const NativeDef>
         case NativeKind::New:
             value = PyNativeFunction::create(globalObject, def, NativeKind::New, this, this);
             break;
-        case NativeKind::StaticMethod:
-            value = PyWrapperObject::create(globalObject, rt.staticmethodType(), PyNativeFunction::create(globalObject, def, NativeKind::Function, { }, this));
+        case NativeKind::StaticMethod: {
+            auto* wrapper = PyWrapperObject::create(globalObject, rt.staticmethodType(), PyNativeFunction::create(globalObject, def, NativeKind::Function, { }, this));
+            wrapper->setCopiesAttributesLater(true);
+            value = wrapper;
             break;
+        }
         }
         m_dict->set(vm, internString(vm, def.name), value);
     }
@@ -207,10 +210,26 @@ JSValue PyType::lookupSlow(JSString* name)
     PyTuple* mro = m_mro.get();
     if (!mro)
         return { };
-    JSValue value;
-    for (unsigned i = 0; !value && i < mro->length(); ++i)
-        value = uncheckedDowncast<PyType>(mro->at(i).asCell())->dict()->get(name);
     VM& vm = this->vm();
+    uint32_t version = m_version;
+    JSValue value;
+    for (unsigned i = 0; !value && i < mro->length(); ++i) {
+        PyDict* dict = uncheckedDowncast<PyType>(mro->at(i).asCell())->dict();
+        if (dict->hasOnlyStringKeys()) [[likely]] {
+            value = dict->get(name);
+            continue;
+        }
+        // type("X", (), { key: 1 }): the key is asked whether it equals the name. What it raises is lost, as in CPython.
+        if (vm.exceptionForInspection())
+            continue;
+        JSGlobalObject* globalObject = realm();
+        value = dict->get(globalObject, name);
+        if (!value && vm.exceptionForInspection())
+            takePendingException(globalObject);
+    }
+    // And it may have changed the type, or its bases.
+    if (m_version != version) [[unlikely]]
+        return value;
     StringImpl* impl = name->tryGetValueImpl();
     LookupCacheEntry& entry = lookupCacheEntry(impl);
     entry.impl = impl;
@@ -222,7 +241,10 @@ JSValue PyType::lookupSlow(JSString* name)
 JSValue PyType::lookupSpecialSlow(Special special)
 {
     Runtime& rt = Runtime::from(realm());
+    uint32_t version = m_version;
     JSValue value = lookup(rt.name(special));
+    if (m_version != version) [[unlikely]]
+        return value;
     unsigned index = static_cast<unsigned>(special);
     m_specials[index].set(rt.vm(), this, value);
     m_specialIsCached[index] = true;

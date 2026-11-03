@@ -67,7 +67,6 @@ enum class CompareOperator : uint8_t {
     ExceptionMatch, // lhs: an exception; rhs: what follows `except`.
 };
 
-// A generator is laid out so that op_get_internal_field and op_put_internal_field reach these. (Field 0 is its type.)
 // ---- What the compiler tells whoever traces the program: PythonMark, in UnlinkedCodeBlock.h ----
 //
 // Line: `value` is lineMarkValue().
@@ -89,7 +88,7 @@ constexpr bool isSilentLine(unsigned value) { return value & 2; }
 struct TracedBlock {
     enum Kind : uint8_t {
         ForLoop, // The register holds the iterator,
-        With, // __exit__,
+        With, // __exit__, and the next register what to pass it first, or the empty value,
         ExceptionHandler, // the exception that was being handled before the one that is now.
         ExceptionHandlerWithMore, // The same, and there is more in other registers: `except*`, `finally` on the way of an exception.
         Other,
@@ -99,11 +98,9 @@ struct TracedBlock {
     static constexpr int registerOffsetOf(uint64_t bits) { return static_cast<int32_t>(static_cast<uint32_t>(bits >> 8)); }
 };
 
-static constexpr unsigned generatorStateField = 1; // As JSGenerator::Field::State.
-static constexpr unsigned generatorBodyField = 2; // The function to call to resume it.
-static constexpr unsigned generatorFrameField = 3; // The environment its registers are kept in while it is suspended.
-static constexpr unsigned generatorArgumentsField = 4; // Until it starts: a tuple, the values of the parameters.
-static constexpr unsigned numberOfGeneratorFields = 4;
+// op_py_send. The mode is a JSGenerator::ResumeMode, or this plus 0, or 1 after __aenter__, or 2 after __aexit__: `iterator` holds
+// what `await` was given, which the instruction replaces by what to iterate over, and then sends None to.
+constexpr int firstSendOfAwait = 8;
 
 // op_py_runtime. name, number of arguments (-1: any). "empty" is the empty JSValue, for what is not there.
 #define FOR_EACH_PY_RUNTIME_FUNCTION(v) \
@@ -138,7 +135,7 @@ static constexpr unsigned numberOfGeneratorFields = 4;
     /* Functions */ \
     v(MakeFunction, -1) /* index, defaults or empty, kwdefaults or empty, annotate or empty, the cells of the closure... */ \
     v(SetFunctionTypeParams, 2) /* function, type params: the function */ \
-    v(MakeGenerator, -1) /* for a generator expression: the iterator of its first iterable */ \
+    v(MakeGenerator, -1) /* how many slots it needs; for a generator expression: the iterator of its first iterable */ \
     v(CallArguments, 3) /* function, args, kwargs or empty: an array of the arguments, and sets aside the names of the keywords */ \
     v(TakeKeywordNames, 0) \
     /* Imports */ \
@@ -154,19 +151,14 @@ static constexpr unsigned numberOfGeneratorFields = 4;
     v(TakeExceptionGroupRest, 0) \
     v(PrepareReraiseStar, 2) /* the original, a list of what was raised: what to raise, or None */ \
     /* with */ \
-    v(LoadSpecial, 2) /* object, SpecialMethodForWith: bound */ \
-    v(WithExit, 2) /* __exit__, exception */ \
+    v(WithExit, 3) /* __exit__, what to pass it first or empty, exception */ \
     /* Generators and coroutines */ \
     v(GetYieldFromIter, 1) \
-    v(GetAwaitable, 2) /* object, where: 0, or 1 after __aenter__, 2 after __aexit__ */ \
     v(GetAIter, 1) \
     v(GetANext, 1) \
     v(EndAsyncFor, 1) /* exception: swallows StopAsyncIteration, throws anything else */ \
-    v(Send, 3) /* iterator, value, resume mode: what it yields, or empty when it is done */ \
-    v(TakeSendResult, 1) /* iterator, for whoever traces the program */ \
     v(AsyncGenWrap, 1) \
     v(ThrowIntoGenerator, 1) \
-    v(KeepVariables, -1) /* does nothing with them: see Unit::keepVariablesAcrossYield() */ \
     /* match */ \
     v(MatchSequence, 1) \
     v(MatchMapping, 1) \
@@ -194,6 +186,7 @@ enum class RuntimeFunction : uint8_t {
 };
 
 // RuntimeFunction::LoadSpecial
+// As the `name` of op_py_get_method, in place of a str: the method is looked for as `with` does it, in the class alone.
 enum class SpecialMethodForWith : uint8_t { Enter, Exit, AEnter, AExit };
 
 // RuntimeFunction::ImportName

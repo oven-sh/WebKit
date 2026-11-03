@@ -1450,12 +1450,56 @@ op :py_get_iter,
         iterable: VirtualRegister,
     }
 
-# The next item, or a jump when there is none.
+# The next item, or a jump when there is none. `stackOffset`, as the argv of op_call, is where there is room for the frame of
+# the body of a generator, which the instruction calls itself.
 op :py_for_iter,
     args: {
         dst: VirtualRegister,
         iterator: VirtualRegister,
         targetLabel: BoundLabel,
+        stackOffset: unsigned,
+    }
+
+# A step of `yield from` or `await`: `value` goes to the iterator, as send() does it, or throw() if `mode` says so
+# (JSGenerator::ResumeMode). What the iterator yields, or what it returns and a jump.
+op :py_send,
+    args: {
+        dst: VirtualRegister,
+        iterator: VirtualRegister,
+        value: VirtualRegister,
+        mode: VirtualRegister,
+        targetLabel: BoundLabel,
+        stackOffset: unsigned,
+    }
+
+# The body of a generator (python/runtime/PyGenerator.h) has been called: the generator is running. If it has run before it
+# goes on where it stopped. (The op_switch_imm that follows never gets to do that: it is there to say where control may go.)
+op :py_generator_enter
+
+# It stops running, and `value` goes to whoever resumed it. The next time it goes on with the instruction that follows.
+# First it saves registers as op_py_generator_registers does, if `count` is not 0.
+op :py_generator_suspend,
+    args: {
+        value: VirtualRegister,
+        first: VirtualRegister,
+        count: unsigned,
+        offset: unsigned,
+    }
+
+# It is done, and `value` goes to whoever resumed it.
+op :py_generator_return,
+    args: {
+        value: VirtualRegister,
+    }
+
+# `count` registers from `first` down go to (`isSave`), or come from, the slots of the generator (Python::PyGenerator::slots())
+# from `offset` up. What comes from a slot leaves it empty.
+op :py_generator_registers,
+    args: {
+        first: VirtualRegister,
+        count: unsigned,
+        offset: unsigned,
+        isSave: bool,
     }
 
 # The items of an iterable go in `before` registers from `argv` down. If `afterPlusOne` is not 0, then a list of all but the

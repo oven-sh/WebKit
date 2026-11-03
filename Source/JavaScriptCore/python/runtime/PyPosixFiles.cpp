@@ -381,6 +381,7 @@ static JSValue posixLchown(JSGlobalObject* globalObject, JSValue pathValue, JSVa
 
 static JSValue posixLink(JSGlobalObject* globalObject, JSValue sourceValue, JSValue destinationValue, JSValue sourceDirFdValue, JSValue destinationDirFdValue, JSValue followSymlinksValue)
 {
+    writeOutPendingOutput(globalObject);
     PosixPath source("link"_s, "src"_s);
     PosixPath destination("link"_s, "dst"_s, PosixPath::MakesNew);
     int sourceDirFd;
@@ -478,6 +479,7 @@ static JSValue posixRemove(JSGlobalObject* globalObject, JSValue path, JSValue d
 
 static JSValue posixRenameNamed(JSGlobalObject* globalObject, ASCIILiteral function, JSValue sourceValue, JSValue destinationValue, JSValue sourceDirFdValue, JSValue destinationDirFdValue)
 {
+    writeOutPendingOutput(globalObject);
     PosixPath source(function, "src"_s);
     PosixPath destination(function, "dst"_s, PosixPath::MakesOrReplaces);
     int sourceDirFd;
@@ -720,6 +722,7 @@ static constexpr TypeDef posixStatxResultTypeDef { "os.statx_result"_s, { }, pos
 
 static JSValue posixStatxFunction(JSGlobalObject* globalObject, JSValue pathValue, JSValue maskValue, JSValue flagsValue, JSValue dirFdValue, JSValue followSymlinksValue)
 {
+    writeOutPendingOutput(globalObject);
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -813,6 +816,7 @@ static JSValue posixStatxFunction(JSGlobalObject* globalObject, JSValue pathValu
 
 static JSValue posixTruncate(JSGlobalObject* globalObject, JSValue pathValue, JSValue lengthValue)
 {
+    writeOutPendingOutput(globalObject);
     PosixPath path("truncate"_s, PosixPath::AllowFd);
     off_t length;
     if (!path.convert(globalObject, pathValue) || !posixToOffset(globalObject, lengthValue, length))
@@ -862,6 +866,7 @@ static bool posixSplitNanoseconds(JSGlobalObject* globalObject, JSValue value, s
 
 static JSValue posixUtime(JSGlobalObject* globalObject, JSValue pathValue, JSValue times, JSValue ns, JSValue dirFdValue, JSValue followSymlinksValue)
 {
+    writeOutPendingOutput(globalObject);
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     PosixPath path("utime"_s, PosixPath::AllowFd);
@@ -1092,6 +1097,7 @@ static unsigned char posixDirEntryType(PyRecord* entry) { return static_cast<uns
 
 static JSValue posixDirEntryFetchStat(JSGlobalObject* globalObject, PyRecord* entry, bool followSymlinks)
 {
+    writeOutPendingOutput(globalObject);
     JSValue pathObject = entry->get(PosixDirEntryPath);
     PosixBytes path;
     if (!posixToFSBytes(globalObject, pathObject, path))

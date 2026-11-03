@@ -10,6 +10,7 @@
 #include "PyAbstract.h"
 #include "PyBuffer.h"
 #include "PyBytes.h"
+#include "PyCommandLine.h"
 #include "PyErrors.h"
 #include "PyException.h"
 #include "PyInternals.h"
@@ -2455,6 +2456,18 @@ static JSValue codecNoteFailure(JSGlobalObject* globalObject, JSValue result, AS
     return result;
 }
 
+// python -X dev: the names are looked up even where nothing has a use for them, as for an empty text. False: a LookupError.
+static bool codecCheckNamesInDevelopmentMode(JSGlobalObject* globalObject, const String& encoding, const String& errors)
+{
+    if (!configuration().devMode) [[likely]]
+        return true;
+    if (!encoding.isNull() && encoding != "utf-8"_s && encoding != "utf8"_s && encoding != "ascii"_s && !codecLookup(globalObject, encoding))
+        return false;
+    if (errors.isNull() || errors == "strict"_s || errors == "ignore"_s || errors == "replace"_s || errors == "surrogateescape"_s || errors == "surrogatepass"_s)
+        return true;
+    return !!codecLookupError(globalObject, errors);
+}
+
 JSValue strEncode(JSGlobalObject* globalObject, JSString* string, JSString* encodingName, JSString* errorsName)
 {
     Runtime& rt = runtime(globalObject);
@@ -2463,6 +2476,8 @@ JSValue strEncode(JSGlobalObject* globalObject, JSString* string, JSString* enco
     String encoding;
     String errors;
     if (!codecNameText(globalObject, encodingName, encoding) || !codecNameText(globalObject, errorsName, errors))
+        return { };
+    if (!codecCheckNamesInDevelopmentMode(globalObject, encoding, errors))
         return { };
     if (encoding.isNull())
         RELEASE_AND_RETURN(scope, codecEncodeUTF8(globalObject, string, errors));
@@ -2518,6 +2533,8 @@ JSValue bytesDecode(JSGlobalObject* globalObject, JSValue bytesLike, JSString* e
     if (!buffer.initialize(globalObject, bytesLike, false))
         return { };
     auto bytes = buffer.span();
+    if (!codecCheckNamesInDevelopmentMode(globalObject, encoding, errors))
+        return { };
     // Whatever the encoding, even one there is no codec for.
     if (bytes.empty())
         return jsEmptyString(vm);

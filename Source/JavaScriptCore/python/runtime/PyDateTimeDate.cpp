@@ -371,14 +371,18 @@ static JSValue dateIsoWeekday(JSGlobalObject*, JSValue self) { return jsNumber(w
 static JSValue dateWeekday(JSGlobalObject*, JSValue self) { return jsNumber(weekdayOfOrdinal(toOrdinal(PyDate::from(self)->packed()))); }
 static JSValue dateToOrdinal(JSGlobalObject*, JSValue self) { return jsNumber(toOrdinal(PyDate::from(self)->packed())); }
 
-static JSValue dateReplace(JSGlobalObject* globalObject, JSValue self, JSValue yearValue, JSValue monthValue, JSValue dayValue)
+static constexpr Parameters dateReplaceParameters { "replace"_s, dateParameterNames, 0, 3 };
+
+// Also __replace__(), which complains under the same name.
+static JSValue dateReplace(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
 {
     auto* date = PyDate::from(self);
     int year = date->year();
     int month = date->month();
     int day = date->day();
-    if ((yearValue && !intArgument(globalObject, yearValue, year)) || (monthValue && !intArgument(globalObject, monthValue, month))
-        || (dayValue && !intArgument(globalObject, dayValue, day)))
+    JSValue values[3];
+    if (!bindArguments(globalObject, dateReplaceParameters, args, values) || (values[0] && !intArgument(globalObject, values[0], year))
+        || (values[1] && !intArgument(globalObject, values[1], month)) || (values[2] && !intArgument(globalObject, values[2], day)))
         return { };
     return makeDate(globalObject, stateOf(globalObject, date), date->type(), year, month, day);
 }
@@ -420,8 +424,8 @@ static constexpr NativeDef dateMethods[] = {
     PY_METHOD("isoweekday", dateIsoWeekday, "($self, /)"),
     PY_METHOD("toordinal", dateToOrdinal, "($self, /)"),
     PY_METHOD("weekday", dateWeekday, "($self, /)"),
-    PY_METHOD("replace", dateReplace, "($self, /, year=unchanged, month=unchanged, day=unchanged)"),
-    PY_METHOD("__replace__", dateReplace, "($self, /, year=unchanged, month=unchanged, day=unchanged)"),
+    PY_METHOD("replace", dateReplace, "!($self, /, year=unchanged, month=unchanged, day=unchanged)"),
+    PY_METHOD("__replace__", dateReplace, "!($self, /, **changes)"),
     PY_METHOD("__reduce__", dateReduce, "($self, /)"),
 };
 
@@ -431,7 +435,7 @@ static constexpr NativeGetSet dateGetSets[] = {
     { "day"_s, dateGetDay },
 };
 
-constexpr TypeDef dateTypeDef { "datetime.date"_s, { TypeFlag::Base, TypeFlag::OwnLayout }, dateMethods, dateGetSets, "Concrete date type."_s };
+constexpr TypeDef dateTypeDef { "datetime.date"_s, { TypeFlag::Base, TypeFlag::OwnLayout }, dateMethods, dateGetSets, { } };
 
 // ---- IsoCalendarDate ----
 
@@ -475,8 +479,7 @@ static constexpr NativeGetSet isoCalendarDateGetSets[] = {
 };
 
 constexpr TypeDef isoCalendarDateTypeDef {
-    "datetime.IsoCalendarDate"_s, { TypeFlag::Immutable }, isoCalendarDateMethods, isoCalendarDateGetSets,
-    "The result of date.isocalendar() or datetime.isocalendar()\n\nThis object may be accessed either as a tuple of\n  ((year, week, weekday)\nor via the object attributes as named in the above tuple."_s
+    "datetime.IsoCalendarDate"_s, { TypeFlag::Immutable }, isoCalendarDateMethods, isoCalendarDateGetSets, { }
 };
 
 } // namespace DateTime

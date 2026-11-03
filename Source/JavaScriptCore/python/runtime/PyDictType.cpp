@@ -30,24 +30,29 @@ namespace Python {
 
 static bool iteratesAsDict(JSGlobalObject* globalObject, PyDict* dict);
 
-// for key in other.keys(): dict[key] = other[key]. With `rejectDuplicates`, a key that is there already is a KeyError.
-static void mergeMapping(JSGlobalObject* globalObject, PyDict* dict, JSValue other, bool rejectDuplicates = false)
+// for key in other.keys(): dict[key] = other[key]. With `duplicate`, a key that is there already ends it: that is where it is put.
+static void mergeMapping(JSGlobalObject* globalObject, PyDict* dict, JSValue other, JSValue* duplicate = nullptr)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto insert = [&](JSValue key, JSValue value, std::optional<int64_t> knownHash = std::nullopt) {
-        int64_t hash = knownHash ? *knownHash : hashForContainer(globalObject, key, dict->type()->has(TypeFlag::DictSubclass) ? "a dict key"_s : "a frozendict key"_s);
+    auto hashOf = [&](JSValue key) {
+        return hashForContainer(globalObject, key, dict->type()->has(TypeFlag::DictSubclass) ? "a dict key"_s : "a frozendict key"_s);
+    };
+    // False: it is, or an exception.
+    auto isNew = [&](JSValue key, int64_t hash) {
+        if (!duplicate)
+            return true;
+        bool present = !!dict->get(globalObject, key, hash);
         RETURN_IF_EXCEPTION(scope, false);
-        if (rejectDuplicates) {
-            bool present = !!dict->get(globalObject, key, hash);
-            RETURN_IF_EXCEPTION(scope, false);
-            if (present) {
-                raiseKeyError(globalObject, scope, key);
-                return false;
-            }
-        }
+        if (present)
+            *duplicate = key;
+        return !present;
+    };
+    auto insert = [&](JSValue key, JSValue value, int64_t hash) {
+        if (!isNew(key, hash))
+            return false;
         dict->set(globalObject, key, hash, value);
         return !scope.exception();
     };
@@ -57,7 +62,7 @@ static void mergeMapping(JSGlobalObject* globalObject, PyDict* dict, JSValue oth
             return;
         if (dict->isEmpty())
             return dict->takeItemsOf(vm, otherDict);
-        dict->reserve(vm, otherDict->size());
+        dict->reserve(vm, otherDict->size(), otherDict->hasOnlyStringKeys());
         const void* storage = otherDict->storageIdentity();
         unsigned end = otherDict->endPosition();
         JSValue key, value;
@@ -74,14 +79,33 @@ static void mergeMapping(JSGlobalObject* globalObject, PyDict* dict, JSValue oth
         return;
     }
 
+    // All the keys are taken before the first value is.
     JSValue keys = callMethod(globalObject, other, rt.names.keys());
     RETURN_IF_EXCEPTION(scope, void());
-    scope.release();
-    forEach(globalObject, keys, [&](JSValue key) {
+    JSArray* list;
+    if (isExactList(keys))
+        list = asList(keys);
+    else {
+        JSValue iterator = getIter(globalObject, keys);
+        if (scope.exception()) [[unlikely]] {
+            if (clearPendingExceptionIfMatches(globalObject, rt.TypeError()))
+                raiseTypeError(globalObject, scope, typeNameForMessage(globalObject, rt.typeOf(other)), ".keys() must return an iterable, not "_s, typeNameForMessage(globalObject, rt.typeOf(keys)));
+            return;
+        }
+        list = listFromIterable(globalObject, iterator);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+    for (unsigned i = 0; i < listLength(list); ++i) {
+        JSValue key = listGet(list, i);
+        int64_t hash = hashOf(key);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (!isNew(key, hash))
+            return;
         JSValue value = getItem(globalObject, other, key);
-        RETURN_IF_EXCEPTION(scope, false);
-        return insert(key, value);
-    });
+        RETURN_IF_EXCEPTION(scope, void());
+        dict->set(globalObject, key, hash, value);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
 }
 
 // for key, value in pairs: dict[key] = value
@@ -174,33 +198,27 @@ void dictMergeForCall(JSGlobalObject* globalObject, PyDict* dict, JSValue mappin
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!PyDict::is(mapping)) {
-        bool hasKeys = hasAttr(globalObject, mapping, rt.names.keys());
+    JSValue duplicate;
+    mergeMapping(globalObject, dict, mapping, &duplicate);
+    if (duplicate) [[unlikely]] {
+        String functionName = functionNameForMessage(globalObject, function);
+        JSString* name = str(globalObject, duplicate);
         RETURN_IF_EXCEPTION(scope, void());
-        if (!hasKeys) {
-            raiseTypeError(globalObject, scope, "Value after ** must be a mapping, not "_s, typeName(globalObject, mapping));
-            return;
-        }
+        raiseTypeError(globalObject, scope, functionName, " got multiple values for keyword argument '"_s, name->value(globalObject).data, '\'');
+        return;
     }
-    mergeMapping(globalObject, dict, mapping, true);
     if (!scope.exception()) [[likely]]
         return;
-    if (!pendingExceptionMatches(globalObject, rt.KeyError()))
+    // What has no keys() is no mapping.
+    if (!pendingExceptionMatches(globalObject, rt.AttributeError()))
         return;
-    JSValue exception = takePendingException(globalObject);
-    PyTuple* args = PyException::from(exception)->args();
-    if (args->length() != 1) {
-        raiseException(globalObject, scope, exception);
-        return;
-    }
-    JSValue key = args->at(0);
-    if (!isStr(key)) {
-        raiseTypeError(globalObject, scope, "keywords must be strings"_s);
-        return;
-    }
-    String name = strValue(key)->value(globalObject);
+    JSValue original = takePendingException(globalObject);
+    bool hasKeys = hasAttr(globalObject, mapping, rt.names.keys());
     RETURN_IF_EXCEPTION(scope, void());
-    raiseTypeError(globalObject, scope, functionNameForMessage(globalObject, function), " got multiple values for keyword argument '"_s, name, '\'');
+    if (hasKeys)
+        throwPythonException(globalObject, scope, original);
+    else
+        raiseTypeError(globalObject, scope, "Value after ** must be a mapping, not "_s, typeNameForMessage(globalObject, rt.typeOf(mapping)));
 }
 
 // dict(*args, **kwargs), dict.update(*args, **kwargs)
@@ -497,6 +515,26 @@ static JSValue dictFromKeys(JSGlobalObject* globalObject, JSValue cls, JSValue i
     PyType* type = PyType::from(cls);
     if (type == rt.dictType() || type == rt.frozendictType()) {
         PyDict* result = PyDict::create(vm, rt.structure<PyDict>(), type);
+        // The keys of a dict and the elements of a set come with their hashes, and differ from one another.
+        if (auto* source = PyDict::tryFrom(iterable); source && (source->type() == rt.dictType() || source->type() == rt.frozendictType())) {
+            result->reserve(vm, source->size(), source->hasOnlyStringKeys());
+            JSValue key, ignored;
+            int64_t hash;
+            for (unsigned position = 0; source->next(position, key, ignored, hash);) {
+                result->set(globalObject, key, hash, value);
+                RETURN_IF_EXCEPTION(scope, { });
+            }
+            return result;
+        }
+        if (auto* source = PySet::tryFrom(iterable); source && (source->type() == rt.setType() || source->type() == rt.frozensetType())) {
+            JSValue key;
+            int64_t hash;
+            for (size_t position = 0; source->next(position, key, hash);) {
+                result->set(globalObject, key, hash, value);
+                RETURN_IF_EXCEPTION(scope, { });
+            }
+            return result;
+        }
         forEach(globalObject, iterable, [&](JSValue key) {
             result->set(globalObject, key, value);
             return true;

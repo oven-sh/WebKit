@@ -138,6 +138,20 @@ static bool isNativeNew(JSValue method, NativeDef::VariadicWithSelf function)
     return native && native->def().signature.isVariadic && native->def().signature.hasSelf && native->def().pointer.variadicWithSelf == function;
 }
 
+// __itemsize__: not 0 for a type whose instances are of variable size in CPython, on which some rules for classes depend.
+static unsigned itemSize(PyType* type)
+{
+    if (type->has(TypeFlag::IntSubclass))
+        return 4;
+    if (type->has(TypeFlag::TupleSubclass))
+        return 8;
+    if (type->has(TypeFlag::BytesSubclass))
+        return 1;
+    if (type->has(TypeFlag::TypeSubclass))
+        return 40;
+    return 0;
+}
+
 // The built-in type that decides what kind of cell the instances are.
 static PyType* layoutBase(PyType* type)
 {
@@ -433,15 +447,10 @@ static bool layoutsAreCompatible(PyType* oldType, PyType* newType, PyType* deriv
         if (derived ? newType->has(flag) && !derived->has(flag) : oldType->has(flag) != newType->has(flag))
             return false;
     }
+    // The classes that last added something to the layout: the same one, or two that added the same to the same base.
     PyType* a = oldType->solidBase();
     PyType* b = newType->solidBase();
-    while (a != b) {
-        if (!a->isHeapType() || !b->isHeapType() || !sameSlots(a, b))
-            return false;
-        a = a->base()->solidBase();
-        b = b->base()->solidBase();
-    }
-    return true;
+    return a == b || (a->base() == b->base() && a->isHeapType() && b->isHeapType() && sameSlots(a, b));
 }
 
 static void objectSetClass(JSGlobalObject* globalObject, JSValue self, JSValue value)
@@ -503,8 +512,8 @@ static constexpr NativeDef objectMethods[] = {
     PY_METHOD("__reduce__", objectReduce, "($self, /)"),
     PY_METHOD("__reduce_ex__", objectReduceEx, "($self, protocol, /)"),
     PY_METHOD("__getstate__", objectGetState, "($self, /)"),
-    PY_CLASSMETHOD("__subclasshook__", objectSubclassHook, "($type, *args, **kwargs)"),
-    PY_CLASSMETHOD("__init_subclass__", objectInitSubclass, "($type, *args, **kwargs)"),
+    PY_CLASSMETHOD("__subclasshook__", objectSubclassHook, "!($type, object, /)"),
+    PY_CLASSMETHOD("__init_subclass__", objectInitSubclass, "!($type, /)"),
 };
 
 static constexpr NativeGetSet objectGetSets[] = {
@@ -513,7 +522,7 @@ static constexpr NativeGetSet objectGetSets[] = {
 
 // ---- The __dict__ and __weakref__ of instances ----
 
-static JSValue instanceGetDict(JSGlobalObject* globalObject, JSValue self)
+static JSValue builtinInstanceGetDict(JSGlobalObject* globalObject, JSValue self)
 {
     if (PyDict* dict = instanceDict(globalObject, self, true))
         return dict;
@@ -522,7 +531,36 @@ static JSValue instanceGetDict(JSGlobalObject* globalObject, JSValue self)
     return raise(globalObject, scope, runtime(globalObject).AttributeError(), "This object has no __dict__"_s);
 }
 
-static void instanceSetDict(JSGlobalObject* globalObject, JSValue self, JSValue value)
+// class Meta(Plain, type): the __dict__ that is found first for an instance of Meta, a class, is that of Plain, which is for
+// ordinary instances. What the __dict__ of a class (a module, a function) is, the descriptor of the built-in type knows.
+// Empty and no exception: there is no such type among the bases.
+static JSValue dictDescriptorOfBuiltinBase(JSGlobalObject* globalObject, JSValue self)
+{
+    Runtime& rt = runtime(globalObject);
+    PyType* type = rt.typeOf(self);
+    while (type->base() && (type->isHeapType() || !type->has(TypeFlag::HasDict)))
+        type = type->base();
+    if (!type->base())
+        return { };
+    JSValue descriptor = type->lookup(rt.names.dDict());
+    if (descriptor && rt.typeOf(descriptor)->lookup(Special::Set))
+        return descriptor;
+    auto scope = DECLARE_THROW_SCOPE(rt.vm());
+    return raiseTypeError(globalObject, scope, "this __dict__ descriptor does not support '"_s, typeName(globalObject, self), "' objects"_s);
+}
+
+static JSValue instanceGetDict(JSGlobalObject* globalObject, JSValue self)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue descriptor = dictDescriptorOfBuiltinBase(globalObject, self);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (descriptor) [[unlikely]]
+        RELEASE_AND_RETURN(scope, bindDescriptor(globalObject, descriptor, self, typeOf(globalObject, self)));
+    RELEASE_AND_RETURN(scope, builtinInstanceGetDict(globalObject, self));
+}
+
+static void setDictOfInstance(JSGlobalObject* globalObject, JSValue self, JSValue value)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -543,18 +581,36 @@ static JSValue instanceGetWeakref(JSGlobalObject* globalObject, JSValue self)
     return raise(globalObject, scope, runtime(globalObject).AttributeError(), "This object has no __weakref__"_s);
 }
 
+static void instanceSetDict(JSGlobalObject* globalObject, JSValue self, JSValue value)
+{
+    Runtime& rt = runtime(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(rt.vm());
+    JSValue descriptor = dictDescriptorOfBuiltinBase(globalObject, self);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (!descriptor) [[likely]]
+        RELEASE_AND_RETURN(scope, setDictOfInstance(globalObject, self, value));
+    if (value)
+        RELEASE_AND_RETURN(scope, void(callSpecial(globalObject, rt.typeOf(descriptor)->lookup(Special::Set), descriptor, self, value)));
+    JSValue deleter = rt.typeOf(descriptor)->lookup(Special::Delete);
+    if (!deleter) {
+        raise(globalObject, scope, rt.AttributeError(), "__delete__"_s);
+        return;
+    }
+    RELEASE_AND_RETURN(scope, void(callSpecial(globalObject, deleter, descriptor, self)));
+}
+
 // That of an instance of a built-in type can be replaced, but not deleted.
 static void builtinInstanceSetDict(JSGlobalObject* globalObject, JSValue self, JSValue value)
 {
     if (value)
-        return instanceSetDict(globalObject, self, value);
+        return setDictOfInstance(globalObject, self, value);
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     raiseTypeError(globalObject, scope, "cannot delete __dict__"_s);
 }
 
 static constexpr NativeGetSet instanceDictGetSet[] = { { "__dict__"_s, instanceGetDict, instanceSetDict, false, "dictionary for instance variables"_s } };
-static constexpr NativeGetSet builtinInstanceDictGetSet[] = { { "__dict__"_s, instanceGetDict, builtinInstanceSetDict, false, "dictionary for instance variables"_s } };
+static constexpr NativeGetSet builtinInstanceDictGetSet[] = { { "__dict__"_s, builtinInstanceGetDict, builtinInstanceSetDict, false, "dictionary for instance variables"_s } };
 static constexpr NativeGetSet instanceWeakrefGetSet[] = { { "__weakref__"_s, instanceGetWeakref, nullptr, false, "list of weak references to the object"_s } };
 
 std::span<const NativeGetSet> dictGetSet() { return builtinInstanceDictGetSet; }
@@ -803,42 +859,51 @@ static String mangle(const String& className, const String& name)
     return makeString('_', StringView(className).substring(start), name);
 }
 
-// Sets the MRO of the type, by the mro() of its metaclass. False: an exception.
-static bool resolveMRO(JSGlobalObject* globalObject, PyType* type)
+enum class MROResult : uint8_t {
+    Raised,
+    Superseded, // While mro() ran, the type got an MRO from somebody who knew its bases as they are now. That one stays.
+    Set,
+};
+
+// Sets the MRO of the type, by the mro() of its metaclass.
+static MROResult resolveMRO(JSGlobalObject* globalObject, PyType* type)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    PyTuple* before = type->mro();
     PyTuple* mro;
     if (type->type() == rt.typeType()) {
         mro = computeMRO(globalObject, type);
-        RETURN_IF_EXCEPTION(scope, false);
+        RETURN_IF_EXCEPTION(scope, MROResult::Raised);
     } else {
         JSValue result = callMethod(globalObject, type, rt.names.mro());
-        RETURN_IF_EXCEPTION(scope, false);
+        RETURN_IF_EXCEPTION(scope, MROResult::Raised);
         mro = tupleFromIterable(globalObject, result);
-        RETURN_IF_EXCEPTION(scope, false);
+        RETURN_IF_EXCEPTION(scope, MROResult::Raised);
         if (!mro->length()) {
             raiseTypeError(globalObject, scope, "type MRO must not be empty"_s);
-            return false;
+            return MROResult::Raised;
         }
         PyType* solid = type->solidBase();
         for (unsigned i = 0; i < mro->length(); ++i) {
             PyType* base = PyType::tryFrom(mro->at(i));
             if (!base) {
                 raiseTypeError(globalObject, scope, typeNameForMessage(globalObject, type), ".mro() returned a non-class ('"_s, typeNameForMessage(globalObject, rt.typeOf(mro->at(i))), "')"_s);
-                return false;
+                return MROResult::Raised;
             }
             if (!solid->isSubtypeOf(base->solidBase())) {
                 raiseTypeError(globalObject, scope, typeNameForMessage(globalObject, type), ".mro() returned base with unsuitable layout ('"_s, typeNameForMessage(globalObject, base), "')"_s);
-                return false;
+                return MROResult::Raised;
             }
         }
     }
+    if (type->mro() != before)
+        return MROResult::Superseded;
     type->setMRO(vm, mro);
     type->didChange(vm);
-    return true;
+    return MROResult::Set;
 }
 
 // Raises the exception again, with one more note.
@@ -997,7 +1062,8 @@ static JSValue typeNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs
         }
     } else {
         addDict = mayAddDict;
-        addWeakref = mayAddWeakref;
+        // Not for what is of variable size in CPython, unless __slots__ asks for it.
+        addWeakref = mayAddWeakref && !itemSize(base);
     }
 
     // ---- The type ----
@@ -1012,6 +1078,7 @@ static JSValue typeNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs
     type->setSolidBase(vm, slots ? type : base->solidBase());
     OptionSet<TypeFlag> flags { TypeFlag::Heap, TypeFlag::Base };
     flags.add(base->flags() & inheritedTypeFlags);
+    flags.remove({ TypeFlag::Sequence, TypeFlag::Mapping }); // These go by the MRO: see below.
     if (addDict)
         flags.add(TypeFlag::HasDict);
     if (addWeakref)
@@ -1037,19 +1104,19 @@ static JSValue typeNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs
     }
 
     // A plain function under one of these names is not an ordinary method.
-    if (JSValue function = dict->get(rt.name(Special::New)); function && PyFunction::is(function))
-        dict->set(vm, rt.name(Special::New), PyWrapperObject::create(globalObject, rt.staticmethodType(), function));
-    for (Special special : { Special::InitSubclass, Special::ClassGetItem }) {
-        if (JSValue function = dict->get(rt.name(special)); function && PyFunction::is(function))
-            dict->set(vm, rt.name(special), PyWrapperObject::create(globalObject, rt.classmethodType(), function));
+    if (JSValue function = dict->get(rt.name(Special::New)); function && PyFunction::is(function)) {
+        JSValue method = makeStaticMethod(globalObject, function);
+        RETURN_IF_EXCEPTION(scope, { });
+        dict->set(vm, rt.name(Special::New), method);
     }
-
-    if (slots) {
-        for (unsigned i = 0; i < slots->length(); ++i) {
-            JSString* slot = asString(slots->at(i));
-            dict->set(vm, slot, PyMemberDescriptor::create(globalObject, slot, type));
+    for (Special special : { Special::InitSubclass, Special::ClassGetItem }) {
+        if (JSValue function = dict->get(rt.name(special)); function && PyFunction::is(function)) {
+            JSValue method = makeClassMethod(globalObject, function);
+            RETURN_IF_EXCEPTION(scope, { });
+            dict->set(vm, rt.name(special), method);
         }
     }
+
     // One descriptor serves all classes, so it is object's.
     auto commonDescriptor = [&](Runtime::Slot slot, const NativeGetSet& def) {
         JSValue descriptor = rt.slot(slot);
@@ -1080,6 +1147,14 @@ static JSValue typeNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs
         dict->remove(vm, rt.names.dClassDictCell());
     }
 
+    // After those: __slots__ may name them.
+    if (slots) {
+        for (unsigned i = 0; i < slots->length(); ++i) {
+            JSString* slot = asString(slots->at(i));
+            dict->set(vm, slot, PyMemberDescriptor::create(globalObject, slot, type));
+        }
+    }
+
     // What defines equality without saying how to hash cannot be hashed.
     if (dict->get(rt.name(Special::Eq)) && !dict->get(rt.name(Special::Hash)))
         dict->set(vm, rt.name(Special::Hash), jsUndefined());
@@ -1100,6 +1175,15 @@ static JSValue typeNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs
     }
     for (unsigned i = 0; i < bases->length(); ++i)
         PyType::from(bases->at(i))->addSubclass(globalObject, type);
+
+    if (!dict->hasOnlyStringKeys()) [[unlikely]] {
+        bool allAreStrs = true;
+        JSValue key, value;
+        for (unsigned position = 0; allAreStrs && dict->next(position, key, value);)
+            allAreStrs = isStr(key);
+        if (!allAreStrs && !warn(globalObject, rt.RuntimeWarning(), makeString("non-string key in the __dict__ of class "_s, nameText)))
+            return { };
+    }
 
     // ---- __set_name__, __init_subclass__ ----
 
@@ -1315,20 +1399,36 @@ static JSValue typeGetBase(JSGlobalObject*, JSValue self)
     return base ? JSValue(base) : jsUndefined();
 }
 
-// Works out the MRO of the type again, and of all that derive from it.
-static bool updateMROs(JSGlobalObject* globalObject, PyType* type)
+// Works out the MRO of the type again, and of all that derive from it. Appends to `changes`, for each type that got a new
+// one: the type, the new MRO, the old one. False: an exception.
+static bool updateMROs(JSGlobalObject* globalObject, PyType* type, MarkedArgumentBuffer& changes)
 {
-    VM& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    resolveMRO(globalObject, type);
-    RETURN_IF_EXCEPTION(scope, false);
+    PyTuple* oldMRO = type->mro();
+    MROResult result = resolveMRO(globalObject, type);
+    if (result != MROResult::Set)
+        return result == MROResult::Superseded;
+    changes.append(type);
+    changes.append(type->mro());
+    changes.append(oldMRO ? JSValue(oldMRO) : jsUndefined());
+    // A copy: an mro() may change who derives from whom.
     MarkedArgumentBuffer subclasses;
     type->appendSubclassesTo(subclasses);
     for (unsigned i = 0; i < subclasses.size(); ++i) {
-        updateMROs(globalObject, PyType::from(subclasses.at(i)));
-        RETURN_IF_EXCEPTION(scope, false);
+        if (!updateMROs(globalObject, PyType::from(subclasses.at(i)), changes))
+            return false;
     }
     return true;
+}
+
+// After the base of the type has changed: which class decides the layout, for it and for all that derive from it.
+static void updateSolidBases(VM& vm, PyType* type)
+{
+    if (!type->slots())
+        type->setSolidBase(vm, type->base()->solidBase());
+    MarkedArgumentBuffer subclasses;
+    type->appendSubclassesTo(subclasses);
+    for (unsigned i = 0; i < subclasses.size(); ++i)
+        updateSolidBases(vm, PyType::from(subclasses.at(i)));
 }
 
 static void typeSetBases(JSGlobalObject* globalObject, JSValue self, JSValue value)
@@ -1353,7 +1453,12 @@ static void typeSetBases(JSGlobalObject* globalObject, JSValue self, JSValue val
             raiseTypeError(globalObject, scope, type->name(), ".__bases__ must be tuple of classes, not '"_s, typeName(globalObject, bases->at(i)), '\'');
             return;
         }
-        if (base->isSubtypeOf(type)) {
+        // The MRO of the base may be out of date, if this is called by the mro() of a metaclass that another assignment to
+        // __bases__ is calling. Its base is not.
+        bool derives = base->isSubtypeOf(type);
+        for (PyType* ancestor = base; !derives && ancestor; ancestor = ancestor->base())
+            derives = ancestor == type;
+        if (derives) {
             raiseTypeError(globalObject, scope, "a __bases__ item causes an inheritance cycle"_s);
             return;
         }
@@ -1367,25 +1472,36 @@ static void typeSetBases(JSGlobalObject* globalObject, JSValue self, JSValue val
 
     PyTuple* oldBases = type->bases();
     PyType* oldBase = type->base();
-    PyTuple* oldMRO = type->mro();
     type->setBases(vm, bases);
     type->setBase(vm, base);
-    if (!type->slots())
-        type->setSolidBase(vm, base->solidBase());
-    updateMROs(globalObject, type);
-    if (scope.exception()) {
-        type->setBases(vm, oldBases);
-        type->setBase(vm, oldBase);
-        if (!type->slots())
-            type->setSolidBase(vm, oldBase->solidBase());
-        type->setMRO(vm, oldMRO);
-        type->didChange(vm);
+    updateSolidBases(vm, type);
+    MarkedArgumentBuffer changes;
+    bool succeeded = updateMROs(globalObject, type, changes);
+    // An mro() that ran may itself have assigned to __bases__. Then what it assigned stays, and has been seen to.
+    bool isCurrent = type->bases() == bases;
+    if (!succeeded) {
+        for (unsigned i = changes.size(); i; i -= 3) {
+            PyType* changed = PyType::from(changes.at(i - 3));
+            if (changed->mro() != changes.at(i - 2).asCell())
+                continue;
+            changed->setMRO(vm, PyTuple::tryFrom(changes.at(i - 1)));
+            changed->didChange(vm);
+        }
+        if (isCurrent) {
+            type->setBases(vm, oldBases);
+            type->setBase(vm, oldBase);
+            updateSolidBases(vm, type);
+            type->didChange(vm);
+        }
         return;
     }
+    if (!isCurrent)
+        return;
     for (unsigned i = 0; i < oldBases->length(); ++i)
         PyType::from(oldBases->at(i))->removeSubclass(globalObject, type);
     for (unsigned i = 0; i < bases->length(); ++i)
         PyType::from(bases->at(i))->addSubclass(globalObject, type);
+    type->didChange(vm);
 }
 
 static JSValue typeGetDict(JSGlobalObject* globalObject, JSValue self)
@@ -1400,7 +1516,7 @@ static JSValue typeGetDoc(JSGlobalObject* globalObject, JSValue self)
     PyType* type = PyType::from(self);
     // What its own namespace has under the name is this very descriptor.
     if (type == runtime(globalObject).typeType())
-        return docstringFor(globalObject, "type"_s);
+        return docstringFor(globalObject, "type type"_s);
     JSValue doc = type->dict()->get(runtime(globalObject).names.dDoc());
     if (!doc)
         return jsUndefined();
@@ -1467,9 +1583,10 @@ static JSValue typeGetAnnotate(JSGlobalObject* globalObject, JSValue self)
     PyType* type = PyType::from(self);
     if (!type->isHeapType())
         return raiseNoTypeAttribute(globalObject, type, "__annotate__"_s);
-    JSValue annotate = type->dict()->get(rt.names.dAnnotateFunc());
+    // What the program wrote itself comes before what the compiler made.
+    JSValue annotate = type->dict()->get(rt.names.dAnnotate());
     if (!annotate)
-        annotate = type->dict()->get(rt.names.dAnnotate());
+        annotate = type->dict()->get(rt.names.dAnnotateFunc());
     if (annotate)
         return bindDescriptor(globalObject, annotate, { }, type);
     type->dict()->set(vm, rt.names.dAnnotateFunc(), jsUndefined());
@@ -1608,6 +1725,11 @@ static constexpr std::pair<ASCIILiteral, ASCIILiteral> typeSignatures[] = {
     { "compression.zstd.ZstdCompressor"_s, "(level=None, options=None, zstd_dict=None)"_s },
     { "compression.zstd.ZstdDecompressor"_s, "(zstd_dict=None, options=None)"_s },
     { "compression.zstd.ZstdDict"_s, "(dict_content, /, *, is_raw=False)"_s },
+    { "datetime.date"_s, "(year, month, day)"_s },
+    { "datetime.datetime"_s, "(year, month, day, hour=0, minute=0, second=0, microsecond=0,\n         tzinfo=None, *, fold=0)"_s },
+    { "datetime.time"_s, "(hour=0, minute=0, second=0, microsecond=0, tzinfo=None, *, fold=0)"_s },
+    { "datetime.timedelta"_s, "(days=0, seconds=0, microseconds=0, milliseconds=0, minutes=0,\n          hours=0, weeks=0)"_s },
+    { "datetime.timezone"_s, "(offset, name=<unrepresentable>)"_s },
     { "ellipsis"_s, "()"_s },
     { "enumerate"_s, "(iterable, start=0)"_s },
     { "filter"_s, "(function, iterable, /)"_s },
@@ -1716,7 +1838,7 @@ static JSValue typeGetFlags(JSGlobalObject* globalObject, JSValue self)
 }
 
 static JSValue typeGetBasicSize(JSGlobalObject*, JSValue) { return jsNumber(16); }
-static JSValue typeGetItemSize(JSGlobalObject*, JSValue) { return jsNumber(0); }
+static JSValue typeGetItemSize(JSGlobalObject*, JSValue self) { return jsNumber(itemSize(PyType::from(self))); }
 static JSValue typeGetDictOffset(JSGlobalObject*, JSValue self) { return jsNumber(PyType::from(self)->has(TypeFlag::HasDict) ? -1 : 0); }
 static JSValue typeGetWeakrefOffset(JSGlobalObject*, JSValue self) { return jsNumber(PyType::from(self)->has(TypeFlag::HasWeakref) ? -1 : 0); }
 

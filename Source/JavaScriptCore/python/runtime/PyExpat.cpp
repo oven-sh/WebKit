@@ -4861,18 +4861,18 @@ static void expatSetSpecifiedAttributes(JSGlobalObject* globalObject, JSValue se
 }
 
 static constexpr NativeDef expatParserMethods[] = {
-    PY_METHOD("Parse", expatParse, "($self, *args, **kwargs)"),
-    PY_METHOD("ParseFile", expatParseFile, "($self, *args, **kwargs)"),
+    PY_METHOD("Parse", expatParse, "!($self, data, isfinal=False, /)"),
+    PY_METHOD("ParseFile", expatParseFile, "!($self, file, /)"),
     PY_METHOD("SetBase", expatSetBase, "($self, base, /)"),
     PY_METHOD("GetBase", expatGetBase, "($self, /)"),
     PY_METHOD("GetInputContext", expatGetInputContext, "($self, /)"),
     PY_METHOD("ExternalEntityParserCreate", expatExternalEntityParserCreate, "($self, *args, **kwargs)"),
     PY_METHOD("SetParamEntityParsing", expatSetParamEntityParsing, "($self, flag, /)"),
-    PY_METHOD("UseForeignDTD", expatUseForeignDTD, "($self, *args, **kwargs)"),
-    PY_METHOD("SetBillionLaughsAttackProtectionActivationThreshold", expatSetExpansionThreshold, "($self, *args, **kwargs)"),
-    PY_METHOD("SetBillionLaughsAttackProtectionMaximumAmplification", expatSetExpansionFactor, "($self, *args, **kwargs)"),
-    PY_METHOD("SetAllocTrackerActivationThreshold", expatSetAllocationThreshold, "($self, *args, **kwargs)"),
-    PY_METHOD("SetAllocTrackerMaximumAmplification", expatSetAllocationFactor, "($self, *args, **kwargs)"),
+    PY_METHOD("UseForeignDTD", expatUseForeignDTD, "!($self, flag=True, /)"),
+    PY_METHOD("SetBillionLaughsAttackProtectionActivationThreshold", expatSetExpansionThreshold, "!($self, threshold, /)"),
+    PY_METHOD("SetBillionLaughsAttackProtectionMaximumAmplification", expatSetExpansionFactor, "!($self, max_factor, /)"),
+    PY_METHOD("SetAllocTrackerActivationThreshold", expatSetAllocationThreshold, "!($self, threshold, /)"),
+    PY_METHOD("SetAllocTrackerMaximumAmplification", expatSetAllocationFactor, "!($self, max_factor, /)"),
     PY_METHOD("SetReparseDeferralEnabled", expatSetReparseDeferralEnabled, "($self, enabled, /)"),
     PY_METHOD("GetReparseDeferralEnabled", expatGetReparseDeferralEnabled, "($self, /)"),
 };
