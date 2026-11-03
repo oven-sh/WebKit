@@ -51,13 +51,13 @@ static bool heapqSiftDown(JSGlobalObject* globalObject, JSArray* heap, unsigned 
     auto scope = DECLARE_THROW_SCOPE(vm);
     unsigned size = listLength(heap);
     if (position >= size)
-        return heapqRaiseOutOfRange(globalObject);
+        RELEASE_AND_RETURN(scope, heapqRaiseOutOfRange(globalObject));
     while (position > start) {
         unsigned parentPosition = (position - 1) >> 1;
         bool comesFirst = heapqComesFirst<isMax>(globalObject, listGet(heap, position), listGet(heap, parentPosition));
         RETURN_IF_EXCEPTION(scope, false);
         if (size != listLength(heap))
-            return heapqRaiseChangedSize(globalObject);
+            RELEASE_AND_RETURN(scope, heapqRaiseChangedSize(globalObject));
         if (!comesFirst)
             break;
         JSValue parent = listGet(heap, parentPosition);
@@ -77,7 +77,7 @@ static bool heapqSiftUp(JSGlobalObject* globalObject, JSArray* heap, unsigned po
     unsigned end = listLength(heap);
     unsigned start = position;
     if (position >= end)
-        return heapqRaiseOutOfRange(globalObject);
+        RELEASE_AND_RETURN(scope, heapqRaiseOutOfRange(globalObject));
     unsigned limit = end >> 1; // The first position without a child.
     while (position < limit) {
         unsigned child = 2 * position + 1;
@@ -87,7 +87,7 @@ static bool heapqSiftUp(JSGlobalObject* globalObject, JSArray* heap, unsigned po
             if (!leftComesFirst)
                 ++child;
             if (end != listLength(heap))
-                return heapqRaiseChangedSize(globalObject);
+                RELEASE_AND_RETURN(scope, heapqRaiseChangedSize(globalObject));
         }
         JSValue item = listGet(heap, position);
         listSet(globalObject, heap, position, listGet(heap, child));
@@ -121,7 +121,7 @@ static JSValue heapqPush(JSGlobalObject* globalObject, JSValue heapValue, JSValu
         return { };
     listAppend(globalObject, heap, item);
     RETURN_IF_EXCEPTION(scope, { });
-    if (!heapqSiftDown<isMax>(globalObject, heap, 0, listLength(heap) - 1))
+    if (failed(scope, heapqSiftDown<isMax>(globalObject, heap, 0, listLength(heap) - 1)))
         return { };
     return jsUndefined();
 }
@@ -146,7 +146,7 @@ static JSValue heapqPop(JSGlobalObject* globalObject, JSValue heapValue)
         return last;
     JSValue top = listGet(heap, 0);
     listSet(globalObject, heap, 0, last);
-    if (!heapqSiftUp<isMax>(globalObject, heap, 0))
+    if (failed(scope, heapqSiftUp<isMax>(globalObject, heap, 0)))
         return { };
     return top;
 }
@@ -154,6 +154,8 @@ static JSValue heapqPop(JSGlobalObject* globalObject, JSValue heapValue)
 template<bool isMax>
 static JSValue heapqReplace(JSGlobalObject* globalObject, JSValue heapValue, JSValue item)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSArray* heap = heapqListArgument(globalObject, isMax ? "heapreplace_max"_s : "heapreplace"_s, 1, heapValue);
     if (!heap)
         return { };
@@ -163,7 +165,7 @@ static JSValue heapqReplace(JSGlobalObject* globalObject, JSValue heapValue, JSV
     }
     JSValue top = listGet(heap, 0);
     listSet(globalObject, heap, 0, item);
-    if (!heapqSiftUp<isMax>(globalObject, heap, 0))
+    if (failed(scope, heapqSiftUp<isMax>(globalObject, heap, 0)))
         return { };
     return top;
 }
@@ -188,7 +190,7 @@ static JSValue heapqPushPop(JSGlobalObject* globalObject, JSValue heapValue, JSV
     }
     JSValue top = listGet(heap, 0);
     listSet(globalObject, heap, 0, item);
-    if (!heapqSiftUp<isMax>(globalObject, heap, 0))
+    if (failed(scope, heapqSiftUp<isMax>(globalObject, heap, 0)))
         return { };
     return top;
 }
@@ -196,12 +198,14 @@ static JSValue heapqPushPop(JSGlobalObject* globalObject, JSValue heapValue, JSV
 template<bool isMax>
 static JSValue heapqHeapify(JSGlobalObject* globalObject, JSValue heapValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSArray* heap = heapqListArgument(globalObject, isMax ? "heapify_max"_s : "heapify"_s, 0, heapValue);
     if (!heap)
         return { };
     // From the last item that has a child to the top: what is below each is a heap by then.
     for (unsigned i = listLength(heap) >> 1; i--;) {
-        if (!heapqSiftUp<isMax>(globalObject, heap, i))
+        if (failed(scope, heapqSiftUp<isMax>(globalObject, heap, i)))
             return { };
     }
     return jsUndefined();
@@ -239,7 +243,7 @@ static bool bisectParseBounds(JSGlobalObject* globalObject, JSValue low, JSValue
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (low) {
-        if (!ssizeArgument(globalObject, low, bounds.low))
+        if (failed(scope, ssizeArgument(globalObject, low, bounds.low)))
             return false;
         if (bounds.low < 0) {
             raiseValueError(globalObject, scope, "lo cannot be negative"_s);
@@ -309,13 +313,15 @@ static int64_t bisectSearch(JSGlobalObject* globalObject, JSValue sequence, JSVa
 template<bool toTheRight>
 static JSValue bisectFind(JSGlobalObject* globalObject, JSValue sequence, JSValue item, JSValue low, JSValue high, JSValue key)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     BisectBounds bounds;
-    if (!bisectParseBounds(globalObject, low, high, bounds))
+    if (failed(scope, bisectParseBounds(globalObject, low, high, bounds)))
         return { };
     int64_t index = bisectSearch<toTheRight>(globalObject, sequence, item, bounds, key && !isNone(key) ? key : JSValue());
     if (index < 0)
         return { };
-    return makeInt(globalObject, index);
+    RELEASE_AND_RETURN(scope, makeInt(globalObject, index));
 }
 
 template<bool toTheRight>
@@ -324,7 +330,7 @@ static JSValue bisectInsort(JSGlobalObject* globalObject, JSValue sequence, JSVa
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     BisectBounds bounds;
-    if (!bisectParseBounds(globalObject, low, high, bounds))
+    if (failed(scope, bisectParseBounds(globalObject, low, high, bounds)))
         return { };
     JSValue sought = item;
     if (key && isNone(key))

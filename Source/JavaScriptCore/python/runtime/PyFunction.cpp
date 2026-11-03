@@ -67,9 +67,11 @@ DEFINE_VISIT_CHILDREN(PyCell);
 
 static JSValue cellNew(JSGlobalObject* globalObject, JSValue, const CallArgs& args)
 {
-    if (!rejectKeywords(globalObject, "cell"_s, args) || !checkPositional(globalObject, "cell"_s, args, 0, 1))
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, rejectKeywords(globalObject, "cell"_s, args)) || failed(scope, checkPositional(globalObject, "cell"_s, args, 0, 1)))
         return { };
-    return PyCell::create(globalObject, args.get(0));
+    RELEASE_AND_RETURN(scope, PyCell::create(globalObject, args.get(0)));
 }
 
 static JSValue cellRepr(JSGlobalObject* globalObject, JSValue self)
@@ -694,10 +696,12 @@ static JSValue functionGetClosure(JSGlobalObject*, JSValue self) { return orNone
 // What of a function is audited: reading and changing its code and the defaults of its parameters.
 static bool auditFunctionAttribute(JSGlobalObject* globalObject, ASCIILiteral event, JSValue self, ASCIILiteral name, JSValue value = { })
 {
-    if (!isAudited(globalObject)) [[likely]]
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, isAudited(globalObject))) [[likely]]
         return true;
     JSString* nameString = makeStr(getVM(globalObject), name);
-    return value ? audit(globalObject, event, self, nameString, value) : audit(globalObject, event, self, nameString);
+    RELEASE_AND_RETURN(scope, value ? audit(globalObject, event, self, nameString, value) : audit(globalObject, event, self, nameString));
 }
 
 static JSValue functionGetDefaults(JSGlobalObject* globalObject, JSValue self)
@@ -961,7 +965,7 @@ static JSValue methodNew(JSGlobalObject* globalObject, JSValue, JSValue function
         return raiseTypeError(globalObject, scope, "first argument must be callable"_s);
     if (isNone(instance))
         return raiseTypeError(globalObject, scope, "instance must not be None"_s);
-    return PyMethod::create(globalObject, function, instance);
+    RELEASE_AND_RETURN(scope, PyMethod::create(globalObject, function, instance));
 }
 
 static JSValue methodCall(JSGlobalObject* globalObject, JSValue self, const CallArgs& args) { return call(globalObject, self, args); }
@@ -997,7 +1001,7 @@ static JSValue methodEquality(JSGlobalObject* globalObject, JSValue self, JSValu
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!PyMethod::is(other))
-        return runtime(globalObject).notImplemented();
+        RELEASE_AND_RETURN(scope, runtime(globalObject).notImplemented());
     auto* a = PyMethod::from(self);
     auto* b = PyMethod::from(other);
     bool equal = isEqual(globalObject, a->function(), b->function());
@@ -1016,7 +1020,7 @@ static JSValue methodHash(JSGlobalObject* globalObject, JSValue self)
     int64_t functionHash = hash(globalObject, method->function());
     RETURN_IF_EXCEPTION(scope, { });
     int64_t result = tryInt64(selfHash).value_or(0) ^ functionHash;
-    return makeInt(globalObject, result == -1 ? static_cast<int64_t>(-2) : result);
+    RELEASE_AND_RETURN(scope, makeInt(globalObject, result == -1 ? static_cast<int64_t>(-2) : result));
 }
 
 // What the method itself does not have is looked for on the function.
@@ -1056,7 +1060,7 @@ static JSValue methodReduce(JSGlobalObject* globalObject, JSValue self)
     JSValue getattr = currentBuiltin(globalObject, internString(vm, "getattr"_s));
     if (!getattr)
         return { };
-    return PyTuple::create(globalObject, { getattr, PyTuple::create(globalObject, { method->self(), name }) });
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { getattr, PyTuple::create(globalObject, { method->self(), name }) }));
 }
 
 static JSValue methodGetFunc(JSGlobalObject*, JSValue self) { return PyMethod::from(self)->function(); }
@@ -1185,7 +1189,7 @@ static JSValue codeRepr(JSGlobalObject* globalObject, JSValue self)
     RETURN_IF_EXCEPTION(scope, { });
     String filename = strValue(codeGetFilename(globalObject, self))->value(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
-    return makeStr(globalObject, makeString("<code object "_s, name, " at "_s, addressForRepr(globalObject, self), ", file \""_s, filename, "\", line "_s, codeGetFirstLineNo(globalObject, self).asInt32(), '>'));
+    RELEASE_AND_RETURN(scope, makeStr(globalObject, makeString("<code object "_s, name, " at "_s, addressForRepr(globalObject, self), ", file \""_s, filename, "\", line "_s, codeGetFirstLineNo(globalObject, self).asInt32(), '>')));
 }
 
 // The code block that has the instructions: for a generator function, that of the body. Null: an exception.
@@ -1297,7 +1301,7 @@ static JSValue codeGetConsts(JSGlobalObject* globalObject, JSValue self)
         if (constants.isEmpty() || (constant.isUsed && !needsNoConstant))
             constants.append(value);
     }
-    return PyTuple::create(globalObject, spanOf(constants));
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, spanOf(constants)));
 }
 
 // Where the text of the code starts in its line.
@@ -1373,7 +1377,7 @@ static JSValue codeHash(JSGlobalObject* globalObject, JSValue self)
     uint64_t result = static_cast<uint64_t>(nameHash) * 1000003 ^ code->flags().toRaw();
     result = result * 1000003 ^ static_cast<uint64_t>(codeGetFirstLineNo(globalObject, self).asInt32());
     result = result * 1000003 ^ code->executable()->source().view().toString().hash();
-    return makeInt(globalObject, static_cast<int64_t>(result >> 2));
+    RELEASE_AND_RETURN(scope, makeInt(globalObject, static_cast<int64_t>(result >> 2)));
 }
 
 // `bytes`: what codeGetLineTable() gives. Null without an exception: they are not that, or not this build's.
@@ -1507,7 +1511,7 @@ static JSValue codeReplace(JSGlobalObject* globalObject, JSValue self, const Cal
             String filename = text("co_filename"_s);
             RETURN_IF_EXCEPTION(scope, { });
             JSValue firstLine = replaced->get(internString(vm, "co_firstlineno"_s));
-            return describeAnew(globalObject, copy, name, qualname, filename, firstLine ? std::optional<int>(firstLine.asInt32()) : std::nullopt, code->codeInfo().lineDelta, flags);
+            RELEASE_AND_RETURN(scope, describeAnew(globalObject, copy, name, qualname, filename, firstLine ? std::optional<int>(firstLine.asInt32()) : std::nullopt, code->codeInfo().lineDelta, flags));
         }
     }
     PyCode* result = PyCode::createWithFlags(globalObject, code->executable(), flags);
@@ -1520,7 +1524,7 @@ static JSValue codeNew(JSGlobalObject* globalObject, JSValue, const CallArgs& ar
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!rejectKeywords(globalObject, "code"_s, args) || !checkPositional(globalObject, "code"_s, args, 16, 18))
+    if (failed(scope, rejectKeywords(globalObject, "code"_s, args)) || failed(scope, checkPositional(globalObject, "code"_s, args, 16, 18)))
         return { };
     // code(argcount, posonlyargcount, kwonlyargcount, nlocals, stacksize, flags, codestring, constants, names, varnames, filename,
     // name, qualname, firstlineno, linetable, exceptiontable, freevars=(), cellvars=()). The instructions are not CPython's and cannot
@@ -1558,7 +1562,7 @@ static JSValue codeNew(JSGlobalObject* globalObject, JSValue, const CallArgs& ar
         texts[i] = strValue(args[10 + i])->value(globalObject);
         RETURN_IF_EXCEPTION(scope, { });
     }
-    return describeAnew(globalObject, code, texts[1], texts[2], texts[0], firstLine, 0, OptionSet<CodeFlag>::fromRaw(static_cast<uint32_t>(flags)));
+    RELEASE_AND_RETURN(scope, describeAnew(globalObject, code, texts[1], texts[2], texts[0], firstLine, 0, OptionSet<CodeFlag>::fromRaw(static_cast<uint32_t>(flags))));
 }
 
 // co_lines(), co_positions() and co_branches() return iterators of types of their own. Fields: the iterator of a list.
@@ -1915,8 +1919,8 @@ static constexpr NativeDef codeMethods[] = {
     PY_SLOT("__eq__", codeEq, "($self, value, /)"),
     PY_SLOT("__ne__", codeNe, "($self, value, /)"),
     PY_SLOT("__hash__", codeHash, "($self, /)"),
-    PY_METHOD("replace", codeReplace, "($self, **changes)"),
-    PY_METHOD("__replace__", codeReplace, "($self, **changes)"),
+    PY_METHOD("replace", codeReplace, "($self, /, **changes)"),
+    PY_METHOD("__replace__", codeReplace, "($self, /, **changes)"),
     PY_METHOD("co_lines", codeLines, "($self, /)"),
     PY_METHOD("co_positions", codePositions, "($self, /)"),
     PY_METHOD("co_branches", codeBranches, "($self, /)"),
@@ -1941,7 +1945,6 @@ static constexpr NativeGetSet codeGetSets[] = {
     PY_MEMBER("co_consts", codeGetConsts),
     { "co_code"_s, codeGetCode },
     { "_co_code_adaptive"_s, codeGetCode },
-    { "co_lnotab"_s, codeGetEmptyBytes },
     PY_MEMBER("co_linetable", codeGetLineTable),
     PY_MEMBER("co_exceptiontable", codeGetEmptyBytes),
 };
@@ -1991,6 +1994,9 @@ static JSValue nativeGetTextSignature(JSGlobalObject* globalObject, JSValue self
             return jsUndefined();
         }
     }
+    // An __init__ is shown as what stands for the operation, whatever it takes.
+    if (def.kind == NativeKind::SlotWrapper && def.name == "__init__"_s)
+        return makeStr(getVM(globalObject), "($self, /, *args, **kwargs)"_s);
     if (def.kind != NativeKind::Function || native->ownerType() || def.signature.hasSelf)
         return makeStr(globalObject, signatureText.toString());
     // A function of a module is bound to it, which the tables leave out: "(obj, /)" is "($module, obj, /)".
@@ -2045,14 +2051,24 @@ static JSValue nativeGetSelf(JSGlobalObject* globalObject, JSValue self)
     return jsUndefined();
 }
 
+// What a program assigns to the __module__ of a built-in function is kept as a property of the object, behind Python's back.
 static JSValue nativeGetModule(JSGlobalObject* globalObject, JSValue self)
 {
     auto* native = asNative(self);
+    VM& vm = getVM(globalObject);
+    if (JSValue assigned = native->getDirect(vm, Identifier::fromString(vm, "__module__"_s)))
+        return assigned;
     JSValue owner = native->owner();
     // A static method of a built-in type is of the module of the type.
     if (owner && PyType::is(owner) && native->kind() == NativeKind::Function && !native->self())
         return getAttr(globalObject, owner, runtime(globalObject).names.dModule());
     return owner && owner.isString() ? owner : jsUndefined();
+}
+
+static void nativeSetModule(JSGlobalObject* globalObject, JSValue self, JSValue value)
+{
+    VM& vm = getVM(globalObject);
+    asNative(self)->putDirect(vm, Identifier::fromString(vm, "__module__"_s), value ? value : jsUndefined());
 }
 
 static JSValue nativeFunctionRepr(JSGlobalObject* globalObject, JSValue self)
@@ -2124,13 +2140,13 @@ static JSValue nativeDescriptorGet(JSGlobalObject* globalObject, JSValue self, J
             return raiseTypeError(globalObject, scope, "descriptor '"_s, native->def().name, "' for type '"_s, type->nameInMessages(), "' needs a type, not a '"_s, typeName(globalObject, cls), "' as arg 2"_s);
         if (!given->isSubtypeOf(type))
             return raiseTypeError(globalObject, scope, "descriptor '"_s, native->def().name, "' requires a subtype of '"_s, type->nameInMessages(), "' but received '"_s, given->nameInMessages(), '\'');
-        return bindDescriptor(globalObject, self, { }, given);
+        RELEASE_AND_RETURN(scope, bindDescriptor(globalObject, self, { }, given));
     }
     if (isNone(instance))
         return self;
     if (!typeOf(globalObject, instance)->isSubtypeOf(type))
         return raiseTypeError(globalObject, scope, "descriptor '"_s, native->def().name, "' for '"_s, type->nameInMessages(), "' objects doesn't apply to a '"_s, typeName(globalObject, instance), "' object"_s);
-    return bindDescriptor(globalObject, self, instance, type);
+    RELEASE_AND_RETURN(scope, bindDescriptor(globalObject, self, instance, type));
 }
 
 static JSValue nativeReduce(JSGlobalObject* globalObject, JSValue self)
@@ -2170,7 +2186,7 @@ static constexpr NativeGetSet nativeFunctionGetSets[] = {
     { "__name__"_s, nativeGetName },
     { "__qualname__"_s, nativeFunctionGetQualname },
     { "__self__"_s, nativeGetSelf },
-    PY_MEMBER("__module__", nativeGetModule),
+    PY_WRITABLE_MEMBER("__module__", nativeGetModule, nativeSetModule),
     { "__doc__"_s, nativeGetDoc },
     { "__text_signature__"_s, nativeGetTextSignature },
 };

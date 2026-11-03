@@ -646,7 +646,7 @@ JSC_DEFINE_HOST_FUNCTION(jsViewIterator, (JSGlobalObject* globalObject, CallFram
     }
     JSValue iterator = getIter(globalObject, callFrame->thisValue());
     RETURN_IF_EXCEPTION(scope, { });
-    return JSValue::encode(jsViewWrapIterator(globalObject, JSViewObject::IteratorPrototype, iterator));
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsViewWrapIterator(globalObject, JSViewObject::IteratorPrototype, iterator)));
 }
 
 // next(value): for a generator, send(value).
@@ -663,8 +663,8 @@ JSC_DEFINE_HOST_FUNCTION(jsViewNext, (JSGlobalObject* globalObject, CallFrame* c
         item = iterNext(globalObject, iterator);
     RETURN_IF_EXCEPTION(scope, { });
     if (item)
-        return JSValue::encode(createIteratorResultObject(globalObject, valueForJS(item), false));
-    return JSValue::encode(createIteratorResultObject(globalObject, result ? valueForJS(result) : jsUndefined(), true));
+        RELEASE_AND_RETURN(scope, JSValue::encode(createIteratorResultObject(globalObject, valueForJS(item), false)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(createIteratorResultObject(globalObject, result ? valueForJS(result) : jsUndefined(), true)));
 }
 
 // return(value): the loop is left early, so what has a close() is closed.
@@ -683,7 +683,7 @@ JSC_DEFINE_HOST_FUNCTION(jsViewReturn, (JSGlobalObject* globalObject, CallFrame*
             call(globalObject, close);
     }
     RETURN_IF_EXCEPTION(scope, { });
-    return JSValue::encode(createIteratorResultObject(globalObject, callFrame->argument(0), true));
+    RELEASE_AND_RETURN(scope, JSValue::encode(createIteratorResultObject(globalObject, callFrame->argument(0), true)));
 }
 
 // throw(exception): raised in a generator where it is suspended; anything else just fails with it.
@@ -702,8 +702,8 @@ JSC_DEFINE_HOST_FUNCTION(jsViewThrow, (JSGlobalObject* globalObject, CallFrame* 
     JSValue item = generatorThrow(globalObject, generator, exceptionFromThrownValue(globalObject, thrown), result);
     RETURN_IF_EXCEPTION(scope, { });
     if (item)
-        return JSValue::encode(createIteratorResultObject(globalObject, valueForJS(item), false));
-    return JSValue::encode(createIteratorResultObject(globalObject, result ? valueForJS(result) : jsUndefined(), true));
+        RELEASE_AND_RETURN(scope, JSValue::encode(createIteratorResultObject(globalObject, valueForJS(item), false)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(createIteratorResultObject(globalObject, result ? valueForJS(result) : jsUndefined(), true)));
 }
 
 // ---- Awaiting ----
@@ -798,7 +798,7 @@ JSC_DEFINE_HOST_FUNCTION(jsViewAsyncIterator, (JSGlobalObject* globalObject, Cal
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue iterator = getAIter(globalObject, callFrame->thisValue());
     RETURN_IF_EXCEPTION(scope, { });
-    return JSValue::encode(jsViewWrapIterator(globalObject, JSViewObject::AsyncIteratorPrototype, iterator));
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsViewWrapIterator(globalObject, JSViewObject::AsyncIteratorPrototype, iterator)));
 }
 
 // What the promise of iterator.__anext__() is followed by.
@@ -814,7 +814,7 @@ JSC_DEFINE_HOST_FUNCTION(jsViewAsyncEnd, (JSGlobalObject* globalObject, CallFram
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue thrown = callFrame->argument(0);
     if (rt.typeOf(thrown)->isSubtypeOf(rt.StopAsyncIteration()))
-        return JSValue::encode(createIteratorResultObject(globalObject, jsUndefined(), true));
+        RELEASE_AND_RETURN(scope, JSValue::encode(createIteratorResultObject(globalObject, jsUndefined(), true)));
     throwException(globalObject, scope, thrown);
     return { };
 }
@@ -966,7 +966,7 @@ JSC_DEFINE_HOST_FUNCTION(jsViewFloat, (JSGlobalObject* globalObject, CallFrame* 
     auto scope = DECLARE_THROW_SCOPE(vm);
     double value = callFrame->argument(0).toNumber(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
-    return JSValue::encode(makeFloat(globalObject, value));
+    RELEASE_AND_RETURN(scope, JSValue::encode(makeFloat(globalObject, value)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsViewImport, (JSGlobalObject* globalObject, CallFrame* callFrame))

@@ -53,11 +53,13 @@ static constexpr size_t posixMaxTransfer = SSIZE_MAX;
 
 static JSValue posixOpen(JSGlobalObject* globalObject, JSValue pathValue, JSValue flagsValue, JSValue modeValue, JSValue dirFdValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PosixPath path("open"_s, PosixPath::AllowVirtual);
     int flags;
     int mode = 0777;
     int dirFd;
-    if (!path.convert(globalObject, pathValue) || !posixToInt(globalObject, flagsValue, flags) || (modeValue && !posixToInt(globalObject, modeValue, mode))
+    if (!path.convert(globalObject, pathValue) || failed(scope, posixToInt(globalObject, flagsValue, flags)) || (modeValue && failed(scope, posixToInt(globalObject, modeValue, mode)))
         || !posixToDirFd(globalObject, dirFdValue, dirFd))
         return { };
     flags |= O_CLOEXEC;
@@ -75,15 +77,17 @@ static JSValue posixOpen(JSGlobalObject* globalObject, JSValue pathValue, JSValu
         }
     } while (fd < 0 && ((errno == EINTR && checkSignals(globalObject)) || (!std::exchange(hasFreedDescriptors, true) && posixFreeDescriptors(globalObject))));
     if (fd < 0)
-        return path.error(globalObject);
+        RELEASE_AND_RETURN(scope, path.error(globalObject));
     return jsNumber(fd);
 }
 
 static JSValue posixClose(JSGlobalObject* globalObject, JSValue fdValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     writeOutPendingOutput(globalObject);
     int fd;
-    if (!posixToInt(globalObject, fdValue, fd))
+    if (failed(scope, posixToInt(globalObject, fdValue, fd)))
         return { };
     // Not tried again after EINTR: the descriptor may be closed already, and be someone else's by now.
     int result;
@@ -92,16 +96,18 @@ static JSValue posixClose(JSGlobalObject* globalObject, JSValue fdValue)
         result = close(fd);
     }
     if (result < 0)
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     return jsUndefined();
 }
 
 static JSValue posixCloserange(JSGlobalObject* globalObject, JSValue lowValue, JSValue highValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     writeOutPendingOutput(globalObject);
     int low;
     int high;
-    if (!posixToInt(globalObject, lowValue, low) || !posixToInt(globalObject, highValue, high))
+    if (failed(scope, posixToInt(globalObject, lowValue, low)) || failed(scope, posixToInt(globalObject, highValue, high)))
         return { };
     low = std::max(low, 0);
     if (high <= low)
@@ -120,33 +126,37 @@ static JSValue posixCloserange(JSGlobalObject* globalObject, JSValue lowValue, J
 
 static JSValue posixDup(JSGlobalObject* globalObject, JSValue fdValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int fd;
-    if (!posixToInt(globalObject, fdValue, fd))
+    if (failed(scope, posixToInt(globalObject, fdValue, fd)))
         return { };
     int result = posixDupNotInheritable(fd);
     if (result < 0 && posixFreeDescriptors(globalObject))
         result = posixDupNotInheritable(fd);
     if (result < 0)
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     return jsNumber(result);
 }
 
 static JSValue posixDup2(JSGlobalObject* globalObject, JSValue fdValue, JSValue fd2Value, JSValue inheritableValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     writeOutPendingOutput(globalObject);
     int fd;
     int fd2;
     bool inheritable;
-    if (!posixToInt(globalObject, fdValue, fd) || !posixToInt(globalObject, fd2Value, fd2) || !posixToBool(globalObject, inheritableValue, true, inheritable))
+    if (failed(scope, posixToInt(globalObject, fdValue, fd)) || failed(scope, posixToInt(globalObject, fd2Value, fd2)) || !posixToBool(globalObject, inheritableValue, true, inheritable))
         return { };
 #if OS(LINUX)
     int result = inheritable ? dup2(fd, fd2) : dup3(fd, fd2, O_CLOEXEC);
     if (result < 0)
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
 #else
     int result = dup2(fd, fd2);
     if (result < 0)
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     if (!inheritable && !posixSetInheritable(fd2, false)) {
         JSValue error = posixError(globalObject);
         close(fd2);
@@ -178,13 +188,15 @@ static JSValue posixPipe(JSGlobalObject* globalObject)
 #if OS(LINUX)
 static JSValue posixPipe2(JSGlobalObject* globalObject, JSValue flagsValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int flags;
-    if (!posixToInt(globalObject, flagsValue, flags))
+    if (failed(scope, posixToInt(globalObject, flagsValue, flags)))
         return { };
     int fds[2];
     if (pipe2(fds, flags))
-        return posixError(globalObject);
-    return PyTuple::create(globalObject, { jsNumber(fds[0]), jsNumber(fds[1]) });
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { jsNumber(fds[0]), jsNumber(fds[1]) }));
 }
 #endif
 
@@ -192,11 +204,13 @@ static JSValue posixPipe2(JSGlobalObject* globalObject, JSValue flagsValue)
 
 static JSValue posixLseek(JSGlobalObject* globalObject, JSValue fdValue, JSValue positionValue, JSValue whenceValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     writeOutPendingOutput(globalObject);
     int fd;
     off_t position;
     int whence;
-    if (!posixToInt(globalObject, fdValue, fd) || !posixToOffset(globalObject, positionValue, position) || !posixToInt(globalObject, whenceValue, whence))
+    if (failed(scope, posixToInt(globalObject, fdValue, fd)) || failed(scope, posixToOffset(globalObject, positionValue, position)) || failed(scope, posixToInt(globalObject, whenceValue, whence)))
         return { };
     switch (whence) {
     case 0:
@@ -211,8 +225,8 @@ static JSValue posixLseek(JSGlobalObject* globalObject, JSValue fdValue, JSValue
     }
     off_t result = lseek(fd, position, whence);
     if (result < 0)
-        return posixError(globalObject);
-    return makeInt(globalObject, static_cast<int64_t>(result));
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
+    RELEASE_AND_RETURN(scope, makeInt(globalObject, static_cast<int64_t>(result)));
 }
 
 // function(buffer, size) reads; what it read becomes bytes.
@@ -237,31 +251,37 @@ static JSValue posixReadBytes(JSGlobalObject* globalObject, int64_t length, cons
 
 static JSValue posixRead(JSGlobalObject* globalObject, JSValue fdValue, JSValue lengthValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int fd;
     int64_t length;
-    if (!posixToInt(globalObject, fdValue, fd) || !posixToSsize(globalObject, lengthValue, length))
+    if (failed(scope, posixToInt(globalObject, fdValue, fd)) || failed(scope, posixToSsize(globalObject, lengthValue, length)))
         return { };
     if (length > 0 && static_cast<size_t>(length) > posixMaxTransfer)
         length = static_cast<int64_t>(posixMaxTransfer);
-    return posixReadBytes(globalObject, length, [&](uint8_t* buffer, size_t size) { return read(fd, buffer, size); });
+    RELEASE_AND_RETURN(scope, posixReadBytes(globalObject, length, [&](uint8_t* buffer, size_t size) { return read(fd, buffer, size); }));
 }
 
 static JSValue posixPread(JSGlobalObject* globalObject, JSValue fdValue, JSValue lengthValue, JSValue offsetValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int fd;
     int64_t length;
     off_t offset;
-    if (!posixToInt(globalObject, fdValue, fd) || !posixToSsize(globalObject, lengthValue, length) || !posixToOffset(globalObject, offsetValue, offset))
+    if (failed(scope, posixToInt(globalObject, fdValue, fd)) || failed(scope, posixToSsize(globalObject, lengthValue, length)) || failed(scope, posixToOffset(globalObject, offsetValue, offset)))
         return { };
-    return posixReadBytes(globalObject, length, [&](uint8_t* buffer, size_t size) { return pread(fd, buffer, size, offset); });
+    RELEASE_AND_RETURN(scope, posixReadBytes(globalObject, length, [&](uint8_t* buffer, size_t size) { return pread(fd, buffer, size, offset); }));
 }
 
 static JSValue posixReadinto(JSGlobalObject* globalObject, JSValue fdValue, JSValue bufferValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     writeOutPendingOutput(globalObject);
     int fd;
     BufferHolder holder(globalObject);
-    if (!posixToInt(globalObject, fdValue, fd) || !posixGetWritableBuffer(globalObject, bufferValue, "readinto"_s, 2, holder))
+    if (failed(scope, posixToInt(globalObject, fdValue, fd)) || !posixGetWritableBuffer(globalObject, bufferValue, "readinto"_s, 2, holder))
         return { };
     auto buffer = holder.buffer.mutableSpan();
     ssize_t count;
@@ -270,16 +290,18 @@ static JSValue posixReadinto(JSGlobalObject* globalObject, JSValue fdValue, JSVa
         count = read(fd, buffer.data(), std::min(buffer.size(), posixMaxTransfer));
     } while (count < 0 && errno == EINTR && checkSignals(globalObject));
     if (count < 0)
-        return posixError(globalObject);
-    return posixMakeInt(globalObject, count);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
+    RELEASE_AND_RETURN(scope, posixMakeInt(globalObject, count));
 }
 
 static JSValue posixWrite(JSGlobalObject* globalObject, JSValue fdValue, JSValue data)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     writeOutPendingOutput(globalObject);
     int fd;
     BufferHolder holder(globalObject);
-    if (!posixToInt(globalObject, fdValue, fd) || !holder.get(data))
+    if (failed(scope, posixToInt(globalObject, fdValue, fd)) || !holder.get(data))
         return { };
     auto bytes = holder.buffer.span();
     ssize_t count;
@@ -288,17 +310,19 @@ static JSValue posixWrite(JSGlobalObject* globalObject, JSValue fdValue, JSValue
         count = write(fd, bytes.data(), std::min(bytes.size(), posixMaxTransfer));
     } while (count < 0 && errno == EINTR && checkSignals(globalObject));
     if (count < 0)
-        return posixError(globalObject);
-    return posixMakeInt(globalObject, count);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
+    RELEASE_AND_RETURN(scope, posixMakeInt(globalObject, count));
 }
 
 static JSValue posixPwrite(JSGlobalObject* globalObject, JSValue fdValue, JSValue data, JSValue offsetValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     writeOutPendingOutput(globalObject);
     int fd;
     BufferHolder holder(globalObject);
     off_t offset;
-    if (!posixToInt(globalObject, fdValue, fd) || !holder.get(data) || !posixToOffset(globalObject, offsetValue, offset) || !refreshBuffer(globalObject, holder.buffer))
+    if (failed(scope, posixToInt(globalObject, fdValue, fd)) || !holder.get(data) || failed(scope, posixToOffset(globalObject, offsetValue, offset)) || !refreshBuffer(globalObject, holder.buffer))
         return { };
     auto bytes = holder.buffer.span();
     ssize_t count;
@@ -307,8 +331,8 @@ static JSValue posixPwrite(JSGlobalObject* globalObject, JSValue fdValue, JSValu
         count = pwrite(fd, bytes.data(), bytes.size(), offset);
     } while (count < 0 && errno == EINTR && checkSignals(globalObject));
     if (count < 0)
-        return posixError(globalObject);
-    return posixMakeInt(globalObject, count);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
+    RELEASE_AND_RETURN(scope, posixMakeInt(globalObject, count));
 }
 
 // A sequence of buffers, for the calls that take several at once.
@@ -342,7 +366,7 @@ public:
             JSValue item = getItem(globalObject, sequence, makeInt(globalObject, i));
             RETURN_IF_EXCEPTION(scope, false);
             Buffer buffer;
-            if (!getBuffer(globalObject, item, buffer, writable ? BufferWritable : BufferSimple))
+            if (failed(scope, getBuffer(globalObject, item, buffer, writable ? BufferWritable : BufferSimple)))
                 return false;
             // The vector is not where the collector looks.
             m_values.append(buffer.object);
@@ -393,20 +417,24 @@ static JSValue posixTransfer(JSGlobalObject* globalObject, const Function& funct
 
 static JSValue posixReadv(JSGlobalObject* globalObject, JSValue fdValue, JSValue buffersValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int fd;
     PosixBufferList buffers(globalObject);
-    if (!posixToInt(globalObject, fdValue, fd) || !buffers.gather(buffersValue, "readv() arg 2 must be a sequence"_s, true))
+    if (failed(scope, posixToInt(globalObject, fdValue, fd)) || !buffers.gather(buffersValue, "readv() arg 2 must be a sequence"_s, true))
         return { };
-    return posixTransfer(globalObject, [&] { return readv(fd, buffers.vectors(), buffers.count()); });
+    RELEASE_AND_RETURN(scope, posixTransfer(globalObject, [&] { return readv(fd, buffers.vectors(), buffers.count()); }));
 }
 
 static JSValue posixWritev(JSGlobalObject* globalObject, JSValue fdValue, JSValue buffersValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int fd;
     PosixBufferList buffers(globalObject);
-    if (!posixToInt(globalObject, fdValue, fd) || !buffers.gather(buffersValue, "writev() arg 2 must be a sequence"_s, false))
+    if (failed(scope, posixToInt(globalObject, fdValue, fd)) || !buffers.gather(buffersValue, "writev() arg 2 must be a sequence"_s, false))
         return { };
-    return posixTransfer(globalObject, [&] { return writev(fd, buffers.vectors(), buffers.count()); });
+    RELEASE_AND_RETURN(scope, posixTransfer(globalObject, [&] { return writev(fd, buffers.vectors(), buffers.count()); }));
 }
 
 [[maybe_unused]] static JSValue posixFlagsUnavailable(JSGlobalObject* globalObject, ASCIILiteral function)
@@ -418,11 +446,13 @@ static JSValue posixWritev(JSGlobalObject* globalObject, JSValue fdValue, JSValu
 
 static JSValue posixPreadv(JSGlobalObject* globalObject, JSValue fdValue, JSValue buffersValue, JSValue offsetValue, JSValue flagsValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int fd;
     off_t offset;
     int flags = 0;
     PosixBufferList buffers(globalObject);
-    if (!posixToInt(globalObject, fdValue, fd) || !posixToOffset(globalObject, offsetValue, offset) || (flagsValue && !posixToInt(globalObject, flagsValue, flags)))
+    if (failed(scope, posixToInt(globalObject, fdValue, fd)) || failed(scope, posixToOffset(globalObject, offsetValue, offset)) || (flagsValue && failed(scope, posixToInt(globalObject, flagsValue, flags))))
         return { };
     if (!buffers.gather(buffersValue, "preadv2() arg 2 must be a sequence"_s, true))
         return { };
@@ -436,18 +466,20 @@ static JSValue posixPreadv(JSGlobalObject* globalObject, JSValue fdValue, JSValu
     });
 #else
     if (flags)
-        return posixFlagsUnavailable(globalObject, "preadv2"_s);
-    return posixTransfer(globalObject, [&] { return preadv(fd, buffers.vectors(), buffers.count(), offset); });
+        RELEASE_AND_RETURN(scope, posixFlagsUnavailable(globalObject, "preadv2"_s));
+    RELEASE_AND_RETURN(scope, posixTransfer(globalObject, [&] { return preadv(fd, buffers.vectors(), buffers.count(), offset); }));
 #endif
 }
 
 static JSValue posixPwritev(JSGlobalObject* globalObject, JSValue fdValue, JSValue buffersValue, JSValue offsetValue, JSValue flagsValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int fd;
     off_t offset;
     int flags = 0;
     PosixBufferList buffers(globalObject);
-    if (!posixToInt(globalObject, fdValue, fd) || !posixToOffset(globalObject, offsetValue, offset) || (flagsValue && !posixToInt(globalObject, flagsValue, flags)))
+    if (failed(scope, posixToInt(globalObject, fdValue, fd)) || failed(scope, posixToOffset(globalObject, offsetValue, offset)) || (flagsValue && failed(scope, posixToInt(globalObject, flagsValue, flags))))
         return { };
     if (!buffers.gather(buffersValue, "pwritev() arg 2 must be a sequence"_s, false))
         return { };
@@ -460,8 +492,8 @@ static JSValue posixPwritev(JSGlobalObject* globalObject, JSValue fdValue, JSVal
     });
 #else
     if (flags)
-        return posixFlagsUnavailable(globalObject, "pwritev2"_s);
-    return posixTransfer(globalObject, [&] { return pwritev(fd, buffers.vectors(), buffers.count(), offset); });
+        RELEASE_AND_RETURN(scope, posixFlagsUnavailable(globalObject, "pwritev2"_s));
+    RELEASE_AND_RETURN(scope, posixTransfer(globalObject, [&] { return pwritev(fd, buffers.vectors(), buffers.count(), offset); }));
 #endif
 }
 
@@ -470,10 +502,12 @@ static JSValue posixPwritev(JSGlobalObject* globalObject, JSValue fdValue, JSVal
 // An offset, or None for "where the descriptor is".
 static bool posixToOptionalOffset(JSGlobalObject* globalObject, JSValue value, off_t& storage, off_t*& result)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     result = nullptr;
     if (!value || isNone(value))
         return true;
-    if (!posixToOffset(globalObject, value, storage))
+    if (failed(scope, posixToOffset(globalObject, value, storage)))
         return false;
     result = &storage;
     return true;
@@ -482,19 +516,23 @@ static bool posixToOptionalOffset(JSGlobalObject* globalObject, JSValue value, o
 #if OS(LINUX)
 static JSValue posixSendfile(JSGlobalObject* globalObject, JSValue outValue, JSValue inValue, JSValue offsetValue, JSValue countValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int out;
     int in;
     int64_t count;
     off_t storage;
     off_t* offset;
-    if (!posixToInt(globalObject, outValue, out) || !posixToInt(globalObject, inValue, in) || !posixToCount(globalObject, countValue, "count"_s, count)
+    if (failed(scope, posixToInt(globalObject, outValue, out)) || failed(scope, posixToInt(globalObject, inValue, in)) || failed(scope, posixToCount(globalObject, countValue, "count"_s, count))
         || !posixToOptionalOffset(globalObject, offsetValue, storage, offset))
         return { };
-    return posixTransfer(globalObject, [&] { return sendfile(out, in, offset, static_cast<size_t>(count)); });
+    RELEASE_AND_RETURN(scope, posixTransfer(globalObject, [&] { return sendfile(out, in, offset, static_cast<size_t>(count)); }));
 }
 
 static JSValue posixCopyFileRange(JSGlobalObject* globalObject, JSValue sourceValue, JSValue destinationValue, JSValue countValue, JSValue sourceOffsetValue, JSValue destinationOffsetValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int source;
     int destination;
     int64_t count;
@@ -502,14 +540,16 @@ static JSValue posixCopyFileRange(JSGlobalObject* globalObject, JSValue sourceVa
     off_t destinationStorage;
     off_t* sourceOffset;
     off_t* destinationOffset;
-    if (!posixToInt(globalObject, sourceValue, source) || !posixToInt(globalObject, destinationValue, destination) || !posixToCount(globalObject, countValue, "count"_s, count)
+    if (failed(scope, posixToInt(globalObject, sourceValue, source)) || failed(scope, posixToInt(globalObject, destinationValue, destination)) || failed(scope, posixToCount(globalObject, countValue, "count"_s, count))
         || !posixToOptionalOffset(globalObject, sourceOffsetValue, sourceStorage, sourceOffset) || !posixToOptionalOffset(globalObject, destinationOffsetValue, destinationStorage, destinationOffset))
         return { };
-    return posixTransfer(globalObject, [&] { return static_cast<ssize_t>(syscall(SYS_copy_file_range, source, sourceOffset, destination, destinationOffset, static_cast<size_t>(count), 0u)); });
+    RELEASE_AND_RETURN(scope, posixTransfer(globalObject, [&] { return static_cast<ssize_t>(syscall(SYS_copy_file_range, source, sourceOffset, destination, destinationOffset, static_cast<size_t>(count), 0u)); }));
 }
 
 static JSValue posixSplice(JSGlobalObject* globalObject, JSValue sourceValue, JSValue destinationValue, JSValue countValue, JSValue sourceOffsetValue, JSValue destinationOffsetValue, JSValue flagsValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int source;
     int destination;
     int64_t count;
@@ -518,11 +558,11 @@ static JSValue posixSplice(JSGlobalObject* globalObject, JSValue sourceValue, JS
     off_t* sourceOffset;
     off_t* destinationOffset;
     unsigned flags = 0;
-    if (!posixToInt(globalObject, sourceValue, source) || !posixToInt(globalObject, destinationValue, destination) || !posixToCount(globalObject, countValue, "count"_s, count)
+    if (failed(scope, posixToInt(globalObject, sourceValue, source)) || failed(scope, posixToInt(globalObject, destinationValue, destination)) || failed(scope, posixToCount(globalObject, countValue, "count"_s, count))
         || (flagsValue && !posixToUnsigned(globalObject, flagsValue, flags))
         || !posixToOptionalOffset(globalObject, sourceOffsetValue, sourceStorage, sourceOffset) || !posixToOptionalOffset(globalObject, destinationOffsetValue, destinationStorage, destinationOffset))
         return { };
-    return posixTransfer(globalObject, [&] { return splice(source, sourceOffset, destination, destinationOffset, static_cast<size_t>(count), flags); });
+    RELEASE_AND_RETURN(scope, posixTransfer(globalObject, [&] { return splice(source, sourceOffset, destination, destinationOffset, static_cast<size_t>(count), flags); }));
 }
 #endif // OS(LINUX)
 
@@ -537,7 +577,7 @@ static JSValue posixSendfile(JSGlobalObject* globalObject, JSValue outValue, JSV
     off_t offset;
     off_t byteCount;
     int flags = 0;
-    if (!posixToInt(globalObject, outValue, out) || !posixToInt(globalObject, inValue, in) || !posixToOffset(globalObject, offsetValue, offset)
+    if (failed(scope, posixToInt(globalObject, outValue, out)) || failed(scope, posixToInt(globalObject, inValue, in)) || failed(scope, posixToOffset(globalObject, offsetValue, offset))
         || !posixToOffset(globalObject, countValue, byteCount) || (flagsValue && !posixToInt(globalObject, flagsValue, flags)))
         return { };
     if (byteCount < 0)
@@ -567,22 +607,24 @@ static JSValue posixSendfile(JSGlobalObject* globalObject, JSValue outValue, JSV
     if (result < 0) {
         // Some of it may have been sent all the same.
         if ((errno == EAGAIN || errno == EBUSY) && byteCount)
-            return makeInt(globalObject, static_cast<int64_t>(byteCount));
-        return posixError(globalObject);
+            RELEASE_AND_RETURN(scope, makeInt(globalObject, static_cast<int64_t>(byteCount)));
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     }
-    return makeInt(globalObject, static_cast<int64_t>(byteCount));
+    RELEASE_AND_RETURN(scope, makeInt(globalObject, static_cast<int64_t>(byteCount)));
 }
 
 static JSValue posixFcopyfile(JSGlobalObject* globalObject, JSValue inValue, JSValue outValue, JSValue flagsValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     writeOutPendingOutput(globalObject);
     int in;
     int out;
     int flags;
-    if (!posixToInt(globalObject, inValue, in) || !posixToInt(globalObject, outValue, out) || !posixToInt(globalObject, flagsValue, flags))
+    if (failed(scope, posixToInt(globalObject, inValue, in)) || failed(scope, posixToInt(globalObject, outValue, out)) || failed(scope, posixToInt(globalObject, flagsValue, flags)))
         return { };
     if (fcopyfile(in, out, nullptr, static_cast<copyfile_flags_t>(flags)) < 0)
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     return jsUndefined();
 }
 #endif // OS(DARWIN)
@@ -591,9 +633,11 @@ static JSValue posixFcopyfile(JSGlobalObject* globalObject, JSValue inValue, JSV
 
 static JSValue posixFstat(JSGlobalObject* globalObject, JSValue fdValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     writeOutPendingOutput(globalObject);
     int fd;
-    if (!posixToInt(globalObject, fdValue, fd))
+    if (failed(scope, posixToInt(globalObject, fdValue, fd)))
         return { };
     struct stat status;
     int result;
@@ -601,8 +645,8 @@ static JSValue posixFstat(JSGlobalObject* globalObject, JSValue fdValue)
         result = fstat(fd, &status);
     } while (result && errno == EINTR && checkSignals(globalObject));
     if (result)
-        return posixError(globalObject);
-    return posixStatResult(globalObject, status);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
+    RELEASE_AND_RETURN(scope, posixStatResult(globalObject, status));
 }
 
 // function(fd), again if a signal interrupts it.
@@ -650,45 +694,53 @@ static JSValue posixFchdir(JSGlobalObject* globalObject, JSValue fdValue)
 
 static JSValue posixFchmod(JSGlobalObject* globalObject, JSValue fdValue, JSValue modeValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int fd;
     int mode;
-    if (!posixToInt(globalObject, fdValue, fd) || !posixToInt(globalObject, modeValue, mode))
+    if (failed(scope, posixToInt(globalObject, fdValue, fd)) || failed(scope, posixToInt(globalObject, modeValue, mode)))
         return { };
     if (!audit(globalObject, "os.chmod"_s, jsNumber(fd), jsNumber(mode), jsNumber(-1)))
         return { };
-    return posixCallWithDescriptor(globalObject, [&] { return fchmod(fd, static_cast<mode_t>(mode)); });
+    RELEASE_AND_RETURN(scope, posixCallWithDescriptor(globalObject, [&] { return fchmod(fd, static_cast<mode_t>(mode)); }));
 }
 
 static JSValue posixFchown(JSGlobalObject* globalObject, JSValue fdValue, JSValue uidValue, JSValue gidValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int fd;
     uid_t uid;
     gid_t gid;
-    if (!posixToInt(globalObject, fdValue, fd) || !posixToUid(globalObject, uidValue, uid) || !posixToGid(globalObject, gidValue, gid))
+    if (failed(scope, posixToInt(globalObject, fdValue, fd)) || failed(scope, posixToUid(globalObject, uidValue, uid)) || failed(scope, posixToGid(globalObject, gidValue, gid)))
         return { };
     if (!audit(globalObject, "os.chown"_s, jsNumber(fd), jsNumber(static_cast<uint32_t>(uid)), jsNumber(static_cast<uint32_t>(gid)), jsNumber(-1)))
         return { };
-    return posixCallWithDescriptor(globalObject, [&] { return fchown(fd, uid, gid); });
+    RELEASE_AND_RETURN(scope, posixCallWithDescriptor(globalObject, [&] { return fchown(fd, uid, gid); }));
 }
 
 static JSValue posixFtruncate(JSGlobalObject* globalObject, JSValue fdValue, JSValue lengthValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     writeOutPendingOutput(globalObject);
     int fd;
     off_t length;
-    if (!posixToInt(globalObject, fdValue, fd) || !posixToOffset(globalObject, lengthValue, length))
+    if (failed(scope, posixToInt(globalObject, fdValue, fd)) || failed(scope, posixToOffset(globalObject, lengthValue, length)))
         return { };
     if (!audit(globalObject, "os.truncate"_s, jsNumber(fd), lengthValue))
         return { };
-    return posixCallWithDescriptor(globalObject, [&] { return ftruncate(fd, length); });
+    RELEASE_AND_RETURN(scope, posixCallWithDescriptor(globalObject, [&] { return ftruncate(fd, length); }));
 }
 
 static JSValue posixLockf(JSGlobalObject* globalObject, JSValue fdValue, JSValue commandValue, JSValue lengthValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int fd;
     int command;
     off_t length;
-    if (!posixToInt(globalObject, fdValue, fd) || !posixToInt(globalObject, commandValue, command) || !posixToOffset(globalObject, lengthValue, length))
+    if (failed(scope, posixToInt(globalObject, fdValue, fd)) || failed(scope, posixToInt(globalObject, commandValue, command)) || failed(scope, posixToOffset(globalObject, lengthValue, length)))
         return { };
     if (!audit(globalObject, "os.lockf"_s, jsNumber(fd), jsNumber(command), lengthValue))
         return { };
@@ -698,7 +750,7 @@ static JSValue posixLockf(JSGlobalObject* globalObject, JSValue fdValue, JSValue
         result = lockf(fd, command, length);
     }
     if (result < 0)
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     return jsUndefined();
 }
 
@@ -722,24 +774,28 @@ static JSValue posixCallReturningError(JSGlobalObject* globalObject, const Funct
 
 static JSValue posixFallocate(JSGlobalObject* globalObject, JSValue fdValue, JSValue offsetValue, JSValue lengthValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int fd;
     off_t offset;
     off_t length;
-    if (!posixToInt(globalObject, fdValue, fd) || !posixToOffset(globalObject, offsetValue, offset) || !posixToOffset(globalObject, lengthValue, length))
+    if (failed(scope, posixToInt(globalObject, fdValue, fd)) || failed(scope, posixToOffset(globalObject, offsetValue, offset)) || failed(scope, posixToOffset(globalObject, lengthValue, length)))
         return { };
-    return posixCallReturningError(globalObject, [&] { return posix_fallocate(fd, offset, length); });
+    RELEASE_AND_RETURN(scope, posixCallReturningError(globalObject, [&] { return posix_fallocate(fd, offset, length); }));
 }
 
 static JSValue posixFadvise(JSGlobalObject* globalObject, JSValue fdValue, JSValue offsetValue, JSValue lengthValue, JSValue adviceValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int fd;
     off_t offset;
     off_t length;
     int advice;
-    if (!posixToInt(globalObject, fdValue, fd) || !posixToOffset(globalObject, offsetValue, offset) || !posixToOffset(globalObject, lengthValue, length)
+    if (failed(scope, posixToInt(globalObject, fdValue, fd)) || failed(scope, posixToOffset(globalObject, offsetValue, offset)) || failed(scope, posixToOffset(globalObject, lengthValue, length))
         || !posixToInt(globalObject, adviceValue, advice))
         return { };
-    return posixCallReturningError(globalObject, [&] { return posix_fadvise(fd, offset, length, advice); });
+    RELEASE_AND_RETURN(scope, posixCallReturningError(globalObject, [&] { return posix_fadvise(fd, offset, length, advice); }));
 }
 #endif
 
@@ -747,49 +803,57 @@ static JSValue posixFadvise(JSGlobalObject* globalObject, JSValue fdValue, JSVal
 
 static JSValue posixGetInheritable(JSGlobalObject* globalObject, JSValue fdValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int fd;
-    if (!posixToInt(globalObject, fdValue, fd))
+    if (failed(scope, posixToInt(globalObject, fdValue, fd)))
         return { };
     int flags = fcntl(fd, F_GETFD, 0);
     if (flags == -1)
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     return jsBoolean(!(flags & FD_CLOEXEC));
 }
 
 static JSValue posixSetInheritableFunction(JSGlobalObject* globalObject, JSValue fdValue, JSValue inheritableValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int fd;
     int inheritable;
-    if (!posixToInt(globalObject, fdValue, fd) || !posixToInt(globalObject, inheritableValue, inheritable))
+    if (failed(scope, posixToInt(globalObject, fdValue, fd)) || failed(scope, posixToInt(globalObject, inheritableValue, inheritable)))
         return { };
     if (!posixSetInheritable(fd, inheritable))
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     return jsUndefined();
 }
 
 static JSValue posixGetBlocking(JSGlobalObject* globalObject, JSValue fdValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int fd;
-    if (!posixToInt(globalObject, fdValue, fd))
+    if (failed(scope, posixToInt(globalObject, fdValue, fd)))
         return { };
     int flags = fcntl(fd, F_GETFL, 0);
     if (flags < 0)
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     return jsBoolean(!(flags & O_NONBLOCK));
 }
 
 static JSValue posixSetBlocking(JSGlobalObject* globalObject, JSValue fdValue, JSValue blockingValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int fd;
     bool blocking;
-    if (!posixToInt(globalObject, fdValue, fd) || !posixToBool(globalObject, blockingValue, true, blocking))
+    if (failed(scope, posixToInt(globalObject, fdValue, fd)) || !posixToBool(globalObject, blockingValue, true, blocking))
         return { };
     int flags = fcntl(fd, F_GETFL, 0);
     if (flags < 0)
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     int newFlags = blocking ? flags & ~O_NONBLOCK : flags | O_NONBLOCK;
     if (newFlags != flags && fcntl(fd, F_SETFL, newFlags) < 0)
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     return jsUndefined();
 }
 
@@ -797,24 +861,28 @@ static JSValue posixSetBlocking(JSGlobalObject* globalObject, JSValue fdValue, J
 
 static JSValue posixIsatty(JSGlobalObject* globalObject, JSValue fdValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int fd;
-    if (!posixToInt(globalObject, fdValue, fd))
+    if (failed(scope, posixToInt(globalObject, fdValue, fd)))
         return { };
     return jsBoolean(isatty(fd));
 }
 
 static JSValue posixTtyname(JSGlobalObject* globalObject, JSValue fdValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int fd;
-    if (!posixToInt(globalObject, fdValue, fd))
+    if (failed(scope, posixToInt(globalObject, fdValue, fd)))
         return { };
     long size = sysconf(_SC_TTY_NAME_MAX);
     if (size == -1)
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     Vector<char, 256> buffer(static_cast<size_t>(size));
     if (int result = ttyname_r(fd, buffer.mutableSpan().data(), buffer.size()))
-        return posixError(globalObject, result);
-    return posixDecode(globalObject, buffer.span().data());
+        RELEASE_AND_RETURN(scope, posixError(globalObject, result));
+    RELEASE_AND_RETURN(scope, posixDecode(globalObject, buffer.span().data()));
 }
 
 static JSValue posixCtermid(JSGlobalObject* globalObject)
@@ -827,34 +895,40 @@ static JSValue posixCtermid(JSGlobalObject* globalObject)
 
 static JSValue posixTcgetpgrp(JSGlobalObject* globalObject, JSValue fdValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int fd;
-    if (!posixToInt(globalObject, fdValue, fd))
+    if (failed(scope, posixToInt(globalObject, fdValue, fd)))
         return { };
     pid_t group = tcgetpgrp(fd);
     if (group < 0)
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     return jsNumber(group);
 }
 
 static JSValue posixTcsetpgrp(JSGlobalObject* globalObject, JSValue fdValue, JSValue groupValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int fd;
     pid_t group;
-    if (!posixToInt(globalObject, fdValue, fd) || !posixToPid(globalObject, groupValue, group))
+    if (failed(scope, posixToInt(globalObject, fdValue, fd)) || failed(scope, posixToPid(globalObject, groupValue, group)))
         return { };
     if (tcsetpgrp(fd, group) < 0)
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     return jsUndefined();
 }
 
 static JSValue posixOpenpt(JSGlobalObject* globalObject, JSValue flagsValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int flags;
-    if (!posixToInt(globalObject, flagsValue, flags))
+    if (failed(scope, posixToInt(globalObject, flagsValue, flags)))
         return { };
     int fd = posix_openpt(flags | O_CLOEXEC);
     if (fd == -1)
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     // Not every system heeds the flag here.
     if (!posixSetInheritable(fd, false)) {
         JSValue error = posixError(globalObject);
@@ -965,13 +1039,15 @@ static JSValue posixMemfdCreate(JSGlobalObject* globalObject, JSValue nameValue,
 
 static JSValue posixEventfd(JSGlobalObject* globalObject, JSValue initialValue, JSValue flagsValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     unsigned initial;
     int flags = EFD_CLOEXEC;
-    if (!posixToUnsigned(globalObject, initialValue, initial) || (flagsValue && !posixToInt(globalObject, flagsValue, flags)))
+    if (failed(scope, posixToUnsigned(globalObject, initialValue, initial)) || (flagsValue && failed(scope, posixToInt(globalObject, flagsValue, flags))))
         return { };
     int fd = eventfd(initial, flags);
     if (fd == -1)
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     return jsNumber(fd);
 }
 
@@ -988,24 +1064,28 @@ static JSValue posixEventfdRead(JSGlobalObject* globalObject, JSValue fdValue)
 
 static JSValue posixEventfdWrite(JSGlobalObject* globalObject, JSValue fdValue, JSValue valueValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int fd;
     uint64_t value;
-    if (!posixToFileDescriptor(globalObject, fdValue, fd) || !posixToUnsignedLongLong(globalObject, valueValue, value))
+    if (!posixToFileDescriptor(globalObject, fdValue, fd) || failed(scope, posixToUnsignedLongLong(globalObject, valueValue, value)))
         return { };
     if (eventfd_write(fd, value) == -1)
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     return jsUndefined();
 }
 
 static JSValue posixTimerfdCreate(JSGlobalObject* globalObject, JSValue clockValue, JSValue flagsValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int clock;
     int flags = 0;
-    if (!posixToInt(globalObject, clockValue, clock) || (flagsValue && !posixToInt(globalObject, flagsValue, flags)))
+    if (failed(scope, posixToInt(globalObject, clockValue, clock)) || (flagsValue && failed(scope, posixToInt(globalObject, flagsValue, flags))))
         return { };
     int fd = timerfd_create(clock, flags | TFD_CLOEXEC);
     if (fd == -1)
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     return jsNumber(fd);
 }
 
@@ -1054,32 +1134,36 @@ static JSValue posixTimerSpecInNanoseconds(JSGlobalObject* globalObject, const s
 
 static JSValue posixTimerfdSettime(JSGlobalObject* globalObject, JSValue fdValue, JSValue flagsValue, JSValue initialValue, JSValue intervalValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int fd;
     int flags = 0;
     struct itimerspec newSpec;
     struct itimerspec oldSpec;
-    if (!posixToFileDescriptor(globalObject, fdValue, fd) || (flagsValue && !posixToInt(globalObject, flagsValue, flags))
+    if (!posixToFileDescriptor(globalObject, fdValue, fd) || (flagsValue && failed(scope, posixToInt(globalObject, flagsValue, flags)))
         || !posixSecondsToTimespec(globalObject, initialValue, newSpec.it_value) || !posixSecondsToTimespec(globalObject, intervalValue, newSpec.it_interval))
         return { };
     if (timerfd_settime(fd, flags, &newSpec, &oldSpec) == -1)
-        return posixError(globalObject);
-    return posixTimerSpecInSeconds(globalObject, oldSpec);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
+    RELEASE_AND_RETURN(scope, posixTimerSpecInSeconds(globalObject, oldSpec));
 }
 
 static JSValue posixTimerfdSettimeNs(JSGlobalObject* globalObject, JSValue fdValue, JSValue flagsValue, JSValue initialValue, JSValue intervalValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int fd;
     int flags = 0;
     int64_t initial = 0;
     int64_t interval = 0;
-    if (!posixToFileDescriptor(globalObject, fdValue, fd) || (flagsValue && !posixToInt(globalObject, flagsValue, flags))
+    if (!posixToFileDescriptor(globalObject, fdValue, fd) || (flagsValue && failed(scope, posixToInt(globalObject, flagsValue, flags)))
         || (initialValue && !posixToLongLong(globalObject, initialValue, initial)) || (intervalValue && !posixToLongLong(globalObject, intervalValue, interval)))
         return { };
     struct itimerspec newSpec { posixTimespecFromNanoseconds(interval), posixTimespecFromNanoseconds(initial) };
     struct itimerspec oldSpec;
     if (timerfd_settime(fd, flags, &newSpec, &oldSpec) == -1)
-        return posixError(globalObject);
-    return posixTimerSpecInNanoseconds(globalObject, oldSpec);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
+    RELEASE_AND_RETURN(scope, posixTimerSpecInNanoseconds(globalObject, oldSpec));
 }
 
 static JSValue posixTimerfdGettime(JSGlobalObject* globalObject, JSValue fdValue)

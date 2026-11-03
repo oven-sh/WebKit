@@ -921,7 +921,7 @@ static bool bufferGetFromMemoryView(JSGlobalObject* globalObject, PyMemoryView* 
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!memoryViewCheckReleased(globalObject, scope, view) || !memoryViewCheckRestricted(globalObject, scope, view))
+    if (failed(scope, memoryViewCheckReleased(globalObject, scope, view)) || failed(scope, memoryViewCheckRestricted(globalObject, scope, view)))
         return false;
     auto fail = [&](ASCIILiteral message) {
         raiseBufferError(globalObject, scope, message);
@@ -971,12 +971,14 @@ static ALWAYS_INLINE bool bufferIsCoreExporter(JSCell* cell)
 
 static bool bufferGetFromCoreExporter(JSGlobalObject* globalObject, JSCell* cell, Buffer& buffer, unsigned flags)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     if (PyMemoryView::is(cell))
-        return bufferGetFromMemoryView(globalObject, uncheckedDowncast<PyMemoryView>(cell), buffer, flags);
-    if (!bufferCheckFlags(globalObject, flags))
+        RELEASE_AND_RETURN(scope, bufferGetFromMemoryView(globalObject, uncheckedDowncast<PyMemoryView>(cell), buffer, flags));
+    if (failed(scope, bufferCheckFlags(globalObject, flags)))
         return false;
     if (cell->type() == PyBytesType)
-        return bufferFill(globalObject, buffer, cell, { cell, 0, uncheckedDowncast<PyBytes>(cell)->length(), true }, flags);
+        RELEASE_AND_RETURN(scope, bufferFill(globalObject, buffer, cell, { cell, 0, uncheckedDowncast<PyBytes>(cell)->length(), true }, flags));
     if (cell->type() == PyByteArrayType) {
         auto* array = uncheckedDowncast<PyByteArray>(cell);
         if (!bufferFill(globalObject, buffer, cell, { cell, 0, array->length(), false, 1, { }, bufferReleaseByteArrayExport }, flags))
@@ -1101,7 +1103,7 @@ static bool bufferGet(JSGlobalObject* globalObject, JSValue object, Buffer& buff
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     ASSERT(!buffer.object);
-    if (!bufferCheckFlags(globalObject, flags))
+    if (failed(scope, bufferCheckFlags(globalObject, flags)))
         return false;
     if (object && object.isCell()) {
         JSCell* cell = object.asCell();
@@ -1236,9 +1238,9 @@ JSValue makeMemoryView(JSGlobalObject* globalObject, JSValue object, unsigned fl
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (auto* view = PyMemoryView::tryFrom(object)) {
-        if (!memoryViewCheckReleased(globalObject, scope, view) || !memoryViewCheckRestricted(globalObject, scope, view))
+        if (failed(scope, memoryViewCheckReleased(globalObject, scope, view)) || failed(scope, memoryViewCheckRestricted(globalObject, scope, view)))
             return { };
-        return memoryViewCopy(globalObject, view);
+        RELEASE_AND_RETURN(scope, memoryViewCopy(globalObject, view));
     }
     if (!hasBuffer(object))
         return raiseTypeError(globalObject, scope, "memoryview: a bytes-like object is required, not '"_s, typeName(globalObject, object), '\'');
@@ -1268,20 +1270,24 @@ static bool bufferFlagsArgument(JSGlobalObject* globalObject, JSValue value, uns
 
 JSValue bufferMethod(JSGlobalObject* globalObject, JSValue self, JSValue flagsValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     unsigned flags;
     Buffer buffer;
-    if (!bufferFlagsArgument(globalObject, flagsValue, flags) || !bufferGetFromCoreExporter(globalObject, self.asCell(), buffer, flags))
+    if (failed(scope, bufferFlagsArgument(globalObject, flagsValue, flags)) || !bufferGetFromCoreExporter(globalObject, self.asCell(), buffer, flags))
         return { };
-    return memoryViewTakingOver(globalObject, buffer);
+    RELEASE_AND_RETURN(scope, memoryViewTakingOver(globalObject, buffer));
 }
 
 JSValue exportBuffer(JSGlobalObject* globalObject, JSValue self, JSValue flagsValue, const BufferExport& source)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     unsigned flags;
     Buffer buffer;
-    if (!bufferFlagsArgument(globalObject, flagsValue, flags) || !bufferFill(globalObject, buffer, self, source, flags))
+    if (failed(scope, bufferFlagsArgument(globalObject, flagsValue, flags)) || !bufferFill(globalObject, buffer, self, source, flags))
         return { };
-    return memoryViewTakingOver(globalObject, buffer);
+    RELEASE_AND_RETURN(scope, memoryViewTakingOver(globalObject, buffer));
 }
 
 static JSValue memoryViewRelease(JSGlobalObject*, JSValue self);
@@ -1400,7 +1406,7 @@ static JSValue memoryViewUnpackAt(JSGlobalObject* globalObject, const PyMemoryVi
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!memoryViewCheckReleased(globalObject, scope, view))
+    if (failed(scope, memoryViewCheckReleased(globalObject, scope, view)))
         return { };
     uint8_t* data = view->data(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
@@ -1432,7 +1438,7 @@ static bool memoryViewPackAt(JSGlobalObject* globalObject, PyMemoryView* view, i
     };
     uint8_t* pointer = nullptr;
     auto locate = [&] {
-        if (!memoryViewCheckReleased(globalObject, scope, view))
+        if (failed(scope, memoryViewCheckReleased(globalObject, scope, view)))
             return false;
         pointer = view->data(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
@@ -1523,7 +1529,7 @@ static bool memoryViewPackAt(JSGlobalObject* globalObject, PyMemoryView* view, i
             break;
         double real;
         double imaginary;
-        if (!complexArgument(globalObject, item, real, imaginary))
+        if (failed(scope, complexArgument(globalObject, item, real, imaginary)))
             return fixError();
         if (!locate())
             return false;
@@ -1566,11 +1572,13 @@ static bool memoryViewPackAt(JSGlobalObject* globalObject, PyMemoryView* view, i
 
 static JSValue memoryViewNew(JSGlobalObject* globalObject, JSValue, const CallArgs& args)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     static constexpr ASCIILiteral keywords[] = { "object"_s };
     JSValue object;
-    if (!unpackKeywordArguments(globalObject, "memoryview"_s, keywords, 1, 1, false, args, &object))
+    if (failed(scope, unpackKeywordArguments(globalObject, "memoryview"_s, keywords, 1, 1, false, args, &object)))
         return { };
-    return makeMemoryView(globalObject, object);
+    RELEASE_AND_RETURN(scope, makeMemoryView(globalObject, object));
 }
 
 static JSValue memoryViewFromFlags(JSGlobalObject* globalObject, JSValue, JSValue object, JSValue flagsValue)
@@ -1597,7 +1605,7 @@ static JSValue memoryViewEnter(JSGlobalObject* globalObject, JSValue self)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!memoryViewCheckReleased(globalObject, scope, PyMemoryView::from(self)))
+    if (failed(scope, memoryViewCheckReleased(globalObject, scope, PyMemoryView::from(self))))
         return { };
     return self;
 }
@@ -1622,7 +1630,7 @@ static JSValue memoryViewCast(JSGlobalObject* globalObject, JSValue self, JSValu
     auto* view = PyMemoryView::from(self);
     if (!isStr(formatValue))
         return raiseTypeError(globalObject, scope, "cast() argument 'format' must be str, not "_s, typeNameOfArgument(globalObject, formatValue));
-    if (!memoryViewCheckReleased(globalObject, scope, view) || !memoryViewCheckRestricted(globalObject, scope, view))
+    if (failed(scope, memoryViewCheckReleased(globalObject, scope, view)) || failed(scope, memoryViewCheckRestricted(globalObject, scope, view)))
         return { };
     if (!view->isCContiguous)
         return raiseTypeError(globalObject, scope, "memoryview: casts are restricted to C-contiguous views"_s);
@@ -1713,7 +1721,7 @@ static JSValue memoryViewToReadOnly(JSGlobalObject* globalObject, JSValue self)
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* view = PyMemoryView::from(self);
-    if (!memoryViewCheckReleased(globalObject, scope, view) || !memoryViewCheckRestricted(globalObject, scope, view))
+    if (failed(scope, memoryViewCheckReleased(globalObject, scope, view)) || failed(scope, memoryViewCheckRestricted(globalObject, scope, view)))
         return { };
     PyMemoryView* result = memoryViewCopy(globalObject, view);
     result->isReadOnly = true;
@@ -1745,7 +1753,7 @@ static JSValue memoryViewToList(JSGlobalObject* globalObject, JSValue self)
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* view = PyMemoryView::from(self);
-    if (!memoryViewCheckReleased(globalObject, scope, view) || !memoryViewCheckFormat(globalObject, scope, view))
+    if (failed(scope, memoryViewCheckReleased(globalObject, scope, view)) || failed(scope, memoryViewCheckFormat(globalObject, scope, view)))
         return { };
     uint8_t* data = view->data(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
@@ -1782,7 +1790,7 @@ static JSValue memoryViewToBytes(JSGlobalObject* globalObject, JSValue self, JSV
         if (orderString.contains('\0'))
             return raiseValueError(globalObject, scope, "embedded null character"_s);
     }
-    if (!memoryViewCheckReleased(globalObject, scope, view))
+    if (failed(scope, memoryViewCheckReleased(globalObject, scope, view)))
         return { };
     if (!orderString.isNull()) {
         if (orderString == "F"_s)
@@ -1801,9 +1809,9 @@ static JSValue memoryViewHex(JSGlobalObject* globalObject, JSValue self, JSValue
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* view = PyMemoryView::from(self);
     int64_t group = 1;
-    if (bytesPerSeparator && !ssizeArgument(globalObject, bytesPerSeparator, group))
+    if (bytesPerSeparator && failed(scope, ssizeArgument(globalObject, bytesPerSeparator, group)))
         return { };
-    if (!memoryViewCheckReleased(globalObject, scope, view))
+    if (failed(scope, memoryViewCheckReleased(globalObject, scope, view)))
         return { };
     PyBytes* bytes = memoryViewContiguousCopy(globalObject, view, 'C');
     RETURN_IF_EXCEPTION(scope, { });
@@ -1844,7 +1852,7 @@ static bool memoryViewOffsetFromTuple(JSGlobalObject* globalObject, const PyMemo
     for (unsigned i = 0; i < tuple->length(); ++i) {
         int64_t index = toSsize(globalObject, tuple->at(i), rt.IndexError());
         RETURN_IF_EXCEPTION(scope, false);
-        if (!memoryViewLookUpDimension(globalObject, view, i, index, offset))
+        if (failed(scope, memoryViewLookUpDimension(globalObject, view, i, index, offset)))
             return false;
     }
     return true;
@@ -1884,14 +1892,14 @@ static JSValue memoryViewItem(JSGlobalObject* globalObject, const PyMemoryView* 
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!memoryViewCheckReleased(globalObject, scope, view) || !memoryViewCheckFormat(globalObject, scope, view))
+    if (failed(scope, memoryViewCheckReleased(globalObject, scope, view)) || failed(scope, memoryViewCheckFormat(globalObject, scope, view)))
         return { };
     if (!view->dimensions())
         return raiseTypeError(globalObject, scope, "invalid indexing of 0-dim memory"_s);
     if (view->dimensions() > 1)
         return raiseNotImplementedError(globalObject, scope, "multi-dimensional sub-views are not implemented"_s);
     int64_t offset = 0;
-    if (!memoryViewLookUpDimension(globalObject, view, 0, index, offset))
+    if (failed(scope, memoryViewLookUpDimension(globalObject, view, 0, index, offset)))
         return { };
     RELEASE_AND_RETURN(scope, memoryViewUnpackAt(globalObject, view, offset));
 }
@@ -1902,12 +1910,12 @@ static JSValue memoryViewGetItem(JSGlobalObject* globalObject, JSValue self, JSV
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* view = PyMemoryView::from(self);
-    if (!memoryViewCheckReleased(globalObject, scope, view))
+    if (failed(scope, memoryViewCheckReleased(globalObject, scope, view)))
         return { };
 
     if (!view->dimensions()) {
         if (memoryViewIsEmptyTuple(key)) {
-            if (!memoryViewCheckFormat(globalObject, scope, view))
+            if (failed(scope, memoryViewCheckFormat(globalObject, scope, view)))
                 return { };
             RELEASE_AND_RETURN(scope, memoryViewUnpackAt(globalObject, view, 0));
         }
@@ -1922,7 +1930,7 @@ static JSValue memoryViewGetItem(JSGlobalObject* globalObject, JSValue self, JSV
         RELEASE_AND_RETURN(scope, memoryViewItem(globalObject, view, index));
     }
     if (auto* slice = PySlice::tryFrom(key)) {
-        if (!memoryViewCheckRestricted(globalObject, scope, view))
+        if (failed(scope, memoryViewCheckRestricted(globalObject, scope, view)))
             return { };
         PyMemoryView* result = memoryViewCopy(globalObject, view);
         PySlice::Indices indices;
@@ -1940,12 +1948,12 @@ static JSValue memoryViewGetItem(JSGlobalObject* globalObject, JSValue self, JSV
     }
     if (memoryViewIsMultiIndex(globalObject, key)) {
         auto* tuple = PyTuple::from(key);
-        if (!memoryViewCheckFormat(globalObject, scope, view))
+        if (failed(scope, memoryViewCheckFormat(globalObject, scope, view)))
             return { };
         if (tuple->length() < view->dimensions())
             return raiseNotImplementedError(globalObject, scope, "sub-views are not implemented"_s);
         int64_t offset;
-        if (!memoryViewOffsetFromTuple(globalObject, view, tuple, offset))
+        if (failed(scope, memoryViewOffsetFromTuple(globalObject, view, tuple, offset)))
             return { };
         RELEASE_AND_RETURN(scope, memoryViewUnpackAt(globalObject, view, offset));
     }
@@ -1961,7 +1969,7 @@ static JSValue memoryViewAssign(JSGlobalObject* globalObject, JSValue self, JSVa
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* view = PyMemoryView::from(self);
-    if (!memoryViewCheckReleased(globalObject, scope, view) || !memoryViewCheckFormat(globalObject, scope, view))
+    if (failed(scope, memoryViewCheckReleased(globalObject, scope, view)) || failed(scope, memoryViewCheckFormat(globalObject, scope, view)))
         return { };
     if (view->isReadOnly)
         return raiseTypeError(globalObject, scope, "cannot modify read-only memory"_s);
@@ -1986,7 +1994,7 @@ static JSValue memoryViewAssign(JSGlobalObject* globalObject, JSValue self, JSVa
         int64_t index = toSsize(globalObject, key, rt.IndexError());
         RETURN_IF_EXCEPTION(scope, { });
         int64_t offset = 0;
-        if (!memoryViewLookUpDimension(globalObject, view, 0, index, offset))
+        if (failed(scope, memoryViewLookUpDimension(globalObject, view, 0, index, offset)))
             return { };
         return packAt(offset);
     }
@@ -2000,7 +2008,7 @@ static JSValue memoryViewAssign(JSGlobalObject* globalObject, JSValue self, JSVa
         if (!slice->indices(globalObject, view->shape()[0], indices))
             return { };
         // That may have run code.
-        if (!memoryViewCheckReleased(globalObject, scope, view))
+        if (failed(scope, memoryViewCheckReleased(globalObject, scope, view)))
             return { };
         String sourceFormat = buffer.format.isNull() ? "B"_str : buffer.format;
         bool sameShape = buffer.dimensions == 1 && buffer.shape[0] == indices.length;
@@ -2034,7 +2042,7 @@ static JSValue memoryViewAssign(JSGlobalObject* globalObject, JSValue self, JSVa
         if (tuple->length() < view->dimensions())
             return raiseNotImplementedError(globalObject, scope, "sub-views are not implemented"_s);
         int64_t offset;
-        if (!memoryViewOffsetFromTuple(globalObject, view, tuple, offset))
+        if (failed(scope, memoryViewOffsetFromTuple(globalObject, view, tuple, offset)))
             return { };
         return packAt(offset);
     }
@@ -2051,11 +2059,11 @@ static JSValue memoryViewLen(JSGlobalObject* globalObject, JSValue self)
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* view = PyMemoryView::from(self);
-    if (!memoryViewCheckReleased(globalObject, scope, view))
+    if (failed(scope, memoryViewCheckReleased(globalObject, scope, view)))
         return { };
     if (!view->dimensions())
         return raiseTypeError(globalObject, scope, "0-dim memory has no length"_s);
-    return makeInt(globalObject, view->shape()[0]);
+    RELEASE_AND_RETURN(scope, makeInt(globalObject, view->shape()[0]));
 }
 
 // ---- Iteration and searching ----
@@ -2072,13 +2080,13 @@ static JSValue memoryViewIter(JSGlobalObject* globalObject, JSValue self)
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* view = PyMemoryView::from(self);
-    if (!memoryViewCheckReleased(globalObject, scope, view))
+    if (failed(scope, memoryViewCheckReleased(globalObject, scope, view)))
         return { };
     if (!view->dimensions())
         return raiseTypeError(globalObject, scope, "invalid indexing of 0-dim memory"_s);
     if (view->dimensions() != 1)
         return raiseNotImplementedError(globalObject, scope, "multi-dimensional sub-views are not implemented"_s);
-    if (!memoryViewCheckFormat(globalObject, scope, view))
+    if (failed(scope, memoryViewCheckFormat(globalObject, scope, view)))
         return { };
     PyRecord* iterator = PyRecord::create(globalObject, rt.memoryviewIteratorType(), MemoryViewIteratorFieldCount);
     iterator->set(vm, MemoryViewIteratorView, view);
@@ -2119,7 +2127,7 @@ static JSValue memoryViewCount(JSGlobalObject* globalObject, JSValue self, JSVal
         RETURN_IF_EXCEPTION(scope, { });
         count += equal;
     }
-    return makeInt(globalObject, count);
+    RELEASE_AND_RETURN(scope, makeInt(globalObject, count));
 }
 
 static JSValue memoryViewIndex(JSGlobalObject* globalObject, JSValue self, JSValue value, JSValue startValue, JSValue stopValue)
@@ -2129,9 +2137,9 @@ static JSValue memoryViewIndex(JSGlobalObject* globalObject, JSValue self, JSVal
     auto* view = PyMemoryView::from(self);
     int64_t start = 0;
     int64_t stop = std::numeric_limits<int64_t>::max();
-    if ((startValue && !sliceIndexArgument(globalObject, startValue, start)) || (stopValue && !sliceIndexArgument(globalObject, stopValue, stop)))
+    if ((startValue && failed(scope, sliceIndexArgument(globalObject, startValue, start))) || (stopValue && failed(scope, sliceIndexArgument(globalObject, stopValue, stop))))
         return { };
-    if (!memoryViewCheckReleased(globalObject, scope, view))
+    if (failed(scope, memoryViewCheckReleased(globalObject, scope, view)))
         return { };
     if (!view->dimensions())
         return raiseTypeError(globalObject, scope, "invalid lookup on 0-dim memory"_s);
@@ -2150,7 +2158,7 @@ static JSValue memoryViewIndex(JSGlobalObject* globalObject, JSValue self, JSVal
         bool equal = isEqual(globalObject, item, value);
         RETURN_IF_EXCEPTION(scope, { });
         if (equal)
-            return makeInt(globalObject, index);
+            RELEASE_AND_RETURN(scope, makeInt(globalObject, index));
     }
     return raiseValueError(globalObject, scope, "memoryview.index(x): x not found"_s);
 }
@@ -2341,7 +2349,7 @@ static std::optional<bool> memoryViewEquals(JSGlobalObject* globalObject, PyMemo
 
     MemoryViewUnpacker unpackV;
     MemoryViewUnpacker unpackW;
-    if (!memoryViewMakeUnpacker(globalObject, v, unpackV) || !memoryViewMakeUnpacker(globalObject, w, unpackW)) {
+    if (failed(scope, memoryViewMakeUnpacker(globalObject, v, unpackV)) || failed(scope, memoryViewMakeUnpacker(globalObject, w, unpackW))) {
         // A format that struct does not know makes them different.
         if (pendingExceptionMatches(globalObject, rt.ImportError()) || pendingExceptionMatches(globalObject, rt.MemoryError()))
             return std::nullopt;
@@ -2374,7 +2382,7 @@ static JSValue memoryViewCompare(JSGlobalObject* globalObject, JSValue self, JSV
     auto equal = memoryViewEquals(globalObject, PyMemoryView::from(self), other);
     RETURN_IF_EXCEPTION(scope, { });
     if (!equal)
-        return runtime(globalObject).notImplemented();
+        RELEASE_AND_RETURN(scope, runtime(globalObject).notImplemented());
     return jsBoolean(*equal != negate);
 }
 
@@ -2386,8 +2394,8 @@ static JSValue memoryViewHash(JSGlobalObject* globalObject, JSValue self)
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* view = PyMemoryView::from(self);
     if (view->hasHash)
-        return makeInt(globalObject, view->hash);
-    if (!memoryViewCheckReleased(globalObject, scope, view))
+        RELEASE_AND_RETURN(scope, makeInt(globalObject, view->hash));
+    if (failed(scope, memoryViewCheckReleased(globalObject, scope, view)))
         return { };
     if (!view->isReadOnly)
         return raiseValueError(globalObject, scope, "cannot hash writable memoryview object"_s);
@@ -2410,7 +2418,7 @@ static JSValue memoryViewHash(JSGlobalObject* globalObject, JSValue self)
         view->hash = hashOfBytes(bytes->span());
     }
     view->hasHash = true;
-    return makeInt(globalObject, view->hash);
+    RELEASE_AND_RETURN(scope, makeInt(globalObject, view->hash));
 }
 
 // ---- Attributes ----
@@ -2429,7 +2437,7 @@ static ALWAYS_INLINE JSValue memoryViewAttribute(JSGlobalObject* globalObject, J
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* view = PyMemoryView::from(self);
-    if (!memoryViewCheckReleased(globalObject, scope, view))
+    if (failed(scope, memoryViewCheckReleased(globalObject, scope, view)))
         return { };
     return function(view);
 }
@@ -2612,13 +2620,15 @@ static JSValue pickleBufferNew(JSGlobalObject* globalObject, JSValue, const Call
 // The buffer is that of the object itself.
 static JSValue pickleBufferBuffer(JSGlobalObject* globalObject, JSValue self, JSValue flagsValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     unsigned flags;
-    if (!bufferFlagsArgument(globalObject, flagsValue, flags))
+    if (failed(scope, bufferFlagsArgument(globalObject, flagsValue, flags)))
         return { };
     PyMemoryView* view = pickleBufferView(globalObject, self);
     if (!view)
         return { };
-    return memoryViewOfBuffer(globalObject, view->managedBuffer()->object(), flags);
+    RELEASE_AND_RETURN(scope, memoryViewOfBuffer(globalObject, view->managedBuffer()->object(), flags));
 }
 
 static JSValue pickleBufferRaw(JSGlobalObject* globalObject, JSValue self)

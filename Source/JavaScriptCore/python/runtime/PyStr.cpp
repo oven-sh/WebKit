@@ -542,11 +542,13 @@ static int compareStrings(StringView a, StringView b)
         unsigned y = b[i];
         if (x == y)
             continue;
-        // What takes a surrogate pair comes after all that does not.
-        if (x >= 0xd800 && y >= 0xd800) {
-            x = x >= 0xe000 ? x - 0x800 : x + 0x2000;
-            y = y >= 0xe000 ? y - 0x800 : y + 0x2000;
-        }
+        // The code points they differ in. A surrogate may stand alone, and is then a code point below all that take a pair.
+        if (i && U16_IS_LEAD(a[i - 1]) && U16_IS_TRAIL(x) != U16_IS_TRAIL(y))
+            return U16_IS_TRAIL(x) ? 1 : -1;
+        if (U16_IS_LEAD(x) && i + 1 < a.length() && U16_IS_TRAIL(a[i + 1]))
+            x = U16_GET_SUPPLEMENTARY(x, a[i + 1]);
+        if (U16_IS_LEAD(y) && i + 1 < b.length() && U16_IS_TRAIL(b[i + 1]))
+            y = U16_GET_SUPPLEMENTARY(y, b[i + 1]);
         return x < y ? -1 : 1;
     }
     return a.length() < b.length() ? -1 : a.length() > b.length();
@@ -571,7 +573,7 @@ static JSValue strHashMethod(JSGlobalObject* globalObject, JSValue self)
     auto scope = DECLARE_THROW_SCOPE(vm);
     int64_t result = hash(globalObject, strValue(self));
     RETURN_IF_EXCEPTION(scope, { });
-    return makeInt(globalObject, result);
+    RELEASE_AND_RETURN(scope, makeInt(globalObject, result));
 }
 
 static JSValue strLenMethod(JSGlobalObject* globalObject, JSValue self) { return jsNumber(strLength(globalObject, strValue(self))); }
@@ -765,7 +767,7 @@ static JSValue strGetItem(JSGlobalObject* globalObject, JSValue self, JSValue ke
     PY_STR_METHOD_PROLOGUE(view);
     if (hasIndex(globalObject, key)) {
         int64_t index;
-        if (!normalizeIndex(globalObject, key, view.length(), "string index out of range"_s, index))
+        if (failed(scope, normalizeIndex(globalObject, key, view.length(), "string index out of range"_s, index)))
             return { };
         if (view.isSimple())
             return jsSingleCharacterString(vm, static_cast<char16_t>(view.string()[index]));
@@ -797,7 +799,7 @@ static JSValue strGetItem(JSGlobalObject* globalObject, JSValue self, JSValue ke
         for (int64_t i = 0; i < indices.length; ++i, position += indices.step)
             appendCodePoint(builder, characters[position]);
     }
-    return makeStr(globalObject, builder);
+    RELEASE_AND_RETURN(scope, makeStr(globalObject, builder));
 }
 
 static JSValue strIter(JSGlobalObject* globalObject, JSValue self)
@@ -817,8 +819,8 @@ static JSValue strGetNewArgs(JSGlobalObject* globalObject, JSValue self)
     String text = strValue(self)->value(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
     if (text.length() < 2)
-        return PyTuple::create(globalObject, { JSValue(strValue(self)) });
-    return PyTuple::create(globalObject, { JSValue(jsNontrivialString(vm, text.is8Bit() ? String(text.span8()) : String(text.span16()))) });
+        RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { JSValue(strValue(self)) }));
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { JSValue(jsNontrivialString(vm, text.is8Bit() ? String(text.span8()) : String(text.span16()))) }));
 }
 
 static JSValue strFormatSpecMethod(JSGlobalObject* globalObject, JSValue self, JSValue spec)
@@ -877,7 +879,7 @@ static JSValue strFindMethod(JSGlobalObject* globalObject, JSValue self, JSValue
 {
     PY_STR_METHOD_PROLOGUE(view);
     String needle;
-    if (!strArgument(globalObject, sub, mustFind ? (reverse ? "rindex"_s : "index"_s) : (reverse ? "rfind"_s : "find"_s), 1, needle))
+    if (failed(scope, strArgument(globalObject, sub, mustFind ? (reverse ? "rindex"_s : "index"_s) : (reverse ? "rfind"_s : "find"_s), 1, needle)))
         return { };
     int64_t from, to;
     if (!sliceBounds(globalObject, start, end, view.length(), from, to))
@@ -892,7 +894,7 @@ static JSValue strCount(JSGlobalObject* globalObject, JSValue self, JSValue sub,
 {
     PY_STR_METHOD_PROLOGUE(view);
     String needle;
-    if (!strArgument(globalObject, sub, "count"_s, 1, needle))
+    if (failed(scope, strArgument(globalObject, sub, "count"_s, 1, needle)))
         return { };
     int64_t from, to;
     if (!sliceBounds(globalObject, start, end, view.length(), from, to))
@@ -949,7 +951,7 @@ static JSValue strRemovePrefix(JSGlobalObject* globalObject, JSValue self, JSVal
 {
     PY_STR_METHOD_PROLOGUE(view);
     String prefix;
-    if (!strArgument(globalObject, prefixValue, "removeprefix"_s, 0, prefix))
+    if (failed(scope, strArgument(globalObject, prefixValue, "removeprefix"_s, 0, prefix)))
         return { };
     if (startsWithText(view.string(), prefix))
         return sliceOfUnits(vm, selfString, view.string(), prefix.length(), view.unitLength());
@@ -960,7 +962,7 @@ static JSValue strRemoveSuffix(JSGlobalObject* globalObject, JSValue self, JSVal
 {
     PY_STR_METHOD_PROLOGUE(view);
     String suffix;
-    if (!strArgument(globalObject, suffixValue, "removesuffix"_s, 0, suffix))
+    if (failed(scope, strArgument(globalObject, suffixValue, "removesuffix"_s, 0, suffix)))
         return { };
     if (endsWithText(view.string(), suffix))
         return sliceOfUnits(vm, selfString, view.string(), 0, view.unitLength() - suffix.length());
@@ -971,10 +973,10 @@ static JSValue strReplace(JSGlobalObject* globalObject, JSValue self, JSValue ol
 {
     PY_STR_METHOD_PROLOGUE(view);
     String target, replacement;
-    if (!strArgument(globalObject, oldValue, "replace"_s, 1, target) || !strArgument(globalObject, newValue, "replace"_s, 2, replacement))
+    if (failed(scope, strArgument(globalObject, oldValue, "replace"_s, 1, target)) || failed(scope, strArgument(globalObject, newValue, "replace"_s, 2, replacement)))
         return { };
     int64_t count = -1;
-    if (countValue && !ssizeArgument(globalObject, countValue, count))
+    if (countValue && failed(scope, ssizeArgument(globalObject, countValue, count)))
         return { };
     if (count < 0)
         count = std::numeric_limits<int64_t>::max();
@@ -998,7 +1000,7 @@ static JSValue strReplace(JSGlobalObject* globalObject, JSValue self, JSValue ol
         }
         if (!first && count > 0)
             builder.append(replacement);
-        return makeStr(globalObject, builder);
+        RELEASE_AND_RETURN(scope, makeStr(globalObject, builder));
     }
     size_t position = findText(string, target);
     if (position == notFound)
@@ -1013,29 +1015,57 @@ static JSValue strReplace(JSGlobalObject* globalObject, JSValue self, JSValue ol
     builder.append(StringView(string).substring(copied));
     if (builder.hasOverflowed())
         return raiseOverflowError(globalObject, scope, "replace string is too long"_s);
-    return makeStr(globalObject, builder);
+    RELEASE_AND_RETURN(scope, makeStr(globalObject, builder));
 }
 
 // ---- Splitting and joining ----
 
 static bool parseMaxSplit(JSGlobalObject* globalObject, JSValue value, int64_t& result)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     result = std::numeric_limits<int64_t>::max();
     if (!value)
         return true;
     int64_t given;
-    if (!ssizeArgument(globalObject, value, given))
+    if (failed(scope, ssizeArgument(globalObject, value, given)))
         return false;
     if (given >= 0)
         result = given;
     return true;
 }
 
+// Whether CPython sees without searching that the separator is not in the text: it is longer, or has characters that take more
+// bytes (1, 2 or 4) than any in the text. The one item of the result is then the object itself, of whatever class derived from str.
+static bool cannotHold(const StrView& view, const String& separator)
+{
+    auto measure = [](const String& string, int64_t& length) {
+        length = string.length();
+        if (string.is8Bit())
+            return 1;
+        int width = 1;
+        auto units = string.span16();
+        for (size_t i = 0; i < units.size(); ++i) {
+            if (units[i] > 0xff)
+                width = std::max(width, 2);
+            if (U16_IS_LEAD(units[i]) && i + 1 < units.size() && U16_IS_TRAIL(units[i + 1])) {
+                width = 4;
+                --length;
+                ++i;
+            }
+        }
+        return width;
+    };
+    int64_t length, separatorLength;
+    int width = measure(view.string(), length);
+    return width < measure(separator, separatorLength) || length < separatorLength;
+}
+
 static JSValue strSplit(JSGlobalObject* globalObject, JSValue self, JSValue separatorValue, JSValue maxSplitValue)
 {
     PY_STR_METHOD_PROLOGUE(view);
     int64_t maxSplit;
-    if (!parseMaxSplit(globalObject, maxSplitValue, maxSplit))
+    if (failed(scope, parseMaxSplit(globalObject, maxSplitValue, maxSplit)))
         return { };
     const String& string = view.string();
     unsigned length = string.length();
@@ -1067,6 +1097,10 @@ static JSValue strSplit(JSGlobalObject* globalObject, JSValue self, JSValue sepa
     RETURN_IF_EXCEPTION(scope, { });
     if (separator.isEmpty())
         return raiseValueError(globalObject, scope, "empty separator"_s);
+    if (!self.isString() && cannotHold(view, separator)) [[unlikely]] {
+        listAppend(globalObject, result, self);
+        return result;
+    }
     unsigned start = 0;
     while (maxSplit-- > 0) {
         size_t position = findText(string, separator, start);
@@ -1093,7 +1127,7 @@ static JSValue strRSplit(JSGlobalObject* globalObject, JSValue self, JSValue sep
 {
     PY_STR_METHOD_PROLOGUE(view);
     int64_t maxSplit;
-    if (!parseMaxSplit(globalObject, maxSplitValue, maxSplit))
+    if (failed(scope, parseMaxSplit(globalObject, maxSplitValue, maxSplit)))
         return { };
     const String& string = view.string();
     JSArray* result = newList(globalObject);
@@ -1124,6 +1158,10 @@ static JSValue strRSplit(JSGlobalObject* globalObject, JSValue self, JSValue sep
     RETURN_IF_EXCEPTION(scope, { });
     if (separator.isEmpty())
         return raiseValueError(globalObject, scope, "empty separator"_s);
+    if (!self.isString() && cannotHold(view, separator)) [[unlikely]] {
+        listAppend(globalObject, result, self);
+        return result;
+    }
     unsigned end = string.length();
     while (maxSplit-- > 0 && end >= separator.length()) {
         size_t position = reverseFindText(StringView(string).left(end), separator);
@@ -1178,12 +1216,13 @@ static JSValue strPartition(JSGlobalObject* globalObject, JSValue self, JSValue 
     const String& string = view.string();
     size_t position = reverse ? reverseFindText(string, separator) : findText(string, separator);
     JSString* empty = jsEmptyString(vm);
+    // The str and the separator are the objects themselves, of whatever class derived from str.
     if (position == notFound) {
         if (reverse)
-            return PyTuple::create(globalObject, { empty, empty, selfString });
-        return PyTuple::create(globalObject, { selfString, empty, empty });
+            RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { empty, empty, self }));
+        RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { self, empty, empty }));
     }
-    return PyTuple::create(globalObject, { sliceOfUnits(vm, nullptr, string, 0, position), separatorString, sliceOfUnits(vm, nullptr, string, position + separator.length(), string.length()) });
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { sliceOfUnits(vm, nullptr, string, 0, position), separatorValue, sliceOfUnits(vm, nullptr, string, position + separator.length(), string.length()) }));
 }
 
 JSString* strJoin(JSGlobalObject* globalObject, JSString* separatorString, JSValue iterable)
@@ -1201,12 +1240,14 @@ JSString* strJoin(JSGlobalObject* globalObject, JSString* separatorString, JSVal
         for (unsigned i = 0; i < listLength(list); ++i)
             items.append(listGet(list, i));
     } else {
-        PyType* type = typeOf(globalObject, iterable);
-        if (!type->lookup(Special::Iter) && !type->lookup(Special::GetItem)) {
-            raiseTypeError(globalObject, scope, "can only join an iterable"_s);
+        // Whatever TypeError asking for the iterator ends in.
+        JSValue iterator = getIter(globalObject, iterable);
+        if (!iterator) {
+            if (clearPendingExceptionIfMatches(globalObject, runtime(globalObject).TypeError()))
+                raiseTypeError(globalObject, scope, "can only join an iterable"_s);
             return nullptr;
         }
-        forEach(globalObject, iterable, [&](JSValue item) {
+        forEach(globalObject, iterator, [&](JSValue item) {
             items.append(item);
             return true;
         });
@@ -1239,7 +1280,7 @@ JSString* strJoin(JSGlobalObject* globalObject, JSString* separatorString, JSVal
         raiseOverflowError(globalObject, scope, "join() result is too long for a Python string"_s);
         return nullptr;
     }
-    return makeStr(globalObject, builder);
+    RELEASE_AND_RETURN(scope, makeStr(globalObject, builder));
 }
 
 static JSValue strJoinMethod(JSGlobalObject* globalObject, JSValue self, JSValue iterable)
@@ -1343,7 +1384,7 @@ static JSValue pad(JSGlobalObject* globalObject, JSString* string, const StrView
     builder.append(view.string());
     for (int64_t i = 0; i < right; ++i)
         appendCodePoint(builder, fill);
-    return makeStr(globalObject, builder);
+    RELEASE_AND_RETURN(scope, makeStr(globalObject, builder));
 }
 
 enum class Justify : uint8_t { Left, Right, Center };
@@ -1353,28 +1394,28 @@ static JSValue strJustify(JSGlobalObject* globalObject, JSValue self, JSValue wi
 {
     PY_STR_METHOD_PROLOGUE(view);
     int64_t width;
-    if (!ssizeArgument(globalObject, widthValue, width))
+    if (failed(scope, ssizeArgument(globalObject, widthValue, width)))
         return { };
     char32_t fill;
-    if (!fillCharacter(globalObject, fillValue, fill))
+    if (failed(scope, fillCharacter(globalObject, fillValue, fill)))
         return { };
     if (width <= static_cast<int64_t>(view.length()))
         return selfString;
     int64_t margin = width - view.length();
     scope.release();
     if (justify == Justify::Left)
-        return pad(globalObject, selfString, view, 0, margin, fill);
+        RELEASE_AND_RETURN(scope, pad(globalObject, selfString, view, 0, margin, fill));
     if (justify == Justify::Right)
-        return pad(globalObject, selfString, view, margin, 0, fill);
+        RELEASE_AND_RETURN(scope, pad(globalObject, selfString, view, margin, 0, fill));
     int64_t left = margin / 2 + (margin & width & 1);
-    return pad(globalObject, selfString, view, left, margin - left, fill);
+    RELEASE_AND_RETURN(scope, pad(globalObject, selfString, view, left, margin - left, fill));
 }
 
 static JSValue strZFill(JSGlobalObject* globalObject, JSValue self, JSValue widthValue)
 {
     PY_STR_METHOD_PROLOGUE(view);
     int64_t width;
-    if (!ssizeArgument(globalObject, widthValue, width))
+    if (failed(scope, ssizeArgument(globalObject, widthValue, width)))
         return { };
     if (width <= static_cast<int64_t>(view.length()))
         return selfString;
@@ -1391,7 +1432,7 @@ static JSValue strZFill(JSGlobalObject* globalObject, JSValue self, JSValue widt
     for (int64_t i = 0; i < fill; ++i)
         builder.append('0');
     builder.append(StringView(string).substring(start));
-    return makeStr(globalObject, builder);
+    RELEASE_AND_RETURN(scope, makeStr(globalObject, builder));
 }
 
 static JSValue strExpandTabs(JSGlobalObject* globalObject, JSValue self, JSValue tabSizeValue)
@@ -1422,7 +1463,7 @@ static JSValue strExpandTabs(JSGlobalObject* globalObject, JSValue self, JSValue
     }
     if (builder.hasOverflowed())
         return raiseOverflowError(globalObject, scope, "new string is too long"_s);
-    return makeStr(globalObject, builder);
+    RELEASE_AND_RETURN(scope, makeStr(globalObject, builder));
 }
 
 // ---- Case ----
@@ -1486,7 +1527,7 @@ static JSValue strLower(JSGlobalObject* globalObject, JSValue self)
     StrBuilder builder;
     for (size_t i = 0; i < text.size(); ++i)
         appendLower(builder, text, i);
-    return makeStr(globalObject, builder);
+    RELEASE_AND_RETURN(scope, makeStr(globalObject, builder));
 }
 
 static JSValue strUpper(JSGlobalObject* globalObject, JSValue self)
@@ -1497,7 +1538,7 @@ static JSValue strUpper(JSGlobalObject* globalObject, JSValue self)
     StrBuilder builder;
     for (char32_t character : view.view().codePoints())
         appendMapped(builder, character, CaseMapping::Upper);
-    return makeStr(globalObject, builder);
+    RELEASE_AND_RETURN(scope, makeStr(globalObject, builder));
 }
 
 static JSValue strCaseFold(JSGlobalObject* globalObject, JSValue self)
@@ -1508,7 +1549,7 @@ static JSValue strCaseFold(JSGlobalObject* globalObject, JSValue self)
     StrBuilder builder;
     for (char32_t character : view.view().codePoints())
         appendMapped(builder, character, CaseMapping::Fold);
-    return makeStr(globalObject, builder);
+    RELEASE_AND_RETURN(scope, makeStr(globalObject, builder));
 }
 
 static JSValue strSwapCase(JSGlobalObject* globalObject, JSValue self)
@@ -1524,7 +1565,7 @@ static JSValue strSwapCase(JSGlobalObject* globalObject, JSValue self)
         else
             appendCodePoint(builder, text[i]);
     }
-    return makeStr(globalObject, builder);
+    RELEASE_AND_RETURN(scope, makeStr(globalObject, builder));
 }
 
 static JSValue strCapitalize(JSGlobalObject* globalObject, JSValue self)
@@ -1538,7 +1579,7 @@ static JSValue strCapitalize(JSGlobalObject* globalObject, JSValue self)
         else
             appendLower(builder, text, i);
     }
-    return makeStr(globalObject, builder);
+    RELEASE_AND_RETURN(scope, makeStr(globalObject, builder));
 }
 
 static JSValue strTitle(JSGlobalObject* globalObject, JSValue self)
@@ -1554,7 +1595,7 @@ static JSValue strTitle(JSGlobalObject* globalObject, JSValue self)
             appendMapped(builder, text[i], CaseMapping::Title);
         previousIsCased = isCased(text[i]);
     }
-    return makeStr(globalObject, builder);
+    RELEASE_AND_RETURN(scope, makeStr(globalObject, builder));
 }
 
 // ---- Predicates ----
@@ -1693,7 +1734,7 @@ static JSValue strTranslate(JSGlobalObject* globalObject, JSValue self, JSValue 
         RETURN_IF_EXCEPTION(scope, { });
         builder.append(text.data);
     }
-    return makeStr(globalObject, builder);
+    RELEASE_AND_RETURN(scope, makeStr(globalObject, builder));
 }
 
 static JSValue strMakeTrans(JSGlobalObject* globalObject, JSValue x, JSValue y, JSValue z)
@@ -1876,16 +1917,16 @@ static constexpr NativeDef strMethods[] = {
     PY_METHOD("casefold", strCaseFold, "($self, /)"),
     PY_METHOD("title", strTitle, "($self, /)"),
     PY_METHOD("center", strJustify<Justify::Center>, "($self, width, fillchar=' ', /)"),
-    PY_METHOD("count", strCount, "($self, sub, start=None, end=None, /)"),
+    PY_METHOD("count", strCount, "($self, sub[, start[, end]], /)"),
     PY_METHOD("expandtabs", strExpandTabs, "($self, /, tabsize=8)"),
-    PY_METHOD("find", (strFindMethod<false, false>), "($self, sub, start=None, end=None, /)"),
+    PY_METHOD("find", (strFindMethod<false, false>), "($self, sub[, start[, end]], /)"),
     PY_METHOD("partition", strPartition<false>, "($self, sep, /)"),
-    PY_METHOD("index", (strFindMethod<false, true>), "($self, sub, start=None, end=None, /)"),
+    PY_METHOD("index", (strFindMethod<false, true>), "($self, sub[, start[, end]], /)"),
     PY_METHOD("ljust", strJustify<Justify::Left>, "($self, width, fillchar=' ', /)"),
     PY_METHOD("lower", strLower, "($self, /)"),
     PY_METHOD("lstrip", strStrip<StripSide::Left>, "($self, chars=None, /)"),
-    PY_METHOD("rfind", (strFindMethod<true, false>), "($self, sub, start=None, end=None, /)"),
-    PY_METHOD("rindex", (strFindMethod<true, true>), "($self, sub, start=None, end=None, /)"),
+    PY_METHOD("rfind", (strFindMethod<true, false>), "($self, sub[, start[, end]], /)"),
+    PY_METHOD("rindex", (strFindMethod<true, true>), "($self, sub[, start[, end]], /)"),
     PY_METHOD("rjust", strJustify<Justify::Right>, "($self, width, fillchar=' ', /)"),
     PY_METHOD("rstrip", strStrip<StripSide::Right>, "($self, chars=None, /)"),
     PY_METHOD("rpartition", strPartition<true>, "($self, sep, /)"),
@@ -1894,8 +1935,8 @@ static constexpr NativeDef strMethods[] = {
     PY_METHOD("swapcase", strSwapCase, "($self, /)"),
     PY_METHOD("translate", strTranslate, "($self, table, /)"),
     PY_METHOD("upper", strUpper, "($self, /)"),
-    PY_METHOD("startswith", strStartsOrEndsWith<false>, "($self, prefix, start=None, end=None, /)"),
-    PY_METHOD("endswith", strStartsOrEndsWith<true>, "($self, suffix, start=None, end=None, /)"),
+    PY_METHOD("startswith", strStartsOrEndsWith<false>, "($self, prefix[, start[, end]], /)"),
+    PY_METHOD("endswith", strStartsOrEndsWith<true>, "($self, suffix[, start[, end]], /)"),
     PY_METHOD("removeprefix", strRemovePrefix, "($self, prefix, /)"),
     PY_METHOD("removesuffix", strRemoveSuffix, "($self, suffix, /)"),
     PY_METHOD("isascii", strIsASCII, "($self, /)"),

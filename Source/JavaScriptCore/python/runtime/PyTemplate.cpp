@@ -72,7 +72,7 @@ static JSValue interpolationNew(JSGlobalObject* globalObject, JSValue, const Cal
     auto scope = DECLARE_THROW_SCOPE(vm);
     static constexpr ASCIILiteral keywords[] = { "value"_s, "expression"_s, "conversion"_s, "format_spec"_s };
     JSValue values[std::size(keywords)];
-    if (!unpackKeywordArguments(globalObject, "Interpolation"_s, keywords, 1, 4, false, args, values))
+    if (failed(scope, unpackKeywordArguments(globalObject, "Interpolation"_s, keywords, 1, 4, false, args, values)))
         return { };
 
     JSValue expression = values[1] ? values[1] : JSValue(rt.names.empty());
@@ -94,7 +94,7 @@ static JSValue interpolationNew(JSGlobalObject* globalObject, JSValue, const Cal
     if (!isStr(formatSpec))
         RELEASE_AND_RETURN(scope, interpolationRaiseNotStr(globalObject, "format_spec"_s, formatSpec));
 
-    return newInterpolation(globalObject, values[0], expression, conversion, formatSpec);
+    RELEASE_AND_RETURN(scope, newInterpolation(globalObject, values[0], expression, conversion, formatSpec));
 }
 
 static JSValue interpolationRepr(JSGlobalObject* globalObject, JSValue self)
@@ -112,7 +112,7 @@ static JSValue interpolationRepr(JSGlobalObject* globalObject, JSValue self)
         builder.append(text);
     }
     builder.append(')');
-    return makeStr(globalObject, builder);
+    RELEASE_AND_RETURN(scope, makeStr(globalObject, builder));
 }
 
 static JSValue interpolationReduce(JSGlobalObject* globalObject, JSValue self)
@@ -154,7 +154,7 @@ JSValue buildInterpolation(JSGlobalObject* globalObject, JSValue value, JSValue 
         else
             return raiseSystemError(globalObject, scope, "Interpolation() argument 'conversion' must be one of 's', 'a' or 'r'"_s);
     }
-    return newInterpolation(globalObject, value, expression, conversion, formatSpec ? formatSpec : JSValue(rt.names.empty()));
+    RELEASE_AND_RETURN(scope, newInterpolation(globalObject, value, expression, conversion, formatSpec ? formatSpec : JSValue(rt.names.empty())));
 }
 
 // ---- Template ----
@@ -212,7 +212,7 @@ static JSValue templateNew(JSGlobalObject* globalObject, JSValue, const CallArgs
     }
     if (!lastWasString)
         strings.append(rt.names.empty());
-    return buildTemplate(globalObject, PyTuple::create(globalObject, spanOf(strings)), PyTuple::create(globalObject, spanOf(interpolations)));
+    RELEASE_AND_RETURN(scope, buildTemplate(globalObject, PyTuple::create(globalObject, spanOf(strings)), PyTuple::create(globalObject, spanOf(interpolations))));
 }
 
 static JSValue templateRepr(JSGlobalObject* globalObject, JSValue self)
@@ -260,7 +260,7 @@ static JSValue templateConcat(JSGlobalObject* globalObject, JSValue self, JSValu
         interpolations->initializeAt(vm, index++, item);
     for (JSValue item : rightInterpolations->span())
         interpolations->initializeAt(vm, index++, item);
-    return buildTemplate(globalObject, strings, interpolations);
+    RELEASE_AND_RETURN(scope, buildTemplate(globalObject, strings, interpolations));
 }
 
 static JSValue templateGetStrings(JSGlobalObject*, JSValue self) { return PyRecord::from(self)->get(templateStrings); }
@@ -285,7 +285,7 @@ static JSValue templateReduce(JSGlobalObject* globalObject, JSValue self)
     JSValue function = getAttr(globalObject, module, internString(vm, "_template_unpickle"_s));
     RETURN_IF_EXCEPTION(scope, { });
     PyRecord* object = PyRecord::from(self);
-    return PyTuple::create(globalObject, { function, PyTuple::create(globalObject, { object->get(templateStrings), object->get(templateInterpolations) }) });
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { function, PyTuple::create(globalObject, { object->get(templateStrings), object->get(templateInterpolations) }) }));
 }
 
 // ---- Iterating over a template: its strings, but for the empty ones, and its interpolations, in turn ----

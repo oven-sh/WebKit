@@ -35,11 +35,11 @@ static JSValue pwdRaiseKeyError(JSGlobalObject* globalObject, const String& mess
 // The name to look up, for a function whose argument must be a str.
 static bool pwdToName(JSGlobalObject* globalObject, JSValue value, PosixBytes& result)
 {
-    if (!posixEncodeStr(globalObject, strValue(value), result))
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, posixEncodeStr(globalObject, strValue(value), result)))
         return false;
     if (result.contains('\0')) {
-        VM& vm = getVM(globalObject);
-        auto scope = DECLARE_THROW_SCOPE(vm);
         raiseValueError(globalObject, scope, "embedded null byte"_s);
         return false;
     }
@@ -79,11 +79,13 @@ static JSValue pwdMakeEntry(JSGlobalObject* globalObject, const struct passwd& e
 
 static JSValue pwdGetpwuid(JSGlobalObject* globalObject, JSValue uidValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     uid_t uid;
-    if (!posixToUid(globalObject, uidValue, uid)) {
+    if (failed(scope, posixToUid(globalObject, uidValue, uid))) {
         // A number no user can have is the number of no user.
         if (clearPendingExceptionIfMatches(globalObject, runtime(globalObject).OverflowError()))
-            return pwdRaiseKeyError(globalObject, "getpwuid(): uid not found"_s);
+            RELEASE_AND_RETURN(scope, pwdRaiseKeyError(globalObject, "getpwuid(): uid not found"_s));
         return { };
     }
     struct passwd entry;
@@ -93,21 +95,20 @@ static JSValue pwdGetpwuid(JSGlobalObject* globalObject, JSValue uidValue)
     });
     if (!found) {
         if (uid == static_cast<uid_t>(-1))
-            return pwdRaiseKeyError(globalObject, "getpwuid(): uid not found: -1"_s);
-        return pwdRaiseKeyError(globalObject, makeString("getpwuid(): uid not found: "_s, uid));
+            RELEASE_AND_RETURN(scope, pwdRaiseKeyError(globalObject, "getpwuid(): uid not found: -1"_s));
+        RELEASE_AND_RETURN(scope, pwdRaiseKeyError(globalObject, makeString("getpwuid(): uid not found: "_s, uid)));
     }
-    return pwdMakeEntry(globalObject, *found);
+    RELEASE_AND_RETURN(scope, pwdMakeEntry(globalObject, *found));
 }
 
 static JSValue pwdGetpwnam(JSGlobalObject* globalObject, JSValue nameValue)
 {
-    if (!isStr(nameValue)) {
-        VM& vm = getVM(globalObject);
-        auto scope = DECLARE_THROW_SCOPE(vm);
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!isStr(nameValue))
         return raiseTypeError(globalObject, scope, "getpwnam() argument must be str, not "_s, posixTypeNameOfArgument(globalObject, nameValue));
-    }
     PosixBytes name;
-    if (!pwdToName(globalObject, nameValue, name))
+    if (failed(scope, pwdToName(globalObject, nameValue, name)))
         return { };
     struct passwd entry;
     Vector<char, 1024> buffer;
@@ -115,8 +116,8 @@ static JSValue pwdGetpwnam(JSGlobalObject* globalObject, JSValue nameValue)
         return getpwnam_r(name.characters(), storage, characters, size, result);
     });
     if (!found)
-        return pwdRaiseKeyError(globalObject, makeString("getpwnam(): name not found: "_s, reprForMessage(globalObject, nameValue)));
-    return pwdMakeEntry(globalObject, *found);
+        RELEASE_AND_RETURN(scope, pwdRaiseKeyError(globalObject, makeString("getpwnam(): name not found: "_s, reprForMessage(globalObject, nameValue))));
+    RELEASE_AND_RETURN(scope, pwdMakeEntry(globalObject, *found));
 }
 
 static JSValue pwdGetpwall(JSGlobalObject* globalObject)
@@ -157,8 +158,10 @@ static JSValue grpMakeEntry(JSGlobalObject* globalObject, const struct group& en
 
 static JSValue grpGetgrgid(JSGlobalObject* globalObject, JSValue idValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     gid_t gid;
-    if (!posixToGid(globalObject, idValue, gid))
+    if (failed(scope, posixToGid(globalObject, idValue, gid)))
         return { };
     struct group entry;
     Vector<char, 1024> buffer;
@@ -167,21 +170,20 @@ static JSValue grpGetgrgid(JSGlobalObject* globalObject, JSValue idValue)
     });
     if (!found) {
         if (gid == static_cast<gid_t>(-1))
-            return pwdRaiseKeyError(globalObject, "getgrgid(): gid not found: -1"_s);
-        return pwdRaiseKeyError(globalObject, makeString("getgrgid(): gid not found: "_s, gid));
+            RELEASE_AND_RETURN(scope, pwdRaiseKeyError(globalObject, "getgrgid(): gid not found: -1"_s));
+        RELEASE_AND_RETURN(scope, pwdRaiseKeyError(globalObject, makeString("getgrgid(): gid not found: "_s, gid)));
     }
-    return grpMakeEntry(globalObject, *found);
+    RELEASE_AND_RETURN(scope, grpMakeEntry(globalObject, *found));
 }
 
 static JSValue grpGetgrnam(JSGlobalObject* globalObject, JSValue nameValue)
 {
-    if (!isStr(nameValue)) {
-        VM& vm = getVM(globalObject);
-        auto scope = DECLARE_THROW_SCOPE(vm);
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!isStr(nameValue))
         return raiseTypeError(globalObject, scope, "getgrnam() argument 'name' must be str, not "_s, posixTypeNameOfArgument(globalObject, nameValue));
-    }
     PosixBytes name;
-    if (!pwdToName(globalObject, nameValue, name))
+    if (failed(scope, pwdToName(globalObject, nameValue, name)))
         return { };
     struct group entry;
     Vector<char, 1024> buffer;
@@ -189,8 +191,8 @@ static JSValue grpGetgrnam(JSGlobalObject* globalObject, JSValue nameValue)
         return getgrnam_r(name.characters(), storage, characters, size, result);
     });
     if (!found)
-        return pwdRaiseKeyError(globalObject, makeString("getgrnam(): name not found: "_s, reprForMessage(globalObject, nameValue)));
-    return grpMakeEntry(globalObject, *found);
+        RELEASE_AND_RETURN(scope, pwdRaiseKeyError(globalObject, makeString("getgrnam(): name not found: "_s, reprForMessage(globalObject, nameValue))));
+    RELEASE_AND_RETURN(scope, grpMakeEntry(globalObject, *found));
 }
 
 static JSValue grpGetgrall(JSGlobalObject* globalObject)

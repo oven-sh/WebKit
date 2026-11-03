@@ -329,11 +329,11 @@ static JSValue astReduce(JSGlobalObject* globalObject, JSValue self)
     JSValue dict = getAttrIfPresent(globalObject, self, rt.names.dDict());
     RETURN_IF_EXCEPTION(scope, { });
     if (!dict)
-        return PyTuple::create(globalObject, { type, rt.emptyTuple() });
+        RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { type, rt.emptyTuple() }));
     JSValue fields = getAttrIfPresent(globalObject, type, state.name(AstName::Fields));
     RETURN_IF_EXCEPTION(scope, { });
     if (!fields)
-        return PyTuple::create(globalObject, { type, rt.emptyTuple(), dict });
+        RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { type, rt.emptyTuple(), dict }));
     if (!isDict(dict))
         return raiseBadInternalCall(globalObject, scope);
 
@@ -349,7 +349,7 @@ static JSValue astReduce(JSGlobalObject* globalObject, JSValue self)
             break;
         ++present;
     }
-    return PyTuple::create(globalObject, { type, PyTuple::create(globalObject, present), dict });
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { type, PyTuple::create(globalObject, present), dict }));
 }
 
 // payload[key] = dict[key], for each of the keys that is there.
@@ -397,9 +397,9 @@ static JSValue astReplace(JSGlobalObject* globalObject, JSValue self, const Call
     if (dict) {
         if (!isDict(dict))
             return raiseBadInternalCall(globalObject, scope);
-        if (!astCopyPresent(globalObject, payload, fields, PyDict::from(dict)))
+        if (failed(scope, astCopyPresent(globalObject, payload, fields, PyDict::from(dict))))
             return { };
-        if (!astCopyPresent(globalObject, payload, attributes, PyDict::from(dict)))
+        if (failed(scope, astCopyPresent(globalObject, payload, attributes, PyDict::from(dict))))
             return { };
     }
     for (unsigned i = 0; i < args.keywordCount(); ++i) {

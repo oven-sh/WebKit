@@ -398,7 +398,7 @@ static JSValue ioBaseSeek(JSGlobalObject* globalObject, JSValue, JSValue offset,
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     int ignored;
-    if (!ioToInt(globalObject, offset, ignored) || (whence && !ioToInt(globalObject, whence, ignored)))
+    if (failed(scope, ioToInt(globalObject, offset, ignored)) || (whence && failed(scope, ioToInt(globalObject, whence, ignored))))
         return { };
     return ioRaiseUnsupported(globalObject, scope, "seek"_s);
 }
@@ -483,7 +483,7 @@ static JSValue ioBaseReadline(JSGlobalObject* globalObject, JSValue self, JSValu
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     int64_t limit = -1;
-    if (!ioToOptionalSize(globalObject, size, limit))
+    if (failed(scope, ioToOptionalSize(globalObject, size, limit)))
         return { };
 
     JSValue peek = getAttrIfPresent(globalObject, self, ioName(globalObject, IOName::peek));
@@ -525,7 +525,7 @@ static JSValue ioBaseReadline(JSGlobalObject* globalObject, JSValue self, JSValu
         if (line.last() == '\n')
             break;
     }
-    return PyBytes::create(globalObject, line.span());
+    RELEASE_AND_RETURN(scope, PyBytes::create(globalObject, line.span()));
 }
 
 static JSValue ioBaseIter(JSGlobalObject* globalObject, JSValue self) { return ioCheckClosed(globalObject, self) ? self : JSValue(); }
@@ -548,7 +548,7 @@ static JSValue ioBaseReadlines(JSGlobalObject* globalObject, JSValue self, JSVal
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     int64_t hint = -1;
-    if (!ioToOptionalSize(globalObject, hintValue, hint))
+    if (failed(scope, ioToOptionalSize(globalObject, hintValue, hint)))
         return { };
     JSArray* result = newList(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
@@ -577,7 +577,7 @@ static JSValue ioBaseWritelines(JSGlobalObject* globalObject, JSValue self, JSVa
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!ioCheckClosed(globalObject, self))
+    if (failed(scope, ioCheckClosed(globalObject, self)))
         return { };
     forEach(globalObject, lines, [&](JSValue line) {
         JSValue result;
@@ -777,7 +777,7 @@ static JSValue rawIOBaseRead(JSGlobalObject* globalObject, JSValue self, JSValue
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     int64_t size = -1;
-    if (sizeValue && !ssizeArgument(globalObject, sizeValue, size))
+    if (sizeValue && failed(scope, ssizeArgument(globalObject, sizeValue, size)))
         return { };
     if (size < 0)
         RELEASE_AND_RETURN(scope, callMethod(globalObject, self, ioName(globalObject, IOName::readall)));
@@ -795,7 +795,7 @@ static JSValue rawIOBaseRead(JSGlobalObject* globalObject, JSValue self, JSValue
     // CPython turns the bytearray into the result, which it cannot do while readinto() holds on to its memory.
     if (isStillExported(globalObject, buffer, [&] { return buffer->exportCount(); }))
         return raise(globalObject, scope, rt.BufferError(), "Existing exports of data: object cannot be re-sized"_s);
-    return PyBytes::create(globalObject, buffer->span().first(std::min<size_t>(filled, buffer->length())));
+    RELEASE_AND_RETURN(scope, PyBytes::create(globalObject, buffer->span().first(std::min<size_t>(filled, buffer->length()))));
 }
 
 static JSValue rawIOBaseReadall(JSGlobalObject* globalObject, JSValue self)
@@ -823,7 +823,7 @@ static JSValue rawIOBaseReadall(JSGlobalObject* globalObject, JSValue self)
             break;
         all.append(bytes->span());
     }
-    return PyBytes::create(globalObject, all.span());
+    RELEASE_AND_RETURN(scope, PyBytes::create(globalObject, all.span()));
 }
 
 static JSValue rawIOBaseNotImplemented(JSGlobalObject* globalObject, JSValue, const CallArgs&)
@@ -850,7 +850,7 @@ static JSValue bufferedIOBaseReadIntoGeneric(JSGlobalObject* globalObject, JSVal
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     IOBuffer buffer;
-    if (!buffer.acquireWritable(globalObject, isReadInto1 ? "readinto1"_s : "readinto"_s, target))
+    if (failed(scope, buffer.acquireWritable(globalObject, isReadInto1 ? "readinto1"_s : "readinto"_s, target)))
         return { };
     JSValue data = callMethod(globalObject, self, isReadInto1 ? ioName(globalObject, IOName::read1) : rt.names.read(), makeInt(globalObject, static_cast<uint64_t>(buffer.size())));
     RETURN_IF_EXCEPTION(scope, { });
@@ -863,7 +863,7 @@ static JSValue bufferedIOBaseReadIntoGeneric(JSGlobalObject* globalObject, JSVal
         return { };
     if (bytes->length())
         memcpy(buffer.mutableData(), bytes->data(), bytes->length());
-    return makeInt(globalObject, static_cast<uint64_t>(bytes->length()));
+    RELEASE_AND_RETURN(scope, makeInt(globalObject, static_cast<uint64_t>(bytes->length())));
 }
 
 static JSValue bufferedIOBaseReadInto(JSGlobalObject* globalObject, JSValue self, JSValue buffer) { return bufferedIOBaseReadIntoGeneric(globalObject, self, buffer, false); }
@@ -874,7 +874,7 @@ static JSValue ioUnsupportedWithSize(JSGlobalObject* globalObject, JSValue size,
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     int ignored;
-    if (size && !ioToInt(globalObject, size, ignored))
+    if (size && failed(scope, ioToInt(globalObject, size, ignored)))
         return { };
     return ioRaiseUnsupported(globalObject, scope, operation);
 }
@@ -953,7 +953,7 @@ static JSValue ioOpen(JSGlobalObject* globalObject, JSValue file, JSValue modeVa
             return { };
     }
     int buffering = -1;
-    if (bufferingValue && !ioToInt(globalObject, bufferingValue, buffering))
+    if (bufferingValue && failed(scope, ioToInt(globalObject, bufferingValue, buffering)))
         return { };
     String encoding, errors, newline;
     if (!ioToOptionalString(globalObject, encodingValue, "open"_s, "encoding"_s, encoding)
@@ -1113,14 +1113,16 @@ static JSValue ioOpenCode(JSGlobalObject* globalObject, JSValue path)
 
 static JSValue ioTextEncoding(JSGlobalObject* globalObject, JSValue encoding, JSValue stackLevel)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int level = 2;
-    if (stackLevel && !ioToInt(globalObject, stackLevel, level))
+    if (stackLevel && failed(scope, ioToInt(globalObject, stackLevel, level)))
         return { };
     if (!isNone(encoding))
         return encoding;
     if (configuration().warnDefaultEncoding && !warn(globalObject, runtime(globalObject).EncodingWarning(), "'encoding' argument not specified"_s, level))
         return { };
-    return makeStr(getVM(globalObject), configuration().utf8Mode ? "utf-8"_s : "locale"_s);
+    RELEASE_AND_RETURN(scope, makeStr(getVM(globalObject), configuration().utf8Mode ? "utf-8"_s : "locale"_s));
 }
 
 // ---- The standard streams ----

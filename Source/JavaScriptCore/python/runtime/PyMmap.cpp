@@ -124,15 +124,15 @@ static void mmapAnnotate(void* data, size_t size, const char* name)
 // The format "i".
 static bool mmapToInt(JSGlobalObject* globalObject, JSValue value, int& result)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int64_t number;
-    if (!posixToLong(globalObject, value, number))
+    if (failed(scope, posixToLong(globalObject, value, number)))
         return false;
     if (number >= INT_MIN && number <= INT_MAX) {
         result = static_cast<int>(number);
         return true;
     }
-    VM& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
     raiseOverflowError(globalObject, scope, number > 0 ? "signed integer is greater than maximum"_s : "signed integer is less than minimum"_s);
     return false;
 }
@@ -148,7 +148,7 @@ static JSValue mmapNew(JSGlobalObject* globalObject, JSValue type, JSValue filen
     int access = MmapAccessDefault;
     int64_t offset = 0;
     bool tracksFd = true;
-    if (!mmapToInt(globalObject, fileno, fd) || !posixToSsize(globalObject, lengthValue, size) || (flagsValue && !mmapToInt(globalObject, flagsValue, flags)) || (protValue && !mmapToInt(globalObject, protValue, protection))
+    if (failed(scope, mmapToInt(globalObject, fileno, fd)) || failed(scope, posixToSsize(globalObject, lengthValue, size)) || (flagsValue && failed(scope, mmapToInt(globalObject, flagsValue, flags))) || (protValue && failed(scope, mmapToInt(globalObject, protValue, protection)))
         || (accessValue && !mmapToInt(globalObject, accessValue, access)) || (offsetValue && !posixToLong(globalObject, offsetValue, offset)) || !posixToBool(globalObject, trackFdValue, true, tracksFd))
         return { };
     if (size < 0)
@@ -205,14 +205,14 @@ static JSValue mmapNew(JSGlobalObject* globalObject, JSValue type, JSValue filen
     else if (tracksFd) {
         duplicate = posixDupNotInheritable(fd);
         if (duplicate < 0)
-            return posixError(globalObject);
+            RELEASE_AND_RETURN(scope, posixError(globalObject));
     }
     void* data = mmap(nullptr, size, protection, flags, fd, offset);
     if (data == MAP_FAILED) {
         int error = errno;
         if (duplicate >= 0)
             close(duplicate);
-        return posixError(globalObject, error);
+        RELEASE_AND_RETURN(scope, posixError(globalObject, error));
     }
     if (flags & MAP_ANONYMOUS)
         mmapAnnotate(data, size, "cpython:mmap");
@@ -256,7 +256,7 @@ static JSValue mmapReadByte(JSGlobalObject* globalObject, JSValue self)
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* map = PyRecord::from(self);
-    if (!mmapCheckOpen(globalObject, map))
+    if (failed(scope, mmapCheckOpen(globalObject, map)))
         return { };
     int64_t position = mmapPosition(map);
     if (position >= mmapSize(map))
@@ -267,8 +267,10 @@ static JSValue mmapReadByte(JSGlobalObject* globalObject, JSValue self)
 
 static JSValue mmapReadLine(JSGlobalObject* globalObject, JSValue self)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* map = PyRecord::from(self);
-    if (!mmapCheckOpen(globalObject, map))
+    if (failed(scope, mmapCheckOpen(globalObject, map)))
         return { };
     int64_t position = mmapPosition(map);
     int64_t remaining = std::max<int64_t>(mmapSize(map) - position, 0);
@@ -295,7 +297,7 @@ static JSValue mmapRead(JSGlobalObject* globalObject, JSValue self, JSValue coun
         count = toSsize(globalObject, countValue, rt.OverflowError());
         RETURN_IF_EXCEPTION(scope, { });
     }
-    if (!mmapCheckOpen(globalObject, map))
+    if (failed(scope, mmapCheckOpen(globalObject, map)))
         return { };
     int64_t position = mmapPosition(map);
     int64_t remaining = std::max<int64_t>(mmapSize(map) - position, 0);
@@ -309,18 +311,20 @@ static JSValue mmapRead(JSGlobalObject* globalObject, JSValue self, JSValue coun
 template<bool reverse>
 static JSValue mmapFind(JSGlobalObject* globalObject, JSValue self, JSValue needleValue, JSValue startValue, JSValue endValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* map = PyRecord::from(self);
     BufferHolder holder(globalObject);
-    if (!holder.get(needleValue) || !mmapCheckOpen(globalObject, map))
+    if (!holder.get(needleValue) || failed(scope, mmapCheckOpen(globalObject, map)))
         return { };
     int64_t start = mmapPosition(map);
     int64_t end = mmapSize(map);
     if (startValue && !isNone(startValue)) {
-        if (!posixToSsize(globalObject, startValue, start) || (endValue && !isNone(endValue) && !posixToSsize(globalObject, endValue, end)))
+        if (failed(scope, posixToSsize(globalObject, startValue, start)) || (endValue && !isNone(endValue) && failed(scope, posixToSsize(globalObject, endValue, end))))
             return { };
     }
     // An __index__() may have closed it.
-    if (!mmapCheckOpen(globalObject, map) || !refreshBuffer(globalObject, holder.buffer))
+    if (failed(scope, mmapCheckOpen(globalObject, map)) || !refreshBuffer(globalObject, holder.buffer))
         return { };
     int64_t size = mmapSize(map);
     if (start < 0)
@@ -334,16 +338,16 @@ static JSValue mmapFind(JSGlobalObject* globalObject, JSValue self, JSValue need
     const uint8_t* data = mmapData(map);
     const uint8_t* needle = holder.buffer.data;
     if (!needleLength)
-        return posixMakeInt(globalObject, reverse ? end : start);
+        RELEASE_AND_RETURN(scope, posixMakeInt(globalObject, reverse ? end : start));
     if constexpr (reverse) {
         for (int64_t i = end - needleLength; i >= start; --i) {
             if (data[i] == needle[0] && !memcmp(data + i, needle, needleLength))
-                return posixMakeInt(globalObject, i);
+                RELEASE_AND_RETURN(scope, posixMakeInt(globalObject, i));
         }
         return jsNumber(-1);
     }
     auto* found = static_cast<const uint8_t*>(memmem(data + start, end - start, needle, needleLength));
-    return found ? posixMakeInt(globalObject, static_cast<int64_t>(found - data)) : jsNumber(-1);
+    RELEASE_AND_RETURN(scope, found ? posixMakeInt(globalObject, static_cast<int64_t>(found - data)) : jsNumber(-1));
 }
 
 static JSValue mmapWrite(JSGlobalObject* globalObject, JSValue self, JSValue dataValue)
@@ -352,7 +356,7 @@ static JSValue mmapWrite(JSGlobalObject* globalObject, JSValue self, JSValue dat
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* map = PyRecord::from(self);
     BufferHolder holder(globalObject);
-    if (!holder.get(dataValue) || !mmapCheckOpen(globalObject, map) || !mmapCheckWritable(globalObject, map))
+    if (!holder.get(dataValue) || failed(scope, mmapCheckOpen(globalObject, map)) || failed(scope, mmapCheckWritable(globalObject, map)))
         return { };
     int64_t position = mmapPosition(map);
     int64_t count = holder.buffer.length;
@@ -361,7 +365,7 @@ static JSValue mmapWrite(JSGlobalObject* globalObject, JSValue self, JSValue dat
     if (count)
         memmove(mmapData(map) + position, holder.buffer.data, count);
     mmapSetPosition(globalObject, map, position + count);
-    return posixMakeInt(globalObject, count);
+    RELEASE_AND_RETURN(scope, posixMakeInt(globalObject, count));
 }
 
 static JSValue mmapWriteByte(JSGlobalObject* globalObject, JSValue self, JSValue value)
@@ -370,13 +374,13 @@ static JSValue mmapWriteByte(JSGlobalObject* globalObject, JSValue self, JSValue
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* map = PyRecord::from(self);
     int64_t byte;
-    if (!posixToLong(globalObject, value, byte))
+    if (failed(scope, posixToLong(globalObject, value, byte)))
         return { };
     if (byte < 0)
         return raiseOverflowError(globalObject, scope, "unsigned byte integer is less than minimum"_s);
     if (byte > 255)
         return raiseOverflowError(globalObject, scope, "unsigned byte integer is greater than maximum"_s);
-    if (!mmapCheckOpen(globalObject, map) || !mmapCheckWritable(globalObject, map))
+    if (failed(scope, mmapCheckOpen(globalObject, map)) || failed(scope, mmapCheckWritable(globalObject, map)))
         return { };
     int64_t position = mmapPosition(map);
     if (position >= mmapSize(map))
@@ -391,16 +395,16 @@ static JSValue mmapSizeMethod(JSGlobalObject* globalObject, JSValue self)
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* map = PyRecord::from(self);
-    if (!mmapCheckOpen(globalObject, map))
+    if (failed(scope, mmapCheckOpen(globalObject, map)))
         return { };
     if (mmapResources(map)->fd != -1) {
         struct stat status;
         if (fstat(mmapResources(map)->fd, &status) < 0)
-            return posixError(globalObject);
-        return posixMakeInt(globalObject, static_cast<int64_t>(status.st_size));
+            RELEASE_AND_RETURN(scope, posixError(globalObject));
+        RELEASE_AND_RETURN(scope, posixMakeInt(globalObject, static_cast<int64_t>(status.st_size)));
     }
     if (map->get(MmapTracksFd).asBoolean())
-        return posixMakeInt(globalObject, mmapSize(map));
+        RELEASE_AND_RETURN(scope, posixMakeInt(globalObject, mmapSize(map)));
     return raiseValueError(globalObject, scope, "can't get size with trackfd=False"_s);
 }
 
@@ -411,7 +415,7 @@ static JSValue mmapResize(JSGlobalObject* globalObject, JSValue self, JSValue si
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* map = PyRecord::from(self);
     int64_t newSize;
-    if (!posixToSsize(globalObject, sizeValue, newSize) || !mmapCheckOpen(globalObject, map))
+    if (failed(scope, posixToSsize(globalObject, sizeValue, newSize)) || failed(scope, mmapCheckOpen(globalObject, map)))
         return { };
     if (mmapIsExported(globalObject, map))
         return raiseBufferError(globalObject, scope, "mmap can't resize with extant buffers exported."_s);
@@ -427,10 +431,10 @@ static JSValue mmapResize(JSGlobalObject* globalObject, JSValue self, JSValue si
     if (resources->fd == -1 && !(map->get(MmapFlags).asInt32() & MAP_PRIVATE) && newSize > mmapSize(map))
         return raiseValueError(globalObject, scope, "mmap: can't expand a shared anonymous mapping"_s);
     if (resources->fd != -1 && ftruncate(resources->fd, offset + newSize) < 0)
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     void* data = mremap(mmapData(map), resources->size, newSize, MREMAP_MAYMOVE);
     if (data == MAP_FAILED)
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     // The memory has a new ArrayBuffer, and the old one nothing to let go of.
     Ref<ArrayBuffer> previous = *mmapArrayBuffer(map);
     resources->ownsMemory = false;
@@ -443,8 +447,10 @@ static JSValue mmapResize(JSGlobalObject* globalObject, JSValue self, JSValue si
 
 static JSValue mmapTell(JSGlobalObject* globalObject, JSValue self)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* map = PyRecord::from(self);
-    if (!mmapCheckOpen(globalObject, map))
+    if (failed(scope, mmapCheckOpen(globalObject, map)))
         return { };
     return map->get(MmapPosition);
 }
@@ -457,7 +463,7 @@ static JSValue mmapFlush(JSGlobalObject* globalObject, JSValue self, JSValue off
     int64_t offset = 0;
     int64_t size = -1;
     int flags = 0;
-    if ((offsetValue && !posixToSsize(globalObject, offsetValue, offset)) || (sizeValue && !posixToSsize(globalObject, sizeValue, size)) || (flagsValue && !posixToInt(globalObject, flagsValue, flags))
+    if ((offsetValue && failed(scope, posixToSsize(globalObject, offsetValue, offset))) || (sizeValue && failed(scope, posixToSsize(globalObject, sizeValue, size))) || (flagsValue && failed(scope, posixToInt(globalObject, flagsValue, flags)))
         || !mmapCheckOpen(globalObject, map))
         return { };
     if (size == -1)
@@ -467,7 +473,7 @@ static JSValue mmapFlush(JSGlobalObject* globalObject, JSValue self, JSValue off
     if (mmapAccess(map) == MmapAccessRead || mmapAccess(map) == MmapAccessCopy)
         return jsUndefined();
     if (msync(mmapData(map) + offset, size, flags ? flags : MS_SYNC) < 0)
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     return jsUndefined();
 }
 
@@ -478,7 +484,7 @@ static JSValue mmapSeek(JSGlobalObject* globalObject, JSValue self, JSValue dist
     auto* map = PyRecord::from(self);
     int64_t distance;
     int whence = 0;
-    if (!posixToSsize(globalObject, distanceValue, distance) || (whenceValue && !posixToInt(globalObject, whenceValue, whence)) || !mmapCheckOpen(globalObject, map))
+    if (failed(scope, posixToSsize(globalObject, distanceValue, distance)) || (whenceValue && failed(scope, posixToInt(globalObject, whenceValue, whence))) || failed(scope, mmapCheckOpen(globalObject, map)))
         return { };
     if (whence < 0 || whence > 2)
         return raiseValueError(globalObject, scope, "unknown seek type"_s);
@@ -499,7 +505,7 @@ static JSValue mmapSetName(JSGlobalObject* globalObject, JSValue self, JSValue n
     if (!isStr(nameValue))
         return raiseTypeError(globalObject, scope, "set_name() argument must be str, not "_s, posixTypeNameOfArgument(globalObject, nameValue));
     PosixBytes name;
-    if (!posixEncodeStr(globalObject, strValue(nameValue), name))
+    if (failed(scope, posixEncodeStr(globalObject, strValue(nameValue), name)))
         return { };
     if (name.contains('\0'))
         return raiseValueError(globalObject, scope, "embedded null character"_s);
@@ -510,13 +516,13 @@ static JSValue mmapSetName(JSGlobalObject* globalObject, JSValue self, JSValue n
         return raiseValueError(globalObject, scope, "name is too long"_s);
     if (!(map->get(MmapFlags).asInt32() & MAP_ANONYMOUS))
         return raiseValueError(globalObject, scope, "Cannot set annotation on non-anonymous mappings"_s);
-    if (!mmapCheckOpen(globalObject, map))
+    if (failed(scope, mmapCheckOpen(globalObject, map)))
         return { };
     char buffer[80];
     snprintf(buffer, sizeof(buffer), "%s%s", prefix, name.characters());
     // A kernel that cannot do this is no reason to fail.
     if (prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, reinterpret_cast<unsigned long>(mmapData(map)), mmapSize(map), reinterpret_cast<unsigned long>(buffer)) < 0 && errno != EINVAL)
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     return jsUndefined();
 #else
     UNUSED_PARAM(self);
@@ -532,7 +538,7 @@ static JSValue mmapMove(JSGlobalObject* globalObject, JSValue self, JSValue dest
     int64_t destination;
     int64_t source;
     int64_t count;
-    if (!posixToSsize(globalObject, destinationValue, destination) || !posixToSsize(globalObject, sourceValue, source) || !posixToSsize(globalObject, countValue, count)
+    if (failed(scope, posixToSsize(globalObject, destinationValue, destination)) || failed(scope, posixToSsize(globalObject, sourceValue, source)) || failed(scope, posixToSsize(globalObject, countValue, count))
         || !mmapCheckOpen(globalObject, map) || !mmapCheckWritable(globalObject, map))
         return { };
     int64_t size = mmapSize(map);
@@ -549,12 +555,12 @@ static JSValue mmapAdvise(JSGlobalObject* globalObject, JSValue self, JSValue op
     auto* map = PyRecord::from(self);
     int option;
     int64_t start = 0;
-    if (!posixToInt(globalObject, optionValue, option) || (startValue && !posixToSsize(globalObject, startValue, start)) || !mmapCheckOpen(globalObject, map))
+    if (failed(scope, posixToInt(globalObject, optionValue, option)) || (startValue && failed(scope, posixToSsize(globalObject, startValue, start))) || failed(scope, mmapCheckOpen(globalObject, map)))
         return { };
     int64_t length = mmapSize(map);
-    if (lengthValue && !isNone(lengthValue) && !posixToSsize(globalObject, lengthValue, length))
+    if (lengthValue && !isNone(lengthValue) && failed(scope, posixToSsize(globalObject, lengthValue, length)))
         return { };
-    if (!mmapCheckOpen(globalObject, map))
+    if (failed(scope, mmapCheckOpen(globalObject, map)))
         return { };
     if (start < 0 || start >= mmapSize(map))
         return raiseValueError(globalObject, scope, "madvise start out of bounds"_s);
@@ -564,13 +570,15 @@ static JSValue mmapAdvise(JSGlobalObject* globalObject, JSValue self, JSValue op
         return raiseOverflowError(globalObject, scope, "madvise length too large"_s);
     length = std::min(length, mmapSize(map) - start);
     if (madvise(mmapData(map) + start, length, option))
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     return jsUndefined();
 }
 
 static JSValue mmapEnter(JSGlobalObject* globalObject, JSValue self)
 {
-    if (!mmapCheckOpen(globalObject, PyRecord::from(self)))
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, mmapCheckOpen(globalObject, PyRecord::from(self))))
         return { };
     return self;
 }
@@ -598,8 +606,10 @@ static void mmapDidRelease(JSGlobalObject* globalObject, JSValue self)
 
 static JSValue mmapBuffer(JSGlobalObject* globalObject, JSValue self, JSValue flags)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* map = PyRecord::from(self);
-    if (!mmapCheckOpen(globalObject, map))
+    if (failed(scope, mmapCheckOpen(globalObject, map)))
         return { };
     JSValue view = exportBuffer(globalObject, self, flags, { map->get(MmapMemory).asCell(), 0, static_cast<size_t>(mmapSize(map)), mmapAccess(map) == MmapAccessRead, 1, { }, mmapDidRelease });
     if (view)
@@ -609,10 +619,12 @@ static JSValue mmapBuffer(JSGlobalObject* globalObject, JSValue self, JSValue fl
 
 static JSValue mmapLength(JSGlobalObject* globalObject, JSValue self)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* map = PyRecord::from(self);
-    if (!mmapCheckOpen(globalObject, map))
+    if (failed(scope, mmapCheckOpen(globalObject, map)))
         return { };
-    return posixMakeInt(globalObject, mmapSize(map));
+    RELEASE_AND_RETURN(scope, posixMakeInt(globalObject, mmapSize(map)));
 }
 
 static JSValue mmapGetItem(JSGlobalObject* globalObject, JSValue self, JSValue key)
@@ -621,12 +633,12 @@ static JSValue mmapGetItem(JSGlobalObject* globalObject, JSValue self, JSValue k
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* map = PyRecord::from(self);
-    if (!mmapCheckOpen(globalObject, map))
+    if (failed(scope, mmapCheckOpen(globalObject, map)))
         return { };
     if (hasIndex(globalObject, key)) {
         int64_t index = toSsize(globalObject, key, rt.IndexError());
         RETURN_IF_EXCEPTION(scope, { });
-        if (!mmapCheckOpen(globalObject, map))
+        if (failed(scope, mmapCheckOpen(globalObject, map)))
             return { };
         if (index < 0)
             index += mmapSize(map);
@@ -638,13 +650,13 @@ static JSValue mmapGetItem(JSGlobalObject* globalObject, JSValue self, JSValue k
     if (!slice)
         return raiseTypeError(globalObject, scope, "mmap indices must be integers"_s);
     PySlice::Indices indices;
-    if (!slice->unpack(globalObject, indices) || !mmapCheckOpen(globalObject, map))
+    if (!slice->unpack(globalObject, indices) || failed(scope, mmapCheckOpen(globalObject, map)))
         return { };
     PySlice::adjust(mmapSize(map), indices);
     if (indices.length <= 0)
-        return PyBytes::create(globalObject, std::span<const uint8_t> { });
+        RELEASE_AND_RETURN(scope, PyBytes::create(globalObject, std::span<const uint8_t> { }));
     if (indices.step == 1)
-        return mmapBytes(globalObject, map, indices.start, indices.length);
+        RELEASE_AND_RETURN(scope, mmapBytes(globalObject, map, indices.start, indices.length));
     PyBytes* result = PyBytes::createUninitialized(globalObject, indices.length);
     const uint8_t* data = mmapData(map);
     for (int64_t i = 0, from = indices.start; i < indices.length; ++i, from += indices.step)
@@ -658,7 +670,7 @@ static JSValue mmapSetItem(JSGlobalObject* globalObject, JSValue self, JSValue k
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* map = PyRecord::from(self);
-    if (!mmapCheckWritable(globalObject, map))
+    if (failed(scope, mmapCheckWritable(globalObject, map)))
         return { };
     if (hasIndex(globalObject, key)) {
         int64_t index = toSsize(globalObject, key, rt.IndexError());
@@ -671,7 +683,7 @@ static JSValue mmapSetItem(JSGlobalObject* globalObject, JSValue self, JSValue k
         RETURN_IF_EXCEPTION(scope, { });
         if (byte < 0 || byte > 255)
             return raiseValueError(globalObject, scope, "mmap item value must be in range(0, 256)"_s);
-        if (!mmapCheckOpen(globalObject, map))
+        if (failed(scope, mmapCheckOpen(globalObject, map)))
             return { };
         if (index < 0)
             index += mmapSize(map);
@@ -690,7 +702,7 @@ static JSValue mmapSetItem(JSGlobalObject* globalObject, JSValue self, JSValue k
     if (!value)
         return raiseTypeError(globalObject, scope, "mmap object doesn't support slice deletion"_s);
     BufferHolder holder(globalObject);
-    if (!holder.get(value) || !mmapCheckOpen(globalObject, map) || !refreshBuffer(globalObject, holder.buffer))
+    if (!holder.get(value) || failed(scope, mmapCheckOpen(globalObject, map)) || !refreshBuffer(globalObject, holder.buffer))
         return { };
     PySlice::adjust(mmapSize(map), indices);
     if (holder.buffer.length != indices.length)
@@ -720,10 +732,10 @@ static JSValue mmapIteratorNext(JSGlobalObject* globalObject, JSValue self)
     JSValue mapValue = iterator->get(MmapIteratorMap);
     if (!isNone(mapValue)) {
         auto* map = PyRecord::from(mapValue);
-        if (!mmapCheckOpen(globalObject, map))
+        if (failed(scope, mmapCheckOpen(globalObject, map)))
             return { };
         if (iterator->number < mmapSize(map))
-            return mmapBytes(globalObject, map, iterator->number++, 1);
+            RELEASE_AND_RETURN(scope, mmapBytes(globalObject, map, iterator->number++, 1));
         iterator->set(vm, MmapIteratorMap, jsUndefined());
     }
     return raiseStopIteration(globalObject, scope);
@@ -963,7 +975,7 @@ static JSValue shmOpen(JSGlobalObject* globalObject, JSValue path, JSValue flags
     PosixBytes name;
     int flags;
     int mode = 0777;
-    if (!shmToName(globalObject, path, "shm_open"_s, 1, name) || !posixToInt(globalObject, flagsValue, flags) || (modeValue && !posixToInt(globalObject, modeValue, mode)))
+    if (!shmToName(globalObject, path, "shm_open"_s, 1, name) || failed(scope, posixToInt(globalObject, flagsValue, flags)) || (modeValue && failed(scope, posixToInt(globalObject, modeValue, mode))))
         return { };
     int fd;
     do {

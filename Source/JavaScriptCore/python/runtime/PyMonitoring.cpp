@@ -1153,6 +1153,8 @@ bool Monitoring::fire(JSGlobalObject* globalObject, CallFrame* callFrame, CodeMo
 
 bool Monitoring::fireLineStart(JSGlobalObject* globalObject, CallFrame* callFrame, CodeMonitor& monitor, unsigned offset, unsigned index)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int line = monitor.m_lineStarts[index].line;
     Shown shown { line, static_cast<int>(monitor.m_lineStarts[index].offset) };
     uint8_t tools = monitor.tools(Event::Line) & ~monitor.m_lineStarts[index].disabledTools;
@@ -1160,7 +1162,7 @@ bool Monitoring::fireLineStart(JSGlobalObject* globalObject, CallFrame* callFram
         return true;
     if (tools >> traceTool & 1) {
         PyFrame* frame = PyFrame::of(globalObject, callFrame);
-        if (!traceLine(globalObject, frame, shown))
+        if (failed(scope, traceLine(globalObject, frame, shown)))
             return false;
         if (frame->jumpTarget)
             return true;
@@ -1882,7 +1884,7 @@ static JSValue monitoringUseToolId(JSGlobalObject* globalObject, JSValue toolVal
     auto scope = DECLARE_THROW_SCOPE(vm);
     Monitoring& monitoring = runtime(globalObject).monitoring();
     unsigned tool;
-    if (!monitoringTool(globalObject, toolValue, tool))
+    if (failed(scope, monitoringTool(globalObject, toolValue, tool)))
         return { };
     if (!isStr(name))
         return raiseValueError(globalObject, scope, "tool name must be a str"_s);
@@ -1894,9 +1896,11 @@ static JSValue monitoringUseToolId(JSGlobalObject* globalObject, JSValue toolVal
 
 static JSValue monitoringClearToolId(JSGlobalObject* globalObject, JSValue toolValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     Monitoring& monitoring = runtime(globalObject).monitoring();
     unsigned tool;
-    if (!monitoringTool(globalObject, toolValue, tool))
+    if (failed(scope, monitoringTool(globalObject, toolValue, tool)))
         return { };
     if (monitoring.toolName(tool))
         monitoring.clearTool(tool);
@@ -1905,9 +1909,11 @@ static JSValue monitoringClearToolId(JSGlobalObject* globalObject, JSValue toolV
 
 static JSValue monitoringFreeToolId(JSGlobalObject* globalObject, JSValue toolValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     Monitoring& monitoring = runtime(globalObject).monitoring();
     unsigned tool;
-    if (!monitoringTool(globalObject, toolValue, tool))
+    if (failed(scope, monitoringTool(globalObject, toolValue, tool)))
         return { };
     if (monitoring.toolName(tool))
         monitoring.clearTool(tool);
@@ -1917,8 +1923,10 @@ static JSValue monitoringFreeToolId(JSGlobalObject* globalObject, JSValue toolVa
 
 static JSValue monitoringGetTool(JSGlobalObject* globalObject, JSValue toolValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     unsigned tool;
-    if (!monitoringTool(globalObject, toolValue, tool))
+    if (failed(scope, monitoringTool(globalObject, toolValue, tool)))
         return { };
     JSValue name = runtime(globalObject).monitoring().toolName(tool);
     return name ? name : jsUndefined();
@@ -1930,7 +1938,7 @@ static JSValue monitoringRegisterCallback(JSGlobalObject* globalObject, JSValue 
     auto scope = DECLARE_THROW_SCOPE(vm);
     Monitoring& monitoring = runtime(globalObject).monitoring();
     unsigned tool;
-    if (!monitoringTool(globalObject, toolValue, tool))
+    if (failed(scope, monitoringTool(globalObject, toolValue, tool)))
         return { };
     int event = toCInt(globalObject, eventValue);
     RETURN_IF_EXCEPTION(scope, { });
@@ -1983,17 +1991,21 @@ static bool monitoringEventSet(JSGlobalObject* globalObject, JSValue value, bool
 
 static JSValue monitoringGetEvents(JSGlobalObject* globalObject, JSValue toolValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     unsigned tool;
-    if (!monitoringTool(globalObject, toolValue, tool))
+    if (failed(scope, monitoringTool(globalObject, toolValue, tool)))
         return { };
-    return jsNumber(runtime(globalObject).monitoring().events(tool));
+    RELEASE_AND_RETURN(scope, jsNumber(runtime(globalObject).monitoring().events(tool)));
 }
 
 static JSValue monitoringSetEvents(JSGlobalObject* globalObject, JSValue toolValue, JSValue eventSet)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     unsigned tool;
     uint32_t events;
-    if (!monitoringTool(globalObject, toolValue, tool) || !monitoringEventSet(globalObject, eventSet, false, events) || !monitoringToolInUse(globalObject, tool))
+    if (failed(scope, monitoringTool(globalObject, toolValue, tool)) || failed(scope, monitoringEventSet(globalObject, eventSet, false, events)) || failed(scope, monitoringToolInUse(globalObject, tool)))
         return { };
     runtime(globalObject).monitoring().setEvents(tool, events);
     return jsUndefined();
@@ -2006,7 +2018,7 @@ static JSValue monitoringGetLocalEvents(JSGlobalObject* globalObject, JSValue to
     if (!PyCode::is(code))
         return raiseTypeError(globalObject, scope, "code must be a code object"_s);
     unsigned tool;
-    if (!monitoringTool(globalObject, toolValue, tool))
+    if (failed(scope, monitoringTool(globalObject, toolValue, tool)))
         return { };
     CodeMonitor* monitor = PyCode::from(code)->codeInfo().monitor.get();
     return jsNumber(monitor ? monitor->localEvents(tool) : 0);
@@ -2021,7 +2033,7 @@ static JSValue monitoringSetLocalEvents(JSGlobalObject* globalObject, JSValue to
         return raiseTypeError(globalObject, scope, "code must be a code object"_s);
     unsigned tool;
     uint32_t events;
-    if (!monitoringTool(globalObject, toolValue, tool) || !monitoringEventSet(globalObject, eventSet, true, events) || !monitoringToolInUse(globalObject, tool))
+    if (failed(scope, monitoringTool(globalObject, toolValue, tool)) || failed(scope, monitoringEventSet(globalObject, eventSet, true, events)) || failed(scope, monitoringToolInUse(globalObject, tool)))
         return { };
     CodeMonitor* monitor = monitoring.monitorFor(globalObject, PyCode::from(code));
     RETURN_IF_EXCEPTION(scope, { });

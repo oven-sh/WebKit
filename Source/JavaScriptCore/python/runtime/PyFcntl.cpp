@@ -122,22 +122,24 @@ static bool fcntlToBits(JSGlobalObject* globalObject, JSValue value, uint64_t& r
 
 static JSValue fcntlFcntl(JSGlobalObject* globalObject, JSValue fdValue, JSValue commandValue, JSValue argument)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int fd;
     int command;
-    if (!posixToFileDescriptor(globalObject, fdValue, fd) || !posixToInt(globalObject, commandValue, command))
+    if (!posixToFileDescriptor(globalObject, fdValue, fd) || failed(scope, posixToInt(globalObject, commandValue, command)))
         return { };
     if (!audit(globalObject, "fcntl.fcntl"_s, jsNumber(fd), jsNumber(command), argument))
         return { };
     if (!argument || hasIndex(globalObject, argument)) {
         uint64_t bits = 0;
         bool fits;
-        if (argument && !fcntlToBits(globalObject, argument, bits, fits))
+        if (argument && failed(scope, fcntlToBits(globalObject, argument, bits, fits)))
             return { };
-        return fcntlCallWithInt(globalObject, [&] { return fcntl(fd, command, static_cast<int>(static_cast<unsigned>(bits))); });
+        RELEASE_AND_RETURN(scope, fcntlCallWithInt(globalObject, [&] { return fcntl(fd, command, static_cast<int>(static_cast<unsigned>(bits))); }));
     }
     if (!fcntlIsBuffer(argument))
-        return fcntlBadArgument(globalObject, "fcntl"_s, argument);
-    return fcntlCallWithBytes(globalObject, argument, "fcntl"_s, [&](uint8_t* address) { return fcntl(fd, command, address); });
+        RELEASE_AND_RETURN(scope, fcntlBadArgument(globalObject, "fcntl"_s, argument));
+    RELEASE_AND_RETURN(scope, fcntlCallWithBytes(globalObject, argument, "fcntl"_s, [&](uint8_t* address) { return fcntl(fd, command, address); }));
 }
 
 static JSValue fcntlIoctl(JSGlobalObject* globalObject, JSValue fdValue, JSValue requestValue, JSValue argument, JSValue mutateValue)
@@ -151,7 +153,7 @@ static JSValue fcntlIoctl(JSGlobalObject* globalObject, JSValue fdValue, JSValue
         return raiseTypeError(globalObject, scope, "ioctl() argument 2 must be int, not "_s, posixTypeNameOfArgument(globalObject, requestValue));
     uint64_t request;
     bool fits;
-    if (!fcntlToBits(globalObject, requestValue, request, fits))
+    if (failed(scope, fcntlToBits(globalObject, requestValue, request, fits)))
         return { };
     if (!audit(globalObject, "fcntl.ioctl"_s, jsNumber(fd), requestValue, argument))
         return { };
@@ -163,16 +165,16 @@ static JSValue fcntlIoctl(JSGlobalObject* globalObject, JSValue fdValue, JSValue
 
     if (!argument || hasIndex(globalObject, argument)) {
         int64_t number = 0;
-        if (argument && !posixToLong(globalObject, argument, number))
+        if (argument && failed(scope, posixToLong(globalObject, argument, number)))
             return { };
         if (number > std::numeric_limits<int>::max())
             return raiseOverflowError(globalObject, scope, "signed integer is greater than maximum"_s);
         if (number < std::numeric_limits<int>::min())
             return raiseOverflowError(globalObject, scope, "signed integer is less than minimum"_s);
-        return fcntlCallWithInt(globalObject, [&] { return ioctl(fd, request, static_cast<int>(number)); });
+        RELEASE_AND_RETURN(scope, fcntlCallWithInt(globalObject, [&] { return ioctl(fd, request, static_cast<int>(number)); }));
     }
     if (!fcntlIsBuffer(argument))
-        return fcntlBadArgument(globalObject, "ioctl"_s, argument);
+        RELEASE_AND_RETURN(scope, fcntlBadArgument(globalObject, "ioctl"_s, argument));
 
     // What can be written to gets what the system wrote, and the result is the system's.
     if (mutate && !PyBytes::is(argument) && !isStr(argument)) {
@@ -192,7 +194,7 @@ static JSValue fcntlIoctl(JSGlobalObject* globalObject, JSValue fdValue, JSValue
                 result = ioctl(fd, request, address);
             } while (result == -1 && errno == EINTR && checkSignals(globalObject));
             if (result < 0)
-                return posixError(globalObject);
+                RELEASE_AND_RETURN(scope, posixError(globalObject));
             if (address == copy) {
                 memcpy(span.data(), copy, span.size());
                 if (memcmp(copy + span.size(), fcntlGuard, sizeof(fcntlGuard))) {
@@ -205,7 +207,7 @@ static JSValue fcntlIoctl(JSGlobalObject* globalObject, JSValue fdValue, JSValue
         if (!clearPendingExceptionIfMatches(globalObject, runtime(globalObject).BufferError()))
             return { };
     }
-    return fcntlCallWithBytes(globalObject, argument, "ioctl"_s, [&](uint8_t* address) { return ioctl(fd, request, address); });
+    RELEASE_AND_RETURN(scope, fcntlCallWithBytes(globalObject, argument, "ioctl"_s, [&](uint8_t* address) { return ioctl(fd, request, address); }));
 }
 
 static JSValue fcntlNoneUnlessFailed(JSGlobalObject* globalObject, int result)
@@ -217,9 +219,11 @@ static JSValue fcntlNoneUnlessFailed(JSGlobalObject* globalObject, int result)
 
 static JSValue fcntlFlock(JSGlobalObject* globalObject, JSValue fdValue, JSValue operationValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int fd;
     int operation;
-    if (!posixToFileDescriptor(globalObject, fdValue, fd) || !posixToInt(globalObject, operationValue, operation))
+    if (!posixToFileDescriptor(globalObject, fdValue, fd) || failed(scope, posixToInt(globalObject, operationValue, operation)))
         return { };
     if (!audit(globalObject, "fcntl.flock"_s, jsNumber(fd), jsNumber(operation)))
         return { };
@@ -228,15 +232,17 @@ static JSValue fcntlFlock(JSGlobalObject* globalObject, JSValue fdValue, JSValue
         AllowThreads allow(globalObject);
         result = flock(fd, operation);
     } while (result == -1 && errno == EINTR && checkSignals(globalObject));
-    return fcntlNoneUnlessFailed(globalObject, result);
+    RELEASE_AND_RETURN(scope, fcntlNoneUnlessFailed(globalObject, result));
 }
 
 static JSValue fcntlLockf(JSGlobalObject* globalObject, JSValue fdValue, JSValue commandValue, JSValue lengthValue, JSValue startValue, JSValue whenceValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int fd;
     int command;
     int whence = 0;
-    if (!posixToFileDescriptor(globalObject, fdValue, fd) || !posixToInt(globalObject, commandValue, command) || (whenceValue && !posixToInt(globalObject, whenceValue, whence)))
+    if (!posixToFileDescriptor(globalObject, fdValue, fd) || failed(scope, posixToInt(globalObject, commandValue, command)) || (whenceValue && failed(scope, posixToInt(globalObject, whenceValue, whence))))
         return { };
     if (!audit(globalObject, "fcntl.lockf"_s, jsNumber(fd), jsNumber(command), lengthValue, startValue, jsNumber(whence)))
         return { };
@@ -248,11 +254,9 @@ static JSValue fcntlLockf(JSGlobalObject* globalObject, JSValue fdValue, JSValue
     else if (command & LOCK_EX)
         lock.l_type = F_WRLCK;
     else {
-        VM& vm = getVM(globalObject);
-        auto scope = DECLARE_THROW_SCOPE(vm);
         return raiseValueError(globalObject, scope, "unrecognized lockf argument"_s);
     }
-    if ((startValue && !posixToOffset(globalObject, startValue, lock.l_start)) || (lengthValue && !posixToOffset(globalObject, lengthValue, lock.l_len)))
+    if ((startValue && failed(scope, posixToOffset(globalObject, startValue, lock.l_start))) || (lengthValue && failed(scope, posixToOffset(globalObject, lengthValue, lock.l_len))))
         return { };
     lock.l_whence = static_cast<short>(whence);
     int result;
@@ -260,7 +264,7 @@ static JSValue fcntlLockf(JSGlobalObject* globalObject, JSValue fdValue, JSValue
         AllowThreads allow(globalObject);
         result = fcntl(fd, command & LOCK_NB ? F_SETLK : F_SETLKW, &lock);
     } while (result == -1 && errno == EINTR && checkSignals(globalObject));
-    return fcntlNoneUnlessFailed(globalObject, result);
+    RELEASE_AND_RETURN(scope, fcntlNoneUnlessFailed(globalObject, result));
 }
 
 static constexpr NativeDef fcntlFunctions[] = {

@@ -106,6 +106,8 @@ String PyType::nameInMessages() const
     return makeString(module, '.', name());
 }
 
+bool hasDocstring(ASCIILiteral owner, ASCIILiteral member); // PyDocstrings.cpp
+
 void PyType::initializeBuiltin(JSGlobalObject* globalObject, const TypeDef& def, PyType* metatype, PyType* base)
 {
     Runtime& rt = runtime(globalObject);
@@ -145,7 +147,7 @@ void PyType::initializeBuiltin(JSGlobalObject* globalObject, const TypeDef& def,
         addGetSets(globalObject, dictGetSet());
     // What CPython makes at run time, much as a class statement does, has what such a class has. Most types outside builtins are
     // made so, and the table of docstrings says which: deque().__module__ is "collections".
-    if (def.flags.contains(TypeFlag::Mutable) || !isNone(docstringFor(globalObject, makeString(def.name, ".__module__"_s))))
+    if (def.flags.contains(TypeFlag::Mutable) || hasDocstring(def.name, "__module__"_s))
         m_dict->set(vm, rt.names.dModule(), m_module.get());
     if (def.flags.contains(TypeFlag::Mutable) && def.flags.contains(TypeFlag::HasWeakref) && !(base && base->has(TypeFlag::HasWeakref)))
         addGetSets(globalObject, weakrefGetSet());
@@ -156,7 +158,7 @@ void PyType::initializeBuiltin(JSGlobalObject* globalObject, const TypeDef& def,
         PyDict* ofObject = rt.objectType()->dict();
         for (auto& slot : repeatableSlotsOfObject()) {
             JSString* name = internString(vm, slot.name);
-            if (lookup(name) == ofObject->get(name) && !isNone(docstringFor(globalObject, makeString(def.name, '.', slot.name))))
+            if (lookup(name) == ofObject->get(name) && hasDocstring(def.name, slot.name))
                 addMethods(globalObject, { &slot, 1 });
         }
     }
@@ -504,7 +506,7 @@ PyTuple* computeMRO(JSGlobalObject* globalObject, PyType* type)
         raiseTypeError(globalObject, scope, message.toString());
         return nullptr;
     }
-    return PyTuple::create(globalObject, result.span());
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, result.span()));
 }
 
 } // namespace Python

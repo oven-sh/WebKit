@@ -28,6 +28,7 @@
 
 #include "Exception.h"
 #include "JSCJSValueInlines.h"
+#include "UncheckedExceptionLog.h"
 #include "VM.h"
 #include <wtf/StackTrace.h>
 
@@ -93,6 +94,8 @@ void ThrowScope::simulateThrow()
     m_vm.m_simulatedThrowPointLocation = m_location;
     m_vm.m_simulatedThrowPointRecursionDepth = m_recursionDepth;
     m_vm.m_needExceptionCheck = true;
+    if (UncheckedExceptionLog::isEnabled()) [[unlikely]]
+        UncheckedExceptionLog::noteSimulatedThrow();
     if (Options::dumpSimulatedThrows()) [[unlikely]]
         m_vm.m_nativeStackTraceOfLastSimulatedThrow = StackTrace::captureStackTrace(Options::unexpectedExceptionStackTraceLimit());
 }

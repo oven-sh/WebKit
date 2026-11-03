@@ -86,7 +86,7 @@ static JSValue sentinelNew(JSGlobalObject* globalObject, JSValue cls, const Call
     JSValue module;
     if (PyFrame* frame = currentFrame(globalObject))
         module = frame->function()->codeOwner()->module();
-    return sentinelCreate(globalObject, PyType::from(cls), name, module ? module : jsUndefined(), repr);
+    RELEASE_AND_RETURN(scope, sentinelCreate(globalObject, PyType::from(cls), name, module ? module : jsUndefined(), repr));
 }
 
 static JSValue sentinelRepr(JSGlobalObject*, JSValue self)
@@ -130,7 +130,7 @@ static constexpr NativeDef sentinelMethods[] = {
     PY_SLOT("__or__", sentinelOr, "($self, value, /)"),
     PY_SLOT("__ror__", sentinelROr, "($self, value, /)"),
     PY_METHOD("__copy__", sentinelCopy, "($self, /)"),
-    PY_METHOD("__deepcopy__", sentinelDeepCopy, "($self, memo, /)"),
+    PY_METHOD("__deepcopy__", sentinelDeepCopy, "($self, object, /)"),
     PY_METHOD("__reduce__", sentinelReduce, "($self, /)"),
 };
 
@@ -209,7 +209,7 @@ static JSValue namespaceInit(JSGlobalObject* globalObject, JSValue self, const C
         dictUpdate(globalObject, dict, source);
         RETURN_IF_EXCEPTION(scope, { });
     }
-    if (!namespaceAddKeywords(globalObject, dict, args))
+    if (failed(scope, namespaceAddKeywords(globalObject, dict, args)))
         return { };
     return jsUndefined();
 }
@@ -254,7 +254,7 @@ static JSValue namespaceRepr(JSGlobalObject* globalObject, JSValue self)
         out.append(keyText, '=', valueText);
     }
     out.append(')');
-    return makeStr(globalObject, out);
+    RELEASE_AND_RETURN(scope, makeStr(globalObject, out));
 }
 
 template<CompareOperator op>
@@ -292,7 +292,7 @@ static JSValue namespaceReplace(JSGlobalObject* globalObject, JSValue self, cons
     PyDict* dict = namespaceDict(globalObject, result);
     dictUpdate(globalObject, dict, namespaceDict(globalObject, self));
     RETURN_IF_EXCEPTION(scope, { });
-    if (!namespaceAddKeywords(globalObject, dict, args))
+    if (failed(scope, namespaceAddKeywords(globalObject, dict, args)))
         return { };
     return result;
 }

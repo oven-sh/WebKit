@@ -62,7 +62,7 @@ static JSValue functoolsPlaceholderNew(JSGlobalObject* globalObject, JSValue, co
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (args.totalCount())
         return raiseTypeError(globalObject, scope, "PlaceholderType takes no arguments"_s);
-    return functoolsPlaceholder(globalObject);
+    RELEASE_AND_RETURN(scope, functoolsPlaceholder(globalObject));
 }
 
 static JSValue functoolsPlaceholderName(JSGlobalObject* globalObject, JSValue) { return makeStr(getVM(globalObject), "Placeholder"_s); }
@@ -316,7 +316,7 @@ static constexpr NativeDef functoolsPartialMethods[] = {
     PY_SLOT("__repr__", functoolsPartialRepr, "($self, /)"),
     PY_SLOT("__get__", functoolsBindAsMethod, "($self, instance, owner=None, /)"),
     PY_METHOD("__reduce__", functoolsPartialReduce, "($self, /)"),
-    PY_METHOD("__setstate__", functoolsPartialSetState, "($self, state, /)"),
+    PY_METHOD("__setstate__", functoolsPartialSetState, "($self, object, /)"),
     PY_CLASSMETHOD("__class_getitem__", classGetItem, "($type, object, /)"),
 };
 static constexpr NativeGetSet functoolsPartialGetSets[] = {
@@ -351,12 +351,14 @@ static JSValue functoolsCmpToKey(JSGlobalObject* globalObject, JSValue compare) 
 
 static JSValue functoolsKeyCall(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     static constexpr ASCIILiteral keywords[] = { "obj"_s };
     JSValue object;
-    if (!unpackKeywordArguments(globalObject, "K"_s, keywords, 1, 1, false, args, &object))
+    if (failed(scope, unpackKeywordArguments(globalObject, "K"_s, keywords, 1, 1, false, args, &object)))
         return { };
     PyRecord* record = functoolsRecord(self);
-    return functoolsMakeKey(globalObject, record->type(), record->get(FunctoolsKey::Compare), object);
+    RELEASE_AND_RETURN(scope, functoolsMakeKey(globalObject, record->type(), record->get(FunctoolsKey::Compare), object));
 }
 
 template<CompareOperator op>
@@ -456,7 +458,7 @@ static JSValue functoolsCacheNew(JSGlobalObject* globalObject, JSValue cls, cons
     auto scope = DECLARE_THROW_SCOPE(vm);
     static constexpr ASCIILiteral keywords[] = { "user_function"_s, "maxsize"_s, "typed"_s, "cache_info_type"_s };
     JSValue values[4];
-    if (!unpackKeywordArguments(globalObject, "lru_cache"_s, keywords, 4, 4, false, args, values))
+    if (failed(scope, unpackKeywordArguments(globalObject, "lru_cache"_s, keywords, 4, 4, false, args, values)))
         return { };
     bool isTyped = isTrue(globalObject, values[2]);
     RETURN_IF_EXCEPTION(scope, { });

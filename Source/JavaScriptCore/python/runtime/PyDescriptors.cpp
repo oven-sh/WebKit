@@ -186,7 +186,7 @@ static JSValue propertySetName(JSGlobalObject* globalObject, JSValue self, const
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!rejectKeywords(globalObject, "property.__set_name__"_s, args))
+    if (failed(scope, rejectKeywords(globalObject, "property.__set_name__"_s, args)))
         return { };
     if (args.size() != 2)
         return raiseTypeError(globalObject, scope, "__set_name__() takes 2 positional arguments but "_s, args.size(), " were given"_s);
@@ -255,9 +255,9 @@ static constexpr NativeDef propertyMethods[] = {
     PY_SLOT("__get__", propertyGet, "($self, instance, owner=None, /)"),
     PY_SLOT("__set__", propertySet, "($self, instance, value, /)"),
     PY_SLOT("__delete__", propertyDelete, "($self, instance, /)"),
-    PY_METHOD("getter", propertyGetter, "($self, fget, /)"),
-    PY_METHOD("setter", propertySetter, "($self, fset, /)"),
-    PY_METHOD("deleter", propertyDeleter, "($self, fdel, /)"),
+    PY_METHOD("getter", propertyGetter, "($self, object, /)"),
+    PY_METHOD("setter", propertySetter, "($self, object, /)"),
+    PY_METHOD("deleter", propertyDeleter, "($self, object, /)"),
     PY_METHOD("__set_name__", propertySetName, "!($self, owner, name, /)"),
 };
 
@@ -322,8 +322,10 @@ static bool wrapperSetCallable(JSGlobalObject* globalObject, PyWrapperObject* wr
 
 void copyAttributesOfWrapped(JSGlobalObject* globalObject, PyWrapperObject* wrapper)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     wrapper->setCopiesAttributesLater(false);
-    if (!wrapperSetCallable(globalObject, wrapper, wrapper->wrapped()))
+    if (failed(scope, wrapperSetCallable(globalObject, wrapper, wrapper->wrapped())))
         takePendingException(globalObject);
 }
 
@@ -350,18 +352,22 @@ static bool wrapperCheckArguments(JSGlobalObject* globalObject, const CallArgs& 
 template<bool isStatic>
 static JSValue wrapperNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs& args)
 {
-    if (!wrapperCheckArguments<isStatic>(globalObject, args))
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, wrapperCheckArguments<isStatic>(globalObject, args)))
         return { };
     auto* wrapper = PyWrapperObject::create(globalObject, PyType::from(cls), jsUndefined());
-    return wrapperSetCallable(globalObject, wrapper, args[0]) ? JSValue(wrapper) : JSValue();
+    RELEASE_AND_RETURN(scope, wrapperSetCallable(globalObject, wrapper, args[0]) ? JSValue(wrapper) : JSValue());
 }
 
 template<bool isStatic>
 static JSValue wrapperInit(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
 {
-    if (!wrapperCheckArguments<isStatic>(globalObject, args))
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, wrapperCheckArguments<isStatic>(globalObject, args)))
         return { };
-    return wrapperSetCallable(globalObject, PyWrapperObject::from(self), args[0]) ? jsUndefined() : JSValue();
+    RELEASE_AND_RETURN(scope, wrapperSetCallable(globalObject, PyWrapperObject::from(self), args[0]) ? jsUndefined() : JSValue());
 }
 
 static JSValue classmethodGet(JSGlobalObject* globalObject, JSValue self, JSValue instance, JSValue owner)
@@ -461,7 +467,7 @@ static JSValue mappingProxyNew(JSGlobalObject* globalObject, JSValue, JSValue ma
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!typeOf(globalObject, mapping)->lookup(Special::GetItem) || isList(mapping) || PyTuple::is(mapping))
         return raiseTypeError(globalObject, scope, "mappingproxy() argument must be a mapping, not "_s, typeName(globalObject, mapping));
-    return makeMappingProxy(globalObject, mapping);
+    RELEASE_AND_RETURN(scope, makeMappingProxy(globalObject, mapping));
 }
 
 static JSValue mappingProxyLen(JSGlobalObject* globalObject, JSValue self)
@@ -520,7 +526,7 @@ static JSValue mappingProxyHash(JSGlobalObject* globalObject, JSValue self)
     auto scope = DECLARE_THROW_SCOPE(vm);
     int64_t result = hash(globalObject, proxied(self));
     RETURN_IF_EXCEPTION(scope, { });
-    return makeInt(globalObject, result);
+    RELEASE_AND_RETURN(scope, makeInt(globalObject, result));
 }
 
 static JSValue unwrapProxy(JSGlobalObject* globalObject, JSValue value)
@@ -634,7 +640,7 @@ static JSValue superInit(JSGlobalObject* globalObject, JSValue self, const CallA
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!rejectKeywords(globalObject, "super"_s, args) || !checkPositional(globalObject, "super()"_s, args, 0, 2))
+    if (failed(scope, rejectKeywords(globalObject, "super"_s, args)) || failed(scope, checkPositional(globalObject, "super()"_s, args, 0, 2)))
         return { };
     auto* object = PySuper::from(self);
 
@@ -847,12 +853,14 @@ static bool checkDescriptorInstance(JSGlobalObject* globalObject, PyType* owner,
 
 static JSValue getSetGet(JSGlobalObject* globalObject, JSValue self, JSValue instance, JSValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     if (isNone(instance))
         return self;
     auto* descriptor = PyGetSetDescriptor::from(self);
-    if (!checkDescriptorInstance(globalObject, descriptor->owner(), descriptor->def().name, instance))
+    if (failed(scope, checkDescriptorInstance(globalObject, descriptor->owner(), descriptor->def().name, instance)))
         return { };
-    return descriptor->def().getter(globalObject, instance);
+    RELEASE_AND_RETURN(scope, descriptor->def().getter(globalObject, instance));
 }
 
 static JSValue getSetAssign(JSGlobalObject* globalObject, JSValue self, JSValue instance, JSValue value)
@@ -861,7 +869,7 @@ static JSValue getSetAssign(JSGlobalObject* globalObject, JSValue self, JSValue 
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* descriptor = PyGetSetDescriptor::from(self);
-    if (!checkDescriptorInstance(globalObject, descriptor->owner(), descriptor->def().name, instance))
+    if (failed(scope, checkDescriptorInstance(globalObject, descriptor->owner(), descriptor->def().name, instance)))
         return { };
     if (!descriptor->def().setter) {
         if (descriptor->def().isMember)
@@ -918,14 +926,16 @@ static constexpr NativeGetSet getSetGetSets[] = {
 
 static JSValue memberGet(JSGlobalObject* globalObject, JSValue self, JSValue instance, JSValue owner)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     if (PyGetSetDescriptor::is(self))
-        return getSetGet(globalObject, self, instance, owner);
+        RELEASE_AND_RETURN(scope, getSetGet(globalObject, self, instance, owner));
     if (isNone(instance))
         return self;
     auto* descriptor = PyMemberDescriptor::from(self);
-    if (!checkDescriptorInstance(globalObject, descriptor->owner(), stringOf(descriptor->name()), instance))
+    if (failed(scope, checkDescriptorInstance(globalObject, descriptor->owner(), stringOf(descriptor->name()), instance)))
         return { };
-    return memberDescriptorGet(globalObject, descriptor, instance);
+    RELEASE_AND_RETURN(scope, memberDescriptorGet(globalObject, descriptor, instance));
 }
 
 static JSValue memberAssign(JSGlobalObject* globalObject, JSValue self, JSValue instance, JSValue value)
@@ -935,7 +945,7 @@ static JSValue memberAssign(JSGlobalObject* globalObject, JSValue self, JSValue 
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* descriptor = PyMemberDescriptor::from(self);
-    if (!checkDescriptorInstance(globalObject, descriptor->owner(), stringOf(descriptor->name()), instance))
+    if (failed(scope, checkDescriptorInstance(globalObject, descriptor->owner(), stringOf(descriptor->name()), instance)))
         return { };
     memberDescriptorSet(globalObject, descriptor, instance, value);
     RETURN_IF_EXCEPTION(scope, { });

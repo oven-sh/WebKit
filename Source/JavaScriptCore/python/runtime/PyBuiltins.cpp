@@ -24,6 +24,17 @@ namespace Python {
 // The module builtins. (Python/bltinmodule.c in CPython is the reference.)
 
 // The keyword arguments of a function that takes any number of positional ones. False: one it does not know, a TypeError.
+// More of them than it knows are complained of as that, by most functions. False: a TypeError.
+static bool checkKeywordCount(JSGlobalObject* globalObject, ASCIILiteral function, const CallArgs& args, unsigned most)
+{
+    if (args.keywordCount() <= most)
+        return true;
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    raiseTypeError(globalObject, scope, function, "() takes at most "_s, most, " keyword argument"_s, most == 1 ? ""_s : "s"_s, " ("_s, args.keywordCount(), " given)"_s);
+    return false;
+}
+
 bool parseKeywordArguments(JSGlobalObject* globalObject, ASCIILiteral function, const CallArgs& args, std::span<const ASCIILiteral> names, JSValue* values)
 {
     for (unsigned i = 0; i < args.keywordCount(); ++i) {
@@ -78,7 +89,7 @@ static JSValue builtinHash(JSGlobalObject* globalObject, JSValue value)
     auto scope = DECLARE_THROW_SCOPE(vm);
     int64_t result = hash(globalObject, value);
     RETURN_IF_EXCEPTION(scope, { });
-    return makeInt(globalObject, result);
+    RELEASE_AND_RETURN(scope, makeInt(globalObject, result));
 }
 
 static JSValue builtinLen(JSGlobalObject* globalObject, JSValue value)
@@ -87,7 +98,7 @@ static JSValue builtinLen(JSGlobalObject* globalObject, JSValue value)
     auto scope = DECLARE_THROW_SCOPE(vm);
     int64_t result = length(globalObject, value);
     RETURN_IF_EXCEPTION(scope, { });
-    return makeInt(globalObject, result);
+    RELEASE_AND_RETURN(scope, makeInt(globalObject, result));
 }
 
 static JSValue builtinIsInstance(JSGlobalObject* globalObject, JSValue object, JSValue classInfo)
@@ -137,7 +148,7 @@ static JSValue builtinGetAttr(JSGlobalObject* globalObject, const CallArgs& args
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!rejectKeywords(globalObject, "getattr"_s, args) || !checkPositional(globalObject, "getattr"_s, args, 2, 3))
+    if (failed(scope, rejectKeywords(globalObject, "getattr"_s, args)) || failed(scope, checkPositional(globalObject, "getattr"_s, args, 2, 3)))
         return { };
     JSString* name = attributeName(globalObject, args[1]);
     RETURN_IF_EXCEPTION(scope, { });
@@ -200,10 +211,10 @@ static JSValue builtinVars(JSGlobalObject* globalObject, const CallArgs& args)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!rejectKeywords(globalObject, "vars"_s, args) || !checkPositional(globalObject, "vars"_s, args, 0, 1))
+    if (failed(scope, rejectKeywords(globalObject, "vars"_s, args)) || failed(scope, checkPositional(globalObject, "vars"_s, args, 0, 1)))
         return { };
     if (!args.size())
-        return builtinLocals(globalObject);
+        RELEASE_AND_RETURN(scope, builtinLocals(globalObject));
     JSValue dict = getAttrIfPresent(globalObject, args[0], runtime(globalObject).names.dDict());
     RETURN_IF_EXCEPTION(scope, { });
     if (!dict)
@@ -216,7 +227,7 @@ static JSValue builtinDir(JSGlobalObject* globalObject, const CallArgs& args)
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!rejectKeywords(globalObject, "dir"_s, args) || !checkPositional(globalObject, "dir"_s, args, 0, 1))
+    if (failed(scope, rejectKeywords(globalObject, "dir"_s, args)) || failed(scope, checkPositional(globalObject, "dir"_s, args, 0, 1)))
         return { };
     JSValue names;
     if (!args.size()) {
@@ -320,7 +331,7 @@ static JSValue builtinIter(JSGlobalObject* globalObject, const CallArgs& args)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!rejectKeywords(globalObject, "iter"_s, args) || !checkPositional(globalObject, "iter"_s, args, 1, 2))
+    if (failed(scope, rejectKeywords(globalObject, "iter"_s, args)) || failed(scope, checkPositional(globalObject, "iter"_s, args, 1, 2)))
         return { };
     if (args.size() == 1)
         RELEASE_AND_RETURN(scope, getIter(globalObject, args[0]));
@@ -336,7 +347,7 @@ static JSValue builtinNext(JSGlobalObject* globalObject, const CallArgs& args)
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!rejectKeywords(globalObject, "next"_s, args) || !checkPositional(globalObject, "next"_s, args, 1, 2))
+    if (failed(scope, rejectKeywords(globalObject, "next"_s, args)) || failed(scope, checkPositional(globalObject, "next"_s, args, 1, 2)))
         return { };
     JSValue iterator = args[0];
     PyType* type = rt.typeOf(iterator);
@@ -383,7 +394,7 @@ static JSValue builtinANext(JSGlobalObject* globalObject, JSValue iterator, JSVa
     RETURN_IF_EXCEPTION(scope, { });
     if (!defaultValue)
         return awaitable;
-    return makeANextAwaitable(globalObject, awaitable, defaultValue);
+    RELEASE_AND_RETURN(scope, makeANextAwaitable(globalObject, awaitable, defaultValue));
 }
 
 template<CompareOperator op>
@@ -396,7 +407,7 @@ static JSValue minOrMax(JSGlobalObject* globalObject, const CallArgs& args)
         return raiseTypeError(globalObject, scope, name, " expected at least 1 argument, got 0"_s);
     static constexpr ASCIILiteral keywords[] = { "key"_s, "default"_s };
     JSValue options[2];
-    if (!parseKeywordArguments(globalObject, name, args, keywords, options))
+    if (failed(scope, checkKeywordCount(globalObject, name, args, 2)) || failed(scope, parseKeywordArguments(globalObject, name, args, keywords, options)))
         return { };
     JSValue key = options[0] && !isNone(options[0]) ? options[0] : JSValue();
     JSValue defaultValue = options[1];
@@ -447,13 +458,13 @@ static JSValue builtinSorted(JSGlobalObject* globalObject, const CallArgs& args)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!checkPositional(globalObject, "sorted"_s, args, 1, 1))
+    if (failed(scope, checkPositional(globalObject, "sorted"_s, args, 1, 1)))
         return { };
     JSArray* list = listFromIterable(globalObject, args[0]);
     RETURN_IF_EXCEPTION(scope, { });
     static constexpr ASCIILiteral keywords[] = { "key"_s, "reverse"_s };
     JSValue options[2];
-    if (args.hasKeywords() && !parseKeywordArguments(globalObject, "sort"_s, args, keywords, options))
+    if (args.hasKeywords() && (failed(scope, checkKeywordCount(globalObject, "sort"_s, args, 2)) || failed(scope, parseKeywordArguments(globalObject, "sort"_s, args, keywords, options))))
         return { };
     JSValue key = options[0];
     JSValue reverse = options[1];
@@ -548,7 +559,7 @@ static JSValue builtinSum(JSGlobalObject* globalObject, JSValue iterable, JSValu
             bool hasItem = next();
             RETURN_IF_EXCEPTION(scope, { });
             if (!hasItem)
-                return makeFloat(globalObject, sum.value());
+                RELEASE_AND_RETURN(scope, makeFloat(globalObject, sum.value()));
             if (isExactFloat(item)) {
                 sum.add(floatValue(item));
                 continue;
@@ -575,7 +586,7 @@ static JSValue builtinSum(JSGlobalObject* globalObject, JSValue iterable, JSValu
             bool hasItem = next();
             RETURN_IF_EXCEPTION(scope, { });
             if (!hasItem)
-                return PyComplex::create(globalObject, real.value(), imaginary.value());
+                RELEASE_AND_RETURN(scope, PyComplex::create(globalObject, real.value(), imaginary.value()));
             if (isExactComplex(item)) {
                 real.add(PyComplex::from(item)->real());
                 imaginary.add(PyComplex::from(item)->imaginary());
@@ -617,7 +628,7 @@ static JSValue builtinPrint(JSGlobalObject* globalObject, const CallArgs& args)
     auto scope = DECLARE_THROW_SCOPE(vm);
     static constexpr ASCIILiteral keywords[] = { "sep"_s, "end"_s, "file"_s, "flush"_s };
     JSValue options[4];
-    if (args.hasKeywords() && !parseKeywordArguments(globalObject, "print"_s, args, keywords, options))
+    if (args.hasKeywords() && failed(scope, parseKeywordArguments(globalObject, "print"_s, args, keywords, options)))
         return { };
     JSValue separator = options[0];
     JSValue end = options[1];
@@ -916,7 +927,7 @@ static JSValue evaluate(JSGlobalObject* globalObject, bool isEval, JSValue sourc
             locals = currentLocals(globalObject);
     }
 
-    if (!ensureBuiltins(globalObject, globals))
+    if (failed(scope, ensureBuiltins(globalObject, globals)))
         return { };
 
     JSValue code = source;

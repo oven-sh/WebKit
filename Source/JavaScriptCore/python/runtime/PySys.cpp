@@ -325,6 +325,8 @@ static JSValue sysGetSizeOf(JSGlobalObject* globalObject, JSValue object, JSValu
         return { };
     }
     size = intValue(size);
+    if (!tryInt64(size))
+        return raiseOverflowError(globalObject, scope, "Python int too large to convert to C ssize_t"_s);
     if (intSign(size) < 0)
         return raiseValueError(globalObject, scope, "__sizeof__() should return >= 0"_s);
     return size;
@@ -382,6 +384,8 @@ static JSValue sysAudit(JSGlobalObject* globalObject, const CallArgs& args)
 
 static JSValue sysAddAuditHook(JSGlobalObject* globalObject, JSValue hook)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     Runtime& rt = runtime(globalObject);
     if (!audit(globalObject, "sys.addaudithook"_s)) {
         // The hooks there are may refuse another, and then nothing is said about it.
@@ -389,7 +393,7 @@ static JSValue sysAddAuditHook(JSGlobalObject* globalObject, JSValue hook)
             return jsUndefined();
         return { };
     }
-    if (!isAudited(globalObject))
+    if (failed(scope, isAudited(globalObject)))
         rt.setSlot(Runtime::Slot::AuditHooks, newList(globalObject));
     listAppend(globalObject, asList(rt.slot(Runtime::Slot::AuditHooks)), hook);
     return jsUndefined();

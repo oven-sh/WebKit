@@ -41,7 +41,8 @@ bool Parser::warnInvalidEscape(std::span<const uint8_t> body, size_t escape, siz
     if (inInterpolatedString && (c == '{' || c == '}'))
         return true; // The lexer has warned.
 
-    if (m_diagnosing)
+    // CPython gives none while it goes over the text again, so as not to give them twice, except where it is not looking for explanations.
+    if (m_diagnosing && !m_quiet)
         return true;
 
     // What is parsed twice warns once.

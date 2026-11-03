@@ -73,7 +73,7 @@ JSValue structSeqNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs& 
     // Whatever the type, the messages about the arguments call it "structseq".
     static constexpr ASCIILiteral keywords[] = { "sequence"_s, "dict"_s };
     JSValue arguments[std::size(keywords)];
-    if (!unpackKeywordArguments(globalObject, "structseq"_s, keywords, 1, 2, false, args, arguments))
+    if (failed(scope, unpackKeywordArguments(globalObject, "structseq"_s, keywords, 1, 2, false, args, arguments)))
         return { };
     auto [sequence, dictValue] = arguments;
     PyType* type = PyType::from(cls);
@@ -111,7 +111,7 @@ JSValue structSeqNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs& 
     }
     if (dict && dict->size() > found)
         return raiseTypeError(globalObject, scope, name, "() got duplicate or unexpected field name(s)"_s);
-    return makeStructSeq(globalObject, type, spanOf(values));
+    RELEASE_AND_RETURN(scope, makeStructSeq(globalObject, type, spanOf(values)));
 }
 
 static JSValue structSeqRepr(JSGlobalObject* globalObject, JSValue self)
@@ -140,7 +140,7 @@ static JSValue structSeqRepr(JSGlobalObject* globalObject, JSValue self)
         builder.append(string);
     }
     builder.append(')');
-    return makeStr(globalObject, builder);
+    RELEASE_AND_RETURN(scope, makeStr(globalObject, builder));
 }
 
 static JSValue structSeqReduce(JSGlobalObject* globalObject, JSValue self)
@@ -184,7 +184,7 @@ static JSValue structSeqReplace(JSGlobalObject* globalObject, JSValue self, cons
                 return raiseTypeError(globalObject, scope, "Got unexpected field name(s): ['"_s, stringOf(args.keywordName(i)), "']"_s);
         }
     }
-    return makeStructSeq(globalObject, type, spanOf(values));
+    RELEASE_AND_RETURN(scope, makeStructSeq(globalObject, type, spanOf(values)));
 }
 
 static constexpr NativeDef structSeqMethods[] = {

@@ -107,7 +107,7 @@ static JSValue tzinfoReduce(JSGlobalObject* globalObject, JSValue self)
     }
     JSValue state = getObjectState(globalObject, self);
     RETURN_IF_EXCEPTION(scope, { });
-    return PyTuple::create(globalObject, { typeOf(globalObject, self), arguments, state });
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { typeOf(globalObject, self), arguments, state }));
 }
 
 static constexpr NativeDef tzinfoMethods[] = {
@@ -151,18 +151,18 @@ static JSValue zoneRepr(JSGlobalObject* globalObject, JSValue self)
     auto* zone = PyTimeZone::from(self);
     String typeName = zone->type()->nameInMessages();
     if (zone == stateOf(globalObject, zone).utc.get())
-        return makeStr(globalObject, makeString(typeName, ".utc"_s));
+        RELEASE_AND_RETURN(scope, makeStr(globalObject, makeString(typeName, ".utc"_s)));
     JSString* offset = repr(globalObject, zone->offset());
     RETURN_IF_EXCEPTION(scope, { });
     String offsetText = offset->value(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
     if (!zone->name())
-        return makeStr(globalObject, makeString(typeName, '(', offsetText, ')'));
+        RELEASE_AND_RETURN(scope, makeStr(globalObject, makeString(typeName, '(', offsetText, ')')));
     JSString* name = repr(globalObject, zone->name());
     RETURN_IF_EXCEPTION(scope, { });
     String nameText = name->value(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
-    return makeStr(globalObject, makeString(typeName, '(', offsetText, ", "_s, nameText, ')'));
+    RELEASE_AND_RETURN(scope, makeStr(globalObject, makeString(typeName, '(', offsetText, ", "_s, nameText, ')')));
 }
 
 static JSValue zoneStr(JSGlobalObject* globalObject, JSValue self)
@@ -186,21 +186,27 @@ static bool zoneCheckArgument(JSGlobalObject* globalObject, ASCIILiteral method,
 
 static JSValue zoneTzName(JSGlobalObject* globalObject, JSValue self, JSValue argument)
 {
-    if (!zoneCheckArgument(globalObject, "tzname"_s, argument))
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, zoneCheckArgument(globalObject, "tzname"_s, argument)))
         return { };
-    return zoneStr(globalObject, self);
+    RELEASE_AND_RETURN(scope, zoneStr(globalObject, self));
 }
 
 static JSValue zoneUtcOffset(JSGlobalObject* globalObject, JSValue self, JSValue argument)
 {
-    if (!zoneCheckArgument(globalObject, "utcoffset"_s, argument))
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, zoneCheckArgument(globalObject, "utcoffset"_s, argument)))
         return { };
     return PyTimeZone::from(self)->offset();
 }
 
 static JSValue zoneDst(JSGlobalObject* globalObject, JSValue, JSValue argument)
 {
-    if (!zoneCheckArgument(globalObject, "dst"_s, argument))
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, zoneCheckArgument(globalObject, "dst"_s, argument)))
         return { };
     return none();
 }
@@ -354,15 +360,17 @@ static JSValue timeOfDayStr(JSGlobalObject* globalObject, JSValue self)
 
 static JSValue timeOfDayIsoFormat(JSGlobalObject* globalObject, JSValue self, JSValue timespec)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* time = PyTimeOfDay::from(self);
     TimeSpec spec;
     if (!timeSpecArgument(globalObject, timespec, time->microsecond(), spec))
         return { };
     Text text;
     appendIsoTime(text, time->packed(), spec);
-    if (!isNone(time->tzinfo()) && !appendUtcOffset(globalObject, stateOf(globalObject, time), text, ":"_s, time->tzinfo(), none()))
+    if (!isNone(time->tzinfo()) && failed(scope, appendUtcOffset(globalObject, stateOf(globalObject, time), text, ":"_s, time->tzinfo(), none())))
         return { };
-    return makeStr(getVM(globalObject), text.toString());
+    RELEASE_AND_RETURN(scope, makeStr(getVM(globalObject), text.toString()));
 }
 
 static JSValue timeOfDayStrftime(JSGlobalObject* globalObject, JSValue self, JSValue format)

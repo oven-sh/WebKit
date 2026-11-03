@@ -259,17 +259,17 @@ static JSValue csvDialectNew(JSGlobalObject* globalObject, JSValue cls, const Ca
     char32_t delimiter, escapeChar, quoteChar;
     bool doubleQuote, skipInitialSpace, strict;
     int quoting = CsvQuoteMinimal;
-    if (!csvSetCharacter(globalObject, "delimiter"_s, delimiterValue, ',', false, delimiter))
+    if (failed(scope, csvSetCharacter(globalObject, "delimiter"_s, delimiterValue, ',', false, delimiter)))
         return { };
     if (!csvSetBool(globalObject, doubleQuoteValue, true, doubleQuote))
         return { };
-    if (!csvSetCharacter(globalObject, "escapechar"_s, escapeCharValue, csvNotSet, true, escapeChar))
+    if (failed(scope, csvSetCharacter(globalObject, "escapechar"_s, escapeCharValue, csvNotSet, true, escapeChar)))
         return { };
     if (!lineTerminatorValue)
         lineTerminatorValue = makeStr(vm, "\r\n"_s);
     else if (!isStr(lineTerminatorValue))
         return raiseTypeError(globalObject, scope, "\"lineterminator\" must be a string, not "_s, typeNameForMessage(globalObject, rt.typeOf(lineTerminatorValue)));
-    if (!csvSetCharacter(globalObject, "quotechar"_s, quoteCharValue, '"', true, quoteChar))
+    if (failed(scope, csvSetCharacter(globalObject, "quotechar"_s, quoteCharValue, '"', true, quoteChar)))
         return { };
     if (quotingValue) {
         if (!isExactInt(quotingValue))
@@ -292,7 +292,7 @@ static JSValue csvDialectNew(JSGlobalObject* globalObject, JSValue cls, const Ca
         return raiseTypeError(globalObject, scope, "quotechar must be set if quoting enabled"_s);
     String lineTerminator = strValue(lineTerminatorValue)->value(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
-    if (!csvCheckCharacter(globalObject, "delimiter"_s, delimiter, lineTerminator, true)
+    if (failed(scope, csvCheckCharacter(globalObject, "delimiter"_s, delimiter, lineTerminator, true))
         || !csvCheckCharacter(globalObject, "escapechar"_s, escapeChar, lineTerminator, !skipInitialSpace)
         || !csvCheckCharacter(globalObject, "quotechar"_s, quoteChar, lineTerminator, !skipInitialSpace)
         || !csvCheckCharacters(globalObject, "delimiter"_s, "escapechar"_s, delimiter, escapeChar)
@@ -445,6 +445,8 @@ public:
     // False: an exception.
     bool process(char32_t c)
     {
+        VM& vm = getVM(m_globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
         switch (m_state) {
         case CsvState::StartRecord:
             if (c == csvEndOfLine)
@@ -458,7 +460,7 @@ public:
         case CsvState::StartField:
             m_isUnquotedField = true;
             if (isEndOfLine(c)) {
-                if (!saveField())
+                if (failed(scope, saveField()))
                     return false;
                 m_state = c == csvEndOfLine ? CsvState::StartRecord : CsvState::EatCRNL;
             } else if (c == m_dialect.quoteChar && m_dialect.quoting != CsvQuoteNone) {
@@ -494,13 +496,13 @@ public:
             [[fallthrough]];
         case CsvState::InField:
             if (isEndOfLine(c)) {
-                if (!saveField())
+                if (failed(scope, saveField()))
                     return false;
                 m_state = c == csvEndOfLine ? CsvState::StartRecord : CsvState::EatCRNL;
             } else if (c == m_dialect.escapeChar)
                 m_state = CsvState::EscapedChar;
             else if (c == m_dialect.delimiter) {
-                if (!saveField())
+                if (failed(scope, saveField()))
                     return false;
                 m_state = CsvState::StartField;
             } else
@@ -530,11 +532,11 @@ public:
                     return false;
                 m_state = CsvState::InQuotedField;
             } else if (c == m_dialect.delimiter) {
-                if (!saveField())
+                if (failed(scope, saveField()))
                     return false;
                 m_state = CsvState::StartField;
             } else if (isEndOfLine(c)) {
-                if (!saveField())
+                if (failed(scope, saveField()))
                     return false;
                 m_state = c == csvEndOfLine ? CsvState::StartRecord : CsvState::EatCRNL;
             } else if (!m_dialect.strict) {
@@ -654,7 +656,7 @@ static JSValue csvReader(JSGlobalObject* globalObject, const CallArgs& args)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!checkPositional(globalObject, "reader"_s, args, 1, 2))
+    if (failed(scope, checkPositional(globalObject, "reader"_s, args, 1, 2)))
         return { };
     JSValue input = getIter(globalObject, args[0]);
     RETURN_IF_EXCEPTION(scope, { });
@@ -867,7 +869,7 @@ static JSValue csvWriter(JSGlobalObject* globalObject, const CallArgs& args)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!checkPositional(globalObject, "writer"_s, args, 1, 2))
+    if (failed(scope, checkPositional(globalObject, "writer"_s, args, 1, 2)))
         return { };
     JSValue write = getAttrIfPresent(globalObject, args[0], internString(vm, "write"_s));
     RETURN_IF_EXCEPTION(scope, { });
@@ -892,7 +894,7 @@ static JSValue csvRegisterDialect(JSGlobalObject* globalObject, const CallArgs& 
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!checkPositional(globalObject, "register_dialect"_s, args, 1, 2))
+    if (failed(scope, checkPositional(globalObject, "register_dialect"_s, args, 1, 2)))
         return { };
     if (!isStr(args[0]))
         return raiseTypeError(globalObject, scope, "dialect name must be a string"_s);
@@ -930,7 +932,7 @@ static JSValue csvFieldSizeLimit(JSGlobalObject* globalObject, JSValue newLimit)
             return raiseOverflowError(globalObject, scope, "Python int too large to convert to C ssize_t"_s);
         csvState(globalObject)->set(vm, internString(vm, "field_limit"_s), newLimit);
     }
-    return makeInt(globalObject, oldLimit);
+    RELEASE_AND_RETURN(scope, makeInt(globalObject, oldLimit));
 }
 
 static constexpr NativeDef csvFunctions[] = {

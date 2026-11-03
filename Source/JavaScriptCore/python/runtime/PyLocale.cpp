@@ -168,14 +168,16 @@ static bool localeIsAllASCII(const char* text)
 
 static JSValue localeSetlocale(JSGlobalObject* globalObject, JSValue categoryValue, JSValue localeValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int category;
     LocaleText locale;
-    if (!posixToInt(globalObject, categoryValue, category) || !localeToText(globalObject, localeValue, "setlocale"_s, 2, true, locale))
+    if (failed(scope, posixToInt(globalObject, categoryValue, category)) || failed(scope, localeToText(globalObject, localeValue, "setlocale"_s, 2, true, locale)))
         return { };
     const char* result = setlocale(category, locale.characters());
     if (!result)
-        return localeRaiseError(globalObject, locale.isNull ? "locale query failed"_s : "unsupported locale setting"_s);
-    return localeDecode(globalObject, result);
+        RELEASE_AND_RETURN(scope, localeRaiseError(globalObject, locale.isNull ? "locale query failed"_s : "unsupported locale setting"_s));
+    RELEASE_AND_RETURN(scope, localeDecode(globalObject, result));
 }
 
 // How digits are grouped: the sizes of the groups from the right, up to a 0 (the last size goes on) or CHAR_MAX (no more groups).
@@ -230,9 +232,11 @@ static JSValue localeLocaleconv(JSGlobalObject* globalObject)
 
 static JSValue localeStrcoll(JSGlobalObject* globalObject, JSValue first, JSValue second)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     Vector<wchar_t, 64> wideFirst;
     Vector<wchar_t, 64> wideSecond;
-    if (!localeRequireStr(globalObject, first, "strcoll"_s, 1) || !localeRequireStr(globalObject, second, "strcoll"_s, 2)
+    if (failed(scope, localeRequireStr(globalObject, first, "strcoll"_s, 1)) || failed(scope, localeRequireStr(globalObject, second, "strcoll"_s, 2))
         || !localeToWide(globalObject, first, wideFirst) || !localeToWide(globalObject, second, wideSecond))
         return { };
     return jsNumber(wcscoll(wideFirst.span().data(), wideSecond.span().data()));
@@ -240,19 +244,21 @@ static JSValue localeStrcoll(JSGlobalObject* globalObject, JSValue first, JSValu
 
 static JSValue localeStrxfrm(JSGlobalObject* globalObject, JSValue string)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     Vector<wchar_t, 64> wide;
-    if (!localeRequireStr(globalObject, string, "strxfrm"_s, 0) || !localeToWide(globalObject, string, wide))
+    if (failed(scope, localeRequireStr(globalObject, string, "strxfrm"_s, 0)) || failed(scope, localeToWide(globalObject, string, wide)))
         return { };
     wchar_t none[1];
     errno = 0;
     size_t length = wcsxfrm(none, wide.span().data(), 1);
     if (errno && errno != ERANGE)
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     Vector<wchar_t, 64> buffer(length + 1);
     errno = 0;
     length = wcsxfrm(buffer.mutableSpan().data(), wide.span().data(), buffer.size());
     if (errno)
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     // The result is numbers to compare, not characters: one that is beyond 16 bits becomes two that keep the order.
     StrBuilder builder;
     for (size_t i = 0; i < length; ++i) {
@@ -263,7 +269,7 @@ static JSValue localeStrxfrm(JSGlobalObject* globalObject, JSValue string)
         } else
             appendCodePoint(builder, number);
     }
-    return makeStr(globalObject, builder);
+    RELEASE_AND_RETURN(scope, makeStr(globalObject, builder));
 }
 
 struct LocaleLanginfoConstant {
@@ -318,8 +324,10 @@ static JSValue localeDecodeStrings(JSGlobalObject* globalObject, const char* str
 
 static JSValue localeNlLanginfo(JSGlobalObject* globalObject, JSValue keyValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int key;
-    if (!posixToInt(globalObject, keyValue, key))
+    if (failed(scope, posixToInt(globalObject, keyValue, key)))
         return { };
     // For other numbers the library may answer with something that is not a string.
     for (auto& constant : localeLanginfoConstants) {
@@ -335,12 +343,10 @@ static JSValue localeNlLanginfo(JSGlobalObject* globalObject, JSValue keyValue)
         LocaleCtypeSwitch ctype(constant.category, constant.category != LC_CTYPE && *result && (isList || !localeIsAllASCII(result)));
 #if defined(__GLIBC__)
         if (isList && *result)
-            return localeDecodeStrings(globalObject, result, key == ALT_DIGITS ? 100 : std::numeric_limits<size_t>::max());
+            RELEASE_AND_RETURN(scope, localeDecodeStrings(globalObject, result, key == ALT_DIGITS ? 100 : std::numeric_limits<size_t>::max()));
 #endif
-        return localeDecode(globalObject, result);
+        RELEASE_AND_RETURN(scope, localeDecode(globalObject, result));
     }
-    VM& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
     return raiseValueError(globalObject, scope, "unsupported langinfo constant"_s);
 }
 
@@ -355,70 +361,82 @@ static JSValue localeGetencoding(JSGlobalObject* globalObject)
 #if PY_LOCALE_HAS_GETTEXT
 static JSValue localeGettext(JSGlobalObject* globalObject, JSValue messageValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     LocaleText message;
-    if (!localeToText(globalObject, messageValue, "gettext"_s, 0, false, message))
+    if (failed(scope, localeToText(globalObject, messageValue, "gettext"_s, 0, false, message)))
         return { };
-    return localeDecode(globalObject, gettext(message.characters()));
+    RELEASE_AND_RETURN(scope, localeDecode(globalObject, gettext(message.characters())));
 }
 
 static JSValue localeDgettext(JSGlobalObject* globalObject, JSValue domainValue, JSValue messageValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     LocaleText domain;
     LocaleText message;
-    if (!localeToText(globalObject, domainValue, "dgettext"_s, 1, true, domain) || !localeToText(globalObject, messageValue, "dgettext"_s, 2, false, message))
+    if (failed(scope, localeToText(globalObject, domainValue, "dgettext"_s, 1, true, domain)) || failed(scope, localeToText(globalObject, messageValue, "dgettext"_s, 2, false, message)))
         return { };
-    return localeDecode(globalObject, dgettext(domain.characters(), message.characters()));
+    RELEASE_AND_RETURN(scope, localeDecode(globalObject, dgettext(domain.characters(), message.characters())));
 }
 
 static JSValue localeDcgettext(JSGlobalObject* globalObject, JSValue domainValue, JSValue messageValue, JSValue categoryValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     LocaleText domain;
     LocaleText message;
     int category;
-    if (!localeToText(globalObject, domainValue, "dcgettext"_s, 1, true, domain) || !localeToText(globalObject, messageValue, "dcgettext"_s, 2, false, message)
+    if (failed(scope, localeToText(globalObject, domainValue, "dcgettext"_s, 1, true, domain)) || failed(scope, localeToText(globalObject, messageValue, "dcgettext"_s, 2, false, message))
         || !posixToInt(globalObject, categoryValue, category))
         return { };
-    return localeDecode(globalObject, dcgettext(domain.characters(), message.characters(), category));
+    RELEASE_AND_RETURN(scope, localeDecode(globalObject, dcgettext(domain.characters(), message.characters(), category)));
 }
 
 static JSValue localeTextdomain(JSGlobalObject* globalObject, JSValue domainValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     LocaleText domain;
-    if (!localeToText(globalObject, domainValue, "textdomain"_s, 0, true, domain))
+    if (failed(scope, localeToText(globalObject, domainValue, "textdomain"_s, 0, true, domain)))
         return { };
     const char* result = textdomain(domain.characters());
     if (!result)
-        return posixError(globalObject);
-    return localeDecode(globalObject, result);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
+    RELEASE_AND_RETURN(scope, localeDecode(globalObject, result));
 }
 
 static JSValue localeBindtextdomain(JSGlobalObject* globalObject, JSValue domainValue, JSValue directoryValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     LocaleText domain;
-    if (!localeToText(globalObject, domainValue, "bindtextdomain"_s, 1, false, domain))
+    if (failed(scope, localeToText(globalObject, domainValue, "bindtextdomain"_s, 1, false, domain)))
         return { };
     if (!domain.bytes.length())
-        return localeRaiseError(globalObject, "domain must be a non-empty string"_s);
+        RELEASE_AND_RETURN(scope, localeRaiseError(globalObject, "domain must be a non-empty string"_s));
     PosixBytes directory;
     bool hasDirectory = !isNone(directoryValue);
     if (hasDirectory && !posixToFSBytes(globalObject, directoryValue, directory))
         return { };
     const char* result = bindtextdomain(domain.characters(), hasDirectory ? directory.characters() : nullptr);
     if (!result)
-        return posixError(globalObject);
-    return localeDecode(globalObject, result);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
+    RELEASE_AND_RETURN(scope, localeDecode(globalObject, result));
 }
 
 static JSValue localeBindTextdomainCodeset(JSGlobalObject* globalObject, JSValue domainValue, JSValue codesetValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     LocaleText domain;
     LocaleText codeset;
-    if (!localeToText(globalObject, domainValue, "bind_textdomain_codeset"_s, 1, false, domain) || !localeToText(globalObject, codesetValue, "bind_textdomain_codeset"_s, 2, true, codeset))
+    if (failed(scope, localeToText(globalObject, domainValue, "bind_textdomain_codeset"_s, 1, false, domain)) || failed(scope, localeToText(globalObject, codesetValue, "bind_textdomain_codeset"_s, 2, true, codeset)))
         return { };
     const char* result = bind_textdomain_codeset(domain.characters(), codeset.characters());
     if (!result)
         return jsUndefined();
-    return localeDecode(globalObject, result);
+    RELEASE_AND_RETURN(scope, localeDecode(globalObject, result));
 }
 #endif // PY_LOCALE_HAS_GETTEXT
 

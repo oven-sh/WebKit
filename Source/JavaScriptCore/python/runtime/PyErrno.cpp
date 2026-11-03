@@ -846,8 +846,10 @@ static bool statGetMode(JSGlobalObject* globalObject, JSValue value, StatMode& m
 template<StatMode type>
 static JSValue statIsType(JSGlobalObject* globalObject, JSValue value)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     StatMode mode;
-    if (!statGetMode(globalObject, value, mode))
+    if (failed(scope, statGetMode(globalObject, value, mode)))
         return { };
     return jsBoolean(type && (mode & statTypeMask) == type);
 }
@@ -855,16 +857,20 @@ static JSValue statIsType(JSGlobalObject* globalObject, JSValue value)
 template<StatMode mask>
 static JSValue statMasked(JSGlobalObject* globalObject, JSValue value)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     StatMode mode;
-    if (!statGetMode(globalObject, value, mode))
+    if (failed(scope, statGetMode(globalObject, value, mode)))
         return { };
     return jsNumber(static_cast<uint32_t>(mode & mask));
 }
 
 static JSValue statFileMode(JSGlobalObject* globalObject, JSValue value)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     StatMode mode;
-    if (!statGetMode(globalObject, value, mode))
+    if (failed(scope, statGetMode(globalObject, value, mode)))
         return { };
 
     static constexpr struct {
@@ -893,7 +899,7 @@ static JSValue statFileMode(JSGlobalObject* globalObject, JSValue value)
         else
             text[3 + 3 * i] = bits & 1 ? 'x' : '-';
     }
-    return makeStr(globalObject, String(std::span<const Latin1Character> { text }));
+    RELEASE_AND_RETURN(scope, makeStr(globalObject, String(std::span<const Latin1Character> { text })));
 }
 
 static constexpr NativeDef statFunctions[] = {

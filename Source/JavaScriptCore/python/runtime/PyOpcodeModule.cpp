@@ -164,7 +164,7 @@ static JSValue opcodeStackEffect(JSGlobalObject* globalObject, JSValue opcodeVal
         return raiseValueError(globalObject, scope, "invalid opcode or oparg"_s);
     if ((info->flags & Exc) && jump && jump.isFalse())
         return jsNumber(0);
-    return makeInt(globalObject, pushed - popped);
+    RELEASE_AND_RETURN(scope, makeInt(globalObject, pushed - popped));
 }
 
 static JSValue opcodeGetSpecializationStats(JSGlobalObject*)

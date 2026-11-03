@@ -160,7 +160,7 @@ static JSValue odictIteratorStep(JSGlobalObject* globalObject, PyRecord* iterato
         return key;
     if (!(kind & ODictKeys))
         return value;
-    return PyTuple::create(globalObject, { key, value });
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { key, value }));
 }
 
 static JSValue odictIteratorIter(JSGlobalObject*, JSValue self) { return self; }
@@ -197,7 +197,7 @@ static JSValue odictIteratorReduce(JSGlobalObject* globalObject, JSValue self)
     }
     JSValue iter = currentBuiltin(globalObject, internString(vm, "iter"_s));
     RETURN_IF_EXCEPTION(scope, { });
-    return PyTuple::create(globalObject, { iter, PyTuple::create(globalObject, { rest }) });
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { iter, PyTuple::create(globalObject, { rest }) }));
 }
 
 static constexpr NativeDef odictIteratorMethods[] = {
@@ -383,6 +383,22 @@ static JSValue odictSetDefault(JSGlobalObject* globalObject, JSValue self, JSVal
     return defaultValue;
 }
 
+// CPython's OrderedDict hands the key over as the value of the exception, not as its argument: a tuple is taken for all the
+// arguments, and None for none.
+static JSValue odictRaiseKeyError(JSGlobalObject* globalObject, JSValue key)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    std::span<const JSValue> arguments { &key, 1 };
+    if (isNone(key))
+        arguments = { };
+    else if (auto* tuple = PyTuple::tryFrom(key))
+        arguments = tuple->span();
+    PyException* exception = newException(globalObject, runtime(globalObject).KeyError(), arguments);
+    RETURN_IF_EXCEPTION(scope, { });
+    return raiseException(globalObject, scope, exception);
+}
+
 static JSValue odictPop(JSGlobalObject* globalObject, JSValue self, JSValue key, JSValue defaultValue)
 {
     VM& vm = getVM(globalObject);
@@ -395,7 +411,7 @@ static JSValue odictPop(JSGlobalObject* globalObject, JSValue self, JSValue key,
         return value;
     if (defaultValue)
         return defaultValue;
-    return raiseKeyError(globalObject, scope, key);
+    RELEASE_AND_RETURN(scope, odictRaiseKeyError(globalObject, key));
 }
 
 static JSValue odictPopItem(JSGlobalObject* globalObject, JSValue self, JSValue lastValue)
@@ -411,7 +427,7 @@ static JSValue odictPopItem(JSGlobalObject* globalObject, JSValue self, JSValue 
     JSValue key, value;
     if (!(last ? dict->takeLast(vm, key, value) : dict->takeFirst(vm, key, value)))
         return raiseKeyError(globalObject, scope, makeStr(vm, "dictionary is empty"_s));
-    return PyTuple::create(globalObject, { key, value });
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { key, value }));
 }
 
 static JSValue odictMoveToEnd(JSGlobalObject* globalObject, JSValue self, JSValue key, JSValue lastValue)
@@ -433,15 +449,7 @@ static JSValue odictMoveToEnd(JSGlobalObject* globalObject, JSValue self, JSValu
     }
     if (found)
         return jsUndefined();
-    // CPython hands the key over as the value of the exception, not as its argument: a tuple is taken for all the arguments, None for none.
-    std::span<const JSValue> arguments { &key, 1 };
-    if (isNone(key))
-        arguments = { };
-    else if (auto* tuple = PyTuple::tryFrom(key))
-        arguments = tuple->span();
-    PyException* exception = newException(globalObject, runtime(globalObject).KeyError(), arguments);
-    RETURN_IF_EXCEPTION(scope, { });
-    return raiseException(globalObject, scope, exception);
+    RELEASE_AND_RETURN(scope, odictRaiseKeyError(globalObject, key));
 }
 
 static JSValue odictClear(JSGlobalObject* globalObject, JSValue self)
@@ -505,7 +513,7 @@ static JSValue odictRepr(JSGlobalObject* globalObject, JSValue self)
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyDict* dict = PyDict::from(self);
     if (dict->isEmpty())
-        return makeStr(globalObject, makeString(dict->type()->name(), "()"_s));
+        RELEASE_AND_RETURN(scope, makeStr(globalObject, makeString(dict->type()->name(), "()"_s)));
     ReprGuard guard(globalObject, self);
     if (guard.isRecursive())
         return makeStr(vm, "..."_s);
@@ -517,7 +525,7 @@ static JSValue odictRepr(JSGlobalObject* globalObject, JSValue self)
     RETURN_IF_EXCEPTION(scope, { });
     String items = text->value(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
-    return makeStr(globalObject, makeString(dict->type()->name(), '(', items, ')'));
+    RELEASE_AND_RETURN(scope, makeStr(globalObject, makeString(dict->type()->name(), '(', items, ')')));
 }
 
 // 1, 0, or -1 for an exception.
@@ -575,7 +583,7 @@ static JSValue odictUnion(JSGlobalObject* globalObject, JSValue left, JSValue ri
     bool leftIsOrdered = isOrderedDict(globalObject, left);
     JSValue other = leftIsOrdered ? right : left;
     if (!PyDict::is(other))
-        return runtime(globalObject).notImplemented();
+        RELEASE_AND_RETURN(scope, runtime(globalObject).notImplemented());
     JSValue result = call(globalObject, PyDict::from(leftIsOrdered ? left : right)->type(), left);
     RETURN_IF_EXCEPTION(scope, { });
     updateFrom(globalObject, result, right);
@@ -606,7 +614,7 @@ static JSValue odictReduce(JSGlobalObject* globalObject, JSValue self)
     RETURN_IF_EXCEPTION(scope, { });
     JSValue iterator = getIter(globalObject, items);
     RETURN_IF_EXCEPTION(scope, { });
-    return PyTuple::create(globalObject, { JSValue(PyDict::from(self)->type()), rt.emptyTuple(), state, jsUndefined(), iterator });
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { JSValue(PyDict::from(self)->type()), rt.emptyTuple(), state, jsUndefined(), iterator }));
 }
 
 // More than the dict it is, as in CPython, where it has a list besides.

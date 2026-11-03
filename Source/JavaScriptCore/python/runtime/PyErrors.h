@@ -12,6 +12,18 @@
 namespace JSC {
 namespace Python {
 
+// Many functions here have nothing to return but whether they succeeded: false means that they have raised. To test that is to
+// check for the exception, and exception scope verification (Options::validateExceptionChecks()) has to be told so:
+//     if (failed(scope, parseArguments(globalObject, args, count)))
+//         return { };
+// It also verifies that false and an exception go together.
+template<typename Scope>
+ALWAYS_INLINE bool failed(Scope& scope, bool succeeded)
+{
+    EXCEPTION_ASSERT_UNUSED(scope, !!scope.exception() == !succeeded);
+    return !succeeded;
+}
+
 // Raising from C++. All return an empty value, to be returned in turn.
 
 // raise type(message)

@@ -6,7 +6,6 @@
 #include "config.h"
 #include "PyException.h"
 
-#include "ErrorHandlingScope.h"
 #include "ErrorInstance.h"
 #include "JSCInlines.h"
 #include "PyAbstract.h"
@@ -14,6 +13,7 @@
 #include "PyErrors.h"
 #include "PyInternals.h"
 #include "PyList.h"
+#include "PyModuleHelpers.h"
 #include "PyNumbers.h"
 #include "PyRuntime.h"
 #include "PyStr.h"
@@ -63,11 +63,14 @@ DEFINE_VISIT_CHILDREN(PyException);
 
 PyException* newException(JSGlobalObject* globalObject, PyType* type, std::span<const JSValue> args)
 {
-    // A RecursionError is made where the stack is as good as used up: what is kept in reserve for handling errors is for this.
-    VM& vm = getVM(globalObject);
-    std::optional<ErrorHandlingScope> errorHandlingScope;
-    if (type == runtime(globalObject).RecursionError() && vm.stackPointerAtVMEntry())
-        errorHandlingScope.emplace(vm);
+    // A RecursionError is made where the stack is as good as used up. A call would find that out in its turn, and raise another.
+    // Calling the type runs nothing of the program's, so this is what comes of it.
+    Runtime& rt = runtime(globalObject);
+    if (type == rt.RecursionError()) [[unlikely]] {
+        PyException* exception = PyException::create(rt.vm(), rt.structure<PyException>(), type);
+        exception->setArgs(rt.vm(), PyTuple::create(globalObject, args));
+        return exception;
+    }
     JSValue result = call(globalObject, type, CallArgs(args));
     return result ? PyException::from(result) : nullptr;
 }
@@ -231,7 +234,9 @@ static bool rejectKeywords(JSGlobalObject* globalObject, JSValue object, const C
 
 static JSValue baseExceptionInit(JSGlobalObject* globalObject, JSValue object, const CallArgs& args)
 {
-    if (!rejectKeywords(globalObject, object, args))
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, rejectKeywords(globalObject, object, args)))
         return { };
     self(object)->setArgs(getVM(globalObject), PyTuple::create(globalObject, args.positional()));
     return jsUndefined();
@@ -244,7 +249,7 @@ static JSValue baseExceptionStr(JSGlobalObject* globalObject, JSValue object)
     case 0:
         return runtime(globalObject).names.empty();
     case 1:
-        return str(globalObject, args->at(0));
+        return strObject(globalObject, args->at(0));
     default:
         return str(globalObject, args);
     }
@@ -472,16 +477,20 @@ static constexpr NativeGetSet systemExitGetSets[] = {
 // ---- Those that take keyword arguments ----
 
 // False: an exception. Each keyword goes in the field that goes with its name.
-static bool initWithKeywords(JSGlobalObject* globalObject, JSValue object, const CallArgs& args, std::initializer_list<std::pair<ASCIILiteral, unsigned>> keywords)
+static bool initWithKeywords(JSGlobalObject* globalObject, ASCIILiteral className, JSValue object, const CallArgs& args, std::initializer_list<std::pair<ASCIILiteral, unsigned>> keywords)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyException* exception = self(object);
+    if (args.keywordCount() > keywords.size()) {
+        raiseTypeError(globalObject, scope, className, "() takes at most "_s, keywords.size(), " keyword argument"_s, keywords.size() == 1 ? ""_s : "s"_s, " ("_s, args.keywordCount(), " given)"_s);
+        return false;
+    }
     exception->setArgs(vm, PyTuple::create(globalObject, args.positional()));
     for (auto& keyword : keywords)
         exception->setField(vm, keyword.second, { });
     if (args.keywordCount() > keywords.size()) {
-        raiseTypeError(globalObject, scope, typeName(globalObject, object), "() takes at most "_s, static_cast<unsigned>(keywords.size()), " keyword argument"_s, keywords.size() == 1 ? ""_s : "s"_s, " ("_s, args.keywordCount(), " given)"_s);
+        raiseTypeError(globalObject, scope, className, "() takes at most "_s, static_cast<unsigned>(keywords.size()), " keyword argument"_s, keywords.size() == 1 ? ""_s : "s"_s, " ("_s, args.keywordCount(), " given)"_s);
         return false;
     }
     for (unsigned i = 0; i < args.keywordCount(); ++i) {
@@ -499,7 +508,7 @@ static bool initWithKeywords(JSGlobalObject* globalObject, JSValue object, const
             for (auto& keyword : keywords)
                 names.append(keyword.first);
             scope.release();
-            raiseUnexpectedKeyword(globalObject, typeName(globalObject, object), String(name), names.span());
+            raiseUnexpectedKeyword(globalObject, className, String(name), names.span());
             return false;
         }
     }
@@ -508,7 +517,9 @@ static bool initWithKeywords(JSGlobalObject* globalObject, JSValue object, const
 
 static JSValue importErrorInit(JSGlobalObject* globalObject, JSValue object, const CallArgs& args)
 {
-    if (!initWithKeywords(globalObject, object, args, { { "name"_s, ExceptionField::importErrorName }, { "path"_s, ExceptionField::importErrorPath }, { "name_from"_s, ExceptionField::importErrorNameFrom } }))
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, initWithKeywords(globalObject, "ImportError"_s, object, args, { { "name"_s, ExceptionField::importErrorName }, { "path"_s, ExceptionField::importErrorPath }, { "name_from"_s, ExceptionField::importErrorNameFrom } })))
         return { };
     self(object)->setField(getVM(globalObject), ExceptionField::importErrorMsg, args.size() == 1 ? args[0] : jsUndefined());
     return jsUndefined();
@@ -550,7 +561,7 @@ static JSValue importErrorRepr(JSGlobalObject* globalObject, JSValue object)
     if (!append("name"_s, name) || !append("path"_s, path))
         return { };
     builder.append(')');
-    return makeStr(globalObject, builder);
+    RELEASE_AND_RETURN(scope, makeStr(globalObject, builder));
 }
 
 // The __dict__ and, under their names, the fields that are set. None: there is neither.
@@ -594,7 +605,9 @@ static constexpr NativeGetSet importErrorGetSets[] = {
 
 static JSValue nameErrorInit(JSGlobalObject* globalObject, JSValue object, const CallArgs& args)
 {
-    if (!initWithKeywords(globalObject, object, args, { { "name"_s, ExceptionField::nameErrorName } }))
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, initWithKeywords(globalObject, "NameError"_s, object, args, { { "name"_s, ExceptionField::nameErrorName } })))
         return { };
     return jsUndefined();
 }
@@ -608,7 +621,9 @@ static constexpr NativeGetSet nameErrorGetSets[] = {
 
 static JSValue attributeErrorInit(JSGlobalObject* globalObject, JSValue object, const CallArgs& args)
 {
-    if (!initWithKeywords(globalObject, object, args, { { "name"_s, ExceptionField::attributeErrorName }, { "obj"_s, ExceptionField::attributeErrorObj } }))
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, initWithKeywords(globalObject, "AttributeError"_s, object, args, { { "name"_s, ExceptionField::attributeErrorName }, { "obj"_s, ExceptionField::attributeErrorObj } })))
         return { };
     return jsUndefined();
 }
@@ -643,7 +658,7 @@ static JSValue keyErrorStr(JSGlobalObject* globalObject, JSValue object)
     // KeyError('') would otherwise show as nothing at all.
     PyTuple* args = self(object)->args();
     if (args->length() == 1)
-        return repr(globalObject, args->at(0));
+        return reprObject(globalObject, args->at(0));
     return baseExceptionStr(globalObject, object);
 }
 
@@ -696,10 +711,12 @@ static PyType* osErrorSubclassFor(Runtime& rt, int errorNumber)
     }
 }
 
-static void osErrorInitialize(JSGlobalObject* globalObject, PyException* exception, const CallArgs& args)
+// False: an exception.
+static bool osErrorInitialize(JSGlobalObject* globalObject, PyException* exception, const CallArgs& args)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     unsigned count = args.size();
     std::span<const JSValue> kept = args.positional();
     if (count >= 2 && count <= 5) {
@@ -707,9 +724,16 @@ static void osErrorInitialize(JSGlobalObject* globalObject, PyException* excepti
         exception->setField(vm, ExceptionField::osErrorStrerror, args[1]);
         if (count >= 3) {
             JSValue filename = args[2];
-            if (exception->type()->isSubtypeOf(rt.BlockingIOError()) && isInt(filename) && count == 3)
-                exception->setField(vm, ExceptionField::osErrorCharactersWritten, filename);
-            else if (!isNone(filename)) {
+            PyType* filenameType = rt.typeOf(filename);
+            bool isNumber = filenameType->lookup(Special::Index) || filenameType->lookup(Special::Int) || filenameType->lookup(Special::Float);
+            if (exception->type() == rt.BlockingIOError() && isNumber) {
+                // In place of a file name, how many characters were written. Nothing is then taken out of the args.
+                int64_t written = toSsize(globalObject, filename, rt.ValueError());
+                RETURN_IF_EXCEPTION(scope, false);
+                // -1 is CPython's mark for "not set".
+                if (written != -1)
+                    exception->setField(vm, ExceptionField::osErrorCharactersWritten, makeInt(globalObject, written));
+            } else if (!isNone(filename)) {
                 exception->setField(vm, ExceptionField::osErrorFilename, filename);
                 if (count == 5 && !isNone(args[4]))
                     exception->setField(vm, ExceptionField::osErrorFilename2, args[4]);
@@ -719,6 +743,7 @@ static void osErrorInitialize(JSGlobalObject* globalObject, PyException* excepti
         }
     }
     exception->setArgs(vm, PyTuple::create(globalObject, kept));
+    return true;
 }
 
 // A subclass that has an __init__ of its own, and not a __new__, gets to see the arguments first.
@@ -732,33 +757,36 @@ static JSValue osErrorNew(JSGlobalObject* globalObject, JSValue cls, const CallA
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PyType* type = PyType::from(cls);
     bool usesInit = osErrorUsesInit(globalObject, type);
     if (!usesInit) {
-        if (args.hasKeywords()) {
-            auto scope = DECLARE_THROW_SCOPE(vm);
+        if (args.hasKeywords())
             return raiseTypeError(globalObject, scope, type->name(), "() takes no keyword arguments"_s);
-        }
-        if (type == rt.OSError() && args.size() >= 2 && args.size() <= 5 && isSmallInt(args[0])) {
-            if (PyType* subclass = osErrorSubclassFor(rt, static_cast<int>(smallIntValue(args[0]))))
+        if (type == rt.OSError() && args.size() >= 2 && args.size() <= 5 && isInt(args[0])) {
+            auto number = tryInt64(intValue(args[0]));
+            if (PyType* subclass = number && *number == static_cast<int>(*number) ? osErrorSubclassFor(rt, static_cast<int>(*number)) : nullptr)
                 type = subclass;
         }
     }
     PyException* exception = PyException::create(vm, rt.structure<PyException>(), type);
     if (usesInit)
         exception->setArgs(vm, rt.emptyTuple());
-    else
-        osErrorInitialize(globalObject, exception, args);
+    else if (failed(scope, osErrorInitialize(globalObject, exception, args)))
+        return { };
     return exception;
 }
 
 static JSValue osErrorInit(JSGlobalObject* globalObject, JSValue object, const CallArgs& args)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     if (!osErrorUsesInit(globalObject, self(object)->type()))
         return jsUndefined();
-    if (!rejectKeywords(globalObject, object, args))
+    if (failed(scope, rejectKeywords(globalObject, object, args)))
         return { };
-    osErrorInitialize(globalObject, self(object), args);
+    if (failed(scope, osErrorInitialize(globalObject, self(object), args)))
+        return { };
     return jsUndefined();
 }
 
@@ -916,11 +944,13 @@ static JSValue syntaxErrorStr(JSGlobalObject* globalObject, JSValue object)
         if (slash != notFound)
             baseName = baseName.substring(slash + 1);
     }
+    // The line is shown as a number of C, which is -1 if it does not fit.
+    String line = hasLineNumber ? (tryInt64(lineNumber) ? intToString(globalObject, lineNumber) : String("-1"_s)) : String();
     if (hasFilename && hasLineNumber)
-        return makeStr(vm, makeString(text, " ("_s, baseName, ", line "_s, intToString(globalObject, lineNumber), ')'));
+        return makeStr(vm, makeString(text, " ("_s, baseName, ", line "_s, line, ')'));
     if (hasFilename)
         return makeStr(vm, makeString(text, " ("_s, baseName, ')'));
-    return makeStr(vm, makeString(text, " (line "_s, intToString(globalObject, lineNumber), ')'));
+    return makeStr(vm, makeString(text, " (line "_s, line, ')'));
 }
 
 static constexpr NativeDef syntaxErrorMethods[] = {
@@ -958,8 +988,9 @@ static JSValue unicodeErrorInitCommon(JSGlobalObject* globalObject, JSValue obje
         return value;
     };
     auto takeIndex = [&]() -> JSValue {
-        int64_t value = toSsize(globalObject, args[next++], nullptr);
-        RETURN_IF_EXCEPTION(scope, { });
+        int64_t value;
+        if (failed(scope, ssizeArgument(globalObject, args[next++], value)))
+            return { };
         return makeInt(globalObject, value);
     };
     JSValue encoding;
@@ -1011,20 +1042,31 @@ static JSValue unicodeErrorStrCommon(JSGlobalObject* globalObject, JSValue objec
     PyException* exception = self(object);
     JSValue target = exception->field(ExceptionField::unicodeErrorObject);
     if (!target)
-        return runtime(globalObject).names.empty();
+        RELEASE_AND_RETURN(scope, runtime(globalObject).names.empty());
 
-    JSString* reasonString = str(globalObject, noneIfEmpty(exception->field(ExceptionField::unicodeErrorReason)));
+    // What __init__ has not set shows as it does in CPython: null pointers and zeros.
+    auto textOf = [&](unsigned field) -> String {
+        JSValue value = exception->field(field);
+        if (!value)
+            return "<NULL>"_s;
+        JSString* string = str(globalObject, value);
+        RETURN_IF_EXCEPTION(scope, { });
+        return string->value(globalObject);
+    };
+    auto positionOf = [&](unsigned field) -> int64_t {
+        JSValue value = exception->field(field);
+        return value ? toSsize(globalObject, value, nullptr) : 0;
+    };
+    String reason = textOf(ExceptionField::unicodeErrorReason);
     RETURN_IF_EXCEPTION(scope, { });
-    String reason = reasonString->value(globalObject);
     String encoding;
     if (kind != 2) {
-        JSString* encodingString = str(globalObject, noneIfEmpty(exception->field(ExceptionField::unicodeErrorEncoding)));
+        encoding = textOf(ExceptionField::unicodeErrorEncoding);
         RETURN_IF_EXCEPTION(scope, { });
-        encoding = encodingString->value(globalObject);
     }
-    int64_t start = toSsize(globalObject, noneIfEmpty(exception->field(ExceptionField::unicodeErrorStart)), nullptr);
+    int64_t start = positionOf(ExceptionField::unicodeErrorStart);
     RETURN_IF_EXCEPTION(scope, { });
-    int64_t end = toSsize(globalObject, noneIfEmpty(exception->field(ExceptionField::unicodeErrorEnd)), nullptr);
+    int64_t end = positionOf(ExceptionField::unicodeErrorEnd);
     RETURN_IF_EXCEPTION(scope, { });
 
     // A __str__ called above may have done anything to the exception.
@@ -1083,8 +1125,9 @@ static void setPositionField(JSGlobalObject* globalObject, JSValue object, JSVal
         raiseTypeError(globalObject, scope, value ? "an integer is required"_s : "can't delete numeric/char attribute"_s);
         return;
     }
-    int64_t position = toSsize(globalObject, value, nullptr);
-    RETURN_IF_EXCEPTION(scope, void());
+    int64_t position;
+    if (failed(scope, ssizeArgument(globalObject, value, position)))
+        return;
     self(object)->setField(vm, index, makeInt(globalObject, position));
 }
 

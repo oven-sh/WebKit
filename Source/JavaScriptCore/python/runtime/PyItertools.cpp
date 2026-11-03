@@ -129,10 +129,10 @@ static JSValue itertoolsBatchedNew(JSGlobalObject* globalObject, JSValue cls, co
     auto scope = DECLARE_THROW_SCOPE(vm);
     static constexpr ASCIILiteral keywords[] = { "iterable"_s, "n"_s, "strict"_s };
     JSValue values[3];
-    if (!unpackKeywordArguments(globalObject, "batched"_s, keywords, 2, 2, false, args, values))
+    if (failed(scope, unpackKeywordArguments(globalObject, "batched"_s, keywords, 2, 2, false, args, values)))
         return { };
     int64_t size;
-    if (!itertoolsSsizeArgument(globalObject, values[1], size))
+    if (failed(scope, itertoolsSsizeArgument(globalObject, values[1], size)))
         return { };
     bool isStrict = values[2] && isTrue(globalObject, values[2]);
     RETURN_IF_EXCEPTION(scope, { });
@@ -173,7 +173,7 @@ static JSValue itertoolsBatchedNext(JSGlobalObject* globalObject, JSValue self)
         batch.append(item);
     }
     if (static_cast<int64_t>(batch.size()) == size)
-        return PyTuple::create(globalObject, spanOf(batch));
+        RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, spanOf(batch)));
     if (batch.isEmpty()) {
         finish();
         RELEASE_AND_RETURN(scope, itertoolsStop(globalObject));
@@ -182,7 +182,7 @@ static JSValue itertoolsBatchedNext(JSGlobalObject* globalObject, JSValue self)
         finish();
         return raiseValueError(globalObject, scope, "batched(): incomplete batch"_s);
     }
-    return PyTuple::create(globalObject, spanOf(batch));
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, spanOf(batch)));
 }
 
 static constexpr NativeDef itertoolsBatchedMethods[] = {
@@ -204,7 +204,7 @@ static JSValue itertoolsPairwiseNew(JSGlobalObject* globalObject, JSValue cls, c
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!itertoolsRejectKeywords(globalObject, cls, itertoolsPairwiseType, "pairwise"_s, args) || !checkPositional(globalObject, "pairwise"_s, args, 1, 1))
+    if (failed(scope, itertoolsRejectKeywords(globalObject, cls, itertoolsPairwiseType, "pairwise"_s, args)) || failed(scope, checkPositional(globalObject, "pairwise"_s, args, 1, 1)))
         return { };
     JSValue iterator = getIter(globalObject, args[0]);
     RETURN_IF_EXCEPTION(scope, { });
@@ -245,7 +245,7 @@ static JSValue itertoolsPairwiseNext(JSGlobalObject* globalObject, JSValue self)
         RELEASE_AND_RETURN(scope, itertoolsStop(globalObject));
     }
     record->set(vm, ItertoolsPairwise::Old, next);
-    return PyTuple::create(globalObject, { old, next });
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { old, next }));
 }
 
 static constexpr NativeDef itertoolsPairwiseMethods[] = {
@@ -273,7 +273,7 @@ static JSValue itertoolsGroupByNew(JSGlobalObject* globalObject, JSValue cls, co
     auto scope = DECLARE_THROW_SCOPE(vm);
     static constexpr ASCIILiteral keywords[] = { "iterable"_s, "key"_s };
     JSValue values[2];
-    if (!unpackKeywordArguments(globalObject, "groupby"_s, keywords, 1, 2, false, args, values))
+    if (failed(scope, unpackKeywordArguments(globalObject, "groupby"_s, keywords, 1, 2, false, args, values)))
         return { };
     JSValue iterator = getIter(globalObject, values[0]);
     RETURN_IF_EXCEPTION(scope, { });
@@ -340,7 +340,7 @@ static JSValue itertoolsGroupByNext(JSGlobalObject* globalObject, JSValue self)
     JSValue key = record->get(ItertoolsGroupBy::CurrentKey);
     record->set(vm, ItertoolsGroupBy::TargetKey, key);
     JSValue grouper = itertoolsMakeGrouper(globalObject, record, key);
-    return PyTuple::create(globalObject, { key, grouper });
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { key, grouper }));
 }
 
 static constexpr NativeDef itertoolsGroupByMethods[] = {
@@ -354,12 +354,12 @@ static JSValue itertoolsGrouperNew(JSGlobalObject* globalObject, JSValue cls, co
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!itertoolsRejectKeywords(globalObject, cls, itertoolsGrouperType, "_grouper"_s, args) || !checkPositional(globalObject, "_grouper"_s, args, 2, 2))
+    if (failed(scope, itertoolsRejectKeywords(globalObject, cls, itertoolsGrouperType, "_grouper"_s, args)) || failed(scope, checkPositional(globalObject, "_grouper"_s, args, 2, 2)))
         return { };
     PyRecord* parent = PyRecord::tryFrom(args[0], itertoolsGroupByType(globalObject));
     if (!parent)
         return raiseTypeError(globalObject, scope, "_grouper() argument 1 must be itertools.groupby, not "_s, isNone(args[0]) ? "None"_str : typeName(globalObject, args[0]));
-    return itertoolsMakeGrouper(globalObject, parent, args[1]);
+    RELEASE_AND_RETURN(scope, itertoolsMakeGrouper(globalObject, parent, args[1]));
 }
 
 static JSValue itertoolsGrouperNext(JSGlobalObject* globalObject, JSValue self)
@@ -426,7 +426,7 @@ static JSValue itertoolsTeeDataNew(JSGlobalObject* globalObject, JSValue cls, co
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!itertoolsRejectKeywords(globalObject, cls, itertoolsTeeDataType, "teedataobject"_s, args) || !checkPositional(globalObject, "teedataobject"_s, args, 3, 3))
+    if (failed(scope, itertoolsRejectKeywords(globalObject, cls, itertoolsTeeDataType, "teedataobject"_s, args)) || failed(scope, checkPositional(globalObject, "teedataobject"_s, args, 3, 3)))
         return { };
     if (!isList(args[1]))
         return raiseTypeError(globalObject, scope, "teedataobject() argument 2 must be list, not "_s, isNone(args[1]) ? "None"_str : typeName(globalObject, args[1]));
@@ -473,15 +473,17 @@ static JSValue itertoolsTeeFromIterable(JSGlobalObject* globalObject, JSValue it
     JSValue iterator = getIter(globalObject, iterable);
     RETURN_IF_EXCEPTION(scope, { });
     if (PyRecord::tryFrom(iterator, itertoolsTeeType(globalObject)))
-        return itertoolsTeeCopy(globalObject, iterator);
-    return itertoolsMakeTee(globalObject, itertoolsTeeType(globalObject), itertoolsMakeTeeData(globalObject, iterator), 0);
+        RELEASE_AND_RETURN(scope, itertoolsTeeCopy(globalObject, iterator));
+    RELEASE_AND_RETURN(scope, itertoolsMakeTee(globalObject, itertoolsTeeType(globalObject), itertoolsMakeTeeData(globalObject, iterator), 0));
 }
 
 static JSValue itertoolsTeeNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs& args)
 {
-    if (!itertoolsRejectKeywords(globalObject, cls, itertoolsTeeType, "_tee"_s, args) || !checkPositional(globalObject, "_tee"_s, args, 1, 1))
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, itertoolsRejectKeywords(globalObject, cls, itertoolsTeeType, "_tee"_s, args)) || failed(scope, checkPositional(globalObject, "_tee"_s, args, 1, 1)))
         return { };
-    return itertoolsTeeFromIterable(globalObject, args[0]);
+    RELEASE_AND_RETURN(scope, itertoolsTeeFromIterable(globalObject, args[0]));
 }
 
 static JSValue itertoolsTeeNext(JSGlobalObject* globalObject, JSValue self)
@@ -536,12 +538,12 @@ static JSValue itertoolsTeeFunction(JSGlobalObject* globalObject, JSValue iterab
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     int64_t count = 2;
-    if (countValue && !itertoolsNonNegativeArgument(globalObject, countValue, "n"_s, count))
+    if (countValue && failed(scope, itertoolsNonNegativeArgument(globalObject, countValue, "n"_s, count)))
         return { };
-    if (!itertoolsCheckLength(globalObject, count))
+    if (failed(scope, itertoolsCheckLength(globalObject, count)))
         return { };
     if (!count)
-        return runtime(globalObject).emptyTuple();
+        RELEASE_AND_RETURN(scope, runtime(globalObject).emptyTuple());
     JSValue iterator = getIter(globalObject, iterable);
     RETURN_IF_EXCEPTION(scope, { });
     JSValue tee = itertoolsTeeFromIterable(globalObject, iterator);
@@ -567,7 +569,7 @@ static JSValue itertoolsCycleNew(JSGlobalObject* globalObject, JSValue cls, cons
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!itertoolsRejectKeywords(globalObject, cls, itertoolsCycleType, "cycle"_s, args) || !checkPositional(globalObject, "cycle"_s, args, 1, 1))
+    if (failed(scope, itertoolsRejectKeywords(globalObject, cls, itertoolsCycleType, "cycle"_s, args)) || failed(scope, checkPositional(globalObject, "cycle"_s, args, 1, 1)))
         return { };
     JSValue iterator = getIter(globalObject, args[0]);
     RETURN_IF_EXCEPTION(scope, { });
@@ -623,7 +625,7 @@ static JSValue itertoolsFunctionalNew(JSGlobalObject* globalObject, JSValue cls,
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!itertoolsRejectKeywords(globalObject, cls, baseType, name, args) || !checkPositional(globalObject, name, args, 2, 2))
+    if (failed(scope, itertoolsRejectKeywords(globalObject, cls, baseType, name, args)) || failed(scope, checkPositional(globalObject, name, args, 2, 2)))
         return { };
     JSValue iterator = getIter(globalObject, args[1]);
     RETURN_IF_EXCEPTION(scope, { });
@@ -775,7 +777,7 @@ static JSValue itertoolsISliceNew(JSGlobalObject* globalObject, JSValue cls, con
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!itertoolsRejectKeywords(globalObject, cls, itertoolsISliceType, "islice"_s, args) || !checkPositional(globalObject, "islice"_s, args, 2, 4))
+    if (failed(scope, itertoolsRejectKeywords(globalObject, cls, itertoolsISliceType, "islice"_s, args)) || failed(scope, checkPositional(globalObject, "islice"_s, args, 2, 4)))
         return { };
 
     // -1, and no exception, for what is not an integer that fits.
@@ -877,9 +879,11 @@ static JSValue itertoolsMakeChain(JSGlobalObject* globalObject, JSValue cls, JSV
 
 static JSValue itertoolsChainNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs& args)
 {
-    if (!itertoolsRejectKeywords(globalObject, cls, itertoolsChainType, "chain"_s, args))
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, itertoolsRejectKeywords(globalObject, cls, itertoolsChainType, "chain"_s, args)))
         return { };
-    return itertoolsMakeChain(globalObject, cls, PyTuple::create(globalObject, args.positional()));
+    RELEASE_AND_RETURN(scope, itertoolsMakeChain(globalObject, cls, PyTuple::create(globalObject, args.positional())));
 }
 
 static JSValue itertoolsChainFromIterable(JSGlobalObject* globalObject, JSValue cls, JSValue iterable) { return itertoolsMakeChain(globalObject, cls, iterable); }
@@ -937,9 +941,9 @@ static JSValue itertoolsProductNew(JSGlobalObject* globalObject, JSValue cls, co
     if (args.hasKeywords()) {
         static constexpr ASCIILiteral keywords[] = { "repeat"_s };
         JSValue repeatValue;
-        if (!unpackKeywordArguments(globalObject, "product"_s, keywords, 0, 0, false, CallArgs(args.values() + args.size(), 0, args.keywordNames()), &repeatValue))
+        if (failed(scope, unpackKeywordArguments(globalObject, "product"_s, keywords, 0, 0, false, CallArgs(args.values() + args.size(), 0, args.keywordNames()), &repeatValue)))
             return { };
-        if (repeatValue && !itertoolsSsizeArgument(globalObject, repeatValue, repeat))
+        if (repeatValue && failed(scope, itertoolsSsizeArgument(globalObject, repeatValue, repeat)))
             return { };
         if (repeat < 0)
             return raiseValueError(globalObject, scope, "repeat argument cannot be negative"_s);
@@ -948,7 +952,7 @@ static JSValue itertoolsProductNew(JSGlobalObject* globalObject, JSValue cls, co
     if (repeat && static_cast<uint64_t>(argumentCount) > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) / sizeof(int64_t) / static_cast<uint64_t>(repeat))
         return raiseOverflowError(globalObject, scope, "repeat argument too large"_s);
     int64_t poolCount = argumentCount * repeat;
-    if (!itertoolsCheckLength(globalObject, poolCount))
+    if (failed(scope, itertoolsCheckLength(globalObject, poolCount)))
         return { };
 
     PyTuple* pools = PyTuple::create(globalObject, static_cast<unsigned>(poolCount));
@@ -1040,14 +1044,14 @@ static JSValue itertoolsCombinationsNewImpl(JSGlobalObject* globalObject, JSValu
     auto scope = DECLARE_THROW_SCOPE(vm);
     static constexpr ASCIILiteral keywords[] = { "iterable"_s, "r"_s };
     JSValue values[2];
-    if (!unpackKeywordArguments(globalObject, name, keywords, 2, 2, false, args, values))
+    if (failed(scope, unpackKeywordArguments(globalObject, name, keywords, 2, 2, false, args, values)))
         return { };
     int64_t length;
-    if (!itertoolsNonNegativeArgument(globalObject, values[1], "r"_s, length))
+    if (failed(scope, itertoolsNonNegativeArgument(globalObject, values[1], "r"_s, length)))
         return { };
     PyTuple* pool = tupleFromIterable(globalObject, values[0]);
     RETURN_IF_EXCEPTION(scope, { });
-    if (!itertoolsCheckLength(globalObject, length))
+    if (failed(scope, itertoolsCheckLength(globalObject, length)))
         return { };
     bool isStopped = withReplacement ? !pool->length() && length : length > pool->length();
     // What has stopped has no use for the indices.
@@ -1140,7 +1144,7 @@ static JSValue itertoolsPermutationsNew(JSGlobalObject* globalObject, JSValue cl
     auto scope = DECLARE_THROW_SCOPE(vm);
     static constexpr ASCIILiteral keywords[] = { "iterable"_s, "r"_s };
     JSValue values[2];
-    if (!unpackKeywordArguments(globalObject, "permutations"_s, keywords, 1, 2, false, args, values))
+    if (failed(scope, unpackKeywordArguments(globalObject, "permutations"_s, keywords, 1, 2, false, args, values)))
         return { };
     PyTuple* pool = tupleFromIterable(globalObject, values[0]);
     RETURN_IF_EXCEPTION(scope, { });
@@ -1156,7 +1160,7 @@ static JSValue itertoolsPermutationsNew(JSGlobalObject* globalObject, JSValue cl
     }
     if (length < 0)
         return raiseValueError(globalObject, scope, "r must be non-negative"_s);
-    if (!itertoolsCheckLength(globalObject, length))
+    if (failed(scope, itertoolsCheckLength(globalObject, length)))
         return { };
 
     bool isStopped = length > poolLength;
@@ -1251,7 +1255,7 @@ static JSValue itertoolsAccumulateNew(JSGlobalObject* globalObject, JSValue cls,
     auto scope = DECLARE_THROW_SCOPE(vm);
     static constexpr ASCIILiteral keywords[] = { "iterable"_s, "func"_s, "initial"_s };
     JSValue values[3];
-    if (!unpackKeywordArguments(globalObject, "accumulate"_s, keywords, 1, 2, false, args, values))
+    if (failed(scope, unpackKeywordArguments(globalObject, "accumulate"_s, keywords, 1, 2, false, args, values)))
         return { };
     JSValue iterator = getIter(globalObject, values[0]);
     RETURN_IF_EXCEPTION(scope, { });
@@ -1309,7 +1313,7 @@ static JSValue itertoolsCompressNew(JSGlobalObject* globalObject, JSValue cls, c
     auto scope = DECLARE_THROW_SCOPE(vm);
     static constexpr ASCIILiteral keywords[] = { "data"_s, "selectors"_s };
     JSValue values[2];
-    if (!unpackKeywordArguments(globalObject, "compress"_s, keywords, 2, 2, false, args, values))
+    if (failed(scope, unpackKeywordArguments(globalObject, "compress"_s, keywords, 2, 2, false, args, values)))
         return { };
     JSValue data = getIter(globalObject, values[0]);
     RETURN_IF_EXCEPTION(scope, { });
@@ -1373,7 +1377,7 @@ static JSValue itertoolsCountNew(JSGlobalObject* globalObject, JSValue cls, cons
     auto scope = DECLARE_THROW_SCOPE(vm);
     static constexpr ASCIILiteral keywords[] = { "start"_s, "step"_s };
     JSValue values[2];
-    if (!unpackKeywordArguments(globalObject, "count"_s, keywords, 0, 2, false, args, values))
+    if (failed(scope, unpackKeywordArguments(globalObject, "count"_s, keywords, 0, 2, false, args, values)))
         return { };
     JSValue start = values[0];
     JSValue step = values[1];
@@ -1405,7 +1409,7 @@ static JSValue itertoolsCountNext(JSGlobalObject* globalObject, JSValue self)
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyRecord* record = itertoolsRecord(self);
     if (record->number != ItertoolsCount::slowMode) [[likely]]
-        return makeInt(globalObject, record->number++);
+        RELEASE_AND_RETURN(scope, makeInt(globalObject, record->number++));
     JSValue count = record->get(ItertoolsCount::Count);
     if (!count)
         count = makeInt(globalObject, ItertoolsCount::slowMode);
@@ -1455,13 +1459,14 @@ enum : unsigned { Element, FieldCount }; // number: how many times are left, or 
 static JSValue itertoolsRepeatNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs& args)
 {
     VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     static constexpr ASCIILiteral keywords[] = { "object"_s, "times"_s };
     JSValue values[2];
-    if (!unpackKeywordArguments(globalObject, "repeat"_s, keywords, 1, 2, false, args, values))
+    if (failed(scope, unpackKeywordArguments(globalObject, "repeat"_s, keywords, 1, 2, false, args, values)))
         return { };
     int64_t count = -1;
     if (values[1]) {
-        if (!itertoolsSsizeArgument(globalObject, values[1], count))
+        if (failed(scope, itertoolsSsizeArgument(globalObject, values[1], count)))
             return { };
         if (count < 0)
             count = 0;
@@ -1503,7 +1508,7 @@ static JSValue itertoolsRepeatLengthHint(JSGlobalObject* globalObject, JSValue s
     PyRecord* record = itertoolsRecord(self);
     if (record->number == -1)
         return raiseTypeError(globalObject, scope, "len() of unsized object"_s);
-    return makeInt(globalObject, record->number);
+    RELEASE_AND_RETURN(scope, makeInt(globalObject, record->number));
 }
 
 static constexpr NativeDef itertoolsRepeatMethods[] = {

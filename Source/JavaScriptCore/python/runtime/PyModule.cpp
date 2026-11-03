@@ -142,14 +142,14 @@ static JSValue moduleRepr(JSGlobalObject* globalObject, JSValue self)
             RETURN_IF_EXCEPTION(scope, { });
             if (!specLoader || isNone(specLoader))
                 return makeStr(vm, makeString("<module "_s, nameRepr, '>'));
-            return makeStr(vm, makeString("<module "_s, nameRepr, " ("_s, reprForMessage(globalObject, specLoader), ")>"_s));
+            RELEASE_AND_RETURN(scope, makeStr(vm, makeString("<module "_s, nameRepr, " ("_s, reprForMessage(globalObject, specLoader), ")>"_s)));
         }
         JSValue hasLocation = getAttrIfPresent(globalObject, spec, internString(vm, "has_location"_s));
         RETURN_IF_EXCEPTION(scope, { });
         bool isLocation = hasLocation && isTrue(globalObject, hasLocation);
         RETURN_IF_EXCEPTION(scope, { });
         if (isLocation)
-            return makeStr(vm, makeString("<module "_s, nameRepr, " from "_s, reprForMessage(globalObject, origin), '>'));
+            RELEASE_AND_RETURN(scope, makeStr(vm, makeString("<module "_s, nameRepr, " from "_s, reprForMessage(globalObject, origin), '>')));
         JSString* originText = str(globalObject, origin);
         RETURN_IF_EXCEPTION(scope, { });
         String text = originText->value(globalObject);
@@ -163,9 +163,9 @@ static JSValue moduleRepr(JSGlobalObject* globalObject, JSValue self)
     JSValue file = getAttrIfPresent(globalObject, self, rt.names.dFile());
     RETURN_IF_EXCEPTION(scope, { });
     if (file)
-        return makeStr(vm, makeString("<module "_s, nameRepr, " from "_s, reprForMessage(globalObject, file), '>'));
+        RELEASE_AND_RETURN(scope, makeStr(vm, makeString("<module "_s, nameRepr, " from "_s, reprForMessage(globalObject, file), '>')));
     if (loader && !isNone(loader))
-        return makeStr(vm, makeString("<module "_s, nameRepr, " ("_s, reprForMessage(globalObject, loader), ")>"_s));
+        RELEASE_AND_RETURN(scope, makeStr(vm, makeString("<module "_s, nameRepr, " ("_s, reprForMessage(globalObject, loader), ")>"_s)));
     return makeStr(vm, makeString("<module "_s, nameRepr, '>'));
 }
 
@@ -267,7 +267,7 @@ static JSValue raiseModuleHasNoAttribute(JSGlobalObject* globalObject, PyModule*
         return raiseAttributeError(globalObject, scope, module, name, plain);
 
     ModuleDiagnosis diagnosis;
-    if (!diagnoseModule(globalObject, spec, moduleNameValue, diagnosis))
+    if (failed(scope, diagnoseModule(globalObject, spec, moduleNameValue, diagnosis)))
         return { };
     String origin;
     if (diagnosis.origin) {

@@ -316,9 +316,11 @@ static bool faultGetFlags(JSGlobalObject* globalObject, std::initializer_list<st
 
 static JSValue faultDumpTracebackFunction(JSGlobalObject* globalObject, JSValue file, JSValue allThreadsValue, JSValue maxThreads)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     bool allThreads = true;
     int64_t maxThreadCount;
-    if (!faultGetFlags(globalObject, { { allThreadsValue, &allThreads } }, maxThreads, maxThreadCount))
+    if (failed(scope, faultGetFlags(globalObject, { { allThreadsValue, &allThreads } }, maxThreads, maxThreadCount)))
         return { };
     int fd = faultGetDescriptor(globalObject, file);
     if (fd < 0)
@@ -581,7 +583,7 @@ static JSValue faultEnable(JSGlobalObject* globalObject, JSValue file, JSValue a
     bool allThreads = true;
     bool cStack = true;
     int64_t maxThreadCount;
-    if (!faultGetFlags(globalObject, { { allThreadsValue, &allThreads }, { cStackValue, &cStack } }, maxThreads, maxThreadCount))
+    if (failed(scope, faultGetFlags(globalObject, { { allThreadsValue, &allThreads }, { cStackValue, &cStack } }, maxThreads, maxThreadCount)))
         return { };
     int fd = faultGetDescriptor(globalObject, file);
     if (fd < 0)
@@ -665,10 +667,10 @@ static JSValue faultDumpTracebackLater(JSGlobalObject* globalObject, JSValue tim
     bool repeats = false;
     bool exits = false;
     int64_t maxThreadCount;
-    if (!faultGetFlags(globalObject, { { repeatValue, &repeats }, { exitValue, &exits } }, maxThreads, maxThreadCount))
+    if (failed(scope, faultGetFlags(globalObject, { { repeatValue, &repeats }, { exitValue, &exits } }, maxThreads, maxThreadCount)))
         return { };
     int64_t nanoseconds;
-    if (!nanosecondsFromSeconds(globalObject, timeoutValue, TimeRounding::AwayFromZero, nanoseconds))
+    if (failed(scope, nanosecondsFromSeconds(globalObject, timeoutValue, TimeRounding::AwayFromZero, nanoseconds)))
         return { };
     int64_t microseconds = nanoseconds / 1000 + (nanoseconds % 1000 > 0);
     if (microseconds <= 0)
@@ -742,9 +744,9 @@ static JSValue faultRegister(JSGlobalObject* globalObject, JSValue numberValue, 
     bool allThreads = true;
     bool chains = false;
     int64_t maxThreadCount;
-    if (!faultGetFlags(globalObject, { { allThreadsValue, &allThreads }, { chainValue, &chains } }, maxThreads, maxThreadCount))
+    if (failed(scope, faultGetFlags(globalObject, { { allThreadsValue, &allThreads }, { chainValue, &chains } }, maxThreads, maxThreadCount)))
         return { };
-    if (!faultCheckSignal(globalObject, number))
+    if (failed(scope, faultCheckSignal(globalObject, number)))
         return { };
     int fd = faultGetDescriptor(globalObject, file);
     if (fd < 0)
@@ -766,7 +768,7 @@ static JSValue faultUnregister(JSGlobalObject* globalObject, JSValue numberValue
     auto scope = DECLARE_THROW_SCOPE(vm);
     int number = toCInt(globalObject, numberValue);
     RETURN_IF_EXCEPTION(scope, { });
-    if (!faultCheckSignal(globalObject, number))
+    if (failed(scope, faultCheckSignal(globalObject, number)))
         return { };
     auto& user = s_faultUserSignals[number];
     if (!std::exchange(user.isEnabled, false))

@@ -146,6 +146,7 @@
 #include "ThunkGenerators.h"
 #include "TypeProfiler.h"
 #include "TypeProfilerLog.h"
+#include "UncheckedExceptionLog.h"
 #include "UnlinkedEvalCodeBlockInlines.h"
 #include "UnlinkedFunctionCodeBlockInlines.h"
 #include "UnlinkedFunctionExecutableInlines.h"
@@ -1996,6 +1997,91 @@ size_t VM::committedStackByteCount()
 }
 
 #if ENABLE(EXCEPTION_SCOPE_VERIFICATION)
+
+namespace {
+
+struct RecordedStack {
+    static constexpr unsigned capacity = 40;
+    struct Frame {
+        void* frame;
+        void* returnAddress;
+    };
+    unsigned size { 0 };
+    std::array<Frame, capacity> frames;
+};
+
+thread_local RecordedStack t_stackOfSimulatedThrow;
+
+// By the frame pointers, which all code here keeps, generated code included. It is done for every scope that ends.
+SUPPRESS_ASAN NEVER_INLINE void recordStack(RecordedStack& stack)
+{
+    auto& bounds = Thread::currentSingleton().stack();
+    void** frame = static_cast<void**>(__builtin_frame_address(0));
+    stack.size = 0;
+    while (stack.size < RecordedStack::capacity && bounds.contains(frame) && !(std::bit_cast<uintptr_t>(frame) % sizeof(void*))) {
+        stack.frames[stack.size++] = { frame, frame[1] };
+        void** caller = static_cast<void**>(frame[0]);
+        if (caller <= frame)
+            break;
+        frame = caller;
+    }
+}
+
+FILE* fileOfUncheckedExceptionLog()
+{
+    // FIXME: This is to be Options::uncheckedExceptionsLog().
+    static FILE* const file = [] {
+        const char* path = getenv("JSC_uncheckedExceptionsLog");
+        return path && *path ? fopen(path, "a") : nullptr;
+    }();
+    return file;
+}
+
+} // anonymous namespace
+
+bool UncheckedExceptionLog::isEnabled()
+{
+    return fileOfUncheckedExceptionLog();
+}
+
+void UncheckedExceptionLog::noteSimulatedThrow()
+{
+    recordStack(t_stackOfSimulatedThrow);
+}
+
+void UncheckedExceptionLog::report(const ExceptionEventLocation& throwLocation, const ExceptionEventLocation& location)
+{
+    RecordedStack here;
+    recordStack(here);
+    auto& there = t_stackOfSimulatedThrow;
+
+    static Lock lock;
+    static NeverDestroyed<HashSet<uint64_t>> reported;
+    FILE* file = fileOfUncheckedExceptionLog();
+    uint64_t key = throwLocation.line * 1000003ull + location.line;
+    for (auto* stack : { &there, &here }) {
+        for (unsigned i = 0; i < std::min(stack->size, 8u); ++i)
+            key = key * 1000003ull + std::bit_cast<uintptr_t>(stack->frames[i].returnAddress);
+    }
+    key |= 1ull << 63; // Neither the empty nor the deleted value.
+    Locker locker { lock };
+    if (!reported->add(key).isNewEntry)
+        return;
+
+    StringPrintStream out;
+    out.print(throwLocation.file, ":", throwLocation.line, "\t", throwLocation.functionName, "\t", location.file, ":", location.line, "\t", location.functionName);
+    for (auto* stack : { &there, &here }) {
+        out.print("\t");
+        for (unsigned i = 0; i < stack->size; ++i)
+            out.print(i ? "," : "", RawHex(std::bit_cast<uintptr_t>(stack->frames[i].frame)), ":", RawHex(std::bit_cast<uintptr_t>(stack->frames[i].returnAddress)));
+    }
+    out.print("\n");
+    auto line = out.toUTF8CString();
+    // Several processes may write to the file: a line at a time.
+    fwrite(line.data(), 1, line.length(), file);
+    fflush(file);
+}
+
 void VM::verifyExceptionCheckNeedIsSatisfied(unsigned recursionDepth, ExceptionEventLocation& location)
 {
     if (!Options::validateExceptionChecks())
@@ -2004,6 +2090,12 @@ void VM::verifyExceptionCheckNeedIsSatisfied(unsigned recursionDepth, ExceptionE
     if (m_needExceptionCheck) [[unlikely]] {
         auto throwDepth = m_simulatedThrowPointRecursionDepth;
         auto& throwLocation = m_simulatedThrowPointLocation;
+
+        if (UncheckedExceptionLog::isEnabled()) {
+            UncheckedExceptionLog::report(throwLocation, location);
+            m_needExceptionCheck = false;
+            return;
+        }
 
         dataLog(
             "ERROR: Unchecked JS exception:\n"

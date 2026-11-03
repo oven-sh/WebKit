@@ -429,7 +429,7 @@ JSString* formatStr(JSGlobalObject* globalObject, JSValue self, JSString* specSt
         raiseMemoryError(globalObject, scope, String());
         return nullptr;
     }
-    return makeStr(globalObject, builder);
+    RELEASE_AND_RETURN(scope, makeStr(globalObject, builder));
 }
 
 // ---- float ----
@@ -474,7 +474,7 @@ static JSString* formatFloatWithSpec(JSGlobalObject* globalObject, double value,
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!checkPrecision(globalObject, spec.precision))
+    if (failed(scope, checkPrecision(globalObject, spec.precision)))
         return nullptr;
     int precision = static_cast<int>(spec.precision);
     int defaultPrecision = 6;
@@ -514,7 +514,7 @@ static JSString* formatFloatWithSpec(JSGlobalObject* globalObject, double value,
         raiseMemoryError(globalObject, scope, String());
         return nullptr;
     }
-    return makeStr(globalObject, builder);
+    RELEASE_AND_RETURN(scope, makeStr(globalObject, builder));
 }
 
 JSString* formatFloat(JSGlobalObject* globalObject, JSValue self, JSString* specString)
@@ -635,7 +635,7 @@ JSString* formatInt(JSGlobalObject* globalObject, JSValue self, JSString* specSt
         raiseMemoryError(globalObject, scope, String());
         return nullptr;
     }
-    return makeStr(globalObject, builder);
+    RELEASE_AND_RETURN(scope, makeStr(globalObject, builder));
 }
 
 // ---- complex ----
@@ -664,7 +664,7 @@ JSString* formatComplex(JSGlobalObject* globalObject, JSValue self, JSString* sp
     default:
         RELEASE_AND_RETURN(scope, raiseUnknownFormatCode(globalObject, spec.type, self));
     }
-    if (!checkPrecision(globalObject, spec.precision))
+    if (failed(scope, checkPrecision(globalObject, spec.precision)))
         return nullptr;
     if (spec.fill == '0') {
         raiseValueError(globalObject, scope, "Zero padding is not allowed in complex format specifier"_s);
@@ -727,7 +727,7 @@ JSString* formatComplex(JSGlobalObject* globalObject, JSValue self, JSString* sp
     appendFill(builder, spec.fill, left);
     builder.append(static_cast<StringBuilder&>(number));
     appendFill(builder, spec.fill, right);
-    return makeStr(globalObject, builder);
+    RELEASE_AND_RETURN(scope, makeStr(globalObject, builder));
 }
 
 // ---- str.format() ----
@@ -755,6 +755,10 @@ struct FormatArguments {
     JSValue mapping; // For format_map().
     AutoNumbering numbering { AutoNumbering::Undecided };
     int64_t nextIndex { 0 };
+    // CPython does not copy what is written last into a result that is still empty: the result is then that object, of whatever
+    // class derived from str.
+    bool isAtLastField { false };
+    JSValue whole;
 };
 
 }
@@ -1025,6 +1029,7 @@ static bool appendField(JSGlobalObject* globalObject, const CodePoints& text, co
     }
     RETURN_IF_EXCEPTION(scope, false);
 
+    bool mayBeWhole = arguments.isAtLastField && builder.isEmpty();
     String spec;
     if (markup.specNeedsExpanding) {
         StrBuilder expanded;
@@ -1038,11 +1043,14 @@ static bool appendField(JSGlobalObject* globalObject, const CodePoints& text, co
     } else if (markup.hasSpec)
         spec = text.substring(markup.specStart, markup.specEnd);
 
-    JSString* result = format(globalObject, object, spec.isEmpty() ? nullptr : makeStr(vm, spec));
+    JSValue formatted = formatObject(globalObject, object, spec.isEmpty() ? nullptr : makeStr(vm, spec));
     RETURN_IF_EXCEPTION(scope, false);
+    JSString* result = strValue(formatted);
     auto view = result->view(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
     builder.append(view.data);
+    if (mayBeWhole && !formatted.isString() && result->length()) [[unlikely]]
+        arguments.whole = formatted;
     return true;
 }
 
@@ -1060,6 +1068,7 @@ static bool expandFormat(JSGlobalObject* globalObject, const CodePoints& text, u
     while ((status = nextMarkup(globalObject, text, position, end, markup)) == 2) {
         text.appendTo(builder, markup.literalStart, markup.literalEnd);
         if (markup.hasField) {
+            arguments.isAtLastField = depth == 2 && position == end;
             if (!appendField(globalObject, text, markup, arguments, depth, builder))
                 return false;
         }
@@ -1080,10 +1089,12 @@ static JSValue formatWith(JSGlobalObject* globalObject, JSValue self, FormatArgu
         return { };
     if (builder.hasOverflowed())
         return raiseMemoryError(globalObject, scope, String());
+    if (arguments.whole) [[unlikely]]
+        return arguments.whole;
     // Text with nothing to replace in it is the result as it is, be it an instance of a class derived from str.
     if (!self.isString() && !string.isEmpty() && string.find('{') == notFound && string.find('}') == notFound)
         return self;
-    return makeStr(globalObject, builder);
+    RELEASE_AND_RETURN(scope, makeStr(globalObject, builder));
 }
 
 JSValue strFormatMethod(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
@@ -1157,7 +1168,7 @@ JSValue formatterFieldNameSplit(JSGlobalObject* globalObject, JSValue fieldName)
         return { };
     JSValue iterator = getIter(globalObject, rest);
     RETURN_IF_EXCEPTION(scope, { });
-    return PyTuple::create(globalObject, { first, iterator });
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { first, iterator }));
 }
 
 // ---- format % arguments ----
@@ -1180,6 +1191,7 @@ struct PercentArgument {
     bool isNumber { false };
     unsigned start { 0 }; // Where the % is.
     JSValue key;
+    JSValue object; // For %s, %r and %a: what was converted to, if that is of a class derived from str.
 };
 
 struct PercentFormatter {
@@ -1417,10 +1429,14 @@ static bool convertPercentArgument(PercentFormatter& f, PercentArgument& argumen
     case 's':
     case 'r':
     case 'a': {
-        JSString* string = code == 's' ? str(globalObject, value) : code == 'r' ? repr(globalObject, value) : ascii(globalObject, value);
+        JSValue object = code == 's' ? strObject(globalObject, value) : reprObject(globalObject, value);
         RETURN_IF_EXCEPTION(scope, false);
-        result = string->value(globalObject);
+        result = strValue(object)->value(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
+        if (code == 'a' && !result.containsOnlyASCII())
+            result = asciiEscape(result);
+        else if (!object.isString()) [[unlikely]]
+            argument.object = object;
         return true;
     }
     case 'i':
@@ -1468,7 +1484,7 @@ static bool convertPercentArgument(PercentFormatter& f, PercentArgument& argumen
                 raiseTypeError(globalObject, scope, f.errorPrefix(argument), '%', static_cast<char>(code), " requires a real number, not "_s, typeNameForMessage(globalObject, typeOf(globalObject, value)));
             return false;
         }
-        if (!checkPrecision(globalObject, argument.precision))
+        if (failed(scope, checkPrecision(globalObject, argument.precision)))
             return false;
         result = formatDouble(number, static_cast<char>(code), argument.precision < 0 ? 6 : argument.precision, argument.flags & Alternate ? FloatAlternate : 0);
         argument.isNumber = true;
@@ -1490,7 +1506,12 @@ static bool convertPercentArgument(PercentFormatter& f, PercentArgument& argumen
             return false;
         }
         JSValue index = toIndex(globalObject, value);
-        RETURN_IF_EXCEPTION(scope, false);
+        if (!index) {
+            // Whatever TypeError __index__() ends in.
+            if (clearPendingExceptionIfMatches(globalObject, rt.TypeError()))
+                raiseTypeError(globalObject, scope, f.errorPrefix(argument), "%c requires an integer or a unicode character, not "_s, typeNameForMessage(globalObject, typeOf(globalObject, value)));
+            return false;
+        }
         auto character = tryInt64(index);
         if (!character || *character < 0 || *character > 0x10ffff) {
             raiseOverflowError(globalObject, scope, f.errorPrefix(argument), "%c argument not in range(0x110000)"_s);
@@ -1594,6 +1615,7 @@ JSValue strFormatPercent(JSGlobalObject* globalObject, JSString* formatString, J
         f.mapping = arguments;
 
     unsigned end = text.length();
+    JSValue whole;
     while (f.position < end) {
         if (text[f.position] != '%') {
             unsigned start = f.position;
@@ -1617,12 +1639,20 @@ JSValue strFormatPercent(JSGlobalObject* globalObject, JSString* formatString, J
         String converted;
         if (!convertPercentArgument(f, argument, converted))
             return { };
+        // See FormatArguments::whole.
+        if (argument.object && f.position >= end && f.builder.isEmpty() && !converted.isEmpty() && !(argument.flags & (AlwaysSign | BlankSign))) [[unlikely]] {
+            int64_t length = CodePoints(converted).length();
+            if (argument.width <= length && (argument.precision < 0 || argument.precision >= length))
+                whole = argument.object;
+        }
         appendPercentArgument(f, argument, converted);
     }
     if (f.argumentIndex < f.argumentCount && !f.mapping)
         return raiseTypeError(globalObject, scope, "not all arguments converted during string formatting (required "_s, f.argumentCount < 0 ? 0 : f.argumentIndex, ", got "_s, f.argumentCount < 0 ? 1 : f.argumentCount, ')');
     if (f.builder.hasOverflowed())
         return raiseMemoryError(globalObject, scope, String());
+    if (whole) [[unlikely]]
+        return whole;
     return makeStr(vm, f.builder.toString());
 }
 

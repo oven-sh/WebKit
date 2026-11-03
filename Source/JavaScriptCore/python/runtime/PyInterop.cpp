@@ -153,7 +153,7 @@ static JSValue jsObjectGetItem(JSGlobalObject* globalObject, JSValue self, JSVal
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     Identifier name;
-    if (!propertyKeyForItem(globalObject, key, name))
+    if (failed(scope, propertyKeyForItem(globalObject, key, name)))
         return { };
     JSObject* object = asObject(self);
     PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
@@ -171,7 +171,7 @@ static JSValue jsObjectSetItem(JSGlobalObject* globalObject, JSValue self, JSVal
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     Identifier name;
-    if (!propertyKeyForItem(globalObject, key, name))
+    if (failed(scope, propertyKeyForItem(globalObject, key, name)))
         return { };
     PutPropertySlot slot(self, true);
     asObject(self)->methodTable()->put(asObject(self), globalObject, name, value, slot);
@@ -186,7 +186,7 @@ static JSValue jsObjectDelItem(JSGlobalObject* globalObject, JSValue self, JSVal
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     Identifier name;
-    if (!propertyKeyForItem(globalObject, key, name))
+    if (failed(scope, propertyKeyForItem(globalObject, key, name)))
         return { };
     JSObject* object = asObject(self);
     bool had = object->hasProperty(globalObject, name);
@@ -205,7 +205,7 @@ static JSValue jsObjectContains(JSGlobalObject* globalObject, JSValue self, JSVa
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     Identifier name;
-    if (!propertyKeyForItem(globalObject, key, name)) {
+    if (failed(scope, propertyKeyForItem(globalObject, key, name))) {
         takePendingException(globalObject);
         return jsBoolean(false);
     }
@@ -411,9 +411,11 @@ static JSValue jsObjectDir(JSGlobalObject* globalObject, JSValue self)
 
 static JSValue jsObjectStr(JSGlobalObject* globalObject, JSValue self)
 {
-    if (!ensureMainThreadForJS(globalObject))
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, ensureMainThreadForJS(globalObject)))
         return { };
-    return self.toString(globalObject);
+    RELEASE_AND_RETURN(scope, self.toString(globalObject));
 }
 
 static JSValue jsObjectRepr(JSGlobalObject* globalObject, JSValue self)
@@ -424,7 +426,7 @@ static JSValue jsObjectRepr(JSGlobalObject* globalObject, JSValue self)
     auto scope = DECLARE_THROW_SCOPE(vm);
     String className = JSObject::calculatedClassName(asObject(self));
     RETURN_IF_EXCEPTION(scope, { });
-    return makeStr(vm, makeString("<JavaScript "_s, className.isEmpty() ? "object"_str : className, " at "_s, addressForRepr(globalObject, self), '>'));
+    RELEASE_AND_RETURN(scope, makeStr(vm, makeString("<JavaScript "_s, className.isEmpty() ? "object"_str : className, " at "_s, addressForRepr(globalObject, self), '>')));
 }
 
 // ---- Symbols, which are no objects ----
@@ -459,7 +461,7 @@ static JSValue jsFunctionRepr(JSGlobalObject* globalObject, JSValue self)
     RETURN_IF_EXCEPTION(scope, { });
     String text = name.isString() ? asString(name)->value(globalObject).data : String();
     RETURN_IF_EXCEPTION(scope, { });
-    return makeStr(vm, makeString("<JavaScript function "_s, text, " at "_s, addressForRepr(globalObject, self), '>'));
+    RELEASE_AND_RETURN(scope, makeStr(vm, makeString("<JavaScript function "_s, text, " at "_s, addressForRepr(globalObject, self), '>')));
 }
 
 // ---- Calls from Python ----

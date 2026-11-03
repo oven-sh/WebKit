@@ -59,73 +59,89 @@ static JSValue posixNoneUnlessFailed(JSGlobalObject* globalObject, int result)
 
 static JSValue posixSetuid(JSGlobalObject* globalObject, JSValue value)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     uid_t uid;
-    if (!posixToUid(globalObject, value, uid))
+    if (failed(scope, posixToUid(globalObject, value, uid)))
         return { };
-    return posixNoneUnlessFailed(globalObject, setuid(uid));
+    RELEASE_AND_RETURN(scope, posixNoneUnlessFailed(globalObject, setuid(uid)));
 }
 
 static JSValue posixSeteuid(JSGlobalObject* globalObject, JSValue value)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     uid_t uid;
-    if (!posixToUid(globalObject, value, uid))
+    if (failed(scope, posixToUid(globalObject, value, uid)))
         return { };
-    return posixNoneUnlessFailed(globalObject, seteuid(uid));
+    RELEASE_AND_RETURN(scope, posixNoneUnlessFailed(globalObject, seteuid(uid)));
 }
 
 static JSValue posixSetgid(JSGlobalObject* globalObject, JSValue value)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     gid_t gid;
-    if (!posixToGid(globalObject, value, gid))
+    if (failed(scope, posixToGid(globalObject, value, gid)))
         return { };
-    return posixNoneUnlessFailed(globalObject, setgid(gid));
+    RELEASE_AND_RETURN(scope, posixNoneUnlessFailed(globalObject, setgid(gid)));
 }
 
 static JSValue posixSetegid(JSGlobalObject* globalObject, JSValue value)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     gid_t gid;
-    if (!posixToGid(globalObject, value, gid))
+    if (failed(scope, posixToGid(globalObject, value, gid)))
         return { };
-    return posixNoneUnlessFailed(globalObject, setegid(gid));
+    RELEASE_AND_RETURN(scope, posixNoneUnlessFailed(globalObject, setegid(gid)));
 }
 
 static JSValue posixSetreuid(JSGlobalObject* globalObject, JSValue realValue, JSValue effectiveValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     uid_t real;
     uid_t effective;
-    if (!posixToUid(globalObject, realValue, real) || !posixToUid(globalObject, effectiveValue, effective))
+    if (failed(scope, posixToUid(globalObject, realValue, real)) || failed(scope, posixToUid(globalObject, effectiveValue, effective)))
         return { };
-    return posixNoneUnlessFailed(globalObject, setreuid(real, effective));
+    RELEASE_AND_RETURN(scope, posixNoneUnlessFailed(globalObject, setreuid(real, effective)));
 }
 
 static JSValue posixSetregid(JSGlobalObject* globalObject, JSValue realValue, JSValue effectiveValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     gid_t real;
     gid_t effective;
-    if (!posixToGid(globalObject, realValue, real) || !posixToGid(globalObject, effectiveValue, effective))
+    if (failed(scope, posixToGid(globalObject, realValue, real)) || failed(scope, posixToGid(globalObject, effectiveValue, effective)))
         return { };
-    return posixNoneUnlessFailed(globalObject, setregid(real, effective));
+    RELEASE_AND_RETURN(scope, posixNoneUnlessFailed(globalObject, setregid(real, effective)));
 }
 
 #if OS(LINUX)
 static JSValue posixSetresuid(JSGlobalObject* globalObject, JSValue realValue, JSValue effectiveValue, JSValue savedValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     uid_t real;
     uid_t effective;
     uid_t saved;
-    if (!posixToUid(globalObject, realValue, real) || !posixToUid(globalObject, effectiveValue, effective) || !posixToUid(globalObject, savedValue, saved))
+    if (failed(scope, posixToUid(globalObject, realValue, real)) || failed(scope, posixToUid(globalObject, effectiveValue, effective)) || failed(scope, posixToUid(globalObject, savedValue, saved)))
         return { };
-    return posixNoneUnlessFailed(globalObject, setresuid(real, effective, saved));
+    RELEASE_AND_RETURN(scope, posixNoneUnlessFailed(globalObject, setresuid(real, effective, saved)));
 }
 
 static JSValue posixSetresgid(JSGlobalObject* globalObject, JSValue realValue, JSValue effectiveValue, JSValue savedValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     gid_t real;
     gid_t effective;
     gid_t saved;
-    if (!posixToGid(globalObject, realValue, real) || !posixToGid(globalObject, effectiveValue, effective) || !posixToGid(globalObject, savedValue, saved))
+    if (failed(scope, posixToGid(globalObject, realValue, real)) || failed(scope, posixToGid(globalObject, effectiveValue, effective)) || failed(scope, posixToGid(globalObject, savedValue, saved)))
         return { };
-    return posixNoneUnlessFailed(globalObject, setresgid(real, effective, saved));
+    RELEASE_AND_RETURN(scope, posixNoneUnlessFailed(globalObject, setresgid(real, effective, saved)));
 }
 
 static JSValue posixGetresuid(JSGlobalObject* globalObject)
@@ -197,12 +213,12 @@ static JSValue posixGetgrouplist(JSGlobalObject* globalObject, JSValue userValue
 #if OS(DARWIN)
     using Group = int;
     int base;
-    if (!posixToInt(globalObject, groupValue, base))
+    if (failed(scope, posixToInt(globalObject, groupValue, base)))
         return { };
 #else
     using Group = gid_t;
     gid_t base;
-    if (!posixToGid(globalObject, groupValue, base))
+    if (failed(scope, posixToGid(globalObject, groupValue, base)))
         return { };
 #endif
     Vector<Group, 64> groups;
@@ -246,49 +262,55 @@ static JSValue posixSetgroups(JSGlobalObject* globalObject, JSValue groupsValue)
         RETURN_IF_EXCEPTION(scope, { });
         if (!hasIndex(globalObject, item))
             return raiseTypeError(globalObject, scope, "groups must be integers"_s);
-        if (!posixToGid(globalObject, item, groups[static_cast<size_t>(i)]))
+        if (failed(scope, posixToGid(globalObject, item, groups[static_cast<size_t>(i)])))
             return { };
     }
-    return posixNoneUnlessFailed(globalObject, setgroups(static_cast<decltype(NGROUPS_MAX)>(count), groups.span().data()));
+    RELEASE_AND_RETURN(scope, posixNoneUnlessFailed(globalObject, setgroups(static_cast<decltype(NGROUPS_MAX)>(count), groups.span().data())));
 }
 
 static JSValue posixInitgroups(JSGlobalObject* globalObject, JSValue userValue, JSValue groupValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PosixBytes user;
     if (!posixToFSBytes(globalObject, userValue, user))
         return { };
 #if OS(DARWIN)
     int group;
-    if (!posixToInt(globalObject, groupValue, group))
+    if (failed(scope, posixToInt(globalObject, groupValue, group)))
         return { };
 #else
     gid_t group;
-    if (!posixToGid(globalObject, groupValue, group))
+    if (failed(scope, posixToGid(globalObject, groupValue, group)))
         return { };
 #endif
-    return posixNoneUnlessFailed(globalObject, initgroups(user.characters(), group));
+    RELEASE_AND_RETURN(scope, posixNoneUnlessFailed(globalObject, initgroups(user.characters(), group)));
 }
 
 // ---- Process groups and sessions ----
 
 static JSValue posixGetpgid(JSGlobalObject* globalObject, JSValue pidValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     pid_t pid;
-    if (!posixToPid(globalObject, pidValue, pid))
+    if (failed(scope, posixToPid(globalObject, pidValue, pid)))
         return { };
     pid_t group = getpgid(pid);
     if (group < 0)
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     return jsNumber(group);
 }
 
 static JSValue posixSetpgid(JSGlobalObject* globalObject, JSValue pidValue, JSValue groupValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     pid_t pid;
     pid_t group;
-    if (!posixToPid(globalObject, pidValue, pid) || !posixToPid(globalObject, groupValue, group))
+    if (failed(scope, posixToPid(globalObject, pidValue, pid)) || failed(scope, posixToPid(globalObject, groupValue, group)))
         return { };
-    return posixNoneUnlessFailed(globalObject, setpgid(pid, group));
+    RELEASE_AND_RETURN(scope, posixNoneUnlessFailed(globalObject, setpgid(pid, group)));
 }
 
 static JSValue posixSetpgrp(JSGlobalObject* globalObject)
@@ -298,12 +320,14 @@ static JSValue posixSetpgrp(JSGlobalObject* globalObject)
 
 static JSValue posixGetsid(JSGlobalObject* globalObject, JSValue pidValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     pid_t pid;
-    if (!posixToPid(globalObject, pidValue, pid))
+    if (failed(scope, posixToPid(globalObject, pidValue, pid)))
         return { };
     pid_t session = getsid(pid);
     if (session < 0)
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     return jsNumber(session);
 }
 
@@ -316,61 +340,71 @@ static JSValue posixSetsid(JSGlobalObject* globalObject)
 
 static JSValue posixNice(JSGlobalObject* globalObject, JSValue incrementValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int increment;
-    if (!posixToInt(globalObject, incrementValue, increment))
+    if (failed(scope, posixToInt(globalObject, incrementValue, increment)))
         return { };
     // -1 is a niceness like any other.
     errno = 0;
     int value = nice(increment);
     if (value == -1 && errno)
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     return jsNumber(value);
 }
 
 static JSValue posixGetpriority(JSGlobalObject* globalObject, JSValue whichValue, JSValue whoValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int which;
     int who;
-    if (!posixToInt(globalObject, whichValue, which) || !posixToInt(globalObject, whoValue, who))
+    if (failed(scope, posixToInt(globalObject, whichValue, which)) || failed(scope, posixToInt(globalObject, whoValue, who)))
         return { };
     errno = 0;
     int value = getpriority(static_cast<decltype(PRIO_PROCESS)>(which), static_cast<id_t>(who));
     if (errno)
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     return jsNumber(value);
 }
 
 static JSValue posixSetpriority(JSGlobalObject* globalObject, JSValue whichValue, JSValue whoValue, JSValue priorityValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int which;
     int who;
     int priority;
-    if (!posixToInt(globalObject, whichValue, which) || !posixToInt(globalObject, whoValue, who) || !posixToInt(globalObject, priorityValue, priority))
+    if (failed(scope, posixToInt(globalObject, whichValue, which)) || failed(scope, posixToInt(globalObject, whoValue, who)) || failed(scope, posixToInt(globalObject, priorityValue, priority)))
         return { };
-    return posixNoneUnlessFailed(globalObject, setpriority(static_cast<decltype(PRIO_PROCESS)>(which), static_cast<id_t>(who), priority));
+    RELEASE_AND_RETURN(scope, posixNoneUnlessFailed(globalObject, setpriority(static_cast<decltype(PRIO_PROCESS)>(which), static_cast<id_t>(who), priority)));
 }
 
 static JSValue posixSchedGetPriorityMax(JSGlobalObject* globalObject, JSValue policyValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int policy;
-    if (!posixToInt(globalObject, policyValue, policy))
+    if (failed(scope, posixToInt(globalObject, policyValue, policy)))
         return { };
     errno = 0;
     int value = sched_get_priority_max(policy);
     if (value == -1 && errno)
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     return jsNumber(value);
 }
 
 static JSValue posixSchedGetPriorityMin(JSGlobalObject* globalObject, JSValue policyValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int policy;
-    if (!posixToInt(globalObject, policyValue, policy))
+    if (failed(scope, posixToInt(globalObject, policyValue, policy)))
         return { };
     errno = 0;
     int value = sched_get_priority_min(policy);
     if (value == -1 && errno)
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     return jsNumber(value);
 }
 
@@ -385,11 +419,13 @@ static constexpr StructSeqDef posixSchedParamDef { "posix.sched_param"_s, posixS
 
 static JSValue posixSchedParamNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs& args)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     static constexpr ASCIILiteral keywords[] = { "sched_priority"_s };
     JSValue priority;
-    if (!unpackKeywordArguments(globalObject, "sched_param"_s, keywords, 1, 1, false, args, &priority))
+    if (failed(scope, unpackKeywordArguments(globalObject, "sched_param"_s, keywords, 1, 1, false, args, &priority)))
         return { };
-    return makeStructSeq(globalObject, PyType::from(cls), { priority });
+    RELEASE_AND_RETURN(scope, makeStructSeq(globalObject, PyType::from(cls), { priority }));
 }
 
 static JSValue posixSchedParamReduce(JSGlobalObject* globalObject, JSValue self)
@@ -424,7 +460,7 @@ static bool posixToSchedParam(JSGlobalObject* globalObject, JSValue value, struc
         return false;
     }
     int64_t priority;
-    if (!posixToLong(globalObject, tuple->at(0), priority))
+    if (failed(scope, posixToLong(globalObject, tuple->at(0), priority)))
         return false;
     if (priority > INT_MAX || priority < INT_MIN) {
         raiseOverflowError(globalObject, scope, "sched_priority out of range"_s);
@@ -436,58 +472,68 @@ static bool posixToSchedParam(JSGlobalObject* globalObject, JSValue value, struc
 
 static JSValue posixSchedGetscheduler(JSGlobalObject* globalObject, JSValue pidValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     pid_t pid;
-    if (!posixToPid(globalObject, pidValue, pid))
+    if (failed(scope, posixToPid(globalObject, pidValue, pid)))
         return { };
     int policy = sched_getscheduler(pid);
     if (policy < 0)
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     return jsNumber(policy);
 }
 
 static JSValue posixSchedSetscheduler(JSGlobalObject* globalObject, JSValue pidValue, JSValue policyValue, JSValue paramValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     pid_t pid;
     int policy;
     struct sched_param param;
-    if (!posixToPid(globalObject, pidValue, pid) || !posixToInt(globalObject, policyValue, policy) || !posixToSchedParam(globalObject, paramValue, param))
+    if (failed(scope, posixToPid(globalObject, pidValue, pid)) || failed(scope, posixToInt(globalObject, policyValue, policy)) || failed(scope, posixToSchedParam(globalObject, paramValue, param)))
         return { };
     if (sched_setscheduler(pid, policy, &param) == -1)
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     return jsUndefined();
 }
 
 static JSValue posixSchedGetparam(JSGlobalObject* globalObject, JSValue pidValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     pid_t pid;
-    if (!posixToPid(globalObject, pidValue, pid))
+    if (failed(scope, posixToPid(globalObject, pidValue, pid)))
         return { };
     struct sched_param param;
     if (sched_getparam(pid, &param))
-        return posixError(globalObject);
-    return makeStructSeq(globalObject, posixSchedParamType(globalObject), { jsNumber(param.sched_priority) });
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
+    RELEASE_AND_RETURN(scope, makeStructSeq(globalObject, posixSchedParamType(globalObject), { jsNumber(param.sched_priority) }));
 }
 
 static JSValue posixSchedSetparam(JSGlobalObject* globalObject, JSValue pidValue, JSValue paramValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     pid_t pid;
     struct sched_param param;
-    if (!posixToPid(globalObject, pidValue, pid) || !posixToSchedParam(globalObject, paramValue, param))
+    if (failed(scope, posixToPid(globalObject, pidValue, pid)) || failed(scope, posixToSchedParam(globalObject, paramValue, param)))
         return { };
     if (sched_setparam(pid, &param))
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     return jsUndefined();
 }
 
 static JSValue posixSchedRrGetInterval(JSGlobalObject* globalObject, JSValue pidValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     pid_t pid;
-    if (!posixToPid(globalObject, pidValue, pid))
+    if (failed(scope, posixToPid(globalObject, pidValue, pid)))
         return { };
     struct timespec interval;
     if (sched_rr_get_interval(pid, &interval))
-        return posixError(globalObject);
-    return makeFloat(globalObject, static_cast<double>(interval.tv_sec) + 1e-9 * static_cast<double>(interval.tv_nsec));
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
+    RELEASE_AND_RETURN(scope, makeFloat(globalObject, static_cast<double>(interval.tv_sec) + 1e-9 * static_cast<double>(interval.tv_nsec)));
 }
 
 // A set of processors, of whatever size it takes.
@@ -530,7 +576,7 @@ static JSValue posixSchedSetaffinity(JSGlobalObject* globalObject, JSValue pidVa
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     pid_t pid;
-    if (!posixToPid(globalObject, pidValue, pid))
+    if (failed(scope, posixToPid(globalObject, pidValue, pid)))
         return { };
     PosixCpuSet cpus(posixInitialCpuCount);
     forEach(globalObject, mask, [&](JSValue item) {
@@ -539,7 +585,7 @@ static JSValue posixSchedSetaffinity(JSGlobalObject* globalObject, JSValue pidVa
             return false;
         }
         int64_t cpu;
-        if (!posixToLong(globalObject, item, cpu))
+        if (failed(scope, posixToLong(globalObject, item, cpu)))
             return false;
         if (cpu < 0) {
             raiseValueError(globalObject, scope, "negative CPU number"_s);
@@ -560,7 +606,7 @@ static JSValue posixSchedSetaffinity(JSGlobalObject* globalObject, JSValue pidVa
     });
     RETURN_IF_EXCEPTION(scope, { });
     if (sched_setaffinity(pid, cpus.size(), cpus.set()))
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     return jsUndefined();
 }
 
@@ -569,13 +615,13 @@ static JSValue posixSchedGetaffinity(JSGlobalObject* globalObject, JSValue pidVa
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     pid_t pid;
-    if (!posixToPid(globalObject, pidValue, pid))
+    if (failed(scope, posixToPid(globalObject, pidValue, pid)))
         return { };
     PosixCpuSet cpus(posixInitialCpuCount);
     while (sched_getaffinity(pid, cpus.size(), cpus.set())) {
         // EINVAL: the kernel knows of more processors than the set has room for.
         if (errno != EINVAL)
-            return posixError(globalObject);
+            RELEASE_AND_RETURN(scope, posixError(globalObject));
         if (cpus.count() > INT_MAX / 2)
             return raiseOverflowError(globalObject, scope, "could not allocate a large enough CPU set"_s);
         cpus.growTo(cpus.count() * 2);
@@ -594,34 +640,40 @@ static JSValue posixSchedGetaffinity(JSGlobalObject* globalObject, JSValue pidVa
 
 static JSValue posixPidfdOpen(JSGlobalObject* globalObject, JSValue pidValue, JSValue flagsValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     pid_t pid;
     unsigned flags = 0;
-    if (!posixToPid(globalObject, pidValue, pid) || (flagsValue && !posixToUnsigned(globalObject, flagsValue, flags)))
+    if (failed(scope, posixToPid(globalObject, pidValue, pid)) || (flagsValue && failed(scope, posixToUnsigned(globalObject, flagsValue, flags))))
         return { };
     int fd = static_cast<int>(syscall(SYS_pidfd_open, pid, flags));
     if (fd < 0)
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     return jsNumber(fd);
 }
 
 static JSValue posixSetns(JSGlobalObject* globalObject, JSValue fdValue, JSValue typeValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int fd;
     int type = 0;
-    if (!posixToFileDescriptor(globalObject, fdValue, fd) || (typeValue && !posixToInt(globalObject, typeValue, type)))
+    if (!posixToFileDescriptor(globalObject, fdValue, fd) || (typeValue && failed(scope, posixToInt(globalObject, typeValue, type))))
         return { };
     if (setns(fd, type))
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     return jsUndefined();
 }
 
 static JSValue posixUnshare(JSGlobalObject* globalObject, JSValue flagsValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int flags;
-    if (!posixToInt(globalObject, flagsValue, flags))
+    if (failed(scope, posixToInt(globalObject, flagsValue, flags)))
         return { };
     if (unshare(flags))
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     return jsUndefined();
 }
 #endif // OS(LINUX)
@@ -630,9 +682,11 @@ static JSValue posixUnshare(JSGlobalObject* globalObject, JSValue flagsValue)
 
 static JSValue posixKill(JSGlobalObject* globalObject, JSValue pidValue, JSValue signalValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     pid_t pid;
     int64_t signal;
-    if (!posixToPid(globalObject, pidValue, pid) || !posixToSsize(globalObject, signalValue, signal))
+    if (failed(scope, posixToPid(globalObject, pidValue, pid)) || failed(scope, posixToSsize(globalObject, signalValue, signal)))
         return { };
     if (!audit(globalObject, "os.kill"_s, jsNumber(pid), signalValue))
         return { };
@@ -648,31 +702,35 @@ static JSValue posixKill(JSGlobalObject* globalObject, JSValue pidValue, JSValue
     };
     if (pid == getpid() && !isForAnotherThread()) {
         if (int error = pthread_kill(pthread_self(), static_cast<int>(signal)))
-            return posixError(globalObject, error);
+            RELEASE_AND_RETURN(scope, posixError(globalObject, error));
         return jsUndefined();
     }
     if (kill(pid, static_cast<int>(signal)) == -1)
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     return jsUndefined();
 }
 
 static JSValue posixKillpg(JSGlobalObject* globalObject, JSValue groupValue, JSValue signalValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     pid_t group;
     int signal;
-    if (!posixToPid(globalObject, groupValue, group) || !posixToInt(globalObject, signalValue, signal))
+    if (failed(scope, posixToPid(globalObject, groupValue, group)) || failed(scope, posixToInt(globalObject, signalValue, signal)))
         return { };
     if (!audit(globalObject, "os.killpg"_s, jsNumber(group), jsNumber(signal)))
         return { };
     if (killpg(group, signal) == -1)
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     return jsUndefined();
 }
 
 static JSValue posixExit(JSGlobalObject* globalObject, JSValue statusValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int status;
-    if (!posixToInt(globalObject, statusValue, status))
+    if (failed(scope, posixToInt(globalObject, statusValue, status)))
         return { };
     _exit(status);
 }
@@ -684,8 +742,10 @@ static JSValue posixAbort(JSGlobalObject*)
 
 static JSValue posixUmask(JSGlobalObject* globalObject, JSValue maskValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int mask;
-    if (!posixToInt(globalObject, maskValue, mask))
+    if (failed(scope, posixToInt(globalObject, maskValue, mask)))
         return { };
     return jsNumber(static_cast<int>(umask(static_cast<mode_t>(mask))));
 }
@@ -839,7 +899,7 @@ static JSValue posixExecv(JSGlobalObject* globalObject, JSValue pathValue, JSVal
     if (!audit(globalObject, "os.exec"_s, path.object(), argv, jsUndefined()))
         return { };
     execv(path.narrow(), arguments.pointers());
-    return posixError(globalObject);
+    RELEASE_AND_RETURN(scope, posixError(globalObject));
 }
 
 static JSValue posixExecve(JSGlobalObject* globalObject, JSValue pathValue, JSValue argv, JSValue env)
@@ -878,7 +938,7 @@ static JSValue posixExecve(JSGlobalObject* globalObject, JSValue pathValue, JSVa
     else
 #endif
         execve(path.narrow(), arguments.pointers(), environment.pointers());
-    return path.error(globalObject);
+    RELEASE_AND_RETURN(scope, path.error(globalObject));
 }
 
 // An iterable of signal numbers.
@@ -968,7 +1028,7 @@ public:
                 return false;
             }
             int64_t tag;
-            if (!posixToLong(globalObject, action->at(0), tag))
+            if (failed(scope, posixToLong(globalObject, action->at(0), tag)))
                 return false;
             auto hasLength = [&](unsigned expected, ASCIILiteral name) {
                 if (action->length() == expected)
@@ -983,7 +1043,7 @@ public:
                 int flags;
                 unsigned mode;
                 PosixBytes path;
-                if (!hasLength(5, "open"_s) || !posixToInt(globalObject, action->at(1), fd) || !posixToFSBytes(globalObject, action->at(2), path)
+                if (!hasLength(5, "open"_s) || failed(scope, posixToInt(globalObject, action->at(1), fd)) || !posixToFSBytes(globalObject, action->at(2), path)
                     || !posixToInt(globalObject, action->at(3), flags) || !posixToUnsignedMask(globalObject, action->at(4), mode))
                     return false;
                 error = posix_spawn_file_actions_addopen(&m_actions, fd, path.characters(), flags, static_cast<mode_t>(mode));
@@ -991,7 +1051,7 @@ public:
             }
             case PosixSpawnClose: {
                 int fd;
-                if (!hasLength(2, "close"_s) || !posixToInt(globalObject, action->at(1), fd))
+                if (!hasLength(2, "close"_s) || failed(scope, posixToInt(globalObject, action->at(1), fd)))
                     return false;
                 error = posix_spawn_file_actions_addclose(&m_actions, fd);
                 break;
@@ -999,7 +1059,7 @@ public:
             case PosixSpawnDup2: {
                 int fd;
                 int fd2;
-                if (!hasLength(3, "dup2"_s) || !posixToInt(globalObject, action->at(1), fd) || !posixToInt(globalObject, action->at(2), fd2))
+                if (!hasLength(3, "dup2"_s) || failed(scope, posixToInt(globalObject, action->at(1), fd)) || failed(scope, posixToInt(globalObject, action->at(2), fd2)))
                     return false;
                 error = posix_spawn_file_actions_adddup2(&m_actions, fd, fd2);
                 break;
@@ -1007,7 +1067,7 @@ public:
             case PosixSpawnCloseFrom:
                 if (auto addCloseFrom = posixAddCloseFrom()) {
                     int fd;
-                    if (!hasLength(2, "closefrom"_s) || !posixToInt(globalObject, action->at(1), fd))
+                    if (!hasLength(2, "closefrom"_s) || failed(scope, posixToInt(globalObject, action->at(1), fd)))
                         return false;
                     error = addCloseFrom(&m_actions, fd);
                     break;
@@ -1110,7 +1170,7 @@ static JSValue posixSpawnNamed(JSGlobalObject* globalObject, ASCIILiteral functi
         return raiseTypeError(globalObject, scope, function, "() takes exactly 3 positional arguments ("_s, args.size(), " given)"_s);
     static constexpr ASCIILiteral names[] = { "file_actions"_s, "setpgroup"_s, "resetids"_s, "setsid"_s, "setsigmask"_s, "setsigdef"_s, "scheduler"_s };
     JSValue options[std::size(names)];
-    if (!parseKeywordArguments(globalObject, function, args, names, options))
+    if (failed(scope, parseKeywordArguments(globalObject, function, args, names, options)))
         return { };
     auto [fileActions, setpgroup, resetidsValue, setsidValue, setsigmask, setsigdef, scheduler] = options;
 
@@ -1178,7 +1238,7 @@ static JSValue posixSpawnFamily(JSGlobalObject* globalObject, JSValue modeValue,
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     int mode;
-    if (!posixToInt(globalObject, modeValue, mode))
+    if (failed(scope, posixToInt(globalObject, modeValue, mode)))
         return { };
     if (!posixIsListOrTuple(argv))
         return raiseTypeError(globalObject, scope, "argv must be a tuple or a list"_s);
@@ -1242,7 +1302,7 @@ static JSValue posixSpawnFamily(JSGlobalObject* globalObject, JSValue modeValue,
 
     pid_t pid = posixSpawnChild(executables.pointers(), arguments.pointers(), env ? environment.pointers() : nullptr);
     if (pid == -1)
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     if (mode == PosixSpawnNoWait)
         return jsNumber(pid);
     for (;;) {
@@ -1254,7 +1314,7 @@ static JSValue posixSpawnFamily(JSGlobalObject* globalObject, JSValue modeValue,
         } while (result < 0 && errno == EINTR && checkSignals(globalObject));
         RETURN_IF_EXCEPTION(scope, { });
         if (result < 0)
-            return posixError(globalObject);
+            RELEASE_AND_RETURN(scope, posixError(globalObject));
         if (WIFSTOPPED(status))
             continue;
         return jsNumber(WIFSIGNALED(status) ? -WTERMSIG(status) : WEXITSTATUS(status));
@@ -1304,9 +1364,11 @@ static JSValue posixWait(JSGlobalObject* globalObject)
 
 static JSValue posixWaitpid(JSGlobalObject* globalObject, JSValue pidValue, JSValue optionsValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     pid_t pid;
     int options;
-    if (!posixToPid(globalObject, pidValue, pid) || !posixToInt(globalObject, optionsValue, options))
+    if (failed(scope, posixToPid(globalObject, pidValue, pid)) || failed(scope, posixToInt(globalObject, optionsValue, options)))
         return { };
     int status = 0;
     pid_t result;
@@ -1315,8 +1377,8 @@ static JSValue posixWaitpid(JSGlobalObject* globalObject, JSValue pidValue, JSVa
         result = waitpid(pid, &status, options);
     } while (result < 0 && errno == EINTR && checkSignals(globalObject));
     if (result < 0)
-        return posixError(globalObject);
-    return PyTuple::create(globalObject, { jsNumber(result), jsNumber(status) });
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { jsNumber(result), jsNumber(status) }));
 }
 
 static JSValue posixWaitResult(JSGlobalObject* globalObject, pid_t pid, int status, struct rusage& usage)
@@ -1329,8 +1391,10 @@ static JSValue posixWaitResult(JSGlobalObject* globalObject, pid_t pid, int stat
 
 static JSValue posixWait3(JSGlobalObject* globalObject, JSValue optionsValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int options;
-    if (!posixToInt(globalObject, optionsValue, options))
+    if (failed(scope, posixToInt(globalObject, optionsValue, options)))
         return { };
     int status = 0;
     struct rusage usage;
@@ -1340,15 +1404,17 @@ static JSValue posixWait3(JSGlobalObject* globalObject, JSValue optionsValue)
         pid = wait4(-1, &status, options, &usage);
     } while (pid < 0 && errno == EINTR && checkSignals(globalObject));
     if (pid < 0)
-        return posixError(globalObject);
-    return posixWaitResult(globalObject, pid, status, usage);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
+    RELEASE_AND_RETURN(scope, posixWaitResult(globalObject, pid, status, usage));
 }
 
 static JSValue posixWait4(JSGlobalObject* globalObject, JSValue pidValue, JSValue optionsValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     pid_t pid;
     int options;
-    if (!posixToPid(globalObject, pidValue, pid) || !posixToInt(globalObject, optionsValue, options))
+    if (failed(scope, posixToPid(globalObject, pidValue, pid)) || failed(scope, posixToInt(globalObject, optionsValue, options)))
         return { };
     int status = 0;
     struct rusage usage;
@@ -1358,8 +1424,8 @@ static JSValue posixWait4(JSGlobalObject* globalObject, JSValue pidValue, JSValu
         result = wait4(pid, &status, options, &usage);
     } while (result < 0 && errno == EINTR && checkSignals(globalObject));
     if (result < 0)
-        return posixError(globalObject);
-    return posixWaitResult(globalObject, result, status, usage);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
+    RELEASE_AND_RETURN(scope, posixWaitResult(globalObject, result, status, usage));
 }
 
 static constexpr ASCIILiteral posixWaitidResultFields[] = { "si_pid"_s, "si_uid"_s, "si_signo"_s, "si_status"_s, "si_code"_s };
@@ -1367,10 +1433,12 @@ static constexpr StructSeqDef posixWaitidResultDef { "posix.waitid_result"_s, po
 
 static JSValue posixWaitid(JSGlobalObject* globalObject, JSValue typeValue, JSValue idValue, JSValue optionsValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int type;
     pid_t id;
     int options;
-    if (!posixToInt(globalObject, typeValue, type) || !posixToPid(globalObject, idValue, id) || !posixToInt(globalObject, optionsValue, options))
+    if (failed(scope, posixToInt(globalObject, typeValue, type)) || failed(scope, posixToPid(globalObject, idValue, id)) || failed(scope, posixToInt(globalObject, optionsValue, options)))
         return { };
     siginfo_t info;
     info.si_pid = 0;
@@ -1380,7 +1448,7 @@ static JSValue posixWaitid(JSGlobalObject* globalObject, JSValue typeValue, JSVa
         result = waitid(static_cast<idtype_t>(type), static_cast<id_t>(id), &info, options);
     } while (result < 0 && errno == EINTR && checkSignals(globalObject));
     if (result < 0)
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     if (!info.si_pid)
         return jsUndefined();
     return makeStructSeq(globalObject, cachedStructSeqType(globalObject, posixWaitidResultDef), {
@@ -1413,7 +1481,7 @@ static JSValue posixWaitstatusToExitcode(JSGlobalObject* globalObject, JSValue s
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     int status;
-    if (!posixToInt(globalObject, statusValue, status))
+    if (failed(scope, posixToInt(globalObject, statusValue, status)))
         return { };
     if (WIFEXITED(status)) {
         int code = WEXITSTATUS(status);
@@ -1531,19 +1599,18 @@ void addPosixProcessFunctions(JSGlobalObject* globalObject, PyModule* module)
 
 static JSValue resourceGetrusage(JSGlobalObject* globalObject, JSValue whoValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int who;
-    if (!posixToInt(globalObject, whoValue, who))
+    if (failed(scope, posixToInt(globalObject, whoValue, who)))
         return { };
     struct rusage usage;
     if (getrusage(static_cast<decltype(RUSAGE_SELF)>(who), &usage) == -1) {
-        if (errno == EINVAL) {
-            VM& vm = getVM(globalObject);
-            auto scope = DECLARE_THROW_SCOPE(vm);
+        if (errno == EINVAL)
             return raiseValueError(globalObject, scope, "invalid who parameter"_s);
-        }
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     }
-    return posixRusage(globalObject, usage);
+    RELEASE_AND_RETURN(scope, posixRusage(globalObject, usage));
 }
 
 static bool resourceToLimit(JSGlobalObject* globalObject, JSValue value, rlim_t& result)
@@ -1558,7 +1625,7 @@ static bool resourceToLimit(JSGlobalObject* globalObject, JSValue value, rlim_t&
         auto converted = tryInt64(index);
         if (converted && static_cast<rlim_t>(*converted) == RLIM_INFINITY) {
             result = RLIM_INFINITY;
-            return warn(globalObject, runtime(globalObject).DeprecationWarning(), "Use RLIM_INFINITY instead of negative limit value."_s);
+            RELEASE_AND_RETURN(scope, warn(globalObject, runtime(globalObject).DeprecationWarning(), "Use RLIM_INFINITY instead of negative limit value."_s));
         }
         raiseValueError(globalObject, scope, "Cannot convert negative int"_s);
         return false;
@@ -1582,7 +1649,7 @@ static bool resourceToLimits(JSGlobalObject* globalObject, JSValue value, struct
         raiseValueError(globalObject, scope, "expected a tuple of 2 integers"_s);
         return false;
     }
-    return resourceToLimit(globalObject, limits->at(0), result.rlim_cur) && resourceToLimit(globalObject, limits->at(1), result.rlim_max);
+    RELEASE_AND_RETURN(scope, resourceToLimit(globalObject, limits->at(0), result.rlim_cur) && resourceToLimit(globalObject, limits->at(1), result.rlim_max));
 }
 
 static JSValue resourceFromLimits(JSGlobalObject* globalObject, const struct rlimit& limits)
@@ -1592,11 +1659,11 @@ static JSValue resourceFromLimits(JSGlobalObject* globalObject, const struct rli
 
 static bool resourceToResource(JSGlobalObject* globalObject, JSValue value, int& result)
 {
-    if (!posixToInt(globalObject, value, result))
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, posixToInt(globalObject, value, result)))
         return false;
     if (result < 0 || result >= static_cast<int>(RLIM_NLIMITS)) {
-        VM& vm = getVM(globalObject);
-        auto scope = DECLARE_THROW_SCOPE(vm);
         raiseValueError(globalObject, scope, "invalid resource specified"_s);
         return false;
     }
@@ -1605,31 +1672,33 @@ static bool resourceToResource(JSGlobalObject* globalObject, JSValue value, int&
 
 static JSValue resourceGetrlimit(JSGlobalObject* globalObject, JSValue resourceValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int resource;
-    if (!resourceToResource(globalObject, resourceValue, resource))
+    if (failed(scope, resourceToResource(globalObject, resourceValue, resource)))
         return { };
     struct rlimit limits;
     if (getrlimit(static_cast<decltype(RLIMIT_CPU)>(resource), &limits) == -1)
-        return posixError(globalObject);
-    return resourceFromLimits(globalObject, limits);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
+    RELEASE_AND_RETURN(scope, resourceFromLimits(globalObject, limits));
 }
 
 static JSValue resourceSetrlimit(JSGlobalObject* globalObject, JSValue resourceValue, JSValue limitsValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int resource;
     struct rlimit limits;
-    if (!resourceToResource(globalObject, resourceValue, resource) || !resourceToLimits(globalObject, limitsValue, limits))
+    if (failed(scope, resourceToResource(globalObject, resourceValue, resource)) || !resourceToLimits(globalObject, limitsValue, limits))
         return { };
     if (!audit(globalObject, "resource.setrlimit"_s, jsNumber(resource), limitsValue))
         return { };
     if (setrlimit(static_cast<decltype(RLIMIT_CPU)>(resource), &limits) == -1) {
-        VM& vm = getVM(globalObject);
-        auto scope = DECLARE_THROW_SCOPE(vm);
         if (errno == EINVAL)
             return raiseValueError(globalObject, scope, "current limit exceeds maximum limit"_s);
         if (errno == EPERM)
             return raiseValueError(globalObject, scope, "not allowed to raise maximum limit"_s);
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     }
     return jsUndefined();
 }
@@ -1637,9 +1706,11 @@ static JSValue resourceSetrlimit(JSGlobalObject* globalObject, JSValue resourceV
 #if OS(LINUX)
 static JSValue resourcePrlimit(JSGlobalObject* globalObject, JSValue pidValue, JSValue resourceValue, JSValue limitsValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     pid_t pid;
     int resource;
-    if (!posixToPid(globalObject, pidValue, pid) || !resourceToResource(globalObject, resourceValue, resource))
+    if (failed(scope, posixToPid(globalObject, pidValue, pid)) || failed(scope, resourceToResource(globalObject, resourceValue, resource)))
         return { };
     if (!audit(globalObject, "resource.prlimit"_s, jsNumber(pid), jsNumber(resource), limitsValue))
         return { };
@@ -1649,14 +1720,11 @@ static JSValue resourcePrlimit(JSGlobalObject* globalObject, JSValue pidValue, J
     if (hasLimits && !resourceToLimits(globalObject, limitsValue, newLimits))
         return { };
     if (prlimit(pid, static_cast<decltype(RLIMIT_CPU)>(resource), hasLimits ? &newLimits : nullptr, &oldLimits) == -1) {
-        if (errno == EINVAL) {
-            VM& vm = getVM(globalObject);
-            auto scope = DECLARE_THROW_SCOPE(vm);
+        if (errno == EINVAL)
             return raiseValueError(globalObject, scope, "current limit exceeds maximum limit"_s);
-        }
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     }
-    return resourceFromLimits(globalObject, oldLimits);
+    RELEASE_AND_RETURN(scope, resourceFromLimits(globalObject, oldLimits));
 }
 #endif
 

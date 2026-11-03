@@ -58,7 +58,7 @@ static JSValue contextNew(JSGlobalObject* globalObject, JSValue, const CallArgs&
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (args.totalCount())
         return raiseTypeError(globalObject, scope, "Context() does not accept any arguments"_s);
-    return newContext(globalObject, nullptr);
+    RELEASE_AND_RETURN(scope, newContext(globalObject, nullptr));
 }
 
 bool enterContext(JSGlobalObject* globalObject, JSValue self)
@@ -104,7 +104,7 @@ static JSValue contextRun(JSGlobalObject* globalObject, JSValue self, const Call
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!args.size())
         return raiseTypeError(globalObject, scope, "run() missing 1 required positional argument"_s);
-    if (!enterContext(globalObject, self))
+    if (failed(scope, enterContext(globalObject, self)))
         return { };
     auto* context = PyRecord::from(self);
     JSValue result = call(globalObject, args[0], args.withoutFirst());
@@ -130,7 +130,7 @@ static JSValue contextGetItem(JSGlobalObject* globalObject, JSValue self, JSValu
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!checkContextKey(globalObject, key))
+    if (failed(scope, checkContextKey(globalObject, key)))
         return { };
     JSValue value = contextValues(PyRecord::from(self))->get(globalObject, key);
     RETURN_IF_EXCEPTION(scope, { });
@@ -143,7 +143,7 @@ static JSValue contextGet(JSGlobalObject* globalObject, JSValue self, JSValue ke
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!checkContextKey(globalObject, key))
+    if (failed(scope, checkContextKey(globalObject, key)))
         return { };
     JSValue value = contextValues(PyRecord::from(self))->get(globalObject, key);
     RETURN_IF_EXCEPTION(scope, { });
@@ -154,7 +154,7 @@ static JSValue contextContains(JSGlobalObject* globalObject, JSValue self, JSVal
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!checkContextKey(globalObject, key))
+    if (failed(scope, checkContextKey(globalObject, key)))
         return { };
     bool found = contextValues(PyRecord::from(self))->contains(globalObject, key);
     RETURN_IF_EXCEPTION(scope, { });
@@ -192,7 +192,7 @@ static constexpr NativeDef contextMethods[] = {
     PY_METHOD("items", contextItems, "($self, /)"),
 };
 
-static constexpr TypeDef contextTypeDef { "_contextvars.Context"_s, { TypeFlag::HasWeakref }, contextMethods, { }, { } };
+static constexpr TypeDef contextTypeDef { "_contextvars.Context"_s, { TypeFlag::HasWeakref, TypeFlag::OwnsContainers }, contextMethods, { }, { } };
 
 static PyType* contextType(JSGlobalObject* globalObject) { return runtime(globalObject).typeFor(contextTypeDef); }
 
@@ -396,7 +396,7 @@ static constexpr NativeDef contextVarMethods[] = {
 };
 
 static constexpr NativeGetSet contextVarGetSets[] = {
-    { "name"_s, contextVarGetName },
+    PY_MEMBER("name", contextVarGetName),
 };
 
 static constexpr TypeDef contextVarTypeDef { "_contextvars.ContextVar"_s, { }, contextVarMethods, contextVarGetSets, { } };

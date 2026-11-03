@@ -341,16 +341,20 @@ bool intDivMod(JSGlobalObject* globalObject, JSValue a, JSValue b, JSValue& quot
 
 JSValue intFloorDivide(JSGlobalObject* globalObject, JSValue a, JSValue b)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue quotient, remainder;
-    if (!intDivMod(globalObject, a, b, quotient, remainder))
+    if (failed(scope, intDivMod(globalObject, a, b, quotient, remainder)))
         return { };
     return quotient;
 }
 
 JSValue intModulo(JSGlobalObject* globalObject, JSValue a, JSValue b)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue quotient, remainder;
-    if (!intDivMod(globalObject, a, b, quotient, remainder))
+    if (failed(scope, intDivMod(globalObject, a, b, quotient, remainder)))
         return { };
     return remainder;
 }
@@ -363,9 +367,9 @@ JSValue intTrueDivide(JSGlobalObject* globalObject, JSValue a, JSValue b)
         return raiseZeroDivisionError(globalObject, scope, "division by zero"_s);
     // Both are exact as doubles, so the quotient is correctly rounded.
     if (a.isNumber() && b.isNumber()) [[likely]]
-        return makeFloat(globalObject, a.asNumber() / b.asNumber());
+        RELEASE_AND_RETURN(scope, makeFloat(globalObject, a.asNumber() / b.asNumber()));
     if (!intSign(a))
-        return makeFloat(globalObject, intSign(b) < 0 ? -0.0 : 0.0);
+        RELEASE_AND_RETURN(scope, makeFloat(globalObject, intSign(b) < 0 ? -0.0 : 0.0));
 
     // Scale so that the integer quotient has a couple of bits more than a double holds, then round once.
     bool negative = (intSign(a) < 0) != (intSign(b) < 0);
@@ -377,7 +381,7 @@ JSValue intTrueDivide(JSGlobalObject* globalObject, JSValue a, JSValue b)
     if (difference > std::numeric_limits<double>::max_exponent)
         return raiseOverflowError(globalObject, scope, "integer division result too large for a float"_s);
     if (difference < std::numeric_limits<double>::min_exponent - std::numeric_limits<double>::digits - 1)
-        return makeFloat(globalObject, negative ? -0.0 : 0.0);
+        RELEASE_AND_RETURN(scope, makeFloat(globalObject, negative ? -0.0 : 0.0));
     int64_t shift = std::max<int64_t>(difference, std::numeric_limits<double>::min_exponent) - std::numeric_limits<double>::digits - 2;
     bool inexact = false;
     if (shift <= 0) {
@@ -413,7 +417,7 @@ JSValue intTrueDivide(JSGlobalObject* globalObject, JSValue a, JSValue b)
     double result = std::ldexp(static_cast<double>(bits), static_cast<int>(shift));
     if (std::isinf(result))
         return raiseOverflowError(globalObject, scope, "integer division result too large for a float"_s);
-    return makeFloat(globalObject, negative ? -result : result);
+    RELEASE_AND_RETURN(scope, makeFloat(globalObject, negative ? -result : result));
 }
 
 JSValue intNegate(JSGlobalObject* globalObject, JSValue a)
@@ -470,7 +474,7 @@ JSValue intLeftShift(JSGlobalObject* globalObject, JSValue a, JSValue b)
     if (isSmallInt(a) && isSmallInt(b)) {
         int64_t shift = smallIntValue(b);
         if (shift + static_cast<int64_t>(intBitLength(a)) <= 62)
-            return makeInt(globalObject, static_cast<int64_t>(static_cast<uint64_t>(smallIntValue(a)) << shift));
+            RELEASE_AND_RETURN(scope, makeInt(globalObject, static_cast<int64_t>(static_cast<uint64_t>(smallIntValue(a)) << shift)));
     }
     if (!isSmallInt(b) || smallIntValue(b) > maxIntBits)
         return raiseOverflowError(globalObject, scope, "too many digits in integer"_s);
@@ -579,7 +583,7 @@ JSValue intPower(JSGlobalObject* globalObject, JSValue base, JSValue exponent, J
         RETURN_IF_EXCEPTION(scope, { });
         double y = toDouble(globalObject, exponent);
         RETURN_IF_EXCEPTION(scope, { });
-        return makeFloat(globalObject, std::pow(x, y));
+        RELEASE_AND_RETURN(scope, makeFloat(globalObject, std::pow(x, y)));
     }
 
     if (isSmallInt(base) && isSmallInt(exponent)) {
@@ -603,7 +607,7 @@ JSValue intPower(JSGlobalObject* globalObject, JSValue base, JSValue exponent, J
             }
         }
         if (!overflowed)
-            return makeInt(globalObject, result);
+            RELEASE_AND_RETURN(scope, makeInt(globalObject, result));
     }
     if (!isSmallInt(exponent)) {
         if (isSmallInt(base) && std::abs(smallIntValue(base)) <= 1)
@@ -656,10 +660,12 @@ PY_INT_BINARY(intXorMethod, intXor)
 
 static JSValue intDivModTuple(JSGlobalObject* globalObject, JSValue a, JSValue b)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue quotient, remainder;
-    if (!intDivMod(globalObject, a, b, quotient, remainder))
+    if (failed(scope, intDivMod(globalObject, a, b, quotient, remainder)))
         return { };
-    return PyTuple::create(globalObject, { quotient, remainder });
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { quotient, remainder }));
 }
 PY_INT_BINARY(intDivModMethod, intDivModTuple)
 
@@ -729,7 +735,7 @@ static JSValue intFloatMethod(JSGlobalObject* globalObject, JSValue self)
     auto scope = DECLARE_THROW_SCOPE(vm);
     double value = toDouble(globalObject, intValue(self));
     RETURN_IF_EXCEPTION(scope, { });
-    return makeFloat(globalObject, value);
+    RELEASE_AND_RETURN(scope, makeFloat(globalObject, value));
 }
 
 static JSValue intReprMethod(JSGlobalObject* globalObject, JSValue self)
@@ -842,12 +848,12 @@ static JSValue intToBytes(JSGlobalObject* globalObject, JSValue self, JSValue le
     auto scope = DECLARE_THROW_SCOPE(vm);
     int64_t length = 1;
     if (lengthValue) {
-        if (!ssizeArgument(globalObject, lengthValue, length))
+        if (failed(scope, ssizeArgument(globalObject, lengthValue, length)))
             return { };
         if (length < 0)
             return raiseValueError(globalObject, scope, "length cannot be negative"_s);
     }
-    if (!checkByteOrder(globalObject, "to_bytes"_s, byteOrder))
+    if (failed(scope, checkByteOrder(globalObject, "to_bytes"_s, byteOrder)))
         return { };
     bool isSigned = false;
     if (isSignedValue) {
@@ -855,7 +861,7 @@ static JSValue intToBytes(JSGlobalObject* globalObject, JSValue self, JSValue le
         RETURN_IF_EXCEPTION(scope, { });
     }
     bool littleEndian;
-    if (!parseByteOrder(globalObject, byteOrder, littleEndian))
+    if (failed(scope, parseByteOrder(globalObject, byteOrder, littleEndian)))
         return { };
     // The bytes are made before the int is looked at.
     Runtime& rt = runtime(globalObject);
@@ -936,7 +942,7 @@ static JSValue intFromBytes(JSGlobalObject* globalObject, JSValue cls, JSValue b
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!checkByteOrder(globalObject, "from_bytes"_s, byteOrder))
+    if (failed(scope, checkByteOrder(globalObject, "from_bytes"_s, byteOrder)))
         return { };
     bool isSigned = false;
     if (isSignedValue) {
@@ -944,7 +950,7 @@ static JSValue intFromBytes(JSGlobalObject* globalObject, JSValue cls, JSValue b
         RETURN_IF_EXCEPTION(scope, { });
     }
     bool littleEndian;
-    if (!parseByteOrder(globalObject, byteOrder, littleEndian))
+    if (failed(scope, parseByteOrder(globalObject, byteOrder, littleEndian)))
         return { };
     JSValue bytesObject;
     std::span<const uint8_t> bytes;
@@ -1108,8 +1114,10 @@ static JSValue intNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs&
 
     JSValue source = args.get(0);
     JSValue baseValue = args.get(1);
-    if (args.size() > 2)
+    if (args.size() > 2 && !args.hasKeywords() && cls.asCell() == rt.intType())
         return raiseTypeError(globalObject, scope, "int expected at most 2 arguments, got "_s, args.size());
+    if (args.totalCount() > 2)
+        return raiseTypeError(globalObject, scope, "int() takes at most 2 "_s, args.size() ? ""_s : "keyword "_s, "arguments ("_s, args.totalCount(), " given)"_s);
     for (unsigned i = 0; i < args.keywordCount(); ++i) {
         if (!WTF::equal(args.keywordName(i)->tryGetValueImpl(), "base"_s.span8()) || baseValue)
             RELEASE_AND_RETURN(scope, raiseUnexpectedKeyword(globalObject, "int"_s, stringOf(args.keywordName(i)), { "base"_s }));

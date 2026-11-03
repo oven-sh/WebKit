@@ -299,7 +299,7 @@ struct SelectSet {
         FD_ZERO(&set);
         // A list is looked at as it is when each item's turn comes: a fileno() may change it.
         JSArray* list = tryAsList(iterable);
-        if (!list && !selectItems(globalObject, iterable, "arguments 1-3 must be sequences"_s, objects))
+        if (!list && failed(scope, selectItems(globalObject, iterable, "arguments 1-3 must be sequences"_s, objects)))
             return false;
         for (unsigned i = 0; i < (list ? listLength(list) : objects.size()); ++i) {
             if (list)
@@ -359,22 +359,24 @@ static JSValue selectSelect(JSGlobalObject* globalObject, JSValue readList, JSVa
     if (result == waitRaised)
         return { };
     if (result < 0)
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
 
     JSValue first = readable.ready(globalObject);
     JSValue second = writable.ready(globalObject);
     JSValue third = exceptional.ready(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
-    return PyTuple::create(globalObject, { first, second, third });
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { first, second, third }));
 }
 
 // ---- poll ---- (field 0: {fd: events}; number: whether poll() is running)
 
 static JSValue pollRegister(JSGlobalObject* globalObject, JSValue self, JSValue fdValue, JSValue maskValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int fd;
     unsigned short mask = POLLIN | POLLPRI | POLLOUT;
-    if (!posixToFileDescriptor(globalObject, fdValue, fd) || (maskValue && !selectToUnsignedShort(globalObject, maskValue, mask)))
+    if (!posixToFileDescriptor(globalObject, fdValue, fd) || (maskValue && failed(scope, selectToUnsignedShort(globalObject, maskValue, mask))))
         return { };
     PyDict::from(PyRecord::from(self)->get(0))->set(globalObject, jsNumber(fd), jsNumber(mask));
     return jsUndefined();
@@ -382,13 +384,15 @@ static JSValue pollRegister(JSGlobalObject* globalObject, JSValue self, JSValue 
 
 static JSValue pollModify(JSGlobalObject* globalObject, JSValue self, JSValue fdValue, JSValue maskValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int fd;
     unsigned short mask;
-    if (!posixToFileDescriptor(globalObject, fdValue, fd) || !selectToUnsignedShort(globalObject, maskValue, mask))
+    if (!posixToFileDescriptor(globalObject, fdValue, fd) || failed(scope, selectToUnsignedShort(globalObject, maskValue, mask)))
         return { };
     PyDict* dict = PyDict::from(PyRecord::from(self)->get(0));
     if (!dict->contains(globalObject, jsNumber(fd)))
-        return posixError(globalObject, ENOENT);
+        RELEASE_AND_RETURN(scope, posixError(globalObject, ENOENT));
     dict->set(globalObject, jsNumber(fd), jsNumber(mask));
     return jsUndefined();
 }
@@ -435,7 +439,7 @@ static JSValue pollPoll(JSGlobalObject* globalObject, JSValue self, JSValue time
     if (result == waitRaised)
         return { };
     if (result < 0)
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
 
     JSArray* list = newList(globalObject);
     for (auto& descriptor : descriptors) {
@@ -516,7 +520,7 @@ static JSValue epollNew(JSGlobalObject* globalObject, JSValue type, JSValue size
     auto scope = DECLARE_THROW_SCOPE(vm);
     int sizeHint = -1;
     int flags = 0;
-    if ((sizeHintValue && !posixToInt(globalObject, sizeHintValue, sizeHint)) || (flagsValue && !posixToInt(globalObject, flagsValue, flags)))
+    if ((sizeHintValue && failed(scope, posixToInt(globalObject, sizeHintValue, sizeHint))) || (flagsValue && failed(scope, posixToInt(globalObject, flagsValue, flags))))
         return { };
     if (sizeHint != -1 && sizeHint <= 0)
         return raiseValueError(globalObject, scope, "negative sizehint"_s);
@@ -527,12 +531,14 @@ static JSValue epollNew(JSGlobalObject* globalObject, JSValue type, JSValue size
 
 static JSValue epollFromFd(JSGlobalObject* globalObject, JSValue type, JSValue fdValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int fd;
-    if (!posixToInt(globalObject, fdValue, fd))
+    if (failed(scope, posixToInt(globalObject, fdValue, fd)))
         return { };
     if (fd == -1)
         fd = epoll_create1(EPOLL_CLOEXEC);
-    return queueCreate(globalObject, type, fd);
+    RELEASE_AND_RETURN(scope, queueCreate(globalObject, type, fd));
 }
 
 static JSValue epollFileno(JSGlobalObject* globalObject, JSValue self)
@@ -568,11 +574,11 @@ static JSValue epollPoll(JSGlobalObject* globalObject, JSValue self, JSValue tim
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     int maxEvents = -1;
-    if (maxEventsValue && !posixToInt(globalObject, maxEventsValue, maxEvents))
+    if (maxEventsValue && failed(scope, posixToInt(globalObject, maxEventsValue, maxEvents)))
         return { };
     auto* object = PyRecord::from(self);
     if (object->number < 0)
-        return epollClosedError(globalObject);
+        RELEASE_AND_RETURN(scope, epollClosedError(globalObject));
     int64_t timeout;
     if (!selectOptionalTimeout(globalObject, timeoutValue, waitNanosecondsPerSecond, timeout))
         return { };
@@ -597,7 +603,7 @@ static JSValue epollPoll(JSGlobalObject* globalObject, JSValue self, JSValue tim
     if (result == waitRaised)
         return { };
     if (result < 0)
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
 
     JSArray* list = newList(globalObject);
     for (int i = 0; i < result; ++i) {
@@ -851,12 +857,14 @@ static JSValue kqueueNew(JSGlobalObject* globalObject, JSValue type) { return kq
 
 static JSValue kqueueFromFd(JSGlobalObject* globalObject, JSValue type, JSValue fdValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int fd;
-    if (!posixToInt(globalObject, fdValue, fd))
+    if (failed(scope, posixToInt(globalObject, fdValue, fd)))
         return { };
     if (fd == -1)
-        return kqueueCreate(globalObject, type);
-    return queueCreate(globalObject, type, fd);
+        RELEASE_AND_RETURN(scope, kqueueCreate(globalObject, type));
+    RELEASE_AND_RETURN(scope, queueCreate(globalObject, type, fd));
 }
 
 static JSValue kqueueFileno(JSGlobalObject* globalObject, JSValue self)
@@ -872,11 +880,11 @@ static JSValue kqueueControl(JSGlobalObject* globalObject, JSValue self, JSValue
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     int maxEvents;
-    if (!posixToInt(globalObject, maxEventsValue, maxEvents))
+    if (failed(scope, posixToInt(globalObject, maxEventsValue, maxEvents)))
         return { };
     auto* object = PyRecord::from(self);
     if (object->number < 0)
-        return kqueueClosedError(globalObject);
+        RELEASE_AND_RETURN(scope, kqueueClosedError(globalObject));
     if (maxEvents < 0)
         return raiseValueError(globalObject, scope, "Length of eventlist must be 0 or positive, got "_s, maxEvents);
     int64_t timeout;
@@ -888,7 +896,7 @@ static JSValue kqueueControl(JSGlobalObject* globalObject, JSValue self, JSValue
     Vector<struct kevent, 8> changes;
     if (!isNone(changeList)) {
         MarkedArgumentBuffer items;
-        if (!selectItems(globalObject, changeList, "changelist is not iterable"_s, items))
+        if (failed(scope, selectItems(globalObject, changeList, "changelist is not iterable"_s, items)))
             return { };
         if (items.size() > INT_MAX)
             return raiseOverflowError(globalObject, scope, "changelist is too long"_s);
@@ -915,7 +923,7 @@ static JSValue kqueueControl(JSGlobalObject* globalObject, JSValue self, JSValue
     if (result == waitRaised)
         return { };
     if (result < 0)
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
 
     JSArray* list = newList(globalObject);
     for (int i = 0; i < result; ++i) {

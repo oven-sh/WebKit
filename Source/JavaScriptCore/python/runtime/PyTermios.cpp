@@ -83,7 +83,7 @@ static JSValue termiosSetAttr(JSGlobalObject* globalObject, JSValue fdValue, JSV
     auto scope = DECLARE_THROW_SCOPE(vm);
     int fd;
     int when;
-    if (!posixToFileDescriptor(globalObject, fdValue, fd) || !posixToInt(globalObject, whenValue, when))
+    if (!posixToFileDescriptor(globalObject, fdValue, fd) || failed(scope, posixToInt(globalObject, whenValue, when)))
         return { };
     JSArray* list = tryAsList(attributes);
     if (!list || listLength(list) != 7)
@@ -91,13 +91,13 @@ static JSValue termiosSetAttr(JSGlobalObject* globalObject, JSValue fdValue, JSV
     // What there is no item for stays as it is.
     struct termios mode;
     if (tcgetattr(fd, &mode) < 0)
-        return termiosError(globalObject);
+        RELEASE_AND_RETURN(scope, termiosError(globalObject));
     int64_t numbers[6];
     for (unsigned i = 0; i < 6; ++i) {
         // An __index__() may have shortened the list.
         if (listLength(list) != 7)
             return raiseTypeError(globalObject, scope, "tcsetattr, arg 3: must be 7 element list"_s);
-        if (!posixToLong(globalObject, listGet(list, i), numbers[i]))
+        if (failed(scope, posixToLong(globalObject, listGet(list, i), numbers[i])))
             return { };
     }
     mode.c_iflag = static_cast<tcflag_t>(numbers[0]);
@@ -114,26 +114,28 @@ static JSValue termiosSetAttr(JSGlobalObject* globalObject, JSValue fdValue, JSV
             mode.c_cc[i] = bytes->data()[0];
         else if (isInt(item)) {
             int64_t number;
-            if (!posixToLong(globalObject, item, number))
+            if (failed(scope, posixToLong(globalObject, item, number)))
                 return { };
             mode.c_cc[i] = static_cast<cc_t>(number);
         } else
             return raiseTypeError(globalObject, scope, "tcsetattr: elements of attributes must be bytes objects of length 1 or integers"_s);
     }
     if (cfsetispeed(&mode, static_cast<speed_t>(numbers[4])) < 0 || cfsetospeed(&mode, static_cast<speed_t>(numbers[5])) < 0 || tcsetattr(fd, when, &mode) < 0)
-        return termiosError(globalObject);
+        RELEASE_AND_RETURN(scope, termiosError(globalObject));
     return jsUndefined();
 }
 
 template<int (*function)(int, int)>
 static JSValue termiosControl(JSGlobalObject* globalObject, JSValue fdValue, JSValue argumentValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int fd;
     int argument;
-    if (!posixToFileDescriptor(globalObject, fdValue, fd) || !posixToInt(globalObject, argumentValue, argument))
+    if (!posixToFileDescriptor(globalObject, fdValue, fd) || failed(scope, posixToInt(globalObject, argumentValue, argument)))
         return { };
     if (function(fd, argument) < 0)
-        return termiosError(globalObject);
+        RELEASE_AND_RETURN(scope, termiosError(globalObject));
     return jsUndefined();
 }
 
@@ -179,19 +181,19 @@ static JSValue termiosSetWinSize(JSGlobalObject* globalObject, JSValue fdValue, 
     for (unsigned i = 0; i < 2; ++i) {
         JSValue item = getItem(globalObject, sizeValue, jsNumber(i));
         RETURN_IF_EXCEPTION(scope, { });
-        if (!posixToLong(globalObject, item, numbers[i]))
+        if (failed(scope, posixToLong(globalObject, item, numbers[i])))
             return { };
     }
     // The size in pixels stays as it is.
     struct winsize size;
     if (ioctl(fd, TIOCGWINSZ, &size) < 0)
-        return termiosError(globalObject);
+        RELEASE_AND_RETURN(scope, termiosError(globalObject));
     size.ws_row = static_cast<unsigned short>(numbers[0]);
     size.ws_col = static_cast<unsigned short>(numbers[1]);
     if (size.ws_row != numbers[0] || size.ws_col != numbers[1])
         return raiseOverflowError(globalObject, scope, "winsize value(s) out of range."_s);
     if (ioctl(fd, TIOCSWINSZ, &size) < 0)
-        return termiosError(globalObject);
+        RELEASE_AND_RETURN(scope, termiosError(globalObject));
     return jsUndefined();
 }
 

@@ -1208,7 +1208,7 @@ static JSValue proxyPop(JSGlobalObject* globalObject, JSValue self, const CallAr
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!checkPositional(globalObject, "pop"_s, args, 1, 2))
+    if (failed(scope, checkPositional(globalObject, "pop"_s, args, 1, 2)))
         return { };
     PyFrame* frame = frameOfProxy(self);
     int index = indexOfVariable(globalObject, FrameVariables(vm, frame), args[0], ProxyAccess::Write);
@@ -1234,16 +1234,16 @@ static JSValue proxyNew(JSGlobalObject* globalObject, JSValue, const CallArgs& a
         return raiseTypeError(globalObject, scope, "expect frame, not "_s, typeNameForMessage(globalObject, typeOf(globalObject, args[0])));
     if (args.hasKeywords())
         return raiseTypeError(globalObject, scope, "FrameLocalsProxy takes no keyword arguments"_s);
-    return PyWrapperObject::create(globalObject, runtime(globalObject).frameLocalsProxyType(), args[0]);
+    RELEASE_AND_RETURN(scope, PyWrapperObject::create(globalObject, runtime(globalObject).frameLocalsProxyType(), args[0]));
 }
 
 static constexpr NativeDef frameLocalsProxyMethods[] = {
     PY_NEW(proxyNew, "($type, *args, **kwargs)"),
     PY_SLOT("__len__", proxyLen, "($self, /)"),
-    PY_SLOT("__getitem__", proxyGetItem, "($self, key, /)"),
+    PY_METHOD("__getitem__", proxyGetItem, "($self, object, /)"),
     PY_SLOT("__setitem__", proxySetItem, "($self, key, value, /)"),
     PY_SLOT("__delitem__", proxyDelItem, "($self, key, /)"),
-    PY_SLOT("__contains__", proxyContains, "($self, key, /)"),
+    PY_METHOD("__contains__", proxyContains, "($self, object, /)"),
     PY_SLOT("__iter__", proxyIter, "($self, /)"),
     PY_SLOT("__repr__", proxyRepr, "($self, /)"),
     PY_SLOT("__eq__", proxyCompare<CompareOperator::Eq>, "($self, value, /)"),
@@ -1263,7 +1263,7 @@ static constexpr NativeDef frameLocalsProxyMethods[] = {
     PY_METHOD("get", proxyGet, "($self, *args)"),
     PY_METHOD("pop", proxyPop, "($self, *args)"),
     PY_METHOD("setdefault", proxySetDefault, "($self, *args)"),
-    PY_METHOD("update", proxyUpdate, "($self, other, /)"),
+    PY_METHOD("update", proxyUpdate, "($self, object, /)"),
 };
 
 // ---- Tracebacks ----
@@ -1336,7 +1336,7 @@ static JSValue tracebackNew(JSGlobalObject* globalObject, JSValue, JSValue next,
     RETURN_IF_EXCEPTION(scope, { });
     int line = toCInt(globalObject, lineNumber);
     RETURN_IF_EXCEPTION(scope, { });
-    return PyTraceback::create(globalObject, isNone(next) ? JSValue() : next, PyFrame::from(frame), line, offset);
+    RELEASE_AND_RETURN(scope, PyTraceback::create(globalObject, isNone(next) ? JSValue() : next, PyFrame::from(frame), line, offset));
 }
 
 static JSValue tracebackGetNext(JSGlobalObject*, JSValue self)

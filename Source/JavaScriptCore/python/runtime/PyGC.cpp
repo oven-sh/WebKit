@@ -115,6 +115,13 @@ static void forEachPartInFields(JSCell* cell, const Function& function)
         function(frame->extraLocals(), false);
     } else if (auto* pythonFunction = PyFunction::tryFrom(cell))
         function(pythonFunction->generatorBodyIfMade(), false);
+    else if (cell->type() == PyObjectType && uncheckedDowncast<PyObject>(cell)->type()->has(TypeFlag::OwnsContainers)) {
+        auto* record = uncheckedDowncast<PyRecord>(cell);
+        for (unsigned i = 0; i < record->fieldCount(); ++i) {
+            if (JSValue field = record->get(i); field && field.isCell() && isContainer(field.asCell()))
+                function(field.asCell(), false);
+        }
+    }
 }
 
 // The heap as it is now: which cells are objects, and which are parts of what. No cell may be allocated while there is one.
@@ -457,7 +464,7 @@ static JSValue gcCollect(JSGlobalObject* globalObject, JSValue generationValue)
     total.duration += stats.duration;
     callCollectionCallbacks(globalObject, "stop"_s, generation, stats);
     RETURN_IF_EXCEPTION(scope, { });
-    return makeInt(globalObject, static_cast<uint64_t>(stats.collected));
+    RELEASE_AND_RETURN(scope, makeInt(globalObject, static_cast<uint64_t>(stats.collected)));
 }
 
 static JSValue gcEnable(JSGlobalObject* globalObject)
@@ -487,8 +494,10 @@ static JSValue gcSetThreshold(JSGlobalObject* globalObject, const CallArgs& args
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!rejectKeywords(globalObject, "set_threshold"_s, args) || !checkPositional(globalObject, "set_threshold"_s, args, 1, 3))
+    if (failed(scope, rejectKeywords(globalObject, "set_threshold"_s, args)))
         return { };
+    if (!args.size() || args.size() > 3)
+        return raiseTypeError(globalObject, scope, "gc.set_threshold requires 1 to 3 arguments"_s);
     auto thresholds = runtime(globalObject).gc.thresholds;
     for (unsigned i = 0; i < args.size(); ++i) {
         thresholds[i] = toCInt(globalObject, args[i]);
@@ -695,12 +704,18 @@ static void appendReferents(JSGlobalObject* globalObject, JSCell* object, Marked
                 result.append(item);
         }
     } else if (auto* dict = PyDict::tryFrom(object)) {
+        // CPython's does not mention its keys if they are all strings.
+        bool mentionsKeys = false;
         unsigned position = 0;
         JSValue key;
         JSValue value;
+        while (!mentionsKeys && dict->next(position, key, value))
+            mentionsKeys = !key.isString();
+        position = 0;
         while (dict->next(position, key, value)) {
-            result.append(key);
             result.append(value);
+            if (mentionsKeys)
+                result.append(key);
         }
     } else if (auto* set = PySet::tryFrom(object)) {
         size_t position = 0;
@@ -725,8 +740,7 @@ static void appendReferents(JSGlobalObject* globalObject, JSCell* object, Marked
         collector.visit(object);
         PyType* type = rt.typeOf(object);
         for (JSCell* cell : collector.cells) {
-            // In CPython an object holds on to its type only if that is a class.
-            if (hidden.contains(cell) || (cell == type && !type->isHeapType()))
+            if (hidden.contains(cell) || cell == type)
                 continue;
             if (parts.contains(cell)) {
                 if (depth < 2)
@@ -736,10 +750,9 @@ static void appendReferents(JSGlobalObject* globalObject, JSCell* object, Marked
             if (cell->isString() || cell->isHeapBigInt() || (cell->isObject() && isObjectOfPython(cell, globalObject) && isWhole(cell)))
                 result.append(cell);
         }
-        return;
     }
-    // An instance of a class derived from one of those refers to the class.
-    if (PyType* type = rt.typeOf(object); type->isHeapType())
+    // In CPython an object holds on to its type only if that is a class.
+    if (PyType* type = rt.typeOf(object); !depth && type->isHeapType())
         result.append(type);
 }
 

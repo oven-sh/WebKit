@@ -137,12 +137,14 @@ static JSValue dateNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs
 
 static JSValue dateFromTimestamp(JSGlobalObject* globalObject, JSValue cls, JSValue timestamp)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PyType* type = PyType::from(cls);
     time_t when;
     struct tm tm;
-    if (!secondsArgument(globalObject, timestamp, when) || !toLocalTime(globalObject, when, tm))
+    if (failed(scope, secondsArgument(globalObject, timestamp, when)) || failed(scope, toLocalTime(globalObject, when, tm)))
         return { };
-    return makeDate(globalObject, stateOf(globalObject, type), type, tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday);
+    RELEASE_AND_RETURN(scope, makeDate(globalObject, stateOf(globalObject, type), type, tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday));
 }
 
 static JSValue dateToday(JSGlobalObject* globalObject, JSValue cls)
@@ -153,7 +155,7 @@ static JSValue dateToday(JSGlobalObject* globalObject, JSValue cls)
     State& state = stateOf(globalObject, type);
     if (type == state.dateType.get()) {
         struct tm tm;
-        if (!toLocalTime(globalObject, ::time(nullptr), tm))
+        if (failed(scope, toLocalTime(globalObject, ::time(nullptr), tm)))
             return { };
         RELEASE_AND_RETURN(scope, newDate(globalObject, state, type, tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday));
     }

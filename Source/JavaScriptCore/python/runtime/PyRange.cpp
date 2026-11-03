@@ -116,14 +116,14 @@ static JSValue makeRange(JSGlobalObject* globalObject, JSValue start, JSValue st
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue length = rangeLength(globalObject, start, stop, step);
     RETURN_IF_EXCEPTION(scope, { });
-    return PyRange::create(globalObject, start, stop, step, length);
+    RELEASE_AND_RETURN(scope, PyRange::create(globalObject, start, stop, step, length));
 }
 
 static JSValue rangeNew(JSGlobalObject* globalObject, JSValue, const CallArgs& args)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!rejectKeywords(globalObject, "range"_s, args) || !checkPositional(globalObject, "range"_s, args, 1, 3))
+    if (failed(scope, rejectKeywords(globalObject, "range"_s, args)) || failed(scope, checkPositional(globalObject, "range"_s, args, 1, 3)))
         return { };
     JSValue start = jsNumber(0);
     JSValue step = jsNumber(1);
@@ -305,7 +305,7 @@ static JSValue rangeReversed(JSGlobalObject* globalObject, JSValue self)
     RETURN_IF_EXCEPTION(scope, { });
     JSValue step = intNegate(globalObject, range->step());
     RETURN_IF_EXCEPTION(scope, { });
-    return makeRangeIteratorFrom(globalObject, last, step, range->length());
+    RELEASE_AND_RETURN(scope, makeRangeIteratorFrom(globalObject, last, step, range->length()));
 }
 
 // For an int, by arithmetic.
@@ -375,7 +375,7 @@ static JSValue rangeCount(JSGlobalObject* globalObject, JSValue self, JSValue va
     uint64_t count = 0;
     findByIteration(globalObject, self, value, &count);
     RETURN_IF_EXCEPTION(scope, { });
-    return makeInt(globalObject, count);
+    RELEASE_AND_RETURN(scope, makeInt(globalObject, count));
 }
 
 static JSValue rangeIndex(JSGlobalObject* globalObject, JSValue self, JSValue value)
@@ -396,7 +396,7 @@ static JSValue rangeIndex(JSGlobalObject* globalObject, JSValue self, JSValue va
     RETURN_IF_EXCEPTION(scope, { });
     if (index < 0)
         return raiseValueError(globalObject, scope, "sequence.index(x): x not in sequence"_s);
-    return makeInt(globalObject, index);
+    RELEASE_AND_RETURN(scope, makeInt(globalObject, index));
 }
 
 static bool rangesAreEqual(PyRange* a, PyRange* b)
@@ -437,7 +437,7 @@ static JSValue rangeHash(JSGlobalObject* globalObject, JSValue self)
     }
     int64_t result = hashOfTuple(globalObject, PyTuple::create(globalObject, { range->length(), start, step }));
     RETURN_IF_EXCEPTION(scope, { });
-    return makeInt(globalObject, result);
+    RELEASE_AND_RETURN(scope, makeInt(globalObject, result));
 }
 
 static JSValue rangeReduce(JSGlobalObject* globalObject, JSValue self)
@@ -463,8 +463,8 @@ static constexpr NativeDef rangeMethods[] = {
     PY_SLOT("__iter__", rangeIter, "($self, /)"),
     PY_METHOD("__reversed__", rangeReversed, "($self, /)"),
     PY_METHOD("__reduce__", rangeReduce, "($self, /)"),
-    PY_METHOD("count", rangeCount, "($self, value, /)"),
-    PY_METHOD("index", rangeIndex, "($self, value, /)"),
+    PY_METHOD("count", rangeCount, "($self, object, /)"),
+    PY_METHOD("index", rangeIndex, "($self, object, /)"),
 };
 
 static constexpr NativeGetSet rangeGetSets[] = {
@@ -539,11 +539,13 @@ void PySlice::adjust(int64_t length, Indices& result)
 
 static JSValue sliceNew(JSGlobalObject* globalObject, JSValue, const CallArgs& args)
 {
-    if (!rejectKeywords(globalObject, "slice"_s, args) || !checkPositional(globalObject, "slice"_s, args, 1, 3))
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, rejectKeywords(globalObject, "slice"_s, args)) || failed(scope, checkPositional(globalObject, "slice"_s, args, 1, 3)))
         return { };
     if (args.size() == 1)
-        return PySlice::create(globalObject, jsUndefined(), args[0], jsUndefined());
-    return PySlice::create(globalObject, args[0], args[1], args.size() == 3 ? args[2] : jsUndefined());
+        RELEASE_AND_RETURN(scope, PySlice::create(globalObject, jsUndefined(), args[0], jsUndefined()));
+    RELEASE_AND_RETURN(scope, PySlice::create(globalObject, args[0], args[1], args.size() == 3 ? args[2] : jsUndefined()));
 }
 
 static JSValue sliceRepr(JSGlobalObject* globalObject, JSValue self)
@@ -564,7 +566,7 @@ static JSValue sliceRepr(JSGlobalObject* globalObject, JSValue self)
         builder.append(view.data);
     }
     builder.append(')');
-    return makeStr(globalObject, builder);
+    RELEASE_AND_RETURN(scope, makeStr(globalObject, builder));
 }
 
 static PyTuple* sliceAsTuple(JSGlobalObject* globalObject, JSValue value)
@@ -599,7 +601,7 @@ static JSValue sliceHash(JSGlobalObject* globalObject, JSValue self)
     }
     if (accumulator == static_cast<uint64_t>(-1))
         accumulator = 1546275796;
-    return makeInt(globalObject, static_cast<int64_t>(accumulator));
+    RELEASE_AND_RETURN(scope, makeInt(globalObject, static_cast<int64_t>(accumulator)));
 }
 
 static JSValue sliceIndices(JSGlobalObject* globalObject, JSValue self, JSValue lengthValue)
@@ -613,7 +615,7 @@ static JSValue sliceIndices(JSGlobalObject* globalObject, JSValue self, JSValue 
     JSValue start, stop, step;
     if (!longSliceIndices(globalObject, PySlice::from(self), length, start, stop, step))
         return { };
-    return PyTuple::create(globalObject, { start, stop, step });
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { start, stop, step }));
 }
 
 static JSValue sliceReduce(JSGlobalObject* globalObject, JSValue self)
@@ -635,7 +637,7 @@ static constexpr NativeDef sliceMethods[] = {
     PY_SLOT("__le__", sliceCompare<CompareOperator::LtE>, "($self, value, /)"),
     PY_SLOT("__gt__", sliceCompare<CompareOperator::Gt>, "($self, value, /)"),
     PY_SLOT("__ge__", sliceCompare<CompareOperator::GtE>, "($self, value, /)"),
-    PY_METHOD("indices", sliceIndices, "($self, len, /)"),
+    PY_METHOD("indices", sliceIndices, "($self, object, /)"),
     PY_METHOD("__reduce__", sliceReduce, "($self, /)"),
     PY_CLASSMETHOD("__class_getitem__", classGetItem, "($type, object, /)"),
 };

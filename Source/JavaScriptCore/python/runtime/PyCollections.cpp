@@ -147,7 +147,8 @@ static JSValue dequeTakeLeft(JSGlobalObject* globalObject, PyRecord* deque)
 static bool dequePushRight(JSGlobalObject* globalObject, PyRecord* deque, JSValue item, int64_t maxLen)
 {
     VM& vm = getVM(globalObject);
-    if (!dequeMakeRoom(globalObject, deque))
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, dequeMakeRoom(globalObject, deque)))
         return false;
     unsigned size = dequeSize(deque);
     dequePut(vm, deque, size, item);
@@ -162,7 +163,8 @@ static bool dequePushRight(JSGlobalObject* globalObject, PyRecord* deque, JSValu
 static bool dequePushLeft(JSGlobalObject* globalObject, PyRecord* deque, JSValue item, int64_t maxLen)
 {
     VM& vm = getVM(globalObject);
-    if (!dequeMakeRoom(globalObject, deque))
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, dequeMakeRoom(globalObject, deque)))
         return false;
     unsigned size = dequeSize(deque);
     dequeSetHead(vm, deque, (dequeHead(deque) - 1) & (dequeBuffer(deque)->length() - 1));
@@ -279,7 +281,7 @@ static JSValue dequeInit(JSGlobalObject* globalObject, JSValue self, const CallA
     auto scope = DECLARE_THROW_SCOPE(vm);
     static constexpr ASCIILiteral keywords[] = { "iterable"_s, "maxlen"_s };
     JSValue values[2];
-    if (!unpackKeywordArguments(globalObject, "deque"_s, keywords, 0, 2, false, args, values))
+    if (failed(scope, unpackKeywordArguments(globalObject, "deque"_s, keywords, 0, 2, false, args, values)))
         return { };
     PyRecord* deque = dequeOf(self);
     JSValue maxLen = jsUndefined();
@@ -303,16 +305,20 @@ static JSValue dequeInit(JSGlobalObject* globalObject, JSValue self, const CallA
 
 static JSValue dequeAppend(JSGlobalObject* globalObject, JSValue self, JSValue item)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PyRecord* deque = dequeOf(self);
-    if (!dequePushRight(globalObject, deque, item, dequeMaxLen(deque)))
+    if (failed(scope, dequePushRight(globalObject, deque, item, dequeMaxLen(deque))))
         return { };
     return jsUndefined();
 }
 
 static JSValue dequeAppendLeft(JSGlobalObject* globalObject, JSValue self, JSValue item)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PyRecord* deque = dequeOf(self);
-    if (!dequePushLeft(globalObject, deque, item, dequeMaxLen(deque)))
+    if (failed(scope, dequePushLeft(globalObject, deque, item, dequeMaxLen(deque))))
         return { };
     return jsUndefined();
 }
@@ -338,7 +344,7 @@ static JSValue dequePop(JSGlobalObject* globalObject, JSValue self)
     PyRecord* deque = dequeOf(self);
     if (!dequeSize(deque))
         return raiseIndexError(globalObject, scope, "pop from an empty deque"_s);
-    return dequeTakeRight(globalObject, deque);
+    RELEASE_AND_RETURN(scope, dequeTakeRight(globalObject, deque));
 }
 
 static JSValue dequePopLeft(JSGlobalObject* globalObject, JSValue self)
@@ -348,7 +354,7 @@ static JSValue dequePopLeft(JSGlobalObject* globalObject, JSValue self)
     PyRecord* deque = dequeOf(self);
     if (!dequeSize(deque))
         return raiseIndexError(globalObject, scope, "pop from an empty deque"_s);
-    return dequeTakeLeft(globalObject, deque);
+    RELEASE_AND_RETURN(scope, dequeTakeLeft(globalObject, deque));
 }
 
 static JSValue dequeClearMethod(JSGlobalObject* globalObject, JSValue self)
@@ -459,8 +465,10 @@ static JSValue dequeIMul(JSGlobalObject* globalObject, JSValue self, JSValue cou
 
 static JSValue dequeRotateMethod(JSGlobalObject* globalObject, JSValue self, JSValue stepsValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int64_t steps = 1;
-    if (stepsValue && !ssizeArgument(globalObject, stepsValue, steps))
+    if (stepsValue && failed(scope, ssizeArgument(globalObject, stepsValue, steps)))
         return { };
     dequeRotate(globalObject, dequeOf(self), steps);
     return jsUndefined();
@@ -517,16 +525,21 @@ static JSValue dequeContains(JSGlobalObject* globalObject, JSValue self, JSValue
 
 static JSValue dequeLen(JSGlobalObject*, JSValue self) { return jsNumber(dequeSize(dequeOf(self))); }
 
-static JSValue dequeIndex(JSGlobalObject* globalObject, JSValue self, JSValue value, JSValue startValue, JSValue stopValue)
+static JSValue dequeIndex(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, rejectKeywords(globalObject, "deque.index"_s, args)) || failed(scope, checkPositional(globalObject, "index"_s, args, 1, 3)))
+        return { };
+    JSValue value = args[0];
+    JSValue startValue = args.get(1);
+    JSValue stopValue = args.get(2);
     PyRecord* deque = dequeOf(self);
     int64_t start = 0;
     int64_t stop = std::numeric_limits<int64_t>::max();
-    if (startValue && !sliceIndexArgument(globalObject, startValue, start))
+    if (startValue && failed(scope, sliceIndexArgument(globalObject, startValue, start)))
         return { };
-    if (stopValue && !sliceIndexArgument(globalObject, stopValue, stop))
+    if (stopValue && failed(scope, sliceIndexArgument(globalObject, stopValue, stop)))
         return { };
     int64_t size = dequeSize(deque);
     int64_t state = deque->number;
@@ -553,7 +566,7 @@ static JSValue dequeInsert(JSGlobalObject* globalObject, JSValue self, JSValue i
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyRecord* deque = dequeOf(self);
     int64_t index;
-    if (!ssizeArgument(globalObject, indexValue, index))
+    if (failed(scope, ssizeArgument(globalObject, indexValue, index)))
         return { };
     int64_t size = dequeSize(deque);
     int64_t maxLen = dequeMaxLen(deque);
@@ -616,16 +629,20 @@ static bool dequeSubscript(JSGlobalObject* globalObject, PyRecord* deque, JSValu
 
 static JSValue dequeGetItem(JSGlobalObject* globalObject, JSValue self, JSValue key)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     unsigned index;
-    if (!dequeSubscript(globalObject, dequeOf(self), key, index))
+    if (failed(scope, dequeSubscript(globalObject, dequeOf(self), key, index)))
         return { };
     return dequeAt(dequeOf(self), index);
 }
 
 static JSValue dequeSetItem(JSGlobalObject* globalObject, JSValue self, JSValue key, JSValue value)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     unsigned index;
-    if (!dequeSubscript(globalObject, dequeOf(self), key, index))
+    if (failed(scope, dequeSubscript(globalObject, dequeOf(self), key, index)))
         return { };
     dequePut(getVM(globalObject), dequeOf(self), index, value);
     return jsUndefined();
@@ -633,8 +650,10 @@ static JSValue dequeSetItem(JSGlobalObject* globalObject, JSValue self, JSValue 
 
 static JSValue dequeDelItem(JSGlobalObject* globalObject, JSValue self, JSValue key)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     unsigned index;
-    if (!dequeSubscript(globalObject, dequeOf(self), key, index))
+    if (failed(scope, dequeSubscript(globalObject, dequeOf(self), key, index)))
         return { };
     dequeRemoveAt(globalObject, dequeOf(self), index);
     return jsUndefined();
@@ -652,7 +671,7 @@ static JSValue dequeReduce(JSGlobalObject* globalObject, JSValue self)
     RETURN_IF_EXCEPTION(scope, { });
     JSValue maxLen = deque->get(DequeMaxLen);
     JSValue arguments = isNone(maxLen) ? rt.emptyTuple() : PyTuple::create(globalObject, { JSValue(rt.emptyTuple()), maxLen });
-    return PyTuple::create(globalObject, { JSValue(deque->type()), arguments, state, iterator });
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { JSValue(deque->type()), arguments, state, iterator }));
 }
 
 static JSValue dequeRepr(JSGlobalObject* globalObject, JSValue self)
@@ -684,7 +703,7 @@ static JSValue dequeCompare(JSGlobalObject* globalObject, JSValue self, JSValue 
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyRecord* right = PyRecord::tryFrom(other, dequeType(globalObject));
     if (!right)
-        return runtime(globalObject).notImplemented();
+        RELEASE_AND_RETURN(scope, runtime(globalObject).notImplemented());
     PyRecord* left = dequeOf(self);
     if constexpr (op == CompareOperator::Eq || op == CompareOperator::NotEq) {
         if (left == right)
@@ -804,7 +823,7 @@ static JSValue dequeIteratorNew(JSGlobalObject* globalObject, JSValue, const Cal
     if (!deque)
         return raiseTypeError(globalObject, scope, "argument 1 must be collections.deque, not "_s, typeNameOfArgument(globalObject, args[0]));
     int64_t index = 0;
-    if (args.size() > 1 && !ssizeArgument(globalObject, args[1], index))
+    if (args.size() > 1 && failed(scope, ssizeArgument(globalObject, args[1], index)))
         return { };
     PyRecord* iterator = dequeMakeIterator(globalObject, isReverse ? dequeReverseIteratorTypeDef : dequeIteratorTypeDef, deque);
     for (int64_t i = 0; i < index && iterator->number; ++i)
@@ -852,7 +871,7 @@ static constexpr NativeDef dequeMethods[] = {
     PY_METHOD("count", dequeCount, "($self, value, /)"),
     PY_METHOD("extend", dequeExtend, "($self, iterable, /)"),
     PY_METHOD("extendleft", dequeExtendLeft, "($self, iterable, /)"),
-    PY_METHOD("index", dequeIndex, "($self, value, start=0, stop=9223372036854775807, /)"),
+    PY_METHOD("index", dequeIndex, "!($self, value, [start, [stop]])"),
     PY_METHOD("insert", dequeInsert, "($self, index, value, /)"),
     PY_METHOD("pop", dequePop, "($self, /)"),
     PY_METHOD("popleft", dequePopLeft, "($self, /)"),
@@ -869,7 +888,7 @@ static constexpr NativeGetSet dequeGetSets[] = {
     { "maxlen"_s, dequeGetMaxLen },
 };
 
-constexpr TypeDef dequeTypeDef { "collections.deque"_s, { TypeFlag::Base, TypeFlag::OwnLayout, TypeFlag::Sequence, TypeFlag::HasWeakref }, dequeMethods, dequeGetSets, "A list-like sequence optimized for data accesses near its endpoints."_s };
+constexpr TypeDef dequeTypeDef { "collections.deque"_s, { TypeFlag::Base, TypeFlag::OwnLayout, TypeFlag::Sequence, TypeFlag::HasWeakref, TypeFlag::OwnsContainers }, dequeMethods, dequeGetSets, "A list-like sequence optimized for data accesses near its endpoints."_s };
 
 static constexpr NativeDef dequeIteratorMethods[] = {
     PY_NEW(dequeIteratorNew<false>, "($type, *args, **kwargs)"),
@@ -955,7 +974,7 @@ static JSValue defaultDictReduce(JSGlobalObject* globalObject, JSValue self)
     RETURN_IF_EXCEPTION(scope, { });
     JSValue iterator = getIter(globalObject, items);
     RETURN_IF_EXCEPTION(scope, { });
-    return PyTuple::create(globalObject, { JSValue(PyDict::from(self)->type()), arguments, jsUndefined(), jsUndefined(), iterator });
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { JSValue(PyDict::from(self)->type()), arguments, jsUndefined(), jsUndefined(), iterator }));
 }
 
 static JSValue defaultDictRepr(JSGlobalObject* globalObject, JSValue self)
@@ -997,7 +1016,7 @@ static JSValue defaultDictUnion(JSGlobalObject* globalObject, JSValue left, JSVa
     JSValue self = leftIsDefaultDict ? left : right;
     JSValue other = leftIsDefaultDict ? right : left;
     if (!PyDict::is(other))
-        return runtime(globalObject).notImplemented();
+        RELEASE_AND_RETURN(scope, runtime(globalObject).notImplemented());
     JSValue result = defaultDictMakeAnother(globalObject, self, left);
     RETURN_IF_EXCEPTION(scope, { });
     if (!isDict(result))
@@ -1020,7 +1039,7 @@ static constexpr NativeDef defaultDictMethods[] = {
     PY_SLOT("__repr__", defaultDictRepr, "($self, /)"),
     PY_SLOT("__or__", defaultDictOr, "($self, value, /)"),
     PY_SLOT("__ror__", defaultDictROr, "($self, value, /)"),
-    PY_METHOD("__missing__", defaultDictMissing, "($self, key, /)"),
+    PY_METHOD("__missing__", defaultDictMissing, "($self, object, /)"),
     PY_METHOD("copy", defaultDictCopy, "($self, /)"),
     PY_METHOD("__copy__", defaultDictCopy, "($self, /)"),
     PY_METHOD("__reduce__", defaultDictReduce, "($self, /)"),
@@ -1028,7 +1047,7 @@ static constexpr NativeDef defaultDictMethods[] = {
 };
 
 static constexpr NativeGetSet defaultDictGetSets[] = {
-    { "default_factory"_s, defaultDictFactory, defaultDictSetFactory },
+    PY_WRITABLE_MEMBER("default_factory", defaultDictFactory, defaultDictSetFactory),
 };
 
 constexpr TypeDef defaultDictTypeDef { "collections.defaultdict"_s, { TypeFlag::Base, TypeFlag::OwnLayout }, defaultDictMethods, defaultDictGetSets,
@@ -1049,10 +1068,11 @@ static JSValue tupleGetterNew(JSGlobalObject* globalObject, JSValue cls, const C
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
-    if (!rejectKeywords(globalObject, "_tuplegetter"_s, args) || !checkPositional(globalObject, "_tuplegetter"_s, args, 2, 2))
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, rejectKeywords(globalObject, "_tuplegetter"_s, args)) || failed(scope, checkPositional(globalObject, "_tuplegetter"_s, args, 2, 2)))
         return { };
     int64_t index;
-    if (!ssizeArgument(globalObject, args[0], index))
+    if (failed(scope, ssizeArgument(globalObject, args[0], index)))
         return { };
     PyRecord* getter = PyRecord::create(vm, rt.structure<PyRecord>(), PyType::from(cls), TupleGetterFieldCount);
     getter->number = index;

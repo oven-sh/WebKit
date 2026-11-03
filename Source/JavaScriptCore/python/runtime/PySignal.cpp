@@ -535,10 +535,12 @@ static JSValue signalSignal(JSGlobalObject* globalObject, JSValue numberValue, J
 
 static JSValue signalGetSignal(JSGlobalObject* globalObject, JSValue numberValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int number;
-    if (!signalNumberArgument(globalObject, numberValue, number))
+    if (failed(scope, signalNumberArgument(globalObject, numberValue, number)))
         return { };
-    return listGet(signalHandlers(globalObject), number);
+    RELEASE_AND_RETURN(scope, listGet(signalHandlers(globalObject), number));
 }
 
 static JSValue signalAlarm(JSGlobalObject* globalObject, JSValue secondsValue)
@@ -576,14 +578,16 @@ static JSValue signalRaiseSignal(JSGlobalObject* globalObject, JSValue numberVal
 
 static JSValue signalStrSignal(JSGlobalObject* globalObject, JSValue numberValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int number;
-    if (!signalNumberArgument(globalObject, numberValue, number))
+    if (failed(scope, signalNumberArgument(globalObject, numberValue, number)))
         return { };
     errno = 0;
     const char* text = strsignal(number);
     if (errno || !text || strstr(text, "Unknown signal"))
         return jsUndefined();
-    return makeStr(globalObject, String::fromUTF8(text));
+    RELEASE_AND_RETURN(scope, makeStr(globalObject, String::fromUTF8(text)));
 }
 
 static JSValue signalSigInterrupt(JSGlobalObject* globalObject, JSValue numberValue, JSValue flagValue)
@@ -653,11 +657,13 @@ static JSValue signalRaiseItimerError(JSGlobalObject* globalObject, int error)
 // Rounded up to microseconds. Not given: 0.
 static bool signalToTimeval(JSGlobalObject* globalObject, JSValue seconds, struct timeval& result)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     result = { };
     if (!seconds)
         return true;
     int64_t nanoseconds;
-    if (!nanosecondsFromSeconds(globalObject, seconds, TimeRounding::Ceiling, nanoseconds))
+    if (failed(scope, nanosecondsFromSeconds(globalObject, seconds, TimeRounding::Ceiling, nanoseconds)))
         return false;
     int64_t microseconds = nanoseconds / 1000;
     if (nanoseconds % 1000 > 0)
@@ -686,11 +692,11 @@ static JSValue signalSetItimer(JSGlobalObject* globalObject, JSValue whichValue,
     int which = toCInt(globalObject, whichValue);
     RETURN_IF_EXCEPTION(scope, { });
     struct itimerval timer, previous;
-    if (!signalToTimeval(globalObject, seconds, timer.it_value) || !signalToTimeval(globalObject, interval, timer.it_interval))
+    if (failed(scope, signalToTimeval(globalObject, seconds, timer.it_value)) || failed(scope, signalToTimeval(globalObject, interval, timer.it_interval)))
         return { };
     if (setitimer(static_cast<decltype(ITIMER_REAL)>(which), &timer, &previous))
-        return signalRaiseItimerError(globalObject, errno);
-    return signalTimerValue(globalObject, previous);
+        RELEASE_AND_RETURN(scope, signalRaiseItimerError(globalObject, errno));
+    RELEASE_AND_RETURN(scope, signalTimerValue(globalObject, previous));
 }
 
 static JSValue signalGetItimer(JSGlobalObject* globalObject, JSValue whichValue)
@@ -701,8 +707,8 @@ static JSValue signalGetItimer(JSGlobalObject* globalObject, JSValue whichValue)
     RETURN_IF_EXCEPTION(scope, { });
     struct itimerval timer;
     if (getitimer(static_cast<decltype(ITIMER_REAL)>(which), &timer))
-        return signalRaiseItimerError(globalObject, errno);
-    return signalTimerValue(globalObject, timer);
+        RELEASE_AND_RETURN(scope, signalRaiseItimerError(globalObject, errno));
+    RELEASE_AND_RETURN(scope, signalTimerValue(globalObject, timer));
 }
 
 // ---- Sets of signals ----
@@ -886,7 +892,7 @@ static JSValue signalSigWaitInfo(JSGlobalObject* globalObject, JSValue setValue)
         if (!checkSignals(globalObject))
             return { };
     }
-    return signalMakeInfo(globalObject, info);
+    RELEASE_AND_RETURN(scope, signalMakeInfo(globalObject, info));
 }
 
 static int64_t signalMonotonicNanoseconds()
@@ -904,7 +910,7 @@ static JSValue signalSigTimedWait(JSGlobalObject* globalObject, JSValue setValue
     if (!signalToSet(globalObject, setValue, set))
         return { };
     int64_t timeout;
-    if (!nanosecondsFromSeconds(globalObject, timeoutValue, TimeRounding::Ceiling, timeout))
+    if (failed(scope, nanosecondsFromSeconds(globalObject, timeoutValue, TimeRounding::Ceiling, timeout)))
         return { };
     if (timeout < 0)
         return raiseValueError(globalObject, scope, "timeout must be non-negative"_s);
@@ -933,7 +939,7 @@ static JSValue signalSigTimedWait(JSGlobalObject* globalObject, JSValue setValue
         if (timeout < 0)
             return jsUndefined();
     }
-    return signalMakeInfo(globalObject, info);
+    RELEASE_AND_RETURN(scope, signalMakeInfo(globalObject, info));
 }
 #else
 #define PY_HAVE_SIGWAITINFO 0

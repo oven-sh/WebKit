@@ -53,7 +53,9 @@ public:
     // For a parameter that takes any object with a buffer.
     bool setBuffer(JSGlobalObject* globalObject, JSValue value)
     {
-        if (!getBuffer(globalObject, value, m_buffer))
+        VM& vm = getVM(globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        if (failed(scope, getBuffer(globalObject, value, m_buffer)))
             return false;
         m_globalObject = globalObject;
         return true;
@@ -77,7 +79,7 @@ public:
                 m_text = String::make8Bit(m_text.span16());
             return true;
         }
-        if (!setBuffer(globalObject, value)) {
+        if (failed(scope, setBuffer(globalObject, value))) {
             takePendingException(globalObject);
             raiseTypeError(globalObject, scope, "argument should be bytes, buffer or ASCII string, not '"_s, typeName(globalObject, value), '\'');
             return false;
@@ -282,12 +284,14 @@ static size_t binasciiWrapLines(uint8_t* data, size_t size, size_t width)
 
 static JSValue binasciiA2BUU(JSGlobalObject* globalObject, JSValue dataValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     BinasciiSource data;
-    if (!data.setASCII(globalObject, dataValue))
+    if (failed(scope, data.setASCII(globalObject, dataValue)))
         return { };
     auto input = data.bytes();
     if (input.empty())
-        return binasciiRaise(globalObject, "Missing length byte"_s);
+        RELEASE_AND_RETURN(scope, binasciiRaise(globalObject, "Missing length byte"_s));
     // The first character says how many bytes the line holds.
     size_t length = (input[0] - ' ') & 077;
     BinasciiWriter writer;
@@ -306,7 +310,7 @@ static JSValue binasciiA2BUU(JSGlobalObject* globalObject, JSValue dataValue)
         else {
             // One more than the 64 there should be: some encoders have '`' for zero.
             if (character < ' ' || character > ' ' + 64)
-                return binasciiRaise(globalObject, "Illegal char"_s);
+                RELEASE_AND_RETURN(scope, binasciiRaise(globalObject, "Illegal char"_s));
             character = (character - ' ') & 077;
         }
         bits = (bits << 6) | character;
@@ -320,21 +324,23 @@ static JSValue binasciiA2BUU(JSGlobalObject* globalObject, JSValue dataValue)
     for (; position < input.size(); ++position) {
         uint8_t character = input[position];
         if (character != ' ' && character != ' ' + 64 && character != '\n' && character != '\r')
-            return binasciiRaise(globalObject, "Trailing garbage"_s);
+            RELEASE_AND_RETURN(scope, binasciiRaise(globalObject, "Trailing garbage"_s));
     }
-    return writer.finish(globalObject, out);
+    RELEASE_AND_RETURN(scope, writer.finish(globalObject, out));
 }
 
 static JSValue binasciiB2AUU(JSGlobalObject* globalObject, JSValue dataValue, JSValue backtickValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     BinasciiSource data;
     bool backtick = false;
-    if (!data.setBuffer(globalObject, dataValue) || !binasciiBoolArgument(globalObject, backtickValue, backtick)
+    if (failed(scope, data.setBuffer(globalObject, dataValue)) || !binasciiBoolArgument(globalObject, backtickValue, backtick)
         || !data.refresh())
         return { };
     auto input = data.bytes();
     if (input.size() > 45)
-        return binasciiRaise(globalObject, "At most 45 bytes at once"_s);
+        RELEASE_AND_RETURN(scope, binasciiRaise(globalObject, "At most 45 bytes at once"_s));
     BinasciiWriter writer;
     if (!writer.allocate(globalObject, 2 + (input.size() + 2) / 3 * 4))
         return { };
@@ -349,20 +355,22 @@ static JSValue binasciiB2AUU(JSGlobalObject* globalObject, JSValue dataValue, JS
             *out++ = encode((group >> shift) & 077);
     }
     *out++ = '\n';
-    return writer.finish(globalObject, out);
+    RELEASE_AND_RETURN(scope, writer.finish(globalObject, out));
 }
 
 // ---- Base64 ----
 
 static JSValue binasciiA2BBase64(JSGlobalObject* globalObject, JSValue dataValue, JSValue strictValue, JSValue paddedValue, JSValue alphabetValue, JSValue ignoreValue, JSValue canonicalValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     BinasciiSource data;
     BinasciiSource alphabet;
     BinasciiSource ignoreSource;
     bool isStrict = false;
     bool isPadded = true;
     bool isCanonical = false;
-    if (!data.setASCII(globalObject, dataValue)
+    if (failed(scope, data.setASCII(globalObject, dataValue))
         || !binasciiBoolArgument(globalObject, strictValue, isStrict)
         || !binasciiBoolArgument(globalObject, paddedValue, isPadded)
         || !binasciiAlphabetArgument(globalObject, "a2b_base64"_s, alphabetValue, alphabet)
@@ -381,7 +389,7 @@ static JSValue binasciiA2BBase64(JSGlobalObject* globalObject, JSValue dataValue
     BinasciiTable customTable;
     const uint8_t* table = standardTable.data();
     if (alphabet.isSet()) {
-        if (!binasciiCheckAlphabetLength(globalObject, alphabet.bytes(), 64))
+        if (failed(scope, binasciiCheckAlphabetLength(globalObject, alphabet.bytes(), 64)))
             return { };
         customTable = binasciiReverseTable(alphabet.bytes(), '=');
         table = customTable.data();
@@ -426,16 +434,16 @@ static JSValue binasciiA2BBase64(JSGlobalObject* globalObject, JSValue dataValue
                 continue;
             if (position == 1)
                 break;
-            return binasciiRaise(globalObject, !position && out == writer.start() ? "Leading padding not allowed"_s : "Excess padding not allowed"_s);
+            RELEASE_AND_RETURN(scope, binasciiRaise(globalObject, !position && out == writer.start() ? "Leading padding not allowed"_s : "Excess padding not allowed"_s));
         }
         uint8_t value = table[character];
         if (value >= 64) {
             if (isStrict && !ignored.contains(character))
-                return binasciiRaise(globalObject, character == '=' ? "Padding not allowed"_s : "Only base64 data is allowed"_s);
+                RELEASE_AND_RETURN(scope, binasciiRaise(globalObject, character == '=' ? "Padding not allowed"_s : "Only base64 data is allowed"_s));
             continue;
         }
         if (pads && isStrict && !ignored.contains('='))
-            return binasciiRaise(globalObject, position + pads == 4 ? "Excess data after padding"_s : "Discontinuous padding not allowed"_s);
+            RELEASE_AND_RETURN(scope, binasciiRaise(globalObject, position + pads == 4 ? "Excess data after padding"_s : "Discontinuous padding not allowed"_s));
         pads = 0;
         switch (position) {
         case 0:
@@ -462,20 +470,22 @@ static JSValue binasciiA2BBase64(JSGlobalObject* globalObject, JSValue dataValue
             ") cannot be 1 more than a multiple of 4"_s);
     }
     if (isPadded && position && position + pads < 4)
-        return binasciiRaise(globalObject, "Incorrect padding"_s);
+        RELEASE_AND_RETURN(scope, binasciiRaise(globalObject, "Incorrect padding"_s));
     if (isCanonical && pending)
-        return binasciiRaise(globalObject, "Non-zero padding bits"_s);
-    return writer.finish(globalObject, out);
+        RELEASE_AND_RETURN(scope, binasciiRaise(globalObject, "Non-zero padding bits"_s));
+    RELEASE_AND_RETURN(scope, writer.finish(globalObject, out));
 }
 
 static JSValue binasciiB2ABase64(JSGlobalObject* globalObject, JSValue dataValue, JSValue paddedValue, JSValue wrapValue, JSValue newlineValue, JSValue alphabetValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     BinasciiSource data;
     BinasciiSource alphabet;
     bool isPadded = true;
     bool hasNewline = true;
     size_t width = 0;
-    if (!data.setBuffer(globalObject, dataValue)
+    if (failed(scope, data.setBuffer(globalObject, dataValue))
         || !binasciiBoolArgument(globalObject, paddedValue, isPadded)
         || !binasciiSizeArgument(globalObject, wrapValue, width)
         || !binasciiBoolArgument(globalObject, newlineValue, hasNewline)
@@ -484,7 +494,7 @@ static JSValue binasciiB2ABase64(JSGlobalObject* globalObject, JSValue dataValue
         return { };
     const uint8_t* table = binasciiBase64Alphabet.characters;
     if (alphabet.isSet()) {
-        if (!binasciiCheckAlphabetLength(globalObject, alphabet.bytes(), 64))
+        if (failed(scope, binasciiCheckAlphabetLength(globalObject, alphabet.bytes(), 64)))
             return { };
         table = alphabet.bytes().data();
     }
@@ -528,7 +538,7 @@ static JSValue binasciiB2ABase64(JSGlobalObject* globalObject, JSValue dataValue
         out = writer.start() + binasciiWrapLines(writer.start(), out - writer.start(), width);
     if (hasNewline)
         *out++ = '\n';
-    return writer.finish(globalObject, out);
+    RELEASE_AND_RETURN(scope, writer.finish(globalObject, out));
 }
 
 // ---- Ascii85 and Base85 ----
@@ -562,12 +572,14 @@ static ALWAYS_INLINE bool binasciiAdd85Digit(uint32_t& group, unsigned position,
 
 static JSValue binasciiA2BAscii85(JSGlobalObject* globalObject, JSValue dataValue, JSValue foldValue, JSValue adobeValue, JSValue ignoreValue, JSValue canonicalValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     BinasciiSource data;
     BinasciiSource ignoreSource;
     bool foldSpaces = false;
     bool isAdobe = false;
     bool isCanonical = false;
-    if (!data.setASCII(globalObject, dataValue)
+    if (failed(scope, data.setASCII(globalObject, dataValue))
         || !binasciiBoolArgument(globalObject, foldValue, foldSpaces)
         || !binasciiBoolArgument(globalObject, adobeValue, isAdobe)
         || (ignoreValue && !ignoreSource.setBuffer(globalObject, ignoreValue))
@@ -578,7 +590,7 @@ static JSValue binasciiA2BAscii85(JSGlobalObject* globalObject, JSValue dataValu
     auto input = data.bytes();
     if (isAdobe) {
         if (input.size() < 2 || input[input.size() - 2] != '~' || input[input.size() - 1] != '>')
-            return binasciiRaise(globalObject, "Ascii85 encoded byte sequences must end with b'~>'"_s);
+            RELEASE_AND_RETURN(scope, binasciiRaise(globalObject, "Ascii85 encoded byte sequences must end with b'~>'"_s));
         input = input.first(input.size() - 2);
         if (input.size() >= 2 && input[0] == '<' && input[1] == '~')
             input = input.subspan(2);
@@ -610,16 +622,16 @@ static JSValue binasciiA2BAscii85(JSGlobalObject* globalObject, JSValue dataValu
         bool isShorthandForZero = false;
         if (digit < 85) {
             if (!binasciiAdd85Digit(group, position, digit))
-                return binasciiRaise(globalObject, "Ascii85 overflow"_s);
+                RELEASE_AND_RETURN(scope, binasciiRaise(globalObject, "Ascii85 overflow"_s));
             ++position;
         } else if ((character == 'y' && foldSpaces) || character == 'z') {
             if (position)
-                return binasciiRaise(globalObject, '\'', static_cast<char>(character), "' inside Ascii85 5-tuple"_s);
+                RELEASE_AND_RETURN(scope, binasciiRaise(globalObject, '\'', static_cast<char>(character), "' inside Ascii85 5-tuple"_s));
             group = character == 'y' ? 0x20202020 : 0;
             isShorthandForZero = character == 'z';
             position = 5;
         } else if (!ignored.contains(character))
-            return binasciiRaise(globalObject, "Non-Ascii85 digit found: "_s, static_cast<char16_t>(character));
+            RELEASE_AND_RETURN(scope, binasciiRaise(globalObject, "Non-Ascii85 digit found: "_s, static_cast<char16_t>(character)));
         if (position == 5 && !flush(0, isShorthandForZero))
             return { };
     }
@@ -627,12 +639,12 @@ static JSValue binasciiA2BAscii85(JSGlobalObject* globalObject, JSValue dataValu
         unsigned missing = 5 - position;
         for (; position < 5; ++position) {
             if (!binasciiAdd85Digit(group, position, 84))
-                return binasciiRaise(globalObject, "Ascii85 overflow"_s);
+                RELEASE_AND_RETURN(scope, binasciiRaise(globalObject, "Ascii85 overflow"_s));
         }
         if (!flush(missing, false))
             return { };
     }
-    return writer.finish(globalObject, out);
+    RELEASE_AND_RETURN(scope, writer.finish(globalObject, out));
 }
 
 // The five digits of a group, or the first `count` of them.
@@ -655,12 +667,14 @@ static ALWAYS_INLINE uint32_t binasciiLoad85Group(const uint8_t* in, size_t avai
 
 static JSValue binasciiB2AAscii85(JSGlobalObject* globalObject, JSValue dataValue, JSValue foldValue, JSValue wrapValue, JSValue padValue, JSValue adobeValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     BinasciiSource data;
     bool foldSpaces = false;
     bool pad = false;
     bool isAdobe = false;
     size_t width = 0;
-    if (!data.setBuffer(globalObject, dataValue)
+    if (failed(scope, data.setBuffer(globalObject, dataValue))
         || !binasciiBoolArgument(globalObject, foldValue, foldSpaces)
         || !binasciiSizeArgument(globalObject, wrapValue, width)
         || !binasciiBoolArgument(globalObject, padValue, pad)
@@ -715,16 +729,18 @@ static JSValue binasciiB2AAscii85(JSGlobalObject* globalObject, JSValue dataValu
             out[-2] = '~';
         }
     }
-    return writer.finish(globalObject, out);
+    RELEASE_AND_RETURN(scope, writer.finish(globalObject, out));
 }
 
 static JSValue binasciiA2BBase85(JSGlobalObject* globalObject, JSValue dataValue, JSValue alphabetValue, JSValue ignoreValue, JSValue canonicalValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     BinasciiSource data;
     BinasciiSource alphabet;
     BinasciiSource ignoreSource;
     bool isCanonical = false;
-    if (!data.setASCII(globalObject, dataValue)
+    if (failed(scope, data.setASCII(globalObject, dataValue))
         || !binasciiAlphabetArgument(globalObject, "a2b_base85"_s, alphabetValue, alphabet)
         || (ignoreValue && !ignoreSource.setBuffer(globalObject, ignoreValue))
         || !binasciiBoolArgument(globalObject, canonicalValue, isCanonical)
@@ -734,7 +750,7 @@ static JSValue binasciiA2BBase85(JSGlobalObject* globalObject, JSValue dataValue
     BinasciiTable customTable;
     const uint8_t* table = standardTable.data();
     if (alphabet.isSet()) {
-        if (!binasciiCheckAlphabetLength(globalObject, alphabet.bytes(), 85))
+        if (failed(scope, binasciiCheckAlphabetLength(globalObject, alphabet.bytes(), 85)))
             return { };
         customTable = binasciiReverseTable(alphabet.bytes(), -1);
         table = customTable.data();
@@ -753,28 +769,30 @@ static JSValue binasciiA2BBase85(JSGlobalObject* globalObject, JSValue dataValue
         uint8_t digit = i < input.size() ? table[input[i]] : 84;
         if (digit < 85) {
             if (!binasciiAdd85Digit(group, position, digit))
-                return binasciiRaise(globalObject, "Base85 overflow in hunk starting at byte "_s, i / 5 * 5);
+                RELEASE_AND_RETURN(scope, binasciiRaise(globalObject, "Base85 overflow in hunk starting at byte "_s, i / 5 * 5));
             ++position;
         } else if (!ignored.contains(input[i]))
-            return binasciiRaise(globalObject, "bad Base85 character at position "_s, i);
+            RELEASE_AND_RETURN(scope, binasciiRaise(globalObject, "bad Base85 character at position "_s, i));
         if (position != 5)
             continue;
         unsigned missing = i < input.size() ? 0 : static_cast<unsigned>(i - input.size() + 1);
         if (ASCIILiteral message = binasciiWrite85Group(group, missing, isCanonical, "Incomplete Base85 group"_s, out); !message.isNull())
-            return binasciiRaise(globalObject, message);
+            RELEASE_AND_RETURN(scope, binasciiRaise(globalObject, message));
         group = 0;
         position = 0;
     }
-    return writer.finish(globalObject, out);
+    RELEASE_AND_RETURN(scope, writer.finish(globalObject, out));
 }
 
 static JSValue binasciiB2ABase85(JSGlobalObject* globalObject, JSValue dataValue, JSValue padValue, JSValue wrapValue, JSValue alphabetValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     BinasciiSource data;
     BinasciiSource alphabet;
     bool pad = false;
     size_t width = 0;
-    if (!data.setBuffer(globalObject, dataValue)
+    if (failed(scope, data.setBuffer(globalObject, dataValue))
         || !binasciiBoolArgument(globalObject, padValue, pad)
         || !binasciiSizeArgument(globalObject, wrapValue, width)
         || (alphabetValue && !alphabet.setBuffer(globalObject, alphabetValue))
@@ -782,7 +800,7 @@ static JSValue binasciiB2ABase85(JSGlobalObject* globalObject, JSValue dataValue
         return { };
     const uint8_t* table = binasciiBase85Alphabet.characters;
     if (alphabet.isSet()) {
-        if (!binasciiCheckAlphabetLength(globalObject, alphabet.bytes(), 85))
+        if (failed(scope, binasciiCheckAlphabetLength(globalObject, alphabet.bytes(), 85)))
             return { };
         table = alphabet.bytes().data();
     }
@@ -807,19 +825,21 @@ static JSValue binasciiB2ABase85(JSGlobalObject* globalObject, JSValue dataValue
         binasciiEncode85Group(table, binasciiLoad85Group(in, left), pad ? 5 : static_cast<unsigned>(left) + 1, out);
     if (width && length)
         out = writer.start() + binasciiWrapLines(writer.start(), out - writer.start(), width);
-    return writer.finish(globalObject, out);
+    RELEASE_AND_RETURN(scope, writer.finish(globalObject, out));
 }
 
 // ---- Base32 ----
 
 static JSValue binasciiA2BBase32(JSGlobalObject* globalObject, JSValue dataValue, JSValue paddedValue, JSValue alphabetValue, JSValue ignoreValue, JSValue canonicalValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     BinasciiSource data;
     BinasciiSource alphabet;
     BinasciiSource ignoreSource;
     bool isPadded = true;
     bool isCanonical = false;
-    if (!data.setASCII(globalObject, dataValue)
+    if (failed(scope, data.setASCII(globalObject, dataValue))
         || !binasciiBoolArgument(globalObject, paddedValue, isPadded)
         || !binasciiAlphabetArgument(globalObject, "a2b_base32"_s, alphabetValue, alphabet)
         || (ignoreValue && !ignoreSource.setBuffer(globalObject, ignoreValue))
@@ -830,7 +850,7 @@ static JSValue binasciiA2BBase32(JSGlobalObject* globalObject, JSValue dataValue
     BinasciiTable customTable;
     const uint8_t* table = standardTable.data();
     if (alphabet.isSet()) {
-        if (!binasciiCheckAlphabetLength(globalObject, alphabet.bytes(), 32))
+        if (failed(scope, binasciiCheckAlphabetLength(globalObject, alphabet.bytes(), 32)))
             return { };
         customTable = binasciiReverseTable(alphabet.bytes(), '=');
         table = customTable.data();
@@ -857,16 +877,16 @@ static JSValue binasciiA2BBase32(JSGlobalObject* globalObject, JSValue dataValue
                 continue;
             if (cannotEndAt(position))
                 break;
-            return binasciiRaise(globalObject, !position && out == writer.start() ? "Leading padding not allowed"_s : "Excess padding not allowed"_s);
+            RELEASE_AND_RETURN(scope, binasciiRaise(globalObject, !position && out == writer.start() ? "Leading padding not allowed"_s : "Excess padding not allowed"_s));
         }
         uint8_t value = table[character];
         if (value >= 32) {
             if (!ignored.contains(character))
-                return binasciiRaise(globalObject, character == '=' ? "Padding not allowed"_s : "Only base32 data is allowed"_s);
+                RELEASE_AND_RETURN(scope, binasciiRaise(globalObject, character == '=' ? "Padding not allowed"_s : "Only base32 data is allowed"_s));
             continue;
         }
         if (pads && !ignored.contains('='))
-            return binasciiRaise(globalObject, position + pads == 8 ? "Excess data after padding"_s : "Discontinuous padding not allowed"_s);
+            RELEASE_AND_RETURN(scope, binasciiRaise(globalObject, position + pads == 8 ? "Excess data after padding"_s : "Discontinuous padding not allowed"_s));
         bits = bits << 5 | value;
         bitCount += 5;
         if (bitCount >= 8) {
@@ -885,19 +905,21 @@ static JSValue binasciiA2BBase32(JSGlobalObject* globalObject, JSValue dataValue
             ") cannot be 1, 3, or 6 more than a multiple of 8"_s);
     }
     if (isPadded && position && position + pads < 8)
-        return binasciiRaise(globalObject, "Incorrect padding"_s);
+        RELEASE_AND_RETURN(scope, binasciiRaise(globalObject, "Incorrect padding"_s));
     if (isCanonical && bits)
-        return binasciiRaise(globalObject, "Non-zero padding bits"_s);
-    return writer.finish(globalObject, out);
+        RELEASE_AND_RETURN(scope, binasciiRaise(globalObject, "Non-zero padding bits"_s));
+    RELEASE_AND_RETURN(scope, writer.finish(globalObject, out));
 }
 
 static JSValue binasciiB2ABase32(JSGlobalObject* globalObject, JSValue dataValue, JSValue paddedValue, JSValue wrapValue, JSValue alphabetValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     BinasciiSource data;
     BinasciiSource alphabet;
     bool isPadded = true;
     size_t width = 0;
-    if (!data.setBuffer(globalObject, dataValue)
+    if (failed(scope, data.setBuffer(globalObject, dataValue))
         || !binasciiBoolArgument(globalObject, paddedValue, isPadded)
         || !binasciiSizeArgument(globalObject, wrapValue, width)
         || (alphabetValue && !alphabet.setBuffer(globalObject, alphabetValue))
@@ -905,7 +927,7 @@ static JSValue binasciiB2ABase32(JSGlobalObject* globalObject, JSValue dataValue
         return { };
     const uint8_t* table = binasciiBase32Alphabet.characters;
     if (alphabet.isSet()) {
-        if (!binasciiCheckAlphabetLength(globalObject, alphabet.bytes(), 32))
+        if (failed(scope, binasciiCheckAlphabetLength(globalObject, alphabet.bytes(), 32)))
             return { };
         table = alphabet.bytes().data();
     }
@@ -941,7 +963,7 @@ static JSValue binasciiB2ABase32(JSGlobalObject* globalObject, JSValue dataValue
         *out++ = '=';
     if (width && length)
         out = writer.start() + binasciiWrapLines(writer.start(), out - writer.start(), width);
-    return writer.finish(globalObject, out);
+    RELEASE_AND_RETURN(scope, writer.finish(globalObject, out));
 }
 
 // ---- Checksums ----
@@ -974,10 +996,12 @@ static constexpr std::array<uint32_t, 256> binasciiMakeCRC32Table()
 
 static JSValue binasciiCRCHqx(JSGlobalObject* globalObject, JSValue dataValue, JSValue crcValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     static constexpr auto table = binasciiMakeCCITTTable();
     BinasciiSource data;
     uint32_t crc;
-    if (!data.setBuffer(globalObject, dataValue) || !binasciiUnsignedArgument(globalObject, crcValue, crc)
+    if (failed(scope, data.setBuffer(globalObject, dataValue)) || !binasciiUnsignedArgument(globalObject, crcValue, crc)
         || !data.refresh())
         return { };
     crc &= 0xffff;
@@ -988,10 +1012,12 @@ static JSValue binasciiCRCHqx(JSGlobalObject* globalObject, JSValue dataValue, J
 
 static JSValue binasciiCRC32(JSGlobalObject* globalObject, JSValue dataValue, JSValue crcValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     static constexpr auto table = binasciiMakeCRC32Table();
     BinasciiSource data;
     uint32_t crc = 0;
-    if (!data.setBuffer(globalObject, dataValue) || (crcValue && !binasciiUnsignedArgument(globalObject, crcValue, crc))
+    if (failed(scope, data.setBuffer(globalObject, dataValue)) || (crcValue && !binasciiUnsignedArgument(globalObject, crcValue, crc))
         || !data.refresh())
         return { };
     crc = ~crc;
@@ -1009,7 +1035,7 @@ static JSValue binasciiB2AHex(JSGlobalObject* globalObject, JSValue dataValue, J
     auto scope = DECLARE_THROW_SCOPE(vm);
     BinasciiSource data;
     int64_t group = 1;
-    if (!data.setBuffer(globalObject, dataValue) || (groupValue && !ssizeArgument(globalObject, groupValue, group)))
+    if (failed(scope, data.setBuffer(globalObject, dataValue)) || (groupValue && failed(scope, ssizeArgument(globalObject, groupValue, group))))
         return { };
     uint8_t separator = 0;
     if (separatorValue) {
@@ -1054,9 +1080,11 @@ static JSValue binasciiB2AHex(JSGlobalObject* globalObject, JSValue dataValue, J
 
 static JSValue binasciiA2BHex(JSGlobalObject* globalObject, JSValue dataValue, JSValue ignoreValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     BinasciiSource data;
     BinasciiSource ignoreSource;
-    if (!data.setASCII(globalObject, dataValue) || (ignoreValue && !ignoreSource.setBuffer(globalObject, ignoreValue))
+    if (failed(scope, data.setASCII(globalObject, dataValue)) || (ignoreValue && failed(scope, ignoreSource.setBuffer(globalObject, ignoreValue)))
         || !data.refresh() || !ignoreSource.refresh())
         return { };
     BinasciiIgnored ignored(ignoreSource.bytes());
@@ -1070,7 +1098,7 @@ static JSValue binasciiA2BHex(JSGlobalObject* globalObject, JSValue dataValue, J
         int digit = binasciiHexDigit(character);
         if (digit < 0) {
             if (!ignored.contains(character))
-                return binasciiRaise(globalObject, "Non-hexadecimal digit found"_s);
+                RELEASE_AND_RETURN(scope, binasciiRaise(globalObject, "Non-hexadecimal digit found"_s));
             continue;
         }
         if (high < 0)
@@ -1081,17 +1109,19 @@ static JSValue binasciiA2BHex(JSGlobalObject* globalObject, JSValue dataValue, J
         }
     }
     if (high >= 0)
-        return binasciiRaise(globalObject, "Odd number of hexadecimal digits"_s);
-    return writer.finish(globalObject, out);
+        RELEASE_AND_RETURN(scope, binasciiRaise(globalObject, "Odd number of hexadecimal digits"_s));
+    RELEASE_AND_RETURN(scope, writer.finish(globalObject, out));
 }
 
 // ---- Quoted-printable ----
 
 static JSValue binasciiA2BQP(JSGlobalObject* globalObject, JSValue dataValue, JSValue headerValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     BinasciiSource data;
     bool isHeader = false;
-    if (!data.setASCII(globalObject, dataValue) || !binasciiBoolArgument(globalObject, headerValue, isHeader)
+    if (failed(scope, data.setASCII(globalObject, dataValue)) || !binasciiBoolArgument(globalObject, headerValue, isHeader)
         || !data.refresh())
         return { };
     auto input = data.bytes();
@@ -1128,7 +1158,7 @@ static JSValue binasciiA2BQP(JSGlobalObject* globalObject, JSValue dataValue, JS
         } else
             *out++ = '=';
     }
-    return writer.finish(globalObject, out);
+    RELEASE_AND_RETURN(scope, writer.finish(globalObject, out));
 }
 
 static JSValue binasciiB2AQP(JSGlobalObject* globalObject, JSValue dataValue, JSValue quoteTabsValue, JSValue isTextValue, JSValue headerValue)
@@ -1141,7 +1171,7 @@ static JSValue binasciiB2AQP(JSGlobalObject* globalObject, JSValue dataValue, JS
     bool quoteTabs = false;
     bool isText = true;
     bool isHeader = false;
-    if (!data.setBuffer(globalObject, dataValue)
+    if (failed(scope, data.setBuffer(globalObject, dataValue))
         || !binasciiBoolArgument(globalObject, quoteTabsValue, quoteTabs)
         || !binasciiBoolArgument(globalObject, isTextValue, isText)
         || !binasciiBoolArgument(globalObject, headerValue, isHeader)
@@ -1208,7 +1238,7 @@ static JSValue binasciiB2AQP(JSGlobalObject* globalObject, JSValue dataValue, JS
         output.append(isHeader && character == ' ' ? static_cast<uint8_t>('_') : character);
         ++i;
     }
-    return PyBytes::create(globalObject, output.span());
+    RELEASE_AND_RETURN(scope, PyBytes::create(globalObject, output.span()));
 }
 
 // ---- The module ----

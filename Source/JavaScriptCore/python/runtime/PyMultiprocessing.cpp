@@ -119,7 +119,7 @@ static JSValue semLockNew(JSGlobalObject* globalObject, JSValue type, JSValue ki
     int value;
     int maxValue;
     PosixBytes name;
-    if (!posixToInt(globalObject, kindValue, kind) || !posixToInt(globalObject, valueValue, value) || !posixToInt(globalObject, maxValueValue, maxValue)
+    if (failed(scope, posixToInt(globalObject, kindValue, kind)) || failed(scope, posixToInt(globalObject, valueValue, value)) || failed(scope, posixToInt(globalObject, maxValueValue, maxValue))
         || !semLockToName(globalObject, nameValue, "SemLock() argument 'name' must be str, not "_s, name))
         return { };
     bool unlinks = isTrue(globalObject, unlinkValue);
@@ -128,22 +128,24 @@ static JSValue semLockNew(JSGlobalObject* globalObject, JSValue type, JSValue ki
         return raiseValueError(globalObject, scope, "unrecognized kind"_s);
     sem_t* handle = sem_open(name.characters(), O_CREAT | O_EXCL, 0600, value);
     if (handle == SEM_FAILED)
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     if (unlinks && sem_unlink(name.characters()) < 0) {
         int error = errno;
         sem_close(handle);
-        return posixError(globalObject, error);
+        RELEASE_AND_RETURN(scope, posixError(globalObject, error));
     }
-    return semLockCreate(globalObject, type, handle, kind, maxValue, unlinks ? jsUndefined() : nameValue);
+    RELEASE_AND_RETURN(scope, semLockCreate(globalObject, type, handle, kind, maxValue, unlinks ? jsUndefined() : nameValue));
 }
 
 static JSValue semLockRebuild(JSGlobalObject* globalObject, JSValue type, JSValue handleValue, JSValue kindValue, JSValue maxValueValue, JSValue nameValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     uint64_t address;
     int kind;
     int maxValue;
     PosixBytes name;
-    if (!posixToUnsignedLongLong(globalObject, handleValue, address) || !posixToInt(globalObject, kindValue, kind) || !posixToInt(globalObject, maxValueValue, maxValue)
+    if (failed(scope, posixToUnsignedLongLong(globalObject, handleValue, address)) || failed(scope, posixToInt(globalObject, kindValue, kind)) || failed(scope, posixToInt(globalObject, maxValueValue, maxValue))
         || (!isNone(nameValue) && !semLockToName(globalObject, nameValue, "_rebuild() argument 4 must be str or None, not "_s, name)))
         return { };
     auto* handle = reinterpret_cast<sem_t*>(static_cast<uintptr_t>(address));
@@ -151,9 +153,9 @@ static JSValue semLockRebuild(JSGlobalObject* globalObject, JSValue type, JSValu
     if (!isNone(nameValue)) {
         handle = sem_open(name.characters(), 0);
         if (handle == SEM_FAILED)
-            return posixError(globalObject);
+            RELEASE_AND_RETURN(scope, posixError(globalObject));
     }
-    return semLockCreate(globalObject, type, handle, kind, maxValue, nameValue);
+    RELEASE_AND_RETURN(scope, semLockCreate(globalObject, type, handle, kind, maxValue, nameValue));
 }
 
 #if !PY_HAVE_SEM_TIMEDWAIT
@@ -209,7 +211,7 @@ static JSValue semLockAcquire(JSGlobalObject* globalObject, JSValue self, JSValu
         timeout = std::max(timeout, 0.0);
         struct timeval now;
         if (gettimeofday(&now, nullptr) < 0)
-            return posixError(globalObject);
+            RELEASE_AND_RETURN(scope, posixError(globalObject));
         long seconds = static_cast<long>(std::min(timeout, 1e15));
         long nanoseconds = static_cast<long>(1e9 * (timeout - seconds) + 0.5);
         deadline.tv_sec = now.tv_sec + seconds;
@@ -244,7 +246,7 @@ static JSValue semLockAcquire(JSGlobalObject* globalObject, JSValue self, JSValu
     if (result < 0) {
         if (errno == EAGAIN || errno == ETIMEDOUT)
             return jsBoolean(false);
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     }
     semLockSetCount(globalObject, lock, semLockCount(lock) + 1);
     lock->set(vm, SemLockLastThread, semLockThisThread(globalObject));
@@ -271,23 +273,23 @@ static JSValue semLockRelease(JSGlobalObject* globalObject, JSValue self)
         if (lock->get(SemLockMaxValue).asInt32() == 1) {
             if (!sem_trywait(handle)) {
                 if (sem_post(handle) < 0)
-                    return posixError(globalObject);
+                    RELEASE_AND_RETURN(scope, posixError(globalObject));
                 return raiseValueError(globalObject, scope, "semaphore or lock released too many times"_s);
             }
             if (errno != EAGAIN)
-                return posixError(globalObject);
+                RELEASE_AND_RETURN(scope, posixError(globalObject));
         }
 #else
         // Another process may release it between this and sem_post(): it is a check, not a guarantee.
         int value;
         if (sem_getvalue(handle, &value) < 0)
-            return posixError(globalObject);
+            RELEASE_AND_RETURN(scope, posixError(globalObject));
         if (value >= lock->get(SemLockMaxValue).asInt32())
             return raiseValueError(globalObject, scope, "semaphore or lock released too many times"_s);
 #endif
     }
     if (sem_post(handle) < 0)
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     semLockSetCount(globalObject, lock, semLockCount(lock) - 1);
     return jsUndefined();
 }

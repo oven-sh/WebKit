@@ -327,7 +327,7 @@ static JSValue structNew(JSGlobalObject* globalObject, JSValue cls, const CallAr
     JSValue format;
     if (type->lookup(Special::New) != structType(globalObject)->lookup(Special::New)) {
         // Called by the __new__() of a class derived from Struct.
-        if (!structParseFormatArgument(globalObject, args, format))
+        if (failed(scope, structParseFormatArgument(globalObject, args, format)))
             return { };
         PyRecord* object = structAllocate(globalObject, type);
         if (!structSetFormat(globalObject, object, format))
@@ -388,7 +388,7 @@ static JSValue structInit(JSGlobalObject* globalObject, JSValue self, const Call
         return jsUndefined();
     }
     JSValue format;
-    if (!structParseFormatArgument(globalObject, args, format))
+    if (failed(scope, structParseFormatArgument(globalObject, args, format)))
         return { };
     if (object->get(StructFormatString)) {
         bool isSame = structIsSameFormat(globalObject, object, format);
@@ -515,11 +515,13 @@ static JSValue structUnpackImpl(JSGlobalObject* globalObject, JSValue self, JSVa
 
 static JSValue structUnpackFromImpl(JSGlobalObject* globalObject, JSValue self, JSValue buffer, JSValue offsetValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     BufferHolder holder(globalObject);
     if (!holder.get(buffer))
         return { };
     int64_t offset = 0;
-    if (offsetValue && (!ssizeArgument(globalObject, offsetValue, offset) || !refreshBuffer(globalObject, holder.buffer)))
+    if (offsetValue && (failed(scope, ssizeArgument(globalObject, offsetValue, offset)) || !refreshBuffer(globalObject, holder.buffer)))
         return { };
     PyByteStorage* storage = structReadyStorage(globalObject, self);
     if (!storage)
@@ -528,16 +530,16 @@ static JSValue structUnpackFromImpl(JSGlobalObject* globalObject, JSValue self, 
     int64_t available = holder.buffer.length;
     if (offset < 0) {
         if (offset + size > 0)
-            return structRaise(globalObject, "not enough data to unpack "_s, size, " bytes at offset "_s, offset);
+            RELEASE_AND_RETURN(scope, structRaise(globalObject, "not enough data to unpack "_s, size, " bytes at offset "_s, offset));
         if (offset + available < 0)
-            return structRaise(globalObject, "offset "_s, offset, " out of range for "_s, available, "-byte buffer"_s);
+            RELEASE_AND_RETURN(scope, structRaise(globalObject, "offset "_s, offset, " out of range for "_s, available, "-byte buffer"_s));
         offset += available;
     }
     if (available - offset < size) {
         return structRaise(globalObject, "unpack_from requires a buffer of at least "_s, static_cast<uint64_t>(size) + static_cast<uint64_t>(offset), " bytes for unpacking "_s, size,
             " bytes at offset "_s, offset, " (actual buffer size is "_s, available, ')');
     }
-    return structUnpackAt(globalObject, storage, holder.buffer.data + offset);
+    RELEASE_AND_RETURN(scope, structUnpackAt(globalObject, storage, holder.buffer.data + offset));
 }
 
 // ---- The iterator of iter_unpack() ----
@@ -559,7 +561,7 @@ static JSValue structIterUnpackImpl(JSGlobalObject* globalObject, JSValue self, 
         return { };
     int64_t size = structLayoutOf(storage)->size;
     if (!size)
-        return structRaise(globalObject, "cannot iteratively unpack with a struct of length 0"_s);
+        RELEASE_AND_RETURN(scope, structRaise(globalObject, "cannot iteratively unpack with a struct of length 0"_s));
     if (!hasBuffer(buffer))
         return raiseTypeError(globalObject, scope, "a bytes-like object is required, not '"_s, typeName(globalObject, buffer), '\'');
     JSValue viewValue = makeMemoryView(globalObject, buffer, BufferSimple);
@@ -567,7 +569,7 @@ static JSValue structIterUnpackImpl(JSGlobalObject* globalObject, JSValue self, 
     auto* view = PyMemoryView::from(viewValue);
     if (view->length % size) {
         view->release(globalObject);
-        return structRaise(globalObject, "iterative unpacking requires a buffer of a multiple of "_s, size, " bytes"_s);
+        RELEASE_AND_RETURN(scope, structRaise(globalObject, "iterative unpacking requires a buffer of a multiple of "_s, size, " bytes"_s));
     }
     PyRecord* iterator = PyRecord::create(globalObject, runtime(globalObject).typeFor(structIteratorTypeDef), StructIteratorFieldCount);
     iterator->set(vm, StructIteratorStruct, self);
@@ -637,6 +639,10 @@ static bool structPackItem(JSGlobalObject* globalObject, const StructFormat& for
         raiseOverflowError(globalObject, scope, "float too large to pack with "_s, code, " format"_s);
         return false;
     };
+    // CPython takes an OverflowError out of __index__() for one of its own, but where it packs eight bytes in the other byte order.
+    auto overflowMeansOutOfRange = [&] {
+        return !(isBigEndian && size == 8) && clearPendingExceptionIfMatches(globalObject, rt.OverflowError());
+    };
     switch (format.kind) {
     case StructKind::Char: {
         auto* bytes = PyBytes::tryFrom(value);
@@ -649,9 +655,10 @@ static bool structPackItem(JSGlobalObject* globalObject, const StructFormat& for
     }
     case StructKind::Signed: {
         JSValue integer = structToInt(globalObject, value);
-        RETURN_IF_EXCEPTION(scope, false);
+        if (!integer && !overflowMeansOutOfRange())
+            return false;
         int64_t largest = static_cast<int64_t>(std::numeric_limits<uint64_t>::max() >> (65 - 8 * size));
-        auto converted = tryInt64(integer);
+        auto converted = integer ? tryInt64(integer) : std::nullopt;
         if (!converted || *converted > largest || *converted < ~largest) {
             structRaise(globalObject, '\'', format.code, "' format requires "_s, ~largest, " <= number <= "_s, largest);
             return false;
@@ -661,9 +668,10 @@ static bool structPackItem(JSGlobalObject* globalObject, const StructFormat& for
     }
     case StructKind::Unsigned: {
         JSValue integer = structToInt(globalObject, value);
-        RETURN_IF_EXCEPTION(scope, false);
+        if (!integer && !overflowMeansOutOfRange())
+            return false;
         uint64_t largest = std::numeric_limits<uint64_t>::max() >> (64 - 8 * size);
-        auto converted = intSign(integer) < 0 ? std::nullopt : tryUInt64(integer);
+        auto converted = !integer || intSign(integer) < 0 ? std::nullopt : tryUInt64(integer);
         if (!converted || *converted > largest) {
             structRaise(globalObject, '\'', format.code, "' format requires 0 <= number <= "_s, largest);
             return false;
@@ -725,7 +733,7 @@ static bool structPackItem(JSGlobalObject* globalObject, const StructFormat& for
     case StructKind::ComplexFloat:
     case StructKind::ComplexDouble: {
         double parts[2];
-        if (!complexArgument(globalObject, value, parts[0], parts[1]))
+        if (failed(scope, complexArgument(globalObject, value, parts[0], parts[1])))
             return notA("complex"_s);
         for (unsigned i = 0; i < 2; ++i) {
             if (format.kind == StructKind::ComplexDouble) {
@@ -795,17 +803,19 @@ static bool structPackAt(JSGlobalObject* globalObject, PyByteStorage* storage, s
 
 static JSValue structPackImpl(JSGlobalObject* globalObject, JSValue self, std::span<const JSValue> values)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PyByteStorage* storage = structReadyStorage(globalObject, self);
     if (!storage)
         return { };
     StructLayout* layout = structLayoutOf(storage);
     if (static_cast<int64_t>(values.size()) != layout->length)
-        return structRaise(globalObject, "pack expected "_s, layout->length, " items for packing (got "_s, values.size(), ')');
+        RELEASE_AND_RETURN(scope, structRaise(globalObject, "pack expected "_s, layout->length, " items for packing (got "_s, values.size(), ')'));
     // Of no size, it may still have values to look at ('0s').
     if (!layout->size && values.empty())
-        return runtime(globalObject).emptyBytes();
+        RELEASE_AND_RETURN(scope, runtime(globalObject).emptyBytes());
     PyBytes* result = newBytes(globalObject, layout->size);
-    if (!result || !structPackAt(globalObject, storage, values, result->mutableData()))
+    if (!result || failed(scope, structPackAt(globalObject, storage, values, result->mutableData())))
         return { };
     return result;
 }
@@ -821,21 +831,21 @@ static JSValue structPackIntoImpl(JSGlobalObject* globalObject, JSValue self, un
         return raiseTypeError(globalObject, scope, "pack_into() argument "_s, position, " must be read-write bytes-like object, not "_s, typeNameOfArgument(globalObject, buffer));
     }
     int64_t offset;
-    if (!ssizeArgument(globalObject, offsetValue, offset))
+    if (failed(scope, ssizeArgument(globalObject, offsetValue, offset)))
         return { };
     PyByteStorage* storage = structReadyStorage(globalObject, self);
     if (!storage)
         return { };
     StructLayout* layout = structLayoutOf(storage);
     if (static_cast<int64_t>(values.size()) != layout->length)
-        return structRaise(globalObject, "pack_into expected "_s, layout->length, " items for packing (got "_s, values.size(), ')');
+        RELEASE_AND_RETURN(scope, structRaise(globalObject, "pack_into expected "_s, layout->length, " items for packing (got "_s, values.size(), ')'));
     int64_t size = layout->size;
     int64_t available = holder.buffer.length;
     if (offset < 0) {
         if (offset + size > 0)
-            return structRaise(globalObject, "no space to pack "_s, size, " bytes at offset "_s, offset);
+            RELEASE_AND_RETURN(scope, structRaise(globalObject, "no space to pack "_s, size, " bytes at offset "_s, offset));
         if (offset + available < 0)
-            return structRaise(globalObject, "offset "_s, offset, " out of range for "_s, available, "-byte buffer"_s);
+            RELEASE_AND_RETURN(scope, structRaise(globalObject, "offset "_s, offset, " out of range for "_s, available, "-byte buffer"_s));
         offset += available;
     }
     if (available - offset < size) {
@@ -844,7 +854,7 @@ static JSValue structPackIntoImpl(JSGlobalObject* globalObject, JSValue self, un
     }
     if (!refreshBuffer(globalObject, holder.buffer))
         return { };
-    if (size && !structPackAt(globalObject, storage, values, holder.buffer.data + offset))
+    if (size && failed(scope, structPackAt(globalObject, storage, values, holder.buffer.data + offset)))
         return { };
     return jsUndefined();
 }
@@ -853,16 +863,20 @@ static JSValue structPackIntoImpl(JSGlobalObject* globalObject, JSValue self, un
 
 static JSValue structPack(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
 {
-    if (!rejectKeywords(globalObject, "Struct.pack"_s, args))
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, rejectKeywords(globalObject, "Struct.pack"_s, args)))
         return { };
-    return structPackImpl(globalObject, self, args.positional());
+    RELEASE_AND_RETURN(scope, structPackImpl(globalObject, self, args.positional()));
 }
 
 static JSValue structPackInto(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
 {
-    if (!rejectKeywords(globalObject, "Struct.pack_into"_s, args) || !checkPositional(globalObject, "pack_into"_s, args, 2, std::numeric_limits<unsigned>::max()))
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, rejectKeywords(globalObject, "Struct.pack_into"_s, args)) || failed(scope, checkPositional(globalObject, "pack_into"_s, args, 2, std::numeric_limits<unsigned>::max())))
         return { };
-    return structPackIntoImpl(globalObject, self, 1, args[0], args[1], args.positional().subspan(2));
+    RELEASE_AND_RETURN(scope, structPackIntoImpl(globalObject, self, 1, args[0], args[1], args.positional().subspan(2)));
 }
 
 static JSValue structUnpack(JSGlobalObject* globalObject, JSValue self, JSValue buffer) { return structUnpackImpl(globalObject, self, buffer); }
@@ -956,22 +970,26 @@ static JSValue structModuleCalcSize(JSGlobalObject* globalObject, JSValue format
 
 static JSValue structModulePack(JSGlobalObject* globalObject, const CallArgs& args)
 {
-    if (!rejectKeywords(globalObject, "_struct.pack"_s, args) || !checkPositional(globalObject, "pack"_s, args, 1, std::numeric_limits<unsigned>::max()))
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, rejectKeywords(globalObject, "_struct.pack"_s, args)) || failed(scope, checkPositional(globalObject, "pack"_s, args, 1, std::numeric_limits<unsigned>::max())))
         return { };
     JSValue object = structForFormat(globalObject, args[0]);
     if (!object)
         return { };
-    return structPackImpl(globalObject, object, args.positional().subspan(1));
+    RELEASE_AND_RETURN(scope, structPackImpl(globalObject, object, args.positional().subspan(1)));
 }
 
 static JSValue structModulePackInto(JSGlobalObject* globalObject, const CallArgs& args)
 {
-    if (!rejectKeywords(globalObject, "_struct.pack_into"_s, args) || !checkPositional(globalObject, "pack_into"_s, args, 3, std::numeric_limits<unsigned>::max()))
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, rejectKeywords(globalObject, "_struct.pack_into"_s, args)) || failed(scope, checkPositional(globalObject, "pack_into"_s, args, 3, std::numeric_limits<unsigned>::max())))
         return { };
     JSValue object = structForFormat(globalObject, args[0]);
     if (!object)
         return { };
-    return structPackIntoImpl(globalObject, object, 2, args[1], args[2], args.positional().subspan(3));
+    RELEASE_AND_RETURN(scope, structPackIntoImpl(globalObject, object, 2, args[1], args[2], args.positional().subspan(3)));
 }
 
 static JSValue structModuleUnpack(JSGlobalObject* globalObject, JSValue format, JSValue buffer)

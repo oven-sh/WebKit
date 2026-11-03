@@ -92,7 +92,7 @@ static bool lockAcquireArguments(JSGlobalObject* globalObject, JSValue blockingV
     bool blocking = !blockingValue || isTrue(globalObject, blockingValue);
     RETURN_IF_EXCEPTION(scope, false);
     timeout = unset;
-    if (timeoutValue && !nanosecondsFromSeconds(globalObject, timeoutValue, TimeRounding::AwayFromZero, timeout))
+    if (timeoutValue && failed(scope, nanosecondsFromSeconds(globalObject, timeoutValue, TimeRounding::AwayFromZero, timeout)))
         return false;
     if (!blocking && timeout != unset) {
         raiseValueError(globalObject, scope, "can't specify a timeout for a non-blocking call"_s);
@@ -146,9 +146,11 @@ static bool threadTakesNoArguments(JSGlobalObject* globalObject, ASCIILiteral na
 
 static JSValue lockNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs& args)
 {
-    if (!threadTakesNoArguments(globalObject, "lock"_s, args))
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, threadTakesNoArguments(globalObject, "lock"_s, args)))
         return { };
-    return PyRecord::create(globalObject, PyType::from(cls), 0);
+    RELEASE_AND_RETURN(scope, PyRecord::create(globalObject, PyType::from(cls), 0));
 }
 
 static JSValue lockAcquire(JSGlobalObject* globalObject, JSValue self, JSValue blockingValue, JSValue timeoutValue)
@@ -156,7 +158,7 @@ static JSValue lockAcquire(JSGlobalObject* globalObject, JSValue self, JSValue b
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     int64_t timeout;
-    if (!lockAcquireArguments(globalObject, blockingValue, timeoutValue, timeout))
+    if (failed(scope, lockAcquireArguments(globalObject, blockingValue, timeoutValue, timeout)))
         return { };
     auto* lock = PyRecord::from(self);
     bool isFree = threadsOf(globalObject).waitUntil(globalObject, lock, timeout, "the lock is held"_s, "acquire lock at interpreter finalization"_s, [&] { return !lock->number; });
@@ -216,12 +218,14 @@ static const TypeDef& rlockType();
 
 static JSValue rlockNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs& args)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     // A class derived from it may have an __init__ that takes some.
     PyType* type = PyType::from(cls);
     PyType* base = runtime(globalObject).typeFor(rlockType());
-    if ((type == base || type->lookup(Special::Init) == base->lookup(Special::Init)) && !threadTakesNoArguments(globalObject, "RLock"_s, args))
+    if ((type == base || type->lookup(Special::Init) == base->lookup(Special::Init)) && failed(scope, threadTakesNoArguments(globalObject, "RLock"_s, args)))
         return { };
-    return PyRecord::create(globalObject, type, 1);
+    RELEASE_AND_RETURN(scope, PyRecord::create(globalObject, type, 1));
 }
 
 // An ident is an address.
@@ -234,7 +238,7 @@ static JSValue rlockAcquire(JSGlobalObject* globalObject, JSValue self, JSValue 
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     int64_t timeout;
-    if (!lockAcquireArguments(globalObject, blockingValue, timeoutValue, timeout))
+    if (failed(scope, lockAcquireArguments(globalObject, blockingValue, timeoutValue, timeout)))
         return { };
     auto* lock = PyRecord::from(self);
     if (rlockIsMine(lock)) {
@@ -511,8 +515,10 @@ static bool threadHandleCheckStarted(JSGlobalObject* globalObject, PyRecord* han
 
 static JSValue threadHandleSetDone(JSGlobalObject* globalObject, JSValue self)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* handle = PyRecord::from(self);
-    if (!threadHandleCheckStarted(globalObject, handle))
+    if (failed(scope, threadHandleCheckStarted(globalObject, handle)))
         return { };
     handle->number = ThreadDone;
     threadsOf(globalObject).wakeAll(handle);
@@ -525,12 +531,12 @@ static JSValue threadHandleJoin(JSGlobalObject* globalObject, JSValue self, cons
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* handle = PyRecord::from(self);
     JSValue timeoutValue;
-    if (!threadOptionalArgument(globalObject, "_ThreadHandle.join"_s, "join"_s, args, timeoutValue))
+    if (failed(scope, threadOptionalArgument(globalObject, "_ThreadHandle.join"_s, "join"_s, args, timeoutValue)))
         return { };
     int64_t timeout = -1;
-    if (timeoutValue && !isNone(timeoutValue) && !nanosecondsFromSeconds(globalObject, timeoutValue, TimeRounding::AwayFromZero, timeout))
+    if (timeoutValue && !isNone(timeoutValue) && failed(scope, nanosecondsFromSeconds(globalObject, timeoutValue, TimeRounding::AwayFromZero, timeout)))
         return { };
-    if (!threadHandleCheckStarted(globalObject, handle))
+    if (failed(scope, threadHandleCheckStarted(globalObject, handle)))
         return { };
     if (handle->number == ThreadRunning && tryUInt64(handle->get(0)) == currentThreadIdent())
         return raiseRuntimeError(globalObject, scope, "Cannot join current thread"_s);
@@ -671,10 +677,11 @@ static void threadRemoveShutdownHandle(JSGlobalObject* globalObject, PyRecord* h
 // A frame of Python code takes a few hundred bytes, but what is written in C++ and calls back into Python takes far more, above
 // all in a build that checks every access to memory.
 #if ASAN_ENABLED || ASSERT_ENABLED
-static constexpr size_t threadDefaultStackSize = 64 * MB;
+static constexpr size_t threadStackScale = 8;
 #else
-static constexpr size_t threadDefaultStackSize = 8 * MB;
+static constexpr size_t threadStackScale = 1;
 #endif
+static constexpr size_t threadDefaultStackSize = threadStackScale * 8 * MB;
 
 // What the new thread does.
 static void threadRun(JSGlobalObject* globalObject, JSValue function, PyTuple* args, PyDict* kwargs, PyRecord* handle)
@@ -715,8 +722,10 @@ static bool threadStart(JSGlobalObject* globalObject, JSValue function, PyTuple*
     }
 
     size_t stackSize = threadDefaultStackSize;
+    // What threading.stack_size() asks for is what the program gets to use. The end of every stack is the engine's reserve, where
+    // nothing of the program's runs: with a stack no larger than that, a thread could not take a step.
     if (JSValue size = rt.typeFor(threadStateTypeDef)->dict()->get(internString(vm, "stack_size"_s)); size && intSign(size) > 0)
-        stackSize = static_cast<size_t>(tryUInt64(size).value_or(stackSize));
+        stackSize = static_cast<size_t>(tryUInt64(size).value_or(8 * MB)) * threadStackScale + Options::softReservedZoneSize();
 
     // The thread is running as far as anybody can tell from here on: it may be over by the time start() returns.
     handle->number = ThreadRunning;
@@ -756,7 +765,7 @@ static JSValue threadStartNew(JSGlobalObject* globalObject, const CallArgs& args
     if (!audit(globalObject, "_thread.start_new_thread"_s, args[0], args[1], args.get(2)))
         return { };
     PyRecord* handle = threadMakeHandle(globalObject, rt.typeFor(threadHandleTypeDef), ThreadNotStarted, jsNumber(0));
-    if (!threadStart(globalObject, args[0], PyTuple::from(args[1]), args.size() == 3 ? PyDict::from(args[2]) : nullptr, handle, true))
+    if (failed(scope, threadStart(globalObject, args[0], PyTuple::from(args[1]), args.size() == 3 ? PyDict::from(args[2]) : nullptr, handle, true)))
         return { };
     return handle->get(0);
 }
@@ -780,7 +789,7 @@ static JSValue threadStartJoinable(JSGlobalObject* globalObject, JSValue functio
         return { };
     if (!handle)
         handle = threadMakeHandle(globalObject, rt.typeFor(threadHandleTypeDef), ThreadNotStarted, jsNumber(0));
-    if (!threadStart(globalObject, function, rt.emptyTuple(), nullptr, handle, isDaemon))
+    if (failed(scope, threadStart(globalObject, function, rt.emptyTuple(), nullptr, handle, isDaemon)))
         return { };
     return handle;
 }
@@ -837,7 +846,7 @@ static JSValue threadStackSize(JSGlobalObject* globalObject, const CallArgs& arg
     auto scope = DECLARE_THROW_SCOPE(vm);
     constexpr int64_t minimum = 53248;
     JSValue sizeValue;
-    if (!threadOptionalArgument(globalObject, "_thread.stack_size"_s, "stack_size"_s, args, sizeValue))
+    if (failed(scope, threadOptionalArgument(globalObject, "_thread.stack_size"_s, "stack_size"_s, args, sizeValue)))
         return { };
     int64_t size = 0;
     if (sizeValue) {
@@ -864,7 +873,7 @@ static JSValue threadMakeThreadHandle(JSGlobalObject* globalObject, JSValue iden
         return raiseOverflowError(globalObject, scope, "can't convert negative int to unsigned"_s);
     if (!tryUInt64(value))
         return raiseOverflowError(globalObject, scope, "int too big to convert"_s);
-    return threadMakeHandle(globalObject, runtime(globalObject).typeFor(threadHandleTypeDef), ThreadRunning, value);
+    RELEASE_AND_RETURN(scope, threadMakeHandle(globalObject, runtime(globalObject).typeFor(threadHandleTypeDef), ThreadRunning, value));
 }
 
 static JSValue threadExceptHook(JSGlobalObject* globalObject, JSValue args)

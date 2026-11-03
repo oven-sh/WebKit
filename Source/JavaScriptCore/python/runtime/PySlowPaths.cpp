@@ -1069,7 +1069,7 @@ static JSValue runRuntimeFunction(JSGlobalObject* globalObject, CallFrame* callF
     switch (function) {
     // ---- Building ----
     case RuntimeFunction::BuildTuple:
-        return PyTuple::createFromNegativeIndexed(globalObject, args.first(), args.size());
+        RELEASE_AND_RETURN(scope, PyTuple::createFromNegativeIndexed(globalObject, args.first(), args.size()));
     case RuntimeFunction::BuildSet: {
         PySet* set = PySet::create(globalObject);
         for (unsigned i = 0; i < args.size(); ++i) {
@@ -1092,7 +1092,7 @@ static JSValue runRuntimeFunction(JSGlobalObject* globalObject, CallFrame* callF
     case RuntimeFunction::BuildString:
         RELEASE_AND_RETURN(scope, buildString(globalObject, args));
     case RuntimeFunction::BuildSlice:
-        return PySlice::create(globalObject, args[0], args[1], args[2]);
+        RELEASE_AND_RETURN(scope, PySlice::create(globalObject, args[0], args[1], args[2]));
     case RuntimeFunction::ListAppend:
         listAppend(globalObject, asList(args[0]), args[1]);
         return jsUndefined();
@@ -1108,7 +1108,7 @@ static JSValue runRuntimeFunction(JSGlobalObject* globalObject, CallFrame* callF
         return jsUndefined();
     }
     case RuntimeFunction::ListToTuple:
-        return tupleFromList(globalObject, asList(args[0]));
+        RELEASE_AND_RETURN(scope, tupleFromList(globalObject, asList(args[0])));
     case RuntimeFunction::SetAdd: {
         // A program can bind __conditional_annotations__ to anything.
         auto* set = PySet::tryFrom(args[0]);
@@ -1205,7 +1205,7 @@ static JSValue runRuntimeFunction(JSGlobalObject* globalObject, CallFrame* callF
         return value;
     }
     case RuntimeFunction::MakeCell:
-        return PyCell::create(globalObject, args[0]);
+        RELEASE_AND_RETURN(scope, PyCell::create(globalObject, args[0]));
     case RuntimeFunction::LoadClosure:
         return calleeOf(callFrame)->closure()->at(args[0].asInt32());
     case RuntimeFunction::LoadBuildClass: {
@@ -1218,12 +1218,12 @@ static JSValue runRuntimeFunction(JSGlobalObject* globalObject, CallFrame* callF
 
     // ---- Functions ----
     case RuntimeFunction::MakeFunction:
-        return makeFunction(globalObject, callFrame, args);
+        RELEASE_AND_RETURN(scope, makeFunction(globalObject, callFrame, args));
     case RuntimeFunction::SetFunctionTypeParams:
         PyFunction::from(args[0])->setTypeParams(vm, args[1]);
         return args[0];
     case RuntimeFunction::MakeGenerator:
-        return makeGenerator(globalObject, callFrame, args[0].asInt32(), args.size() > 1 ? args[1] : JSValue());
+        RELEASE_AND_RETURN(scope, makeGenerator(globalObject, callFrame, args[0].asInt32(), args.size() > 1 ? args[1] : JSValue()));
     case RuntimeFunction::CallArguments:
         RELEASE_AND_RETURN(scope, callArguments(globalObject, args[0], args[1], args[2]));
     case RuntimeFunction::TakeKeywordNames:
@@ -1252,7 +1252,7 @@ static JSValue runRuntimeFunction(JSGlobalObject* globalObject, CallFrame* callF
         throwPythonException(globalObject, scope, args[0]);
         return { };
     case RuntimeFunction::CatchException:
-        return exceptionFromThrownValue(globalObject, args[0]);
+        RELEASE_AND_RETURN(scope, exceptionFromThrownValue(globalObject, args[0]));
     case RuntimeFunction::SetHandledException:
         return rt.setHandledExceptionInTopSlot(args[0]);
     case RuntimeFunction::MatchExceptionGroup: {
@@ -1295,7 +1295,7 @@ static JSValue runRuntimeFunction(JSGlobalObject* globalObject, CallFrame* callF
         return { };
     }
     case RuntimeFunction::AsyncGenWrap:
-        return wrapAsyncGeneratorValue(globalObject, args[0]);
+        RELEASE_AND_RETURN(scope, wrapAsyncGeneratorValue(globalObject, args[0]));
     case RuntimeFunction::ThrowIntoGenerator:
         return raiseExceptionThrownIntoGenerator(globalObject, scope, args[0]);
 

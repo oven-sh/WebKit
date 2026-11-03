@@ -108,7 +108,7 @@ static JSValue reduceDefaultState(JSGlobalObject* globalObject, JSValue object, 
     }
     if (slots->isEmpty())
         return state;
-    return PyTuple::create(globalObject, { state, JSValue(slots) });
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { state, JSValue(slots) }));
 }
 
 JSValue objectGetState(JSGlobalObject* globalObject, JSValue self)
@@ -211,7 +211,7 @@ static JSValue reduceNewObject(JSGlobalObject* globalObject, JSValue object)
 
     PyTuple* args;
     PyDict* kwargs;
-    if (!reduceNewArguments(globalObject, object, args, kwargs))
+    if (failed(scope, reduceNewArguments(globalObject, object, args, kwargs)))
         return { };
     JSValue copyreg = reduceImportCopyreg(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
@@ -249,7 +249,7 @@ static JSValue reduceNewObject(JSGlobalObject* globalObject, JSValue object)
         dictItems = getIter(globalObject, items);
         RETURN_IF_EXCEPTION(scope, { });
     }
-    return PyTuple::create(globalObject, { function, JSValue(functionArguments), state, listItems, dictItems });
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { function, JSValue(functionArguments), state, listItems, dictItems }));
 }
 
 static JSValue reduceCommon(JSGlobalObject* globalObject, JSValue object, int protocol)

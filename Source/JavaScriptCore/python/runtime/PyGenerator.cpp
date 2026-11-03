@@ -537,7 +537,7 @@ static JSValue anextAwaitableIterator(JSGlobalObject* globalObject, PyRecord* se
     RETURN_IF_EXCEPTION(scope, { });
     // Of what that returns, only coroutines have no __next__.
     if (auto* coroutine = PyGenerator::tryFrom(iterator); coroutine && coroutine->kind() == PyGenerator::Kind::Coroutine)
-        return PyWrapperObject::create(globalObject, rt.coroutineWrapperType(), iterator);
+        RELEASE_AND_RETURN(scope, PyWrapperObject::create(globalObject, rt.coroutineWrapperType(), iterator));
     return iterator;
 }
 
@@ -714,7 +714,7 @@ static JSValue exceptionForThrow(JSGlobalObject* globalObject, ASCIILiteral func
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!rejectKeywords(globalObject, function, args) || !checkPositional(globalObject, function, args, 1, 3))
+    if (failed(scope, rejectKeywords(globalObject, function, args)) || failed(scope, checkPositional(globalObject, function, args, 1, 3)))
         return { };
     if (args.size() > 1 && warnsOfSignature) {
         bool goOn = warn(globalObject, rt.DeprecationWarning(), makeString("the (type, exc, tb) signature of "_s, function, "() is deprecated, use the single-arg signature instead."_s));
@@ -797,7 +797,7 @@ static JSValue generatorRepr(JSGlobalObject* globalObject, JSValue selfValue)
     RETURN_IF_EXCEPTION(scope, { });
     String text = qualname->value(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
-    return makeStr(vm, makeString('<', generator->type()->name(), " object "_s, text, " at "_s, addressForRepr(globalObject, selfValue), '>'));
+    RELEASE_AND_RETURN(scope, makeStr(vm, makeString('<', generator->type()->name(), " object "_s, text, " at "_s, addressForRepr(globalObject, selfValue), '>')));
 }
 
 static JSValue generatorGetName(JSGlobalObject*, JSValue selfValue) { return generatorOf(selfValue)->name(); }
@@ -862,7 +862,7 @@ static constexpr NativeDef generatorMethods[] = {
     PY_SLOT("__iter__", generatorIter, "($self, /)"),
     PY_SLOT("__next__", generatorNext, "($self, /)"),
     PY_SLOT("__repr__", generatorRepr, "($self, /)"),
-    PY_METHOD("send", generatorSendMethod, "($self, value, /)"),
+    PY_METHOD("send", generatorSendMethod, "($self, object, /)"),
     PY_METHOD("throw", generatorThrowMethod, "($self, *args)"),
     PY_METHOD("close", generatorCloseMethod, "($self, /)"),
     PY_CLASSMETHOD("__class_getitem__", classGetItem, "($type, object, /)"),
@@ -889,7 +889,7 @@ static JSValue coroutineAwait(JSGlobalObject* globalObject, JSValue selfValue)
 static constexpr NativeDef coroutineMethods[] = {
     PY_SLOT("__await__", coroutineAwait, "($self, /)"),
     PY_SLOT("__repr__", generatorRepr, "($self, /)"),
-    PY_METHOD("send", generatorSendMethod, "($self, value, /)"),
+    PY_METHOD("send", generatorSendMethod, "($self, object, /)"),
     PY_METHOD("throw", generatorThrowMethod, "($self, *args)"),
     PY_METHOD("close", generatorCloseMethod, "($self, /)"),
     PY_CLASSMETHOD("__class_getitem__", classGetItem, "($type, object, /)"),
@@ -996,9 +996,11 @@ static bool initializeHooks(JSGlobalObject* globalObject, PyGenerator* generator
 
 static JSValue makeAwaitable(JSGlobalObject* globalObject, JSValue selfValue, PyAsyncGenAwaitable::Kind kind, JSValue value)
 {
-    if (!initializeHooks(globalObject, generatorOf(selfValue)))
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, initializeHooks(globalObject, generatorOf(selfValue))))
         return { };
-    return PyAsyncGenAwaitable::create(globalObject, kind, generatorOf(selfValue), value);
+    RELEASE_AND_RETURN(scope, PyAsyncGenAwaitable::create(globalObject, kind, generatorOf(selfValue), value));
 }
 
 static JSValue asyncGeneratorANext(JSGlobalObject* globalObject, JSValue selfValue) { return makeAwaitable(globalObject, selfValue, PyAsyncGenAwaitable::Kind::Send, jsUndefined()); }
@@ -1007,11 +1009,13 @@ static JSValue asyncGeneratorAClose(JSGlobalObject* globalObject, JSValue selfVa
 
 static JSValue asyncGeneratorAThrow(JSGlobalObject* globalObject, JSValue selfValue, const CallArgs& args)
 {
-    if (!rejectKeywords(globalObject, "athrow"_s, args) || !checkPositional(globalObject, "athrow"_s, args, 1, 3))
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, rejectKeywords(globalObject, "athrow"_s, args)) || failed(scope, checkPositional(globalObject, "athrow"_s, args, 1, 3)))
         return { };
     if (args.size() > 1 && !warn(globalObject, runtime(globalObject).DeprecationWarning(), "the (type, exc, tb) signature of athrow() is deprecated, use the single-arg signature instead."_s))
         return { };
-    return makeAwaitable(globalObject, selfValue, PyAsyncGenAwaitable::Kind::Throw, PyTuple::create(globalObject, args.positional()));
+    RELEASE_AND_RETURN(scope, makeAwaitable(globalObject, selfValue, PyAsyncGenAwaitable::Kind::Throw, PyTuple::create(globalObject, args.positional())));
 }
 
 // What came out of the generator, as the awaitable passes it on: a wrapped value ends the awaitable with that value.
@@ -1190,14 +1194,14 @@ static JSValue athrowSend(JSGlobalObject* globalObject, JSValue selfValue, JSVal
     scope.release();
     if (isClose) {
         if (!result)
-            return finishAThrow(globalObject, awaitable);
+            RELEASE_AND_RETURN(scope, finishAThrow(globalObject, awaitable));
         if (isWrappedValue(globalObject, result))
-            return raiseIgnoredExit(globalObject, awaitable);
+            RELEASE_AND_RETURN(scope, raiseIgnoredExit(globalObject, awaitable));
         return result;
     }
     result = unwrapResult(globalObject, generator, result);
     if (!result)
-        return finishAThrow(globalObject, awaitable);
+        RELEASE_AND_RETURN(scope, finishAThrow(globalObject, awaitable));
     return result;
 }
 
@@ -1221,9 +1225,9 @@ static JSValue athrowThrow(JSGlobalObject* globalObject, JSValue selfValue, cons
     scope.release();
     if (awaitable->kind() == PyAsyncGenAwaitable::Kind::Close) {
         if (!result)
-            return finishAThrow(globalObject, awaitable);
+            RELEASE_AND_RETURN(scope, finishAThrow(globalObject, awaitable));
         if (isWrappedValue(globalObject, result))
-            return raiseIgnoredExit(globalObject, awaitable);
+            RELEASE_AND_RETURN(scope, raiseIgnoredExit(globalObject, awaitable));
         return result;
     }
     result = unwrapResult(globalObject, generator, result);
@@ -1247,7 +1251,7 @@ static constexpr NativeDef asyncGeneratorMethods[] = {
     PY_SLOT("__aiter__", generatorIter, "($self, /)"),
     PY_SLOT("__anext__", asyncGeneratorANext, "($self, /)"),
     PY_SLOT("__repr__", generatorRepr, "($self, /)"),
-    PY_METHOD("asend", asyncGeneratorASend, "($self, value, /)"),
+    PY_METHOD("asend", asyncGeneratorASend, "($self, object, /)"),
     PY_METHOD("athrow", asyncGeneratorAThrow, "($self, *args)"),
     PY_METHOD("aclose", asyncGeneratorAClose, "($self, /)"),
     PY_CLASSMETHOD("__class_getitem__", classGetItem, "($type, object, /)"),

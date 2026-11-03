@@ -92,6 +92,7 @@ private:
 // the function is JSValue f(JSGlobalObject*, JSValue self, JSValue sep, JSValue maxsplit): one parameter for each in the
 // signature, which is empty if the caller left it out. The caller's arguments are checked against the signature.
 // With *args or **kwargs in the signature, it is JSValue f(JSGlobalObject*, JSValue self, const CallArgs&), and nothing is checked.
+// "(sub[, start[, end]], /)" is CPython's notation for parameters that may be left out and have no default to show.
 // The same with a ! before the signature, which then is only what __text_signature__ shows: "!(iterable, /, *, key=None)".
 // (`self` is there only if the signature starts with a $ parameter.)
 // What throws returns an empty value.
@@ -126,10 +127,12 @@ constexpr NativeSignature parseNativeSignature(const char* text, size_t length)
     bool keywordOnly = false;
     bool sawSlash = false;
     bool sawDefault = false;
+    bool inOptionalGroup = false;
     while (i < end) {
         size_t start = i;
         unsigned depth = 0;
-        bool hasDefault = false;
+        bool hasDefault = inOptionalGroup;
+        bool hasValue = false;
         bool inString = false;
         while (i < end) {
             char c = text[i];
@@ -138,12 +141,16 @@ constexpr NativeSignature parseNativeSignature(const char* text, size_t length)
                     inString = false;
             } else if (c == '\'')
                 inString = true;
-            else if (c == '(' || c == '[' || c == '{')
+            else if ((c == '[' || c == ']') && !depth && !hasValue) {
+                // "sub[, start[, end]]": what follows may be left out, and has no default to show.
+                if (c == '[')
+                    inOptionalGroup = true;
+            } else if (c == '(' || c == '[' || c == '{')
                 ++depth;
             else if (c == ')' || c == ']' || c == '}')
                 --depth;
             else if (c == '=' && !depth)
-                hasDefault = true;
+                hasDefault = hasValue = true;
             else if (c == ',' && !depth)
                 break;
             ++i;

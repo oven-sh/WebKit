@@ -386,17 +386,14 @@ int toCInt(JSGlobalObject* globalObject, JSValue value)
         return value.asInt32();
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    int64_t result = toInt64(globalObject, value);
-    if (scope.exception()) [[unlikely]] {
-        if (!clearPendingExceptionIfMatches(globalObject, runtime(globalObject).OverflowError()))
-            return -1;
-        result = std::numeric_limits<int64_t>::max();
-    }
-    if (result < std::numeric_limits<int>::min() || result > std::numeric_limits<int>::max()) {
+    JSValue index = toIndex(globalObject, value);
+    RETURN_IF_EXCEPTION(scope, -1);
+    auto result = tryInt64(index);
+    if (!result || *result < std::numeric_limits<int>::min() || *result > std::numeric_limits<int>::max()) {
         raiseOverflowError(globalObject, scope, "Python int too large to convert to C int"_s);
         return -1;
     }
-    return static_cast<int>(result);
+    return static_cast<int>(*result);
 }
 
 double toDouble(JSGlobalObject* globalObject, JSValue value)

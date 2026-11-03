@@ -8,6 +8,7 @@
 
 #include "JSCInlines.h"
 #include "PyAbstract.h"
+#include "PyDescriptors.h"
 #include "PyErrors.h"
 #include "PyInternals.h"
 #include "PyList.h"
@@ -274,7 +275,7 @@ static bool groupMatches(JSGlobalObject* globalObject, JSValue exception, const 
         RELEASE_AND_RETURN(scope, isTrue(globalObject, result));
     }
     case GroupMatcher::Kind::Leaves:
-        return !isExceptionGroupInstance(globalObject, exception) && matcher.leaves->contains(exception.asCell());
+        RELEASE_AND_RETURN(scope, !isExceptionGroupInstance(globalObject, exception) && matcher.leaves->contains(exception.asCell()));
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -341,24 +342,28 @@ static bool groupSplitRecursive(JSGlobalObject* globalObject, JSValue exception,
 
 static JSValue groupSplit(JSGlobalObject* globalObject, JSValue self, JSValue matcherValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     GroupMatcher matcher;
-    if (!groupMatcherFor(globalObject, matcherValue, matcher))
+    if (failed(scope, groupMatcherFor(globalObject, matcherValue, matcher)))
         return { };
     JSValue match;
     JSValue rest;
-    if (!groupSplitRecursive(globalObject, self, matcher, true, match, rest))
+    if (failed(scope, groupSplitRecursive(globalObject, self, matcher, true, match, rest)))
         return { };
-    return PyTuple::create(globalObject, { match ? match : jsUndefined(), rest ? rest : jsUndefined() });
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { match ? match : jsUndefined(), rest ? rest : jsUndefined() }));
 }
 
 static JSValue groupSubgroup(JSGlobalObject* globalObject, JSValue self, JSValue matcherValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     GroupMatcher matcher;
-    if (!groupMatcherFor(globalObject, matcherValue, matcher))
+    if (failed(scope, groupMatcherFor(globalObject, matcherValue, matcher)))
         return { };
     JSValue match;
     JSValue rest;
-    if (!groupSplitRecursive(globalObject, self, matcher, false, match, rest))
+    if (failed(scope, groupSplitRecursive(globalObject, self, matcher, false, match, rest)))
         return { };
     return match ? match : jsUndefined();
 }
@@ -418,7 +423,7 @@ JSValue matchExceptionGroup(JSGlobalObject* globalObject, JSValue exception, JSV
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     rest = jsUndefined();
-    if (!groupCheckExceptStarType(globalObject, type))
+    if (failed(scope, groupCheckExceptStarType(globalObject, type)))
         return { };
     // An earlier clause caught everything.
     if (isNone(exception))
@@ -469,7 +474,7 @@ static bool groupCollectLeaves(JSGlobalObject* globalObject, JSValue exception, 
             raiseRecursionError(globalObject, scope, "maximum recursion depth exceeded in collect_exception_group_leaf_ids"_s);
             return false;
         }
-        if (!groupCollectLeaves(globalObject, exceptions->at(i), leaves))
+        if (failed(scope, groupCollectLeaves(globalObject, exceptions->at(i), leaves)))
             return false;
     }
     return true;
@@ -478,15 +483,17 @@ static bool groupCollectLeaves(JSGlobalObject* globalObject, JSValue exception, 
 // The part of the group made of the leaves that are in any of the groups in the list, or None.
 static JSValue groupProjection(JSGlobalObject* globalObject, JSValue group, JSArray* keep)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     UncheckedKeyHashSet<JSCell*> leaves;
     for (unsigned i = 0; i < listLength(keep); ++i) {
-        if (!groupCollectLeaves(globalObject, listGet(keep, i), leaves))
+        if (failed(scope, groupCollectLeaves(globalObject, listGet(keep, i), leaves)))
             return { };
     }
     GroupMatcher matcher { GroupMatcher::Kind::Leaves, { }, &leaves };
     JSValue match;
     JSValue rest;
-    if (!groupSplitRecursive(globalObject, group, matcher, false, match, rest))
+    if (failed(scope, groupSplitRecursive(globalObject, group, matcher, false, match, rest)))
         return { };
     return match ? match : jsUndefined();
 }
@@ -558,7 +565,13 @@ void initializeExceptionGroupTypes(JSGlobalObject* globalObject)
     group->add(TypeFlag::Mutable);
     group->add(TypeFlag::HasWeakref);
     group->dict()->set(vm, rt.names.dModule(), rt.names.builtins());
-    group->addGetSets(globalObject, weakrefGetSet());
+    // So its __weakref__ is the descriptor that all classes made that way share.
+    JSValue weakrefDescriptor = rt.slot(Runtime::Slot::InstanceWeakrefDescriptor);
+    if (!weakrefDescriptor) {
+        weakrefDescriptor = PyGetSetDescriptor::create(globalObject, weakrefGetSet()[0], rt.objectType());
+        rt.setSlot(Runtime::Slot::InstanceWeakrefDescriptor, weakrefDescriptor);
+    }
+    group->dict()->set(vm, rt.names.dWeakref(), weakrefDescriptor);
     rt.Exception()->addSubclass(globalObject, group);
     group->didChange(vm);
 }

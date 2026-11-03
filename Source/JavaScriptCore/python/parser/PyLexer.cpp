@@ -283,6 +283,13 @@ bool SourceText::initialize(std::span<const uint8_t> input, OptionSet<Flag> flag
                     bool unknownEncoding = false;
                     UTF8CString decoded = host.decodeSource(m_bytes.span(), cookie, message, unknownEncoding);
                     if (decoded.isNull()) {
+                        // Of a file, CPython has what follows the declaration decoded by a reader that starts at the end of that line:
+                        // that is where the position in the message counts from.
+                        if (!filename.isNull() && !unknownEncoding) {
+                            String messageOfReader;
+                            if (host.decodeSource(m_bytes.span().subspan(cookieLineText.data() + cookieLineText.size() - m_bytes.span().data()), cookie, messageOfReader, unknownEncoding).isNull())
+                                message = WTF::move(messageOfReader);
+                        }
                         // SyntaxError(message, (filename, 0, -1, None))
                         error.type = SyntaxErrorInfo::Type::SyntaxError;
                         error.message = WTF::move(message);

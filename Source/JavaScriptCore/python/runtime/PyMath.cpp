@@ -95,7 +95,7 @@ static JSValue mathCall1(JSGlobalObject* globalObject, JSValue argument, double 
     }
     if (std::isfinite(result) && errno && mathRaiseForErrno(globalObject, scope, result))
         return { };
-    return makeFloat(globalObject, result);
+    RELEASE_AND_RETURN(scope, makeFloat(globalObject, result));
 }
 
 // For a function that can be trusted to set errno.
@@ -113,7 +113,7 @@ static JSValue mathCall1WithErrno(JSGlobalObject* globalObject, JSValue argument
         if (mathRaiseForErrno(globalObject, scope, result))
             return { };
     }
-    return makeFloat(globalObject, result);
+    RELEASE_AND_RETURN(scope, makeFloat(globalObject, result));
 }
 
 static JSValue mathCall2(JSGlobalObject* globalObject, JSValue first, JSValue second, double (*function)(double, double))
@@ -132,7 +132,7 @@ static JSValue mathCall2(JSGlobalObject* globalObject, JSValue first, JSValue se
         errno = std::isfinite(x) && std::isfinite(y) ? ERANGE : 0;
     if (errno && mathRaiseForErrno(globalObject, scope, result))
         return { };
-    return makeFloat(globalObject, result);
+    RELEASE_AND_RETURN(scope, makeFloat(globalObject, result));
 }
 
 // ---- gamma, lgamma: Lanczos' approximation ----
@@ -401,7 +401,7 @@ static JSValue mathFmax(JSGlobalObject* globalObject, JSValue first, JSValue sec
     auto scope = DECLARE_THROW_SCOPE(vm);
     MATH_GET_DOUBLE(x, first);
     MATH_GET_DOUBLE(y, second);
-    return makeFloat(globalObject, std::fmax(x, y));
+    RELEASE_AND_RETURN(scope, makeFloat(globalObject, std::fmax(x, y)));
 }
 
 static JSValue mathFmin(JSGlobalObject* globalObject, JSValue first, JSValue second)
@@ -410,7 +410,7 @@ static JSValue mathFmin(JSGlobalObject* globalObject, JSValue first, JSValue sec
     auto scope = DECLARE_THROW_SCOPE(vm);
     MATH_GET_DOUBLE(x, first);
     MATH_GET_DOUBLE(y, second);
-    return makeFloat(globalObject, std::fmin(x, y));
+    RELEASE_AND_RETURN(scope, makeFloat(globalObject, std::fmin(x, y)));
 }
 
 static JSValue mathFmod(JSGlobalObject* globalObject, JSValue first, JSValue second)
@@ -420,14 +420,14 @@ static JSValue mathFmod(JSGlobalObject* globalObject, JSValue first, JSValue sec
     MATH_GET_DOUBLE(x, first);
     MATH_GET_DOUBLE(y, second);
     if (std::isinf(y) && std::isfinite(x))
-        return makeFloat(globalObject, x);
+        RELEASE_AND_RETURN(scope, makeFloat(globalObject, x));
     errno = 0;
     double result = std::fmod(x, y);
     if (std::isnan(result))
         errno = !std::isnan(x) && !std::isnan(y) ? EDOM : 0;
     if (errno && mathRaiseForErrno(globalObject, scope, result))
         return { };
-    return makeFloat(globalObject, result);
+    RELEASE_AND_RETURN(scope, makeFloat(globalObject, result));
 }
 
 static JSValue mathPow(JSGlobalObject* globalObject, JSValue first, JSValue second)
@@ -447,7 +447,7 @@ static JSValue mathPow(JSGlobalObject* globalObject, JSValue first, JSValue seco
         errno = !x ? EDOM : ERANGE;
     if (errno && mathRaiseForErrno(globalObject, scope, result))
         return { };
-    return makeFloat(globalObject, result);
+    RELEASE_AND_RETURN(scope, makeFloat(globalObject, result));
 }
 
 static JSValue mathFma(JSGlobalObject* globalObject, JSValue first, JSValue second, JSValue third)
@@ -463,7 +463,7 @@ static JSValue mathFma(JSGlobalObject* globalObject, JSValue first, JSValue seco
             return raiseValueError(globalObject, scope, "invalid operation in fma"_s);
     } else if (std::isinf(result) && std::isfinite(x) && std::isfinite(y) && std::isfinite(z))
         return raiseOverflowError(globalObject, scope, "overflow in fma"_s);
-    return makeFloat(globalObject, result);
+    RELEASE_AND_RETURN(scope, makeFloat(globalObject, result));
 }
 
 static JSValue mathFrexp(JSGlobalObject* globalObject, JSValue argument)
@@ -474,7 +474,7 @@ static JSValue mathFrexp(JSGlobalObject* globalObject, JSValue argument)
     int exponent = 0;
     if (std::isfinite(x) && x)
         x = std::frexp(x, &exponent);
-    return PyTuple::create(globalObject, { makeFloat(globalObject, x), jsNumber(exponent) });
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { makeFloat(globalObject, x), jsNumber(exponent) }));
 }
 
 static JSValue mathLdexp(JSGlobalObject* globalObject, JSValue first, JSValue second)
@@ -507,7 +507,7 @@ static JSValue mathLdexp(JSGlobalObject* globalObject, JSValue first, JSValue se
     }
     if (errno && mathRaiseForErrno(globalObject, scope, result))
         return { };
-    return makeFloat(globalObject, result);
+    RELEASE_AND_RETURN(scope, makeFloat(globalObject, result));
 }
 
 static JSValue mathModf(JSGlobalObject* globalObject, JSValue argument)
@@ -524,7 +524,7 @@ static JSValue mathModf(JSGlobalObject* globalObject, JSValue argument)
         fraction = whole = x;
     else
         fraction = std::modf(x, &whole);
-    return PyTuple::create(globalObject, { makeFloat(globalObject, fraction), makeFloat(globalObject, whole) });
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { makeFloat(globalObject, fraction), makeFloat(globalObject, whole) }));
 }
 
 static JSValue mathDegrees(JSGlobalObject* globalObject, JSValue argument)
@@ -532,7 +532,7 @@ static JSValue mathDegrees(JSGlobalObject* globalObject, JSValue argument)
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     MATH_GET_DOUBLE(x, argument);
-    return makeFloat(globalObject, x * (180.0 / mathPi));
+    RELEASE_AND_RETURN(scope, makeFloat(globalObject, x * (180.0 / mathPi)));
 }
 
 static JSValue mathRadians(JSGlobalObject* globalObject, JSValue argument)
@@ -540,7 +540,7 @@ static JSValue mathRadians(JSGlobalObject* globalObject, JSValue argument)
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     MATH_GET_DOUBLE(x, argument);
-    return makeFloat(globalObject, x * (mathPi / 180.0));
+    RELEASE_AND_RETURN(scope, makeFloat(globalObject, x * (mathPi / 180.0)));
 }
 
 template<bool (*predicate)(double)>
@@ -592,7 +592,7 @@ static JSValue mathNextAfter(JSGlobalObject* globalObject, JSValue first, JSValu
     MATH_GET_DOUBLE(x, first);
     MATH_GET_DOUBLE(y, second);
     if (!stepsValue || isNone(stepsValue))
-        return makeFloat(globalObject, std::nextafter(x, y));
+        RELEASE_AND_RETURN(scope, makeFloat(globalObject, std::nextafter(x, y)));
 
     JSValue index = toIndex(globalObject, stepsValue);
     RETURN_IF_EXCEPTION(scope, { });
@@ -600,9 +600,9 @@ static JSValue mathNextAfter(JSGlobalObject* globalObject, JSValue first, JSValu
         return raiseValueError(globalObject, scope, "steps must be a non-negative integer"_s);
     uint64_t steps = tryUInt64(index).value_or(std::numeric_limits<uint64_t>::max());
     if (!steps || std::isnan(x))
-        return makeFloat(globalObject, x);
+        RELEASE_AND_RETURN(scope, makeFloat(globalObject, x));
     if (std::isnan(y))
-        return makeFloat(globalObject, y);
+        RELEASE_AND_RETURN(scope, makeFloat(globalObject, y));
 
     // The floats in order are the integers in order, once those with the sign bit are taken for negative; both zeros are 0.
     static constexpr uint64_t signBit = 1ULL << 63;
@@ -614,11 +614,11 @@ static JSValue mathNextAfter(JSGlobalObject* globalObject, JSValue first, JSValu
     int64_t to = position(y);
     uint64_t distance = from < to ? static_cast<uint64_t>(to) - static_cast<uint64_t>(from) : static_cast<uint64_t>(from) - static_cast<uint64_t>(to);
     if (distance <= steps)
-        return makeFloat(globalObject, y);
+        RELEASE_AND_RETURN(scope, makeFloat(globalObject, y));
     int64_t reached = static_cast<int64_t>(from < to ? static_cast<uint64_t>(from) + steps : static_cast<uint64_t>(from) - steps);
     if (!reached)
-        return makeFloat(globalObject, std::copysign(0.0, x));
-    return makeFloat(globalObject, std::bit_cast<double>(reached < 0 ? signBit | static_cast<uint64_t>(-reached) : static_cast<uint64_t>(reached)));
+        RELEASE_AND_RETURN(scope, makeFloat(globalObject, std::copysign(0.0, x)));
+    RELEASE_AND_RETURN(scope, makeFloat(globalObject, std::bit_cast<double>(reached < 0 ? signBit | static_cast<uint64_t>(-reached) : static_cast<uint64_t>(reached))));
 }
 
 static JSValue mathUlp(JSGlobalObject* globalObject, JSValue argument)
@@ -627,14 +627,14 @@ static JSValue mathUlp(JSGlobalObject* globalObject, JSValue argument)
     auto scope = DECLARE_THROW_SCOPE(vm);
     MATH_GET_DOUBLE(x, argument);
     if (std::isnan(x))
-        return makeFloat(globalObject, x);
+        RELEASE_AND_RETURN(scope, makeFloat(globalObject, x));
     x = std::abs(x);
     if (std::isinf(x))
-        return makeFloat(globalObject, x);
+        RELEASE_AND_RETURN(scope, makeFloat(globalObject, x));
     double next = std::nextafter(x, mathInfinity);
     if (std::isinf(next))
-        return makeFloat(globalObject, x - std::nextafter(x, -mathInfinity));
-    return makeFloat(globalObject, next - x);
+        RELEASE_AND_RETURN(scope, makeFloat(globalObject, x - std::nextafter(x, -mathInfinity)));
+    RELEASE_AND_RETURN(scope, makeFloat(globalObject, next - x));
 }
 
 // ---- Logarithms ----
@@ -675,10 +675,10 @@ static JSValue mathLogOfInt(JSGlobalObject* globalObject, JSValue value, double 
         return raiseValueError(globalObject, scope, "expected a positive input"_s);
     double x = intToDouble(value);
     if (!std::isinf(x))
-        return makeFloat(globalObject, function(x));
+        RELEASE_AND_RETURN(scope, makeFloat(globalObject, function(x)));
     int64_t exponent;
     x = mathFrexpOfHugeInt(value, exponent);
-    return makeFloat(globalObject, std::fma(function(2.0), static_cast<double>(exponent), function(x)));
+    RELEASE_AND_RETURN(scope, makeFloat(globalObject, std::fma(function(2.0), static_cast<double>(exponent), function(x))));
 }
 
 static JSValue mathLogOf(JSGlobalObject* globalObject, JSValue argument, double (*function)(double))
@@ -704,7 +704,7 @@ static JSValue mathLog(JSGlobalObject* globalObject, const CallArgs& args)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!rejectKeywords(globalObject, "math.log"_s, args) || !checkPositional(globalObject, "log"_s, args, 1, 2))
+    if (failed(scope, rejectKeywords(globalObject, "math.log"_s, args)) || failed(scope, checkPositional(globalObject, "log"_s, args, 1, 2)))
         return { };
     JSValue numerator = mathLogOf(globalObject, args[0], ::log);
     RETURN_IF_EXCEPTION(scope, { });
@@ -816,7 +816,7 @@ static JSValue mathFsum(JSGlobalObject* globalObject, JSValue iterable)
     if (specialSum) {
         if (std::isnan(infinitySum))
             return raiseValueError(globalObject, scope, "-inf + inf in fsum"_s);
-        return makeFloat(globalObject, specialSum);
+        RELEASE_AND_RETURN(scope, makeFloat(globalObject, specialSum));
     }
 
     double hi = 0;
@@ -841,7 +841,7 @@ static JSValue mathFsum(JSGlobalObject* globalObject, JSValue iterable)
                 hi = x;
         }
     }
-    return makeFloat(globalObject, hi);
+    RELEASE_AND_RETURN(scope, makeFloat(globalObject, hi));
 }
 
 // sqrt(sum(x * x for x in values)), where `max` is the largest of the values, none of which is negative.
@@ -888,7 +888,7 @@ static JSValue mathHypot(JSGlobalObject* globalObject, const CallArgs& args)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!rejectKeywords(globalObject, "math.hypot"_s, args))
+    if (failed(scope, rejectKeywords(globalObject, "math.hypot"_s, args)))
         return { };
     Vector<double, 28> coordinates(args.size());
     double max = 0;
@@ -901,7 +901,7 @@ static JSValue mathHypot(JSGlobalObject* globalObject, const CallArgs& args)
         if (x > max)
             max = x;
     }
-    return makeFloat(globalObject, mathVectorNorm(coordinates.mutableSpan(), max, foundNaN));
+    RELEASE_AND_RETURN(scope, makeFloat(globalObject, mathVectorNorm(coordinates.mutableSpan(), max, foundNaN)));
 }
 
 static JSValue mathDist(JSGlobalObject* globalObject, JSValue first, JSValue second)
@@ -933,7 +933,7 @@ static JSValue mathDist(JSGlobalObject* globalObject, JSValue first, JSValue sec
         if (x > max)
             max = x;
     }
-    return makeFloat(globalObject, mathVectorNorm(differences.mutableSpan(), max, foundNaN));
+    RELEASE_AND_RETURN(scope, makeFloat(globalObject, mathVectorNorm(differences.mutableSpan(), max, foundNaN)));
 }
 
 // Ints are summed exactly and floats in triple length for as long as there is nothing else; which of the three ways a pair
@@ -1048,7 +1048,7 @@ static JSValue mathProd(JSGlobalObject* globalObject, JSValue iterable, JSValue 
             JSValue item = iterNext(globalObject, iterator);
             RETURN_IF_EXCEPTION(scope, { });
             if (!item)
-                return makeInt(globalObject, *product);
+                RELEASE_AND_RETURN(scope, makeInt(globalObject, *product));
             if (auto factor = isExactInt(item) ? tryInt64(item) : std::nullopt) {
                 int64_t next;
                 if (!__builtin_mul_overflow(*product, *factor, &next)) {
@@ -1067,7 +1067,7 @@ static JSValue mathProd(JSGlobalObject* globalObject, JSValue iterable, JSValue 
             JSValue item = iterNext(globalObject, iterator);
             RETURN_IF_EXCEPTION(scope, { });
             if (!item)
-                return makeFloat(globalObject, product);
+                RELEASE_AND_RETURN(scope, makeFloat(globalObject, product));
             if (mathIsExactFloat(globalObject, item)) {
                 product *= floatValue(item);
                 continue;
@@ -1105,7 +1105,7 @@ static JSValue mathGcdOfInts(JSGlobalObject* globalObject, JSValue a, JSValue b)
         auto x = tryUInt64(a);
         auto y = tryUInt64(b);
         if (x && y)
-            return makeInt(globalObject, std::gcd(*x, *y));
+            RELEASE_AND_RETURN(scope, makeInt(globalObject, std::gcd(*x, *y)));
         if (!intSign(b))
             return a;
         JSValue remainder = intModulo(globalObject, a, b);
@@ -1135,7 +1135,7 @@ static JSValue mathFoldInts(JSGlobalObject* globalObject, const CallArgs& args, 
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!rejectKeywords(globalObject, name, args))
+    if (failed(scope, rejectKeywords(globalObject, name, args)))
         return { };
     if (args.isEmpty())
         return jsNumber(identity);
@@ -1174,7 +1174,7 @@ static JSValue mathIsqrt(JSGlobalObject* globalObject, JSValue argument)
             --root;
         while (root < maxRoot && (root + 1) * (root + 1) <= *small)
             ++root;
-        return makeInt(globalObject, root);
+        RELEASE_AND_RETURN(scope, makeInt(globalObject, root));
     }
 
     // Newton's method on the leading bits of n, twice as many of them each time: `a` is within one of the root of
@@ -1212,7 +1212,7 @@ static JSValue mathProductOfOdds(JSGlobalObject* globalObject, uint64_t start, u
         uint64_t product = start;
         for (uint64_t factor = start + 2; factor < stop; factor += 2)
             product *= factor;
-        return makeInt(globalObject, product);
+        RELEASE_AND_RETURN(scope, makeInt(globalObject, product));
     }
     uint64_t middle = (start + count) | 1;
     JSValue left = mathProductOfOdds(globalObject, start, middle);
@@ -1238,7 +1238,7 @@ static JSValue mathFactorial(JSGlobalObject* globalObject, JSValue argument)
         uint64_t result = 1;
         for (uint64_t i = 2; i <= n; ++i)
             result *= i;
-        return makeInt(globalObject, result);
+        RELEASE_AND_RETURN(scope, makeInt(globalObject, result));
     }
 
     // n! is 2**(n - popcount(n)) times, for each i, the product of the odd numbers up to n >> i. `inner` is that product,
@@ -1279,7 +1279,7 @@ static JSValue mathPermutationsOrCombinations(JSGlobalObject* globalObject, JSVa
             if (combinations)
                 result /= i + 1;
         }
-        return makeInt(globalObject, result);
+        RELEASE_AND_RETURN(scope, makeInt(globalObject, result));
     }
 
     // P(n, k) = P(n, j) * P(n - j, k - j), and C(n, k) = C(n, j) * C(n - j, k - j) / C(k, j).
@@ -1324,7 +1324,7 @@ static JSValue mathPerm(JSGlobalObject* globalObject, JSValue n, JSValue k)
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!k || isNone(k))
         RELEASE_AND_RETURN(scope, mathFactorial(globalObject, n));
-    if (!mathGetCounts(globalObject, n, k))
+    if (failed(scope, mathGetCounts(globalObject, n, k)))
         return { };
     if (compareInts(n, k) < 0)
         return jsNumber(0);
@@ -1338,7 +1338,7 @@ static JSValue mathComb(JSGlobalObject* globalObject, JSValue n, JSValue k)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!mathGetCounts(globalObject, n, k))
+    if (failed(scope, mathGetCounts(globalObject, n, k)))
         return { };
     JSValue complement = intSubtract(globalObject, n, k);
     RETURN_IF_EXCEPTION(scope, { });
@@ -1492,7 +1492,7 @@ static JSValue statisticsNormalDistInvCdf(JSGlobalObject* globalObject, JSValue 
             5.3941960214247511077e+3, 6.8718700749205790830e+2, 4.2313330701600911252e+1, 1.0 });
         if (!denominator)
             return undefined();
-        return makeFloat(globalObject, mu + (numerator / denominator * sigma));
+        RELEASE_AND_RETURN(scope, makeFloat(globalObject, mu + (numerator / denominator * sigma)));
     }
 
     double r = q <= 0.0 ? p : 1.0 - p;
@@ -1519,7 +1519,7 @@ static JSValue statisticsNormalDistInvCdf(JSGlobalObject* globalObject, JSValue 
     double x = numerator / denominator;
     if (q < 0.0)
         x = -x;
-    return makeFloat(globalObject, mu + (x * sigma));
+    RELEASE_AND_RETURN(scope, makeFloat(globalObject, mu + (x * sigma)));
 }
 
 static constexpr NativeDef statisticsFunctions[] = {

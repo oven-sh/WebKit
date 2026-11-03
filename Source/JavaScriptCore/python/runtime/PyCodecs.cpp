@@ -323,7 +323,7 @@ public:
             return true;
         }
         scope.release();
-        if (!getBuffer(globalObject, value, m_buffer))
+        if (failed(scope, getBuffer(globalObject, value, m_buffer)))
             return false;
         m_globalObject = globalObject;
         m_span = m_buffer.span();
@@ -419,7 +419,7 @@ JSValue codecLookup(JSGlobalObject* globalObject, const String& encoding)
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     CodecRegistry registry;
-    if (!codecGetRegistry(globalObject, registry))
+    if (failed(scope, codecGetRegistry(globalObject, registry)))
         return { };
 
     // Whatever the case of the ASCII letters, and with hyphens for spaces: "US ASCII" is "us-ascii".
@@ -542,7 +542,7 @@ JSValue codecLookupError(JSGlobalObject* globalObject, const String& name)
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     CodecRegistry registry;
-    if (!codecGetRegistry(globalObject, registry))
+    if (failed(scope, codecGetRegistry(globalObject, registry)))
         return { };
     if (JSValue handler = registry.errorHandlers->get(internString(vm, name.isNull() ? String("strict"_s) : name)))
         return handler;
@@ -650,17 +650,17 @@ public:
         static constexpr auto message = "encoding error handler must return (str/bytes, int) tuple"_s;
         auto* tuple = PyTuple::tryFrom(result);
         if (!tuple || tuple->length() != 2)
-            return raiseTypeError(m_globalObject, scope, message);
+            RELEASE_AND_RETURN(scope, raiseTypeError(m_globalObject, scope, message));
         JSValue replacement = tuple->at(0);
         int64_t position = codecToSsize(m_globalObject, tuple->at(1));
         RETURN_IF_EXCEPTION(scope, { });
         if (!isStr(replacement) && !PyBytes::is(replacement))
-            return raiseTypeError(m_globalObject, scope, message);
+            RELEASE_AND_RETURN(scope, raiseTypeError(m_globalObject, scope, message));
         int64_t length = text.length();
         if (position < 0)
             position += length;
         if (position < 0 || position > length)
-            return raiseIndexError(m_globalObject, scope, "position "_s, position, " from error handler out of bounds"_s);
+            RELEASE_AND_RETURN(scope, raiseIndexError(m_globalObject, scope, "position "_s, position, " from error handler out of bounds"_s));
         newPosition = static_cast<unsigned>(position);
         return replacement;
     }
@@ -1077,7 +1077,7 @@ static JSValue codecSurrogatePassErrors(JSGlobalObject* globalObject, JSValue va
         PyBytes* replacement = makeBytes(globalObject, out);
         if (!replacement)
             return { };
-        return codecHandlerResult(globalObject, replacement, info.end);
+        RELEASE_AND_RETURN(scope, codecHandlerResult(globalObject, replacement, info.end));
     }
 
     // One surrogate. If more follow, the codec will be back.
@@ -1107,7 +1107,7 @@ static JSValue codecSurrogatePassErrors(JSGlobalObject* globalObject, JSValue va
     }
     if (!U_IS_SURROGATE(character))
         RELEASE_AND_RETURN(scope, codecRaiseAgain(globalObject, exception));
-    return codecHandlerResult(globalObject, makeStr(vm, stringFromCodePoint(character)), info.start + byteLength);
+    RELEASE_AND_RETURN(scope, codecHandlerResult(globalObject, makeStr(vm, stringFromCodePoint(character)), info.start + byteLength));
 }
 
 static JSValue codecSurrogateEscapeErrors(JSGlobalObject* globalObject, JSValue value)
@@ -1294,13 +1294,14 @@ static CodecUTF8Status codecScanUTF8(std::span<const uint8_t> s, char32_t& chara
 JSValue codecDecodeUTF8(JSGlobalObject* globalObject, std::span<const uint8_t> input, const String& errors, size_t* consumed)
 {
     VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     if (input.empty()) {
         if (consumed)
             *consumed = 0;
         return jsEmptyString(vm);
     }
     if (input.size() > String::MaxLength)
-        return codecRaiseMemoryError(globalObject);
+        RELEASE_AND_RETURN(scope, codecRaiseMemoryError(globalObject));
     // Most text is well formed.
     if (String text { byteCast<char8_t>(input) }; !text.isNull()) {
         if (consumed)
@@ -1355,7 +1356,7 @@ JSValue codecDecodeUTF8(JSGlobalObject* globalObject, std::span<const uint8_t> i
                 out.append(static_cast<char16_t>(0xdc00 + decoder.input()[position]));
             break;
         default:
-            if (!decoder.callHandler("utf-8"_s, reason, position, end, position))
+            if (failed(scope, decoder.callHandler("utf-8"_s, reason, position, end, position)))
                 return { };
             break;
         }
@@ -1451,8 +1452,10 @@ JSValue codecDecodeLatin1(JSGlobalObject* globalObject, std::span<const uint8_t>
 
 JSValue codecDecodeASCII(JSGlobalObject* globalObject, std::span<const uint8_t> input, const String& errors)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     if (charactersAreAllASCII(byteCast<Latin1Character>(input)))
-        return codecDecodeLatin1(globalObject, input);
+        RELEASE_AND_RETURN(scope, codecDecodeLatin1(globalObject, input));
 
     CodecDecoder decoder(globalObject, input, errors);
     StringBuilder& out = decoder.out;
@@ -1477,7 +1480,7 @@ JSValue codecDecodeASCII(JSGlobalObject* globalObject, std::span<const uint8_t> 
             ++position;
             break;
         default:
-            if (!decoder.callHandler("ascii"_s, "ordinal not in range(128)"_s, position, position + 1, position))
+            if (failed(scope, decoder.callHandler("ascii"_s, "ordinal not in range(128)"_s, position, position + 1, position)))
                 return { };
             break;
         }
@@ -1554,6 +1557,8 @@ JSValue codecEncodeUTF32(JSGlobalObject* globalObject, JSString* string, const S
 
 JSValue codecDecodeUTF16(JSGlobalObject* globalObject, std::span<const uint8_t> input, const String& errors, int* byteOrder, size_t* consumed)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     size_t position = 0;
     int order = byteOrder ? *byteOrder : 0;
     if (!order && input.size() >= 2) {
@@ -1571,7 +1576,7 @@ JSValue codecDecodeUTF16(JSGlobalObject* globalObject, std::span<const uint8_t> 
     if (position == input.size()) {
         if (consumed)
             *consumed = input.size();
-        return jsEmptyString(getVM(globalObject));
+        RELEASE_AND_RETURN(scope, jsEmptyString(getVM(globalObject)));
     }
     bool isLittleEndian = order < 0 || (!order && codecHostIsLittleEndian);
     ASCIILiteral encoding = isLittleEndian ? "utf-16-le"_s : "utf-16-be"_s;
@@ -1626,7 +1631,7 @@ JSValue codecDecodeUTF16(JSGlobalObject* globalObject, std::span<const uint8_t> 
             end = size;
         } else if (end == size && start == position && consumed)
             break; // Half of a pair: the rest is to come.
-        if (!decoder.callHandler(encoding, reason, start, end, position))
+        if (failed(scope, decoder.callHandler(encoding, reason, start, end, position)))
             return { };
     }
     if (consumed)
@@ -1636,6 +1641,8 @@ JSValue codecDecodeUTF16(JSGlobalObject* globalObject, std::span<const uint8_t> 
 
 JSValue codecDecodeUTF32(JSGlobalObject* globalObject, std::span<const uint8_t> input, const String& errors, int* byteOrder, size_t* consumed)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     size_t position = 0;
     int order = byteOrder ? *byteOrder : 0;
     if (!order && input.size() >= 4) {
@@ -1653,7 +1660,7 @@ JSValue codecDecodeUTF32(JSGlobalObject* globalObject, std::span<const uint8_t> 
     if (position == input.size()) {
         if (consumed)
             *consumed = input.size();
-        return jsEmptyString(getVM(globalObject));
+        RELEASE_AND_RETURN(scope, jsEmptyString(getVM(globalObject)));
     }
     bool isLittleEndian = order < 0 || (!order && codecHostIsLittleEndian);
     ASCIILiteral encoding = isLittleEndian ? "utf-32-le"_s : "utf-32-be"_s;
@@ -1687,7 +1694,7 @@ JSValue codecDecodeUTF32(JSGlobalObject* globalObject, std::span<const uint8_t> 
             reason = "truncated data"_s;
             end = size;
         }
-        if (!decoder.callHandler(encoding, reason, position, end, position))
+        if (failed(scope, decoder.callHandler(encoding, reason, position, end, position)))
             return { };
     }
     if (consumed)
@@ -1728,10 +1735,12 @@ static bool codecUTF7EncodesDirectly(char32_t c)
 
 JSValue codecDecodeUTF7(JSGlobalObject* globalObject, std::span<const uint8_t> input, const String& errors, size_t* consumed)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     if (input.empty()) {
         if (consumed)
             *consumed = 0;
-        return jsEmptyString(getVM(globalObject));
+        RELEASE_AND_RETURN(scope, jsEmptyString(getVM(globalObject)));
     }
 
     CodecDecoder decoder(globalObject, input, errors);
@@ -1820,7 +1829,7 @@ JSValue codecDecodeUTF7(JSGlobalObject* globalObject, std::span<const uint8_t> i
                 ++s;
                 reason = "unexpected special character"_s;
             }
-            if (!decoder.callHandler("utf7"_s, reason, start, s, s))
+            if (failed(scope, decoder.callHandler("utf7"_s, reason, start, s, s)))
                 return { };
         }
 
@@ -1830,7 +1839,7 @@ JSValue codecDecodeUTF7(JSGlobalObject* globalObject, std::span<const uint8_t> i
         inShift = false;
         if (!surrogate && base64Bits < 6 && !(base64Bits > 0 && base64Buffer))
             break;
-        if (!decoder.callHandler("utf7"_s, "unterminated shift sequence"_s, start, decoder.input().size(), s))
+        if (failed(scope, decoder.callHandler("utf7"_s, "unterminated shift sequence"_s, start, decoder.input().size(), s)))
             return { };
         if (s >= decoder.input().size())
             break;
@@ -1946,10 +1955,12 @@ static CodecEscapeOutcome codecReadHexDigits(std::span<const uint8_t> in, size_t
 
 JSValue codecDecodeUnicodeEscape(JSGlobalObject* globalObject, std::span<const uint8_t> input, const String& errors, size_t* consumed)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     if (input.empty()) {
         if (consumed)
             *consumed = 0;
-        return jsEmptyString(getVM(globalObject));
+        RELEASE_AND_RETURN(scope, jsEmptyString(getVM(globalObject)));
     }
 
     if (consumed)
@@ -2086,7 +2097,7 @@ JSValue codecDecodeUnicodeEscape(JSGlobalObject* globalObject, std::span<const u
             *consumed = start;
             break;
         }
-        if (!decoder.callHandler("unicodeescape"_s, message, start, s, s))
+        if (failed(scope, decoder.callHandler("unicodeescape"_s, message, start, s, s)))
             return { };
     }
     if (firstInvalidEscape != -1 && !codecWarnInvalidEscape(globalObject, firstInvalidEscape, ""_s))
@@ -2125,10 +2136,12 @@ JSValue codecEncodeUnicodeEscape(JSGlobalObject* globalObject, JSString* string)
 
 JSValue codecDecodeRawUnicodeEscape(JSGlobalObject* globalObject, std::span<const uint8_t> input, const String& errors, size_t* consumed)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     if (input.empty()) {
         if (consumed)
             *consumed = 0;
-        return jsEmptyString(getVM(globalObject));
+        RELEASE_AND_RETURN(scope, jsEmptyString(getVM(globalObject)));
     }
 
     if (consumed)
@@ -2172,7 +2185,7 @@ JSValue codecDecodeRawUnicodeEscape(JSGlobalObject* globalObject, std::span<cons
             *consumed = start;
             break;
         }
-        if (!decoder.callHandler("rawunicodeescape"_s, message, start, s, s))
+        if (failed(scope, decoder.callHandler("rawunicodeescape"_s, message, start, s, s)))
             return { };
     }
     return decoder.finish();
@@ -2238,7 +2251,7 @@ JSValue codecDecodeCharmap(JSGlobalObject* globalObject, std::span<const uint8_t
                 ++position;
                 continue;
             }
-            if (!decoder.callHandler("charmap"_s, reason, position, position + 1, position))
+            if (failed(scope, decoder.callHandler("charmap"_s, reason, position, position + 1, position)))
                 return { };
         }
         RELEASE_AND_RETURN(scope, decoder.finish());
@@ -2270,7 +2283,7 @@ JSValue codecDecodeCharmap(JSGlobalObject* globalObject, std::span<const uint8_t
             ++position;
             continue;
         }
-        if (!decoder.callHandler("charmap"_s, reason, position, position + 1, position))
+        if (failed(scope, decoder.callHandler("charmap"_s, reason, position, position + 1, position)))
             return { };
     }
     RELEASE_AND_RETURN(scope, decoder.finish());
@@ -2480,7 +2493,7 @@ JSValue strEncode(JSGlobalObject* globalObject, JSString* string, JSString* enco
     auto scope = DECLARE_THROW_SCOPE(vm);
     String encoding;
     String errors;
-    if (!codecNameText(globalObject, encodingName, encoding) || !codecNameText(globalObject, errorsName, errors))
+    if (failed(scope, codecNameText(globalObject, encodingName, encoding)) || failed(scope, codecNameText(globalObject, errorsName, errors)))
         return { };
     if (!codecCheckNamesInDevelopmentMode(globalObject, encoding, errors))
         return { };
@@ -2521,7 +2534,7 @@ JSValue strEncode(JSGlobalObject* globalObject, JSString* string, JSString* enco
         RETURN_IF_EXCEPTION(scope, { });
         if (!goesOn)
             return { };
-        return PyBytes::create(globalObject, byteArray->span());
+        RELEASE_AND_RETURN(scope, PyBytes::create(globalObject, byteArray->span()));
     }
     return raiseTypeError(globalObject, scope, '\'', encoding, "' encoder returned '"_s, typeName(globalObject, result), "' instead of 'bytes'; use codecs.encode() to encode to arbitrary types"_s);
 }
@@ -2532,7 +2545,7 @@ JSValue bytesDecode(JSGlobalObject* globalObject, JSValue bytesLike, JSString* e
     auto scope = DECLARE_THROW_SCOPE(vm);
     String encoding;
     String errors;
-    if (!codecNameText(globalObject, encodingName, encoding) || !codecNameText(globalObject, errorsName, errors))
+    if (failed(scope, codecNameText(globalObject, encodingName, encoding)) || failed(scope, codecNameText(globalObject, errorsName, errors)))
         return { };
     CodecBuffer buffer;
     if (!buffer.initialize(globalObject, bytesLike, false))
@@ -2622,7 +2635,7 @@ static JSValue codecModuleRegister(JSGlobalObject* globalObject, JSValue searchF
     if (!isCallable(globalObject, searchFunction))
         return raiseTypeError(globalObject, scope, "argument must be callable"_s);
     CodecRegistry registry;
-    if (!codecGetRegistry(globalObject, registry) || !codecImportEncodings(globalObject, registry))
+    if (failed(scope, codecGetRegistry(globalObject, registry)) || !codecImportEncodings(globalObject, registry))
         return { };
     listAppend(globalObject, registry.searchPath, searchFunction);
     RETURN_IF_EXCEPTION(scope, { });
@@ -2634,7 +2647,7 @@ static JSValue codecModuleUnregister(JSGlobalObject* globalObject, JSValue searc
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     CodecRegistry registry;
-    if (!codecGetRegistry(globalObject, registry))
+    if (failed(scope, codecGetRegistry(globalObject, registry)))
         return { };
     for (unsigned i = 0; i < listLength(registry.searchPath); ++i) {
         if (!isIdentical(listGet(registry.searchPath, i), searchFunction))
@@ -2649,23 +2662,27 @@ static JSValue codecModuleUnregister(JSGlobalObject* globalObject, JSValue searc
 
 static JSValue codecModuleLookup(JSGlobalObject* globalObject, JSValue encodingValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     String encoding;
-    if (!codecStrArgument(globalObject, "lookup"_s, "argument"_s, encodingValue, encoding))
+    if (failed(scope, codecStrArgument(globalObject, "lookup"_s, "argument"_s, encodingValue, encoding)))
         return { };
-    return codecLookup(globalObject, encoding);
+    RELEASE_AND_RETURN(scope, codecLookup(globalObject, encoding));
 }
 
 template<bool isEncoder>
 static JSValue codecModuleTranscode(JSGlobalObject* globalObject, JSValue object, JSValue encodingValue, JSValue errorsValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     ASCIILiteral function = isEncoder ? "encode"_s : "decode"_s;
     String encoding = "utf-8"_s;
     String errors;
-    if (encodingValue && !codecStrArgument(globalObject, function, "argument 'encoding'"_s, encodingValue, encoding))
+    if (encodingValue && failed(scope, codecStrArgument(globalObject, function, "argument 'encoding'"_s, encodingValue, encoding)))
         return { };
-    if (errorsValue && !codecStrArgument(globalObject, function, "argument 'errors'"_s, errorsValue, errors))
+    if (errorsValue && failed(scope, codecStrArgument(globalObject, function, "argument 'errors'"_s, errorsValue, errors)))
         return { };
-    return isEncoder ? codecEncodeObject(globalObject, object, encoding, errors) : codecDecodeObject(globalObject, object, encoding, errors);
+    RELEASE_AND_RETURN(scope, isEncoder ? codecEncodeObject(globalObject, object, encoding, errors) : codecDecodeObject(globalObject, object, encoding, errors));
 }
 
 static JSValue codecModuleRegisterError(JSGlobalObject* globalObject, JSValue nameValue, JSValue handler)
@@ -2673,12 +2690,12 @@ static JSValue codecModuleRegisterError(JSGlobalObject* globalObject, JSValue na
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     String name;
-    if (!codecStrArgument(globalObject, "register_error"_s, "argument 1"_s, nameValue, name))
+    if (failed(scope, codecStrArgument(globalObject, "register_error"_s, "argument 1"_s, nameValue, name)))
         return { };
     if (!isCallable(globalObject, handler))
         return raiseTypeError(globalObject, scope, "handler must be callable"_s);
     CodecRegistry registry;
-    if (!codecGetRegistry(globalObject, registry))
+    if (failed(scope, codecGetRegistry(globalObject, registry)))
         return { };
     registry.errorHandlers->set(vm, internString(vm, name), handler);
     return jsUndefined();
@@ -2705,24 +2722,26 @@ static JSValue codecModuleUnregisterError(JSGlobalObject* globalObject, JSValue 
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     String name;
-    if (!codecStrArgument(globalObject, "_unregister_error"_s, "argument"_s, nameValue, name))
+    if (failed(scope, codecStrArgument(globalObject, "_unregister_error"_s, "argument"_s, nameValue, name)))
         return { };
     for (ASCIILiteral builtin : codecBuiltinHandlerNames) {
         if (name == builtin)
             return raiseValueError(globalObject, scope, "cannot un-register built-in error handler '"_s, name, '\'');
     }
     CodecRegistry registry;
-    if (!codecGetRegistry(globalObject, registry))
+    if (failed(scope, codecGetRegistry(globalObject, registry)))
         return { };
     return jsBoolean(registry.errorHandlers->remove(vm, internString(vm, name)));
 }
 
 static JSValue codecModuleLookupError(JSGlobalObject* globalObject, JSValue nameValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     String name;
-    if (!codecStrArgument(globalObject, "lookup_error"_s, "argument"_s, nameValue, name))
+    if (failed(scope, codecStrArgument(globalObject, "lookup_error"_s, "argument"_s, nameValue, name)))
         return { };
-    return codecLookupError(globalObject, name);
+    RELEASE_AND_RETURN(scope, codecLookupError(globalObject, name));
 }
 
 static JSValue codecModuleNormalizeEncoding(JSGlobalObject* globalObject, JSValue encodingValue)
@@ -2748,7 +2767,7 @@ static JSValue codecRunDecoder(JSGlobalObject* globalObject, ASCIILiteral functi
     if (!buffer.initialize(globalObject, data, acceptsStr))
         return { };
     String errors;
-    if (!codecErrorsArgument(globalObject, function, errorsValue, errors))
+    if (failed(scope, codecErrorsArgument(globalObject, function, errorsValue, errors)))
         return { };
     if (finalValue) {
         isFinal = isTrue(globalObject, finalValue);
@@ -2757,7 +2776,7 @@ static JSValue codecRunDecoder(JSGlobalObject* globalObject, ASCIILiteral functi
     size_t consumed = buffer.span().size();
     JSValue decoded = decode(buffer.span(), errors, isFinal ? nullptr : &consumed);
     RETURN_IF_EXCEPTION(scope, { });
-    return PyTuple::create(globalObject, { decoded, jsNumber(consumed) });
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { decoded, jsNumber(consumed) }));
 }
 
 // (decode(data, errors, byteorder, final), how much of the data it took, the byte order found)
@@ -2770,7 +2789,7 @@ static JSValue codecRunDecoderWithByteOrder(JSGlobalObject* globalObject, ASCIIL
     if (!buffer.initialize(globalObject, data, false))
         return { };
     String errors;
-    if (!codecErrorsArgument(globalObject, function, errorsValue, errors))
+    if (failed(scope, codecErrorsArgument(globalObject, function, errorsValue, errors)))
         return { };
     int byteOrder = 0;
     if (byteOrderValue) {
@@ -2785,7 +2804,7 @@ static JSValue codecRunDecoderWithByteOrder(JSGlobalObject* globalObject, ASCIIL
     size_t consumed = buffer.span().size();
     JSValue decoded = decode(globalObject, buffer.span(), errors, &byteOrder, isFinal ? nullptr : &consumed);
     RETURN_IF_EXCEPTION(scope, { });
-    return PyTuple::create(globalObject, { decoded, jsNumber(consumed), jsNumber(byteOrder) });
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { decoded, jsNumber(consumed), jsNumber(byteOrder) }));
 }
 
 // (encode(str, errors), len(str))
@@ -2797,14 +2816,14 @@ static JSValue codecRunEncoder(JSGlobalObject* globalObject, ASCIILiteral functi
     if (!isStr(value))
         return raiseTypeError(globalObject, scope, function, "() argument 1 must be str, not "_s, codecArgumentTypeName(globalObject, value));
     String errors;
-    if (!codecErrorsArgument(globalObject, function, errorsValue, errors))
+    if (failed(scope, codecErrorsArgument(globalObject, function, errorsValue, errors)))
         return { };
     JSString* string = strValue(value);
     JSValue encoded = encode(string, errors);
     RETURN_IF_EXCEPTION(scope, { });
     unsigned length = strLength(globalObject, string);
     RETURN_IF_EXCEPTION(scope, { });
-    return PyTuple::create(globalObject, { encoded, jsNumber(length) });
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { encoded, jsNumber(length) }));
 }
 
 #define CODEC_DEFINE_STATEFUL_DECODER(function, name, acceptsStr, isFinal, expression) \
@@ -3079,7 +3098,7 @@ static JSValue codecModuleEscapeEncode(JSGlobalObject* globalObject, JSValue dat
     if (!bytes)
         return raiseTypeError(globalObject, scope, "escape_encode() argument 1 must be bytes, not "_s, codecArgumentTypeName(globalObject, data));
     String errors;
-    if (!codecErrorsArgument(globalObject, "escape_encode"_s, errorsValue, errors))
+    if (failed(scope, codecErrorsArgument(globalObject, "escape_encode"_s, errorsValue, errors)))
         return { };
     ByteBuilder out;
     out.reserveInitialCapacity(bytes->length());
@@ -3105,7 +3124,7 @@ static JSValue codecModuleEscapeEncode(JSGlobalObject* globalObject, JSValue dat
     PyBytes* result = makeBytes(globalObject, out);
     if (!result)
         return { };
-    return PyTuple::create(globalObject, { result, jsNumber(bytes->length()) });
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { result, jsNumber(bytes->length()) }));
 }
 
 static constexpr NativeDef codecModuleFunctions[] = {

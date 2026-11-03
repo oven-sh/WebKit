@@ -195,7 +195,7 @@ static JSValue abcInit(JSGlobalObject* globalObject, JSValue self)
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyRecord* state = abcState(globalObject);
-    if (!abcComputeAbstractMethods(globalObject, self))
+    if (failed(scope, abcComputeAbstractMethods(globalObject, self)))
         return { };
     PyRecord* data = PyRecord::create(globalObject, PyType::from(state->get(AbcStateDataType)), AbcDataFieldCount);
     data->number = state->number;
@@ -416,7 +416,7 @@ static JSValue abcGetDump(JSGlobalObject* globalObject, JSValue self)
     RETURN_IF_EXCEPTION(scope, { });
     JSValue negativeCache = abcDump(globalObject, impl, AbcDataNegativeCache);
     RETURN_IF_EXCEPTION(scope, { });
-    return PyTuple::create(globalObject, { registry, cache, negativeCache, makeInt(globalObject, impl->number) });
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { registry, cache, negativeCache, makeInt(globalObject, impl->number) }));
 }
 
 static JSValue abcGetCacheToken(JSGlobalObject* globalObject) { return makeInt(globalObject, abcState(globalObject)->number); }

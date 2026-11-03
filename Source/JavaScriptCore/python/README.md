@@ -147,21 +147,53 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
 - **An object registers when it is made**, if its class has a `__del__` then. A class that gets one later, by assignment to the
   attribute or to `__bases__`, has the heap searched for its instances (`registerInstancesForFinalization`), once; an object
   that is given such a class by assignment to `__class__` registers then.
-- **An object is finalized before what it refers to**, as with reference counts: a `__del__` that writes to `self.file` finds the
-  file open. The collection ranks the unreachable objects that have finalizers by how they reach one another through what else is
-  unreachable (`PyFinalizationOrder.cpp`), and queues those that no other reaches. The rest wait for the collection that finds
-  those gone, so a finalizer that resurrects its object also keeps what the object refers to from being finalized. Objects in a
-  cycle are finalized together, in no order, as in CPython. A structure more than a few levels deep is finalized in one round,
-  from the top down, instead of a collection per level.
-- **Weak references** are cleared when the collection that finds the referent dead ends, before any finalizer or callback
-  runs; callbacks are queued like finalizers.
-- **At exit**, if there is anything left to finalize, `sys.modules` is emptied as CPython empties it, and collections find and
-  order what only the modules held. What is then still held (by JS, by a frame on the stack) is finalized in the order it was made.
+- **Finalizers run in the order of reference counts.** A `__del__` that writes to `self.file` finds the file open, and the items of
+  a list that is dropped go from the last to the first. When marking has converged, the dead cells are taken for a graph and let go
+  of as reference counts would have let go of them (`PyFinalizationOrder.cpp`): first those that nothing dead refers to, each of
+  which lets go of what it refers to in CPython's order, depth first. That gives the order of the objects with finalizers,
+  and leaves over what reference counts would not have freed: the cycles and what hangs off them.
+  - Only those are queued that no other object with a finalizer reaches. The rest wait for the collection that finds those gone, so
+    a finalizer that resurrects its object also keeps what the object refers to from being finalized. A structure more than a few
+    levels deep is finalized in one round, from the top down, instead of a collection per level.
+  - What is in a cycle or hangs off one comes after the rest and is finalized in one go, in the order in which the objects were
+    made, whatever refers to what: that is what CPython's collector does with it.
+  - A collection that the program waits for (`gc.collect()`, the exit, a thread that is idle: `Runtime::collectAsAskedFor`) looks at
+    all that died in it, about 120 ns for a dead cell. One of the engine's own looks only at what the objects with finalizers
+    reach, and at nothing if there is but one: it does not see the list that held them, and takes siblings in the order they were made.
+  - Some objects are several cells here that refer to one another: a generator and its frame object, a generator function and the
+    function that runs the body, an object of a module written in C++ and its guard. Those are no cycles
+    (`wholeThatPartRefersTo`, `TypeFlag::Internal`). A cache that would make one is to be weak.
+  - None of this can free or lose anything: the graph marks nothing and decides only about order. Every unmarked object with a
+    finalizer ends up queued and marked, or is reached by one that is and stays registered. Dead cells are read only between the
+    end of marking and the first sweep, with the world stopped, when they are still whole.
+- **Weak references** are cleared when the collection that finds the referent dead ends, before any callback runs; callbacks are
+  queued like finalizers, and come first. For an object with a finalizer that is the collection after the one that queued it: first
+  `__del__`, then the weak references, as with reference counts. For what is in a cycle or hangs off one CPython has it the other
+  way round, and so it is here: the weak references *with callbacks* are cleared before the finalizers run, and stay dead
+  if a finalizer brings the object back; those without are cleared afterwards. A callback is called only if the weak reference
+  is itself reachable.
+- **At exit**, when the threads are joined and before `atexit`'s callbacks, what is unreachable by then and reference counts would
+  have freed is finalized: in CPython it would have been long ago. After the callbacks, if there is anything left to finalize,
+  `sys.modules` is emptied as CPython empties it, and collections find and order what only the modules held. What is then still
+  held (by JS, by a frame on the stack) is finalized in the order it was made.
 - **`gc.collect()`** collects, serves the queue, and repeats until nothing is left to do, so `del x; gc.collect()` does what it does in
   CPython. For that to be true the stack scan must not see stale values: before it, the temporaries of Python frames that liveness
   analysis says are dead are emptied (`clearDeadTemporaries`). Variables are not: an object lives while a variable names it.
   And the frames of C++ between the Python code and the collector must not lie over what earlier calls left on the stack, for what
   a frame does not write it still holds: the stack below is wiped before the first of them (`NativeFlag::OnWipedStack`).
+- **What `gc.collect()` returns** is what CPython's would: how many objects it found that reference counts would not have freed.
+  Of what is left over in the graph above, the cells are counted that are objects which CPython's collector keeps track of
+  (`isTracked` in `PyGC.cpp`: tables made from CPython). `DEBUG_SAVEALL` marks them instead and they go to `gc.garbage`. The first
+  call in a program also finds the cycles that have piled up since it started, which CPython's own collections would have taken.
+- **What the module `gc` hands out** (`get_objects`, `get_referrers`, `get_referents`, `garbage`) is decided in one place, at the top
+  of `PyGC.cpp`: a cell is given to the program if it is an object of Python of this realm, of a kind that programs see, whole (no
+  tuple that is still being filled), and not a part of something else (the table of a dict, the namespace of a class, the values
+  of a frame, what a module written in C++ keeps under a hidden key or in a slot of the runtime). A reference held by a part counts as
+  held by its owner.
+- **The engine collects when it sees fit.** `gc.disable()`, `set_threshold()` and `freeze()` do not change that: the collector is the
+  only thing that frees memory. A collection of the engine's own is told to `gc.callbacks` and counted in `get_stats()` at the next
+  safe point: "start", then what it found (callbacks of weak references, finalizers), then "stop"; a collection of the young
+  generation as generation 0, a full one as generation 2. Not while the collector is "disabled".
 - **A thread that waits collects.** A program may wait for what only a finalizer brings about: it has dropped a response without
   closing it, and waits for a server in another thread that waits for the end of the connection. A thread that has waited for
   another for 50 ms collects and finalizes (`Threads::collectWhileIdle`), then less and less often; so does one that would
@@ -178,8 +210,8 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
 ## Imports
 
 The import system is `importlib`, unchanged. `importlib._bootstrap` is loaded from the standard library when the interpreter starts
-(`startImportSystem`) and imports the rest itself, then `site`. `import` in C++ is what it is in CPython: a look in `sys.modules`,
-and `_find_and_load` if that fails.
+(`startImportSystem`) and imports the rest itself; `zipimport` follows, whose hook is the first of `sys.path_hooks`, then `site`.
+`import` in C++ is what it is in CPython: a look in `sys.modules`, and `_find_and_load` if that fails.
 
 **Frozen modules** are the ones that are frozen in CPython (`runtime/PyImp.cpp` has the table: the import system, `os`, `site`,
 `codecs`, `io`, `abc`, `runpy` and what else every start needs, and `__hello__` and its like for tests). `FrozenImporter` finds them
@@ -395,6 +427,13 @@ Everything is tested through Bun, against CPython 3.15 as the oracle. The tests 
   without a CPython; `differential/tools/run.py` runs them by hand, shows differences legibly, and asks a CPython again
   (`--update`). `expected-failures.json` lists what is known to differ, and why; a listed script that passes is a failure.
   `differential/command-line/` does the same for about 130 command lines of `python3`.
+- **The grid** (`differential/extra/grid/grid.py`): every method of the built-in types and of many others written in C++, every operator, the
+  built-in functions, formats, codecs, `struct`, `math`, attributes, exceptions, calls, special methods that misbehave, containers that change
+  under an iteration, arithmetic around the sizes where the representation of an int changes: 4.3 million calls on ordinary and borderline
+  arguments, each of which has to come out as in CPython, message included. What cannot, by design, is left out there with a comment saying
+  why. `differential/extra/grid_*.py` are samples of it (each Nth call, digests of the outcomes) small enough for a debug build;
+  `tools/grid_compare.py` and `tools/grid_classes.py` make all the calls under both interpreters, in half a minute with a release build, and show
+  what differs, call by call or put in classes; `tools/grid_scripts.py` writes the samples again after a change to the grid.
 - **Bun's own tests**: `*.test.ts` (`cli.test.ts` is the command line).
 - **CPython's test suite** (`Lib/test`, which is not in the executable: point `BUN_PYTHON_STDLIB` at a checkout's `Lib`).
   `python3 -m test test_x` is regrtest unchanged, `-j N` with worker processes included. Tests that need `_testcapi`,

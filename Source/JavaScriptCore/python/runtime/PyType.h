@@ -31,8 +31,11 @@ enum class TypeFlag : uint32_t {
     OwnLayout = 1 << 10, // The instances are laid out differently from those of the base, so no class can derive from this and from another such.
     Mutable = 1 << 11, // A built-in type whose attributes can be set all the same.
     // The instances are the runtime's own: each is a part of the one object that refers to it (it may refer back), and no program
-    // gets to see it, or the type. See isObjectOfPython() in PyGC.cpp and refersToNothingOfItsOwn().
+    // gets to see it, or the type. See isObjectOfPython() in PyGC.cpp and PyFinalizationOrder.cpp.
     Internal = 1 << 12,
+    // The instances are records (PyRecord), and the lists, tuples, dicts and sets in their fields are their memory: parts of them,
+    // which no program gets to see. See forEachPartInFields() in PyGC.cpp.
+    OwnsContainers = 1 << 13,
 
     // Derives from:
     IntSubclass = 1 << 16,
@@ -47,7 +50,7 @@ enum class TypeFlag : uint32_t {
 };
 
 static constexpr OptionSet<TypeFlag> inheritedTypeFlags {
-    TypeFlag::HasDict, TypeFlag::HasWeakref, TypeFlag::Sequence, TypeFlag::Mapping, TypeFlag::MatchSelf,
+    TypeFlag::HasDict, TypeFlag::HasWeakref, TypeFlag::Sequence, TypeFlag::Mapping, TypeFlag::MatchSelf, TypeFlag::OwnsContainers,
     TypeFlag::IntSubclass, TypeFlag::FloatSubclass, TypeFlag::StrSubclass, TypeFlag::BytesSubclass, TypeFlag::ListSubclass,
     TypeFlag::TupleSubclass, TypeFlag::DictSubclass, TypeFlag::TypeSubclass, TypeFlag::ExceptionSubclass
 };

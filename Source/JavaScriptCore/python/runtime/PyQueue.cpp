@@ -81,7 +81,7 @@ static JSValue simpleQueueGet(JSGlobalObject* globalObject, JSValue self, JSValu
     if (blocks) {
         timeout = -1;
         if (timeoutValue && !isNone(timeoutValue)) {
-            if (!nanosecondsFromSeconds(globalObject, timeoutValue, TimeRounding::Ceiling, timeout))
+            if (failed(scope, nanosecondsFromSeconds(globalObject, timeoutValue, TimeRounding::Ceiling, timeout)))
                 return { };
             if (timeout < 0)
                 return raiseValueError(globalObject, scope, "'timeout' must be a non-negative number"_s);
@@ -129,7 +129,7 @@ static constexpr NativeDef simpleQueueMethods[] = {
     PY_CLASSMETHOD("__class_getitem__", classGetItem, "($type, object, /)"),
 };
 
-static constexpr TypeDef simpleQueueTypeDef { "_queue.SimpleQueue"_s, { TypeFlag::Base, TypeFlag::OwnLayout, TypeFlag::HasWeakref }, simpleQueueMethods, { }, { } };
+static constexpr TypeDef simpleQueueTypeDef { "_queue.SimpleQueue"_s, { TypeFlag::Base, TypeFlag::OwnLayout, TypeFlag::HasWeakref, TypeFlag::OwnsContainers }, simpleQueueMethods, { }, { } };
 
 void initializeQueueModule(JSGlobalObject* globalObject, PyModule* module)
 {

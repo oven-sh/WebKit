@@ -129,7 +129,7 @@ static JSValue unicodeDataDecimal(JSGlobalObject* globalObject, JSValue characte
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     char32_t c;
-    if (!unicodeDataCharacter(globalObject, "decimal"_s, "argument 1"_s, character, c))
+    if (failed(scope, unicodeDataCharacter(globalObject, "decimal"_s, "argument 1"_s, character, c)))
         return { };
     int result = u_charDigitValue(static_cast<UChar32>(c));
     if constexpr (version == UnicodeVersion::Old) {
@@ -153,7 +153,7 @@ static JSValue unicodeDataDigit(JSGlobalObject* globalObject, JSValue character,
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     char32_t c;
-    if (!unicodeDataCharacter(globalObject, "digit"_s, "argument 1"_s, character, c))
+    if (failed(scope, unicodeDataCharacter(globalObject, "digit"_s, "argument 1"_s, character, c)))
         return { };
     int type = u_getIntPropertyValue(static_cast<UChar32>(c), UCHAR_NUMERIC_TYPE);
     if (auto digit = unicodeDataFind(unicodeNewDigits, c)) {
@@ -172,7 +172,7 @@ static JSValue unicodeDataNumeric(JSGlobalObject* globalObject, JSValue characte
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     char32_t c;
-    if (!unicodeDataCharacter(globalObject, "numeric"_s, "argument 1"_s, character, c))
+    if (failed(scope, unicodeDataCharacter(globalObject, "numeric"_s, "argument 1"_s, character, c)))
         return { };
     double result = u_getNumericValue(static_cast<UChar32>(c));
     bool isNumeric = result != U_NO_NUMERIC_VALUE;
@@ -188,7 +188,7 @@ static JSValue unicodeDataNumeric(JSGlobalObject* globalObject, JSValue characte
         result = *current;
     }
     if (isNumeric)
-        return makeFloat(globalObject, result);
+        RELEASE_AND_RETURN(scope, makeFloat(globalObject, result));
     if (defaultValue)
         return defaultValue;
     return raiseValueError(globalObject, scope, "not a numeric character"_s);
@@ -212,15 +212,17 @@ static int unicodeDataCategoryOf(char32_t c)
 template<UnicodeVersion version>
 static JSValue unicodeDataCategory(JSGlobalObject* globalObject, JSValue character)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     // In the order of UCharCategory.
     static constexpr ASCIILiteral names[] = {
         "Cn"_s, "Lu"_s, "Ll"_s, "Lt"_s, "Lm"_s, "Lo"_s, "Mn"_s, "Me"_s, "Mc"_s, "Nd"_s, "Nl"_s, "No"_s, "Zs"_s, "Zl"_s, "Zp"_s,
         "Cc"_s, "Cf"_s, "Co"_s, "Cs"_s, "Pd"_s, "Ps"_s, "Pe"_s, "Pc"_s, "Po"_s, "Sm"_s, "Sc"_s, "Sk"_s, "So"_s, "Pi"_s, "Pf"_s,
     };
     char32_t c;
-    if (!unicodeDataCharacter(globalObject, "category"_s, "argument"_s, character, c))
+    if (failed(scope, unicodeDataCharacter(globalObject, "category"_s, "argument"_s, character, c)))
         return { };
-    return makeStr(getVM(globalObject), unicodeDataNameOf(names, unicodeDataCategoryOf<version>(c)));
+    RELEASE_AND_RETURN(scope, makeStr(getVM(globalObject), unicodeDataNameOf(names, unicodeDataCategoryOf<version>(c))));
 }
 
 template<UnicodeVersion version>
@@ -232,8 +234,9 @@ static JSValue unicodeDataBidirectional(JSGlobalObject* globalObject, JSValue ch
         "PDF"_s, "NSM"_s, "BN"_s, "FSI"_s, "LRI"_s, "RLI"_s, "PDI"_s,
     };
     VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     char32_t c;
-    if (!unicodeDataCharacter(globalObject, "bidirectional"_s, "argument"_s, character, c))
+    if (failed(scope, unicodeDataCharacter(globalObject, "bidirectional"_s, "argument"_s, character, c)))
         return { };
     int direction = u_charDirection(static_cast<UChar32>(c));
     if constexpr (version == UnicodeVersion::Old) {
@@ -250,8 +253,10 @@ static JSValue unicodeDataBidirectional(JSGlobalObject* globalObject, JSValue ch
 template<UnicodeVersion version>
 static JSValue unicodeDataCombining(JSGlobalObject* globalObject, JSValue character)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     char32_t c;
-    if (!unicodeDataCharacter(globalObject, "combining"_s, "argument"_s, character, c))
+    if (failed(scope, unicodeDataCharacter(globalObject, "combining"_s, "argument"_s, character, c)))
         return { };
     if (version == UnicodeVersion::Old)
         return jsNumber(unicodeDataIsNew(c) ? 0 : u_getCombiningClass(static_cast<UChar32>(c)));
@@ -261,8 +266,10 @@ static JSValue unicodeDataCombining(JSGlobalObject* globalObject, JSValue charac
 template<UnicodeVersion version>
 static JSValue unicodeDataMirrored(JSGlobalObject* globalObject, JSValue character)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     char32_t c;
-    if (!unicodeDataCharacter(globalObject, "mirrored"_s, "argument"_s, character, c))
+    if (failed(scope, unicodeDataCharacter(globalObject, "mirrored"_s, "argument"_s, character, c)))
         return { };
     if constexpr (version == UnicodeVersion::Old) {
         if (unicodeDataIsNew(c))
@@ -277,10 +284,12 @@ static JSValue unicodeDataMirrored(JSGlobalObject* globalObject, JSValue charact
 template<UnicodeVersion version>
 static JSValue unicodeDataEastAsianWidth(JSGlobalObject* globalObject, JSValue character)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     // In the order of UEastAsianWidth.
     static constexpr ASCIILiteral names[] = { "N"_s, "A"_s, "H"_s, "F"_s, "Na"_s, "W"_s };
     char32_t c;
-    if (!unicodeDataCharacter(globalObject, "east_asian_width"_s, "argument"_s, character, c))
+    if (failed(scope, unicodeDataCharacter(globalObject, "east_asian_width"_s, "argument"_s, character, c)))
         return { };
     int width = u_getIntPropertyValue(static_cast<UChar32>(c), UCHAR_EAST_ASIAN_WIDTH);
     if constexpr (version == UnicodeVersion::Old) {
@@ -290,7 +299,7 @@ static JSValue unicodeDataEastAsianWidth(JSGlobalObject* globalObject, JSValue c
             width = *old;
     } else
         width = unicodeDataFind(unicodeNewWidths, c).value_or(width);
-    return makeStr(getVM(globalObject), unicodeDataNameOf(names, width));
+    RELEASE_AND_RETURN(scope, makeStr(getVM(globalObject), unicodeDataNameOf(names, width)));
 }
 
 // ---- Normalization ----
@@ -509,7 +518,7 @@ static JSValue unicodeDataNormalize(JSGlobalObject* globalObject, JSValue formVa
     auto scope = DECLARE_THROW_SCOPE(vm);
     String formName;
     String string;
-    if (!unicodeDataString(globalObject, "normalize"_s, 1, formValue, formName) || !unicodeDataString(globalObject, "normalize"_s, 2, stringValue, string))
+    if (failed(scope, unicodeDataString(globalObject, "normalize"_s, 1, formValue, formName)) || failed(scope, unicodeDataString(globalObject, "normalize"_s, 2, stringValue, string)))
         return { };
     if (string.isEmpty())
         return strValue(stringValue);
@@ -531,7 +540,7 @@ static JSValue unicodeDataIsNormalized(JSGlobalObject* globalObject, JSValue for
     auto scope = DECLARE_THROW_SCOPE(vm);
     String formName;
     String string;
-    if (!unicodeDataString(globalObject, "is_normalized"_s, 1, formValue, formName) || !unicodeDataString(globalObject, "is_normalized"_s, 2, stringValue, string))
+    if (failed(scope, unicodeDataString(globalObject, "is_normalized"_s, 1, formValue, formName)) || failed(scope, unicodeDataString(globalObject, "is_normalized"_s, 2, stringValue, string)))
         return { };
     if (string.isEmpty())
         return jsBoolean(true);
@@ -553,8 +562,9 @@ static JSValue unicodeDataDecomposition(JSGlobalObject* globalObject, JSValue ch
         "<narrow> "_s, "<noBreak> "_s, "<small> "_s, "<square> "_s, "<sub> "_s, "<super> "_s, "<vertical> "_s, "<wide> "_s,
     };
     VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     char32_t c;
-    if (!unicodeDataCharacter(globalObject, "decomposition"_s, "argument"_s, character, c))
+    if (failed(scope, unicodeDataCharacter(globalObject, "decomposition"_s, "argument"_s, character, c)))
         return { };
     if (version == UnicodeVersion::Old && unicodeDataIsNew(c))
         return jsEmptyString(vm);
@@ -571,7 +581,7 @@ static JSValue unicodeDataDecomposition(JSGlobalObject* globalObject, JSValue ch
         builder.append(hex(0x1100 + index / (vowelCount * trailingCount), 4), ' ', hex(0x1161 + index / trailingCount % vowelCount, 4));
         if (trailing)
             builder.append(' ', hex(0x11A7 + trailing, 4));
-        return makeStr(globalObject, builder);
+        RELEASE_AND_RETURN(scope, makeStr(globalObject, builder));
     }
 
     if (auto* entry = version == UnicodeVersion::Current ? unicodeDataNewDecomposition(c) : nullptr) {
@@ -579,7 +589,7 @@ static JSValue unicodeDataDecomposition(JSGlobalObject* globalObject, JSValue ch
         builder.append(unicodeDataNameOf(tags, entry->type));
         for (unsigned i = 0; i < entry->length; ++i)
             builder.append(i ? " "_s : ""_s, hex(static_cast<unsigned>(entry->parts[i]), 4));
-        return makeStr(globalObject, builder);
+        RELEASE_AND_RETURN(scope, makeStr(globalObject, builder));
     }
 
     const UNormalizer2* normalizer = unicodeDataNormalizer(UnicodeForm::NFKC);
@@ -600,7 +610,7 @@ static JSValue unicodeDataDecomposition(JSGlobalObject* globalObject, JSValue ch
         isFirst = false;
         builder.append(hex(static_cast<unsigned>(part), 4));
     }
-    return makeStr(globalObject, builder);
+    RELEASE_AND_RETURN(scope, makeStr(globalObject, builder));
 }
 
 // ---- Names ----
@@ -611,7 +621,7 @@ static JSValue unicodeDataName(JSGlobalObject* globalObject, JSValue character, 
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     char32_t c;
-    if (!unicodeDataCharacter(globalObject, "name"_s, "argument 1"_s, character, c))
+    if (failed(scope, unicodeDataCharacter(globalObject, "name"_s, "argument 1"_s, character, c)))
         return { };
     char buffer[256];
     UErrorCode status = U_ZERO_ERROR;
@@ -675,12 +685,12 @@ static JSValue unicodeDataLookup(JSGlobalObject* globalObject, JSValue nameValue
         }
         StrBuilder builder;
         appendCodePoint(builder, c);
-        return makeStr(globalObject, builder);
+        RELEASE_AND_RETURN(scope, makeStr(globalObject, builder));
     } else {
         if (auto c = codePointFromName(name)) {
             StrBuilder builder;
             appendCodePoint(builder, *c);
-            return makeStr(globalObject, builder);
+            RELEASE_AND_RETURN(scope, makeStr(globalObject, builder));
         }
         Vector<char, maxNameLength> upperName;
         for (uint8_t byte : name)
@@ -697,55 +707,67 @@ static JSValue unicodeDataLookup(JSGlobalObject* globalObject, JSValue nameValue
 
 static JSValue unicodeDataBlock(JSGlobalObject* globalObject, JSValue character)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     char32_t c;
-    if (!unicodeDataCharacter(globalObject, "block"_s, "argument"_s, character, c))
+    if (failed(scope, unicodeDataCharacter(globalObject, "block"_s, "argument"_s, character, c)))
         return { };
     auto* block = std::ranges::lower_bound(unicodeBlocks, c, { }, &UnicodeBlock::last);
-    return makeStr(getVM(globalObject), block != std::end(unicodeBlocks) && block->first <= c ? block->name : "No_Block"_s);
+    RELEASE_AND_RETURN(scope, makeStr(getVM(globalObject), block != std::end(unicodeBlocks) && block->first <= c ? block->name : "No_Block"_s));
 }
 
 static JSValue unicodeDataGraphemeClusterBreak(JSGlobalObject* globalObject, JSValue character)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     // In the order of UGraphemeClusterBreak. Four of the values are no longer used.
     static constexpr ASCIILiteral names[] = {
         "Other"_s, "Control"_s, "CR"_s, "Extend"_s, "L"_s, "LF"_s, "LV"_s, "LVT"_s, "T"_s, "V"_s, "SpacingMark"_s, "Prepend"_s,
         "Regional_Indicator"_s, "Other"_s, "Other"_s, "Other"_s, "Other"_s, "ZWJ"_s,
     };
     char32_t c;
-    if (!unicodeDataCharacter(globalObject, "grapheme_cluster_break"_s, "argument"_s, character, c))
+    if (failed(scope, unicodeDataCharacter(globalObject, "grapheme_cluster_break"_s, "argument"_s, character, c)))
         return { };
-    return makeStr(getVM(globalObject), unicodeDataNameOf(names, unicodeDataCurrentGraphemeBreak(c)));
+    RELEASE_AND_RETURN(scope, makeStr(getVM(globalObject), unicodeDataNameOf(names, unicodeDataCurrentGraphemeBreak(c))));
 }
 
 static JSValue unicodeDataIndicConjunctBreak(JSGlobalObject* globalObject, JSValue character)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     static constexpr ASCIILiteral names[] = { "None"_s, "Consonant"_s, "Extend"_s, "Linker"_s };
     char32_t c;
-    if (!unicodeDataCharacter(globalObject, "indic_conjunct_break"_s, "argument"_s, character, c))
+    if (failed(scope, unicodeDataCharacter(globalObject, "indic_conjunct_break"_s, "argument"_s, character, c)))
         return { };
-    return makeStr(getVM(globalObject), names[unicodeDataFind(unicodeConjunctBreaks, c).value_or(0)]);
+    RELEASE_AND_RETURN(scope, makeStr(getVM(globalObject), names[unicodeDataFind(unicodeConjunctBreaks, c).value_or(0)]));
 }
 
 static JSValue unicodeDataExtendedPictographic(JSGlobalObject* globalObject, JSValue character)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     char32_t c;
-    if (!unicodeDataCharacter(globalObject, "extended_pictographic"_s, "argument"_s, character, c))
+    if (failed(scope, unicodeDataCharacter(globalObject, "extended_pictographic"_s, "argument"_s, character, c)))
         return { };
     return jsBoolean(unicodeDataIsCurrentlyPictographic(c));
 }
 
 static JSValue unicodeDataIsXIDStart(JSGlobalObject* globalObject, JSValue character)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     char32_t c;
-    if (!unicodeDataCharacter(globalObject, "isxidstart"_s, "argument"_s, character, c))
+    if (failed(scope, unicodeDataCharacter(globalObject, "isxidstart"_s, "argument"_s, character, c)))
         return { };
     return jsBoolean(isXIDStart(c));
 }
 
 static JSValue unicodeDataIsXIDContinue(JSGlobalObject* globalObject, JSValue character)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     char32_t c;
-    if (!unicodeDataCharacter(globalObject, "isxidcontinue"_s, "argument"_s, character, c))
+    if (failed(scope, unicodeDataCharacter(globalObject, "isxidcontinue"_s, "argument"_s, character, c)))
         return { };
     return jsBoolean(isXIDContinue(c));
 }
@@ -908,7 +930,7 @@ static JSValue unicodeDataIterGraphemes(JSGlobalObject* globalObject, JSValue st
         return raiseTypeError(globalObject, scope, "iter_graphemes() argument 1 must be str, not "_s, unicodeDataTypeName(globalObject, stringValue));
     int64_t start = 0;
     int64_t end = std::numeric_limits<int64_t>::max();
-    if ((startValue && !ssizeArgument(globalObject, startValue, start)) || (endValue && !ssizeArgument(globalObject, endValue, end)))
+    if ((startValue && failed(scope, ssizeArgument(globalObject, startValue, start))) || (endValue && failed(scope, ssizeArgument(globalObject, endValue, end))))
         return { };
     JSString* string = strValue(stringValue);
     StrView view(globalObject, string);

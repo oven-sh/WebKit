@@ -459,25 +459,31 @@ JSValue newDeltaFromTotal(JSGlobalObject* globalObject, State& state, PyType* ty
 
 JSValue newDate(JSGlobalObject* globalObject, State& state, PyType* type, int year, int month, int day)
 {
-    if (!checkDateFields(globalObject, year, month, day)) [[unlikely]]
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, checkDateFields(globalObject, year, month, day))) [[unlikely]]
         return { };
-    return PyDate::create(getVM(globalObject), state.dateStructure.get(), type, Packed::date(year, month, day));
+    RELEASE_AND_RETURN(scope, PyDate::create(getVM(globalObject), state.dateStructure.get(), type, Packed::date(year, month, day)));
 }
 
 JSValue newTime(JSGlobalObject* globalObject, State& state, PyType* type, int hour, int minute, int second, int microsecond, JSValue tzinfo, int fold)
 {
-    if (!checkTimeFields(globalObject, hour, minute, second, microsecond, fold) || !checkTzInfo(globalObject, state, tzinfo)) [[unlikely]]
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, checkTimeFields(globalObject, hour, minute, second, microsecond, fold)) || failed(scope, checkTzInfo(globalObject, state, tzinfo))) [[unlikely]]
         return { };
-    return PyTimeOfDay::create(getVM(globalObject), state.timeStructure.get(), type, Packed::time(hour, minute, second, microsecond, fold), tzinfo);
+    RELEASE_AND_RETURN(scope, PyTimeOfDay::create(getVM(globalObject), state.timeStructure.get(), type, Packed::time(hour, minute, second, microsecond, fold), tzinfo));
 }
 
 JSValue newDateTime(JSGlobalObject* globalObject, State& state, PyType* type, const Fields& fields, JSValue tzinfo)
 {
-    if (!checkDateFields(globalObject, fields.year, fields.month, fields.day)
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, checkDateFields(globalObject, fields.year, fields.month, fields.day))
         || !checkTimeFields(globalObject, fields.hour, fields.minute, fields.second, fields.microsecond, fields.fold)
         || !checkTzInfo(globalObject, state, tzinfo)) [[unlikely]]
         return { };
-    return PyDateTime::create(getVM(globalObject), state.dateTimeStructure.get(), type, Packed::all(fields), tzinfo);
+    RELEASE_AND_RETURN(scope, PyDateTime::create(getVM(globalObject), state.dateTimeStructure.get(), type, Packed::all(fields), tzinfo));
 }
 
 static bool isOffsetInRange(PyTimeDelta* offset)
@@ -800,7 +806,7 @@ JSValue wrapStrftime(JSGlobalObject* globalObject, State& state, JSValue object,
     String zoneName;
     auto makeOffsetText = [&](String& text, ASCIILiteral separator) {
         Text buffer;
-        if (!appendUtcOffset(globalObject, state, buffer, separator, tzinfo, tzinfoArgument))
+        if (failed(scope, appendUtcOffset(globalObject, state, buffer, separator, tzinfo, tzinfoArgument)))
             return false;
         text = buffer.isEmpty() ? emptyString() : buffer.toString();
         return true;
@@ -1025,6 +1031,8 @@ static IsoClock parseIsoClock(const IsoText& text, unsigned start, unsigned end,
 
 IsoTimeResult parseIsoTime(JSGlobalObject* globalObject, const IsoText& text, unsigned start, Fields& result, int& offsetSeconds, int& offsetMicroseconds)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     unsigned end = text.length();
     unsigned zone = start;
     do {
@@ -1053,7 +1061,7 @@ IsoTimeResult parseIsoTime(JSGlobalObject* globalObject, const IsoText& text, un
     int offset[4] = { 0, 0, 0, 0 };
     clock = parseIsoClock(text, zone + 1, end, offset);
     // An hour 25 is complained of as such even if what follows it makes no sense.
-    if (!checkTimeFields(globalObject, offset[0], offset[1], offset[2], offset[3], 0))
+    if (failed(scope, checkTimeFields(globalObject, offset[0], offset[1], offset[2], offset[3], 0)))
         return IsoTimeResult::Raised;
     if (clock != IsoClock::Ended)
         return IsoTimeResult::Malformed;

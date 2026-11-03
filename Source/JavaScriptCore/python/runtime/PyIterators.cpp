@@ -128,8 +128,11 @@ JSValue PyIterator::next(JSGlobalObject* globalObject)
         return exhaust();
     }
     case Kind::ListReverse: {
+        // Having gone through the list it still has it, and __setstate__() can send it back. It lets go of a list that has shrunk under it.
+        if (position < 0)
+            return { };
         JSArray* list = asList(target);
-        if (position >= 0 && position < list->length())
+        if (position < list->length())
             return listGet(list, position--);
         position = -1;
         return exhaust();
@@ -220,7 +223,7 @@ JSValue PyIterator::next(JSGlobalObject* globalObject)
         case Kind::DictReverseValues:
             return value;
         default:
-            return PyTuple::create(globalObject, { key, value });
+            RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { key, value }));
         }
     }
     case Kind::Set: {
@@ -345,16 +348,16 @@ static JSValue iteratorLengthHint(JSGlobalObject* globalObject, JSValue self)
     }
     case PyIterator::Kind::Sequence: {
         if (!typeOf(globalObject, target)->lookup(Special::Len))
-            return runtime(globalObject).notImplemented();
+            RELEASE_AND_RETURN(scope, runtime(globalObject).notImplemented());
         int64_t size = length(globalObject, target);
         RETURN_IF_EXCEPTION(scope, { });
         result = size - iterator->position;
         break;
     }
     case PyIterator::Kind::Callable:
-        return runtime(globalObject).notImplemented();
+        RELEASE_AND_RETURN(scope, runtime(globalObject).notImplemented());
     }
-    return makeInt(globalObject, std::max<int64_t>(result, 0));
+    RELEASE_AND_RETURN(scope, makeInt(globalObject, std::max<int64_t>(result, 0)));
 }
 
 // ---- Pickling: __reduce__ and __setstate__ ----
@@ -389,32 +392,32 @@ static JSValue iteratorReduce(JSGlobalObject* globalObject, JSValue self)
     switch (iterator->kind()) {
     case PyIterator::Kind::List:
         if (target)
-            return reduceTo(globalObject, iter, target, jsNumber(static_cast<double>(iterator->position)));
-        return reduceTo(globalObject, iter, newList(globalObject));
+            RELEASE_AND_RETURN(scope, reduceTo(globalObject, iter, target, jsNumber(static_cast<double>(iterator->position))));
+        RELEASE_AND_RETURN(scope, reduceTo(globalObject, iter, newList(globalObject)));
     case PyIterator::Kind::ListReverse:
         if (target && iterator->position >= 0)
-            return reduceTo(globalObject, iter, target, jsNumber(static_cast<double>(iterator->position)));
-        return reduceTo(globalObject, iter, newList(globalObject));
+            RELEASE_AND_RETURN(scope, reduceTo(globalObject, iter, target, jsNumber(static_cast<double>(iterator->position))));
+        RELEASE_AND_RETURN(scope, reduceTo(globalObject, iter, newList(globalObject)));
     case PyIterator::Kind::Str: {
         if (!target)
-            return reduceTo(globalObject, iter, rt.names.empty());
+            RELEASE_AND_RETURN(scope, reduceTo(globalObject, iter, rt.names.empty()));
         StrView view(globalObject, asString(target));
         RETURN_IF_EXCEPTION(scope, { });
-        return reduceTo(globalObject, iter, target, jsNumber(view.indexOfUnitOffset(iterator->position)));
+        RELEASE_AND_RETURN(scope, reduceTo(globalObject, iter, target, jsNumber(view.indexOfUnitOffset(iterator->position))));
     }
     case PyIterator::Kind::Tuple:
     case PyIterator::Kind::Bytes:
     case PyIterator::Kind::ByteArray:
     case PyIterator::Kind::Sequence:
         if (target)
-            return reduceTo(globalObject, iter, target, jsNumber(static_cast<double>(iterator->position)));
-        return reduceTo(globalObject, iter, rt.emptyTuple());
+            RELEASE_AND_RETURN(scope, reduceTo(globalObject, iter, target, jsNumber(static_cast<double>(iterator->position))));
+        RELEASE_AND_RETURN(scope, reduceTo(globalObject, iter, rt.emptyTuple()));
     case PyIterator::Kind::Range: {
         // What is left of the range.
         JSValue start = makeInt(globalObject, iterator->position);
         JSValue stop = makeInt(globalObject, iterator->position + iterator->remaining * iterator->step);
         JSValue range = PyRange::create(globalObject, start, stop, makeInt(globalObject, iterator->step), makeInt(globalObject, iterator->remaining));
-        return reduceTo(globalObject, iter, range, jsUndefined());
+        RELEASE_AND_RETURN(scope, reduceTo(globalObject, iter, range, jsUndefined()));
     }
     case PyIterator::Kind::LongRange: {
         auto* state = PyTuple::from(iterator->extra());
@@ -422,12 +425,12 @@ static JSValue iteratorReduce(JSGlobalObject* globalObject, JSValue self)
         RETURN_IF_EXCEPTION(scope, { });
         JSValue stop = intAdd(globalObject, target, span);
         RETURN_IF_EXCEPTION(scope, { });
-        return reduceTo(globalObject, iter, PyRange::create(globalObject, target, stop, state->at(0), state->at(1)), jsUndefined());
+        RELEASE_AND_RETURN(scope, reduceTo(globalObject, iter, PyRange::create(globalObject, target, stop, state->at(0), state->at(1)), jsUndefined()));
     }
     case PyIterator::Kind::Callable:
         if (target)
-            return PyTuple::create(globalObject, { iter, PyTuple::create(globalObject, { target, iterator->extra() }) });
-        return reduceTo(globalObject, iter, rt.emptyTuple());
+            RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { iter, PyTuple::create(globalObject, { target, iterator->extra() }) }));
+        RELEASE_AND_RETURN(scope, reduceTo(globalObject, iter, rt.emptyTuple()));
     case PyIterator::Kind::DictKeys:
     case PyIterator::Kind::DictValues:
     case PyIterator::Kind::DictItems:
@@ -451,7 +454,7 @@ static JSValue iteratorReduce(JSGlobalObject* globalObject, JSValue self)
                 RETURN_IF_EXCEPTION(scope, { });
             }
         }
-        return reduceTo(globalObject, iter, rest);
+        RELEASE_AND_RETURN(scope, reduceTo(globalObject, iter, rest));
     }
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -507,7 +510,7 @@ static JSValue iteratorSetState(JSGlobalObject* globalObject, JSValue self, JSVa
         iterator->remaining -= index;
         return jsUndefined();
     }
-    if (!stateAsIndex(globalObject, state, index))
+    if (failed(scope, stateAsIndex(globalObject, state, index)))
         return { };
     if (!target)
         return jsUndefined();
@@ -536,6 +539,12 @@ static JSValue iteratorSetState(JSGlobalObject* globalObject, JSValue self, JSVa
         iterator->position = std::clamp<int64_t>(index, 0, PyBytes::from(target)->length());
         break;
     case PyIterator::Kind::ByteArray:
+        // Below zero, it is exhausted.
+        if (index < 0)
+            iterator->setTarget(vm, { });
+        else
+            iterator->position = std::min<int64_t>(index, PyByteArray::from(target)->length());
+        break;
     case PyIterator::Kind::Sequence:
         iterator->position = std::max<int64_t>(index, 0);
         break;
@@ -552,6 +561,12 @@ static JSValue iteratorSetState(JSGlobalObject* globalObject, JSValue self, JSVa
 
 // Those that know where they are by a number.
 static constexpr NativeDef iteratorMethods[] = {
+    PY_ITERATOR_METHODS,
+    PY_METHOD("__length_hint__", iteratorLengthHint, "($self, /)"),
+    PY_METHOD("__setstate__", iteratorSetState, "($self, object, /)"),
+};
+
+static constexpr NativeDef rangeIteratorMethods[] = {
     PY_ITERATOR_METHODS,
     PY_METHOD("__length_hint__", iteratorLengthHint, "($self, /)"),
     PY_METHOD("__setstate__", iteratorSetState, "($self, state, /)"),
@@ -631,7 +646,7 @@ JSValue PyMultiIterator::next(JSGlobalObject* globalObject)
         JSValue following = intAdd(globalObject, count, jsNumber(1));
         RETURN_IF_EXCEPTION(scope, { });
         second.set(vm, this, following);
-        return PyTuple::create(globalObject, { count, item });
+        RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { count, item }));
     }
     case Kind::Zip: {
         auto* iterators = PyTuple::from(first.get());
@@ -771,6 +786,10 @@ static bool parseStrict(JSGlobalObject* globalObject, ASCIILiteral function, con
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     strict = false;
+    if (args.keywordCount() > 1) {
+        raiseTypeError(globalObject, scope, function, "() takes at most 1 keyword argument ("_s, args.keywordCount(), " given)"_s);
+        return false;
+    }
     for (unsigned i = 0; i < args.keywordCount(); ++i) {
         String keyword = stringOf(args.keywordName(i));
         if (keyword != "strict"_s) {
@@ -802,7 +821,7 @@ static JSValue zipNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs&
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     bool strict;
-    if (!parseStrict(globalObject, "zip"_s, args, strict))
+    if (failed(scope, parseStrict(globalObject, "zip"_s, args, strict)))
         return { };
     PyTuple* iterators = iteratorsOf(globalObject, args.positional());
     RETURN_IF_EXCEPTION(scope, { });
@@ -817,7 +836,7 @@ static JSValue mapNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs&
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     bool strict;
-    if (!parseStrict(globalObject, "map"_s, args, strict))
+    if (failed(scope, parseStrict(globalObject, "map"_s, args, strict)))
         return { };
     if (args.size() < 2)
         return raiseTypeError(globalObject, scope, "map() must have at least two arguments."_s);
@@ -835,9 +854,9 @@ static JSValue filterNew(JSGlobalObject* globalObject, JSValue cls, const CallAr
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!rejectKeywordsInNew(globalObject, "filter"_s, PyType::from(cls), rt.filterType(), args))
+    if (failed(scope, rejectKeywordsInNew(globalObject, "filter"_s, PyType::from(cls), rt.filterType(), args)))
         return { };
-    if (!checkPositional(globalObject, "filter"_s, args, 2, 2))
+    if (failed(scope, checkPositional(globalObject, "filter"_s, args, 2, 2)))
         return { };
     JSValue iterator = getIter(globalObject, args[1]);
     RETURN_IF_EXCEPTION(scope, { });
@@ -852,9 +871,9 @@ static JSValue reversedNew(JSGlobalObject* globalObject, JSValue cls, const Call
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!rejectKeywordsInNew(globalObject, "reversed"_s, PyType::from(cls), rt.reversedType(), args))
+    if (failed(scope, rejectKeywordsInNew(globalObject, "reversed"_s, PyType::from(cls), rt.reversedType(), args)))
         return { };
-    if (!checkPositional(globalObject, "reversed"_s, args, 1, 1))
+    if (failed(scope, checkPositional(globalObject, "reversed"_s, args, 1, 1)))
         return { };
     JSValue sequence = args[0];
     PyType* type = rt.typeOf(sequence);
@@ -885,7 +904,7 @@ static JSValue reversedLengthHint(JSGlobalObject* globalObject, JSValue self)
     int64_t size = length(globalObject, iterator->first.get());
     RETURN_IF_EXCEPTION(scope, { });
     int64_t position = iterator->position + 1;
-    return makeInt(globalObject, size < position ? static_cast<int64_t>(0) : position);
+    RELEASE_AND_RETURN(scope, makeInt(globalObject, size < position ? static_cast<int64_t>(0) : position));
 }
 
 static JSValue multiIteratorReduce(JSGlobalObject* globalObject, JSValue self)
@@ -938,7 +957,7 @@ static JSValue reversedSetState(JSGlobalObject* globalObject, JSValue self, JSVa
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* iterator = PyMultiIterator::from(self);
     int64_t index;
-    if (!stateAsIndex(globalObject, state, index))
+    if (failed(scope, stateAsIndex(globalObject, state, index)))
         return { };
     if (!iterator->first || iterator->position == -1)
         return jsUndefined();
@@ -960,17 +979,17 @@ static constexpr NativeDef enumerateMethods[] = {
 };
 static constexpr NativeDef zipMethods[] = {
     PY_MULTI_ITERATOR_METHODS(zipNew),
-    PY_METHOD("__setstate__", multiIteratorSetStrict, "($self, state, /)"),
+    PY_METHOD("__setstate__", multiIteratorSetStrict, "($self, object, /)"),
 };
 static constexpr NativeDef mapMethods[] = {
     PY_MULTI_ITERATOR_METHODS(mapNew),
-    PY_METHOD("__setstate__", multiIteratorSetStrict, "($self, state, /)"),
+    PY_METHOD("__setstate__", multiIteratorSetStrict, "($self, object, /)"),
 };
 static constexpr NativeDef filterMethods[] = { PY_MULTI_ITERATOR_METHODS(filterNew) };
 static constexpr NativeDef reversedMethods[] = {
     PY_MULTI_ITERATOR_METHODS(reversedNew),
     PY_METHOD("__length_hint__", reversedLengthHint, "($self, /)"),
-    PY_METHOD("__setstate__", reversedSetState, "($self, state, /)"),
+    PY_METHOD("__setstate__", reversedSetState, "($self, object, /)"),
 };
 
 void initializeIteratorTypes(JSGlobalObject* globalObject)
@@ -985,8 +1004,8 @@ void initializeIteratorTypes(JSGlobalObject* globalObject)
     define(rt.strIteratorType(), "str_iterator"_s, iteratorMethods);
     define(rt.bytesIteratorType(), "bytes_iterator"_s, iteratorMethods);
     define(rt.bytearrayIteratorType(), "bytearray_iterator"_s, iteratorMethods);
-    define(rt.rangeIteratorType(), "range_iterator"_s, iteratorMethods);
-    define(rt.longRangeIteratorType(), "longrange_iterator"_s, iteratorMethods);
+    define(rt.rangeIteratorType(), "range_iterator"_s, rangeIteratorMethods);
+    define(rt.longRangeIteratorType(), "longrange_iterator"_s, rangeIteratorMethods);
     define(rt.dictKeyIteratorType(), "dict_keyiterator"_s, hashIteratorMethods);
     define(rt.dictValueIteratorType(), "dict_valueiterator"_s, hashIteratorMethods);
     define(rt.dictItemIteratorType(), "dict_itemiterator"_s, hashIteratorMethods);

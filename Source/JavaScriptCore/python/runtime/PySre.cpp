@@ -557,7 +557,7 @@ static JSValue sreMatchGroup(JSGlobalObject* globalObject, JSValue thisValue, co
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyRecord* match = PyRecord::from(thisValue);
-    if (!rejectKeywords(globalObject, "group"_s, args))
+    if (failed(scope, rejectKeywords(globalObject, "group"_s, args)))
         return { };
     if (!args.size())
         RELEASE_AND_RETURN(scope, sreGroupByIndex(globalObject, match, 0, none()));
@@ -830,11 +830,11 @@ static JSValue sreMatchOnce(JSGlobalObject* globalObject, JSValue thisValue, JSV
     PyRecord* pattern = PyRecord::from(thisValue);
     ptrdiff_t start;
     ptrdiff_t end;
-    if (!sreToSsize(globalObject, pos, 0, start) || !sreToSsize(globalObject, endpos, sreMaxSsize, end))
+    if (failed(scope, sreToSsize(globalObject, pos, 0, start)) || failed(scope, sreToSsize(globalObject, endpos, sreMaxSsize, end)))
         return { };
 
     SreRun run(globalObject);
-    if (!sreBegin(globalObject, run, pattern, string, start, end))
+    if (failed(scope, sreBegin(globalObject, run, pattern, string, start, end)))
         return { };
     run.state.ptr = run.state.start;
     run.state.matchAll = mode == SreMode::FullMatch;
@@ -878,11 +878,11 @@ static JSValue srePatternFindAll(JSGlobalObject* globalObject, JSValue thisValue
     PyRecord* pattern = PyRecord::from(thisValue);
     ptrdiff_t start;
     ptrdiff_t end;
-    if (!sreToSsize(globalObject, pos, 0, start) || !sreToSsize(globalObject, endpos, sreMaxSsize, end))
+    if (failed(scope, sreToSsize(globalObject, pos, 0, start)) || failed(scope, sreToSsize(globalObject, endpos, sreMaxSsize, end)))
         return { };
 
     SreRun run(globalObject);
-    if (!sreBegin(globalObject, run, pattern, string, start, end))
+    if (failed(scope, sreBegin(globalObject, run, pattern, string, start, end)))
         return { };
     ptrdiff_t groups = sreNumberField(pattern, SrePattern::Groups);
     JSArray* list = newList(globalObject);
@@ -924,11 +924,11 @@ static JSValue srePatternSplit(JSGlobalObject* globalObject, JSValue thisValue, 
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyRecord* pattern = PyRecord::from(thisValue);
     ptrdiff_t maxSplit;
-    if (!sreToSsize(globalObject, maxSplitValue, 0, maxSplit))
+    if (failed(scope, sreToSsize(globalObject, maxSplitValue, 0, maxSplit)))
         return { };
 
     SreRun run(globalObject);
-    if (!sreBegin(globalObject, run, pattern, string, 0, sreMaxSsize))
+    if (failed(scope, sreBegin(globalObject, run, pattern, string, 0, sreMaxSsize)))
         return { };
     ptrdiff_t groups = sreNumberField(pattern, SrePattern::Groups);
     JSArray* list = newList(globalObject);
@@ -967,7 +967,7 @@ static JSValue sreSubstitute(JSGlobalObject* globalObject, JSValue thisValue, JS
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyRecord* pattern = PyRecord::from(thisValue);
     ptrdiff_t maxCount;
-    if (!sreToSsize(globalObject, countValue, 0, maxCount))
+    if (failed(scope, sreToSsize(globalObject, countValue, 0, maxCount)))
         return { };
 
     enum { Literal, Template, Callable } kind;
@@ -1002,7 +1002,7 @@ static JSValue sreSubstitute(JSGlobalObject* globalObject, JSValue thisValue, JS
     }
 
     SreRun run(globalObject);
-    if (!sreBegin(globalObject, run, pattern, string, 0, sreMaxSsize))
+    if (failed(scope, sreBegin(globalObject, run, pattern, string, 0, sreMaxSsize)))
         return { };
     JSArray* list = newList(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
@@ -1049,7 +1049,7 @@ static JSValue sreSubstitute(JSGlobalObject* globalObject, JSValue thisValue, JS
     JSValue result = listLength(list) ? sreJoin(globalObject, run.text.isBytes, list) : run.slice(globalObject, 0, 0);
     RETURN_IF_EXCEPTION(scope, { });
     if (withCount)
-        return PyTuple::create(globalObject, { result, jsNumber(count) });
+        RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { result, jsNumber(count) }));
     return result;
 }
 
@@ -1070,11 +1070,11 @@ static JSValue srePatternScanner(JSGlobalObject* globalObject, JSValue thisValue
     PyRecord* pattern = PyRecord::from(thisValue);
     ptrdiff_t start;
     ptrdiff_t end;
-    if (!sreToSsize(globalObject, pos, 0, start) || !sreToSsize(globalObject, endpos, sreMaxSsize, end))
+    if (failed(scope, sreToSsize(globalObject, pos, 0, start)) || failed(scope, sreToSsize(globalObject, endpos, sreMaxSsize, end)))
         return { };
 
     SreRun run(globalObject);
-    if (!sreBegin(globalObject, run, pattern, string, start, end))
+    if (failed(scope, sreBegin(globalObject, run, pattern, string, start, end)))
         return { };
     PyRecord* scanner = PyRecord::create(globalObject, sreScannerType(globalObject), SreScanner::FieldCount);
     scanner->set(vm, SreScanner::Pattern, pattern);
@@ -1152,7 +1152,7 @@ static JSValue srePatternRepr(JSGlobalObject* globalObject, JSValue thisValue)
     if (flags)
         builder.append(separator, "0x"_s, hex(static_cast<unsigned>(flags), Lowercase));
     builder.append(')');
-    return makeStr(globalObject, builder);
+    RELEASE_AND_RETURN(scope, makeStr(globalObject, builder));
 }
 
 static std::span<const uint8_t> sreCodeBytes(PyRecord* pattern)
@@ -1173,7 +1173,7 @@ static JSValue srePatternHash(JSGlobalObject* globalObject, JSValue thisValue)
     result ^= sreNumberField(pattern, SrePattern::CodeSize);
     if (result == -1)
         result = -2;
-    return makeInt(globalObject, result);
+    RELEASE_AND_RETURN(scope, makeInt(globalObject, result));
 }
 
 // The code is compared as well as the source: with re.LOCALE, what a pattern compiles to depends on the locale at the time.
@@ -1182,7 +1182,7 @@ static JSValue srePatternCompare(JSGlobalObject* globalObject, JSValue thisValue
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (typeOf(globalObject, other) != srePatternType(globalObject))
-        return runtime(globalObject).notImplemented();
+        RELEASE_AND_RETURN(scope, runtime(globalObject).notImplemented());
     if (thisValue == other)
         return jsBoolean(wantEqual);
     PyRecord* left = PyRecord::from(thisValue);
@@ -1248,7 +1248,7 @@ static JSValue sreScan(JSGlobalObject* globalObject, JSValue thisValue, SreMode 
         return none();
 
     SreRun run(globalObject);
-    if (!sreBegin(globalObject, run, pattern, scanner->get(SreScanner::String), sreNumberField(scanner, SreScanner::Pos), sreNumberField(scanner, SreScanner::EndPos), scanner))
+    if (failed(scope, sreBegin(globalObject, run, pattern, scanner->get(SreScanner::String), sreNumberField(scanner, SreScanner::Pos), sreNumberField(scanner, SreScanner::EndPos), scanner)))
         return { };
     run.state.start = run.state.positionAt(start);
     run.state.ptr = run.state.start;
@@ -1298,7 +1298,7 @@ static JSValue sreCompile(JSGlobalObject* globalObject, JSValue source, JSValue 
     if (!isList(codeValue))
         return raiseTypeError(globalObject, scope, "compile() argument 'code' must be list, not "_s, sreArgumentTypeName(globalObject, codeValue));
     ptrdiff_t groups;
-    if (!sreToSsize(globalObject, groupsValue, 0, groups))
+    if (failed(scope, sreToSsize(globalObject, groupsValue, 0, groups)))
         return { };
     if (!PyDict::is(groupIndex))
         return raiseTypeError(globalObject, scope, "compile() argument 'groupindex' must be dict, not "_s, sreArgumentTypeName(globalObject, groupIndex));
@@ -1330,7 +1330,7 @@ static JSValue sreCompile(JSGlobalObject* globalObject, JSValue source, JSValue 
     int isBytes = -1;
     if (!isNone(source)) {
         SreText text(globalObject);
-        if (!sreGetText(globalObject, source, text))
+        if (failed(scope, sreGetText(globalObject, source, text)))
             return { };
         isBytes = text.isBytes;
     }

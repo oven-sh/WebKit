@@ -104,7 +104,7 @@ static JSValue jsonEncodeBaseString(JSGlobalObject* globalObject, JSValue value)
     jsonAppendQuoted<asciiOnly>(out, text);
     if (out.hasOverflowed())
         return raiseOverflowError(globalObject, scope, "string is too long to escape"_s);
-    return makeStr(globalObject, out);
+    RELEASE_AND_RETURN(scope, makeStr(globalObject, out));
 }
 
 // ---- The scanner ----
@@ -292,13 +292,13 @@ private:
     NEVER_INLINE JSValue stop(size_t offset)
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
-        return raiseWithArgs(m_globalObject, scope, runtime(m_globalObject).StopIteration(), { jsNumber(m_view.indexOfUnitOffset(offset)) });
+        RELEASE_AND_RETURN(scope, raiseWithArgs(m_globalObject, scope, runtime(m_globalObject).StopIteration(), { jsNumber(m_view.indexOfUnitOffset(offset)) }));
     }
 
     NEVER_INLINE JSValue overflow(ASCIILiteral message)
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
-        return raiseRecursionError(m_globalObject, scope, message);
+        RELEASE_AND_RETURN(scope, raiseRecursionError(m_globalObject, scope, message));
     }
 
     JSValue substring(size_t start, size_t end)
@@ -497,7 +497,7 @@ private:
         if (isFloat) {
             auto value = floatFromText(StringView(text));
             ASSERT(value);
-            return makeFloat(m_globalObject, value.value_or(0));
+            RELEASE_AND_RETURN(scope, makeFloat(m_globalObject, value.value_or(0)));
         }
         if (text.size() <= 15) {
             bool isNegative = text[0] == '-';
@@ -530,12 +530,12 @@ static JSValue jsonScanString(JSGlobalObject* globalObject, const CallArgs& args
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!rejectKeywords(globalObject, "_json.scanstring"_s, args) || !checkPositional(globalObject, "scanstring"_s, args, 2, 3))
+    if (failed(scope, rejectKeywords(globalObject, "_json.scanstring"_s, args)) || failed(scope, checkPositional(globalObject, "scanstring"_s, args, 2, 3)))
         return { };
     if (!isStr(args[0]))
         return raiseTypeError(globalObject, scope, "scanstring() argument 1 must be str, not "_s, typeNameOfArgument(globalObject, args[0]));
     int64_t end;
-    if (!ssizeArgument(globalObject, args[1], end))
+    if (failed(scope, ssizeArgument(globalObject, args[1], end)))
         return { };
     bool strict = args.size() < 3 || isTrue(globalObject, args[2]);
     RETURN_IF_EXCEPTION(scope, { });
@@ -553,7 +553,7 @@ static JSValue jsonScanString(JSGlobalObject* globalObject, const CallArgs& args
     else
         result = JsonScanner<char16_t>(globalObject, nullptr, document, view, view.view().span16(), strict).scanString(offset, next);
     RETURN_IF_EXCEPTION(scope, { });
-    return jsonResult(globalObject, view, result, next);
+    RELEASE_AND_RETURN(scope, jsonResult(globalObject, view, result, next));
 }
 
 static JSValue jsonScannerNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs& args)
@@ -562,7 +562,7 @@ static JSValue jsonScannerNew(JSGlobalObject* globalObject, JSValue cls, const C
     auto scope = DECLARE_THROW_SCOPE(vm);
     static constexpr ASCIILiteral keywords[] = { "context"_s };
     JSValue context;
-    if (!unpackKeywordArguments(globalObject, "make_scanner"_s, keywords, 1, 1, false, args, &context))
+    if (failed(scope, unpackKeywordArguments(globalObject, "make_scanner"_s, keywords, 1, 1, false, args, &context)))
         return { };
 
     PyRecord* scanner = PyRecord::create(globalObject, PyType::from(cls), JsonScannerFieldCount);
@@ -586,10 +586,10 @@ static JSValue jsonScannerCall(JSGlobalObject* globalObject, JSValue self, const
     auto scope = DECLARE_THROW_SCOPE(vm);
     static constexpr ASCIILiteral keywords[] = { "string"_s, "idx"_s };
     JSValue values[2];
-    if (!unpackKeywordArguments(globalObject, "scan_once"_s, keywords, 2, 2, false, args, values))
+    if (failed(scope, unpackKeywordArguments(globalObject, "scan_once"_s, keywords, 2, 2, false, args, values)))
         return { };
     int64_t index;
-    if (!ssizeArgument(globalObject, values[1], index))
+    if (failed(scope, ssizeArgument(globalObject, values[1], index)))
         return { };
     if (!isStr(values[0]))
         return raiseTypeError(globalObject, scope, "first argument must be a string, not "_s, typeName(globalObject, values[0]));
@@ -610,7 +610,7 @@ static JSValue jsonScannerCall(JSGlobalObject* globalObject, JSValue self, const
     else
         result = JsonScanner<char16_t>(globalObject, scanner, document, view, view.view().span16(), scanner->number).scanOnce(offset, next);
     RETURN_IF_EXCEPTION(scope, { });
-    return jsonResult(globalObject, view, result, next);
+    RELEASE_AND_RETURN(scope, jsonResult(globalObject, view, result, next));
 }
 
 template<unsigned field>
@@ -966,7 +966,7 @@ private:
         m_out.append('{');
         if (m_hasIndent) {
             ++level;
-            if (!prepareLevel(level))
+            if (failed(scope, prepareLevel(level)))
                 return false;
         }
 
@@ -996,7 +996,7 @@ private:
             }
         }
 
-        if (!leave(identity))
+        if (failed(scope, leave(identity)))
             return false;
         if (m_hasIndent && !isFirst)
             m_out.append(m_newlineIndents[level - 1]);
@@ -1045,7 +1045,7 @@ private:
         m_out.append('[');
         if (m_hasIndent) {
             ++level;
-            if (!prepareLevel(level))
+            if (failed(scope, prepareLevel(level)))
                 return false;
             m_out.append(m_newlineIndents[level]);
         }
@@ -1062,7 +1062,7 @@ private:
                 return false;
             }
         }
-        if (!leave(identity))
+        if (failed(scope, leave(identity)))
             return false;
         if (m_hasIndent)
             m_out.append(m_newlineIndents[level - 1]);
@@ -1088,13 +1088,13 @@ static JSValue jsonEncoderCall(JSGlobalObject* globalObject, JSValue self, const
     auto scope = DECLARE_THROW_SCOPE(vm);
     static constexpr ASCIILiteral keywords[] = { "obj"_s, "_current_indent_level"_s };
     JSValue values[2];
-    if (!unpackKeywordArguments(globalObject, "_iterencode"_s, keywords, 2, 2, false, args, values))
+    if (failed(scope, unpackKeywordArguments(globalObject, "_iterencode"_s, keywords, 2, 2, false, args, values)))
         return { };
     int64_t level;
-    if (!ssizeArgument(globalObject, values[1], level))
+    if (failed(scope, ssizeArgument(globalObject, values[1], level)))
         return { };
     JsonEncoder encoder(globalObject, PyRecord::from(self));
-    if (!encoder.startIndent(level))
+    if (failed(scope, encoder.startIndent(level)))
         return { };
     encoder.encode(values[0], 0);
     RETURN_IF_EXCEPTION(scope, { });
@@ -1133,7 +1133,7 @@ static JSValue jsonEncoderNew(JSGlobalObject* globalObject, JSValue cls, const C
         "markers"_s, "default"_s, "encoder"_s, "indent"_s, "key_separator"_s, "item_separator"_s, "sort_keys"_s, "skipkeys"_s, "allow_nan"_s,
     };
     JSValue values[9];
-    if (!unpackKeywordArguments(globalObject, "make_encoder"_s, keywords, 9, 9, false, args, values))
+    if (failed(scope, unpackKeywordArguments(globalObject, "make_encoder"_s, keywords, 9, 9, false, args, values)))
         return { };
     for (unsigned i = 4; i < 6; ++i) {
         if (!isStr(values[i]))

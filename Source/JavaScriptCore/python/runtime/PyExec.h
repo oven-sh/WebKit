@@ -67,6 +67,12 @@ JS_EXPORT_PRIVATE JSValue importFileFromJS(JSGlobalObject*, const String& path, 
 // current directory first on sys.path. "__python__" is no module but an object of JS with what JS needs to talk to Python:
 // kwargs({ name: value }), float(number), import(name). See PyJSView.h.
 JS_EXPORT_PRIVATE JSValue importModuleFromJS(JSGlobalObject*, const String& name);
+// The same for a host whose module loader takes the name from a specifier (`import json from "python:json"`). If there is no such
+// module, the ModuleNotFoundError gets an attribute `code` with this text: that is what code in JS tells such errors by.
+JS_EXPORT_PRIVATE JSValue importModuleFromJS(JSGlobalObject*, const String& name, ASCIILiteral codeIfNotFound);
+// Whether the name, which may be dotted, is that of a module of the standard library, going by its first part and
+// sys.stdlib_module_names. Does not start the interpreter.
+JS_EXPORT_PRIVATE bool isStandardLibraryModuleName(StringView);
 
 // Reports the exception that is propagating as the interpreter does one nothing caught, through sys.excepthook.
 // Returns the exit status it calls for: that of a SystemExit, which is not reported, or 1; or, negative, the number of the

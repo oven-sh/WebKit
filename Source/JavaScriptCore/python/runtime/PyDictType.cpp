@@ -226,7 +226,7 @@ static bool updateFromArguments(JSGlobalObject* globalObject, PyDict* dict, cons
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!checkPositional(globalObject, function, args, 0, 1))
+    if (failed(scope, checkPositional(globalObject, function, args, 0, 1)))
         return false;
     if (args.size()) {
         dictUpdate(globalObject, dict, args[0]);
@@ -259,7 +259,9 @@ static JSValue dictNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs
 
 static JSValue dictInit(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
 {
-    if (!updateFromArguments(globalObject, PyDict::from(self), args, "dict"_s))
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, updateFromArguments(globalObject, PyDict::from(self), args, "dict"_s)))
         return { };
     return jsUndefined();
 }
@@ -300,9 +302,9 @@ static JSValue dictRepr(JSGlobalObject* globalObject, JSValue self)
     if (dict->isEmpty())
         return makeStr(vm, "{}"_s);
     StrBuilder builder;
-    if (!appendDictRepr(globalObject, dict, builder))
+    if (failed(scope, appendDictRepr(globalObject, dict, builder)))
         return { };
-    return makeStr(globalObject, builder);
+    RELEASE_AND_RETURN(scope, makeStr(globalObject, builder));
 }
 
 static JSValue dictLen(JSGlobalObject*, JSValue self) { return jsNumber(PyDict::from(self)->size()); }
@@ -398,7 +400,7 @@ static JSValue dictEquality(JSGlobalObject* globalObject, JSValue self, JSValue 
     PY_DICT_PROLOGUE();
     auto* otherDict = PyDict::tryFrom(other);
     if (!otherDict)
-        return runtime(globalObject).notImplemented();
+        RELEASE_AND_RETURN(scope, runtime(globalObject).notImplemented());
     bool equal = dictsAreEqual(globalObject, dict, otherDict);
     RETURN_IF_EXCEPTION(scope, { });
     return jsBoolean(equal == wantEqual);
@@ -428,7 +430,7 @@ static JSValue dictOrOf(JSGlobalObject* globalObject, JSValue left, JSValue righ
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!PyDict::is(left) || !PyDict::is(right))
-        return runtime(globalObject).notImplemented();
+        RELEASE_AND_RETURN(scope, runtime(globalObject).notImplemented());
     PyDict* result = copyAsBaseType(globalObject, PyDict::from(left));
     RETURN_IF_EXCEPTION(scope, { });
     mergeMapping(globalObject, result, right);
@@ -483,7 +485,7 @@ static JSValue dictPopItem(JSGlobalObject* globalObject, JSValue self)
     JSValue key, value;
     if (!dict->takeLast(vm, key, value))
         return raiseKeyError(globalObject, scope, makeStr(vm, "popitem(): dictionary is empty"_s));
-    return PyTuple::create(globalObject, { key, value });
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { key, value }));
 }
 
 static JSValue dictKeys(JSGlobalObject* globalObject, JSValue self) { return PyDictView::create(globalObject, PyDictView::Kind::Keys, PyDict::from(self)); }
@@ -492,7 +494,9 @@ static JSValue dictItems(JSGlobalObject* globalObject, JSValue self) { return Py
 
 static JSValue dictUpdateMethod(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
 {
-    if (!updateFromArguments(globalObject, PyDict::from(self), args, "update"_s))
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, updateFromArguments(globalObject, PyDict::from(self), args, "update"_s)))
         return { };
     return jsUndefined();
 }
@@ -606,6 +610,8 @@ static constexpr NativeDef dictMethods[] = {
 
 static JSValue frozendictNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs& args)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     Runtime& rt = runtime(globalObject);
     PyType* type = PyType::from(cls);
     if (type == rt.frozendictType() && args.size() == 1 && !args.hasKeywords()) {
@@ -613,7 +619,7 @@ static JSValue frozendictNew(JSGlobalObject* globalObject, JSValue cls, const Ca
             return existing;
     }
     PyDict* result = PyDict::create(rt.vm(), rt.structure<PyDict>(), type);
-    if (!updateFromArguments(globalObject, result, args, "frozendict"_s))
+    if (failed(scope, updateFromArguments(globalObject, result, args, "frozendict"_s)))
         return { };
     return result;
 }
@@ -623,10 +629,10 @@ static JSValue frozendictRepr(JSGlobalObject* globalObject, JSValue self)
     PY_DICT_PROLOGUE();
     StrBuilder builder;
     builder.append(dict->type()->name(), '(');
-    if (!dict->isEmpty() && !appendDictRepr(globalObject, dict, builder))
+    if (!dict->isEmpty() && failed(scope, appendDictRepr(globalObject, dict, builder)))
         return { };
     builder.append(')');
-    return makeStr(globalObject, builder);
+    RELEASE_AND_RETURN(scope, makeStr(globalObject, builder));
 }
 
 static JSValue frozendictHash(JSGlobalObject* globalObject, JSValue self)
@@ -649,7 +655,7 @@ static JSValue frozendictHash(JSGlobalObject* globalObject, JSValue self)
     result = result * 69069U + 907133923UL;
     if (result == static_cast<uint64_t>(-1))
         result = 590923713UL;
-    return makeInt(globalObject, static_cast<int64_t>(result));
+    RELEASE_AND_RETURN(scope, makeInt(globalObject, static_cast<int64_t>(result)));
 }
 
 static JSValue frozendictOr(JSGlobalObject* globalObject, JSValue self, JSValue other)
@@ -807,7 +813,7 @@ static JSValue viewCompare(JSGlobalObject* globalObject, JSValue self, JSValue o
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!PySet::is(other) && !asSetLikeView(other))
-        return runtime(globalObject).notImplemented();
+        RELEASE_AND_RETURN(scope, runtime(globalObject).notImplemented());
     int64_t lengthSelf = PyDictView::from(self)->dict()->size();
     int64_t lengthOther = length(globalObject, other);
     RETURN_IF_EXCEPTION(scope, { });
@@ -971,7 +977,7 @@ static constexpr NativeDef setLikeViewMethods[] = {
     PY_SLOT("__rsub__", viewRSub, "($self, value, /)"),
     PY_SLOT("__xor__", viewXor, "($self, value, /)"),
     PY_SLOT("__rxor__", viewRXor, "($self, value, /)"),
-    PY_METHOD("isdisjoint", viewIsDisjoint, "($self, other, /)"),
+    PY_METHOD("isdisjoint", viewIsDisjoint, "($self, object, /)"),
 };
 
 static constexpr NativeDef valuesViewMethods[] = {

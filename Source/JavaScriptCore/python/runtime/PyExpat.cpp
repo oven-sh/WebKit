@@ -3606,7 +3606,7 @@ private:
         VM& vm = getVM(m_globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
         if (!vm.isSafeToRecurseSoft())
-            return raiseRecursionError(m_globalObject, scope, "maximum recursion depth exceeded in conv_content_model"_s);
+            RELEASE_AND_RETURN(scope, raiseRecursionError(m_globalObject, scope, "maximum recursion depth exceeded in conv_content_model"_s));
         const ExpatContentNode& node = m_contentNodes[index];
         MarkedArgumentBuffer children;
         for (int child = node.firstChild; child >= 0; child = m_contentNodes[child].nextSibling) {
@@ -3614,7 +3614,7 @@ private:
             RETURN_IF_EXCEPTION(scope, { });
             children.append(tuple);
         }
-        return PyTuple::create(m_globalObject, { jsNumber(node.type), jsNumber(node.quantifier), toStr(node.name), PyTuple::create(m_globalObject, spanOf(children)) });
+        RELEASE_AND_RETURN(scope, PyTuple::create(m_globalObject, { jsNumber(node.type), jsNumber(node.quantifier), toStr(node.name), PyTuple::create(m_globalObject, spanOf(children)) }));
     }
 
     // A new node, in the group that is open if any is.
@@ -4515,7 +4515,7 @@ static JSValue expatParse(JSGlobalObject* globalObject, JSValue self, const Call
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!expatCheckArguments(globalObject, "Parse"_s, args, 1, 2))
+    if (failed(scope, expatCheckArguments(globalObject, "Parse"_s, args, 1, 2)))
         return { };
     bool isFinal = args.size() > 1 && isTrue(globalObject, args[1]);
     RETURN_IF_EXCEPTION(scope, { });
@@ -4553,7 +4553,7 @@ static JSValue expatParseFile(JSGlobalObject* globalObject, JSValue self, const 
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!expatCheckArguments(globalObject, "ParseFile"_s, args, 1, 1))
+    if (failed(scope, expatCheckArguments(globalObject, "ParseFile"_s, args, 1, 1)))
         return { };
     ExpatParser& parser = expatParserOf(self);
     if (parser.isInCallback)
@@ -4609,8 +4609,10 @@ static bool expatStringArgument(JSGlobalObject* globalObject, ASCIILiteral funct
 
 static JSValue expatSetBase(JSGlobalObject* globalObject, JSValue self, JSValue base)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     String text;
-    if (!expatStringArgument(globalObject, "SetBase"_s, "argument"_s, base, false, text))
+    if (failed(scope, expatStringArgument(globalObject, "SetBase"_s, "argument"_s, base, false, text)))
         return { };
     expatParserOf(self).setBase(text);
     return jsUndefined();
@@ -4633,12 +4635,13 @@ static JSValue expatGetInputContext(JSGlobalObject* globalObject, JSValue self)
 static JSValue expatExternalEntityParserCreate(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
 {
     VM& vm = getVM(globalObject);
-    if (!expatCheckArguments(globalObject, "ExternalEntityParserCreate"_s, args, 1, 2))
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, expatCheckArguments(globalObject, "ExternalEntityParserCreate"_s, args, 1, 2)))
         return { };
     String context, encoding;
-    if (!expatStringArgument(globalObject, "ExternalEntityParserCreate"_s, "argument 1"_s, args[0], true, context))
+    if (failed(scope, expatStringArgument(globalObject, "ExternalEntityParserCreate"_s, "argument 1"_s, args[0], true, context)))
         return { };
-    if (args.size() > 1 && !expatStringArgument(globalObject, "ExternalEntityParserCreate"_s, "argument 2"_s, args[1], false, encoding))
+    if (args.size() > 1 && failed(scope, expatStringArgument(globalObject, "ExternalEntityParserCreate"_s, "argument 2"_s, args[1], false, encoding)))
         return { };
     ExpatParser& parent = expatParserOf(self);
     PyRecord* record = expatCreateParserObject(globalObject, parent, context, encoding);
@@ -4669,7 +4672,7 @@ static JSValue expatUseForeignDTD(JSGlobalObject* globalObject, JSValue self, co
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!expatCheckArguments(globalObject, "UseForeignDTD"_s, args, 0, 1))
+    if (failed(scope, expatCheckArguments(globalObject, "UseForeignDTD"_s, args, 0, 1)))
         return { };
     bool flag = !args.size() || isTrue(globalObject, args[0]);
     RETURN_IF_EXCEPTION(scope, { });
@@ -4697,7 +4700,7 @@ static JSValue expatSetLimit(JSGlobalObject* globalObject, JSValue self, const C
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!expatCheckArguments(globalObject, isFactor ? "SetMaximumAmplification"_s : "SetActivationThreshold"_s, args, 1, 1))
+    if (failed(scope, expatCheckArguments(globalObject, isFactor ? "SetMaximumAmplification"_s : "SetActivationThreshold"_s, args, 1, 1)))
         return { };
     ExpatParser& parser = expatParserOf(self);
     if (PyRecord::from(self)->get(ExpatParent))
@@ -4784,8 +4787,10 @@ static JSValue expatGetIntern(JSGlobalObject*, JSValue self)
 
 static void expatSetBufferText(JSGlobalObject* globalObject, JSValue self, JSValue value)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     bool flag;
-    if (!expatFlagValue(globalObject, value, flag))
+    if (failed(scope, expatFlagValue(globalObject, value, flag)))
         return;
     ExpatParser& parser = expatParserOf(self);
     if (flag) {
@@ -4839,8 +4844,10 @@ static void expatSetBufferSize(JSGlobalObject* globalObject, JSValue self, JSVal
 
 static void expatSetNamespacePrefixes(JSGlobalObject* globalObject, JSValue self, JSValue value)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     bool flag;
-    if (!expatFlagValue(globalObject, value, flag))
+    if (failed(scope, expatFlagValue(globalObject, value, flag)))
         return;
     expatParserOf(self).namespacePrefixes = flag;
     expatParserOf(self).setReturnsTriplets(flag);
@@ -4910,9 +4917,9 @@ static JSValue expatParserCreate(JSGlobalObject* globalObject, JSValue encodingV
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     String encoding, separator;
-    if (encodingValue && !expatStringArgument(globalObject, "ParserCreate"_s, "argument 'encoding'"_s, encodingValue, true, encoding))
+    if (encodingValue && failed(scope, expatStringArgument(globalObject, "ParserCreate"_s, "argument 'encoding'"_s, encodingValue, true, encoding)))
         return { };
-    if (separatorValue && !expatStringArgument(globalObject, "ParserCreate"_s, "argument 'namespace_separator'"_s, separatorValue, true, separator))
+    if (separatorValue && failed(scope, expatStringArgument(globalObject, "ParserCreate"_s, "argument 'namespace_separator'"_s, separatorValue, true, separator)))
         return { };
     if (!separator.isNull()) {
         StrView view(separator);

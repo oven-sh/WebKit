@@ -332,8 +332,14 @@ void listExtend(JSGlobalObject* globalObject, JSArray* list, JSValue iterable)
     JSValue iterator = getIter(globalObject, iterable);
     RETURN_IF_EXCEPTION(scope, void());
     // Only asked so that what is wrong with the answer is reported: the array grows as it needs to.
-    lengthHint(globalObject, iterable, 8);
+    int64_t hint = lengthHint(globalObject, iterable, 8);
     RETURN_IF_EXCEPTION(scope, void());
+    // CPython makes room for so many, unless the sum overflows: then it takes the hint for a lie.
+    constexpr int64_t maxSsize = std::numeric_limits<int64_t>::max();
+    if (int64_t length = list->length(); hint <= maxSsize - length && hint + length > maxSsize / static_cast<int64_t>(sizeof(void*))) [[unlikely]] {
+        raiseMemoryError(globalObject, scope, String());
+        return;
+    }
     while (true) {
         JSValue item = iterNext(globalObject, iterator);
         RETURN_IF_EXCEPTION(scope, void());
@@ -372,10 +378,21 @@ PyTuple* tupleFromIterable(JSGlobalObject* globalObject, JSValue iterable)
     if (auto* tuple = PyTuple::tryFrom(iterable); tuple && tuple->type() == runtime(globalObject).tupleType())
         return tuple;
     if (isExactList(iterable))
-        return tupleFromList(globalObject, asList(iterable));
-    JSArray* list = listFromIterable(globalObject, iterable);
+        RELEASE_AND_RETURN(scope, tupleFromList(globalObject, asList(iterable)));
+    // Unlike a list, a tuple does not ask how many there will be.
+    JSValue iterator = getIter(globalObject, iterable);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    return tupleFromList(globalObject, list);
+    JSArray* list = newList(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    while (true) {
+        JSValue item = iterNext(globalObject, iterator);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (!item)
+            break;
+        list->push(globalObject, item);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+    RELEASE_AND_RETURN(scope, tupleFromList(globalObject, list));
 }
 
 // ---- Sorting ----
@@ -528,10 +545,13 @@ private:
             unsigned d = y[i];
             if (c == d)
                 continue;
-            if (c >= 0xd800 && d >= 0xd800) {
-                c = c >= 0xe000 ? c - 0x800 : c + 0x2000;
-                d = d >= 0xe000 ? d - 0x800 : d + 0x2000;
-            }
+            // As compareStrings() in PyStr.cpp: by code point, and a surrogate may stand alone.
+            if (i && U16_IS_LEAD(x[i - 1]) && U16_IS_TRAIL(c) != U16_IS_TRAIL(d))
+                return U16_IS_TRAIL(d);
+            if (U16_IS_LEAD(c) && i + 1 < x.length() && U16_IS_TRAIL(x[i + 1]))
+                c = U16_GET_SUPPLEMENTARY(c, x[i + 1]);
+            if (U16_IS_LEAD(d) && i + 1 < y.length() && U16_IS_TRAIL(y[i + 1]))
+                d = U16_GET_SUPPLEMENTARY(d, y[i + 1]);
             return c < d;
         }
         return x.length() < y.length();
@@ -1203,9 +1223,9 @@ static JSValue listInit(JSGlobalObject* globalObject, JSValue self, const CallAr
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!rejectKeywordsInInit(globalObject, "list"_s, self, runtime(globalObject).listType(), args))
+    if (failed(scope, rejectKeywordsInInit(globalObject, "list"_s, self, runtime(globalObject).listType(), args)))
         return { };
-    if (!checkPositional(globalObject, "list"_s, args, 0, 1))
+    if (failed(scope, checkPositional(globalObject, "list"_s, args, 0, 1)))
         return { };
     JSArray* list = asList(self);
     listTruncate(globalObject, list, 0);
@@ -1239,7 +1259,7 @@ static JSValue listRepr(JSGlobalObject* globalObject, JSValue self)
         builder.append(view.data);
     }
     builder.append(']');
-    return makeStr(globalObject, builder);
+    RELEASE_AND_RETURN(scope, makeStr(globalObject, builder));
 }
 
 template<CompareOperator op>
@@ -1302,7 +1322,7 @@ static JSValue listGetItemMethod(JSGlobalObject* globalObject, JSValue self, JSV
     JSArray* list = asList(self);
     if (hasIndex(globalObject, key)) {
         int64_t index;
-        if (!listSubscriptIndex(globalObject, list, key, "list index out of range"_s, index))
+        if (failed(scope, listSubscriptIndex(globalObject, list, key, "list index out of range"_s, index)))
             return { };
         return listGet(list, index);
     }
@@ -1339,7 +1359,7 @@ static void listAssignSubscript(JSGlobalObject* globalObject, JSArray* list, JSV
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (hasIndex(globalObject, key)) {
         int64_t index;
-        if (!listSubscriptIndex(globalObject, list, key, "list assignment index out of range"_s, index))
+        if (failed(scope, listSubscriptIndex(globalObject, list, key, "list assignment index out of range"_s, index)))
             return;
         scope.release();
         if (value)
@@ -1361,12 +1381,14 @@ static void listAssignSubscript(JSGlobalObject* globalObject, JSArray* list, JSV
     // The items are collected before the length of the list is looked at: working them out may change the list, and they may be the list.
     MarkedArgumentBuffer items;
     if (value) {
-        PyType* type = typeOf(globalObject, value);
-        if (!type->lookup(Special::Iter) && !type->lookup(Special::GetItem)) {
-            raiseTypeError(globalObject, scope, "must assign iterable to extended slice"_s);
+        // Whatever TypeError asking for the iterator ends in. (A list or a tuple is not asked.)
+        JSValue iterator = isExactList(value) || typeOf(globalObject, value) == runtime(globalObject).tupleType() ? value : getIter(globalObject, value);
+        if (!iterator) {
+            if (clearPendingExceptionIfMatches(globalObject, runtime(globalObject).TypeError()))
+                raiseTypeError(globalObject, scope, "must assign iterable to extended slice"_s);
             return;
         }
-        forEach(globalObject, value, [&](JSValue item) {
+        forEach(globalObject, iterator, [&](JSValue item) {
             items.append(item);
             return true;
         });
@@ -1495,7 +1517,7 @@ static JSValue listMul(JSGlobalObject* globalObject, JSValue self, JSValue count
     JSArray* list = asList(self);
     unsigned length;
     uint64_t count;
-    if (!repeatCount(globalObject, countValue, [&] { return list->length(); }, length, count))
+    if (failed(scope, repeatCount(globalObject, countValue, [&] { return list->length(); }, length, count)))
         return { };
     JSArray* result = JSArray::tryCreate(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), length * count);
     if (!result)
@@ -1515,7 +1537,7 @@ static JSValue listIMul(JSGlobalObject* globalObject, JSValue self, JSValue coun
     JSArray* list = asList(self);
     unsigned length;
     uint64_t count;
-    if (!repeatCount(globalObject, countValue, [&] { return list->length(); }, length, count))
+    if (failed(scope, repeatCount(globalObject, countValue, [&] { return list->length(); }, length, count)))
         return { };
     if (!count) {
         listTruncate(globalObject, list, 0);
@@ -1555,7 +1577,7 @@ static JSValue listInsertMethod(JSGlobalObject* globalObject, JSValue self, JSVa
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSArray* list = asList(self);
     int64_t index;
-    if (!ssizeArgument(globalObject, indexValue, index))
+    if (failed(scope, ssizeArgument(globalObject, indexValue, index)))
         return { };
     int64_t length = list->length();
     if (index < 0)
@@ -1572,7 +1594,7 @@ static JSValue listPop(JSGlobalObject* globalObject, JSValue self, JSValue index
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSArray* list = asList(self);
     int64_t index = -1;
-    if (indexValue && !ssizeArgument(globalObject, indexValue, index))
+    if (indexValue && failed(scope, ssizeArgument(globalObject, indexValue, index)))
         return { };
     int64_t length = list->length();
     if (!length)
@@ -1642,7 +1664,7 @@ static JSValue listIndex(JSGlobalObject* globalObject, JSValue self, JSValue ite
     JSArray* list = asList(self);
     int64_t from = 0;
     int64_t to = std::numeric_limits<int64_t>::max();
-    if ((start && !sliceIndexArgument(globalObject, start, from)) || (stop && !sliceIndexArgument(globalObject, stop, to)))
+    if ((start && failed(scope, sliceIndexArgument(globalObject, start, from))) || (stop && failed(scope, sliceIndexArgument(globalObject, stop, to))))
         return { };
     // Not clipped to the length: the list may grow as it is searched.
     if (from < 0)
@@ -1728,7 +1750,7 @@ static constexpr NativeDef listMethods[] = {
     PY_METHOD("extend", listExtendMethod, "($self, iterable, /)"),
     PY_METHOD("pop", listPop, "($self, index=-1, /)"),
     PY_METHOD("remove", listRemoveMethod, "($self, value, /)"),
-    PY_METHOD("index", listIndex, "($self, value, start=0, stop=9223372036854775807, /)"),
+    PY_METHOD("index", listIndex, "($self, value, start=0, stop=sys.maxsize, /)"),
     PY_METHOD("count", listCount, "($self, value, /)"),
     PY_METHOD("reverse", listReverse, "($self, /)"),
     PY_METHOD("sort", listSortMethod, "($self, /, *, key=None, reverse=False)"),
@@ -1782,9 +1804,9 @@ static JSValue tupleNew(JSGlobalObject* globalObject, JSValue cls, const CallArg
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyType* type = PyType::from(cls);
-    if (!rejectKeywordsInNew(globalObject, "tuple"_s, type, rt.tupleType(), args))
+    if (failed(scope, rejectKeywordsInNew(globalObject, "tuple"_s, type, rt.tupleType(), args)))
         return { };
-    if (!checkPositional(globalObject, "tuple"_s, args, 0, 1))
+    if (failed(scope, checkPositional(globalObject, "tuple"_s, args, 0, 1)))
         return { };
     PyTuple* items = rt.emptyTuple();
     if (args.size()) {
@@ -1821,7 +1843,7 @@ static JSValue tupleRepr(JSGlobalObject* globalObject, JSValue self)
         builder.append(view.data);
     }
     builder.append(tuple->length() == 1 ? ",)"_s : ")"_s);
-    return makeStr(globalObject, builder);
+    RELEASE_AND_RETURN(scope, makeStr(globalObject, builder));
 }
 
 static JSValue tupleHash(JSGlobalObject* globalObject, JSValue self)
@@ -1830,7 +1852,7 @@ static JSValue tupleHash(JSGlobalObject* globalObject, JSValue self)
     auto scope = DECLARE_THROW_SCOPE(vm);
     int64_t result = hashOfTuple(globalObject, PyTuple::from(self));
     RETURN_IF_EXCEPTION(scope, { });
-    return makeInt(globalObject, result);
+    RELEASE_AND_RETURN(scope, makeInt(globalObject, result));
 }
 
 template<CompareOperator op>
@@ -1851,7 +1873,7 @@ static JSValue tupleGetItem(JSGlobalObject* globalObject, JSValue self, JSValue 
     PyTuple* tuple = PyTuple::from(self);
     if (hasIndex(globalObject, key)) {
         int64_t index;
-        if (!normalizeIndex(globalObject, key, tuple->length(), "tuple index out of range"_s, index))
+        if (failed(scope, normalizeIndex(globalObject, key, tuple->length(), "tuple index out of range"_s, index)))
             return { };
         return tuple->at(index);
     }
@@ -1916,10 +1938,11 @@ static JSValue tupleMul(JSGlobalObject* globalObject, JSValue self, JSValue coun
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PyTuple* tuple = PyTuple::from(self);
     unsigned length;
     uint64_t count;
-    if (!repeatCount(globalObject, countValue, [&] { return tuple->length(); }, length, count))
+    if (failed(scope, repeatCount(globalObject, countValue, [&] { return tuple->length(); }, length, count)))
         return { };
     if ((!length || count == 1) && tuple->type() == rt.tupleType())
         return tuple;
@@ -1954,7 +1977,7 @@ static JSValue tupleIndex(JSGlobalObject* globalObject, JSValue self, JSValue it
     PyTuple* tuple = PyTuple::from(self);
     int64_t from = 0;
     int64_t to = std::numeric_limits<int64_t>::max();
-    if ((start && !sliceIndexArgument(globalObject, start, from)) || (stop && !sliceIndexArgument(globalObject, stop, to)))
+    if ((start && failed(scope, sliceIndexArgument(globalObject, start, from))) || (stop && failed(scope, sliceIndexArgument(globalObject, stop, to))))
         return { };
     adjustSliceBounds(tuple->length(), from, to);
     for (int64_t i = from; i < to; ++i) {
@@ -1990,7 +2013,7 @@ static constexpr NativeDef tupleMethods[] = {
     PY_SEQUENCE_SLOT("__mul__", tupleMul, "($self, value, /)"),
     PY_SEQUENCE_SLOT("__rmul__", tupleMul, "($self, value, /)"),
     PY_METHOD("__getnewargs__", tupleGetNewArgs, "($self, /)"),
-    PY_METHOD("index", tupleIndex, "($self, value, start=0, stop=9223372036854775807, /)"),
+    PY_METHOD("index", tupleIndex, "($self, value, start=0, stop=sys.maxsize, /)"),
     PY_METHOD("count", tupleCount, "($self, value, /)"),
     PY_CLASSMETHOD("__class_getitem__", classGetItem, "($type, object, /)"),
 };

@@ -19,6 +19,7 @@
 #include "PyModule.h"
 #include "PyNumbers.h"
 #include "PyParser.h"
+#include "PyStdlibModuleNames.h"
 #include "PyStr.h"
 #include "PyThreads.h"
 #include "PyVirtualFiles.h"
@@ -288,7 +289,7 @@ JSValue compileTree(JSGlobalObject* globalObject, ParseTree& tree, ParserHost& h
     UnlinkedFunctionExecutable* unlinked = compiler.compile();
     if (!unlinked)
         RELEASE_AND_RETURN(scope, raiseSyntaxErrorInfo(globalObject, compiler.error(), filename));
-    return PyCode::of(globalObject, unlinked->link(vm, nullptr, sourceCode));
+    RELEASE_AND_RETURN(scope, PyCode::of(globalObject, unlinked->link(vm, nullptr, sourceCode)));
 }
 
 JSValue compileSource(JSGlobalObject* globalObject, std::span<const uint8_t> source, const String& filename, ASCIILiteral mode, int flags, int optimize, JSValue module)
@@ -321,15 +322,16 @@ JSValue runCode(JSGlobalObject* globalObject, JSValue codeValue, PyDict* globals
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* code = PyCode::from(codeValue);
-    if (!ensureBuiltins(globalObject, globals))
+    if (failed(scope, ensureBuiltins(globalObject, globals)))
         return { };
     PyFunction* function = PyFunction::create(globalObject, code->executable(), globals);
     if (closure && closure->length())
         function->setClosure(vm, closure);
     if (!code->codeInfo().takesNamespace)
-        return call(globalObject, function);
-    return call(globalObject, function, locals ? locals : JSValue(globals));
+        RELEASE_AND_RETURN(scope, call(globalObject, function));
+    RELEASE_AND_RETURN(scope, call(globalObject, function, locals ? locals : JSValue(globals)));
 }
 
 // ---- Output ----
@@ -598,6 +600,37 @@ JSValue importModuleFromJS(JSGlobalObject* globalObject, const String& name)
     if (name == "__python__"_s)
         return rt.jsViewObject(JSViewObject::Namespace);
     return importModule(globalObject, internString(vm, name));
+}
+
+JSValue importModuleFromJS(JSGlobalObject* globalObject, const String& name, ASCIILiteral codeIfNotFound)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue module = importModuleFromJS(globalObject, name);
+    if (!scope.exception() || !globalObject->pythonRuntime()) [[likely]]
+        return module;
+    Runtime& rt = runtime(globalObject);
+    if (!pendingExceptionMatches(globalObject, rt.ModuleNotFoundError()))
+        return { };
+    // Not one that the module itself ran into, importing something else.
+    JSValue exception = takePendingException(globalObject);
+    JSValue missing = PyException::from(exception)->field(ExceptionField::importErrorName);
+    if (missing && isStr(missing)) {
+        String missingName = strValue(missing)->value(globalObject);
+        if (!scope.exception() && (missingName == name || name.startsWith(makeString(missingName, '.'))))
+            setAttr(globalObject, exception, internString(vm, "code"_s), makeStr(vm, codeIfNotFound));
+    }
+    (void)scope.tryClearException();
+    throwPythonException(globalObject, scope, exception);
+    return { };
+}
+
+bool isStandardLibraryModuleName(StringView name)
+{
+    StringView first = name.left(name.find('.'));
+    return std::ranges::any_of(stdlibModuleNames, [&](ASCIILiteral candidate) {
+        return first == candidate;
+    });
 }
 
 // Not FileSystem::realPath(): that frees what the C library allocated, and in Bun the two do not have the same allocator.

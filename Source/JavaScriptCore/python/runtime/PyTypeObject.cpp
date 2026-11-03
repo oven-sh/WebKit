@@ -211,7 +211,7 @@ JSValue objectNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs& arg
     // A class derived from a built-in type that has no __new__ because there is no making its instances from Python.
     if (layoutBase(type) != rt.objectType()) [[unlikely]]
         return raiseTypeError(globalObject, scope, "cannot create '"_s, type->nameInMessages(), "' instances"_s);
-    return allocateInstance(globalObject, type);
+    RELEASE_AND_RETURN(scope, allocateInstance(globalObject, type));
 }
 
 JSValue objectInit(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
@@ -224,7 +224,7 @@ JSValue objectInit(JSGlobalObject* globalObject, JSValue self, const CallArgs& a
     if (!isNativeNew(type->lookup(Special::Init), objectInit))
         return raiseTypeError(globalObject, scope, "object.__init__() takes exactly one argument (the instance to initialize)"_s);
     // A built-in type whose instances cannot be made from Python has no __new__ at all in CPython, not that of object.
-    if (isNativeNew(type->lookup(Special::New), objectNew) && layoutBase(type) == runtime(globalObject).objectType())
+    if (isNativeNew(type->lookup(Special::New), objectNew) && !type->has(TypeFlag::DisallowInstantiation))
         return raiseTypeError(globalObject, scope, type->nameInMessages(), ".__init__() takes exactly one argument (the instance to initialize)"_s);
     return jsUndefined();
 }
@@ -309,7 +309,7 @@ JSValue objectSetAttr(JSGlobalObject* globalObject, JSValue self, JSValue name, 
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!checkNotOverridden(globalObject, self, Special::SetAttr, "__setattr__"_s, [](const NativeDef& def) { return def.pointer.f3 == objectSetAttr; }))
+    if (failed(scope, checkNotOverridden(globalObject, self, Special::SetAttr, "__setattr__"_s, [](const NativeDef& def) { return def.pointer.f3 == objectSetAttr; })))
         return { };
     JSString* string = attributeName(globalObject, name);
     RETURN_IF_EXCEPTION(scope, { });
@@ -322,7 +322,7 @@ JSValue objectDelAttr(JSGlobalObject* globalObject, JSValue self, JSValue name)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!checkNotOverridden(globalObject, self, Special::DelAttr, "__delattr__"_s, [](const NativeDef& def) { return def.pointer.f2 == objectDelAttr; }))
+    if (failed(scope, checkNotOverridden(globalObject, self, Special::DelAttr, "__delattr__"_s, [](const NativeDef& def) { return def.pointer.f2 == objectDelAttr; })))
         return { };
     JSString* string = attributeName(globalObject, name);
     RETURN_IF_EXCEPTION(scope, { });
@@ -419,7 +419,7 @@ static JSValue objectDir(JSGlobalObject* globalObject, JSValue self)
         mergeClassDict(globalObject, names, cls);
         RETURN_IF_EXCEPTION(scope, { });
     }
-    return keysAsList(globalObject, names);
+    RELEASE_AND_RETURN(scope, keysAsList(globalObject, names));
 }
 
 static JSValue objectGetClass(JSGlobalObject* globalObject, JSValue self)
@@ -1353,7 +1353,7 @@ static JSValue typeMRO(JSGlobalObject* globalObject, JSValue self)
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyTuple* mro = computeMRO(globalObject, PyType::from(self));
     RETURN_IF_EXCEPTION(scope, { });
-    return newList(globalObject, mro->span());
+    RELEASE_AND_RETURN(scope, newList(globalObject, mro->span()));
 }
 
 static JSValue typeSubclasses(JSGlobalObject* globalObject, JSValue self)
@@ -1393,7 +1393,7 @@ static JSValue typeDir(JSGlobalObject* globalObject, JSValue self)
     PyDict* names = PyDict::create(globalObject);
     mergeClassDict(globalObject, names, self);
     RETURN_IF_EXCEPTION(scope, { });
-    return keysAsList(globalObject, names);
+    RELEASE_AND_RETURN(scope, keysAsList(globalObject, names));
 }
 
 static JSValue typeOr(JSGlobalObject* globalObject, JSValue self, JSValue other) { return makeUnion(globalObject, self, other); }
@@ -1726,7 +1726,7 @@ static JSValue typeGetAnnotations(JSGlobalObject* globalObject, JSValue self)
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyType* type = PyType::from(self);
     if (!type->isHeapType())
-        return raiseNoTypeAttribute(globalObject, type, "__annotations__"_s);
+        RELEASE_AND_RETURN(scope, raiseNoTypeAttribute(globalObject, type, "__annotations__"_s));
 
     JSValue annotations = type->dict()->get(rt.names.dAnnotations());
     if (!annotations)
@@ -1990,7 +1990,7 @@ static constexpr NativeDef typeMethods[] = {
     PY_SLOT("__ror__", typeROr, "($self, value, /)"),
     PY_METHOD("mro", typeMRO, "($self, /)"),
     PY_METHOD("__subclasses__", typeSubclasses, "($self, /)"),
-    PY_CLASSMETHOD("__prepare__", typePrepare, "($cls, *args, **kwargs)"),
+    PY_CLASSMETHOD("__prepare__", typePrepare, "!($cls, name, bases, /, **kwds)"),
     PY_METHOD("__instancecheck__", typeInstanceCheck, "($self, instance, /)"),
     PY_METHOD("__subclasscheck__", typeSubclassCheck, "($self, subclass, /)"),
     PY_METHOD("__dir__", typeDir, "($self, /)"),
@@ -2060,7 +2060,7 @@ static PyTuple* updateBases(JSGlobalObject* globalObject, PyTuple* bases)
         for (JSValue entry : PyTuple::from(entries)->span())
             listAppend(globalObject, replaced, entry);
     }
-    return replaced ? tupleFromList(globalObject, replaced) : bases;
+    RELEASE_AND_RETURN(scope, replaced ? tupleFromList(globalObject, replaced) : bases);
 }
 
 JSValue buildClass(JSGlobalObject* globalObject, const CallArgs& args)
@@ -2174,7 +2174,7 @@ static JSValue notImplementedNew(JSGlobalObject* globalObject, JSValue, const Ca
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (hasExcessArguments(args))
         return raiseTypeError(globalObject, scope, "NotImplementedType takes no arguments"_s);
-    return runtime(globalObject).notImplemented();
+    RELEASE_AND_RETURN(scope, runtime(globalObject).notImplemented());
 }
 
 static JSValue notImplementedRepr(JSGlobalObject* globalObject, JSValue) { return makeStr(getVM(globalObject), "NotImplemented"_s); }
@@ -2199,7 +2199,7 @@ static JSValue ellipsisNew(JSGlobalObject* globalObject, JSValue, const CallArgs
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (hasExcessArguments(args))
         return raiseTypeError(globalObject, scope, "EllipsisType takes no arguments"_s);
-    return runtime(globalObject).ellipsis();
+    RELEASE_AND_RETURN(scope, runtime(globalObject).ellipsis());
 }
 
 static JSValue ellipsisRepr(JSGlobalObject* globalObject, JSValue) { return makeStr(getVM(globalObject), "Ellipsis"_s); }

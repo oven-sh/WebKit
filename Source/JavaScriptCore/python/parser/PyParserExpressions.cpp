@@ -197,6 +197,14 @@ Expr* Parser::parseExpressionOnce()
 {
     if (at(TokenKind::KwLambda))
         return parseLambda();
+    if ((at(TokenKind::KwPass) || at(TokenKind::KwBreak) || at(TokenKind::KwContinue)) && !m_quiet) [[unlikely]] {
+        bool isBeforeIf;
+        {
+            SetForScope reading(m_diagnosing, true);
+            isBeforeIf = peek(1).kind == TokenKind::KwIf;
+        }
+        return isBeforeIf ? diagnoseStatementBeforeIf() : invalidSyntax();
+    }
 
     Position start = startPosition();
     size_t startIndex = m_index;
@@ -1165,10 +1173,11 @@ Expr* Parser::parseForTargets(bool inComprehension)
     if (m_errorIsFatal)
         return nullptr;
 
-    // Read as expressions, they tell what is wrong.
+    // Read as expressions, they tell what is wrong. What parseStarTargets() had to say comes last of all that can be said here.
+    m_errorWasFoundDiagnosing = false;
+    rewind(saved);
     DIAGNOSE();
     SetForScope acceptsPrefix(m_acceptsPrefix, true);
-    rewind(saved);
     if (inComprehension) {
         // At least one variable, or it is not known to be a loop at all.
         bool parsed = atStartOfExpression();
@@ -1301,20 +1310,6 @@ Expr* Parser::parseAtom()
     case TokenKind::LBrace:
         CHECK_RECURSION();
         return parseBraceDisplay();
-    case TokenKind::KwPass:
-    case TokenKind::KwBreak:
-    case TokenKind::KwContinue: {
-        if (m_quiet)
-            return invalidSyntax();
-        bool isBeforeIf;
-        {
-            SetForScope reading(m_diagnosing, true);
-            isBeforeIf = peek(1).kind == TokenKind::KwIf;
-        }
-        if (isBeforeIf)
-            return diagnoseStatementBeforeIf();
-        return invalidSyntax();
-    }
     default:
         return invalidSyntax();
     }
@@ -1361,7 +1356,8 @@ Expr* Parser::parseParenthesized()
         Position starStart = startPosition();
         auto saved = checkpoint();
         advance();
-        Expr* value = atStartOfExpression() ? parseExpression() : nullptr;
+        m_failedExpressionHasPrefix = false;
+        Expr* value = atStartOfExpression() ? parseExpression() : invalidSyntax();
         if (value && atComprehension()) {
             auto* starred = make<Starred>(rangeFrom(starStart));
             starred->value = value;
@@ -1370,6 +1366,10 @@ Expr* Parser::parseParenthesized()
         } else {
             if (m_errorIsFatal)
                 return nullptr;
+            if (!value && m_errorIsGeneric && !m_failedExpressionHasPrefix && !m_quiet) {
+                m_error = { };
+                return syntaxError("Invalid star expression"_s);
+            }
             rewind(saved);
             first = parseSequenceElement();
         }
@@ -1466,7 +1466,7 @@ Expr* Parser::parseListDisplay()
         while (at(TokenKind::Comma)) {
             lastComma = advance();
             endsWithComma = true;
-            if (at(TokenKind::RSqb) || atComprehension())
+            if (at(TokenKind::RSqb) || atMisplacedComprehension())
                 break;
             Expr* element = parseSequenceElement();
             if (!element)
@@ -1474,7 +1474,7 @@ Expr* Parser::parseListDisplay()
             elements.append(element);
             endsWithComma = false;
         }
-        if (atComprehension())
+        if (atMisplacedComprehension())
             return diagnoseComprehensionTarget(elements, lastComma, endsWithComma);
     }
     if (!expect(TokenKind::RSqb))
@@ -1702,7 +1702,7 @@ Expr* Parser::parseBraceDisplay()
     while (at(TokenKind::Comma)) {
         lastComma = advance();
         endsWithComma = true;
-        if (at(TokenKind::RBrace) || atComprehension())
+        if (at(TokenKind::RBrace) || atMisplacedComprehension())
             break;
         Expr* element = parseSequenceElement();
         if (!element)
@@ -1710,7 +1710,7 @@ Expr* Parser::parseBraceDisplay()
         elements.append(element);
         endsWithComma = false;
     }
-    if (atComprehension())
+    if (atMisplacedComprehension())
         return diagnoseComprehensionTarget(elements, lastComma, endsWithComma);
     if (!expect(TokenKind::RBrace))
         return nullptr;

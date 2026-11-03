@@ -187,19 +187,23 @@ static bool timeReadClock(JSGlobalObject* globalObject, clockid_t clock, int64_t
 template<clockid_t clock>
 static JSValue timeClockSeconds(JSGlobalObject* globalObject)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int64_t nanoseconds;
-    if (!timeReadClock(globalObject, clock, nanoseconds))
+    if (failed(scope, timeReadClock(globalObject, clock, nanoseconds)))
         return { };
-    return makeFloat(globalObject, timeSecondsOf(nanoseconds));
+    RELEASE_AND_RETURN(scope, makeFloat(globalObject, timeSecondsOf(nanoseconds)));
 }
 
 template<clockid_t clock>
 static JSValue timeClockNanoseconds(JSGlobalObject* globalObject)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int64_t nanoseconds;
-    if (!timeReadClock(globalObject, clock, nanoseconds))
+    if (failed(scope, timeReadClock(globalObject, clock, nanoseconds)))
         return { };
-    return makeInt(globalObject, nanoseconds);
+    RELEASE_AND_RETURN(scope, makeInt(globalObject, nanoseconds));
 }
 
 // False: a TypeError, whatever was wrong.
@@ -222,30 +226,32 @@ static JSValue timeClockGetTime(JSGlobalObject* globalObject, JSValue id)
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     clockid_t clock;
-    if (!timeGetClockID(globalObject, id, clock))
+    if (failed(scope, timeGetClockID(globalObject, id, clock)))
         return { };
     struct timespec time;
     if (clock_gettime(clock, &time))
         return raiseOSError(globalObject, scope, errno);
-    return makeFloat(globalObject, timeSecondsOf(time));
+    RELEASE_AND_RETURN(scope, makeFloat(globalObject, timeSecondsOf(time)));
 }
 
 static JSValue timeClockGetTimeNs(JSGlobalObject* globalObject, JSValue id)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     clockid_t clock;
-    if (!timeGetClockID(globalObject, id, clock))
+    if (failed(scope, timeGetClockID(globalObject, id, clock)))
         return { };
     int64_t nanoseconds;
-    if (!timeReadClock(globalObject, clock, nanoseconds))
+    if (failed(scope, timeReadClock(globalObject, clock, nanoseconds)))
         return { };
-    return makeInt(globalObject, nanoseconds);
+    RELEASE_AND_RETURN(scope, makeInt(globalObject, nanoseconds));
 }
 
 static JSValue timeSetClock(JSGlobalObject* globalObject, const CallArgs& args, bool isNanoseconds)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!timeCheckArguments(globalObject, "clock_settime"_s, args, 2, 2))
+    if (failed(scope, timeCheckArguments(globalObject, "clock_settime"_s, args, 2, 2)))
         return { };
     int id = timeGetCInt(globalObject, args[0]);
     RETURN_IF_EXCEPTION(scope, { });
@@ -257,7 +263,7 @@ static JSValue timeSetClock(JSGlobalObject* globalObject, const CallArgs& args, 
         if (!converted)
             return raiseOverflowError(globalObject, scope, "Python int too large to convert to C int64_t"_s);
         nanoseconds = *converted;
-    } else if (!timeGetNanoseconds(globalObject, args[1], false, nanoseconds))
+    } else if (failed(scope, timeGetNanoseconds(globalObject, args[1], false, nanoseconds)))
         return { };
     struct timespec time = timeToTimespec(nanoseconds);
     if (clock_settime(static_cast<clockid_t>(id), &time))
@@ -272,14 +278,14 @@ static JSValue timeClockGetRes(JSGlobalObject* globalObject, const CallArgs& arg
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!timeCheckArguments(globalObject, "clock_getres"_s, args, 1, 1))
+    if (failed(scope, timeCheckArguments(globalObject, "clock_getres"_s, args, 1, 1)))
         return { };
     int id = timeGetCInt(globalObject, args[0]);
     RETURN_IF_EXCEPTION(scope, { });
     struct timespec resolution;
     if (clock_getres(static_cast<clockid_t>(id), &resolution))
         return raiseOSError(globalObject, scope, errno);
-    return makeFloat(globalObject, timeSecondsOf(resolution));
+    RELEASE_AND_RETURN(scope, makeFloat(globalObject, timeSecondsOf(resolution)));
 }
 
 #if !OS(DARWIN)
@@ -287,7 +293,7 @@ static JSValue timePthreadGetCpuClockID(JSGlobalObject* globalObject, const Call
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!timeCheckArguments(globalObject, "pthread_getcpuclockid"_s, args, 1, 1))
+    if (failed(scope, timeCheckArguments(globalObject, "pthread_getcpuclockid"_s, args, 1, 1)))
         return { };
     if (!hasIndex(globalObject, args[0]))
         return raiseTypeError(globalObject, scope, "pthread_getcpuclockid() argument 1 must be int, not "_s, typeNameOfArgument(globalObject, args[0]));
@@ -320,7 +326,7 @@ static JSValue timeGetClockInfo(JSGlobalObject* globalObject, const CallArgs& ar
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!timeCheckArguments(globalObject, "get_clock_info"_s, args, 1, 1))
+    if (failed(scope, timeCheckArguments(globalObject, "get_clock_info"_s, args, 1, 1)))
         return { };
     if (!isStr(args[0]))
         return raiseTypeError(globalObject, scope, "get_clock_info() argument 1 must be str, not "_s, typeNameOfArgument(globalObject, args[0]));
@@ -367,12 +373,12 @@ static JSValue timeSleep(JSGlobalObject* globalObject, JSValue seconds)
     if (!audit(globalObject, "time.sleep"_s, seconds))
         return { };
     int64_t timeout;
-    if (!timeGetNanoseconds(globalObject, seconds, true, timeout))
+    if (failed(scope, timeGetNanoseconds(globalObject, seconds, true, timeout)))
         return { };
     if (timeout < 0)
         return raiseValueError(globalObject, scope, "sleep length must be non-negative"_s);
     int64_t now;
-    if (!timeReadClock(globalObject, CLOCK_MONOTONIC, now))
+    if (failed(scope, timeReadClock(globalObject, CLOCK_MONOTONIC, now)))
         return { };
     int64_t deadline;
     if (__builtin_add_overflow(now, timeout, &deadline))
@@ -398,7 +404,7 @@ static JSValue timeSleep(JSGlobalObject* globalObject, JSValue seconds)
         if (!checkSignals(globalObject))
             return { };
 #if !OS(LINUX)
-        if (!timeReadClock(globalObject, CLOCK_MONOTONIC, now))
+        if (failed(scope, timeReadClock(globalObject, CLOCK_MONOTONIC, now)))
             return { };
         timeout = deadline - now;
         if (timeout < 0)
@@ -456,13 +462,15 @@ static bool timeToLocal(JSGlobalObject* globalObject, time_t when, struct tm& tm
 // The optional argument of gmtime(), localtime() and ctime(): None, like none at all, is now.
 static bool timeGetWhen(JSGlobalObject* globalObject, ASCIILiteral function, const CallArgs& args, time_t& when)
 {
-    if (!timeCheckArguments(globalObject, function, args, 0, 1))
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, timeCheckArguments(globalObject, function, args, 0, 1)))
         return false;
     if (args.isEmpty() || isNone(args[0])) {
         when = time(nullptr);
         return true;
     }
-    return timeGetSeconds(globalObject, args[0], when);
+    RELEASE_AND_RETURN(scope, timeGetSeconds(globalObject, args[0], when));
 }
 
 static JSValue timeGmTime(JSGlobalObject* globalObject, const CallArgs& args)
@@ -470,7 +478,7 @@ static JSValue timeGmTime(JSGlobalObject* globalObject, const CallArgs& args)
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     time_t when;
-    if (!timeGetWhen(globalObject, "gmtime"_s, args, when))
+    if (failed(scope, timeGetWhen(globalObject, "gmtime"_s, args, when)))
         return { };
     struct tm tm;
     errno = 0;
@@ -481,11 +489,13 @@ static JSValue timeGmTime(JSGlobalObject* globalObject, const CallArgs& args)
 
 static JSValue timeLocalTime(JSGlobalObject* globalObject, const CallArgs& args)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     time_t when;
     struct tm tm;
-    if (!timeGetWhen(globalObject, "localtime"_s, args, when) || !timeToLocal(globalObject, when, tm))
+    if (failed(scope, timeGetWhen(globalObject, "localtime"_s, args, when)) || failed(scope, timeToLocal(globalObject, when, tm)))
         return { };
-    return timeMakeStruct(globalObject, tm);
+    RELEASE_AND_RETURN(scope, timeMakeStruct(globalObject, tm));
 }
 
 namespace {
@@ -596,24 +606,28 @@ static JSValue timeFormatAsC(JSGlobalObject* globalObject, const struct tm& tm)
 
 static JSValue timeAscTime(JSGlobalObject* globalObject, const CallArgs& args)
 {
-    if (!rejectKeywords(globalObject, "asctime"_s, args) || !checkPositional(globalObject, "asctime"_s, args, 0, 1))
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, rejectKeywords(globalObject, "asctime"_s, args)) || failed(scope, checkPositional(globalObject, "asctime"_s, args, 0, 1)))
         return { };
     TimeFields fields;
     if (args.isEmpty()) {
-        if (!timeToLocal(globalObject, time(nullptr), fields.tm))
+        if (failed(scope, timeToLocal(globalObject, time(nullptr), fields.tm)))
             return { };
-    } else if (!timeGetFields(globalObject, args[0], "asctime"_s, fields) || !timeCheckFields(globalObject, fields.tm))
+    } else if (failed(scope, timeGetFields(globalObject, args[0], "asctime"_s, fields)) || failed(scope, timeCheckFields(globalObject, fields.tm)))
         return { };
-    return timeFormatAsC(globalObject, fields.tm);
+    RELEASE_AND_RETURN(scope, timeFormatAsC(globalObject, fields.tm));
 }
 
 static JSValue timeCTime(JSGlobalObject* globalObject, const CallArgs& args)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     time_t when;
     struct tm tm;
-    if (!timeGetWhen(globalObject, "ctime"_s, args, when) || !timeToLocal(globalObject, when, tm))
+    if (failed(scope, timeGetWhen(globalObject, "ctime"_s, args, when)) || failed(scope, timeToLocal(globalObject, when, tm)))
         return { };
-    return timeFormatAsC(globalObject, tm);
+    RELEASE_AND_RETURN(scope, timeFormatAsC(globalObject, tm));
 }
 
 static JSValue timeMkTime(JSGlobalObject* globalObject, JSValue tuple)
@@ -621,29 +635,29 @@ static JSValue timeMkTime(JSGlobalObject* globalObject, JSValue tuple)
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     TimeFields fields;
-    if (!timeGetFields(globalObject, tuple, "mktime"_s, fields))
+    if (failed(scope, timeGetFields(globalObject, tuple, "mktime"_s, fields)))
         return { };
     // -1 may be a time like any other; but then mktime() has worked out the day of the week.
     fields.tm.tm_wday = -1;
     time_t result = mktime(&fields.tm);
     if (result == static_cast<time_t>(-1) && fields.tm.tm_wday == -1)
         return raiseOverflowError(globalObject, scope, "mktime argument out of range"_s);
-    return makeFloat(globalObject, static_cast<double>(result));
+    RELEASE_AND_RETURN(scope, makeFloat(globalObject, static_cast<double>(result)));
 }
 
 static JSValue timeStrfTime(JSGlobalObject* globalObject, const CallArgs& args)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!timeCheckArguments(globalObject, "strftime"_s, args, 1, 2))
+    if (failed(scope, timeCheckArguments(globalObject, "strftime"_s, args, 1, 2)))
         return { };
     if (!isStr(args[0]))
         return raiseTypeError(globalObject, scope, "strftime() argument 1 must be str, not "_s, typeNameOfArgument(globalObject, args[0]));
     TimeFields fields;
     if (args.size() < 2) {
-        if (!timeToLocal(globalObject, time(nullptr), fields.tm))
+        if (failed(scope, timeToLocal(globalObject, time(nullptr), fields.tm)))
             return { };
-    } else if (!timeGetFields(globalObject, args[1], "strftime"_s, fields) || !timeCheckFields(globalObject, fields.tm))
+    } else if (failed(scope, timeGetFields(globalObject, args[1], "strftime"_s, fields)) || failed(scope, timeCheckFields(globalObject, fields.tm)))
         return { };
     fields.tm.tm_isdst = std::clamp(fields.tm.tm_isdst, -1, 1);
 
@@ -699,14 +713,14 @@ static JSValue timeStrfTime(JSGlobalObject* globalObject, const CallArgs& args)
             ++i;
         result.append(StringView(format).substring(start, i - start));
     }
-    return makeStr(globalObject, result);
+    RELEASE_AND_RETURN(scope, makeStr(globalObject, result));
 }
 
 static JSValue timeStrpTime(JSGlobalObject* globalObject, const CallArgs& args)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!rejectKeywords(globalObject, "strptime"_s, args))
+    if (failed(scope, rejectKeywords(globalObject, "strptime"_s, args)))
         return { };
     JSValue module = importModule(globalObject, "_strptime"_s);
     RETURN_IF_EXCEPTION(scope, { });

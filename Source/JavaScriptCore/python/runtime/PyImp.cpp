@@ -265,7 +265,7 @@ static JSValue impFindFrozen(JSGlobalObject* globalObject, JSValue name, JSValue
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!checkFrozenName(globalObject, name, "find_frozen"_s, true))
+    if (failed(scope, checkFrozenName(globalObject, name, "find_frozen"_s, true)))
         return { };
     bool wantsData = withData && isTrue(globalObject, withData);
     RETURN_IF_EXCEPTION(scope, { });
@@ -283,14 +283,14 @@ static JSValue impFindFrozen(JSGlobalObject* globalObject, JSValue name, JSValue
         data = makeMemoryView(globalObject, PyBytes::create(globalObject, bytes.span()));
         RETURN_IF_EXCEPTION(scope, { });
     }
-    return PyTuple::create(globalObject, { data, jsBoolean(module->isPackage), module->originalName.isNull() ? jsUndefined() : JSValue(makeStr(vm, module->originalName)) });
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { data, jsBoolean(module->isPackage), module->originalName.isNull() ? jsUndefined() : JSValue(makeStr(vm, module->originalName)) }));
 }
 
 static JSValue impGetFrozenObject(JSGlobalObject* globalObject, JSValue name, JSValue data)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!checkFrozenName(globalObject, name, "get_frozen_object"_s, true))
+    if (failed(scope, checkFrozenName(globalObject, name, "get_frozen_object"_s, true)))
         return { };
     if (!data || isNone(data)) {
         auto module = findFrozenModule(name);
@@ -318,19 +318,59 @@ static JSValue impGetFrozenObject(JSGlobalObject* globalObject, JSValue name, JS
 
 static JSValue impIsFrozen(JSGlobalObject* globalObject, JSValue name)
 {
-    if (!checkFrozenName(globalObject, name, "is_frozen"_s))
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, checkFrozenName(globalObject, name, "is_frozen"_s)))
         return { };
     return jsBoolean(!!findFrozenModule(name));
 }
 
 static JSValue impIsFrozenPackage(JSGlobalObject* globalObject, JSValue name)
 {
-    if (!checkFrozenName(globalObject, name, "is_frozen_package"_s))
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, checkFrozenName(globalObject, name, "is_frozen_package"_s)))
         return { };
     auto module = findFrozenModule(name);
     if (!module)
-        return raiseNoSuchFrozenObject(globalObject, name);
+        RELEASE_AND_RETURN(scope, raiseNoSuchFrozenObject(globalObject, name));
     return jsBoolean(module->isPackage);
+}
+
+// PyImport_ImportFrozenModuleObject(): the module is run without importlib having a hand in it. None: there is no such module.
+static JSValue impInitFrozen(JSGlobalObject* globalObject, JSValue nameValue)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, checkFrozenName(globalObject, nameValue, "init_frozen"_s)))
+        return { };
+    auto found = findFrozenModule(nameValue);
+    if (!found)
+        return jsUndefined();
+    JSValue code = codeOfFrozenModule(globalObject, *found, nameValue);
+    RETURN_IF_EXCEPTION(scope, { });
+    JSString* name = strValue(nameValue);
+    auto* module = PyModule::tryFrom(rt.modules()->get(name));
+    if (!module) {
+        module = PyModule::create(globalObject, name);
+        rt.modules()->set(vm, name, module);
+    }
+    PyDict* dict = module->dict();
+    if (found->isPackage)
+        dict->set(vm, rt.names.dPath(), newList(globalObject));
+    ensureBuiltins(globalObject, dict);
+    RETURN_IF_EXCEPTION(scope, { });
+    runCode(globalObject, code, dict, dict);
+    if (scope.exception()) {
+        rt.modules()->remove(vm, name);
+        return { };
+    }
+    JSValue result = rt.modules()->get(name);
+    if (!result)
+        return raiseImportError(globalObject, scope, "Loaded module "_s, strRepr(stringOf(name)), " not found in sys.modules"_s);
+    dict->set(vm, internString(vm, "__origname__"_s), found->originalName.isNull() ? jsUndefined() : JSValue(makeStr(vm, found->originalName)));
+    return result;
 }
 
 static JSValue impFrozenModuleNames(JSGlobalObject* globalObject)
@@ -437,7 +477,7 @@ static JSValue impSourceHash(JSGlobalObject* globalObject, JSValue key, JSValue 
     uint8_t result[8];
     for (unsigned i = 0; i < 8; ++i)
         result[i] = static_cast<uint8_t>(hash >> (8 * i));
-    return PyBytes::create(globalObject, std::span<const uint8_t> { result, 8 });
+    RELEASE_AND_RETURN(scope, PyBytes::create(globalObject, std::span<const uint8_t> { result, 8 }));
 }
 
 static constexpr NativeDef impFunctions[] = {
@@ -448,6 +488,7 @@ static constexpr NativeDef impFunctions[] = {
     PY_FUNCTION("create_builtin", impCreateBuiltin, "(spec, /)"),
     PY_FUNCTION("exec_builtin", impExecBuiltin, "(mod, /)"),
     PY_FUNCTION("is_frozen", impIsFrozen, "(name, /)"),
+    PY_FUNCTION("init_frozen", impInitFrozen, "(name, /)"),
     PY_FUNCTION("is_frozen_package", impIsFrozenPackage, "(name, /)"),
     PY_FUNCTION("get_frozen_object", impGetFrozenObject, "(name, data=None, /)"),
     PY_FUNCTION("find_frozen", impFindFrozen, "(name, /, *, withdata=False)"),

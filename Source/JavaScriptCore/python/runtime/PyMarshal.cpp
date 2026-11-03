@@ -739,7 +739,7 @@ public:
         JSValue result = readObject();
         RETURN_IF_EXCEPTION(scope, { });
         if (!result)
-            return raiseTypeError(m_globalObject, scope, "NULL object in marshal data for object"_s);
+            RELEASE_AND_RETURN(scope, raiseTypeError(m_globalObject, scope, "NULL object in marshal data for object"_s));
         return result;
     }
 
@@ -811,7 +811,7 @@ private:
             return byte;
         }
         std::span<const uint8_t> bytes;
-        if (!readBytes(1, bytes))
+        if (failed(scope, readBytes(1, bytes)))
             return -1;
         return bytes[0];
     }
@@ -857,7 +857,7 @@ private:
         int length = readByte();
         RETURN_IF_EXCEPTION(scope, -1);
         std::span<const uint8_t> bytes;
-        if (!readBytes(length, bytes))
+        if (failed(scope, readBytes(length, bytes)))
             return -1;
         // What follows a NUL is not looked at.
         if (size_t end = WTF::find(bytes, static_cast<uint8_t>(0)); end != notFound)
@@ -877,22 +877,22 @@ private:
         int32_t size = readLong();
         RETURN_IF_EXCEPTION(scope, { });
         if (size == std::numeric_limits<int32_t>::min())
-            return raiseValueError(m_globalObject, scope, "bad marshal data (long size out of range)"_s);
+            RELEASE_AND_RETURN(scope, raiseValueError(m_globalObject, scope, "bad marshal data (long size out of range)"_s));
         bool isNegative = size < 0;
         size_t digits = isNegative ? -static_cast<int64_t>(size) : size;
         if (!digits)
             return jsNumber(0);
         std::span<const uint8_t> bytes;
-        if (!readBytes(digits * 2, bytes))
+        if (failed(scope, readBytes(digits * 2, bytes)))
             return { };
         Vector<uint64_t, 8> words;
         words.fill(0, (digits * marshalDigitBits + 63) / 64);
         for (size_t i = 0; i < digits; ++i) {
             unsigned digit = bytes[2 * i] | bytes[2 * i + 1] << 8;
             if (digit >= 1u << marshalDigitBits)
-                return raiseValueError(m_globalObject, scope, "bad marshal data (digit out of range in long)"_s);
+                RELEASE_AND_RETURN(scope, raiseValueError(m_globalObject, scope, "bad marshal data (digit out of range in long)"_s));
             if (!digit && i == digits - 1)
-                return raiseValueError(m_globalObject, scope, "bad marshal data (unnormalized long data)"_s);
+                RELEASE_AND_RETURN(scope, raiseValueError(m_globalObject, scope, "bad marshal data (unnormalized long data)"_s));
             size_t bit = i * marshalDigitBits;
             words[bit / 64] |= static_cast<uint64_t>(digit) << (bit % 64);
             if (bit % 64 > 64 - marshalDigitBits)
@@ -965,7 +965,7 @@ private:
         VM& vm = m_runtime.vm();
         auto scope = DECLARE_THROW_SCOPE(vm);
         std::span<const uint8_t> bytes;
-        if (!readBytes(8, bytes))
+        if (failed(scope, readBytes(8, bytes)))
             return { };
         uint64_t bits = 0;
         for (unsigned i = 0; i < 8; ++i)
@@ -981,7 +981,7 @@ private:
         auto scope = DECLARE_THROW_SCOPE(vm);
         double number = isText ? readTextDouble() : readBinaryDouble();
         RETURN_IF_EXCEPTION(scope, { });
-        return remember(makeFloat(m_globalObject, number), isNumbered);
+        RELEASE_AND_RETURN(scope, remember(makeFloat(m_globalObject, number), isNumbered));
     }
 
     NEVER_INLINE JSValue readComplex(bool isText, bool isNumbered)
@@ -992,7 +992,7 @@ private:
         RETURN_IF_EXCEPTION(scope, { });
         double imaginary = isText ? readTextDouble() : readBinaryDouble();
         RETURN_IF_EXCEPTION(scope, { });
-        return remember(PyComplex::create(m_globalObject, real, imaginary), isNumbered);
+        RELEASE_AND_RETURN(scope, remember(PyComplex::create(m_globalObject, real, imaginary), isNumbered));
     }
 
     NEVER_INLINE JSValue readBytesObject(bool isNumbered)
@@ -1002,9 +1002,9 @@ private:
         int64_t size = readSize("bytes object"_s);
         RETURN_IF_EXCEPTION(scope, { });
         std::span<const uint8_t> bytes;
-        if (!readBytes(size, bytes))
+        if (failed(scope, readBytes(size, bytes)))
             return { };
-        return remember(PyBytes::create(m_globalObject, bytes), isNumbered);
+        RELEASE_AND_RETURN(scope, remember(PyBytes::create(m_globalObject, bytes), isNumbered));
     }
 
     NEVER_INLINE JSValue readStrObject(int type, bool isNumbered)
@@ -1016,7 +1016,7 @@ private:
         int64_t size = isShort ? readByte() : readSize("string"_s);
         RETURN_IF_EXCEPTION(scope, { });
         std::span<const uint8_t> bytes;
-        if (!readBytes(size, bytes))
+        if (failed(scope, readBytes(size, bytes)))
             return { };
         JSValue string = readStr(bytes, type != MarshalUnicode && type != MarshalInterned, isInterned);
         RETURN_IF_EXCEPTION(scope, { });
@@ -1029,7 +1029,7 @@ private:
         auto scope = DECLARE_THROW_SCOPE(vm);
         int64_t size = isSmall ? readByte() : readSize("tuple"_s);
         RETURN_IF_EXCEPTION(scope, { });
-        if (!checkItemCount(size))
+        if (failed(scope, checkItemCount(size)))
             return { };
         PyTuple* tuple = size ? PyTuple::create(m_globalObject, static_cast<unsigned>(size)) : PyTuple::empty(m_globalObject);
         remember(tuple, isNumbered);
@@ -1037,7 +1037,7 @@ private:
             JSValue item = readObject();
             RETURN_IF_EXCEPTION(scope, { });
             if (!item)
-                return raiseTypeError(m_globalObject, scope, "NULL object in marshal data for tuple"_s);
+                RELEASE_AND_RETURN(scope, raiseTypeError(m_globalObject, scope, "NULL object in marshal data for tuple"_s));
             tuple->initializeAt(vm, i, item);
         }
         return tuple;
@@ -1049,7 +1049,7 @@ private:
         auto scope = DECLARE_THROW_SCOPE(vm);
         int64_t size = readSize("list"_s);
         RETURN_IF_EXCEPTION(scope, { });
-        if (!checkItemCount(size))
+        if (failed(scope, checkItemCount(size)))
             return { };
         JSArray* list = newList(m_globalObject);
         remember(list, isNumbered);
@@ -1057,7 +1057,7 @@ private:
             JSValue item = readObject();
             RETURN_IF_EXCEPTION(scope, { });
             if (!item)
-                return raiseTypeError(m_globalObject, scope, "NULL object in marshal data for list"_s);
+                RELEASE_AND_RETURN(scope, raiseTypeError(m_globalObject, scope, "NULL object in marshal data for list"_s));
             listAppend(m_globalObject, list, item);
             RETURN_IF_EXCEPTION(scope, { });
         }
@@ -1099,7 +1099,7 @@ private:
         auto scope = DECLARE_THROW_SCOPE(vm);
         int64_t size = readSize("set"_s);
         RETURN_IF_EXCEPTION(scope, { });
-        if (!checkItemCount(size))
+        if (failed(scope, checkItemCount(size)))
             return { };
         PySet* set = isFrozen ? PySet::createFrozen(m_globalObject) : PySet::create(m_globalObject);
         unsigned number = 0;
@@ -1111,7 +1111,7 @@ private:
             JSValue item = readObject();
             RETURN_IF_EXCEPTION(scope, { });
             if (!item)
-                return raiseTypeError(m_globalObject, scope, "NULL object in marshal data for set"_s);
+                RELEASE_AND_RETURN(scope, raiseTypeError(m_globalObject, scope, "NULL object in marshal data for set"_s));
             set->add(m_globalObject, item);
             RETURN_IF_EXCEPTION(scope, { });
         }
@@ -1127,10 +1127,10 @@ private:
         int32_t number = readLong();
         RETURN_IF_EXCEPTION(scope, { });
         if (number < 0 || static_cast<unsigned>(number) >= listLength(m_references))
-            return raiseValueError(m_globalObject, scope, "bad marshal data (invalid reference)"_s);
+            RELEASE_AND_RETURN(scope, raiseValueError(m_globalObject, scope, "bad marshal data (invalid reference)"_s));
         JSValue object = listGet(m_references, number);
         if (isNone(object))
-            return raiseValueError(m_globalObject, scope, "bad marshal data (invalid reference)"_s);
+            RELEASE_AND_RETURN(scope, raiseValueError(m_globalObject, scope, "bad marshal data (invalid reference)"_s));
         return object;
     }
 
@@ -1146,20 +1146,22 @@ private:
             if (!part)
                 return { };
         }
-        return rememberAt(PySlice::create(m_globalObject, parts[0], parts[1], parts[2]), number, isNumbered);
+        RELEASE_AND_RETURN(scope, rememberAt(PySlice::create(m_globalObject, parts[0], parts[1], parts[2]), number, isNumbered));
     }
 
     NEVER_INLINE JSValue readCode(bool isNumbered)
     {
+        VM& vm = getVM(m_globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
         if (!m_allowCode)
             return raiseBadData("unmarshalling code objects is disallowed"_s);
         std::span<const uint8_t> bytes;
-        if (!readBytes(MarshalledCodeHeader::size, bytes))
+        if (failed(scope, readBytes(MarshalledCodeHeader::size, bytes)))
             return { };
         auto header = MarshalledCodeHeader::read(bytes.first<MarshalledCodeHeader::size>());
         if (!isOfThisBuild(header))
             return raiseBadData("bad marshal data (code object of another build)"_s);
-        if (!readBytes(header.payloadSize, bytes))
+        if (failed(scope, readBytes(header.payloadSize, bytes)))
             return { };
         PyCode* code = readMarshalledCode(m_globalObject, header, bytes);
         if (!code)
@@ -1171,7 +1173,7 @@ private:
     {
         VM& vm = m_runtime.vm();
         auto scope = DECLARE_THROW_SCOPE(vm);
-        return raiseValueError(m_globalObject, scope, message);
+        RELEASE_AND_RETURN(scope, raiseValueError(m_globalObject, scope, message));
     }
 
     // -1: an exception.
@@ -1290,16 +1292,18 @@ static bool marshalOptions(JSGlobalObject* globalObject, JSValue versionValue, J
 
 static JSValue marshalDumps(JSGlobalObject* globalObject, JSValue value, JSValue versionValue, JSValue allowCodeValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int version;
     bool allowCode;
-    if (!marshalOptions(globalObject, versionValue, allowCodeValue, version, allowCode))
+    if (failed(scope, marshalOptions(globalObject, versionValue, allowCodeValue, version, allowCode)))
         return { };
     if (!audit(globalObject, "marshal.dumps"_s, value, jsNumber(version)))
         return { };
     MarshalWriter writer(globalObject, version, allowCode);
     if (!writer.write(value))
         return { };
-    return PyBytes::create(globalObject, writer.bytes().span());
+    RELEASE_AND_RETURN(scope, PyBytes::create(globalObject, writer.bytes().span()));
 }
 
 static JSValue marshalDump(JSGlobalObject* globalObject, JSValue value, JSValue file, JSValue versionValue, JSValue allowCodeValue)

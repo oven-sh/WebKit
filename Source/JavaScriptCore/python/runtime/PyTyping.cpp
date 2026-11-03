@@ -242,7 +242,7 @@ static JSValue noDefaultNew(JSGlobalObject* globalObject, JSValue, const CallArg
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (args.totalCount())
         return raiseTypeError(globalObject, scope, "NoDefaultType takes no arguments"_s);
-    return noDefaultObject(globalObject);
+    RELEASE_AND_RETURN(scope, noDefaultObject(globalObject));
 }
 
 static JSValue noDefaultRepr(JSGlobalObject* globalObject, JSValue) { return makeStr(getVM(globalObject), "typing.NoDefault"_s); }
@@ -342,7 +342,7 @@ static JSValue constEvaluatorCall(JSGlobalObject* globalObject, JSValue self, co
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!rejectKeywords(globalObject, "constevaluator.__call__"_s, args))
+    if (failed(scope, rejectKeywords(globalObject, "constevaluator.__call__"_s, args)))
         return { };
     if (args.size() != 1)
         return raiseTypeError(globalObject, scope, "constevaluator.__call__() takes exactly 1 argument ("_s, args.size(), " given)"_s);
@@ -366,7 +366,7 @@ static JSValue constEvaluatorCall(JSGlobalObject* globalObject, JSValue self, co
         constEvaluatorAppendTypeRepr(globalObject, builder, value);
         RETURN_IF_EXCEPTION(scope, { });
     }
-    return makeStr(globalObject, builder);
+    RELEASE_AND_RETURN(scope, makeStr(globalObject, builder));
 }
 
 static JSValue constEvaluatorRepr(JSGlobalObject* globalObject, JSValue self)
@@ -543,7 +543,7 @@ static JSValue typeVarNew(JSGlobalObject* globalObject, JSValue, const CallArgs&
     auto scope = DECLARE_THROW_SCOPE(vm);
     static constexpr ASCIILiteral keywords[] = { "name"_s, "bound"_s, "default"_s, "covariant"_s, "contravariant"_s, "infer_variance"_s };
     JSValue values[std::size(keywords)];
-    if (!unpackKeywordArguments(globalObject, "typevar"_s, keywords, 1, 1, true, args, values))
+    if (failed(scope, unpackKeywordArguments(globalObject, "typevar"_s, keywords, 1, 1, true, args, values)))
         return { };
     JSValue name = values[0];
     if (!isStr(name))
@@ -675,11 +675,13 @@ static JSValue newParamSpecAttribute(JSGlobalObject* globalObject, PyType* type,
 
 static JSValue paramSpecAttributeNew(JSGlobalObject* globalObject, ASCIILiteral functionName, JSValue cls, const CallArgs& args)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     static constexpr ASCIILiteral keywords[] = { "origin"_s };
     JSValue values[std::size(keywords)];
-    if (!unpackKeywordArguments(globalObject, functionName, keywords, 1, 1, false, args, values))
+    if (failed(scope, unpackKeywordArguments(globalObject, functionName, keywords, 1, 1, false, args, values)))
         return { };
-    return newParamSpecAttribute(globalObject, PyType::from(cls), values[0]);
+    RELEASE_AND_RETURN(scope, newParamSpecAttribute(globalObject, PyType::from(cls), values[0]));
 }
 
 static JSValue paramSpecArgsNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs& args) { return paramSpecAttributeNew(globalObject, "paramspecargs"_s, cls, args); }
@@ -746,7 +748,7 @@ static JSValue paramSpecNew(JSGlobalObject* globalObject, JSValue, const CallArg
     auto scope = DECLARE_THROW_SCOPE(vm);
     static constexpr ASCIILiteral keywords[] = { "name"_s, "bound"_s, "default"_s, "covariant"_s, "contravariant"_s, "infer_variance"_s };
     JSValue values[std::size(keywords)];
-    if (!unpackKeywordArguments(globalObject, "paramspec"_s, keywords, 1, 1, false, args, values))
+    if (failed(scope, unpackKeywordArguments(globalObject, "paramspec"_s, keywords, 1, 1, false, args, values)))
         return { };
     JSValue name = values[0];
     if (!isStr(name))
@@ -795,7 +797,7 @@ static JSValue typeVarTupleNew(JSGlobalObject* globalObject, JSValue, const Call
     auto scope = DECLARE_THROW_SCOPE(vm);
     static constexpr ASCIILiteral keywords[] = { "name"_s, "bound"_s, "covariant"_s, "contravariant"_s, "infer_variance"_s, "default"_s };
     JSValue values[std::size(keywords)];
-    if (!unpackKeywordArguments(globalObject, "typevartuple"_s, keywords, 1, 1, false, args, values))
+    if (failed(scope, unpackKeywordArguments(globalObject, "typevartuple"_s, keywords, 1, 1, false, args, values)))
         return { };
     JSValue name = values[0];
     if (!isStr(name))
@@ -897,7 +899,7 @@ static JSValue typeAliasNew(JSGlobalObject* globalObject, JSValue, const CallArg
     auto scope = DECLARE_THROW_SCOPE(vm);
     static constexpr ASCIILiteral keywords[] = { "name"_s, "value"_s, "type_params"_s, "qualname"_s };
     JSValue values[std::size(keywords)];
-    if (!unpackKeywordArguments(globalObject, "typealias"_s, keywords, 2, 2, false, args, values))
+    if (failed(scope, unpackKeywordArguments(globalObject, "typealias"_s, keywords, 2, 2, false, args, values)))
         return { };
     JSValue name = values[0];
     if (!isStr(name))
@@ -921,7 +923,7 @@ static JSValue typeAliasNew(JSGlobalObject* globalObject, JSValue, const CallArg
     else if (!isStr(qualname))
         return raiseTypeError(globalObject, scope, "qualname must be a string"_s);
 
-    return newTypeAlias(globalObject, name, qualname, typeParams, { }, values[1], typingCallerModule(globalObject));
+    RELEASE_AND_RETURN(scope, newTypeAlias(globalObject, name, qualname, typeParams, { }, values[1], typingCallerModule(globalObject)));
 }
 
 static JSValue typeAliasGetName(JSGlobalObject*, JSValue self) { return PyRecord::from(self)->get(typeAliasName); }

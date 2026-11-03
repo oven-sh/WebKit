@@ -393,7 +393,7 @@ void genericSetAttr(JSGlobalObject* globalObject, JSValue object, JSString* name
     if (!dict) {
         String text = stringOf(name);
         if (descriptor)
-            raise(globalObject, scope, rt.AttributeError(), makeString('\'', type->name(), "' object attribute '"_s, text, "' is read-only"_s));
+            raise(globalObject, scope, rt.AttributeError(), makeString('\'', type->nameInMessages(), "' object attribute '"_s, text, "' is read-only"_s));
         else {
             // The hint is for classes that leave setting attributes to object.
             auto* setter = PyNativeFunction::tryFrom(type->lookup(Special::SetAttr));
@@ -928,7 +928,7 @@ JSValue callSpecial(JSGlobalObject* globalObject, JSValue method, JSValue self, 
     RETURN_IF_EXCEPTION(scope, { });
     // After A.__call__ = A(), to call an A is to call an A. That has to end, although it may use no stack: these are tail calls.
     Runtime& rt = runtime(globalObject);
-    if (!rt.tryEnterFrame()) [[unlikely]]
+    if (failed(scope, rt.tryEnterFrame())) [[unlikely]]
         return { };
     JSValue result = call(globalObject, bound, args);
     rt.leaveFrame();
@@ -944,8 +944,8 @@ JSValue callOperatorMethod(JSGlobalObject* globalObject, JSValue method, JSValue
     auto scope = DECLARE_THROW_SCOPE(rt.vm());
     JSValue bound = bindDescriptor(globalObject, method, self, rt.typeOf(self));
     if (!bound) [[unlikely]]
-        return clearPendingExceptionIfMatches(globalObject, rt.AttributeError()) ? rt.notImplemented() : JSValue();
-    if (!rt.tryEnterFrame()) [[unlikely]]
+        RELEASE_AND_RETURN(scope, clearPendingExceptionIfMatches(globalObject, rt.AttributeError()) ? rt.notImplemented() : JSValue());
+    if (failed(scope, rt.tryEnterFrame())) [[unlikely]]
         return { };
     JSValue result = call(globalObject, bound, args);
     rt.leaveFrame();
@@ -1536,7 +1536,7 @@ static JSValue indexIntoSequence(JSGlobalObject* globalObject, JSValue key)
         return raiseTypeError(globalObject, scope, "sequence index must be integer, not '"_s, typeName(globalObject, key), '\'');
     int64_t index = toSsize(globalObject, key, runtime(globalObject).IndexError());
     RETURN_IF_EXCEPTION(scope, { });
-    return makeInt(globalObject, index);
+    RELEASE_AND_RETURN(scope, makeInt(globalObject, index));
 }
 
 JSValue getItem(JSGlobalObject* globalObject, JSValue object, JSValue key)
@@ -1740,7 +1740,7 @@ JSValue getIter(JSGlobalObject* globalObject, JSValue value)
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (value.isCell() && value.asCell()->type() == ArrayType)
-        return PyIterator::create(globalObject, PyIterator::Kind::List, value);
+        RELEASE_AND_RETURN(scope, PyIterator::create(globalObject, PyIterator::Kind::List, value));
 
     PyType* type = rt.typeOf(value);
     JSValue method = type->lookup(Special::Iter);
@@ -1761,7 +1761,7 @@ JSValue getIter(JSGlobalObject* globalObject, JSValue value)
                 return raiseTypeError(globalObject, scope, '\'', type->nameInMessages(), "' object is not iterable"_s);
             }
         }
-        return PyIterator::create(globalObject, PyIterator::Kind::Sequence, value);
+        RELEASE_AND_RETURN(scope, PyIterator::create(globalObject, PyIterator::Kind::Sequence, value));
     }
     return raiseTypeError(globalObject, scope, '\'', type->nameInMessages(), "' object is not iterable"_s);
 }
@@ -1784,15 +1784,20 @@ JSValue iterNext(JSGlobalObject* globalObject, JSValue iterator)
             const ClassInfo* info = cell->classInfo();
             if (info == PyIterator::info())
                 RELEASE_AND_RETURN(scope, uncheckedDowncast<PyIterator>(cell)->next(globalObject));
-            if (info == PyMultiIterator::info() && !uncheckedDowncast<PyMultiIterator>(cell)->type()->isHeapType())
-                RELEASE_AND_RETURN(scope, uncheckedDowncast<PyMultiIterator>(cell)->next(globalObject));
+            if (info == PyMultiIterator::info() && !uncheckedDowncast<PyMultiIterator>(cell)->type()->isHeapType()) {
+                JSValue result = uncheckedDowncast<PyMultiIterator>(cell)->next(globalObject);
+                // A StopIteration out of the function of a map or a filter ends the iteration like any other.
+                if (!result) [[unlikely]]
+                    clearPendingExceptionIfMatches(globalObject, rt.StopIteration());
+                return result;
+            }
         } else if (cell->type() == PyGeneratorType) {
             auto* generator = uncheckedDowncast<PyGenerator>(cell);
             if (generator->kind() == PyGenerator::Kind::Generator) {
                 JSValue result;
                 if (generator->state() >= 0) [[likely]] {
                     scope.release();
-                    return generator->resume(globalObject, jsUndefined(), JSGenerator::ResumeMode::NormalMode, result) == PyGenerator::Outcome::Yielded ? result : JSValue();
+                    RELEASE_AND_RETURN(scope, generator->resume(globalObject, jsUndefined(), JSGenerator::ResumeMode::NormalMode, result) == PyGenerator::Outcome::Yielded ? result : JSValue());
                 }
                 RELEASE_AND_RETURN(scope, generatorSend(globalObject, generator, jsUndefined(), result));
             }

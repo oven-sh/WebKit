@@ -152,10 +152,12 @@ static bool operatorSearch(JSGlobalObject* globalObject, JSValue iterable, JSVal
 
 static JSValue operatorCountOf(JSGlobalObject* globalObject, JSValue a, JSValue b)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int64_t count = 0;
-    if (!operatorSearch(globalObject, a, b, [&](int64_t) { ++count; return true; }))
+    if (failed(scope, operatorSearch(globalObject, a, b, [&](int64_t) { ++count; return true; })))
         return { };
-    return makeInt(globalObject, count);
+    RELEASE_AND_RETURN(scope, makeInt(globalObject, count));
 }
 
 static JSValue operatorIndexOf(JSGlobalObject* globalObject, JSValue a, JSValue b)
@@ -272,14 +274,16 @@ static JSValue operatorLengthHint(JSGlobalObject* globalObject, JSValue object, 
     }
     int64_t result = lengthHint(globalObject, object, fallback);
     RETURN_IF_EXCEPTION(scope, { });
-    return makeInt(globalObject, result);
+    RELEASE_AND_RETURN(scope, makeInt(globalObject, result));
 }
 
 static JSValue operatorCall(JSGlobalObject* globalObject, const CallArgs& args)
 {
-    if (!checkPositional(globalObject, "call"_s, args, 1, std::numeric_limits<unsigned>::max()))
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, checkPositional(globalObject, "call"_s, args, 1, std::numeric_limits<unsigned>::max())))
         return { };
-    return call(globalObject, args[0], args.withoutFirst());
+    RELEASE_AND_RETURN(scope, call(globalObject, args[0], args.withoutFirst()));
 }
 
 // How long it takes depends on the length of `b` and on nothing else.
@@ -351,7 +355,7 @@ static JSValue operatorReprWithArguments(JSGlobalObject* globalObject, JSValue s
         RETURN_IF_EXCEPTION(scope, { });
     }
     builder.append(')');
-    return makeStr(globalObject, builder);
+    RELEASE_AND_RETURN(scope, makeStr(globalObject, builder));
 }
 
 // ---- itemgetter ----
@@ -364,9 +368,11 @@ static PyType* operatorItemGetterType(JSGlobalObject*);
 
 static JSValue operatorItemGetterNew(JSGlobalObject* globalObject, JSValue, const CallArgs& args)
 {
-    if (!rejectKeywords(globalObject, "itemgetter"_s, args))
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, rejectKeywords(globalObject, "itemgetter"_s, args)))
         return { };
-    if (!args.size() && !checkPositional(globalObject, "itemgetter"_s, args, 1, 1))
+    if (!args.size() && failed(scope, checkPositional(globalObject, "itemgetter"_s, args, 1, 1)))
         return { };
     PyRecord* record = PyRecord::create(globalObject, operatorItemGetterType(globalObject), OperatorItemGetter::FieldCount);
     record->set(getVM(globalObject), OperatorItemGetter::Items, PyTuple::create(globalObject, args.positional()));
@@ -377,7 +383,7 @@ static JSValue operatorItemGetterCall(JSGlobalObject* globalObject, JSValue self
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!rejectKeywords(globalObject, "itemgetter"_s, args) || !checkPositional(globalObject, "itemgetter"_s, args, 1, 1))
+    if (failed(scope, rejectKeywords(globalObject, "itemgetter"_s, args)) || failed(scope, checkPositional(globalObject, "itemgetter"_s, args, 1, 1)))
         return { };
     JSValue object = args[0];
     PyTuple* items = PyTuple::from(operatorRecord(self)->get(OperatorItemGetter::Items));
@@ -433,9 +439,9 @@ static JSValue operatorAttrGetterNew(JSGlobalObject* globalObject, JSValue, cons
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!rejectKeywords(globalObject, "attrgetter"_s, args))
+    if (failed(scope, rejectKeywords(globalObject, "attrgetter"_s, args)))
         return { };
-    if (!args.size() && !checkPositional(globalObject, "attrgetter"_s, args, 1, 1))
+    if (!args.size() && failed(scope, checkPositional(globalObject, "attrgetter"_s, args, 1, 1)))
         return { };
     unsigned count = args.size();
     PyTuple* names = PyTuple::create(globalObject, count);
@@ -479,7 +485,7 @@ static JSValue operatorAttrGetterCall(JSGlobalObject* globalObject, JSValue self
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!rejectKeywords(globalObject, "attrgetter"_s, args) || !checkPositional(globalObject, "attrgetter"_s, args, 1, 1))
+    if (failed(scope, rejectKeywords(globalObject, "attrgetter"_s, args)) || failed(scope, checkPositional(globalObject, "attrgetter"_s, args, 1, 1)))
         return { };
     JSValue object = args[0];
     PyTuple* paths = PyTuple::from(operatorRecord(self)->get(OperatorAttrGetter::Paths));
@@ -563,7 +569,7 @@ static JSValue operatorMethodCallerCall(JSGlobalObject* globalObject, JSValue se
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!checkPositional(globalObject, "methodcaller"_s, args, 1, 1) || !rejectKeywords(globalObject, "methodcaller"_s, args))
+    if (failed(scope, checkPositional(globalObject, "methodcaller"_s, args, 1, 1)) || failed(scope, rejectKeywords(globalObject, "methodcaller"_s, args)))
         return { };
     PyRecord* record = operatorRecord(self);
     PyTuple* values = PyTuple::from(record->get(OperatorMethodCaller::Values));
@@ -596,7 +602,7 @@ static JSValue operatorMethodCallerReduce(JSGlobalObject* globalObject, JSValue 
     PyTuple* values = PyTuple::from(record->get(OperatorMethodCaller::Values));
     PyTuple* keywordNames = operatorMethodCallerKeywordNames(record);
     if (!keywordNames)
-        return PyTuple::create(globalObject, { record->type(), values });
+        RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { record->type(), values }));
 
     // A constructor cannot be handed keywords when unpickling: partial(methodcaller, name, **keywords) can.
     JSValue functools = importModule(globalObject, "functools"_s);
@@ -611,7 +617,7 @@ static JSValue operatorMethodCallerReduce(JSGlobalObject* globalObject, JSValue 
         arguments.append(values->at(i));
     JSValue constructor = call(globalObject, partial, CallArgs(valuesOf(arguments), 2, keywordNames));
     RETURN_IF_EXCEPTION(scope, { });
-    return PyTuple::create(globalObject, { constructor, PyTuple::create(globalObject, values->span().subspan(1, positionalCount)) });
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { constructor, PyTuple::create(globalObject, values->span().subspan(1, positionalCount)) }));
 }
 
 static constexpr NativeDef operatorMethodCallerMethods[] = {

@@ -167,6 +167,15 @@ Vector<PyWeakRef*> Runtime::weakRefsWithCallbacksToUnmarkedObjects(SlotVisitor& 
 // The collection will mark no more.
 void Runtime::didMarkAll(SlotVisitor& visitor)
 {
+#if ASSERT_ENABLED
+    // What is registered and was not reachable has been kept. Anything else would be freed now and still be in the list.
+    for (JSCell* cell : m_finalizable) {
+        if (!visitor.isMarked(cell)) [[unlikely]] {
+            dataLogLn("A registered object of type ", typeOf(cell)->nameInMessages(), " is about to be freed");
+            RELEASE_ASSERT_NOT_REACHED();
+        }
+    }
+#endif
     m_finalized.removeIf([&](JSCell* cell) {
         return !visitor.isMarked(cell);
     });

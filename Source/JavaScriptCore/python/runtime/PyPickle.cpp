@@ -575,7 +575,7 @@ private:
             writeOp(PickleOpLongBinGet);
             writeSize(static_cast<uint64_t>(index), 4);
         } else
-            return pickleRaise(m_globalObject, PickleStatePicklingError, "memo id too large for LONG_BINGET"_s);
+            RELEASE_AND_RETURN(scope, pickleRaise(m_globalObject, PickleStatePicklingError, "memo id too large for LONG_BINGET"_s));
         return true;
     }
 
@@ -759,7 +759,7 @@ private:
         }
         for (size_t i = 1; i < headerSize; ++i)
             header[i] = static_cast<uint8_t>(size >> (8 * (i - 1)));
-        if (!writeBytes({ header, headerSize }, data, object))
+        if (failed(scope, writeBytes({ header, headerSize }, data, object)))
             return false;
         return memoPut(object);
     }
@@ -822,12 +822,12 @@ private:
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
         if (m_proto < 5)
-            return pickleRaise(m_globalObject, PickleStatePicklingError, "PickleBuffer can only be pickled with protocol >= 5"_s);
+            RELEASE_AND_RETURN(scope, pickleRaise(m_globalObject, PickleStatePicklingError, "PickleBuffer can only be pickled with protocol >= 5"_s));
         BufferHolder holder(m_globalObject);
         if (!holder.get(object, BufferFullRO))
             return false;
         if (!isContiguous(holder.buffer))
-            return pickleRaise(m_globalObject, PickleStatePicklingError, "PickleBuffer can not be pickled when pointing to a non-contiguous buffer"_s);
+            RELEASE_AND_RETURN(scope, pickleRaise(m_globalObject, PickleStatePicklingError, "PickleBuffer can not be pickled when pointing to a non-contiguous buffer"_s));
         bool isInBand = true;
         if (m_bufferCallback) {
             JSValue result = call(m_globalObject, m_bufferCallback, object);
@@ -900,7 +900,7 @@ private:
         }
         for (size_t i = 1; i < headerSize; ++i)
             header[i] = static_cast<uint8_t>(size >> (8 * (i - 1)));
-        if (!writeBytes({ header, headerSize }, data, { }))
+        if (failed(scope, writeBytes({ header, headerSize }, data, { })))
             return false;
         return memoPut(object);
     }
@@ -1502,7 +1502,7 @@ private:
                 writeOp(PickleOpMark);
         }
         writeOp(PickleOpGlobal);
-        if (m_proto < 3 && m_fixImports && !fixImports(moduleName, globalName))
+        if (m_proto < 3 && m_fixImports && failed(scope, fixImports(moduleName, globalName)))
             return false;
         if (!writeIdentifier(moduleName, "module"_s) || !writeIdentifier(globalName, "global"_s))
             return false;
@@ -1579,16 +1579,16 @@ private:
         JSValue stateSetter = optional(5);
 
         if (!isCallable(m_globalObject, callable))
-            return fail("first item of the tuple returned by __reduce__ must be callable, not "_s, pickleTypeName(m_globalObject, callable));
+            RELEASE_AND_RETURN(scope, fail("first item of the tuple returned by __reduce__ must be callable, not "_s, pickleTypeName(m_globalObject, callable)));
         auto* argumentTuple = PyTuple::tryFrom(argumentsValue);
         if (!argumentTuple)
-            return fail("second item of the tuple returned by __reduce__ must be a tuple, not "_s, pickleTypeName(m_globalObject, argumentsValue));
+            RELEASE_AND_RETURN(scope, fail("second item of the tuple returned by __reduce__ must be a tuple, not "_s, pickleTypeName(m_globalObject, argumentsValue)));
         if (listItems && !isIterator(listItems))
-            return fail("fourth item of the tuple returned by __reduce__ must be an iterator, not "_s, pickleTypeName(m_globalObject, listItems));
+            RELEASE_AND_RETURN(scope, fail("fourth item of the tuple returned by __reduce__ must be an iterator, not "_s, pickleTypeName(m_globalObject, listItems)));
         if (dictItems && !isIterator(dictItems))
-            return fail("fifth item of the tuple returned by __reduce__ must be an iterator, not "_s, pickleTypeName(m_globalObject, dictItems));
+            RELEASE_AND_RETURN(scope, fail("fifth item of the tuple returned by __reduce__ must be an iterator, not "_s, pickleTypeName(m_globalObject, dictItems)));
         if (stateSetter && !isCallable(m_globalObject, stateSetter))
-            return fail("sixth item of the tuple returned by __reduce__ must be callable, not "_s, pickleTypeName(m_globalObject, stateSetter));
+            RELEASE_AND_RETURN(scope, fail("sixth item of the tuple returned by __reduce__ must be callable, not "_s, pickleTypeName(m_globalObject, stateSetter)));
 
         bool usesNewObj = false;
         bool usesNewObjEx = false;
@@ -1608,13 +1608,13 @@ private:
                 return fail("__newobj_ex__ expected 3 arguments, got "_s, argumentTuple->length());
             JSValue cls = argumentTuple->at(0);
             if (!PyType::is(cls))
-                return fail("first argument to __newobj_ex__() must be a class, not "_s, pickleTypeName(m_globalObject, cls));
+                RELEASE_AND_RETURN(scope, fail("first argument to __newobj_ex__() must be a class, not "_s, pickleTypeName(m_globalObject, cls)));
             auto* args = PyTuple::tryFrom(argumentTuple->at(1));
             if (!args)
-                return fail("second argument to __newobj_ex__() must be a tuple, not "_s, pickleTypeName(m_globalObject, argumentTuple->at(1)));
+                RELEASE_AND_RETURN(scope, fail("second argument to __newobj_ex__() must be a tuple, not "_s, pickleTypeName(m_globalObject, argumentTuple->at(1))));
             JSValue kwargs = argumentTuple->at(2);
             if (!isDict(kwargs))
-                return fail("third argument to __newobj_ex__() must be a dict, not "_s, pickleTypeName(m_globalObject, kwargs));
+                RELEASE_AND_RETURN(scope, fail("third argument to __newobj_ex__() must be a dict, not "_s, pickleTypeName(m_globalObject, kwargs)));
             if (m_proto >= 4) {
                 if (!save(cls))
                     RELEASE_AND_RETURN(scope, note(object, "class"_s));
@@ -1641,7 +1641,7 @@ private:
                 return fail("__newobj__ expected at least 1 argument, got 0"_s);
             JSValue cls = argumentTuple->at(0);
             if (!PyType::is(cls))
-                return fail("first argument to __newobj__() must be a class, not "_s, pickleTypeName(m_globalObject, cls));
+                RELEASE_AND_RETURN(scope, fail("first argument to __newobj__() must be a class, not "_s, pickleTypeName(m_globalObject, cls)));
             if (object) {
                 JSValue objectClass = getAttrIfPresent(m_globalObject, object, m_rt.names.dClass());
                 RETURN_IF_EXCEPTION(scope, false);
@@ -1794,7 +1794,7 @@ private:
                     reduceFunction = getAttrIfPresent(m_globalObject, object, m_rt.names.dReduce());
                     RETURN_IF_EXCEPTION(scope, false);
                     if (!reduceFunction)
-                        return pickleRaise(m_globalObject, PickleStatePicklingError, "Can't pickle "_s, pickleTypeName(m_globalObject, object), " object"_s);
+                        RELEASE_AND_RETURN(scope, pickleRaise(m_globalObject, PickleStatePicklingError, "Can't pickle "_s, pickleTypeName(m_globalObject, object), " object"_s));
                     reduced = call(m_globalObject, reduceFunction);
                 }
             }
@@ -1856,7 +1856,7 @@ static JSValue picklerInit(JSGlobalObject* globalObject, JSValue self, const Cal
     auto scope = DECLARE_THROW_SCOPE(vm);
     static constexpr ASCIILiteral keywords[] = { "file"_s, "protocol"_s, "fix_imports"_s, "buffer_callback"_s };
     JSValue values[4];
-    if (!unpackKeywordArguments(globalObject, "Pickler"_s, keywords, 1, 4, false, args, values))
+    if (failed(scope, unpackKeywordArguments(globalObject, "Pickler"_s, keywords, 1, 4, false, args, values)))
         return { };
     bool fixImports = !values[2] || isTrue(globalObject, values[2]);
     RETURN_IF_EXCEPTION(scope, { });
@@ -1870,7 +1870,7 @@ static JSValue picklerInit(JSGlobalObject* globalObject, JSValue self, const Cal
             pickler->set(vm, field, { });
         picklerClearMemo(globalObject, pickler);
     }
-    if (!picklerSetProtocol(globalObject, pickler, values[1], fixImports)
+    if (failed(scope, picklerSetProtocol(globalObject, pickler, values[1], fixImports))
         || !picklerSetOutputStream(globalObject, pickler, values[0])
         || !picklerSetBufferCallback(globalObject, pickler, values[3]))
         return { };
@@ -1890,7 +1890,7 @@ static JSValue picklerDump(JSGlobalObject* globalObject, JSValue self, const Cal
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!picklePositionalOnly(globalObject, "dump"_s, args, 1))
+    if (failed(scope, picklePositionalOnly(globalObject, "dump"_s, args, 1)))
         return { };
     JSValue object = args[0];
     auto* pickler = PyRecord::from(self);
@@ -2098,7 +2098,7 @@ static JSValue pickleMemoProxyReduce(JSGlobalObject* globalObject, JSValue self)
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue contents = copy(globalObject, self);
     RETURN_IF_EXCEPTION(scope, { });
-    return PyTuple::create(globalObject, { runtime(globalObject).dictType(), PyTuple::create(globalObject, { contents }) });
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { runtime(globalObject).dictType(), PyTuple::create(globalObject, { contents }) }));
 }
 
 static constexpr NativeDef picklerMemoProxyMethods[] = {
@@ -2665,7 +2665,7 @@ private:
         JSValue value = intFromText(m_globalObject, view, 10);
         RETURN_IF_EXCEPTION(scope, { });
         if (!value)
-            return raiseValueError(m_globalObject, scope, "invalid literal for int() with base 10: "_s, strRepr(view));
+            RELEASE_AND_RETURN(scope, raiseValueError(m_globalObject, scope, "invalid literal for int() with base 10: "_s, strRepr(view)));
         return value;
     }
 
@@ -2742,7 +2742,7 @@ private:
             raiseValueError(m_globalObject, scope, "could not convert string to float"_s);
             return false;
         }
-        return push(makeFloat(m_globalObject, value));
+        RELEASE_AND_RETURN(scope, push(makeFloat(m_globalObject, value)));
     }
 
     bool loadBinFloat()
@@ -3223,7 +3223,7 @@ private:
         if (stackSize() <= m_fence)
             RELEASE_AND_RETURN(scope, underflow());
         int64_t index;
-        if (!readIndex(index))
+        if (failed(scope, readIndex(index)))
             return false;
         if (index < 0) {
             raiseValueError(m_globalObject, scope, "negative PUT argument"_s);
@@ -3653,7 +3653,7 @@ static bool unpicklerCheckOptions(JSGlobalObject* globalObject, ASCIILiteral fun
     auto scope = DECLARE_THROW_SCOPE(vm);
     fixImports = !values[0] || isTrue(globalObject, values[0]);
     RETURN_IF_EXCEPTION(scope, false);
-    return pickleStringArgument(globalObject, function, "encoding"_s, values[1], "ASCII"_s) && pickleStringArgument(globalObject, function, "errors"_s, values[2], "strict"_s);
+    RELEASE_AND_RETURN(scope, pickleStringArgument(globalObject, function, "encoding"_s, values[1], "ASCII"_s) && pickleStringArgument(globalObject, function, "errors"_s, values[2], "strict"_s));
 }
 
 static JSValue unpicklerInit(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
@@ -3662,7 +3662,7 @@ static JSValue unpicklerInit(JSGlobalObject* globalObject, JSValue self, const C
     auto scope = DECLARE_THROW_SCOPE(vm);
     static constexpr ASCIILiteral keywords[] = { "file"_s, "fix_imports"_s, "encoding"_s, "errors"_s, "buffers"_s };
     JSValue values[5];
-    if (!unpackKeywordArguments(globalObject, "Unpickler"_s, keywords, 1, 1, false, args, values))
+    if (failed(scope, unpackKeywordArguments(globalObject, "Unpickler"_s, keywords, 1, 1, false, args, values)))
         return { };
     bool fixImports;
     if (!unpicklerCheckOptions(globalObject, "Unpickler"_s, values + 1, fixImports))
@@ -3676,7 +3676,7 @@ static JSValue unpicklerInit(JSGlobalObject* globalObject, JSValue self, const C
         for (unsigned field : { UnpicklerRead, UnpicklerReadLine, UnpicklerPersistentLoadAttr, UnpicklerBuffers, UnpicklerInput })
             unpickler->set(vm, field, { });
     }
-    if (!unpicklerSetInputStream(globalObject, unpickler, values[0]) || !unpicklerSetOptions(globalObject, "Unpickler"_s, unpickler, values + 1))
+    if (failed(scope, unpicklerSetInputStream(globalObject, unpickler, values[0])) || failed(scope, unpicklerSetOptions(globalObject, "Unpickler"_s, unpickler, values + 1)))
         return { };
     unpickler->number = UnpicklerIsRunning | (fixImports ? UnpicklerFixImports : 0);
     unpicklerClearMemo(globalObject, unpickler, 32);
@@ -3687,7 +3687,7 @@ static JSValue unpicklerLoad(JSGlobalObject* globalObject, JSValue self, const C
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!picklePositionalOnly(globalObject, "load"_s, args, 0))
+    if (failed(scope, picklePositionalOnly(globalObject, "load"_s, args, 0)))
         return { };
     auto* unpickler = PyRecord::from(self);
     if (!unpickler->get(UnpicklerRead)) {
@@ -3703,7 +3703,9 @@ static JSValue unpicklerLoad(JSGlobalObject* globalObject, JSValue self, const C
 
 static JSValue unpicklerPersistentLoad(JSGlobalObject* globalObject, JSValue, const CallArgs& args)
 {
-    if (!picklePositionalOnly(globalObject, "persistent_load"_s, args, 1))
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, picklePositionalOnly(globalObject, "persistent_load"_s, args, 1)))
         return { };
     pickleRaise(globalObject, PickleStateUnpicklingError, "A load persistent id instruction was encountered, but no persistent_load function was specified."_s);
     return { };
@@ -3773,9 +3775,11 @@ static JSValue unpicklerFindClass(JSGlobalObject* globalObject, JSValue self, JS
 
 static JSValue unpicklerFindClassMethod(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
 {
-    if (!picklePositionalOnly(globalObject, "find_class"_s, args, 2))
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, picklePositionalOnly(globalObject, "find_class"_s, args, 2)))
         return { };
-    return unpicklerFindClass(globalObject, self, args[0], args[1]);
+    RELEASE_AND_RETURN(scope, unpicklerFindClass(globalObject, self, args[0], args[1]));
 }
 
 static JSValue unpicklerSizeOf(JSGlobalObject*, JSValue self)
@@ -3942,7 +3946,7 @@ static JSValue pickleDump(JSGlobalObject* globalObject, JSValue object, JSValue 
     bool fixImports = !fixImportsValue || isTrue(globalObject, fixImportsValue);
     RETURN_IF_EXCEPTION(scope, { });
     PyRecord* pickler = picklerCreate(globalObject, pickleStateType(globalObject, PickleStatePicklerType));
-    if (!picklerSetProtocol(globalObject, pickler, protocol, fixImports)
+    if (failed(scope, picklerSetProtocol(globalObject, pickler, protocol, fixImports))
         || !picklerSetOutputStream(globalObject, pickler, file)
         || !picklerSetBufferCallback(globalObject, pickler, bufferCallback))
         return { };
@@ -3961,7 +3965,7 @@ static JSValue pickleDumps(JSGlobalObject* globalObject, JSValue object, JSValue
     bool fixImports = !fixImportsValue || isTrue(globalObject, fixImportsValue);
     RETURN_IF_EXCEPTION(scope, { });
     PyRecord* pickler = picklerCreate(globalObject, pickleStateType(globalObject, PickleStatePicklerType));
-    if (!picklerSetProtocol(globalObject, pickler, protocol, fixImports) || !picklerSetBufferCallback(globalObject, pickler, bufferCallback))
+    if (failed(scope, picklerSetProtocol(globalObject, pickler, protocol, fixImports)) || failed(scope, picklerSetBufferCallback(globalObject, pickler, bufferCallback)))
         return { };
     PicklerRun run(globalObject, pickler);
     run.dump(object);
@@ -3978,7 +3982,7 @@ static JSValue pickleLoad(JSGlobalObject* globalObject, JSValue file, JSValue fi
     if (!unpicklerCheckOptions(globalObject, "load"_s, options, fixImports))
         return { };
     PyRecord* unpickler = unpicklerCreate(globalObject, pickleStateType(globalObject, PickleStateUnpicklerType));
-    if (!unpicklerSetInputStream(globalObject, unpickler, file) || !unpicklerSetOptions(globalObject, "load"_s, unpickler, options))
+    if (failed(scope, unpicklerSetInputStream(globalObject, unpickler, file)) || failed(scope, unpicklerSetOptions(globalObject, "load"_s, unpickler, options)))
         return { };
     unpickler->number = fixImports ? UnpicklerFixImports : 0;
     UnpicklerRun run(globalObject, unpickler);
@@ -3997,7 +4001,7 @@ static JSValue pickleLoads(JSGlobalObject* globalObject, JSValue data, JSValue f
     BufferHolder holder(globalObject);
     if (!holder.get(data, BufferContigRO))
         return { };
-    if (!unpicklerSetOptions(globalObject, "loads"_s, unpickler, options))
+    if (failed(scope, unpicklerSetOptions(globalObject, "loads"_s, unpickler, options)))
         return { };
     unpickler->number = fixImports ? UnpicklerFixImports : 0;
     UnpicklerRun run(globalObject, unpickler);

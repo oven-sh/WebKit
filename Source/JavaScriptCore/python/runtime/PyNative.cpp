@@ -56,9 +56,12 @@ static void parseParameters(const NativeDef& def, Vector<NativeParameter, Native
     auto text = def.signatureText.span8();
     size_t i = 1;
     size_t end = text.size() - 1;
+    bool inOptionalGroup = false;
     while (i < end) {
         size_t start = i;
         size_t nameEnd = 0;
+        size_t bracket = 0;
+        bool isOptional = inOptionalGroup;
         unsigned depth = 0;
         bool inString = false;
         while (i < end) {
@@ -68,7 +71,13 @@ static void parseParameters(const NativeDef& def, Vector<NativeParameter, Native
                     inString = false;
             } else if (ch == '\'')
                 inString = true;
-            else if (ch == '(' || ch == '[' || ch == '{')
+            else if ((ch == '[' || ch == ']') && !depth && !nameEnd) {
+                // An optional group: see parseNativeSignature().
+                if (!bracket)
+                    bracket = i;
+                if (ch == '[')
+                    inOptionalGroup = true;
+            } else if (ch == '(' || ch == '[' || ch == '{')
                 ++depth;
             else if (ch == ')' || ch == ']' || ch == '}')
                 --depth;
@@ -87,7 +96,7 @@ static void parseParameters(const NativeDef& def, Vector<NativeParameter, Native
         Latin1Character first = text[start];
         if (first == '$' || first == '/' || first == '*')
             continue;
-        parameters.append({ text.subspan(start, (nameEnd ? nameEnd : tokenEnd) - start), !!nameEnd });
+        parameters.append({ text.subspan(start, (nameEnd ? nameEnd : bracket ? bracket : tokenEnd) - start), nameEnd || isOptional });
     }
 }
 

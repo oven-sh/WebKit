@@ -94,7 +94,7 @@ static bool treatmentFromArgument(JSGlobalObject* globalObject, ASCIILiteral fun
         return false;
     }
     String name;
-    if (!textOfCString(globalObject, strValue(errors), NUL::IsAnError, name))
+    if (failed(scope, textOfCString(globalObject, strValue(errors), NUL::IsAnError, name)))
         return false;
     treatment = treatmentNamed(name);
     return true;
@@ -221,7 +221,7 @@ static bool handleEncodeError(JSGlobalObject* globalObject, EncodeRun& run, int 
         if (!encodeText(globalObject, run.codec, run.state, tuple->at(0), { }, flushes, run.out, position, length))
             return false;
     }
-    return positionFromHandler(globalObject, tuple->at(1), run.text.length(), run.position);
+    RELEASE_AND_RETURN(scope, positionFromHandler(globalObject, tuple->at(1), run.text.length(), run.position));
 }
 
 // Appends the bytes for the text. `position`: how many of its `length` characters they are for; without `flushes`, the last may
@@ -320,7 +320,7 @@ static bool handleDecodeError(JSGlobalObject* globalObject, const Codec& codec, 
     String replacement = strValue(tuple->at(0))->value(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
     run.out.append(replacement);
-    return positionFromHandler(globalObject, tuple->at(1), run.in.size(), run.position);
+    RELEASE_AND_RETURN(scope, positionFromHandler(globalObject, tuple->at(1), run.in.size(), run.position));
 }
 
 // Decodes until the end, or until what is left is the beginning of something.
@@ -382,7 +382,7 @@ static JSValue codecEncode(JSGlobalObject* globalObject, JSValue self, JSValue i
     auto scope = DECLARE_THROW_SCOPE(vm);
     const Codec& codec = *std::bit_cast<const Codec*>(static_cast<intptr_t>(PyRecord::from(self)->number));
     ErrorTreatment errors;
-    if (!treatmentFromArgument(globalObject, "encode"_s, errorsValue, errors))
+    if (failed(scope, treatmentFromArgument(globalObject, "encode"_s, errorsValue, errors)))
         return { };
     JSValue text = textToEncode(globalObject, input);
     RETURN_IF_EXCEPTION(scope, { });
@@ -409,7 +409,7 @@ static JSValue codecDecode(JSGlobalObject* globalObject, JSValue self, JSValue i
     if (!probe.get(input))
         return { };
     ErrorTreatment errors;
-    if (!treatmentFromArgument(globalObject, "decode"_s, errorsValue, errors))
+    if (failed(scope, treatmentFromArgument(globalObject, "decode"_s, errorsValue, errors)))
         return { };
     InputBytes bytes(globalObject);
     if (!bytes.get(globalObject, input, { }, errors))
@@ -504,7 +504,7 @@ static PyRecord* newStatefulObject(JSGlobalObject* globalObject, JSValue cls, co
             raiseTypeError(globalObject, scope, function, "() argument "_s, i + 1, " must be str, not "_s, typeNameOfArgument(globalObject, values[i]));
             return nullptr;
         }
-        if (!textOfCString(globalObject, strValue(values[i]), NUL::IsAnError, errors))
+        if (failed(scope, textOfCString(globalObject, strValue(values[i]), NUL::IsAnError, errors)))
             return nullptr;
     }
     for (unsigned i = 0; i < count; ++i) {
@@ -693,7 +693,7 @@ static JSValue incrementalEncoderSetState(JSGlobalObject* globalObject, JSValue 
     if (!isInt(value))
         return raiseTypeError(globalObject, scope, "setstate() argument must be int, not "_s, typeNameOfArgument(globalObject, value));
     uint8_t bytes[1 + maxPendingUTF8 + sizeof(State)];
-    if (!bytesOfInt(globalObject, value, bytes))
+    if (failed(scope, bytesOfInt(globalObject, value, bytes)))
         return { };
     size_t size = bytes[0];
     if (size > maxPendingUTF8)
@@ -805,7 +805,7 @@ static JSValue incrementalDecoderDecode(JSGlobalObject* globalObject, JSValue se
         }
     }
     if (run.position < run.in.size()) {
-        if (!keepRestPending(globalObject, object, run))
+        if (failed(scope, keepRestPending(globalObject, object, run)))
             return { };
     }
     RELEASE_AND_RETURN(scope, makeStr(globalObject, run.out));
@@ -835,7 +835,7 @@ static JSValue incrementalDecoderSetState(JSGlobalObject* globalObject, JSValue 
     if (tuple->length() != 2 || !PyBytes::is(tuple->at(0)) || !isInt(tuple->at(1)))
         return raiseTypeError(globalObject, scope, "setstate(): illegal state argument"_s);
     State state;
-    if (!bytesOfInt(globalObject, tuple->at(1), state.c))
+    if (failed(scope, bytesOfInt(globalObject, tuple->at(1), state.c)))
         return { };
     auto* pending = PyBytes::from(tuple->at(0));
     if (pending->span().size() > maxPendingBytes) {
@@ -930,7 +930,7 @@ static JSString* readFromStream(JSGlobalObject* globalObject, PyRecord* object, 
                 return nullptr;
         }
         if (run.position < run.in.size()) {
-            if (!keepRestPending(globalObject, object, run))
+            if (failed(scope, keepRestPending(globalObject, object, run)))
                 return nullptr;
         }
         if (size < 0 || !run.out.isEmpty() || run.in.empty())
@@ -1001,8 +1001,10 @@ static bool writeToStream(JSGlobalObject* globalObject, PyRecord* object, JSValu
 
 static JSValue streamWriterWrite(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue text = onlyArgument(globalObject, "write"_s, args);
-    if (!text || !writeToStream(globalObject, PyRecord::from(self), text))
+    if (!text || failed(scope, writeToStream(globalObject, PyRecord::from(self), text)))
         return { };
     return jsUndefined();
 }
@@ -1024,7 +1026,7 @@ static JSValue streamWriterWriteLines(JSGlobalObject* globalObject, JSValue self
             break;
         JSValue line = getItem(globalObject, lines, jsNumber(i));
         RETURN_IF_EXCEPTION(scope, { });
-        if (!writeToStream(globalObject, PyRecord::from(self), line))
+        if (failed(scope, writeToStream(globalObject, PyRecord::from(self), line)))
             return { };
     }
     return jsUndefined();

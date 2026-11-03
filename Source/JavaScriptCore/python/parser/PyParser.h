@@ -231,6 +231,16 @@ private:
     bool parseArguments(Seq<Expr*>& arguments, Seq<AST::Keyword*>& keywords, Position openParenthesis, Expr*& soleGenerator);
     bool parseComprehensionClauses(Seq<AST::Comprehension*>&);
     bool atComprehension() { return at(TokenKind::KwFor) || (at(TokenKind::KwAsync) && peek(1).kind == TokenKind::KwFor); }
+    // Where there can be none: what follows an `async` is only read to explain the error.
+    bool atMisplacedComprehension()
+    {
+        if (!at(TokenKind::KwAsync))
+            return at(TokenKind::KwFor);
+        if (m_quiet)
+            return false;
+        SetForScope reading(m_diagnosing, true);
+        return peek(1).kind == TokenKind::KwFor;
+    }
     Expr* parseForTargets(bool inComprehension);
     Expr* parseStarTargets(); // star_targets
     Expr* parseStarTarget();
@@ -300,6 +310,7 @@ private:
     SyntaxErrorInfo m_error;
     bool m_errorIsFatal { false };
     bool m_errorIsGeneric { false };
+    bool m_errorWasFoundDiagnosing { false };
     bool m_errorIsFinal { false }; // No error of the lexer further on replaces it.
     // Of a fatal error. It is the parser's: it came of a rule that is always tried, not of one of those that explain errors, and
     // after it nothing else is tried.

@@ -515,13 +515,13 @@ static JSValue cmathCall(JSGlobalObject* globalObject, JSValue argument)
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     CMathValue z;
-    if (!cmathGetArgument(globalObject, argument, z))
+    if (failed(scope, cmathGetArgument(globalObject, argument, z)))
         return { };
     CMathError error = CMathError::None;
     CMathValue result = function(z, error);
     if (error != CMathError::None)
         return cmathRaise(globalObject, scope, error);
-    return PyComplex::create(globalObject, result.real, result.imaginary);
+    RELEASE_AND_RETURN(scope, PyComplex::create(globalObject, result.real, result.imaginary));
 }
 
 static JSValue cmathLog(JSGlobalObject* globalObject, JSValue argument, JSValue base)
@@ -529,19 +529,19 @@ static JSValue cmathLog(JSGlobalObject* globalObject, JSValue argument, JSValue 
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     CMathValue x;
-    if (!cmathGetArgument(globalObject, argument, x))
+    if (failed(scope, cmathGetArgument(globalObject, argument, x)))
         return { };
     CMathError error;
     x = cmathLogOf(x, error);
     if (!base) {
         if (error != CMathError::None)
             return cmathRaise(globalObject, scope, error);
-        return PyComplex::create(globalObject, x.real, x.imaginary);
+        RELEASE_AND_RETURN(scope, PyComplex::create(globalObject, x.real, x.imaginary));
     }
 
     // As in CPython, what was wrong with the first logarithm is forgotten over the second.
     CMathValue y;
-    if (!cmathGetArgument(globalObject, base, y))
+    if (failed(scope, cmathGetArgument(globalObject, base, y)))
         return { };
     y = cmathLogOf(y, error);
     if (!y.real && !y.imaginary)
@@ -556,14 +556,14 @@ static JSValue cmathPhase(JSGlobalObject* globalObject, JSValue argument)
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     CMathValue z;
-    if (!cmathGetArgument(globalObject, argument, z))
+    if (failed(scope, cmathGetArgument(globalObject, argument, z)))
         return { };
     // CPython goes by errno here, which glibc sets when the result underflows.
     errno = 0;
     double phi = std::atan2(z.imaginary, z.real);
     if (errno)
         return cmathRaise(globalObject, scope, errno == EDOM ? CMathError::Domain : CMathError::Range);
-    return makeFloat(globalObject, phi);
+    RELEASE_AND_RETURN(scope, makeFloat(globalObject, phi));
 }
 
 static JSValue cmathPolar(JSGlobalObject* globalObject, JSValue argument)
@@ -571,13 +571,13 @@ static JSValue cmathPolar(JSGlobalObject* globalObject, JSValue argument)
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     CMathValue z;
-    if (!cmathGetArgument(globalObject, argument, z))
+    if (failed(scope, cmathGetArgument(globalObject, argument, z)))
         return { };
     CMathError error = CMathError::None;
     double r = cmathAbsOf(z, error);
     if (error != CMathError::None)
         return cmathRaise(globalObject, scope, error);
-    return PyTuple::create(globalObject, { makeFloat(globalObject, r), makeFloat(globalObject, std::atan2(z.imaginary, z.real)) });
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { makeFloat(globalObject, r), makeFloat(globalObject, std::atan2(z.imaginary, z.real)) }));
 }
 
 static JSValue cmathRect(JSGlobalObject* globalObject, JSValue first, JSValue second)
@@ -603,14 +603,16 @@ static JSValue cmathRect(JSGlobalObject* globalObject, JSValue first, JSValue se
         z = { r, r * phi };
     else
         z = { r * std::cos(phi), r * std::sin(phi) };
-    return PyComplex::create(globalObject, z.real, z.imaginary);
+    RELEASE_AND_RETURN(scope, PyComplex::create(globalObject, z.real, z.imaginary));
 }
 
 template<bool (*predicate)(CMathValue)>
 static JSValue cmathPredicate(JSGlobalObject* globalObject, JSValue argument)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     CMathValue z;
-    if (!cmathGetArgument(globalObject, argument, z))
+    if (failed(scope, cmathGetArgument(globalObject, argument, z)))
         return { };
     return jsBoolean(predicate(z));
 }
@@ -624,10 +626,10 @@ static JSValue cmathIsClose(JSGlobalObject* globalObject, JSValue first, JSValue
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     CMathValue a;
-    if (!cmathGetArgument(globalObject, first, a))
+    if (failed(scope, cmathGetArgument(globalObject, first, a)))
         return { };
     CMathValue b;
-    if (!cmathGetArgument(globalObject, second, b))
+    if (failed(scope, cmathGetArgument(globalObject, second, b)))
         return { };
     double relative = 1e-09;
     if (relativeTolerance) {

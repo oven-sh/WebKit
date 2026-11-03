@@ -99,6 +99,22 @@ private:
         return type == StringType || type == HeapBigIntType || type == SymbolType || type == PyFloatType;
     }
 
+    // Cells say what they refer to from first to last. CPython's lists and tuples let go of their items from last to first, and so
+    // do frames of their variables.
+    static bool letsGoFromTheEnd(JSCell* cell)
+    {
+        switch (cell->type()) {
+        case ArrayType:
+        case DerivedArrayType:
+        case PyGeneratorType:
+            return true;
+        case PyTupleType:
+            return true;
+        default:
+            return false;
+        }
+    }
+
     // Where the number of a cell is kept: there is a table for each block that has any.
     unsigned* slotFor(JSCell* cell, bool makesRoom)
     {
@@ -265,6 +281,7 @@ void DeadGraph::addAllThatDied(std::span<JSCell* const> candidates)
 
 void DeadGraph::walk()
 {
+    UncheckedKeyHashSet<unsigned, IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> memoryOfOthers; // A deque lets go from the left.
     for (unsigned i = 0; i < m_cells.size(); ++i) {
         m_firstEdge.append(m_edges.size());
         JSCell* cell = m_cells[i];
@@ -272,12 +289,16 @@ void DeadGraph::walk()
             continue;
         m_wholeOfCurrentCell = wholeThatPartRefersTo(cell);
         cell->methodTable()->visitChildren(cell, *this);
-        // Cells say what they refer to from first to last. CPython's lists and tuples let go of their items from last to first.
-        JSType type = cell->type();
-        if (type == ArrayType || type == DerivedArrayType || type == PyTupleType)
-            std::ranges::reverse(m_edges.mutableSpan().subspan(m_firstEdge[i]));
+        if (cell->type() == PyObjectType && uncheckedDowncast<PyObject>(cell)->type()->has(TypeFlag::OwnsContainers)) {
+            for (unsigned part : m_edges.span().subspan(m_firstEdge[i]))
+                memoryOfOthers.add(part);
+        }
     }
     m_firstEdge.append(m_edges.size());
+    for (unsigned i = 0; i < m_cells.size(); ++i) {
+        if (letsGoFromTheEnd(m_cells[i]) && !memoryOfOthers.contains(i))
+            std::ranges::reverse(m_edges.mutableSpan().subspan(m_firstEdge[i], m_firstEdge[i + 1] - m_firstEdge[i]));
+    }
 }
 
 // The cells that nothing dead refers to: the program dropped them, in an order that nobody knows. They are put in the order in which

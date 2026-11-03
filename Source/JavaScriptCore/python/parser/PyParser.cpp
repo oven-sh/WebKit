@@ -151,7 +151,9 @@ Name Parser::expectName()
 
 void Parser::rewind(const Checkpoint& checkpoint)
 {
-    if (!m_errorIsFatal) {
+    // Once the parser is past a mistake and looks for what to say about it, the first thing it finds is what it says.
+    bool isExplained = failed() && !m_errorIsGeneric && m_errorWasFoundDiagnosing;
+    if (!m_errorIsFatal && !isExplained) {
         m_error = { };
         m_errorIsGeneric = false;
         m_errorIsFinal = false;
@@ -201,6 +203,7 @@ std::nullptr_t Parser::raise(SyntaxErrorInfo::Type type, int lineno, int colOffs
     };
 
     m_errorIsGeneric = m_quiet;
+    m_errorWasFoundDiagnosing = m_diagnosing;
     m_error.type = type;
     m_error.message = message;
     m_error.hasLocation = true;
@@ -327,13 +330,16 @@ void Parser::raiseLexerError()
         raise(SyntaxErrorInfo::Type::IndentationError, line, 0, line, -1, "too many levels of indentation"_s);
         break;
     case Lexer::Status::LineContinuation:
-        raise(SyntaxErrorInfo::Type::SyntaxError, line, std::max(static_cast<int>(m_lexer.currentOffset() - m_lexer.currentLineStart()) - 1, 0), line, -1, "unexpected character after line continuation character"_s);
+        // CPython counts the column from where its buffer begins, which on a line that continues another one is the first of them.
+        // So there it is past the end of the line, which is as far as a column goes.
+        raise(SyntaxErrorInfo::Type::SyntaxError, line, std::max(static_cast<int>(m_lexer.currentOffset() - m_lexer.lineStartOffset(std::min(m_lexer.firstBufferedLine(), line))) - 1, 0), line, -1, "unexpected character after line continuation character"_s);
         break;
     case Lexer::Status::Ok:
         raise(SyntaxErrorInfo::Type::SyntaxError, line, 0, line, -1, "unknown parsing error"_s);
         break;
     }
     m_errorIsFatal = true;
+    m_errorIsGeneric = false;
 }
 
 // After a syntax error: an error of the lexer further on, such as a bracket that does not match, explains more.
@@ -1636,7 +1642,7 @@ Stmt* Parser::parseWith(bool isAsync, Position start)
             newlineInsteadOfColon = at(TokenKind::Newline);
         }
         if (!parsed) {
-            if (m_errorIsFatal)
+            if (m_errorIsFatal || (failed() && !m_errorIsGeneric))
                 return nullptr;
             rewind(saved);
             items.clear();

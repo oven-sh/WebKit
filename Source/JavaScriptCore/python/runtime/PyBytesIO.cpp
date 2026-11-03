@@ -152,10 +152,12 @@ static JSValue bytesIOTake(JSGlobalObject* globalObject, PyRecord* stream, int64
 // The number of bytes written. -1: an exception.
 static int64_t bytesIOWriteBytes(JSGlobalObject* globalObject, PyRecord* stream, JSValue data)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     IOBuffer buffer;
     if (!buffer.acquire(globalObject, data))
         return -1;
-    if (!bytesIOCheckOpen(globalObject, stream) || !bytesIOCheckExports(globalObject, stream))
+    if (failed(scope, bytesIOCheckOpen(globalObject, stream)) || failed(scope, bytesIOCheckExports(globalObject, stream)))
         return -1;
     size_t length = buffer.size();
     if (!length)
@@ -195,13 +197,15 @@ static JSValue bytesIONew(JSGlobalObject* globalObject, JSValue cls, const CallA
 
 static JSValue bytesIOInit(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     Runtime& rt = runtime(globalObject);
     static constexpr ASCIILiteral keywords[] = { "initial_bytes"_s };
     JSValue initial;
-    if (!unpackKeywordArguments(globalObject, "BytesIO"_s, keywords, 0, 1, false, args, &initial))
+    if (failed(scope, unpackKeywordArguments(globalObject, "BytesIO"_s, keywords, 0, 1, false, args, &initial)))
         return { };
     PyRecord* stream = PyRecord::from(self);
-    if (!bytesIOCheckExports(globalObject, stream))
+    if (failed(scope, bytesIOCheckExports(globalObject, stream)))
         return { };
 
     auto& state = bytesIOStateOf(stream);
@@ -227,17 +231,21 @@ static JSValue bytesIOGetClosed(JSGlobalObject*, JSValue self) { return jsBoolea
 
 static JSValue bytesIOGetBuffer(JSGlobalObject* globalObject, JSValue self)
 {
-    if (!bytesIOCheckOpen(globalObject, PyRecord::from(self)))
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, bytesIOCheckOpen(globalObject, PyRecord::from(self))))
         return { };
     PyRecord* exporter = PyRecord::create(globalObject, ioType(globalObject, IOType::BytesIOBuffer), BytesIOExporterFieldCount);
     exporter->set(getVM(globalObject), BytesIOExporterSourceField, self);
-    return makeMemoryView(globalObject, exporter);
+    RELEASE_AND_RETURN(scope, makeMemoryView(globalObject, exporter));
 }
 
 static JSValue bytesIOGetValue(JSGlobalObject* globalObject, JSValue self)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PyRecord* stream = PyRecord::from(self);
-    if (!bytesIOCheckOpen(globalObject, stream))
+    if (failed(scope, bytesIOCheckOpen(globalObject, stream)))
         return { };
     auto& state = bytesIOStateOf(stream);
     if (PyBytes* shared = bytesIOSharedBuffer(stream); shared && shared->length() == static_cast<size_t>(state.size))
@@ -254,36 +262,42 @@ static JSValue bytesIOGetValue(JSGlobalObject* globalObject, JSValue self)
 
 static JSValue bytesIOTell(JSGlobalObject* globalObject, JSValue self)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PyRecord* stream = PyRecord::from(self);
-    if (!bytesIOCheckOpen(globalObject, stream))
+    if (failed(scope, bytesIOCheckOpen(globalObject, stream)))
         return { };
-    return makeInt(globalObject, bytesIOStateOf(stream).position);
+    RELEASE_AND_RETURN(scope, makeInt(globalObject, bytesIOStateOf(stream).position));
 }
 
 static JSValue bytesIORead(JSGlobalObject* globalObject, JSValue self, JSValue sizeValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int64_t size = -1;
-    if (!ioToOptionalSize(globalObject, sizeValue, size))
+    if (failed(scope, ioToOptionalSize(globalObject, sizeValue, size)))
         return { };
     PyRecord* stream = PyRecord::from(self);
-    if (!bytesIOCheckOpen(globalObject, stream))
+    if (failed(scope, bytesIOCheckOpen(globalObject, stream)))
         return { };
     auto& state = bytesIOStateOf(stream);
     int64_t available = state.size - state.position;
     if (size < 0 || size > available)
         size = std::max<int64_t>(available, 0);
-    return bytesIOTake(globalObject, stream, size);
+    RELEASE_AND_RETURN(scope, bytesIOTake(globalObject, stream, size));
 }
 
 static JSValue bytesIOReadline(JSGlobalObject* globalObject, JSValue self, JSValue sizeValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int64_t size = -1;
-    if (!ioToOptionalSize(globalObject, sizeValue, size))
+    if (failed(scope, ioToOptionalSize(globalObject, sizeValue, size)))
         return { };
     PyRecord* stream = PyRecord::from(self);
-    if (!bytesIOCheckOpen(globalObject, stream))
+    if (failed(scope, bytesIOCheckOpen(globalObject, stream)))
         return { };
-    return bytesIOTake(globalObject, stream, bytesIOScanLine(stream, size));
+    RELEASE_AND_RETURN(scope, bytesIOTake(globalObject, stream, bytesIOScanLine(stream, size)));
 }
 
 static JSValue bytesIOReadlines(JSGlobalObject* globalObject, JSValue self, JSValue sizeValue)
@@ -291,13 +305,13 @@ static JSValue bytesIOReadlines(JSGlobalObject* globalObject, JSValue self, JSVa
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyRecord* stream = PyRecord::from(self);
-    if (!bytesIOCheckOpen(globalObject, stream))
+    if (failed(scope, bytesIOCheckOpen(globalObject, stream)))
         return { };
     int64_t maxSize = -1;
     if (sizeValue && !isNone(sizeValue)) {
         if (!isInt(sizeValue))
             return raiseTypeError(globalObject, scope, "integer argument expected, got '"_s, typeName(globalObject, sizeValue), '\'');
-        if (!ssizeArgument(globalObject, sizeValue, maxSize))
+        if (failed(scope, ssizeArgument(globalObject, sizeValue, maxSize)))
             return { };
     }
 
@@ -318,11 +332,13 @@ static JSValue bytesIOReadlines(JSGlobalObject* globalObject, JSValue self, JSVa
 
 static JSValue bytesIOReadInto(JSGlobalObject* globalObject, JSValue self, JSValue target)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     IOBuffer buffer;
-    if (!buffer.acquireWritable(globalObject, "readinto"_s, target))
+    if (failed(scope, buffer.acquireWritable(globalObject, "readinto"_s, target)))
         return { };
     PyRecord* stream = PyRecord::from(self);
-    if (!bytesIOCheckOpen(globalObject, stream))
+    if (failed(scope, bytesIOCheckOpen(globalObject, stream)))
         return { };
     auto& state = bytesIOStateOf(stream);
     int64_t length = std::min<int64_t>(buffer.size(), state.size - state.position);
@@ -330,7 +346,7 @@ static JSValue bytesIOReadInto(JSGlobalObject* globalObject, JSValue self, JSVal
         return jsNumber(0);
     memmove(buffer.mutableSpan().data(), bytesIOData(stream) + state.position, length);
     state.position += length;
-    return makeInt(globalObject, length);
+    RELEASE_AND_RETURN(scope, makeInt(globalObject, length));
 }
 
 static JSValue bytesIOTruncate(JSGlobalObject* globalObject, JSValue self, JSValue sizeValue)
@@ -338,7 +354,7 @@ static JSValue bytesIOTruncate(JSGlobalObject* globalObject, JSValue self, JSVal
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyRecord* stream = PyRecord::from(self);
-    if (!bytesIOCheckOpen(globalObject, stream) || !bytesIOCheckExports(globalObject, stream))
+    if (failed(scope, bytesIOCheckOpen(globalObject, stream)) || failed(scope, bytesIOCheckExports(globalObject, stream)))
         return { };
     auto& state = bytesIOStateOf(stream);
     int64_t size = state.position;
@@ -348,7 +364,7 @@ static JSValue bytesIOTruncate(JSGlobalObject* globalObject, JSValue self, JSVal
         if (size < 0)
             return raiseValueError(globalObject, scope, "negative size value "_s, size);
         // Converting the size may have run anything.
-        if (!bytesIOCheckOpen(globalObject, stream) || !bytesIOCheckExports(globalObject, stream))
+        if (failed(scope, bytesIOCheckOpen(globalObject, stream)) || failed(scope, bytesIOCheckExports(globalObject, stream)))
             return { };
     }
     if (size < state.size) {
@@ -358,7 +374,7 @@ static JSValue bytesIOTruncate(JSGlobalObject* globalObject, JSValue self, JSVal
             return { };
         }
     }
-    return makeInt(globalObject, size);
+    RELEASE_AND_RETURN(scope, makeInt(globalObject, size));
 }
 
 static JSValue bytesIOSelf(JSGlobalObject*, JSValue self) { return self; }
@@ -368,7 +384,7 @@ static JSValue bytesIONext(JSGlobalObject* globalObject, JSValue self)
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyRecord* stream = PyRecord::from(self);
-    if (!bytesIOCheckOpen(globalObject, stream))
+    if (failed(scope, bytesIOCheckOpen(globalObject, stream)))
         return { };
     int64_t length = bytesIOScanLine(stream, -1);
     if (!length)
@@ -381,13 +397,13 @@ static JSValue bytesIOSeek(JSGlobalObject* globalObject, JSValue self, JSValue p
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     int64_t position;
-    if (!ssizeArgument(globalObject, positionValue, position))
+    if (failed(scope, ssizeArgument(globalObject, positionValue, position)))
         return { };
     int whence = 0;
-    if (whenceValue && !ioToInt(globalObject, whenceValue, whence))
+    if (whenceValue && failed(scope, ioToInt(globalObject, whenceValue, whence)))
         return { };
     PyRecord* stream = PyRecord::from(self);
-    if (!bytesIOCheckOpen(globalObject, stream))
+    if (failed(scope, bytesIOCheckOpen(globalObject, stream)))
         return { };
     auto& state = bytesIOStateOf(stream);
 
@@ -401,7 +417,7 @@ static JSValue bytesIOSeek(JSGlobalObject* globalObject, JSValue self, JSValue p
     } else if (whence)
         return raiseValueError(globalObject, scope, "invalid whence ("_s, whence, ", should be 0, 1 or 2)"_s);
     state.position = std::max<int64_t>(position, 0);
-    return makeInt(globalObject, state.position);
+    RELEASE_AND_RETURN(scope, makeInt(globalObject, state.position));
 }
 
 static JSValue bytesIOWrite(JSGlobalObject* globalObject, JSValue self, JSValue data)
@@ -415,7 +431,7 @@ static JSValue bytesIOWritelines(JSGlobalObject* globalObject, JSValue self, JSV
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyRecord* stream = PyRecord::from(self);
-    if (!bytesIOCheckOpen(globalObject, stream))
+    if (failed(scope, bytesIOCheckOpen(globalObject, stream)))
         return { };
     forEach(globalObject, lines, [&](JSValue line) {
         return bytesIOWriteBytes(globalObject, stream, line) >= 0;
@@ -426,8 +442,10 @@ static JSValue bytesIOWritelines(JSGlobalObject* globalObject, JSValue self, JSV
 
 static JSValue bytesIOClose(JSGlobalObject* globalObject, JSValue self)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PyRecord* stream = PyRecord::from(self);
-    if (!bytesIOCheckExports(globalObject, stream))
+    if (failed(scope, bytesIOCheckExports(globalObject, stream)))
         return { };
     stream->set(getVM(globalObject), BytesIOBufferField, JSValue());
     ioDidClose(globalObject, stream);
@@ -443,7 +461,7 @@ static JSValue bytesIOGetState(JSGlobalObject* globalObject, JSValue self)
     JSValue value = bytesIOGetValue(globalObject, self);
     RETURN_IF_EXCEPTION(scope, { });
     PyDict* dict = instanceDict(globalObject, self, false);
-    return PyTuple::create(globalObject, { value, makeInt(globalObject, bytesIOStateOf(PyRecord::from(self)).position), dict ? JSValue(dict->copy(globalObject)) : jsUndefined() });
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { value, makeInt(globalObject, bytesIOStateOf(PyRecord::from(self)).position), dict ? JSValue(dict->copy(globalObject)) : jsUndefined() }));
 }
 
 static JSValue bytesIOSetState(JSGlobalObject* globalObject, JSValue self, JSValue stateValue)
@@ -455,7 +473,7 @@ static JSValue bytesIOSetState(JSGlobalObject* globalObject, JSValue self, JSVal
     auto* tuple = PyTuple::tryFrom(stateValue);
     if (!tuple || tuple->length() < 3)
         return raiseTypeError(globalObject, scope, typeName(globalObject, self), ".__setstate__ argument should be 3-tuple, got "_s, typeName(globalObject, stateValue));
-    if (!bytesIOCheckExports(globalObject, stream))
+    if (failed(scope, bytesIOCheckExports(globalObject, stream)))
         return { };
 
     auto& state = bytesIOStateOf(stream);
@@ -468,7 +486,7 @@ static JSValue bytesIOSetState(JSGlobalObject* globalObject, JSValue self, JSVal
     if (!isInt(positionValue))
         return raiseTypeError(globalObject, scope, "second item of state must be an integer, not "_s, typeName(globalObject, positionValue));
     int64_t position;
-    if (!ssizeArgument(globalObject, positionValue, position))
+    if (failed(scope, ssizeArgument(globalObject, positionValue, position)))
         return { };
     if (position < 0)
         return raiseValueError(globalObject, scope, "position value cannot be negative"_s);
@@ -517,7 +535,7 @@ static constexpr NativeDef bytesIOMethods[] = {
     PY_METHOD("seek", bytesIOSeek, "($self, pos, whence=0, /)"),
     PY_METHOD("truncate", bytesIOTruncate, "($self, size=None, /)"),
     PY_METHOD("__getstate__", bytesIOGetState, "($self, /)"),
-    PY_METHOD("__setstate__", bytesIOSetState, "($self, state, /)"),
+    PY_METHOD("__setstate__", bytesIOSetState, "($self, object, /)"),
     PY_METHOD("__sizeof__", bytesIOSizeOf, "($self, /)"),
 };
 
@@ -536,8 +554,10 @@ static void bytesIOExporterRelease(JSGlobalObject*, JSValue exporter)
 
 static JSValue bytesIOExporterBuffer(JSGlobalObject* globalObject, JSValue self, JSValue flags)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PyRecord* stream = PyRecord::from(PyRecord::from(self)->get(BytesIOExporterSourceField));
-    if (!bytesIOCheckOpen(globalObject, stream))
+    if (failed(scope, bytesIOCheckOpen(globalObject, stream)))
         return { };
     auto& state = bytesIOStateOf(stream);
     if (bytesIOSharedBuffer(stream) && !bytesIOReallocate(globalObject, stream, state.size))

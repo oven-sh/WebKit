@@ -503,7 +503,7 @@ static bool waitUntilModuleIsInitialized(JSGlobalObject* globalObject, JSValue m
     if (!waits || !bootstrap)
         return true;
     scope.release();
-    return !!callMethod(globalObject, bootstrap, internString(vm, "_lock_unlock_module"_s), name);
+    RELEASE_AND_RETURN(scope, !!callMethod(globalObject, bootstrap, internString(vm, "_lock_unlock_module"_s), name));
 }
 
 // With `missingIsNone`, the answer for a module that is nowhere to be found is None.
@@ -536,11 +536,7 @@ static JSValue importModuleOrNone(JSGlobalObject* globalObject, JSString* name, 
 
     String text = stringOf(name);
     if (JSValue findAndLoad = rt.slot(Runtime::Slot::FindAndLoad)) {
-        if (isAudited(globalObject)) [[unlikely]] {
-            auto fromSys = [&](ASCIILiteral attribute) { return rt.sysDict()->get(internString(vm, attribute)); };
-            if (!audit(globalObject, "import"_s, name, jsUndefined(), fromSys("path"_s), fromSys("meta_path"_s), fromSys("path_hooks"_s)))
-                return { };
-        }
+        // (It raises the audit event.)
         ImportTimeReport report(text);
         JSValue module = call(globalObject, findAndLoad, name, rt.defaultImportFunction());
         if (scope.exception()) [[unlikely]] {
@@ -771,7 +767,7 @@ JSValue importFrom(JSGlobalObject* globalObject, JSValue module, JSString* name)
     if (!spec)
         message = makeString(start, shownName, " (unknown location)"_s);
     else {
-        if (!diagnoseModule(globalObject, spec, moduleName ? moduleName : JSValue(makeStr(vm, "<unknown module name>"_s)), diagnosis))
+        if (failed(scope, diagnoseModule(globalObject, spec, moduleName ? moduleName : JSValue(makeStr(vm, "<unknown module name>"_s)), diagnosis)))
             return { };
         if (auto* object = PyModule::tryFrom(module); object && !diagnosis.origin) {
             if (JSValue file = object->dict()->get(rt.names.dFile()); file && isStr(file))
@@ -1356,7 +1352,7 @@ static JSValue resolveLazyImport(JSGlobalObject* globalObject, PyRecord* lazy, J
         exception->setField(vm, ExceptionField::importErrorName, root->get(LazyImportSource));
         return raiseException(globalObject, scope, exception);
     }
-    if (!rt.tryEnterFrame())
+    if (failed(scope, rt.tryEnterFrame()))
         return { };
     if (!rt.threadLocals() || !rt.threadLocals().isCell())
         rt.setThreadLocals(JSWeakMap::create(vm, globalObject->weakMapStructure()));

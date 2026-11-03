@@ -421,7 +421,7 @@ private:
                 return false;
             if (info.attributes != AstAttributes::None && !convertAttributes(info, object, range))
                 return false;
-            if (!checkRequiredFields(info, slots))
+            if (failed(scope, checkRequiredFields(info, slots)))
                 return false;
             out.pointer = makeProduct(id, slots, range);
             return true;
@@ -452,7 +452,7 @@ private:
         const AstClassInfo& constructorInfo = infoOfAstClass(constructor);
         if (!convertFields(constructor, constructorInfo, object, slots))
             return false;
-        if (!checkRequiredFields(constructorInfo, slots))
+        if (failed(scope, checkRequiredFields(constructorInfo, slots)))
             return false;
         const ConstantValue* constant = nullptr;
         switch (id) {

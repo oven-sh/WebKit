@@ -139,8 +139,10 @@ static bool socketToInt(JSGlobalObject* globalObject, JSValue value, int& result
 // A descriptor given as an int. What does not fit is cut off, as a cast does.
 static bool socketToDescriptor(JSGlobalObject* globalObject, JSValue value, int& result)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int64_t number;
-    if (!posixToLong(globalObject, value, number))
+    if (failed(scope, posixToLong(globalObject, value, number)))
         return false;
     result = static_cast<int>(number);
     return true;
@@ -353,8 +355,10 @@ public:
 
     bool add(JSValue object, unsigned flags)
     {
+        VM& vm = getVM(m_globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
         Buffer buffer;
-        if (!getBuffer(m_globalObject, object, buffer, flags))
+        if (failed(scope, getBuffer(m_globalObject, object, buffer, flags)))
             return false;
         // The vector is not where the collector looks.
         m_values.append(buffer.object);
@@ -507,12 +511,12 @@ static JSValue socketAddressObject(JSGlobalObject* globalObject, const SocketAdd
     case AF_INET: {
         JSValue host = socketFormatIP(globalObject, AF_INET, &address.inet.sin_addr);
         RETURN_IF_EXCEPTION(scope, { });
-        return PyTuple::create(globalObject, { host, jsNumber(ntohs(address.inet.sin_port)) });
+        RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { host, jsNumber(ntohs(address.inet.sin_port)) }));
     }
     case AF_INET6: {
         JSValue host = socketFormatIP(globalObject, AF_INET6, &address.inet6.sin6_addr);
         RETURN_IF_EXCEPTION(scope, { });
-        return PyTuple::create(globalObject, { host, jsNumber(ntohs(address.inet6.sin6_port)), jsNumber(ntohl(address.inet6.sin6_flowinfo)), jsNumber(address.inet6.sin6_scope_id) });
+        RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { host, jsNumber(ntohs(address.inet6.sin6_port)), jsNumber(ntohl(address.inet6.sin6_flowinfo)), jsNumber(address.inet6.sin6_scope_id) }));
     }
     case AF_UNIX: {
         constexpr size_t pathOffset = offsetof(struct sockaddr_un, sun_path);
@@ -520,16 +524,16 @@ static JSValue socketAddressObject(JSGlobalObject* globalObject, const SocketAdd
 #if OS(LINUX)
         // The abstract namespace: the name is all the bytes, of which the first is 0.
         if (length > pathOffset && !path[0])
-            return PyBytes::create(globalObject, std::span<const char> { path, length - pathOffset });
+            RELEASE_AND_RETURN(scope, PyBytes::create(globalObject, std::span<const char> { path, length - pathOffset }));
 #endif
-        return posixDecode(globalObject, std::span<const char> { path, strnlen(path, sizeof(address.storage) - pathOffset) });
+        RELEASE_AND_RETURN(scope, posixDecode(globalObject, std::span<const char> { path, strnlen(path, sizeof(address.storage) - pathOffset) }));
     }
 #if OS(LINUX)
     case AF_NETLINK:
-        return PyTuple::create(globalObject, { jsNumber(address.netlink.nl_pid), jsNumber(address.netlink.nl_groups) });
+        RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { jsNumber(address.netlink.nl_pid), jsNumber(address.netlink.nl_groups) }));
 #endif
     default:
-        return PyTuple::create(globalObject, { jsNumber(address.generic.sa_family), PyBytes::create(globalObject, std::span<const char> { address.generic.sa_data, sizeof(address.generic.sa_data) }) });
+        RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { jsNumber(address.generic.sa_family), PyBytes::create(globalObject, std::span<const char> { address.generic.sa_data, sizeof(address.generic.sa_data) }) }));
     }
 }
 
@@ -557,7 +561,7 @@ static bool socketParseInternetAddress(JSGlobalObject* globalObject, int family,
     int port;
     unsigned flowInfo = 0;
     unsigned scopeId = 0;
-    if (!socketToHostInAddress(globalObject, tuple->at(0), host))
+    if (failed(scope, socketToHostInAddress(globalObject, tuple->at(0), host)))
         return false;
     if (!socketToInt(globalObject, tuple->at(1), port)
         || (tuple->length() > 2 && !posixToUnsignedMask(globalObject, tuple->at(2), flowInfo))
@@ -566,7 +570,7 @@ static bool socketParseInternetAddress(JSGlobalObject* globalObject, int family,
             return portOutOfRange();
         return false;
     }
-    if (!socketResolve(globalObject, host.characters(), result, isIPv6 ? AF_INET6 : AF_INET))
+    if (failed(scope, socketResolve(globalObject, host.characters(), result, isIPv6 ? AF_INET6 : AF_INET)))
         return false;
     if (port < 0 || port > 0xffff)
         return portOutOfRange();
@@ -590,12 +594,14 @@ static bool socketParseInternetAddress(JSGlobalObject* globalObject, int family,
 
 static bool socketParseLocalAddress(JSGlobalObject* globalObject, JSValue value, SocketAddress& result)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PosixBytes encoded;
     BufferHolder holder(globalObject);
     std::span<const char> path;
     // Not os.fsencode(): on Linux there may be NULs in it.
     if (isStr(value)) {
-        if (!posixEncodeStr(globalObject, strValue(value), encoded))
+        if (failed(scope, posixEncodeStr(globalObject, strValue(value), encoded)))
             return false;
         path = encoded.span();
     } else {
@@ -894,13 +900,13 @@ static JSValue socketInit(JSGlobalObject* globalObject, JSValue self, JSValue fa
     int family = -1;
     int type = -1;
     int protocol = -1;
-    if ((familyValue && !posixToInt(globalObject, familyValue, family)) || (typeValue && !posixToInt(globalObject, typeValue, type)) || (protocolValue && !posixToInt(globalObject, protocolValue, protocol)))
+    if ((familyValue && failed(scope, posixToInt(globalObject, familyValue, family))) || (typeValue && failed(scope, posixToInt(globalObject, typeValue, type))) || (protocolValue && failed(scope, posixToInt(globalObject, protocolValue, protocol))))
         return { };
     if (!audit(globalObject, "socket.__new__"_s, self, jsNumber(family), jsNumber(type), jsNumber(protocol)))
         return { };
     int fd;
     if (fileno && !isNone(fileno)) {
-        if (!socketToDescriptor(globalObject, fileno, fd))
+        if (failed(scope, socketToDescriptor(globalObject, fileno, fd)))
             return { };
         if (fd < 0)
             return raiseValueError(globalObject, scope, "negative file descriptor"_s);
@@ -911,16 +917,16 @@ static JSValue socketInit(JSGlobalObject* globalObject, JSValue self, JSValue fa
             if (family == -1)
                 family = address.generic.sa_family;
         } else if (family == -1 || errno == EBADF || errno == ENOTSOCK)
-            return posixError(globalObject);
+            RELEASE_AND_RETURN(scope, posixError(globalObject));
         auto ask = [&](int option, int& result) {
             socklen_t length = sizeof(result);
             return result != -1 || !getsockopt(fd, SOL_SOCKET, option, &result, &length);
         };
         if (!ask(SO_TYPE, type))
-            return posixError(globalObject);
+            RELEASE_AND_RETURN(scope, posixError(globalObject));
 #ifdef SO_PROTOCOL
         if (!ask(SO_PROTOCOL, protocol))
-            return posixError(globalObject);
+            RELEASE_AND_RETURN(scope, posixError(globalObject));
 #else
         protocol = 0;
 #endif
@@ -935,7 +941,7 @@ static JSValue socketInit(JSGlobalObject* globalObject, JSValue self, JSValue fa
         if (fd < 0 && posixFreeDescriptors(globalObject))
             fd = socketCreateDescriptor(family, type, protocol);
         if (fd < 0)
-            return posixError(globalObject);
+            RELEASE_AND_RETURN(scope, posixError(globalObject));
     }
     if (!socketAdopt(globalObject, PyRecord::from(self), fd, family, type, protocol)) {
         // Also if it is the caller's.
@@ -1050,7 +1056,7 @@ static JSValue socketSetOption(JSGlobalObject* globalObject, JSValue self, const
     int level;
     int option;
     unsigned length = 0;
-    if (!socketCheckCount(globalObject, args, "socket."_s, "setsockopt"_s, 3, 4) || !socketToInt(globalObject, args[0], level) || !socketToInt(globalObject, args[1], option)
+    if (failed(scope, socketCheckCount(globalObject, args, "socket."_s, "setsockopt"_s, 3, 4)) || !socketToInt(globalObject, args[0], level) || !socketToInt(globalObject, args[1], option)
         || (args.size() == 4 && !posixToUnsignedMask(globalObject, args[3], length)))
         return { };
     JSValue value = args[2];
@@ -1075,16 +1081,18 @@ static JSValue socketSetOption(JSGlobalObject* globalObject, JSValue self, const
     } else
         return raiseTypeError(globalObject, scope, "socket option should be int, bytes-like object or None (got "_s, typeNameForMessage(globalObject, typeOf(globalObject, value)), ')');
     if (result < 0)
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     return jsUndefined();
 }
 
 static JSValue socketGetOption(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int level;
     int option;
     int size = 0;
-    if (!socketCheckCount(globalObject, args, "socket."_s, "getsockopt"_s, 2, 3) || !socketToInt(globalObject, args[0], level) || !socketToInt(globalObject, args[1], option)
+    if (failed(scope, socketCheckCount(globalObject, args, "socket."_s, "getsockopt"_s, 2, 3)) || !socketToInt(globalObject, args[0], level) || !socketToInt(globalObject, args[1], option)
         || (args.size() == 3 && !socketToInt(globalObject, args[2], size)))
         return { };
     int fd = socketDescriptor(PyRecord::from(self));
@@ -1092,16 +1100,16 @@ static JSValue socketGetOption(JSGlobalObject* globalObject, JSValue self, const
         int flag = 0;
         socklen_t length = sizeof(flag);
         if (getsockopt(fd, level, option, &flag, &length) < 0)
-            return posixError(globalObject);
+            RELEASE_AND_RETURN(scope, posixError(globalObject));
         return jsNumber(flag);
     }
     if (size < 0 || size > 1024)
-        return socketRaiseOSError(globalObject, "getsockopt buflen out of range"_s);
+        RELEASE_AND_RETURN(scope, socketRaiseOSError(globalObject, "getsockopt buflen out of range"_s));
     char buffer[1024];
     socklen_t length = size;
     if (getsockopt(fd, level, option, buffer, &length) < 0)
-        return posixError(globalObject);
-    return PyBytes::create(globalObject, std::span<const char> { buffer, std::min<size_t>(length, sizeof(buffer)) });
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
+    RELEASE_AND_RETURN(scope, PyBytes::create(globalObject, std::span<const char> { buffer, std::min<size_t>(length, sizeof(buffer)) }));
 }
 
 static JSValue socketBind(JSGlobalObject* globalObject, JSValue self, JSValue addressValue)
@@ -1119,11 +1127,13 @@ static JSValue socketBind(JSGlobalObject* globalObject, JSValue self, JSValue ad
 
 static JSValue socketListen(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int backlog = std::min(SOMAXCONN, 128);
-    if (!socketCheckCount(globalObject, args, "socket."_s, "listen"_s, 0, 1) || (args.size() && !socketToInt(globalObject, args[0], backlog)))
+    if (failed(scope, socketCheckCount(globalObject, args, "socket."_s, "listen"_s, 0, 1)) || (args.size() && !socketToInt(globalObject, args[0], backlog)))
         return { };
     if (listen(socketDescriptor(PyRecord::from(self)), std::max(backlog, 0)) < 0)
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     return jsUndefined();
 }
 
@@ -1135,7 +1145,7 @@ static JSValue socketAccept(JSGlobalObject* globalObject, JSValue self)
     auto* socket = PyRecord::from(self);
     SocketAddress address;
     socklen_t capacity;
-    if (!socketAddressLength(globalObject, socket, capacity))
+    if (failed(scope, socketAddressLength(globalObject, socket, capacity)))
         return { };
     int fd = -1;
     bool succeeded = socketCall(globalObject, socket, false, socketTimeoutOf(socket), [&] {
@@ -1160,7 +1170,7 @@ static JSValue socketAccept(JSGlobalObject* globalObject, JSValue self)
     if (!posixSetInheritable(fd, false)) {
         int saved = errno;
         close(fd);
-        return posixError(globalObject, saved);
+        RELEASE_AND_RETURN(scope, posixError(globalObject, saved));
     }
 #endif
     JSValue peer = socketAddressObject(globalObject, address, address.length);
@@ -1168,7 +1178,7 @@ static JSValue socketAccept(JSGlobalObject* globalObject, JSValue self)
         close(fd);
         return { };
     }
-    return PyTuple::create(globalObject, { jsNumber(fd), peer });
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { jsNumber(fd), peer }));
 }
 
 // 0, or the reason why not; -1: an exception. With `raises`, any failure is one.
@@ -1246,22 +1256,26 @@ static JSValue socketConnectEx(JSGlobalObject* globalObject, JSValue self, JSVal
 template<int (*function)(int, struct sockaddr*, socklen_t*)>
 static JSValue socketName(JSGlobalObject* globalObject, JSValue self)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* socket = PyRecord::from(self);
     SocketAddress address;
-    if (!socketAddressLength(globalObject, socket, address.length))
+    if (failed(scope, socketAddressLength(globalObject, socket, address.length)))
         return { };
     if (function(socketDescriptor(socket), &address.generic, &address.length) < 0)
-        return posixError(globalObject);
-    return socketAddressObject(globalObject, address, address.length);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
+    RELEASE_AND_RETURN(scope, socketAddressObject(globalObject, address, address.length));
 }
 
 static JSValue socketShutdown(JSGlobalObject* globalObject, JSValue self, JSValue howValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int how;
-    if (!posixToInt(globalObject, howValue, how))
+    if (failed(scope, posixToInt(globalObject, howValue, how)))
         return { };
     if (shutdown(socketDescriptor(PyRecord::from(self)), how) < 0)
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     return jsUndefined();
 }
 
@@ -1293,7 +1307,7 @@ static bool socketParseReceive(JSGlobalObject* globalObject, const CallArgs& arg
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     flags = 0;
-    if (!socketCheckCount(globalObject, args, "socket."_s, name, 1, 2) || !posixToSsize(globalObject, args[0], size) || (args.size() > 1 && !socketToInt(globalObject, args[1], flags)))
+    if (failed(scope, socketCheckCount(globalObject, args, "socket."_s, name, 1, 2)) || failed(scope, posixToSsize(globalObject, args[0], size)) || (args.size() > 1 && !socketToInt(globalObject, args[1], flags)))
         return false;
     if (size < 0) {
         raiseValueError(globalObject, scope, "negative buffersize in "_s, name);
@@ -1337,7 +1351,7 @@ static JSValue socketRecvFrom(JSGlobalObject* globalObject, JSValue self, const 
     SocketScratch scratch;
     SocketAddress address;
     socklen_t capacity;
-    if (!socketParseReceive(globalObject, args, "recvfrom"_s, size, flags, scratch) || !socketAddressLength(globalObject, socket, capacity))
+    if (!socketParseReceive(globalObject, args, "recvfrom"_s, size, flags, scratch) || failed(scope, socketAddressLength(globalObject, socket, capacity)))
         return { };
     ssize_t count = 0;
     bool succeeded = socketCall(globalObject, socket, false, socketTimeoutOf(socket), [&] {
@@ -1353,7 +1367,7 @@ static JSValue socketRecvFrom(JSGlobalObject* globalObject, JSValue self, const 
     RETURN_IF_EXCEPTION(scope, { });
     JSValue data = socketReceivedBytes(globalObject, scratch, count);
     RETURN_IF_EXCEPTION(scope, { });
-    return PyTuple::create(globalObject, { data, sender });
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { data, sender }));
 }
 
 // (buffer, nbytes=0, flags=0). `size` is how much to receive.
@@ -1363,7 +1377,7 @@ static bool socketParseReceiveInto(JSGlobalObject* globalObject, ASCIILiteral na
     auto scope = DECLARE_THROW_SCOPE(vm);
     size = 0;
     flags = 0;
-    if (!posixGetWritableBuffer(globalObject, bufferValue, name, 1, holder) || (sizeValue && !posixToSsize(globalObject, sizeValue, size)) || (flagsValue && !socketToInt(globalObject, flagsValue, flags)))
+    if (!posixGetWritableBuffer(globalObject, bufferValue, name, 1, holder) || (sizeValue && failed(scope, posixToSsize(globalObject, sizeValue, size))) || (flagsValue && !socketToInt(globalObject, flagsValue, flags)))
         return false;
     if (size < 0) {
         raiseValueError(globalObject, scope, "negative buffersize in "_s, name);
@@ -1428,7 +1442,7 @@ static JSValue socketRecvFromInto(JSGlobalObject* globalObject, JSValue self, JS
         return { };
     JSValue sender = socketAddressObject(globalObject, address, address.length);
     RETURN_IF_EXCEPTION(scope, { });
-    return PyTuple::create(globalObject, { posixMakeInt(globalObject, count), sender });
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { posixMakeInt(globalObject, count), sender }));
 }
 
 // ---- Ancillary data ----
@@ -1491,13 +1505,13 @@ static JSValue socketReceiveMessage(JSGlobalObject* globalObject, PyRecord* sock
     auto scope = DECLARE_THROW_SCOPE(vm);
     SocketAddress address;
     socklen_t capacity;
-    if (!socketAddressLength(globalObject, socket, capacity))
+    if (failed(scope, socketAddressLength(globalObject, socket, capacity)))
         return { };
     if (controlSize < 0 || static_cast<uint64_t>(controlSize) > socketLengthLimit)
         return raiseValueError(globalObject, scope, "invalid ancillary data buffer length"_s);
     Vector<uint8_t, 256> control;
     if (!control.tryGrow(controlSize))
-        return socketRaiseMemoryError(globalObject);
+        RELEASE_AND_RETURN(scope, socketRaiseMemoryError(globalObject));
 
     struct msghdr message { };
     ssize_t count = 0;
@@ -1558,14 +1572,14 @@ static JSValue socketRecvMsg(JSGlobalObject* globalObject, JSValue self, const C
     int64_t size;
     int64_t controlSize = 0;
     int flags = 0;
-    if (!socketCheckCount(globalObject, args, "socket."_s, "recvmsg"_s, 1, 3) || !posixToSsize(globalObject, args[0], size) || (args.size() > 1 && !posixToSsize(globalObject, args[1], controlSize))
+    if (failed(scope, socketCheckCount(globalObject, args, "socket."_s, "recvmsg"_s, 1, 3)) || failed(scope, posixToSsize(globalObject, args[0], size)) || (args.size() > 1 && failed(scope, posixToSsize(globalObject, args[1], controlSize)))
         || (args.size() > 2 && !socketToInt(globalObject, args[2], flags)))
         return { };
     if (size < 0)
         return raiseValueError(globalObject, scope, "negative buffer size in recvmsg()"_s);
     SocketScratch scratch;
     if (!scratch.tryGrow(size))
-        return socketRaiseMemoryError(globalObject);
+        RELEASE_AND_RETURN(scope, socketRaiseMemoryError(globalObject));
     struct iovec vector { scratch.mutableSpan().data(), static_cast<size_t>(size) };
     RELEASE_AND_RETURN(scope, socketReceiveMessage(globalObject, PyRecord::from(self), controlSize, flags, [&](struct msghdr& message) {
         message.msg_iov = &vector;
@@ -1583,10 +1597,10 @@ static JSValue socketRecvMsgInto(JSGlobalObject* globalObject, JSValue self, con
     auto scope = DECLARE_THROW_SCOPE(vm);
     int64_t controlSize = 0;
     int flags = 0;
-    if (!socketCheckCount(globalObject, args, "socket."_s, "recvmsg_into"_s, 1, 3) || (args.size() > 1 && !posixToSsize(globalObject, args[1], controlSize)) || (args.size() > 2 && !socketToInt(globalObject, args[2], flags)))
+    if (failed(scope, socketCheckCount(globalObject, args, "socket."_s, "recvmsg_into"_s, 1, 3)) || (args.size() > 1 && failed(scope, posixToSsize(globalObject, args[1], controlSize))) || (args.size() > 2 && !socketToInt(globalObject, args[2], flags)))
         return { };
     MarkedArgumentBuffer items;
-    if (!socketItems(globalObject, args[0], "recvmsg_into() argument 1 must be an iterable"_s, items))
+    if (failed(scope, socketItems(globalObject, args[0], "recvmsg_into() argument 1 must be an iterable"_s, items)))
         return { };
     SocketBufferList buffers(globalObject);
     for (unsigned i = 0; i < items.size(); ++i) {
@@ -1611,10 +1625,12 @@ static JSValue socketRecvMsgInto(JSGlobalObject* globalObject, JSValue self, con
 
 static JSValue socketSend(JSGlobalObject* globalObject, JSValue self, JSValue data, JSValue flagsValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* socket = PyRecord::from(self);
     BufferHolder holder(globalObject);
     int flags = 0;
-    if (!holder.get(data) || (flagsValue && !posixToInt(globalObject, flagsValue, flags)))
+    if (!holder.get(data) || (flagsValue && failed(scope, posixToInt(globalObject, flagsValue, flags))))
         return { };
     ssize_t count = 0;
     bool succeeded = socketCall(globalObject, socket, true, socketTimeoutOf(socket), [&] {
@@ -1626,7 +1642,7 @@ static JSValue socketSend(JSGlobalObject* globalObject, JSValue self, JSValue da
     }, socketOptionsForFlags(flags));
     if (!succeeded)
         return { };
-    return posixMakeInt(globalObject, count);
+    RELEASE_AND_RETURN(scope, posixMakeInt(globalObject, count));
 }
 
 static JSValue socketSendAll(JSGlobalObject* globalObject, JSValue self, JSValue data, JSValue flagsValue)
@@ -1637,7 +1653,7 @@ static JSValue socketSendAll(JSGlobalObject* globalObject, JSValue self, JSValue
     auto* socket = PyRecord::from(self);
     BufferHolder holder(globalObject);
     int flags = 0;
-    if (!holder.get(data) || (flagsValue && !posixToInt(globalObject, flagsValue, flags)))
+    if (!holder.get(data) || (flagsValue && failed(scope, posixToInt(globalObject, flagsValue, flags))))
         return { };
     int64_t timeout = socketTimeoutOf(socket);
     bool hasTimeout = timeout > 0;
@@ -1698,7 +1714,7 @@ static JSValue socketSendTo(JSGlobalObject* globalObject, JSValue self, const Ca
     }, socketOptionsForFlags(flags));
     if (!succeeded)
         return { };
-    return posixMakeInt(globalObject, count);
+    RELEASE_AND_RETURN(scope, posixMakeInt(globalObject, count));
 }
 
 static JSValue socketSendMsg(JSGlobalObject* globalObject, JSValue self, JSValue buffersValue, JSValue ancillaryValue, JSValue flagsValue, JSValue addressValue)
@@ -1707,7 +1723,7 @@ static JSValue socketSendMsg(JSGlobalObject* globalObject, JSValue self, JSValue
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* socket = PyRecord::from(self);
     int flags = 0;
-    if (flagsValue && !posixToInt(globalObject, flagsValue, flags))
+    if (flagsValue && failed(scope, posixToInt(globalObject, flagsValue, flags)))
         return { };
     struct msghdr message { };
     SocketAddress address;
@@ -1721,7 +1737,7 @@ static JSValue socketSendMsg(JSGlobalObject* globalObject, JSValue self, JSValue
         return { };
 
     MarkedArgumentBuffer items;
-    if (!socketItems(globalObject, buffersValue, "sendmsg() argument 1 must be an iterable"_s, items))
+    if (failed(scope, socketItems(globalObject, buffersValue, "sendmsg() argument 1 must be an iterable"_s, items)))
         return { };
     SocketBufferList buffers(globalObject);
     for (unsigned i = 0; i < items.size(); ++i) {
@@ -1735,7 +1751,7 @@ static JSValue socketSendMsg(JSGlobalObject* globalObject, JSValue self, JSValue
         int type;
     };
     MarkedArgumentBuffer ancillaryItems;
-    if (ancillaryValue && !socketItems(globalObject, ancillaryValue, "sendmsg() argument 2 must be an iterable"_s, ancillaryItems))
+    if (ancillaryValue && failed(scope, socketItems(globalObject, ancillaryValue, "sendmsg() argument 2 must be an iterable"_s, ancillaryItems)))
         return { };
     SocketBufferList ancillary(globalObject);
     Vector<Header, 4> headers;
@@ -1762,14 +1778,14 @@ static JSValue socketSendMsg(JSGlobalObject* globalObject, JSValue self, JSValue
         headers.append(header);
         size_t space;
         if (!socketControlSpace(ancillary.at(i).length, space))
-            return socketRaiseOSError(globalObject, "ancillary data item too large"_s);
+            RELEASE_AND_RETURN(scope, socketRaiseOSError(globalObject, "ancillary data item too large"_s));
         controlSize += space;
         if (controlSize > socketLengthLimit)
-            return socketRaiseOSError(globalObject, "too much ancillary data"_s);
+            RELEASE_AND_RETURN(scope, socketRaiseOSError(globalObject, "too much ancillary data"_s));
     }
     Vector<uint8_t, 256> control;
     if (!control.tryGrow(controlSize))
-        return socketRaiseMemoryError(globalObject);
+        RELEASE_AND_RETURN(scope, socketRaiseMemoryError(globalObject));
 
     ssize_t count = 0;
     bool succeeded = socketCall(globalObject, socket, true, socketTimeoutOf(socket), [&] {
@@ -1803,7 +1819,7 @@ static JSValue socketSendMsg(JSGlobalObject* globalObject, JSValue self, JSValue
     }, socketOptionsForFlags(flags));
     if (!succeeded)
         return { };
-    return posixMakeInt(globalObject, count);
+    RELEASE_AND_RETURN(scope, posixMakeInt(globalObject, count));
 }
 
 static constexpr NativeDef socketMethods[] = {
@@ -1855,8 +1871,10 @@ PyType* socketType(JSGlobalObject* globalObject) { return runtime(globalObject).
 
 static JSValue socketClose(JSGlobalObject* globalObject, JSValue fdValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int fd;
-    if (!socketToDescriptor(globalObject, fdValue, fd))
+    if (failed(scope, socketToDescriptor(globalObject, fdValue, fd)))
         return { };
     int result;
     {
@@ -1864,41 +1882,45 @@ static JSValue socketClose(JSGlobalObject* globalObject, JSValue fdValue)
         result = close(fd);
     }
     if (result < 0 && errno != ECONNRESET)
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     return jsUndefined();
 }
 
 static JSValue socketDup(JSGlobalObject* globalObject, JSValue fdValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int fd;
-    if (!socketToDescriptor(globalObject, fdValue, fd))
+    if (failed(scope, socketToDescriptor(globalObject, fdValue, fd)))
         return { };
     int result = posixDupNotInheritable(fd);
     if (result < 0)
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     return jsNumber(result);
 }
 
 static JSValue socketPair(JSGlobalObject* globalObject, const CallArgs& args)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int family = AF_UNIX;
     int type = SOCK_STREAM;
     int protocol = 0;
-    if (!socketCheckCount(globalObject, args, ""_s, "socketpair"_s, 0, 3) || (args.size() > 0 && !socketToInt(globalObject, args[0], family)) || (args.size() > 1 && !socketToInt(globalObject, args[1], type))
+    if (failed(scope, socketCheckCount(globalObject, args, ""_s, "socketpair"_s, 0, 3)) || (args.size() > 0 && !socketToInt(globalObject, args[0], family)) || (args.size() > 1 && !socketToInt(globalObject, args[1], type))
         || (args.size() > 2 && !socketToInt(globalObject, args[2], protocol)))
         return { };
     int descriptors[2];
 #ifdef SOCK_CLOEXEC
     if (socketpair(family, type | SOCK_CLOEXEC, protocol, descriptors) < 0 && (!posixFreeDescriptors(globalObject) || socketpair(family, type | SOCK_CLOEXEC, protocol, descriptors) < 0))
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
 #else
     if (socketpair(family, type, protocol, descriptors) < 0)
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     if (!posixSetInheritable(descriptors[0], false) || !posixSetInheritable(descriptors[1], false)) {
         int saved = errno;
         close(descriptors[0]);
         close(descriptors[1]);
-        return posixError(globalObject, saved);
+        RELEASE_AND_RETURN(scope, posixError(globalObject, saved));
     }
 #endif
     PyRecord* sockets[2];
@@ -1911,7 +1933,7 @@ static JSValue socketPair(JSGlobalObject* globalObject, const CallArgs& args)
             return { };
         }
     }
-    return PyTuple::create(globalObject, { sockets[0], sockets[1] });
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { sockets[0], sockets[1] }));
 }
 
 // ---- Functions: names and numbers ----
@@ -1929,7 +1951,9 @@ static JSValue socketGetHostName(JSGlobalObject* globalObject)
 
 static JSValue socketSetHostName(JSGlobalObject* globalObject, const CallArgs& args)
 {
-    if (!socketCheckCount(globalObject, args, ""_s, "sethostname"_s, 1, 1))
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, socketCheckCount(globalObject, args, ""_s, "sethostname"_s, 1, 1)))
         return { };
     PosixBytes name;
     if (auto* bytes = PyBytes::tryFrom(args[0]))
@@ -1939,17 +1963,19 @@ static JSValue socketSetHostName(JSGlobalObject* globalObject, const CallArgs& a
     if (!audit(globalObject, "socket.sethostname"_s, args[0]))
         return { };
     if (sethostname(name.characters(), name.length()) < 0)
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     return jsUndefined();
 }
 
 static JSValue socketGetHostByName(JSGlobalObject* globalObject, const CallArgs& args)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PosixBytes name;
     SocketAddress address;
-    if (!socketCheckCount(globalObject, args, ""_s, "gethostbyname"_s, 1, 1) || !socketToHostName(globalObject, args[0], "gethostbyname"_s, name) || !audit(globalObject, "socket.gethostbyname"_s, args[0]) || !socketResolve(globalObject, name.characters(), address, AF_INET))
+    if (failed(scope, socketCheckCount(globalObject, args, ""_s, "gethostbyname"_s, 1, 1)) || !socketToHostName(globalObject, args[0], "gethostbyname"_s, name) || !audit(globalObject, "socket.gethostbyname"_s, args[0]) || failed(scope, socketResolve(globalObject, name.characters(), address, AF_INET)))
         return { };
-    return socketFormatIP(globalObject, AF_INET, &address.inet.sin_addr);
+    RELEASE_AND_RETURN(scope, socketFormatIP(globalObject, AF_INET, &address.inet.sin_addr));
 }
 
 // (name, aliases, addresses)
@@ -1958,9 +1984,9 @@ static JSValue socketHostEntry(JSGlobalObject* globalObject, struct hostent* ent
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!entry)
-        return socketRaiseHostError(globalObject, error);
+        RELEASE_AND_RETURN(scope, socketRaiseHostError(globalObject, error));
     if (entry->h_addrtype != family)
-        return posixError(globalObject, EAFNOSUPPORT);
+        RELEASE_AND_RETURN(scope, posixError(globalObject, EAFNOSUPPORT));
     JSArray* aliases = newList(globalObject);
     JSArray* addresses = newList(globalObject);
     for (char** alias = entry->h_aliases; alias && *alias; ++alias)
@@ -1971,14 +1997,16 @@ static JSValue socketHostEntry(JSGlobalObject* globalObject, struct hostent* ent
         listAppend(globalObject, addresses, text);
     }
     RETURN_IF_EXCEPTION(scope, { });
-    return PyTuple::create(globalObject, { posixDecode(globalObject, entry->h_name), aliases, addresses });
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { posixDecode(globalObject, entry->h_name), aliases, addresses }));
 }
 
 static JSValue socketGetHostByNameEx(JSGlobalObject* globalObject, const CallArgs& args)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PosixBytes name;
     SocketAddress address;
-    if (!socketCheckCount(globalObject, args, ""_s, "gethostbyname_ex"_s, 1, 1) || !socketToHostName(globalObject, args[0], "gethostbyname_ex"_s, name) || !audit(globalObject, "socket.gethostbyname"_s, args[0]) || !socketResolve(globalObject, name.characters(), address, AF_INET))
+    if (failed(scope, socketCheckCount(globalObject, args, ""_s, "gethostbyname_ex"_s, 1, 1)) || !socketToHostName(globalObject, args[0], "gethostbyname_ex"_s, name) || !audit(globalObject, "socket.gethostbyname"_s, args[0]) || failed(scope, socketResolve(globalObject, name.characters(), address, AF_INET)))
         return { };
     struct hostent* entry = nullptr;
     int error = 0;
@@ -1993,14 +2021,16 @@ static JSValue socketGetHostByNameEx(JSGlobalObject* globalObject, const CallArg
     entry = gethostbyname(name.characters());
     error = h_errno;
 #endif
-    return socketHostEntry(globalObject, entry, address.generic.sa_family, error);
+    RELEASE_AND_RETURN(scope, socketHostEntry(globalObject, entry, address.generic.sa_family, error));
 }
 
 static JSValue socketGetHostByAddr(JSGlobalObject* globalObject, const CallArgs& args)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PosixBytes name;
     SocketAddress address;
-    if (!socketCheckCount(globalObject, args, ""_s, "gethostbyaddr"_s, 1, 1) || !socketToHostName(globalObject, args[0], "gethostbyaddr"_s, name) || !audit(globalObject, "socket.gethostbyaddr"_s, args[0]) || !socketResolve(globalObject, name.characters(), address, AF_UNSPEC))
+    if (failed(scope, socketCheckCount(globalObject, args, ""_s, "gethostbyaddr"_s, 1, 1)) || !socketToHostName(globalObject, args[0], "gethostbyaddr"_s, name) || !audit(globalObject, "socket.gethostbyaddr"_s, args[0]) || failed(scope, socketResolve(globalObject, name.characters(), address, AF_UNSPEC)))
         return { };
     int family = address.generic.sa_family;
     const void* bytes = family == AF_INET ? static_cast<const void*>(&address.inet.sin_addr) : &address.inet6.sin6_addr;
@@ -2018,21 +2048,23 @@ static JSValue socketGetHostByAddr(JSGlobalObject* globalObject, const CallArgs&
     entry = gethostbyaddr(bytes, length, family);
     error = h_errno;
 #endif
-    return socketHostEntry(globalObject, entry, family, error);
+    RELEASE_AND_RETURN(scope, socketHostEntry(globalObject, entry, family, error));
 }
 
 static JSValue socketGetServByName(JSGlobalObject* globalObject, const CallArgs& args)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PosixBytes name;
     PosixBytes protocol;
-    if (!socketCheckCount(globalObject, args, ""_s, "getservbyname"_s, 1, 2) || !socketToCString(globalObject, args[0], "getservbyname"_s, 1, name)
+    if (failed(scope, socketCheckCount(globalObject, args, ""_s, "getservbyname"_s, 1, 2)) || !socketToCString(globalObject, args[0], "getservbyname"_s, 1, name)
         || (args.size() > 1 && !socketToCString(globalObject, args[1], "getservbyname"_s, 2, protocol)))
         return { };
     if (!audit(globalObject, "socket.getservbyname"_s, args[0], args.get(1)))
         return { };
     struct servent* entry = getservbyname(name.characters(), args.size() > 1 ? protocol.characters() : nullptr);
     if (!entry)
-        return socketRaiseOSError(globalObject, "service/proto not found"_s);
+        RELEASE_AND_RETURN(scope, socketRaiseOSError(globalObject, "service/proto not found"_s));
     return jsNumber(ntohs(static_cast<uint16_t>(entry->s_port)));
 }
 
@@ -2042,7 +2074,7 @@ static JSValue socketGetServByPort(JSGlobalObject* globalObject, const CallArgs&
     auto scope = DECLARE_THROW_SCOPE(vm);
     int port;
     PosixBytes protocol;
-    if (!socketCheckCount(globalObject, args, ""_s, "getservbyport"_s, 1, 2) || !socketToInt(globalObject, args[0], port) || (args.size() > 1 && !socketToCString(globalObject, args[1], "getservbyport"_s, 2, protocol)))
+    if (failed(scope, socketCheckCount(globalObject, args, ""_s, "getservbyport"_s, 1, 2)) || !socketToInt(globalObject, args[0], port) || (args.size() > 1 && !socketToCString(globalObject, args[1], "getservbyport"_s, 2, protocol)))
         return { };
     if (!audit(globalObject, "socket.getservbyport"_s, jsNumber(port), args.get(1)))
         return { };
@@ -2050,33 +2082,39 @@ static JSValue socketGetServByPort(JSGlobalObject* globalObject, const CallArgs&
         return raiseOverflowError(globalObject, scope, "getservbyport: port must be 0-65535."_s);
     struct servent* entry = getservbyport(htons(static_cast<uint16_t>(port)), args.size() > 1 ? protocol.characters() : nullptr);
     if (!entry)
-        return socketRaiseOSError(globalObject, "port/proto not found"_s);
-    return posixDecode(globalObject, entry->s_name);
+        RELEASE_AND_RETURN(scope, socketRaiseOSError(globalObject, "port/proto not found"_s));
+    RELEASE_AND_RETURN(scope, posixDecode(globalObject, entry->s_name));
 }
 
 static JSValue socketGetProtoByName(JSGlobalObject* globalObject, const CallArgs& args)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PosixBytes name;
-    if (!socketCheckCount(globalObject, args, ""_s, "getprotobyname"_s, 1, 1) || !socketToCString(globalObject, args[0], "getprotobyname"_s, 1, name))
+    if (failed(scope, socketCheckCount(globalObject, args, ""_s, "getprotobyname"_s, 1, 1)) || !socketToCString(globalObject, args[0], "getprotobyname"_s, 1, name))
         return { };
     struct protoent* entry = getprotobyname(name.characters());
     if (!entry)
-        return socketRaiseOSError(globalObject, "protocol not found"_s);
+        RELEASE_AND_RETURN(scope, socketRaiseOSError(globalObject, "protocol not found"_s));
     return jsNumber(entry->p_proto);
 }
 
 static JSValue socketNtohs(JSGlobalObject* globalObject, JSValue value)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     uint16_t number;
-    if (!socketToUnsigned(globalObject, value, "uint16_t"_s, number))
+    if (failed(scope, socketToUnsigned(globalObject, value, "uint16_t"_s, number)))
         return { };
     return jsNumber(ntohs(number));
 }
 
 static JSValue socketNtohl(JSGlobalObject* globalObject, JSValue value)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     uint32_t number;
-    if (!socketToUnsigned(globalObject, value, "uint32_t"_s, number))
+    if (failed(scope, socketToUnsigned(globalObject, value, "uint32_t"_s, number)))
         return { };
     return jsNumber(ntohl(number));
 }
@@ -2104,17 +2142,19 @@ static JSValue socketInetNtoa(JSGlobalObject* globalObject, JSValue value)
 
 static JSValue socketInetPton(JSGlobalObject* globalObject, const CallArgs& args)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int family;
     PosixBytes text;
-    if (!socketCheckCount(globalObject, args, ""_s, "inet_pton"_s, 2, 2) || !socketToInt(globalObject, args[0], family) || !socketToCString(globalObject, args[1], "inet_pton"_s, 2, text))
+    if (failed(scope, socketCheckCount(globalObject, args, ""_s, "inet_pton"_s, 2, 2)) || !socketToInt(globalObject, args[0], family) || !socketToCString(globalObject, args[1], "inet_pton"_s, 2, text))
         return { };
     char packed[sizeof(struct in6_addr)];
     int result = inet_pton(family, text.characters(), packed);
     if (result < 0)
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     if (!result)
-        return socketRaiseOSError(globalObject, "illegal IP address string passed to inet_pton"_s);
-    return PyBytes::create(globalObject, std::span<const char> { packed, family == AF_INET ? sizeof(struct in_addr) : sizeof(struct in6_addr) });
+        RELEASE_AND_RETURN(scope, socketRaiseOSError(globalObject, "illegal IP address string passed to inet_pton"_s));
+    RELEASE_AND_RETURN(scope, PyBytes::create(globalObject, std::span<const char> { packed, family == AF_INET ? sizeof(struct in_addr) : sizeof(struct in6_addr) }));
 }
 
 static JSValue socketInetNtop(JSGlobalObject* globalObject, const CallArgs& args)
@@ -2123,7 +2163,7 @@ static JSValue socketInetNtop(JSGlobalObject* globalObject, const CallArgs& args
     auto scope = DECLARE_THROW_SCOPE(vm);
     int family;
     BufferHolder holder(globalObject);
-    if (!socketCheckCount(globalObject, args, ""_s, "inet_ntop"_s, 2, 2) || !socketToInt(globalObject, args[0], family) || !holder.get(args[1]))
+    if (failed(scope, socketCheckCount(globalObject, args, ""_s, "inet_ntop"_s, 2, 2)) || !socketToInt(globalObject, args[0], family) || !holder.get(args[1]))
         return { };
     if (family != AF_INET && family != AF_INET6)
         return raiseValueError(globalObject, scope, "unknown address family "_s, family);
@@ -2168,7 +2208,7 @@ static JSValue socketGetAddrInfo(JSGlobalObject* globalObject, JSValue hostValue
     } else if (auto* bytes = PyBytes::tryFrom(portValue))
         port.assign(byteCast<char>(bytes->span()));
     else if (hasPort)
-        return socketRaiseOSError(globalObject, "Int or String expected"_s);
+        RELEASE_AND_RETURN(scope, socketRaiseOSError(globalObject, "Int or String expected"_s));
 #if OS(DARWIN)
     // There, with AI_NUMERICSERV, no service or "0" is refused.
     if ((hints.ai_flags & AI_NUMERICSERV) && (!hasPort || !strcmp(port.characters(), "0"))) {
@@ -2184,7 +2224,7 @@ static JSValue socketGetAddrInfo(JSGlobalObject* globalObject, JSValue hostValue
         error = getaddrinfo(hasHost ? host.characters() : nullptr, hasPort ? port.characters() : nullptr, &hints, &found);
     }
     if (error)
-        return socketRaiseAddressInfoError(globalObject, error);
+        RELEASE_AND_RETURN(scope, socketRaiseAddressInfoError(globalObject, error));
     JSArray* result = newList(globalObject);
     for (struct addrinfo* info = found; info && !scope.exception(); info = info->ai_next) {
         SocketAddress address;
@@ -2206,7 +2246,7 @@ static JSValue socketGetNameInfo(JSGlobalObject* globalObject, const CallArgs& a
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     int flags;
-    if (!socketCheckCount(globalObject, args, ""_s, "getnameinfo"_s, 2, 2) || !socketToInt(globalObject, args[1], flags))
+    if (failed(scope, socketCheckCount(globalObject, args, ""_s, "getnameinfo"_s, 2, 2)) || !socketToInt(globalObject, args[1], flags))
         return { };
     auto* tuple = PyTuple::tryFrom(args[0]);
     if (!tuple)
@@ -2233,7 +2273,7 @@ static JSValue socketGetNameInfo(JSGlobalObject* globalObject, const CallArgs& a
     hints.ai_flags = AI_NUMERICHOST; // Nothing is to be looked up yet.
     struct addrinfo* found = nullptr;
     if (int error = getaddrinfo(host.characters(), service, &hints, &found))
-        return socketRaiseAddressInfoError(globalObject, error);
+        RELEASE_AND_RETURN(scope, socketRaiseAddressInfoError(globalObject, error));
     ASCIILiteral complaint;
     int error = 0;
     char name[NI_MAXHOST];
@@ -2252,10 +2292,10 @@ static JSValue socketGetNameInfo(JSGlobalObject* globalObject, const CallArgs& a
     }
     freeaddrinfo(found);
     if (!complaint.isNull())
-        return socketRaiseOSError(globalObject, complaint);
+        RELEASE_AND_RETURN(scope, socketRaiseOSError(globalObject, complaint));
     if (error)
-        return socketRaiseAddressInfoError(globalObject, error);
-    return PyTuple::create(globalObject, { posixDecode(globalObject, name), posixDecode(globalObject, service) });
+        RELEASE_AND_RETURN(scope, socketRaiseAddressInfoError(globalObject, error));
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { posixDecode(globalObject, name), posixDecode(globalObject, service) }));
 }
 
 static JSValue socketGetDefaultTimeout(JSGlobalObject* globalObject) { return socketTimeoutObject(globalObject, socketDefaultTimeout(globalObject)); }
@@ -2276,7 +2316,7 @@ static JSValue socketIfNameIndex(JSGlobalObject* globalObject)
     auto scope = DECLARE_THROW_SCOPE(vm);
     struct if_nameindex* interfaces = if_nameindex();
     if (!interfaces)
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     JSArray* result = newList(globalObject);
     for (struct if_nameindex* interface = interfaces; interface->if_index && !scope.exception(); ++interface)
         listAppend(globalObject, result, PyTuple::create(globalObject, { jsNumber(interface->if_index), posixDecode(globalObject, interface->if_name) }));
@@ -2299,14 +2339,16 @@ static JSValue socketIfNameToIndex(JSGlobalObject* globalObject, JSValue value)
 
 static JSValue socketIfIndexToName(JSGlobalObject* globalObject, JSValue value)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     unsigned index;
-    if (!socketToUnsigned(globalObject, value, "unsigned int"_s, index))
+    if (failed(scope, socketToUnsigned(globalObject, value, "unsigned int"_s, index)))
         return { };
     errno = ENXIO;
     char name[IF_NAMESIZE + 1];
     if (!if_indextoname(index, name))
-        return posixError(globalObject);
-    return posixDecode(globalObject, name);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
+    RELEASE_AND_RETURN(scope, posixDecode(globalObject, name));
 }
 
 template<bool (*function)(size_t, size_t&)>
@@ -2316,11 +2358,11 @@ static JSValue socketControlSize(JSGlobalObject* globalObject, const CallArgs& a
     auto scope = DECLARE_THROW_SCOPE(vm);
     int64_t length;
     size_t result;
-    if (!socketCheckCount(globalObject, args, ""_s, name, 1, 1) || !posixToSsize(globalObject, args[0], length))
+    if (failed(scope, socketCheckCount(globalObject, args, ""_s, name, 1, 1)) || failed(scope, posixToSsize(globalObject, args[0], length)))
         return { };
     if (length < 0 || !function(length, result))
         return raiseOverflowError(globalObject, scope, name, "() argument out of range"_s);
-    return posixMakeInt(globalObject, result);
+    RELEASE_AND_RETURN(scope, posixMakeInt(globalObject, result));
 }
 
 static JSValue socketCMSGLen(JSGlobalObject* globalObject, const CallArgs& args) { return socketControlSize<socketControlLength>(globalObject, args, "CMSG_LEN"_s); }

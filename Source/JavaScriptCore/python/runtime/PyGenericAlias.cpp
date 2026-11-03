@@ -217,7 +217,7 @@ static PyTuple* aliasMakeParameters(JSGlobalObject* globalObject, JSValue argsVa
                 add(tuple->at(j));
         }
     }
-    return PyTuple::create(globalObject, spanOf(parameters));
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, spanOf(parameters)));
 }
 
 // If the object has type variables of its own, as list[T] has, object[...] with what takes the place of each.
@@ -298,7 +298,7 @@ static PyTuple* aliasUnpackArguments(JSGlobalObject* globalObject, JSValue item)
         result.append(element);
     }
     ensureStillAliveHere(item); // `items` may point into it.
-    return PyTuple::create(globalObject, spanOf(result));
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, spanOf(result)));
 }
 
 // self[item]: the arguments (a tuple or a list) with each of the parameters replaced by the part of `item` that goes with it.
@@ -396,7 +396,7 @@ static PyTuple* aliasSubstituteParameters(JSGlobalObject* globalObject, JSValue 
         aliasAppendAll(result, tuple);
     }
     ensureStillAliveHere(item); // `items` may point into it.
-    return PyTuple::create(globalObject, spanOf(result));
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, spanOf(result)));
 }
 
 // ---- GenericAlias ----
@@ -419,9 +419,11 @@ JSValue makeGenericAlias(JSGlobalObject* globalObject, JSValue origin, JSValue a
 
 static JSValue aliasNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs& args)
 {
-    if (!rejectKeywords(globalObject, "GenericAlias"_s, args) || !checkPositional(globalObject, "GenericAlias"_s, args, 2, 2))
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, rejectKeywords(globalObject, "GenericAlias"_s, args)) || failed(scope, checkPositional(globalObject, "GenericAlias"_s, args, 2, 2)))
         return { };
-    return aliasCreate(globalObject, PyType::from(cls), args[0], args[1]);
+    RELEASE_AND_RETURN(scope, aliasCreate(globalObject, PyType::from(cls), args[0], args[1]));
 }
 
 static JSValue aliasRepr(JSGlobalObject* globalObject, JSValue self)
@@ -464,7 +466,7 @@ static JSValue aliasRepr(JSGlobalObject* globalObject, JSValue self)
     if (!args->length())
         out.append("()"_s);
     out.append(']');
-    return makeStr(globalObject, out);
+    RELEASE_AND_RETURN(scope, makeStr(globalObject, out));
 }
 
 // Null: an exception.
@@ -502,7 +504,7 @@ static JSValue aliasHash(JSGlobalObject* globalObject, JSValue self)
     int64_t argsHash = hash(globalObject, alias->get(AliasArgs));
     RETURN_IF_EXCEPTION(scope, { });
     int64_t result = originHash ^ argsHash;
-    return makeInt(globalObject, result == -1 ? static_cast<int64_t>(-2) : result);
+    RELEASE_AND_RETURN(scope, makeInt(globalObject, result == -1 ? static_cast<int64_t>(-2) : result));
 }
 
 // list[int]() makes a list, which is told, if it can be, what made it.
@@ -568,7 +570,7 @@ static JSValue aliasEq(JSGlobalObject* globalObject, JSValue self, JSValue other
     PyRecord* a = aliasRecord(self);
     PyRecord* b = tryAlias(globalObject, other);
     if (!b)
-        return runtime(globalObject).notImplemented();
+        RELEASE_AND_RETURN(scope, runtime(globalObject).notImplemented());
     if (aliasIsStarred(a) != aliasIsStarred(b))
         return jsBoolean(false);
     bool sameOrigin = isEqual(globalObject, a->get(AliasOrigin), b->get(AliasOrigin));
@@ -621,12 +623,12 @@ static JSValue aliasReduce(JSGlobalObject* globalObject, JSValue self)
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyRecord* alias = aliasRecord(self);
     if (!aliasIsStarred(alias))
-        return PyTuple::create(globalObject, { JSValue(alias->type()), JSValue(PyTuple::create(globalObject, { alias->get(AliasOrigin), alias->get(AliasArgs) })) });
+        RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { JSValue(alias->type()), JSValue(PyTuple::create(globalObject, { alias->get(AliasOrigin), alias->get(AliasArgs) })) }));
     // next(iter(alias)) is the alias, starred.
     JSValue iterator = aliasIter(globalObject, makeGenericAlias(globalObject, alias->get(AliasOrigin), alias->get(AliasArgs)));
     JSValue next = aliasGetBuiltin(globalObject, "next"_s);
     RETURN_IF_EXCEPTION(scope, { });
-    return PyTuple::create(globalObject, { next, JSValue(PyTuple::create(globalObject, { iterator })) });
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { next, JSValue(PyTuple::create(globalObject, { iterator })) }));
 }
 
 static JSValue aliasDir(JSGlobalObject* globalObject, JSValue self)
@@ -683,9 +685,9 @@ static constexpr NativeDef aliasMethods[] = {
     PY_SLOT("__or__", aliasOr, "($self, value, /)"),
     PY_SLOT("__ror__", aliasROr, "($self, value, /)"),
     PY_SLOT("__getitem__", aliasGetItem, "($self, key, /)"),
-    PY_METHOD("__mro_entries__", aliasMroEntries, "($self, bases, /)"),
-    PY_METHOD("__instancecheck__", aliasInstanceCheck, "($self, instance, /)"),
-    PY_METHOD("__subclasscheck__", aliasSubclassCheck, "($self, subclass, /)"),
+    PY_METHOD("__mro_entries__", aliasMroEntries, "($self, object, /)"),
+    PY_METHOD("__instancecheck__", aliasInstanceCheck, "($self, object, /)"),
+    PY_METHOD("__subclasscheck__", aliasSubclassCheck, "($self, object, /)"),
     PY_METHOD("__reduce__", aliasReduce, "($self, /)"),
     PY_METHOD("__dir__", aliasDir, "($self, /)"),
 };
@@ -724,7 +726,7 @@ static JSValue aliasIteratorReduce(JSGlobalObject* globalObject, JSValue self)
     JSValue iter = aliasGetBuiltin(globalObject, "iter"_s);
     RETURN_IF_EXCEPTION(scope, { });
     JSValue value = aliasRecord(self)->get(0);
-    return PyTuple::create(globalObject, { iter, JSValue(PyTuple::create(globalObject, { value ? value : JSValue(runtime(globalObject).emptyTuple()) })) });
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { iter, JSValue(PyTuple::create(globalObject, { value ? value : JSValue(runtime(globalObject).emptyTuple()) })) }));
 }
 
 static constexpr NativeDef aliasIteratorMethods[] = {
@@ -806,7 +808,7 @@ public:
         auto scope = DECLARE_THROW_SCOPE(vm);
         unsigned count = listLength(m_args);
         if (!count)
-            return raiseTypeError(m_globalObject, scope, "Cannot take a Union of no types."_s);
+            RELEASE_AND_RETURN(scope, raiseTypeError(m_globalObject, scope, "Cannot take a Union of no types."_s));
         if (count == 1)
             return listGet(m_args, 0);
 
@@ -932,7 +934,7 @@ static JSValue unionHash(JSGlobalObject* globalObject, JSValue self)
     }
     int64_t result = hash(globalObject, record->get(UnionHashableArgs));
     RETURN_IF_EXCEPTION(scope, { });
-    return makeInt(globalObject, result);
+    RELEASE_AND_RETURN(scope, makeInt(globalObject, result));
 }
 
 static bool unionsAreEqual(JSGlobalObject* globalObject, PyRecord* a, PyRecord* b)
@@ -975,7 +977,7 @@ static JSValue unionEquality(JSGlobalObject* globalObject, JSValue self, JSValue
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyRecord* b = tryUnion(globalObject, other);
     if (!b)
-        return runtime(globalObject).notImplemented();
+        RELEASE_AND_RETURN(scope, runtime(globalObject).notImplemented());
     bool equal = unionsAreEqual(globalObject, aliasRecord(self), b);
     RETURN_IF_EXCEPTION(scope, { });
     return jsBoolean(equal == wantEqual);
@@ -993,7 +995,7 @@ static JSValue unionRepr(JSGlobalObject* globalObject, JSValue self)
         aliasAppendTypeRepr(globalObject, out, args->at(i));
         RETURN_IF_EXCEPTION(scope, { });
     }
-    return makeStr(globalObject, out);
+    RELEASE_AND_RETURN(scope, makeStr(globalObject, out));
 }
 
 static JSValue unionGetItem(JSGlobalObject* globalObject, JSValue self, JSValue item)

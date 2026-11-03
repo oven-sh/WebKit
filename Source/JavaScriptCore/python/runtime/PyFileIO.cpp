@@ -231,7 +231,7 @@ static JSValue fileIOInit(JSGlobalObject* globalObject, JSValue self, const Call
 
     static constexpr ASCIILiteral keywords[] = { "file"_s, "mode"_s, "closefd"_s, "opener"_s };
     JSValue values[std::size(keywords)];
-    if (!unpackKeywordArguments(globalObject, "FileIO"_s, keywords, 1, 4, false, args, values))
+    if (failed(scope, unpackKeywordArguments(globalObject, "FileIO"_s, keywords, 1, 4, false, args, values)))
         return { };
     JSValue nameObject = values[0];
     String mode = "r"_s;
@@ -251,7 +251,7 @@ static JSValue fileIOInit(JSGlobalObject* globalObject, JSValue self, const Call
     if (state.fd >= 0) {
         if (!state.closefd)
             state.fd = -1;
-        else if (!fileIOSystemClose(globalObject, state))
+        else if (failed(scope, fileIOSystemClose(globalObject, state)))
             return { };
     }
 
@@ -368,7 +368,7 @@ static JSValue fileIOInit(JSGlobalObject* globalObject, JSValue self, const Call
                     return false;
                 }
                 int opened;
-                if (!ioToInt(globalObject, result, opened))
+                if (failed(scope, ioToInt(globalObject, result, opened)))
                     return false;
                 state.fd = opened;
                 if (opened < 0) {
@@ -529,10 +529,12 @@ static JSValue fileIOResult(JSGlobalObject* globalObject, int64_t count)
 
 static JSValue fileIOReadIntoMethod(JSGlobalObject* globalObject, JSValue self, JSValue target)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     IOBuffer buffer;
-    if (!buffer.acquireWritable(globalObject, "readinto"_s, target, "argument 1"_s))
+    if (failed(scope, buffer.acquireWritable(globalObject, "readinto"_s, target, "argument 1"_s)))
         return { };
-    return fileIOResult(globalObject, fileIOReadInto(globalObject, PyRecord::from(self), buffer.mutableSpan()));
+    RELEASE_AND_RETURN(scope, fileIOResult(globalObject, fileIOReadInto(globalObject, PyRecord::from(self), buffer.mutableSpan())));
 }
 
 static JSValue fileIOReadall(JSGlobalObject* globalObject, JSValue self)
@@ -542,9 +544,9 @@ static JSValue fileIOReadall(JSGlobalObject* globalObject, JSValue self)
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto& state = fileIOStateOf(self);
     if (state.fd < 0)
-        return fileIORaiseClosed(globalObject);
+        RELEASE_AND_RETURN(scope, fileIORaiseClosed(globalObject));
     if (!state.readable)
-        return fileIORaiseMode(globalObject, "reading"_s);
+        RELEASE_AND_RETURN(scope, fileIORaiseMode(globalObject, "reading"_s));
 
     // How much there probably is.
     size_t expected = 0;
@@ -573,7 +575,7 @@ static JSValue fileIOReadall(JSGlobalObject* globalObject, JSValue self)
                 wouldBlock = count == -2;
                 if (wouldBlock && !filled)
                     return jsUndefined();
-                return PyBytes::create(globalObject, result->span().first(filled));
+                RELEASE_AND_RETURN(scope, PyBytes::create(globalObject, result->span().first(filled)));
             }
             filled += count;
         }
@@ -602,9 +604,9 @@ static JSValue fileIOReadall(JSGlobalObject* globalObject, JSValue self)
         restFilled += count;
     }
     if (!restFilled)
-        return result ? result : runtime(globalObject).emptyBytes();
+        RELEASE_AND_RETURN(scope, result ? result : runtime(globalObject).emptyBytes());
     if (!result)
-        return PyBytes::create(globalObject, rest.span().first(restFilled));
+        RELEASE_AND_RETURN(scope, PyBytes::create(globalObject, rest.span().first(restFilled)));
     PyBytes* all = ioTryNewBytes(globalObject, filled + restFilled);
     RETURN_IF_EXCEPTION(scope, { });
     memcpy(all->mutableData(), result->data(), filled);
@@ -617,13 +619,13 @@ static JSValue fileIORead(JSGlobalObject* globalObject, JSValue self, JSValue si
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     int64_t size = -1;
-    if (!ioToOptionalSize(globalObject, sizeValue, size))
+    if (failed(scope, ioToOptionalSize(globalObject, sizeValue, size)))
         return { };
     auto& state = fileIOStateOf(self);
     if (state.fd < 0)
-        return fileIORaiseClosed(globalObject);
+        RELEASE_AND_RETURN(scope, fileIORaiseClosed(globalObject));
     if (!state.readable)
-        return fileIORaiseMode(globalObject, "reading"_s);
+        RELEASE_AND_RETURN(scope, fileIORaiseMode(globalObject, "reading"_s));
     if (size < 0)
         RELEASE_AND_RETURN(scope, fileIOReadall(globalObject, self));
 
@@ -634,7 +636,7 @@ static JSValue fileIORead(JSGlobalObject* globalObject, JSValue self, JSValue si
         RELEASE_AND_RETURN(scope, fileIOResult(globalObject, count));
     if (count == size)
         return result;
-    return PyBytes::create(globalObject, result->span().first(count));
+    RELEASE_AND_RETURN(scope, PyBytes::create(globalObject, result->span().first(count)));
 }
 
 static JSValue fileIOWriteMethod(JSGlobalObject* globalObject, JSValue self, JSValue data)
@@ -652,17 +654,17 @@ static JSValue fileIOSeekMethod(JSGlobalObject* globalObject, JSValue self, JSVa
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     int whence = 0;
-    if (whenceValue && !ioToInt(globalObject, whenceValue, whence))
+    if (whenceValue && failed(scope, ioToInt(globalObject, whenceValue, whence)))
         return { };
     auto& state = fileIOStateOf(self);
     if (state.fd < 0)
-        return fileIORaiseClosed(globalObject);
+        RELEASE_AND_RETURN(scope, fileIORaiseClosed(globalObject));
     int64_t position = toInt64(globalObject, positionValue);
     RETURN_IF_EXCEPTION(scope, { });
     // Converting the position may have run anything.
     int64_t result = fileIOSystemSeek(globalObject, state, position, whence);
     RETURN_IF_EXCEPTION(scope, { });
-    return makeInt(globalObject, result);
+    RELEASE_AND_RETURN(scope, makeInt(globalObject, result));
 }
 
 static JSValue fileIOTell(JSGlobalObject* globalObject, JSValue self)
@@ -678,9 +680,9 @@ static JSValue fileIOTruncate(JSGlobalObject* globalObject, JSValue self, JSValu
     auto& state = fileIOStateOf(self);
     int fd = state.fd;
     if (fd < 0)
-        return fileIORaiseClosed(globalObject);
+        RELEASE_AND_RETURN(scope, fileIORaiseClosed(globalObject));
     if (!state.writable)
-        return fileIORaiseMode(globalObject, "writing"_s);
+        RELEASE_AND_RETURN(scope, fileIORaiseMode(globalObject, "writing"_s));
 
     if (!sizeValue || isNone(sizeValue)) {
         int64_t position = fileIOSystemSeek(globalObject, state, 0, SEEK_CUR);
@@ -690,7 +692,7 @@ static JSValue fileIOTruncate(JSGlobalObject* globalObject, JSValue self, JSValu
     int64_t size = toInt64(globalObject, sizeValue);
     RETURN_IF_EXCEPTION(scope, { });
     if (ftruncate(fd, size))
-        return fileIORaiseErrno(globalObject, errno);
+        RELEASE_AND_RETURN(scope, fileIORaiseErrno(globalObject, errno));
     // The size it had when it was opened says nothing any more.
     state.hasStat = false;
     return sizeValue;
@@ -765,7 +767,7 @@ static constexpr NativeDef fileIOMethods[] = {
     PY_METHOD("fileno", fileIOFileno, "($self, /)"),
     PY_METHOD("isatty", fileIOIsATTY, "($self, /)"),
     PY_METHOD("_isatty_open_only", fileIOIsATTYOpenOnly, "($self, /)"),
-    PY_METHOD("_dealloc_warn", fileIODeallocWarn, "($self, source, /)"),
+    PY_METHOD("_dealloc_warn", fileIODeallocWarn, "($self, object, /)"),
     PY_METHOD("__getstate__", ioCannotPickle, "($self, /)"),
 };
 

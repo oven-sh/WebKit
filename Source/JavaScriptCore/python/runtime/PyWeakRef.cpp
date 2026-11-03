@@ -131,22 +131,28 @@ PyWeakRef* makeWeakRef(JSGlobalObject* globalObject, JSValue object, JSValue cal
 
 static JSValue weakRefNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs& args)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     // A subclass may take keywords, which are for its __init__.
-    if (!checkPositional(globalObject, "ref"_s, args, 1, 2))
+    if (failed(scope, checkPositional(globalObject, "ref"_s, args, 1, 2)))
         return { };
-    return newWeakRef(globalObject, PyType::from(cls), args[0], args.get(1));
+    RELEASE_AND_RETURN(scope, newWeakRef(globalObject, PyType::from(cls), args[0], args.get(1)));
 }
 
 static JSValue weakRefInit(JSGlobalObject* globalObject, JSValue, const CallArgs& args)
 {
-    if (!rejectKeywords(globalObject, "ref"_s, args) || !checkPositional(globalObject, "ref"_s, args, 1, 2))
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, rejectKeywords(globalObject, "ref"_s, args)) || failed(scope, checkPositional(globalObject, "ref"_s, args, 1, 2)))
         return { };
     return jsUndefined();
 }
 
 static JSValue weakRefCall(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
 {
-    if (!rejectKeywords(globalObject, "weakref"_s, args) || !checkPositional(globalObject, "weakref"_s, args, 0, 0))
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, rejectKeywords(globalObject, "weakref"_s, args)) || failed(scope, checkPositional(globalObject, "weakref"_s, args, 0, 0)))
         return { };
     return weakRefGet(self);
 }
@@ -158,7 +164,7 @@ static JSValue weakRefRepr(JSGlobalObject* globalObject, JSValue self)
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSCell* referent = PyWeakRef::from(self)->referent();
     if (!referent)
-        return makeStr(vm, makeString("<weakref at "_s, addressForRepr(globalObject, self), "; dead>"_s));
+        RELEASE_AND_RETURN(scope, makeStr(vm, makeString("<weakref at "_s, addressForRepr(globalObject, self), "; dead>"_s)));
     // In the type of the referent, not in the referent.
     JSValue name = rt.typeOf(referent)->lookup(rt.names.dName());
     if (name) {
@@ -187,7 +193,7 @@ static JSValue weakRefHash(JSGlobalObject* globalObject, JSValue self)
         RETURN_IF_EXCEPTION(scope, { });
         weakRef->setHash(result);
     }
-    return makeInt(globalObject, weakRef->hash());
+    RELEASE_AND_RETURN(scope, makeInt(globalObject, weakRef->hash()));
 }
 
 // While both referents are alive they are what is compared; otherwise the references themselves.
@@ -343,7 +349,7 @@ static JSValue proxyFloat(JSGlobalObject* globalObject, JSValue self)
     UNWRAP(self);
     double value = toDouble(globalObject, self);
     RETURN_IF_EXCEPTION(scope, { });
-    return makeFloat(globalObject, value);
+    RELEASE_AND_RETURN(scope, makeFloat(globalObject, value));
 }
 
 static JSValue proxyBool(JSGlobalObject* globalObject, JSValue self)

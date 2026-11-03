@@ -179,7 +179,7 @@ static bool stringIORealize(JSGlobalObject* globalObject, PyRecord* stream)
     String text = asString(stream->get(StringIOAccumulatedField))->value(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
     size_t length = ioCountCodePoints(text);
-    if (!stringIOResizeBuffer(globalObject, stream, length, 0))
+    if (failed(scope, stringIOResizeBuffer(globalObject, stream, length, 0)))
         return false;
     state.isAccumulating = false;
     stream->set(vm, StringIOAccumulatedField, JSValue());
@@ -221,11 +221,11 @@ static bool stringIOWriteStr(JSGlobalObject* globalObject, PyRecord* stream, JSV
             RETURN_IF_EXCEPTION(scope, false);
             stream->set(vm, StringIOAccumulatedField, joined);
             isAppended = true;
-        } else if (!stringIORealize(globalObject, stream))
+        } else if (failed(scope, stringIORealize(globalObject, stream)))
             return false;
     }
     if (!isAppended) {
-        if (state.position + length > state.size && !stringIOResizeBuffer(globalObject, stream, state.position + length, state.size))
+        if (state.position + length > state.size && failed(scope, stringIOResizeBuffer(globalObject, stream, state.position + length, state.size)))
             return false;
         char32_t* characters = stringIOCharacters(stream);
         // What a seek beyond the end has skipped reads as NULs.
@@ -303,7 +303,7 @@ static bool stringIOInitialize(JSGlobalObject* globalObject, PyRecord* stream, J
     bool hasValue = value && !isNone(value) && strValue(value)->length();
     state.isAccumulating = !hasValue;
     if (hasValue) {
-        if (!stringIOWriteStr(globalObject, stream, value))
+        if (failed(scope, stringIOWriteStr(globalObject, stream, value)))
             return false;
     } else
         stream->set(vm, StringIOAccumulatedField, rt.names.empty());
@@ -315,39 +315,47 @@ static bool stringIOInitialize(JSGlobalObject* globalObject, PyRecord* stream, J
 
 static JSValue stringIOInit(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     static constexpr ASCIILiteral keywords[] = { "initial_value"_s, "newline"_s };
     JSValue values[std::size(keywords)];
-    if (!unpackKeywordArguments(globalObject, "StringIO"_s, keywords, 0, 2, false, args, values))
+    if (failed(scope, unpackKeywordArguments(globalObject, "StringIO"_s, keywords, 0, 2, false, args, values)))
         return { };
-    return stringIOInitialize(globalObject, PyRecord::from(self), values[0], values[1]) ? jsUndefined() : JSValue();
+    RELEASE_AND_RETURN(scope, stringIOInitialize(globalObject, PyRecord::from(self), values[0], values[1]) ? jsUndefined() : JSValue());
 }
 
 static JSValue stringIOGetValue(JSGlobalObject* globalObject, JSValue self)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PyRecord* stream = PyRecord::from(self);
-    if (!stringIOCheckUsable(globalObject, stream))
+    if (failed(scope, stringIOCheckUsable(globalObject, stream)))
         return { };
     auto& state = stringIOStateOf(stream);
     if (state.isAccumulating)
         return stream->get(StringIOAccumulatedField);
-    return stringIOMakeStr(globalObject, { stringIOStorage(stream) ? stringIOCharacters(stream) : nullptr, static_cast<size_t>(state.size) });
+    RELEASE_AND_RETURN(scope, stringIOMakeStr(globalObject, { stringIOStorage(stream) ? stringIOCharacters(stream) : nullptr, static_cast<size_t>(state.size) }));
 }
 
 static JSValue stringIOTell(JSGlobalObject* globalObject, JSValue self)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PyRecord* stream = PyRecord::from(self);
-    if (!stringIOCheckUsable(globalObject, stream))
+    if (failed(scope, stringIOCheckUsable(globalObject, stream)))
         return { };
-    return makeInt(globalObject, stringIOStateOf(stream).position);
+    RELEASE_AND_RETURN(scope, makeInt(globalObject, stringIOStateOf(stream).position));
 }
 
 static JSValue stringIORead(JSGlobalObject* globalObject, JSValue self, JSValue sizeValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int64_t size = -1;
-    if (!ioToOptionalSize(globalObject, sizeValue, size))
+    if (failed(scope, ioToOptionalSize(globalObject, sizeValue, size)))
         return { };
     PyRecord* stream = PyRecord::from(self);
-    if (!stringIOCheckUsable(globalObject, stream))
+    if (failed(scope, stringIOCheckUsable(globalObject, stream)))
         return { };
     auto& state = stringIOStateOf(stream);
     int64_t available = state.size - state.position;
@@ -359,14 +367,14 @@ static JSValue stringIORead(JSGlobalObject* globalObject, JSValue self, JSValue 
         state.position = state.size;
         return stream->get(StringIOAccumulatedField);
     }
-    if (!stringIORealize(globalObject, stream))
+    if (failed(scope, stringIORealize(globalObject, stream)))
         return { };
     if (!size)
-        return runtime(globalObject).names.empty();
+        RELEASE_AND_RETURN(scope, runtime(globalObject).names.empty());
     size = std::min(size, std::max<int64_t>(state.size - state.position, 0));
     const char32_t* start = stringIOCharacters(stream) + state.position;
     state.position += size;
-    return stringIOMakeStr(globalObject, { start, static_cast<size_t>(size) });
+    RELEASE_AND_RETURN(scope, stringIOMakeStr(globalObject, { start, static_cast<size_t>(size) }));
 }
 
 // The stream is realized.
@@ -397,13 +405,15 @@ static JSValue stringIOReadlineImpl(JSGlobalObject* globalObject, PyRecord* stre
 
 static JSValue stringIOReadline(JSGlobalObject* globalObject, JSValue self, JSValue sizeValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int64_t size = -1;
-    if (!ioToOptionalSize(globalObject, sizeValue, size))
+    if (failed(scope, ioToOptionalSize(globalObject, sizeValue, size)))
         return { };
     PyRecord* stream = PyRecord::from(self);
-    if (!stringIOCheckUsable(globalObject, stream) || !stringIORealize(globalObject, stream))
+    if (failed(scope, stringIOCheckUsable(globalObject, stream)) || failed(scope, stringIORealize(globalObject, stream)))
         return { };
-    return stringIOReadlineImpl(globalObject, stream, size);
+    RELEASE_AND_RETURN(scope, stringIOReadlineImpl(globalObject, stream, size));
 }
 
 static JSValue stringIONext(JSGlobalObject* globalObject, JSValue self)
@@ -412,7 +422,7 @@ static JSValue stringIONext(JSGlobalObject* globalObject, JSValue self)
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyRecord* stream = PyRecord::from(self);
-    if (!stringIOCheckUsable(globalObject, stream) || !stringIORealize(globalObject, stream))
+    if (failed(scope, stringIOCheckUsable(globalObject, stream)) || failed(scope, stringIORealize(globalObject, stream)))
         return { };
 
     JSValue line;
@@ -434,7 +444,7 @@ static JSValue stringIOTruncate(JSGlobalObject* globalObject, JSValue self, JSVa
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyRecord* stream = PyRecord::from(self);
-    if (!stringIOCheckUsable(globalObject, stream))
+    if (failed(scope, stringIOCheckUsable(globalObject, stream)))
         return { };
     auto& state = stringIOStateOf(stream);
     int64_t size = state.position;
@@ -445,15 +455,15 @@ static JSValue stringIOTruncate(JSGlobalObject* globalObject, JSValue self, JSVa
             return raiseValueError(globalObject, scope, "negative pos value "_s, size);
     }
     if (size < state.size) {
-        if (!stringIORealize(globalObject, stream))
+        if (failed(scope, stringIORealize(globalObject, stream)))
             return { };
         if (size < state.size) {
-            if (!stringIOResizeBuffer(globalObject, stream, size, size))
+            if (failed(scope, stringIOResizeBuffer(globalObject, stream, size, size)))
                 return { };
             state.size = size;
         }
     }
-    return makeInt(globalObject, size);
+    RELEASE_AND_RETURN(scope, makeInt(globalObject, size));
 }
 
 static JSValue stringIOSeek(JSGlobalObject* globalObject, JSValue self, JSValue positionValue, JSValue whenceValue)
@@ -462,13 +472,13 @@ static JSValue stringIOSeek(JSGlobalObject* globalObject, JSValue self, JSValue 
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     int64_t position;
-    if (!ssizeArgument(globalObject, positionValue, position))
+    if (failed(scope, ssizeArgument(globalObject, positionValue, position)))
         return { };
     int whence = 0;
-    if (whenceValue && !ioToInt(globalObject, whenceValue, whence))
+    if (whenceValue && failed(scope, ioToInt(globalObject, whenceValue, whence)))
         return { };
     PyRecord* stream = PyRecord::from(self);
-    if (!stringIOCheckUsable(globalObject, stream))
+    if (failed(scope, stringIOCheckUsable(globalObject, stream)))
         return { };
     auto& state = stringIOStateOf(stream);
 
@@ -483,7 +493,7 @@ static JSValue stringIOSeek(JSGlobalObject* globalObject, JSValue self, JSValue 
     else if (whence == 2)
         position = state.size;
     state.position = position;
-    return makeInt(globalObject, position);
+    RELEASE_AND_RETURN(scope, makeInt(globalObject, position));
 }
 
 static JSValue stringIOWrite(JSGlobalObject* globalObject, JSValue self, JSValue object)
@@ -491,15 +501,15 @@ static JSValue stringIOWrite(JSGlobalObject* globalObject, JSValue self, JSValue
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyRecord* stream = PyRecord::from(self);
-    if (!stringIOCheckInitialized(globalObject, stream))
+    if (failed(scope, stringIOCheckInitialized(globalObject, stream)))
         return { };
     if (!isStr(object))
         return raiseTypeError(globalObject, scope, "string argument expected, got '"_s, typeName(globalObject, object), '\'');
-    if (!stringIOCheckOpen(globalObject, stream))
+    if (failed(scope, stringIOCheckOpen(globalObject, stream)))
         return { };
     unsigned size = strLength(globalObject, strValue(object));
     RETURN_IF_EXCEPTION(scope, { });
-    if (size && !stringIOWriteStr(globalObject, stream, object))
+    if (size && failed(scope, stringIOWriteStr(globalObject, stream, object)))
         return { };
     return jsNumber(size);
 }
@@ -528,7 +538,7 @@ static JSValue stringIOGetState(JSGlobalObject* globalObject, JSValue self)
     RETURN_IF_EXCEPTION(scope, { });
     PyDict* dict = instanceDict(globalObject, self, false);
     JSValue newline = stream->get(StringIOReadNewlineField);
-    return PyTuple::create(globalObject, { value, newline ? newline : jsUndefined(), makeInt(globalObject, stringIOStateOf(stream).position), dict ? JSValue(dict->copy(globalObject)) : jsUndefined() });
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { value, newline ? newline : jsUndefined(), makeInt(globalObject, stringIOStateOf(stream).position), dict ? JSValue(dict->copy(globalObject)) : jsUndefined() }));
 }
 
 static JSValue stringIOSetState(JSGlobalObject* globalObject, JSValue self, JSValue stateValue)
@@ -536,7 +546,7 @@ static JSValue stringIOSetState(JSGlobalObject* globalObject, JSValue self, JSVa
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyRecord* stream = PyRecord::from(self);
-    if (!stringIOCheckOpen(globalObject, stream))
+    if (failed(scope, stringIOCheckOpen(globalObject, stream)))
         return { };
     // A longer tuple is fine: a later version may have more to say.
     auto* tuple = PyTuple::tryFrom(stateValue);
@@ -550,10 +560,10 @@ static JSValue stringIOSetState(JSGlobalObject* globalObject, JSValue self, JSVa
     if (JSValue value = tuple->at(0); isStr(value)) {
         String text = strValue(value)->value(globalObject);
         RETURN_IF_EXCEPTION(scope, { });
-        if (!stringIORealize(globalObject, stream))
+        if (failed(scope, stringIORealize(globalObject, stream)))
             return { };
         size_t length = ioCountCodePoints(text);
-        if (!stringIOResizeBuffer(globalObject, stream, length, 0))
+        if (failed(scope, stringIOResizeBuffer(globalObject, stream, length, 0)))
             return { };
         if (length)
             stringIOCopyCodePoints(text, stringIOCharacters(stream));
@@ -565,7 +575,7 @@ static JSValue stringIOSetState(JSGlobalObject* globalObject, JSValue self, JSVa
     if (!isInt(positionValue))
         return raiseTypeError(globalObject, scope, "third item of state must be an integer, got "_s, typeName(globalObject, positionValue));
     int64_t position;
-    if (!ssizeArgument(globalObject, positionValue, position))
+    if (failed(scope, ssizeArgument(globalObject, positionValue, position)))
         return { };
     if (position < 0)
         return raiseValueError(globalObject, scope, "position value cannot be negative"_s);
@@ -585,8 +595,10 @@ static JSValue stringIOSetState(JSGlobalObject* globalObject, JSValue self, JSVa
 
 static JSValue stringIOGetClosed(JSGlobalObject* globalObject, JSValue self)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PyRecord* stream = PyRecord::from(self);
-    if (!stringIOCheckInitialized(globalObject, stream))
+    if (failed(scope, stringIOCheckInitialized(globalObject, stream)))
         return { };
     return jsBoolean(stringIOStateOf(stream).isClosed);
 }
@@ -595,13 +607,15 @@ static JSValue stringIOGetLineBuffering(JSGlobalObject* globalObject, JSValue se
 
 static JSValue stringIOGetNewlines(JSGlobalObject* globalObject, JSValue self)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PyRecord* stream = PyRecord::from(self);
-    if (!stringIOCheckUsable(globalObject, stream))
+    if (failed(scope, stringIOCheckUsable(globalObject, stream)))
         return { };
     JSValue decoder = stream->get(StringIODecoderField);
     if (!decoder)
         return jsUndefined();
-    return getAttr(globalObject, decoder, ioName(globalObject, IOName::newlines));
+    RELEASE_AND_RETURN(scope, getAttr(globalObject, decoder, ioName(globalObject, IOName::newlines)));
 }
 
 static constexpr NativeDef stringIOMethods[] = {

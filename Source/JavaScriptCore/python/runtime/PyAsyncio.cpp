@@ -740,9 +740,11 @@ static JSValue futureNew(JSGlobalObject* globalObject, JSValue cls, const CallAr
 
 static JSValue futureInit(JSGlobalObject* globalObject, JSValue self, JSValue loop)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PyRecord* future = recordOf(self);
     PyRecord* state = stateOf(future);
-    if (!initializeFuture(globalObject, state, future, loop))
+    if (failed(scope, initializeFuture(globalObject, state, future, loop)))
         return { };
     finalizerHasNothingToDo(globalObject, state, future);
     return jsUndefined();
@@ -804,7 +806,7 @@ static JSValue futureSetException(JSGlobalObject* globalObject, JSValue self, JS
     PyRecord* future = recordOf(self);
     ENSURE_FUTURE_ALIVE(future);
     scope.release();
-    return setFutureException(globalObject, stateOf(future), future, exception) ? jsUndefined() : JSValue();
+    RELEASE_AND_RETURN(scope, setFutureException(globalObject, stateOf(future), future, exception) ? jsUndefined() : JSValue());
 }
 
 static JSValue futureAddDoneCallback(JSGlobalObject* globalObject, JSValue self, JSValue callback, JSValue context)
@@ -1120,7 +1122,7 @@ static JSValue futureIterThrow(JSGlobalObject* globalObject, JSValue self, const
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!rejectKeywords(globalObject, "FutureIter.throw"_s, args) || !checkPositional(globalObject, "throw"_s, args, 1, 3))
+    if (failed(scope, rejectKeywords(globalObject, "FutureIter.throw"_s, args)) || failed(scope, checkPositional(globalObject, "throw"_s, args, 1, 3)))
         return { };
     if (args.size() > 1) {
         bool goOn = warn(globalObject, rt.DeprecationWarning(), "the (type, exc, tb) signature of throw() is deprecated, use the single-arg signature instead."_s);
@@ -1291,7 +1293,7 @@ static JSValue setErrorSoon(JSGlobalObject* globalObject, PyRecord* state, PyRec
     PyException* error = newException(globalObject, runtime(globalObject).RuntimeError(), message);
     RETURN_IF_EXCEPTION(scope, { });
     scope.release();
-    return callStepSoon(globalObject, state, task, error) ? jsUndefined() : JSValue();
+    RELEASE_AND_RETURN(scope, callStepSoon(globalObject, state, task, error) ? jsUndefined() : JSValue());
 }
 
 static bool enterTask(JSGlobalObject* globalObject, PyRecord* state, JSValue loop, JSValue task)
@@ -1442,9 +1444,9 @@ static JSValue stepTaskEntered(JSGlobalObject* globalObject, PyRecord* state, Py
         if (hasFlag(task, FlagMustCancel)) {
             // It was cancelled just before the coroutine came to its end.
             setFlag(task, FlagMustCancel, false);
-            return cancelFuture(globalObject, state, task, task->get(FutureCancelMessage)) ? jsUndefined() : JSValue();
+            RELEASE_AND_RETURN(scope, cancelFuture(globalObject, state, task, task->get(FutureCancelMessage)) ? jsUndefined() : JSValue());
         }
-        return setFutureResult(globalObject, state, task, returned) ? jsUndefined() : JSValue();
+        RELEASE_AND_RETURN(scope, setFutureResult(globalObject, state, task, returned) ? jsUndefined() : JSValue());
     }
 
     JSValue raised = takePendingException(globalObject);
@@ -1453,7 +1455,7 @@ static JSValue stepTaskEntered(JSGlobalObject* globalObject, PyRecord* state, Py
     if (typeOf(globalObject, raised)->isSubtypeOf(typeIn(state, StateCancelledError))) {
         task->set(vm, FutureCancelledError, raised);
         scope.release();
-        return cancelFuture(globalObject, state, task, { }) ? jsUndefined() : JSValue();
+        RELEASE_AND_RETURN(scope, cancelFuture(globalObject, state, task, { }) ? jsUndefined() : JSValue());
     }
     setFutureException(globalObject, state, task, raised);
     RETURN_IF_EXCEPTION(scope, { });
@@ -1521,13 +1523,13 @@ static JSValue handleYielded(JSGlobalObject* globalObject, PyRecord* state, PyRe
         RETURN_IF_EXCEPTION(scope, { });
         task->set(vm, TaskWaiter, future);
         scope.release();
-        return cancelWaiterIfMustCancel(globalObject, state, task, future) ? jsUndefined() : JSValue();
+        RELEASE_AND_RETURN(scope, cancelWaiterIfMustCancel(globalObject, state, task, future) ? jsUndefined() : JSValue());
     }
 
     // A bare yield gives up control for one turn of the loop.
     if (isNone(yielded)) {
         scope.release();
-        return callStepSoon(globalObject, state, task, { }) ? jsUndefined() : JSValue();
+        RELEASE_AND_RETURN(scope, callStepSoon(globalObject, state, task, { }) ? jsUndefined() : JSValue());
     }
 
     // Anything that says it is like a future.
@@ -1555,7 +1557,7 @@ static JSValue handleYielded(JSGlobalObject* globalObject, PyRecord* state, PyRe
         RETURN_IF_EXCEPTION(scope, { });
         task->set(vm, TaskWaiter, yielded);
         scope.release();
-        return cancelWaiterIfMustCancel(globalObject, state, task, yielded) ? jsUndefined() : JSValue();
+        RELEASE_AND_RETURN(scope, cancelWaiterIfMustCancel(globalObject, state, task, yielded) ? jsUndefined() : JSValue());
     }
 
     bool isGenerator = isInstance(globalObject, yielded, rt.generatorType());
@@ -1587,7 +1589,7 @@ static JSValue stepTask(JSGlobalObject* globalObject, PyRecord* state, PyRecord*
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue loop = task->get(FutureLoop);
-    if (!enterTask(globalObject, state, loop, task))
+    if (failed(scope, enterTask(globalObject, state, loop, task)))
         return { };
     JSValue result = stepTaskEntered(globalObject, state, task, exception);
     if (!result) [[unlikely]] {
@@ -1600,7 +1602,7 @@ static JSValue stepTask(JSGlobalObject* globalObject, PyRecord* state, PyRecord*
         return { };
     }
     scope.release();
-    return leaveTask(globalObject, state, loop, task) ? result : JSValue();
+    RELEASE_AND_RETURN(scope, leaveTask(globalObject, state, loop, task) ? result : JSValue());
 }
 
 // The first step of the task, at once, within whatever is running. False: an exception.
@@ -1613,7 +1615,7 @@ static bool startEagerly(JSGlobalObject* globalObject, PyRecord* state, PyRecord
     RETURN_IF_EXCEPTION(scope, false);
     // If it comes to its end without suspending, that takes it out again; otherwise it goes on as any task.
     registerTask(globalObject, state, task);
-    if (!enterContext(globalObject, task->get(TaskContext))) {
+    if (failed(scope, enterContext(globalObject, task->get(TaskContext)))) {
         JSValue raised = takePendingException(globalObject);
         setFlag(task, FlagLogDestroyPending, false);
         swapCurrentTask(globalObject, state, loop, previous);
@@ -1636,7 +1638,7 @@ static bool startEagerly(JSGlobalObject* globalObject, PyRecord* state, PyRecord
         noteFailure();
     if (!swapCurrentTask(globalObject, state, loop, previous))
         noteFailure();
-    if (!exitContext(globalObject, task->get(TaskContext)))
+    if (failed(scope, exitContext(globalObject, task->get(TaskContext))))
         noteFailure();
     if (futureState(task) != StatePending)
         task->set(vm, TaskCoroutine, { });
@@ -1656,7 +1658,7 @@ static JSValue taskInit(JSGlobalObject* globalObject, JSValue self, JSValue coro
         eagerStart = isTrue(globalObject, eagerStartValue);
         RETURN_IF_EXCEPTION(scope, { });
     }
-    if (!initializeFuture(globalObject, state, task, loop))
+    if (failed(scope, initializeFuture(globalObject, state, task, loop)))
         return { };
 
     int isOne = isCoroutine(globalObject, state, coroutine);
@@ -1690,7 +1692,7 @@ static JSValue taskInit(JSGlobalObject* globalObject, JSValue self, JSValue coro
         RETURN_IF_EXCEPTION(scope, { });
         if (answer.isTrue()) {
             scope.release();
-            return startEagerly(globalObject, state, task) ? jsUndefined() : JSValue();
+            RELEASE_AND_RETURN(scope, startEagerly(globalObject, state, task) ? jsUndefined() : JSValue());
         }
     }
     if (!callStepSoon(globalObject, state, task, { }))
@@ -2036,9 +2038,11 @@ static JSValue asyncioAllTasks(JSGlobalObject* globalObject, JSValue loop)
 
 static JSValue asyncioFutureAddToAwaitedBy(JSGlobalObject* globalObject, JSValue futureValue, JSValue waiter)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PyRecord* state = moduleState(globalObject);
     PyRecord* future = asFuture(state, futureValue);
-    if (future && asFuture(state, waiter) && !addToAwaitedBy(globalObject, future, waiter))
+    if (future && asFuture(state, waiter) && failed(scope, addToAwaitedBy(globalObject, future, waiter)))
         return { };
     return jsUndefined();
 }

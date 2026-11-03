@@ -466,7 +466,7 @@ static JSValue subprocessForkExec(JSGlobalObject* globalObject, const CallArgs& 
     auto* passFds = PyTuple::tryFrom(args[ArgumentPassFds]);
     if (!passFds)
         return raiseTypeError(globalObject, scope, "fork_exec() argument 4 must be tuple, not "_s, posixTypeNameOfArgument(globalObject, args[ArgumentPassFds]));
-    if (!posixToInt(globalObject, args[ArgumentP2CRead], request.p2cRead) || !posixToInt(globalObject, args[ArgumentP2CWrite], request.p2cWrite)
+    if (failed(scope, posixToInt(globalObject, args[ArgumentP2CRead], request.p2cRead)) || failed(scope, posixToInt(globalObject, args[ArgumentP2CWrite], request.p2cWrite))
         || !posixToInt(globalObject, args[ArgumentC2PRead], request.c2pRead) || !posixToInt(globalObject, args[ArgumentC2PWrite], request.c2pWrite)
         || !posixToInt(globalObject, args[ArgumentErrRead], request.errRead) || !posixToInt(globalObject, args[ArgumentErrWrite], request.errWrite)
         || !posixToInt(globalObject, args[ArgumentErrPipeRead], request.errorPipeRead) || !posixToInt(globalObject, args[ArgumentErrPipeWrite], request.errorPipeWrite))
@@ -475,7 +475,7 @@ static JSValue subprocessForkExec(JSGlobalObject* globalObject, const CallArgs& 
     RETURN_IF_EXCEPTION(scope, { });
     request.startsSession = isTrue(globalObject, args[ArgumentCallSetsid]);
     RETURN_IF_EXCEPTION(scope, { });
-    if (!posixToPid(globalObject, args[ArgumentPgidToSet], request.processGroup) || !posixToInt(globalObject, args[ArgumentChildUmask], request.umask))
+    if (failed(scope, posixToPid(globalObject, args[ArgumentPgidToSet], request.processGroup)) || failed(scope, posixToInt(globalObject, args[ArgumentChildUmask], request.umask)))
         return { };
 
     if (!isNone(args[ArgumentPreexecFn]))
@@ -498,7 +498,7 @@ static JSValue subprocessForkExec(JSGlobalObject* globalObject, const CallArgs& 
     SubprocessStrings arguments;
     SubprocessStrings environment;
     PosixBytes directory;
-    if (!subprocessGatherBytes(globalObject, args[ArgumentExecutableList], executables))
+    if (failed(scope, subprocessGatherBytes(globalObject, args[ArgumentExecutableList], executables)))
         return { };
     request.executables = executables.finish();
     if (!isNone(args[ArgumentArgs])) {
@@ -526,7 +526,7 @@ static JSValue subprocessForkExec(JSGlobalObject* globalObject, const CallArgs& 
         request.arguments = arguments.finish();
     }
     if (!isNone(args[ArgumentEnv])) {
-        if (!subprocessGatherBytes(globalObject, args[ArgumentEnv], environment))
+        if (failed(scope, subprocessGatherBytes(globalObject, args[ArgumentEnv], environment)))
             return { };
         request.environment = environment.finish();
     }
@@ -549,7 +549,7 @@ static JSValue subprocessForkExec(JSGlobalObject* globalObject, const CallArgs& 
             if (!isInt(item))
                 return raiseTypeError(globalObject, scope, "extra_groups must be integers"_s);
             gid_t group;
-            if (!posixToGid(globalObject, item, group)) {
+            if (failed(scope, posixToGid(globalObject, item, group))) {
                 takePendingException(globalObject);
                 return raiseValueError(globalObject, scope, "invalid group id"_s);
             }
@@ -560,9 +560,9 @@ static JSValue subprocessForkExec(JSGlobalObject* globalObject, const CallArgs& 
     }
     request.gid = static_cast<gid_t>(-1);
     request.uid = static_cast<uid_t>(-1);
-    if (!isNone(args[ArgumentGid]) && !posixToGid(globalObject, args[ArgumentGid], request.gid))
+    if (!isNone(args[ArgumentGid]) && failed(scope, posixToGid(globalObject, args[ArgumentGid], request.gid)))
         return { };
-    if (!isNone(args[ArgumentUid]) && !posixToUid(globalObject, args[ArgumentUid], request.uid))
+    if (!isNone(args[ArgumentUid]) && failed(scope, posixToUid(globalObject, args[ArgumentUid], request.uid)))
         return { };
 
     if (!audit(globalObject, "_posixsubprocess.fork_exec"_s, args[ArgumentExecutableList], args[ArgumentArgs], args[ArgumentEnv]))
@@ -574,7 +574,7 @@ static JSValue subprocessForkExec(JSGlobalObject* globalObject, const CallArgs& 
 
     pid_t pid = subprocessStart(request);
     if (pid == -1)
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     return jsNumber(pid);
 }
 

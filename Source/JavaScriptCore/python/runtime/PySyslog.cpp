@@ -87,7 +87,7 @@ static JSValue syslogOpenLog(JSGlobalObject* globalObject, JSValue identValue, J
     int64_t facility = LOG_USER;
     if (identValue && !isStr(identValue))
         return raiseTypeError(globalObject, scope, "openlog() argument 'ident' must be str, not "_s, posixTypeNameOfArgument(globalObject, identValue));
-    if ((optionsValue && !posixToLong(globalObject, optionsValue, options)) || (facilityValue && !posixToLong(globalObject, facilityValue, facility)))
+    if ((optionsValue && failed(scope, posixToLong(globalObject, optionsValue, options))) || (facilityValue && failed(scope, posixToLong(globalObject, facilityValue, facility))))
         return { };
     if (!syslogOpen(globalObject, identValue ? strValue(identValue) : nullptr, options, facility))
         return { };
@@ -107,7 +107,7 @@ static JSValue syslogSyslog(JSGlobalObject* globalObject, const CallArgs& args)
     if (args.size() == 2) {
         // As the format "i" words it.
         int64_t number;
-        if (!posixToLong(globalObject, args[0], number))
+        if (failed(scope, posixToLong(globalObject, args[0], number)))
             return { };
         if (number > INT_MAX)
             return raiseOverflowError(globalObject, scope, "signed integer is greater than maximum"_s);
@@ -148,8 +148,10 @@ static JSValue syslogCloseLog(JSGlobalObject* globalObject)
 
 static JSValue syslogSetLogMask(JSGlobalObject* globalObject, JSValue value)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int64_t mask;
-    if (!posixToLong(globalObject, value, mask))
+    if (failed(scope, posixToLong(globalObject, value, mask)))
         return { };
     if (!audit(globalObject, "syslog.setlogmask"_s, posixMakeInt(globalObject, mask)))
         return { };
@@ -159,18 +161,22 @@ static JSValue syslogSetLogMask(JSGlobalObject* globalObject, JSValue value)
 
 static JSValue syslogMask(JSGlobalObject* globalObject, JSValue value)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int64_t priority;
-    if (!posixToLong(globalObject, value, priority))
+    if (failed(scope, posixToLong(globalObject, value, priority)))
         return { };
-    return posixMakeInt(globalObject, static_cast<int64_t>(static_cast<int>(1u << (priority & 31))));
+    RELEASE_AND_RETURN(scope, posixMakeInt(globalObject, static_cast<int64_t>(static_cast<int>(1u << (priority & 31)))));
 }
 
 static JSValue syslogUpTo(JSGlobalObject* globalObject, JSValue value)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int64_t priority;
-    if (!posixToLong(globalObject, value, priority))
+    if (failed(scope, posixToLong(globalObject, value, priority)))
         return { };
-    return posixMakeInt(globalObject, static_cast<int64_t>(static_cast<int>((1u << ((priority + 1) & 31)) - 1)));
+    RELEASE_AND_RETURN(scope, posixMakeInt(globalObject, static_cast<int64_t>(static_cast<int>((1u << ((priority + 1) & 31)) - 1))));
 }
 
 static constexpr NativeDef syslogFunctions[] = {

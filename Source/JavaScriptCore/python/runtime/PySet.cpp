@@ -512,7 +512,7 @@ static bool hashForLookup(JSGlobalObject* globalObject, JSValue key, int64_t& ha
     if (!scope.exception()) [[likely]]
         return true;
     auto* set = PySet::tryFrom(key);
-    if (!set || !isMutableSet(globalObject, set) || !clearPendingExceptionIfMatches(globalObject, rt.TypeError()))
+    if (!set || failed(scope, isMutableSet(globalObject, set)) || !clearPendingExceptionIfMatches(globalObject, rt.TypeError()))
         return false;
     hash = hashOfSet(set);
     return true;
@@ -523,7 +523,7 @@ static PySet* intersection(JSGlobalObject* globalObject, PySet* set, JSValue oth
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (other == JSValue(set))
-        return copyAsBaseType(globalObject, set);
+        RELEASE_AND_RETURN(scope, copyAsBaseType(globalObject, set));
     PySet* result = newSetLike(globalObject, set);
     if (auto* otherSet = PySet::tryFrom(other)) {
         // Go through the smaller of the two.
@@ -704,10 +704,10 @@ static JSValue setNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs&
 static JSValue setInit(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
 {
     PY_SET_PROLOGUE();
-    if (!rejectKeywords(globalObject, "set"_s, args))
+    if (failed(scope, rejectKeywords(globalObject, "set"_s, args)))
         return { };
-    if (!checkPositional(globalObject, "set"_s, args, 0, 1))
-        return { };
+    if (args.size() > 1)
+        return raiseTypeError(globalObject, scope, typeName(globalObject, self), " expected at most 1 argument, got "_s, args.size());
     set->clear(vm);
     if (args.size()) {
         updateSet(globalObject, set, args[0]);
@@ -722,10 +722,10 @@ static JSValue frozensetNew(JSGlobalObject* globalObject, JSValue cls, const Cal
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyType* type = PyType::from(cls);
-    if (!rejectKeywordsInNew(globalObject, "frozenset"_s, type, rt.frozensetType(), args))
+    if (failed(scope, rejectKeywordsInNew(globalObject, "frozenset"_s, type, rt.frozensetType(), args)))
         return { };
-    if (!checkPositional(globalObject, "frozenset"_s, args, 0, 1))
-        return { };
+    if (args.size() > 1)
+        return raiseTypeError(globalObject, scope, type->nameInMessages(), " expected at most 1 argument, got "_s, args.size());
     if (args.size() && type == rt.frozensetType()) {
         if (auto* existing = PySet::tryFrom(args[0]); existing && existing->type() == type)
             return existing;
@@ -768,7 +768,7 @@ static JSValue setRepr(JSGlobalObject* globalObject, JSValue self)
     builder.append('}');
     if (!isPlainSet)
         builder.append(')');
-    return makeStr(globalObject, builder);
+    RELEASE_AND_RETURN(scope, makeStr(globalObject, builder));
 }
 
 static JSValue setLen(JSGlobalObject* globalObject, JSValue self) { return makeInt(globalObject, static_cast<uint64_t>(PySet::from(self)->size())); }
@@ -805,7 +805,7 @@ static JSValue setCompare(JSGlobalObject* globalObject, JSValue self, JSValue ot
     PY_SET_PROLOGUE();
     auto* otherSet = PySet::tryFrom(other);
     if (!otherSet)
-        return runtime(globalObject).notImplemented();
+        RELEASE_AND_RETURN(scope, runtime(globalObject).notImplemented());
     bool result;
     switch (op) {
     case CompareOperator::Eq:
@@ -894,7 +894,7 @@ static JSValue frozensetCopy(JSGlobalObject* globalObject, JSValue self)
 static JSValue setUpdateMethod(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
 {
     PY_SET_PROLOGUE();
-    if (!rejectKeywords(globalObject, "update"_s, args))
+    if (failed(scope, rejectKeywords(globalObject, "update"_s, args)))
         return { };
     for (JSValue other : args.positional()) {
         updateSet(globalObject, set, other);
@@ -906,7 +906,7 @@ static JSValue setUpdateMethod(JSGlobalObject* globalObject, JSValue self, const
 static JSValue setUnion(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
 {
     PY_SET_PROLOGUE();
-    if (!rejectKeywords(globalObject, "union"_s, args))
+    if (failed(scope, rejectKeywords(globalObject, "union"_s, args)))
         return { };
     PySet* result = copyAsBaseType(globalObject, set);
     for (JSValue other : args.positional()) {
@@ -923,7 +923,7 @@ static PySet* intersectionOfAll(JSGlobalObject* globalObject, PySet* set, const 
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!args.size())
-        return copyAsBaseType(globalObject, set);
+        RELEASE_AND_RETURN(scope, copyAsBaseType(globalObject, set));
     PySet* result = set;
     for (JSValue other : args.positional()) {
         result = intersection(globalObject, result, other);
@@ -934,15 +934,17 @@ static PySet* intersectionOfAll(JSGlobalObject* globalObject, PySet* set, const 
 
 static JSValue setIntersection(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
 {
-    if (!rejectKeywords(globalObject, "intersection"_s, args))
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, rejectKeywords(globalObject, "intersection"_s, args)))
         return { };
-    return intersectionOfAll(globalObject, PySet::from(self), args);
+    RELEASE_AND_RETURN(scope, intersectionOfAll(globalObject, PySet::from(self), args));
 }
 
 static JSValue setIntersectionUpdate(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
 {
     PY_SET_PROLOGUE();
-    if (!rejectKeywords(globalObject, "intersection_update"_s, args))
+    if (failed(scope, rejectKeywords(globalObject, "intersection_update"_s, args)))
         return { };
     PySet* result = intersectionOfAll(globalObject, set, args);
     RETURN_IF_EXCEPTION(scope, { });
@@ -953,10 +955,10 @@ static JSValue setIntersectionUpdate(JSGlobalObject* globalObject, JSValue self,
 static JSValue setDifference(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
 {
     PY_SET_PROLOGUE();
-    if (!rejectKeywords(globalObject, "difference"_s, args))
+    if (failed(scope, rejectKeywords(globalObject, "difference"_s, args)))
         return { };
     if (!args.size())
-        return copyAsBaseType(globalObject, set);
+        RELEASE_AND_RETURN(scope, copyAsBaseType(globalObject, set));
     PySet* result = difference(globalObject, set, args[0]);
     RETURN_IF_EXCEPTION(scope, { });
     for (unsigned i = 1; i < args.size(); ++i) {
@@ -969,7 +971,7 @@ static JSValue setDifference(JSGlobalObject* globalObject, JSValue self, const C
 static JSValue setDifferenceUpdate(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
 {
     PY_SET_PROLOGUE();
-    if (!rejectKeywords(globalObject, "difference_update"_s, args))
+    if (failed(scope, rejectKeywords(globalObject, "difference_update"_s, args)))
         return { };
     for (JSValue other : args.positional()) {
         differenceUpdate(globalObject, set, other);
@@ -1051,7 +1053,7 @@ static JSValue setOperation(JSGlobalObject* globalObject, SetOperator op, JSValu
     auto* a = PySet::tryFrom(left);
     auto* b = PySet::tryFrom(right);
     if (!a || !b)
-        return runtime(globalObject).notImplemented();
+        RELEASE_AND_RETURN(scope, runtime(globalObject).notImplemented());
     switch (op) {
     case SetOperator::Or: {
         PySet* result = copyAsBaseType(globalObject, a);
@@ -1082,7 +1084,7 @@ static JSValue setInPlace(JSGlobalObject* globalObject, JSValue self, JSValue ot
     PY_SET_PROLOGUE();
     auto* otherSet = PySet::tryFrom(other);
     if (!otherSet)
-        return runtime(globalObject).notImplemented();
+        RELEASE_AND_RETURN(scope, runtime(globalObject).notImplemented());
     switch (op) {
     case SetOperator::Or:
         set->merge(globalObject, otherSet);
@@ -1111,7 +1113,7 @@ static JSValue setReduce(JSGlobalObject* globalObject, JSValue self)
     RETURN_IF_EXCEPTION(scope, { });
     JSValue state = getObjectState(globalObject, self);
     RETURN_IF_EXCEPTION(scope, { });
-    return PyTuple::create(globalObject, { set->type(), PyTuple::create(globalObject, { JSValue(keys) }), state });
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { set->type(), PyTuple::create(globalObject, { JSValue(keys) }), state }));
 }
 
 static JSValue setSizeOf(JSGlobalObject* globalObject, JSValue self)
@@ -1138,13 +1140,13 @@ static JSValue setSizeOf(JSGlobalObject* globalObject, JSValue self)
     PY_SLOT("__rsub__", setReflected<SetOperator::Sub>, "($self, value, /)"), \
     PY_SLOT("__xor__", setBinary<SetOperator::Xor>, "($self, value, /)"), \
     PY_SLOT("__rxor__", setReflected<SetOperator::Xor>, "($self, value, /)"), \
-    PY_METHOD("difference", setDifference, "($self, *others)"), \
-    PY_METHOD("intersection", setIntersection, "($self, *others)"), \
+    PY_METHOD("difference", setDifference, "($self, /, *others)"), \
+    PY_METHOD("intersection", setIntersection, "($self, /, *others)"), \
     PY_METHOD("isdisjoint", setIsDisjoint, "($self, other, /)"), \
     PY_METHOD("issubset", setIsSubset, "($self, other, /)"), \
     PY_METHOD("issuperset", setIsSuperset, "($self, other, /)"), \
     PY_METHOD("symmetric_difference", setSymmetricDifference, "($self, other, /)"), \
-    PY_METHOD("union", setUnion, "($self, *others)"), \
+    PY_METHOD("union", setUnion, "($self, /, *others)"), \
     PY_METHOD("__reduce__", setReduce, "($self, /)"), \
     PY_METHOD("__sizeof__", setSizeOf, "($self, /)"), \
     PY_CLASSMETHOD("__class_getitem__", classGetItem, "($type, object, /)")
@@ -1161,12 +1163,12 @@ static constexpr NativeDef setMethods[] = {
     PY_METHOD("clear", setClear, "($self, /)"),
     PY_METHOD("copy", setCopy, "($self, /)"),
     PY_METHOD("discard", setDiscard, "($self, object, /)"),
-    PY_METHOD("difference_update", setDifferenceUpdate, "($self, *others)"),
-    PY_METHOD("intersection_update", setIntersectionUpdate, "($self, *others)"),
+    PY_METHOD("difference_update", setDifferenceUpdate, "($self, /, *others)"),
+    PY_METHOD("intersection_update", setIntersectionUpdate, "($self, /, *others)"),
     PY_METHOD("pop", setPop, "($self, /)"),
     PY_METHOD("remove", setRemove, "($self, object, /)"),
     PY_METHOD("symmetric_difference_update", setSymmetricDifferenceUpdate, "($self, other, /)"),
-    PY_METHOD("update", setUpdateMethod, "($self, *others)"),
+    PY_METHOD("update", setUpdateMethod, "($self, /, *others)"),
 };
 
 static constexpr NativeDef frozensetMethods[] = {

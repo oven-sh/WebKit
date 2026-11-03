@@ -43,9 +43,9 @@ static JSValue deltaFromMicroseconds(JSGlobalObject* globalObject, State& state,
     JSValue microseconds;
     JSValue days;
     JSValue seconds;
-    if (!intDivMod(globalObject, total, jsNumber(microsecondsPerSecond), allSeconds, microseconds))
+    if (failed(scope, intDivMod(globalObject, total, jsNumber(microsecondsPerSecond), allSeconds, microseconds)))
         return { };
-    if (!intDivMod(globalObject, allSeconds, jsNumber(secondsPerDay), days, seconds))
+    if (failed(scope, intDivMod(globalObject, allSeconds, jsNumber(secondsPerDay), days, seconds)))
         return { };
     auto fewDays = tryInt64(days);
     if (!fewDays || *fewDays < std::numeric_limits<int>::min() || *fewDays > std::numeric_limits<int>::max())
@@ -60,7 +60,7 @@ static JSValue deltaDivideNearest(JSGlobalObject* globalObject, JSValue dividend
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue quotient;
     JSValue remainder;
-    if (!intDivMod(globalObject, dividend, divisor, quotient, remainder))
+    if (failed(scope, intDivMod(globalObject, dividend, divisor, quotient, remainder)))
         return { };
     JSValue twice = intAdd(globalObject, remainder, remainder);
     RETURN_IF_EXCEPTION(scope, { });
@@ -231,7 +231,7 @@ static JSValue deltaMultiply(JSGlobalObject* globalObject, JSValue left, JSValue
     if (isFloat(number))
         RELEASE_AND_RETURN(scope, deltaScaleByFloat(globalObject, state, delta, number, false));
     if (!isInt(number))
-        return runtime(globalObject).notImplemented();
+        RELEASE_AND_RETURN(scope, runtime(globalObject).notImplemented());
     if (!isExactInt(number) && !number.isBoolean()) [[unlikely]] {
         // Its class may have a __rmul__ of its own.
         JSValue total = deltaMakeInt(globalObject, delta->total());
@@ -262,7 +262,7 @@ static JSValue deltaFloorDivide(JSGlobalObject* globalObject, JSValue left, JSVa
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* delta = PyTimeDelta::tryFrom(left);
     if (!delta)
-        return runtime(globalObject).notImplemented();
+        RELEASE_AND_RETURN(scope, runtime(globalObject).notImplemented());
     Int128 remainder;
     if (auto* divisor = PyTimeDelta::tryFrom(right)) {
         if (divisor->isZero())
@@ -270,7 +270,7 @@ static JSValue deltaFloorDivide(JSGlobalObject* globalObject, JSValue left, JSVa
         RELEASE_AND_RETURN(scope, deltaMakeInt(globalObject, floorDivide<Int128>(delta->total(), divisor->total(), remainder)));
     }
     if (!isInt(right))
-        return runtime(globalObject).notImplemented();
+        RELEASE_AND_RETURN(scope, runtime(globalObject).notImplemented());
     State& state = stateOf(globalObject, delta);
     JSValue divisor = intValue(right);
     auto small = tryInt64(divisor);
@@ -304,14 +304,14 @@ static JSValue deltaTrueDivide(JSGlobalObject* globalObject, JSValue left, JSVal
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* delta = PyTimeDelta::tryFrom(left);
     if (!delta)
-        return runtime(globalObject).notImplemented();
+        RELEASE_AND_RETURN(scope, runtime(globalObject).notImplemented());
     if (auto* divisor = PyTimeDelta::tryFrom(right))
         RELEASE_AND_RETURN(scope, deltaRatio(globalObject, delta->total(), divisor->total()));
     State& state = stateOf(globalObject, delta);
     if (isFloat(right))
         RELEASE_AND_RETURN(scope, deltaScaleByFloat(globalObject, state, delta, right, true));
     if (!isInt(right))
-        return runtime(globalObject).notImplemented();
+        RELEASE_AND_RETURN(scope, runtime(globalObject).notImplemented());
     JSValue total = deltaMakeInt(globalObject, delta->total());
     RETURN_IF_EXCEPTION(scope, { });
     JSValue quotient = deltaDivideNearest(globalObject, total, intValue(right));
@@ -340,7 +340,7 @@ static JSValue deltaDivMod(JSGlobalObject* globalObject, JSValue left, JSValue r
     auto* a = PyTimeDelta::tryFrom(left);
     auto* b = PyTimeDelta::tryFrom(right);
     if (!a || !b)
-        return runtime(globalObject).notImplemented();
+        RELEASE_AND_RETURN(scope, runtime(globalObject).notImplemented());
     if (b->isZero())
         RELEASE_AND_RETURN(scope, divmod(globalObject, jsNumber(1), jsNumber(0)));
     State& state = stateOf(globalObject, a);
@@ -349,7 +349,7 @@ static JSValue deltaDivMod(JSGlobalObject* globalObject, JSValue left, JSValue r
     RETURN_IF_EXCEPTION(scope, { });
     JSValue rest = newDeltaFromTotal(globalObject, state, state.deltaType.get(), remainder);
     RETURN_IF_EXCEPTION(scope, { });
-    return PyTuple::create(globalObject, { quotient, rest });
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { quotient, rest }));
 }
 
 template<JSValue (*operation)(JSGlobalObject*, JSValue, JSValue)>

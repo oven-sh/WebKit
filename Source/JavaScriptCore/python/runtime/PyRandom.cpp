@@ -141,20 +141,24 @@ static JSValue randomNew(JSGlobalObject* globalObject, JSValue cls, const CallAr
 
 static JSValue randomInit(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     // A subclass with a __new__ of its own may have keyword arguments for it.
     PyType* baseType = runtime(globalObject).typeFor(randomTypeDef);
-    if (typeOf(globalObject, self)->lookup(Special::New) == baseType->lookup(Special::New) && !rejectKeywords(globalObject, "Random"_s, args))
+    if (typeOf(globalObject, self)->lookup(Special::New) == baseType->lookup(Special::New) && failed(scope, rejectKeywords(globalObject, "Random"_s, args)))
         return { };
-    if (!checkPositional(globalObject, "Random"_s, args, 0, 1))
+    if (failed(scope, checkPositional(globalObject, "Random"_s, args, 0, 1)))
         return { };
-    if (!randomSeedWith(globalObject, PyRecord::from(self), args.get(0)))
+    if (failed(scope, randomSeedWith(globalObject, PyRecord::from(self), args.get(0))))
         return { };
     return none();
 }
 
 static JSValue randomSeed(JSGlobalObject* globalObject, JSValue self, JSValue seed)
 {
-    if (!randomSeedWith(globalObject, PyRecord::from(self), seed))
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, randomSeedWith(globalObject, PyRecord::from(self), seed)))
         return { };
     return none();
 }

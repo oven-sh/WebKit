@@ -84,7 +84,7 @@ private:
         bytes.clear();
         JSValue line = call(m_globalObject, m_iterator->get(IteratorReadline));
         if (scope.exception())
-            return clearPendingExceptionIfMatches(m_globalObject, m_runtime.StopIteration());
+            RELEASE_AND_RETURN(scope, clearPendingExceptionIfMatches(m_globalObject, m_runtime.StopIteration()));
         if (JSValue encoding = m_iterator->get(IteratorEncoding)) {
             if (!PyBytes::is(line)) {
                 raiseTypeError(m_globalObject, scope, "readline() returned a non-bytes object"_s);

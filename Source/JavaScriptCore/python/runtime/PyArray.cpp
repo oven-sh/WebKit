@@ -218,10 +218,11 @@ static bool arrayCheckResizable(JSGlobalObject* globalObject, PyRecord* array)
 static bool arrayResize(JSGlobalObject* globalObject, PyRecord* array, int64_t newLength)
 {
     VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int64_t length = arrayLength(array);
     int64_t itemSize = arrayItemSize(array);
     PyByteStorage* storage = arrayStorage(array);
-    if (newLength != length && !arrayCheckResizable(globalObject, array))
+    if (newLength != length && failed(scope, arrayCheckResizable(globalObject, array)))
         return false;
     // What is allocated will do, unless much of it would go to waste.
     if (storage && arrayAllocated(array) >= newLength && length < newLength + 16) {
@@ -380,14 +381,14 @@ static bool arrayConvert(JSGlobalObject* globalObject, ArrayKind kind, JSValue v
     switch (kind) {
     case ArrayKind::SignedChar:
         scope.release();
-        if (!arrayConvertNarrow(globalObject, value, std::numeric_limits<short>::min(), std::numeric_limits<short>::max(), shortName, integer)
+        if (failed(scope, arrayConvertNarrow(globalObject, value, std::numeric_limits<short>::min(), std::numeric_limits<short>::max(), shortName, integer))
             || !arrayConvertNarrow(globalObject, jsNumber(static_cast<int32_t>(integer)), -128, 127, "signed char"_s, integer))
             return false;
         arrayStore<int8_t>(item, integer);
         return true;
     case ArrayKind::UnsignedChar:
         scope.release();
-        if (!arrayConvertNarrow(globalObject, value, 0, 255, "unsigned byte integer"_s, integer))
+        if (failed(scope, arrayConvertNarrow(globalObject, value, 0, 255, "unsigned byte integer"_s, integer)))
             return false;
         *item = static_cast<uint8_t>(integer);
         return true;
@@ -417,26 +418,26 @@ static bool arrayConvert(JSGlobalObject* globalObject, ArrayKind kind, JSValue v
     }
     case ArrayKind::Short:
         scope.release();
-        if (!arrayConvertNarrow(globalObject, value, std::numeric_limits<short>::min(), std::numeric_limits<short>::max(), shortName, integer))
+        if (failed(scope, arrayConvertNarrow(globalObject, value, std::numeric_limits<short>::min(), std::numeric_limits<short>::max(), shortName, integer)))
             return false;
         arrayStore<short>(item, integer);
         return true;
     case ArrayKind::UnsignedShort:
         scope.release();
-        if (!arrayConvertNarrow(globalObject, value, std::numeric_limits<int>::min(), std::numeric_limits<int>::max(), intName, integer)
+        if (failed(scope, arrayConvertNarrow(globalObject, value, std::numeric_limits<int>::min(), std::numeric_limits<int>::max(), intName, integer))
             || !arrayConvertNarrow(globalObject, jsNumber(static_cast<int32_t>(integer)), 0, std::numeric_limits<unsigned short>::max(), "unsigned short"_s, integer))
             return false;
         arrayStore<unsigned short>(item, integer);
         return true;
     case ArrayKind::Int:
         scope.release();
-        if (!arrayConvertNarrow(globalObject, value, std::numeric_limits<int>::min(), std::numeric_limits<int>::max(), intName, integer))
+        if (failed(scope, arrayConvertNarrow(globalObject, value, std::numeric_limits<int>::min(), std::numeric_limits<int>::max(), intName, integer)))
             return false;
         arrayStore<int>(item, integer);
         return true;
     case ArrayKind::UnsignedInt:
     case ArrayKind::UnsignedLong:
-        if (!arrayConvertUnsigned(globalObject, value, std::numeric_limits<unsigned long>::max(), "can't convert negative value to unsigned int"_s, "Python int too large to convert to C unsigned long"_s, natural))
+        if (failed(scope, arrayConvertUnsigned(globalObject, value, std::numeric_limits<unsigned long>::max(), "can't convert negative value to unsigned int"_s, "Python int too large to convert to C unsigned long"_s, natural)))
             return false;
         if (kind == ArrayKind::UnsignedLong) {
             arrayStore<unsigned long>(item, natural);
@@ -450,7 +451,7 @@ static bool arrayConvert(JSGlobalObject* globalObject, ArrayKind kind, JSValue v
         return true;
     case ArrayKind::Long:
         scope.release();
-        if (!arrayConvertLong(globalObject, value, integer))
+        if (failed(scope, arrayConvertLong(globalObject, value, integer)))
             return false;
         arrayStore<long>(item, integer);
         return true;
@@ -467,7 +468,7 @@ static bool arrayConvert(JSGlobalObject* globalObject, ArrayKind kind, JSValue v
     }
     case ArrayKind::UnsignedLongLong:
         scope.release();
-        if (!arrayConvertUnsigned(globalObject, value, std::numeric_limits<uint64_t>::max(), "can't convert negative int to unsigned"_s, "int too big to convert"_s, natural))
+        if (failed(scope, arrayConvertUnsigned(globalObject, value, std::numeric_limits<uint64_t>::max(), "can't convert negative int to unsigned"_s, "int too big to convert"_s, natural)))
             return false;
         arrayStore<unsigned long long>(item, natural);
         return true;
@@ -501,7 +502,7 @@ static bool arrayConvert(JSGlobalObject* globalObject, ArrayKind kind, JSValue v
         double real;
         double imaginary;
         scope.release();
-        if (!complexArgument(globalObject, value, real, imaginary))
+        if (failed(scope, complexArgument(globalObject, value, real, imaginary)))
             return false;
         if (kind == ArrayKind::ComplexDouble) {
             arrayStore<double>(item, real);
@@ -569,14 +570,16 @@ static ALWAYS_INLINE bool arrayAppendItem(JSGlobalObject* globalObject, PyRecord
 // del array[low:high], for bounds in range.
 static bool arrayDeleteRange(JSGlobalObject* globalObject, PyRecord* array, int64_t low, int64_t high)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     if (high <= low)
         return true;
-    if (!arrayCheckResizable(globalObject, array))
+    if (failed(scope, arrayCheckResizable(globalObject, array)))
         return false;
     int64_t itemSize = arrayItemSize(array);
     uint8_t* data = arrayData(array);
     memmove(data + low * itemSize, data + high * itemSize, (arrayLength(array) - high) * itemSize);
-    return arrayResize(globalObject, array, arrayLength(array) - (high - low));
+    RELEASE_AND_RETURN(scope, arrayResize(globalObject, array, arrayLength(array) - (high - low)));
 }
 
 // array[low:high], for bounds in range: an array, whatever class this one is of.
@@ -794,7 +797,7 @@ static JSValue arrayNew(JSGlobalObject* globalObject, JSValue cls, const CallArg
     PyType* type = PyType::from(cls);
     PyType* exactType = arrayType(globalObject);
     // A class derived from array whose __init__() takes keywords may be given them.
-    if ((type == exactType || type->lookup(Special::Init) == exactType->lookup(Special::Init)) && !rejectKeywords(globalObject, "array.array"_s, args))
+    if ((type == exactType || type->lookup(Special::Init) == exactType->lookup(Special::Init)) && failed(scope, rejectKeywords(globalObject, "array.array"_s, args)))
         return { };
     if (!args.size() || args.size() > 2)
         return raiseTypeError(globalObject, scope, "array() takes at "_s, args.size() ? "most 2 arguments ("_s : "least 1 argument ("_s, args.size(), " given)"_s);
@@ -833,15 +836,19 @@ static JSValue arrayAppend(JSGlobalObject* globalObject, JSValue self, JSValue v
 
 static JSValue arrayInsert(JSGlobalObject* globalObject, JSValue self, JSValue indexValue, JSValue value)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int64_t index;
-    if (!ssizeArgument(globalObject, indexValue, index) || !arrayInsertAt(globalObject, arrayOf(self), index, value))
+    if (failed(scope, ssizeArgument(globalObject, indexValue, index)) || !arrayInsertAt(globalObject, arrayOf(self), index, value))
         return { };
     return jsUndefined();
 }
 
 static JSValue arrayExtend(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
 {
-    if (!arrayCheckArguments(globalObject, "extend"_s, args, 1) || !arrayExtendWith(globalObject, arrayOf(self), args[0]))
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, arrayCheckArguments(globalObject, "extend"_s, args, 1)) || !arrayExtendWith(globalObject, arrayOf(self), args[0]))
         return { };
     return jsUndefined();
 }
@@ -880,7 +887,7 @@ static JSValue arrayCount(JSGlobalObject* globalObject, JSValue self, JSValue va
         RETURN_IF_EXCEPTION(scope, { });
         count += equal;
     }
-    return makeInt(globalObject, count);
+    RELEASE_AND_RETURN(scope, makeInt(globalObject, count));
 }
 
 // The index of the first item from `start` on and before `stop` that equals the value. -1: none. -2: an exception.
@@ -906,9 +913,9 @@ static JSValue arrayIndex(JSGlobalObject* globalObject, JSValue self, JSValue va
     PyRecord* array = arrayOf(self);
     int64_t start = 0;
     int64_t stop = std::numeric_limits<int64_t>::max();
-    if (startValue && !sliceIndexArgument(globalObject, startValue, start))
+    if (startValue && failed(scope, sliceIndexArgument(globalObject, startValue, start)))
         return { };
-    if (stopValue && !sliceIndexArgument(globalObject, stopValue, stop))
+    if (stopValue && failed(scope, sliceIndexArgument(globalObject, stopValue, stop)))
         return { };
     if (start < 0)
         start = std::max<int64_t>(start + arrayLength(array), 0);
@@ -918,7 +925,7 @@ static JSValue arrayIndex(JSGlobalObject* globalObject, JSValue self, JSValue va
     RETURN_IF_EXCEPTION(scope, { });
     if (index < 0)
         return raiseValueError(globalObject, scope, "array.index(x): x not in array"_s);
-    return makeInt(globalObject, index);
+    RELEASE_AND_RETURN(scope, makeInt(globalObject, index));
 }
 
 static JSValue arrayContains(JSGlobalObject* globalObject, JSValue self, JSValue value)
@@ -950,7 +957,7 @@ static JSValue arrayPop(JSGlobalObject* globalObject, JSValue self, JSValue inde
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyRecord* array = arrayOf(self);
     int64_t index = -1;
-    if (indexValue && !ssizeArgument(globalObject, indexValue, index))
+    if (indexValue && failed(scope, ssizeArgument(globalObject, indexValue, index)))
         return { };
     if (!arrayLength(array))
         return raiseIndexError(globalObject, scope, "pop from empty array"_s);
@@ -1061,7 +1068,7 @@ static JSValue arrayFromFile(JSGlobalObject* globalObject, JSValue self, const C
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyRecord* array = arrayOf(self);
     int64_t count;
-    if (!arrayCheckArguments(globalObject, "fromfile"_s, args, 2) || !ssizeArgument(globalObject, args[1], count))
+    if (failed(scope, arrayCheckArguments(globalObject, "fromfile"_s, args, 2)) || failed(scope, ssizeArgument(globalObject, args[1], count)))
         return { };
     JSValue file = args[0];
     if (count < 0)
@@ -1086,7 +1093,7 @@ static JSValue arrayToFile(JSGlobalObject* globalObject, JSValue self, const Cal
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     static constexpr size_t blockSize = 64 * 1024;
-    if (!arrayCheckArguments(globalObject, "tofile"_s, args, 1))
+    if (failed(scope, arrayCheckArguments(globalObject, "tofile"_s, args, 1)))
         return { };
     JSValue file = args[0];
     JSString* write = internString(vm, "write"_s);
@@ -1134,7 +1141,7 @@ static JSValue arrayToUnicode(JSGlobalObject* globalObject, JSValue self)
             return raiseValueError(globalObject, scope, "character U+"_s, hex(character, Lowercase), " is not in range [U+0000; U+10ffff]"_s);
         appendCodePoint(builder, character);
     }
-    return makeStr(globalObject, builder);
+    RELEASE_AND_RETURN(scope, makeStr(globalObject, builder));
 }
 
 static JSValue arraySizeOf(JSGlobalObject* globalObject, JSValue self)
@@ -1236,7 +1243,7 @@ static JSValue arrayCompare(JSGlobalObject* globalObject, JSValue self, JSValue 
     PyRecord* left = arrayOf(self);
     PyRecord* right = arrayTryFrom(globalObject, other);
     if (!right)
-        return runtime(globalObject).notImplemented();
+        RELEASE_AND_RETURN(scope, runtime(globalObject).notImplemented());
     if ((op == CompareOperator::Eq || op == CompareOperator::NotEq) && arrayLength(left) != arrayLength(right))
         return jsBoolean(op == CompareOperator::NotEq);
 
@@ -1448,7 +1455,7 @@ static JSValue arrayAssign(JSGlobalObject* globalObject, JSValue self, JSValue k
     int64_t selected = std::max<int64_t>(indices.length, 0);
     // Where a slice with a step of 1 ends. For array[2:1] = ..., what is inserted goes at the start.
     int64_t stop = start + selected;
-    if ((!needed || selected != needed) && !arrayCheckResizable(globalObject, array))
+    if ((!needed || selected != needed) && failed(scope, arrayCheckResizable(globalObject, array)))
         return { };
 
     if (step == 1) {
@@ -1510,7 +1517,7 @@ static JSValue arrayReduceEx(JSGlobalObject* globalObject, JSValue self, const C
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyRecord* array = arrayOf(self);
-    if (!arrayCheckArguments(globalObject, "__reduce_ex__"_s, args, 1))
+    if (failed(scope, arrayCheckArguments(globalObject, "__reduce_ex__"_s, args, 1)))
         return { };
     JSValue protocolValue = args[0];
     JSValue module = importModule(globalObject, "array"_s);
@@ -1520,7 +1527,7 @@ static JSValue arrayReduceEx(JSGlobalObject* globalObject, JSValue self, const C
     if (!isInt(protocolValue))
         return raiseTypeError(globalObject, scope, "__reduce_ex__ argument should be an integer"_s);
     int64_t protocol;
-    if (!arrayConvertLong(globalObject, protocolValue, protocol))
+    if (failed(scope, arrayConvertLong(globalObject, protocolValue, protocol)))
         return { };
     JSValue dict = getAttrIfPresent(globalObject, self, rt.names.dDict());
     RETURN_IF_EXCEPTION(scope, { });
@@ -1530,12 +1537,12 @@ static JSValue arrayReduceEx(JSGlobalObject* globalObject, JSValue self, const C
     if (protocol < 3) {
         JSValue list = arrayToList(globalObject, self);
         RETURN_IF_EXCEPTION(scope, { });
-        return PyTuple::create(globalObject, { JSValue(array->type()), PyTuple::create(globalObject, { typecode, list }), dict });
+        RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { JSValue(array->type()), PyTuple::create(globalObject, { typecode, list }), dict }));
     }
     JSValue bytes = arrayToBytes(globalObject, self);
     RETURN_IF_EXCEPTION(scope, { });
     JSValue arguments = PyTuple::create(globalObject, { JSValue(array->type()), typecode, jsNumber(arrayDescriptor(array).machineFormat), bytes });
-    return PyTuple::create(globalObject, { reconstructor, arguments, dict });
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { reconstructor, arguments, dict }));
 }
 
 // The size of an item in each machine format, as CPython has them: those of the four Unicode formats are twice what they should be.
@@ -1700,14 +1707,14 @@ static JSValue arrayIteratorReduce(JSGlobalObject* globalObject, JSValue self, c
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyRecord* iterator = PyRecord::from(self);
-    if (!arrayCheckArguments(globalObject, "__reduce__"_s, args, 0))
+    if (failed(scope, arrayCheckArguments(globalObject, "__reduce__"_s, args, 0)))
         return { };
     JSValue iter = builtinNamed(globalObject, "iter"_s);
     RETURN_IF_EXCEPTION(scope, { });
     JSValue array = iterator->get(ArrayIteratorArray);
     if (isNone(array))
-        return PyTuple::create(globalObject, { iter, PyTuple::create(globalObject, { JSValue(rt.emptyTuple()) }) });
-    return PyTuple::create(globalObject, { iter, PyTuple::create(globalObject, { array }), makeInt(globalObject, iterator->number) });
+        RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { iter, PyTuple::create(globalObject, { JSValue(rt.emptyTuple()) }) }));
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { iter, PyTuple::create(globalObject, { array }), makeInt(globalObject, iterator->number) }));
 }
 
 static JSValue arrayIteratorSetState(JSGlobalObject* globalObject, JSValue self, JSValue state)
@@ -1757,18 +1764,18 @@ static constexpr NativeDef arrayMethods[] = {
     PY_METHOD("__copy__", arrayCopy, "($self, /)"),
     PY_METHOD("count", arrayCount, "($self, v, /)"),
     PY_METHOD("__deepcopy__", arrayDeepCopy, "($self, unused, /)"),
-    PY_METHOD("extend", arrayExtend, "($self, /, *args, **kwargs)"),
-    PY_METHOD("fromfile", arrayFromFile, "($self, /, *args, **kwargs)"),
+    PY_METHOD("extend", arrayExtend, "!($self, bb, /)"),
+    PY_METHOD("fromfile", arrayFromFile, "!($self, f, n, /)"),
     PY_METHOD("fromlist", arrayFromList, "($self, list, /)"),
     PY_METHOD("frombytes", arrayFromBytes, "($self, buffer, /)"),
     PY_METHOD("fromunicode", arrayFromUnicode, "($self, ustr, /)"),
     PY_METHOD("index", arrayIndex, "($self, v, start=0, stop=sys.maxsize, /)"),
     PY_METHOD("insert", arrayInsert, "($self, i, v, /)"),
     PY_METHOD("pop", arrayPop, "($self, i=-1, /)"),
-    PY_METHOD("__reduce_ex__", arrayReduceEx, "($self, /, *args, **kwargs)"),
+    PY_METHOD("__reduce_ex__", arrayReduceEx, "!($self, value, /)"),
     PY_METHOD("remove", arrayRemove, "($self, v, /)"),
     PY_METHOD("reverse", arrayReverse, "($self, /)"),
-    PY_METHOD("tofile", arrayToFile, "($self, /, *args, **kwargs)"),
+    PY_METHOD("tofile", arrayToFile, "!($self, f, /)"),
     PY_METHOD("tolist", arrayToList, "($self, /)"),
     PY_METHOD("tobytes", arrayToBytes, "($self, /)"),
     PY_METHOD("tounicode", arrayToUnicode, "($self, /)"),

@@ -222,7 +222,7 @@ int BufferedStream::isClosed()
     if (s.fastClosedChecks)
         return fileIOIsClosed(rawFile());
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!checkInitialized())
+    if (failed(scope, checkInitialized()))
         return -1;
     JSValue closed = getAttr(globalObject, raw(), ioName(globalObject, IOName::closed));
     RETURN_IF_EXCEPTION(scope, -1);
@@ -455,7 +455,7 @@ JSValue BufferedStream::readAll()
         if (isNone(data) || !PyBytes::from(data)->length()) {
             if (!currentSize)
                 return data;
-            return PyBytes::create(globalObject, all.span());
+            RELEASE_AND_RETURN(scope, PyBytes::create(globalObject, all.span()));
         }
         auto* bytes = PyBytes::from(data);
         all.append(bytes->span());
@@ -778,14 +778,16 @@ static JSValue bufferedNew(JSGlobalObject* globalObject, JSValue cls, const Call
 
 static JSValue bufferedInit(JSGlobalObject* globalObject, JSValue self, const CallArgs& args, ASCIILiteral name, bool readable, bool writable)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     static constexpr ASCIILiteral keywords[] = { "raw"_s, "buffer_size"_s };
     JSValue values[std::size(keywords)];
-    if (!unpackKeywordArguments(globalObject, name, keywords, 1, 2, false, args, values))
+    if (failed(scope, unpackKeywordArguments(globalObject, name, keywords, 1, 2, false, args, values)))
         return { };
     int64_t bufferSize = ioDefaultBufferSize;
-    if (values[1] && !ssizeArgument(globalObject, values[1], bufferSize))
+    if (values[1] && failed(scope, ssizeArgument(globalObject, values[1], bufferSize)))
         return { };
-    return BufferedStream(globalObject, self).initialize(values[0], bufferSize, readable, writable) ? jsUndefined() : JSValue();
+    RELEASE_AND_RETURN(scope, BufferedStream(globalObject, self).initialize(values[0], bufferSize, readable, writable) ? jsUndefined() : JSValue());
 }
 
 static JSValue bufferedReaderInit(JSGlobalObject* globalObject, JSValue self, const CallArgs& args) { return bufferedInit(globalObject, self, args, "BufferedReader"_s, true, false); }
@@ -814,19 +816,23 @@ static JSValue bufferedDeallocWarn(JSGlobalObject* globalObject, JSValue self, J
 // raw.method()
 static JSValue bufferedForward(JSGlobalObject* globalObject, JSValue self, JSString* method)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     BufferedStream stream(globalObject, self);
-    if (!stream.checkInitialized())
+    if (failed(scope, stream.checkInitialized()))
         return { };
-    return callMethod(globalObject, stream.raw(), method);
+    RELEASE_AND_RETURN(scope, callMethod(globalObject, stream.raw(), method));
 }
 
 // raw.attribute
 static JSValue bufferedForwardGet(JSGlobalObject* globalObject, JSValue self, JSString* attribute)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     BufferedStream stream(globalObject, self);
-    if (!stream.checkInitialized())
+    if (failed(scope, stream.checkInitialized()))
         return { };
-    return getAttr(globalObject, stream.raw(), attribute);
+    RELEASE_AND_RETURN(scope, getAttr(globalObject, stream.raw(), attribute));
 }
 
 static JSValue bufferedSimpleFlush(JSGlobalObject* globalObject, JSValue self) { return bufferedForward(globalObject, self, runtime(globalObject).names.flush()); }
@@ -850,8 +856,10 @@ static void bufferedSetFinalizing(JSGlobalObject* globalObject, JSValue self, JS
 
 static JSValue bufferedClose(JSGlobalObject* globalObject, JSValue self)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     BufferedStream stream(globalObject, self);
-    if (!stream.checkInitialized())
+    if (failed(scope, stream.checkInitialized()))
         return { };
     BufferedLock lock(stream);
     if (!lock)
@@ -890,13 +898,15 @@ static JSValue bufferedClose(JSGlobalObject* globalObject, JSValue self)
 
 static JSValue bufferedDetach(JSGlobalObject* globalObject, JSValue self)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     BufferedStream stream(globalObject, self);
-    if (!stream.checkInitialized())
+    if (failed(scope, stream.checkInitialized()))
         return { };
     if (!ioFlush(globalObject, self))
         return { };
     // Flushing may have run anything.
-    if (!stream.checkInitialized())
+    if (failed(scope, stream.checkInitialized()))
         return { };
     JSValue raw = stream.raw();
     stream.record->set(stream.vm, BufferedRawField, JSValue());
@@ -909,8 +919,10 @@ static JSValue bufferedDetach(JSGlobalObject* globalObject, JSValue self)
 
 static JSValue bufferedFlush(JSGlobalObject* globalObject, JSValue self)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     BufferedStream stream(globalObject, self);
-    if (!stream.checkInitialized() || !stream.checkClosed("flush of closed file"_s))
+    if (failed(scope, stream.checkInitialized()) || !stream.checkClosed("flush of closed file"_s))
         return { };
     BufferedLock lock(stream);
     if (!lock)
@@ -920,11 +932,13 @@ static JSValue bufferedFlush(JSGlobalObject* globalObject, JSValue self)
 
 static JSValue bufferedPeek(JSGlobalObject* globalObject, JSValue self, JSValue sizeValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int64_t size = 0;
-    if (sizeValue && !ssizeArgument(globalObject, sizeValue, size))
+    if (sizeValue && failed(scope, ssizeArgument(globalObject, sizeValue, size)))
         return { };
     BufferedStream stream(globalObject, self);
-    if (!stream.checkInitialized() || !stream.checkClosed("peek of closed file"_s))
+    if (failed(scope, stream.checkInitialized()) || !stream.checkClosed("peek of closed file"_s))
         return { };
     BufferedLock lock(stream);
     if (!lock)
@@ -939,10 +953,10 @@ static JSValue bufferedRead(JSGlobalObject* globalObject, JSValue self, JSValue 
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     int64_t size = -1;
-    if (!ioToOptionalSize(globalObject, sizeValue, size))
+    if (failed(scope, ioToOptionalSize(globalObject, sizeValue, size)))
         return { };
     BufferedStream stream(globalObject, self);
-    if (!stream.checkInitialized())
+    if (failed(scope, stream.checkInitialized()))
         return { };
     if (size < -1)
         return raiseValueError(globalObject, scope, "read length must be non-negative or -1"_s);
@@ -965,17 +979,17 @@ static JSValue bufferedRead1(JSGlobalObject* globalObject, JSValue self, JSValue
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     int64_t size = -1;
-    if (sizeValue && !ssizeArgument(globalObject, sizeValue, size))
+    if (sizeValue && failed(scope, ssizeArgument(globalObject, sizeValue, size)))
         return { };
     BufferedStream stream(globalObject, self);
-    if (!stream.checkInitialized())
+    if (failed(scope, stream.checkInitialized()))
         return { };
     if (size < 0)
         size = stream.s.bufferSize;
     if (!stream.checkClosed("read of closed file"_s))
         return { };
     if (!size)
-        return runtime(globalObject).emptyBytes();
+        RELEASE_AND_RETURN(scope, runtime(globalObject).emptyBytes());
 
     // What the buffer holds, if it holds anything. Otherwise the raw stream is asked once.
     if (int64_t have = stream.readAhead(); have > 0)
@@ -997,7 +1011,7 @@ static JSValue bufferedRead1(JSGlobalObject* globalObject, JSValue self, JSValue
         count = 0;
     if (count == size)
         return result;
-    return PyBytes::create(globalObject, result->span().first(count));
+    RELEASE_AND_RETURN(scope, PyBytes::create(globalObject, result->span().first(count)));
 }
 
 static JSValue bufferedReadInto(JSGlobalObject* globalObject, JSValue self, JSValue target) { return BufferedStream(globalObject, self).readInto(target, false); }
@@ -1005,24 +1019,28 @@ static JSValue bufferedReadInto1(JSGlobalObject* globalObject, JSValue self, JSV
 
 static JSValue bufferedReadline(JSGlobalObject* globalObject, JSValue self, JSValue sizeValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int64_t size = -1;
-    if (!ioToOptionalSize(globalObject, sizeValue, size))
+    if (failed(scope, ioToOptionalSize(globalObject, sizeValue, size)))
         return { };
     BufferedStream stream(globalObject, self);
-    if (!stream.checkInitialized())
+    if (failed(scope, stream.checkInitialized()))
         return { };
     return stream.readline(size);
 }
 
 static JSValue bufferedTell(JSGlobalObject* globalObject, JSValue self)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     BufferedStream stream(globalObject, self);
-    if (!stream.checkInitialized())
+    if (failed(scope, stream.checkInitialized()))
         return { };
     int64_t position = stream.rawTell();
     if (position == -1)
         return { };
-    return makeInt(globalObject, std::max<int64_t>(position - stream.rawOffset(), 0));
+    RELEASE_AND_RETURN(scope, makeInt(globalObject, std::max<int64_t>(position - stream.rawOffset(), 0)));
 }
 
 static JSValue bufferedSeek(JSGlobalObject* globalObject, JSValue self, JSValue targetValue, JSValue whenceValue)
@@ -1030,11 +1048,11 @@ static JSValue bufferedSeek(JSGlobalObject* globalObject, JSValue self, JSValue 
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     int whence = 0;
-    if (whenceValue && !ioToInt(globalObject, whenceValue, whence))
+    if (whenceValue && failed(scope, ioToInt(globalObject, whenceValue, whence)))
         return { };
     BufferedStream stream(globalObject, self);
     auto& s = stream.s;
-    if (!stream.checkInitialized())
+    if (failed(scope, stream.checkInitialized()))
         return { };
 
     bool isKnownWhence = whence >= 0 && whence <= 2;
@@ -1066,7 +1084,7 @@ static JSValue bufferedSeek(JSGlobalObject* globalObject, JSValue self, JSValue 
             int64_t offset = !whence ? target - (current - stream.rawOffset()) : target;
             if (offset >= -s.position && offset <= available) {
                 s.position += offset;
-                return makeInt(globalObject, std::max<int64_t>(current - available + offset, 0));
+                RELEASE_AND_RETURN(scope, makeInt(globalObject, std::max<int64_t>(current - available + offset, 0)));
             }
         }
     }
@@ -1084,7 +1102,7 @@ static JSValue bufferedSeek(JSGlobalObject* globalObject, JSValue self, JSValue 
     s.rawPosition = -1;
     if (s.readable)
         stream.resetReadBuffer();
-    return makeInt(globalObject, position);
+    RELEASE_AND_RETURN(scope, makeInt(globalObject, position));
 }
 
 static JSValue bufferedTruncate(JSGlobalObject* globalObject, JSValue self, JSValue position)
@@ -1092,7 +1110,7 @@ static JSValue bufferedTruncate(JSGlobalObject* globalObject, JSValue self, JSVa
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     BufferedStream stream(globalObject, self);
-    if (!stream.checkInitialized() || !stream.checkClosed("truncate of closed file"_s))
+    if (failed(scope, stream.checkInitialized()) || !stream.checkClosed("truncate of closed file"_s))
         return { };
     if (!stream.s.writable)
         return ioRaiseUnsupported(globalObject, scope, "truncate"_s);
@@ -1115,7 +1133,7 @@ static JSValue bufferedNext(JSGlobalObject* globalObject, JSValue self)
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     BufferedStream stream(globalObject, self);
-    if (!stream.checkInitialized())
+    if (failed(scope, stream.checkInitialized()))
         return { };
 
     JSValue line;
@@ -1167,7 +1185,7 @@ static JSValue bufferedWrite(JSGlobalObject* globalObject, JSValue self, JSValue
         return { };
     BufferedStream stream(globalObject, self);
     auto& s = stream.s;
-    if (!stream.checkInitialized())
+    if (failed(scope, stream.checkInitialized()))
         return { };
     BufferedLock lock(stream);
     if (!lock)
@@ -1195,7 +1213,7 @@ static JSValue bufferedWrite(JSGlobalObject* globalObject, JSValue self, JSValue
         stream.adjustPosition(s.position + length);
         s.writeEnd = std::max(s.writeEnd, s.position);
         bufferedNotePendingOutput(stream);
-        return makeInt(globalObject, length);
+        RELEASE_AND_RETURN(scope, makeInt(globalObject, length));
     }
 
     bool flushed = stream.flushWrites();
@@ -1226,7 +1244,7 @@ static JSValue bufferedWrite(JSGlobalObject* globalObject, JSValue self, JSValue
             memcpy(buffer + s.writeEnd, source, length);
             s.writeEnd += length;
             s.position += length;
-            return makeInt(globalObject, length);
+            RELEASE_AND_RETURN(scope, makeInt(globalObject, length));
         }
         memcpy(buffer + s.writeEnd, source, available);
         s.writeEnd += available;
@@ -1286,7 +1304,7 @@ static JSValue bufferedWrite(JSGlobalObject* globalObject, JSValue self, JSValue
     s.rawPosition = 0;
     if (remaining > 0)
         bufferedNotePendingOutput(stream);
-    return makeInt(globalObject, written);
+    RELEASE_AND_RETURN(scope, makeInt(globalObject, written));
 }
 
 static constexpr NativeGetSet bufferedGetSets[] = {
@@ -1406,10 +1424,10 @@ static JSValue bufferedRWPairInit(JSGlobalObject* globalObject, JSValue self, co
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!rejectKeywords(globalObject, "BufferedRWPair"_s, args) || !checkPositional(globalObject, "BufferedRWPair"_s, args, 2, 3))
+    if (failed(scope, rejectKeywords(globalObject, "BufferedRWPair"_s, args)) || failed(scope, checkPositional(globalObject, "BufferedRWPair"_s, args, 2, 3)))
         return { };
     int64_t bufferSize = ioDefaultBufferSize;
-    if (args.size() > 2 && !ssizeArgument(globalObject, args[2], bufferSize))
+    if (args.size() > 2 && failed(scope, ssizeArgument(globalObject, args[2], bufferSize)))
         return { };
     if (!ioCheckReadable(globalObject, args[0]) || !ioCheckWritable(globalObject, args[1]))
         return { };

@@ -218,7 +218,7 @@ JSValue complexPower(JSGlobalObject* globalObject, double baseReal, double baseI
         return raiseZeroDivisionError(globalObject, scope, "zero to a negative or complex power"_s);
     if (error == ComplexError::Range)
         return raiseOverflowError(globalObject, scope, "complex exponentiation"_s);
-    return PyComplex::create(globalObject, r.real, r.imaginary);
+    RELEASE_AND_RETURN(scope, PyComplex::create(globalObject, r.real, r.imaginary));
 }
 
 // ---- Methods ----
@@ -316,7 +316,7 @@ static JSValue complexArithmetic(JSGlobalObject* globalObject, BinaryOperator op
     }
     if (error == ComplexError::Domain)
         return raiseZeroDivisionError(globalObject, scope, "division by zero"_s);
-    return PyComplex::create(globalObject, r.real, r.imaginary);
+    RELEASE_AND_RETURN(scope, PyComplex::create(globalObject, r.real, r.imaginary));
 }
 
 template<BinaryOperator op>
@@ -370,13 +370,13 @@ static JSValue complexAbs(JSGlobalObject* globalObject, JSValue self)
     auto scope = DECLARE_THROW_SCOPE(vm);
     Complex value = valueOf(self);
     if (std::isinf(value.real) || std::isinf(value.imaginary))
-        return makeFloat(globalObject, infinity);
+        RELEASE_AND_RETURN(scope, makeFloat(globalObject, infinity));
     if (std::isnan(value.real) || std::isnan(value.imaginary))
-        return makeFloat(globalObject, std::numeric_limits<double>::quiet_NaN());
+        RELEASE_AND_RETURN(scope, makeFloat(globalObject, std::numeric_limits<double>::quiet_NaN()));
     double result = std::hypot(value.real, value.imaginary);
     if (std::isinf(result))
         return raiseOverflowError(globalObject, scope, "absolute value too large"_s);
-    return makeFloat(globalObject, result);
+    RELEASE_AND_RETURN(scope, makeFloat(globalObject, result));
 }
 
 static JSValue complexBool(JSGlobalObject*, JSValue self)
@@ -572,7 +572,7 @@ static JSValue complexNew(JSGlobalObject* globalObject, JSValue cls, const CallA
 
     if (args.size() <= 1 && !args.hasKeywords()) {
         if (!args.size())
-            return makeComplex(globalObject, type, 0.0, 0.0);
+            RELEASE_AND_RETURN(scope, makeComplex(globalObject, type, 0.0, 0.0));
         JSValue argument = args[0];
         if (type == rt.complexType() && PyComplex::is(argument) && PyComplex::from(argument)->type() == type)
             return argument;
@@ -585,7 +585,7 @@ static JSValue complexNew(JSGlobalObject* globalObject, JSValue cls, const CallA
                 return raiseValueError(globalObject, scope, "could not convert string to complex: "_s, reprForMessage(globalObject, argument));
             if (!normalizeNumberText(text, normalized) || !parseComplex(normalized.span(), value))
                 return raiseValueError(globalObject, scope, "complex() arg is a malformed string"_s);
-            return makeComplex(globalObject, type, value.real, value.imaginary);
+            RELEASE_AND_RETURN(scope, makeComplex(globalObject, type, value.real, value.imaginary));
         }
         JSValue converted = tryComplexMethod(globalObject, argument);
         RETURN_IF_EXCEPTION(scope, { });
@@ -593,17 +593,17 @@ static JSValue complexNew(JSGlobalObject* globalObject, JSValue cls, const CallA
             converted = argument;
         if (converted) {
             Complex value = valueOf(converted);
-            return makeComplex(globalObject, type, value.real, value.imaginary);
+            RELEASE_AND_RETURN(scope, makeComplex(globalObject, type, value.real, value.imaginary));
         }
         if (!isRealNumber(globalObject, argument))
             return raiseTypeError(globalObject, scope, "complex() argument must be a string or a number, not "_s, typeName(globalObject, argument));
         double real = toDouble(globalObject, argument);
         RETURN_IF_EXCEPTION(scope, { });
-        return makeComplex(globalObject, type, real, 0.0);
+        RELEASE_AND_RETURN(scope, makeComplex(globalObject, type, real, 0.0));
     }
 
-    if (args.size() > 2)
-        return raiseTypeError(globalObject, scope, "complex() takes at most 2 arguments ("_s, args.totalCount(), " given)"_s);
+    if (args.totalCount() > 2)
+        return raiseTypeError(globalObject, scope, "complex() takes at most 2 "_s, args.size() ? ""_s : "keyword "_s, "arguments ("_s, args.totalCount(), " given)"_s);
     JSValue r = args.get(0);
     JSValue i = args.get(1);
     for (unsigned k = 0; k < args.keywordCount(); ++k) {
@@ -659,7 +659,7 @@ static JSValue complexNew(JSGlobalObject* globalObject, JSValue cls, const CallA
         cr.real -= ci.imaginary;
     if (realIsComplex && i)
         ci.real += cr.imaginary;
-    return makeComplex(globalObject, type, cr.real, ci.real);
+    RELEASE_AND_RETURN(scope, makeComplex(globalObject, type, cr.real, ci.real));
 }
 
 static JSValue complexFromNumber(JSGlobalObject* globalObject, JSValue cls, JSValue number)

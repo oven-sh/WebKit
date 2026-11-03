@@ -78,13 +78,13 @@ static ALWAYS_INLINE int64_t dateTimeSeconds(const Fields& fields)
 // What the local clock shows at the moment `utc`. False: an exception.
 static bool dateTimeLocalSeconds(JSGlobalObject* globalObject, int64_t utc, int64_t& result)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     struct tm tm;
-    if (!toLocalTime(globalObject, utc - epochSeconds, tm))
+    if (failed(scope, toLocalTime(globalObject, utc - epochSeconds, tm)))
         return false;
     int64_t year = static_cast<int64_t>(tm.tm_year) + 1900;
     if (year < minYear || year > maxYear) {
-        VM& vm = getVM(globalObject);
-        auto scope = DECLARE_THROW_SCOPE(vm);
         raiseValueError(globalObject, scope, "year must be in "_s, minYear, ".."_s, maxYear, ", not "_s, year);
         return false;
     }
@@ -95,20 +95,22 @@ static bool dateTimeLocalSeconds(JSGlobalObject* globalObject, int64_t utc, int6
 // The moment at which the local clock shows that, the first or the second of two according to the fold (PEP 495).
 static bool dateTimeLocalToUtc(JSGlobalObject* globalObject, const Fields& fields, int fold, int64_t& result)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int64_t wanted = dateTimeSeconds(fields);
     int64_t shown;
-    if (!dateTimeLocalSeconds(globalObject, wanted, shown))
+    if (failed(scope, dateTimeLocalSeconds(globalObject, wanted, shown)))
         return false;
     int64_t firstOffset = shown - wanted;
     int64_t first = wanted - firstOffset;
     int64_t shownAtFirst;
-    if (!dateTimeLocalSeconds(globalObject, first, shownAtFirst))
+    if (failed(scope, dateTimeLocalSeconds(globalObject, first, shownAtFirst)))
         return false;
     int64_t secondOffset;
     if (shownAtFirst == wanted) {
         // A solution. There may be another, earlier or later, and it may be the one asked for.
         int64_t probe = first + (fold ? maxFoldSeconds : -maxFoldSeconds);
-        if (!dateTimeLocalSeconds(globalObject, probe, shown))
+        if (failed(scope, dateTimeLocalSeconds(globalObject, probe, shown)))
             return false;
         secondOffset = shown - probe;
         if (secondOffset == firstOffset) {
@@ -119,7 +121,7 @@ static bool dateTimeLocalToUtc(JSGlobalObject* globalObject, const Fields& field
         secondOffset = shownAtFirst - first;
     int64_t second = wanted - secondOffset;
     int64_t shownAtSecond;
-    if (!dateTimeLocalSeconds(globalObject, second, shownAtSecond))
+    if (failed(scope, dateTimeLocalSeconds(globalObject, second, shownAtSecond)))
         return false;
     if (shownAtSecond == wanted)
         result = second;
@@ -132,31 +134,30 @@ static bool dateTimeLocalToUtc(JSGlobalObject* globalObject, const Fields& field
 
 static JSValue dateTimeFromSeconds(JSGlobalObject* globalObject, State& state, PyType* cls, bool isLocal, time_t when, int microsecond, JSValue tzinfo)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     struct tm tm;
     if (!(isLocal ? toLocalTime(globalObject, when, tm) : toUniversalTime(globalObject, when, tm)))
         return { };
     int64_t year = static_cast<int64_t>(tm.tm_year) + 1900;
-    if (year < minYear || year > maxYear) {
-        VM& vm = getVM(globalObject);
-        auto scope = DECLARE_THROW_SCOPE(vm);
+    if (year < minYear || year > maxYear)
         return raiseValueError(globalObject, scope, "year must be in "_s, minYear, ".."_s, maxYear, ", not "_s, year);
-    }
     // A leap second is not told from the second before it.
     Fields fields { static_cast<int>(year), tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, std::min(59, tm.tm_sec), microsecond, 0 };
     if (isLocal && isNone(tzinfo)) {
         // Has the clock shown this before?
         int64_t shown = dateTimeSeconds(fields);
         int64_t probe;
-        if (!dateTimeLocalSeconds(globalObject, epochSeconds + when - maxFoldSeconds, probe))
+        if (failed(scope, dateTimeLocalSeconds(globalObject, epochSeconds + when - maxFoldSeconds, probe)))
             return { };
         int64_t transition = shown - probe - maxFoldSeconds;
         if (transition < 0) {
-            if (!dateTimeLocalSeconds(globalObject, epochSeconds + when + transition, probe))
+            if (failed(scope, dateTimeLocalSeconds(globalObject, epochSeconds + when + transition, probe)))
                 return { };
             fields.fold = probe == shown;
         }
     }
-    return makeDateTime(globalObject, state, cls, fields, tzinfo);
+    RELEASE_AND_RETURN(scope, makeDateTime(globalObject, state, cls, fields, tzinfo));
 }
 
 // A timestamp, its microseconds rounded half to even. False: an exception.
@@ -220,7 +221,7 @@ static JSValue dateTimeNow(JSGlobalObject* globalObject, JSValue cls, JSValue tz
     State& state = stateOf(globalObject, type);
     if (!tz)
         tz = none();
-    if (!checkTzInfo(globalObject, state, tz))
+    if (failed(scope, checkTzInfo(globalObject, state, tz)))
         return { };
     JSValue result = dateTimeCurrent(globalObject, state, type, isNone(tz), tz);
     RETURN_IF_EXCEPTION(scope, { });
@@ -247,7 +248,7 @@ static JSValue dateTimeFromTimestamp(JSGlobalObject* globalObject, JSValue cls, 
         tz = none();
     time_t seconds;
     int microseconds;
-    if (!checkTzInfo(globalObject, state, tz) || !dateTimeTimestampArgument(globalObject, timestamp, seconds, microseconds))
+    if (failed(scope, checkTzInfo(globalObject, state, tz)) || failed(scope, dateTimeTimestampArgument(globalObject, timestamp, seconds, microseconds)))
         return { };
     JSValue result = dateTimeFromSeconds(globalObject, state, type, isNone(tz), seconds, microseconds, tz);
     RETURN_IF_EXCEPTION(scope, { });
@@ -258,14 +259,16 @@ static JSValue dateTimeFromTimestamp(JSGlobalObject* globalObject, JSValue cls, 
 
 static JSValue dateTimeUtcFromTimestamp(JSGlobalObject* globalObject, JSValue cls, JSValue timestamp)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PyType* type = PyType::from(cls);
     if (!warn(globalObject, runtime(globalObject).DeprecationWarning(), "datetime.datetime.utcfromtimestamp() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.fromtimestamp(timestamp, datetime.UTC)."_s))
         return { };
     time_t seconds;
     int microseconds;
-    if (!dateTimeTimestampArgument(globalObject, timestamp, seconds, microseconds))
+    if (failed(scope, dateTimeTimestampArgument(globalObject, timestamp, seconds, microseconds)))
         return { };
-    return dateTimeFromSeconds(globalObject, stateOf(globalObject, type), type, false, seconds, microseconds, none());
+    RELEASE_AND_RETURN(scope, dateTimeFromSeconds(globalObject, stateOf(globalObject, type), type, false, seconds, microseconds, none()));
 }
 
 static JSValue dateTimeStrptime(JSGlobalObject* globalObject, JSValue cls, JSValue string, JSValue format)
@@ -597,7 +600,7 @@ static JSValue dateTimeIsoFormat(JSGlobalObject* globalObject, JSValue self, JSV
     }
     if (separator < 0x80) [[likely]]
         return makeStr(vm, date.toString());
-    return makeStr(globalObject, makeString(date.span(), stringFromCodePoint(separator), time.span()));
+    RELEASE_AND_RETURN(scope, makeStr(globalObject, makeString(date.span(), stringFromCodePoint(separator), time.span())));
 }
 
 static JSValue dateTimeCTime(JSGlobalObject* globalObject, JSValue self) { return formatCTime(globalObject, PyDateTime::from(self)->packed()); }
@@ -628,7 +631,7 @@ static JSValue dateTimeLocalZoneAt(JSGlobalObject* globalObject, State& state, t
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     struct tm tm;
-    if (!toLocalTime(globalObject, when, tm))
+    if (failed(scope, toLocalTime(globalObject, when, tm)))
         return { };
     JSValue offset = newDelta(globalObject, state, 0, tm.tm_gmtoff, 0);
     RETURN_IF_EXCEPTION(scope, { });
@@ -638,15 +641,17 @@ static JSValue dateTimeLocalZoneAt(JSGlobalObject* globalObject, State& state, t
 
 static JSValue dateTimeLocalZoneOf(JSGlobalObject* globalObject, State& state, PyDateTime* local)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     Fields fields = local->fields();
     int64_t seconds;
     int64_t otherSeconds;
-    if (!dateTimeLocalToUtc(globalObject, fields, fields.fold, seconds) || !dateTimeLocalToUtc(globalObject, fields, !fields.fold, otherSeconds))
+    if (failed(scope, dateTimeLocalToUtc(globalObject, fields, fields.fold, seconds)) || failed(scope, dateTimeLocalToUtc(globalObject, fields, !fields.fold, otherSeconds)))
         return { };
     // In a gap, the offset is the one from the other side of it.
     if (otherSeconds != seconds && (otherSeconds > seconds) == fields.fold)
         seconds = otherSeconds;
-    return dateTimeLocalZoneAt(globalObject, state, seconds - epochSeconds);
+    RELEASE_AND_RETURN(scope, dateTimeLocalZoneAt(globalObject, state, seconds - epochSeconds));
 }
 
 static JSValue dateTimeAsTimeZone(JSGlobalObject* globalObject, JSValue self, JSValue tz)
@@ -657,7 +662,7 @@ static JSValue dateTimeAsTimeZone(JSGlobalObject* globalObject, JSValue self, JS
     State& state = stateOf(globalObject, dateTime);
     if (!tz)
         tz = none();
-    if (!checkTzInfo(globalObject, state, tz))
+    if (failed(scope, checkTzInfo(globalObject, state, tz)))
         return { };
 
     // One that is naive, or whose zone does not know, is in the zone of the system.
@@ -731,9 +736,9 @@ static JSValue dateTimeTimestamp(JSGlobalObject* globalObject, JSValue self)
     auto* dateTime = PyDateTime::from(self);
     if (dateTime->isNaive()) {
         int64_t seconds;
-        if (!dateTimeLocalToUtc(globalObject, dateTime->fields(), dateTime->fold(), seconds))
+        if (failed(scope, dateTimeLocalToUtc(globalObject, dateTime->fields(), dateTime->fold(), seconds)))
             return { };
-        return makeFloat(globalObject, static_cast<double>(seconds - epochSeconds) + dateTime->microsecond() / 1e6);
+        RELEASE_AND_RETURN(scope, makeFloat(globalObject, static_cast<double>(seconds - epochSeconds) + dateTime->microsecond() / 1e6));
     }
     State& state = stateOf(globalObject, dateTime);
     JSValue sinceEpoch = subtractDateTimes(globalObject, state, dateTime, state.epoch.get());

@@ -586,22 +586,22 @@ JSValue floatBinaryOperation(JSGlobalObject* globalObject, BinaryOperator op, do
     auto scope = DECLARE_THROW_SCOPE(vm);
     switch (op) {
     case BinaryOperator::Add:
-        return makeFloat(globalObject, a + b);
+        RELEASE_AND_RETURN(scope, makeFloat(globalObject, a + b));
     case BinaryOperator::Sub:
-        return makeFloat(globalObject, a - b);
+        RELEASE_AND_RETURN(scope, makeFloat(globalObject, a - b));
     case BinaryOperator::Mult:
-        return makeFloat(globalObject, a * b);
+        RELEASE_AND_RETURN(scope, makeFloat(globalObject, a * b));
     case BinaryOperator::Div:
         if (!b)
             return raiseZeroDivisionError(globalObject, scope, "division by zero"_s);
-        return makeFloat(globalObject, a / b);
+        RELEASE_AND_RETURN(scope, makeFloat(globalObject, a / b));
     case BinaryOperator::Mod:
     case BinaryOperator::FloorDiv: {
         if (!b)
             return raiseZeroDivisionError(globalObject, scope, "division by zero"_s);
         double quotient, remainder;
         floatDivMod(a, b, quotient, remainder);
-        return makeFloat(globalObject, op == BinaryOperator::Mod ? remainder : quotient);
+        RELEASE_AND_RETURN(scope, makeFloat(globalObject, op == BinaryOperator::Mod ? remainder : quotient));
     }
     case BinaryOperator::Pow:
         RELEASE_AND_RETURN(scope, floatPower(globalObject, a, b));
@@ -741,7 +741,7 @@ static JSValue floatDivModOf(JSGlobalObject* globalObject, double a, double b)
         return raiseZeroDivisionError(globalObject, scope, "division by zero"_s);
     double quotient, remainder;
     floatDivMod(a, b, quotient, remainder);
-    return PyTuple::create(globalObject, { makeFloat(globalObject, quotient), makeFloat(globalObject, remainder) });
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { makeFloat(globalObject, quotient), makeFloat(globalObject, remainder) }));
 }
 
 static JSValue floatDivModMethod(JSGlobalObject* globalObject, JSValue self, JSValue other)
@@ -868,12 +868,12 @@ static JSValue floatRoundMethod(JSGlobalObject* globalObject, JSValue self, JSVa
     int64_t count = toSsize(globalObject, digitsValue, nullptr);
     RETURN_IF_EXCEPTION(scope, { });
     if (!std::isfinite(value))
-        return makeFloat(globalObject, value);
+        RELEASE_AND_RETURN(scope, makeFloat(globalObject, value));
     // Beyond these, there is nothing to round off, or nothing left.
     if (count > 323)
-        return makeFloat(globalObject, value);
+        RELEASE_AND_RETURN(scope, makeFloat(globalObject, value));
     if (count < -308)
-        return makeFloat(globalObject, 0.0 * value);
+        RELEASE_AND_RETURN(scope, makeFloat(globalObject, 0.0 * value));
 
     Digits digits;
     digitsOf(std::abs(value), DigitsMode::Fixed, static_cast<int>(count), digits);
@@ -887,7 +887,7 @@ static JSValue floatRoundMethod(JSGlobalObject* globalObject, JSValue self, JSVa
     double rounded = *parseDouble(text.span());
     if (std::isinf(rounded))
         return raiseOverflowError(globalObject, scope, "rounded value too large to represent"_s);
-    return makeFloat(globalObject, std::signbit(value) ? -rounded : rounded);
+    RELEASE_AND_RETURN(scope, makeFloat(globalObject, std::signbit(value) ? -rounded : rounded));
 }
 
 static JSValue floatAsIntegerRatio(JSGlobalObject* globalObject, JSValue self)
@@ -913,7 +913,7 @@ static JSValue floatAsIntegerRatio(JSGlobalObject* globalObject, JSValue self)
     else
         denominator = intLeftShift(globalObject, denominator, jsNumber(-exponent));
     RETURN_IF_EXCEPTION(scope, { });
-    return PyTuple::create(globalObject, { numerator, denominator });
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { numerator, denominator }));
 }
 
 static JSValue floatHex(JSGlobalObject* globalObject, JSValue self)
@@ -1115,9 +1115,9 @@ static JSValue floatNew(JSGlobalObject* globalObject, JSValue cls, const CallArg
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyType* type = PyType::from(cls);
-    if (!rejectKeywordsInNew(globalObject, "float"_s, type, rt.floatType(), args))
+    if (failed(scope, rejectKeywordsInNew(globalObject, "float"_s, type, rt.floatType(), args)))
         return { };
-    if (!checkPositional(globalObject, "float"_s, args, 0, 1))
+    if (failed(scope, checkPositional(globalObject, "float"_s, args, 0, 1)))
         return { };
 
     double value = 0.0;
@@ -1154,7 +1154,7 @@ static JSValue floatNew(JSGlobalObject* globalObject, JSValue cls, const CallArg
         }
     }
     if (type == rt.floatType())
-        return makeFloat(globalObject, value);
+        RELEASE_AND_RETURN(scope, makeFloat(globalObject, value));
     return PyFloat::create(vm, rt.structure<PyFloat>(), type, value);
 }
 

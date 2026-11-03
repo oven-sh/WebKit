@@ -173,8 +173,10 @@ static bool posixToUnsignedOfType(JSGlobalObject* globalObject, JSValue value, A
 
 bool posixToUnsigned(JSGlobalObject* globalObject, JSValue value, unsigned& result)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     uint64_t number;
-    if (!posixToUnsignedOfType(globalObject, value, "unsigned int"_s, std::numeric_limits<unsigned>::max(), number))
+    if (failed(scope, posixToUnsignedOfType(globalObject, value, "unsigned int"_s, std::numeric_limits<unsigned>::max(), number)))
         return false;
     result = static_cast<unsigned>(number);
     return true;
@@ -204,17 +206,17 @@ bool posixToUnsignedMask(JSGlobalObject* globalObject, JSValue value, unsigned& 
         result = static_cast<unsigned>(tryInt64(low).value_or(0));
     }
     if (!converted || *converted < std::numeric_limits<int>::min() || *converted > std::numeric_limits<unsigned>::max())
-        return warn(globalObject, runtime(globalObject).DeprecationWarning(), "integer value out of range"_s);
+        RELEASE_AND_RETURN(scope, warn(globalObject, runtime(globalObject).DeprecationWarning(), "integer value out of range"_s));
     return true;
 }
 
 bool posixToCount(JSGlobalObject* globalObject, JSValue value, ASCIILiteral name, int64_t& result)
 {
-    if (!posixToSsize(globalObject, value, result))
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, posixToSsize(globalObject, value, result)))
         return false;
     if (result < 0) {
-        VM& vm = getVM(globalObject);
-        auto scope = DECLARE_THROW_SCOPE(vm);
         raiseValueError(globalObject, scope, name, " cannot be negative"_s);
         return false;
     }
@@ -249,8 +251,10 @@ static bool posixToId(JSGlobalObject* globalObject, JSValue value, ASCIILiteral 
 
 bool posixToUid(JSGlobalObject* globalObject, JSValue value, uid_t& result)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     uint32_t id;
-    if (!posixToId(globalObject, value, "uid"_s, id))
+    if (failed(scope, posixToId(globalObject, value, "uid"_s, id)))
         return false;
     result = id;
     return true;
@@ -258,8 +262,10 @@ bool posixToUid(JSGlobalObject* globalObject, JSValue value, uid_t& result)
 
 bool posixToGid(JSGlobalObject* globalObject, JSValue value, gid_t& result)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     uint32_t id;
-    if (!posixToId(globalObject, value, "gid"_s, id))
+    if (failed(scope, posixToId(globalObject, value, "gid"_s, id)))
         return false;
     result = id;
     return true;
@@ -307,7 +313,7 @@ bool posixToFileDescriptor(JSGlobalObject* globalObject, JSValue value, int& res
     if (isInt(value)) {
         if (!posixWarnOfBoolDescriptor(globalObject, value))
             return false;
-        if (!posixToInt(globalObject, value, fd))
+        if (failed(scope, posixToInt(globalObject, value, fd)))
             return false;
     } else {
         JSValue method = getAttrIfPresent(globalObject, value, internString(vm, "fileno"_s));
@@ -322,7 +328,7 @@ bool posixToFileDescriptor(JSGlobalObject* globalObject, JSValue value, int& res
             raiseTypeError(globalObject, scope, typeNameForMessage(globalObject, typeOf(globalObject, value)), ".fileno() must return an int, not "_s, typeNameForMessage(globalObject, typeOf(globalObject, number)));
             return false;
         }
-        if (!posixToInt(globalObject, number, fd))
+        if (failed(scope, posixToInt(globalObject, number, fd)))
             return false;
     }
     if (fd < 0) {
@@ -412,7 +418,7 @@ bool posixToFSBytes(JSGlobalObject* globalObject, JSValue value, PosixBytes& res
     RETURN_IF_EXCEPTION(scope, false);
     if (auto* bytes = PyBytes::tryFrom(path))
         result.assign(byteCast<char>(bytes->span()));
-    else if (!posixEncodeStr(globalObject, strValue(path), result))
+    else if (failed(scope, posixEncodeStr(globalObject, strValue(path), result)))
         return false;
     if (result.contains('\0')) {
         raiseValueError(globalObject, scope, "embedded null byte"_s);
@@ -486,7 +492,7 @@ bool PosixPath::convert(JSGlobalObject* globalObject, JSValue value)
     }
 
     if (isText) {
-        if (!posixEncodeStr(globalObject, strValue(value), m_narrow))
+        if (failed(scope, posixEncodeStr(globalObject, strValue(value), m_narrow)))
             return false;
     } else
         m_narrow.assign(byteCast<char>(PyBytes::from(value)->span()));
@@ -822,34 +828,38 @@ static bool posixTextOf(JSGlobalObject* globalObject, const PosixPath& path, Str
 
 static JSValue posixPathNormpath(JSGlobalObject* globalObject, JSValue pathValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PosixPath path("_path_normpath"_s, PosixPath::Nonstrict | PosixPath::AllowVirtual);
     if (!path.convert(globalObject, pathValue))
         return { };
     if (path.isBytes())
-        return PyBytes::create(globalObject, posixNormalizedPath(path.span()).span());
+        RELEASE_AND_RETURN(scope, PyBytes::create(globalObject, posixNormalizedPath(path.span()).span()));
     String text;
-    if (!posixTextOf(globalObject, path, text))
+    if (failed(scope, posixTextOf(globalObject, path, text)))
         return { };
     if (text.is8Bit())
-        return makeStr(globalObject, String(posixNormalizedPath(text.span8()).span()));
-    return makeStr(globalObject, String(posixNormalizedPath(text.span16()).span()));
+        RELEASE_AND_RETURN(scope, makeStr(globalObject, String(posixNormalizedPath(text.span8()).span())));
+    RELEASE_AND_RETURN(scope, makeStr(globalObject, String(posixNormalizedPath(text.span16()).span())));
 }
 
 static JSValue posixPathSplitrootEx(JSGlobalObject* globalObject, JSValue pathValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PosixPath path("_path_splitroot_ex"_s, PosixPath::Nonstrict | PosixPath::AllowVirtual);
     if (!path.convert(globalObject, pathValue))
         return { };
     if (path.isBytes()) {
         auto span = path.span();
         size_t root = posixRootLength(span);
-        return PyTuple::create(globalObject, { runtime(globalObject).emptyBytes(), PyBytes::create(globalObject, span.first(root)), PyBytes::create(globalObject, span.subspan(root)) });
+        RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { runtime(globalObject).emptyBytes(), PyBytes::create(globalObject, span.first(root)), PyBytes::create(globalObject, span.subspan(root)) }));
     }
     String text;
-    if (!posixTextOf(globalObject, path, text))
+    if (failed(scope, posixTextOf(globalObject, path, text)))
         return { };
     unsigned root = static_cast<unsigned>(text.is8Bit() ? posixRootLength(text.span8()) : posixRootLength(text.span16()));
-    return PyTuple::create(globalObject, { makeStr(globalObject, emptyString()), makeStr(globalObject, text.left(root)), makeStr(globalObject, text.substring(root)) });
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { makeStr(globalObject, emptyString()), makeStr(globalObject, text.left(root)), makeStr(globalObject, text.substring(root)) }));
 }
 
 // ---- What the system says of itself ----
@@ -888,15 +898,17 @@ static constexpr StructSeqDef posixTerminalSizeDef { "os.terminal_size"_s, posix
 
 static JSValue posixGetTerminalSize(JSGlobalObject* globalObject, JSValue fdValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int fd = STDOUT_FILENO;
-    if (fdValue && !posixToInt(globalObject, fdValue, fd))
+    if (fdValue && failed(scope, posixToInt(globalObject, fdValue, fd)))
         return { };
     if (!isatty(fd))
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     struct winsize size;
     if (ioctl(fd, TIOCGWINSZ, &size))
-        return posixError(globalObject);
-    return makeStructSeq(globalObject, cachedStructSeqType(globalObject, posixTerminalSizeDef), { jsNumber(size.ws_col), jsNumber(size.ws_row) });
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
+    RELEASE_AND_RETURN(scope, makeStructSeq(globalObject, cachedStructSeqType(globalObject, posixTerminalSizeDef), { jsNumber(size.ws_col), jsNumber(size.ws_row) }));
 }
 
 // The name of a limit, for sysconf() and its like: an int, or a key of the table of that name.
@@ -918,71 +930,79 @@ static bool posixToConfigurationName(JSGlobalObject* globalObject, JSValue value
         raiseTypeError(globalObject, scope, "configuration names must be strings or integers"_s);
         return false;
     }
-    return posixToInt(globalObject, value, result);
+    RELEASE_AND_RETURN(scope, posixToInt(globalObject, value, result));
 }
 
 static JSValue posixSysconf(JSGlobalObject* globalObject, JSValue nameValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int name;
-    if (!posixToConfigurationName(globalObject, nameValue, "sysconf_names"_s, name))
+    if (failed(scope, posixToConfigurationName(globalObject, nameValue, "sysconf_names"_s, name)))
         return { };
     errno = 0;
     long value = sysconf(name);
     if (value == -1 && errno)
-        return posixError(globalObject);
-    return posixMakeInt(globalObject, value);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
+    RELEASE_AND_RETURN(scope, posixMakeInt(globalObject, value));
 }
 
 #if !OS(ANDROID)
 static JSValue posixConfstr(JSGlobalObject* globalObject, JSValue nameValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int name;
-    if (!posixToConfigurationName(globalObject, nameValue, "confstr_names"_s, name))
+    if (failed(scope, posixToConfigurationName(globalObject, nameValue, "confstr_names"_s, name)))
         return { };
     Vector<char, 256> buffer(256);
     errno = 0;
     size_t length = confstr(name, buffer.mutableSpan().data(), buffer.size());
     if (!length) {
         if (errno)
-            return posixError(globalObject);
+            RELEASE_AND_RETURN(scope, posixError(globalObject));
         return jsUndefined();
     }
     if (length > buffer.size()) {
         buffer.grow(length);
         length = confstr(name, buffer.mutableSpan().data(), buffer.size());
     }
-    return posixDecode(globalObject, buffer.span().first(length - 1));
+    RELEASE_AND_RETURN(scope, posixDecode(globalObject, buffer.span().first(length - 1)));
 }
 #endif
 
 static JSValue posixFpathconf(JSGlobalObject* globalObject, JSValue fdValue, JSValue nameValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int fd;
     int name;
-    if (!posixToFileDescriptor(globalObject, fdValue, fd) || !posixToConfigurationName(globalObject, nameValue, "pathconf_names"_s, name))
+    if (!posixToFileDescriptor(globalObject, fdValue, fd) || failed(scope, posixToConfigurationName(globalObject, nameValue, "pathconf_names"_s, name)))
         return { };
     errno = 0;
     long limit = fpathconf(fd, name);
     if (limit == -1 && errno)
-        return posixError(globalObject);
-    return posixMakeInt(globalObject, limit);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
+    RELEASE_AND_RETURN(scope, posixMakeInt(globalObject, limit));
 }
 
 static JSValue posixPathconf(JSGlobalObject* globalObject, JSValue pathValue, JSValue nameValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PosixPath path("pathconf"_s, PosixPath::AllowFd | PosixPath::VirtualUnsupported);
     int name;
-    if (!path.convert(globalObject, pathValue) || !posixToConfigurationName(globalObject, nameValue, "pathconf_names"_s, name))
+    if (!path.convert(globalObject, pathValue) || failed(scope, posixToConfigurationName(globalObject, nameValue, "pathconf_names"_s, name)))
         return { };
     errno = 0;
     long limit = path.isFd() ? fpathconf(path.fd(), name) : pathconf(path.narrow(), name);
     if (limit == -1 && errno) {
         // EINVAL may be about the name as well as about the path.
         if (errno == EINVAL)
-            return posixError(globalObject);
-        return path.error(globalObject);
+            RELEASE_AND_RETURN(scope, posixError(globalObject));
+        RELEASE_AND_RETURN(scope, path.error(globalObject));
     }
-    return posixMakeInt(globalObject, limit);
+    RELEASE_AND_RETURN(scope, posixMakeInt(globalObject, limit));
 }
 
 #if !OS(ANDROID)
@@ -1010,20 +1030,24 @@ static JSValue posixCpuCount(JSGlobalObject*)
 
 static JSValue posixStrerror(JSGlobalObject* globalObject, JSValue codeValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int code;
-    if (!posixToInt(globalObject, codeValue, code))
+    if (failed(scope, posixToInt(globalObject, codeValue, code)))
         return { };
-    return posixDecode(globalObject, strerror(code));
+    RELEASE_AND_RETURN(scope, posixDecode(globalObject, strerror(code)));
 }
 
 static JSValue posixDeviceEncoding(JSGlobalObject* globalObject, JSValue fdValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int fd;
-    if (!posixToInt(globalObject, fdValue, fd))
+    if (failed(scope, posixToInt(globalObject, fdValue, fd)))
         return { };
     if (!isatty(fd))
         return jsUndefined();
-    return makeStr(getVM(globalObject), "utf-8"_s);
+    RELEASE_AND_RETURN(scope, makeStr(getVM(globalObject), "utf-8"_s));
 }
 
 // ---- Random bytes ----
@@ -1044,8 +1068,10 @@ static PyBytes* posixNewBytes(JSGlobalObject* globalObject, int64_t size)
 
 static JSValue posixUrandom(JSGlobalObject* globalObject, JSValue sizeValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int64_t size;
-    if (!posixToCount(globalObject, sizeValue, "size"_s, size))
+    if (failed(scope, posixToCount(globalObject, sizeValue, "size"_s, size)))
         return { };
     PyBytes* bytes = posixNewBytes(globalObject, size);
     if (!bytes)
@@ -1057,18 +1083,17 @@ static JSValue posixUrandom(JSGlobalObject* globalObject, JSValue sizeValue)
 #if OS(LINUX)
 static JSValue posixGetrandom(JSGlobalObject* globalObject, JSValue sizeValue, JSValue flagsValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int64_t size;
     int flags = 0;
-    if (!posixToSsize(globalObject, sizeValue, size) || (flagsValue && !posixToInt(globalObject, flagsValue, flags)))
+    if (failed(scope, posixToSsize(globalObject, sizeValue, size)) || (flagsValue && failed(scope, posixToInt(globalObject, flagsValue, flags))))
         return { };
     if (size < 0)
-        return posixError(globalObject, EINVAL);
+        RELEASE_AND_RETURN(scope, posixError(globalObject, EINVAL));
     Vector<uint8_t> buffer;
-    if (!buffer.tryGrow(static_cast<size_t>(size))) {
-        VM& vm = getVM(globalObject);
-        auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!buffer.tryGrow(static_cast<size_t>(size)))
         return raise(globalObject, scope, runtime(globalObject).MemoryError(), String());
-    }
     ssize_t count;
     do {
         // Not getrandom(), which is newer than the oldest C library this may run with.
@@ -1076,8 +1101,8 @@ static JSValue posixGetrandom(JSGlobalObject* globalObject, JSValue sizeValue, J
         count = static_cast<ssize_t>(syscall(SYS_getrandom, buffer.mutableSpan().data(), buffer.size(), static_cast<unsigned>(flags)));
     } while (count < 0 && errno == EINTR && checkSignals(globalObject));
     if (count < 0)
-        return posixError(globalObject);
-    return PyBytes::create(globalObject, buffer.span().first(static_cast<size_t>(count)));
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
+    RELEASE_AND_RETURN(scope, PyBytes::create(globalObject, buffer.span().first(static_cast<size_t>(count))));
 }
 #endif
 
