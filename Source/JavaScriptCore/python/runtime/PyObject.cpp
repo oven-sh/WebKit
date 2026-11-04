@@ -220,7 +220,15 @@ void PyInstance::forEachAttribute(JSGlobalObject* globalObject, const ScopedLamb
     for (auto& property : properties)
         values.append(getDirect(property.second));
     for (unsigned i = 0; i < properties.size(); ++i) {
-        if (!function(internString(vm, String(properties[i].first.get())), values.at(i)))
+        // One cell for a name, however many objects have an attribute of that name.
+        JSString* name;
+        {
+            DeferGC deferGC(vm);
+            name = vm.atomStringToJSStringMap.ensureValue(properties[i].first.get(), [&] {
+                return jsString(vm, String(properties[i].first.get()));
+            });
+        }
+        if (!function(name, values.at(i)))
             return;
     }
 }
@@ -229,20 +237,46 @@ PyDict* PyInstance::ensureDict(JSGlobalObject* globalObject)
 {
     if (PyDict* dict = m_dict.get())
         return dict;
-    VM& vm = getVM(globalObject);
-    PyDict* dict = PyDict::create(globalObject);
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    Structure* before = structure();
+    unsigned otherProperties = 0;
+    unsigned attributeCount = 0;
+    before->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
+        ++(entry.key()->isSymbol() ? otherProperties : attributeCount);
+        return true;
+    });
+    PyDict* dict = PyDict::createWithCapacity(globalObject, attributeCount);
     Vector<RefPtr<UniquedStringImpl>, 8> keys;
     forEachAttribute(globalObject, [&](JSString* name, JSValue value) {
         dict->set(vm, name, value);
         keys.append(static_cast<UniquedStringImpl*>(name->tryGetValueImpl()));
         return true;
     });
-    for (auto& key : keys) {
-        DeletePropertySlot slot;
-        JSObject::deleteProperty(this, globalObject, PropertyName(key.get()), slot);
+    ASSERT(structure() == before);
+    // No instruction that has seen an object without some attribute, by its Structure, takes this one for such: the Structure has a
+    // property that says so.
+    constexpr unsigned attributes = static_cast<unsigned>(PropertyAttribute::DontEnum);
+    PropertyOffset offset;
+    Structure* after = Structure::addPropertyTransition(vm, type()->instanceStructure(vm), rt.instanceHasDictKey(), attributes, offset);
+    if (otherProperties == numberOfFields && !before->isDictionary() && !before->hasIndexingHeader(this) && before->inlineCapacity() == after->inlineCapacity() && isInlineOffset(offset)) [[likely]] {
+        // There is nothing to the object but its attributes. It goes straight to the one Structure that all such instances of the
+        // class have, and lets go of the storage beside it.
+        before->didTransitionFromThisStructureWithoutFiringWatchpoint();
+        before->fireStructureTransitionWatchpoint(nullptr);
+        nukeStructureAndSetButterfly(vm, before->id(), nullptr);
+        for (unsigned i = numberOfFields; i < before->inlineCapacity(); ++i)
+            inlineStorage()[i].clear();
+        putDirectOffset(vm, offset, jsBoolean(true));
+        setStructure(vm, after);
+    } else {
+        // What __slots__ names stays where it is.
+        for (auto& key : keys) {
+            DeletePropertySlot slot;
+            JSObject::deleteProperty(this, globalObject, PropertyName(key.get()), slot);
+        }
+        putDirect(vm, rt.instanceHasDictKey(), jsBoolean(true), attributes);
     }
-    // No instruction that has seen an object without some attribute, by its Structure, takes this one for such.
-    putDirect(vm, runtime(globalObject).instanceHasDictKey(), jsBoolean(true), static_cast<unsigned>(PropertyAttribute::DontEnum));
     m_dict.set(vm, this, dict);
     return dict;
 }

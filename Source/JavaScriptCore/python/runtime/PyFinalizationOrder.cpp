@@ -115,7 +115,13 @@ private:
         }
     }
 
-    // Where the number of a cell is kept: there is a table for each block that has any.
+    // Where the number of a cell is kept: there is a table for each block that has any, with room for as many cells as the block has.
+    struct Table {
+        unsigned first { 0 }; // In m_numbers.
+        uint16_t startAtom { 0 };
+        uint16_t atomsPerCell { 1 };
+    };
+
     unsigned* slotFor(JSCell* cell, bool makesRoom)
     {
         if (cell->isPreciseAllocation()) {
@@ -132,14 +138,17 @@ private:
             else {
                 if (!makesRoom)
                     return nullptr;
-                m_tableOfLastBlock = m_numbers.size();
-                m_numbers.grow(m_tableOfLastBlock + MarkedBlock::atomsPerBlock);
-                std::ranges::fill(m_numbers.mutableSpan().subspan(m_tableOfLastBlock), none);
+                MarkedBlock::Handle& handle = block.handle();
+                size_t startAtom = block.atomNumber(handle.start());
+                size_t atomsPerCell = handle.cellSize() / MarkedBlock::atomSize;
+                m_tableOfLastBlock = { static_cast<unsigned>(m_numbers.size()), static_cast<uint16_t>(startAtom), static_cast<uint16_t>(atomsPerCell) };
+                m_numbers.grow(m_numbers.size() + (MarkedBlock::endAtom - startAtom) / atomsPerCell);
+                std::ranges::fill(m_numbers.mutableSpan().subspan(m_tableOfLastBlock.first), none);
                 m_tables.add(&block, m_tableOfLastBlock);
             }
             m_lastBlock = &block;
         }
-        return &m_numbers[m_tableOfLastBlock + block.atomNumber(cell)];
+        return &m_numbers[m_tableOfLastBlock.first + (block.atomNumber(cell) - m_tableOfLastBlock.startAtom) / m_tableOfLastBlock.atomsPerCell];
     }
 
     void add(JSCell* cell)
@@ -198,11 +207,11 @@ private:
 #endif
     ConcurrentPtrHashSet m_opaqueRootStorage;
 
-    UncheckedKeyHashMap<MarkedBlock*, unsigned> m_tables;
+    UncheckedKeyHashMap<MarkedBlock*, Table> m_tables;
     Vector<unsigned> m_numbers;
     UncheckedKeyHashMap<JSCell*, unsigned> m_numbersOfPreciseAllocations;
     MarkedBlock* m_lastBlock { nullptr };
-    unsigned m_tableOfLastBlock { 0 };
+    Table m_tableOfLastBlock;
 
     // The candidates come first.
     Vector<JSCell*> m_cells;
