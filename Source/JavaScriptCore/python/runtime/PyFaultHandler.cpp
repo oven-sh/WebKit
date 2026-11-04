@@ -323,21 +323,22 @@ static JSValue faultDumpTracebackFunction(JSGlobalObject* globalObject, JSValue 
     if (failed(scope, faultGetFlags(globalObject, { { allThreadsValue, &allThreads } }, maxThreads, maxThreadCount)))
         return { };
     int fd = faultGetDescriptor(globalObject, file);
-    if (fd < 0)
+    if (failed(scope, fd >= 0))
         return { };
     faultDumpTraceback(globalObject, fd, allThreads ? FaultHeader::CurrentThread : FaultHeader::Stack, maxThreadCount);
-    if (!checkSignals(globalObject))
+    if (failed(scope, checkSignals(globalObject)))
         return { };
     return jsUndefined();
 }
 
 static JSValue faultDumpCStack(JSGlobalObject* globalObject, JSValue file)
 {
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     int fd = faultGetDescriptor(globalObject, file);
-    if (fd < 0)
+    if (failed(scope, fd >= 0))
         return { };
     faultWrite(fd, "Current thread's C stack trace (most recent call first):\n  <cannot get C stack on this system>\n"_span);
-    if (!checkSignals(globalObject))
+    if (failed(scope, checkSignals(globalObject)))
         return { };
     return jsUndefined();
 }
@@ -586,7 +587,7 @@ static JSValue faultEnable(JSGlobalObject* globalObject, JSValue file, JSValue a
     if (failed(scope, faultGetFlags(globalObject, { { allThreadsValue, &allThreads }, { cStackValue, &cStack } }, maxThreads, maxThreadCount)))
         return { };
     int fd = faultGetDescriptor(globalObject, file);
-    if (fd < 0)
+    if (failed(scope, fd >= 0))
         return { };
     faultKeepFile(globalObject, "enable"_s, file);
     s_faultFatalDescriptor = fd;
@@ -676,7 +677,7 @@ static JSValue faultDumpTracebackLater(JSGlobalObject* globalObject, JSValue tim
     if (microseconds <= 0)
         return raiseValueError(globalObject, scope, "timeout must be greater than 0"_s);
     int fd = faultGetDescriptor(globalObject, file);
-    if (fd < 0)
+    if (failed(scope, fd >= 0))
         return { };
 
     cancelTracebackDumpRequests();
@@ -749,7 +750,7 @@ static JSValue faultRegister(JSGlobalObject* globalObject, JSValue numberValue, 
     if (failed(scope, faultCheckSignal(globalObject, number)))
         return { };
     int fd = faultGetDescriptor(globalObject, file);
-    if (fd < 0)
+    if (failed(scope, fd >= 0))
         return { };
     auto& user = s_faultUserSignals[number];
     if (int error = watchSignal(globalObject, number, chains))

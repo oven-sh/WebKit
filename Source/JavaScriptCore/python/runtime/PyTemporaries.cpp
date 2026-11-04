@@ -404,8 +404,11 @@ void Runtime::releaseIteratorsOfLoopsLeft(CallFrame* callFrame, unsigned offset,
             releaseIteratorOfLoop(generator);
         }
         if (pending && !scope.exception()) {
-            auto throwScope = DECLARE_THROW_SCOPE(m_vm);
-            throwException(m_globalObject, throwScope, pending);
+            {
+                auto throwScope = DECLARE_THROW_SCOPE(m_vm);
+                throwException(m_globalObject, throwScope, pending);
+            }
+            EXCEPTION_ASSERT(scope.exception());
         }
     }
 }

@@ -472,9 +472,10 @@ public:
         return slot ? m_generator->slot(*slot) : JSValue();
     }
 
-    // Those that have a value, in a new dict.
+    // Those that have a value, in a new dict. Null: an exception.
     PyDict* toDict(JSGlobalObject* globalObject, PyDict* extra) const
     {
+        auto scope = DECLARE_THROW_SCOPE(m_vm);
         PyDict* result = PyDict::create(globalObject);
         // Those of a comprehension have a value while it is in progress, and then hide others of the same name.
         for (bool hidden : { false, true }) {
@@ -488,8 +489,10 @@ public:
         if (extra) {
             unsigned position = 0;
             JSValue key, value;
-            while (extra->next(position, key, value))
+            while (extra->next(position, key, value)) {
                 result->set(globalObject, key, value);
+                RETURN_IF_EXCEPTION(scope, nullptr);
+            }
         }
         return result;
     }
@@ -1182,13 +1185,24 @@ static PyDict* proxyToDict(JSGlobalObject* globalObject, JSValue self)
 }
 
 static JSValue proxyCopy(JSGlobalObject* globalObject, JSValue self) { return proxyToDict(globalObject, self); }
-static JSValue proxyLen(JSGlobalObject* globalObject, JSValue self) { return jsNumber(proxyToDict(globalObject, self)->size()); }
+
+static JSValue proxyLen(JSGlobalObject* globalObject, JSValue self)
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    PyDict* dict = proxyToDict(globalObject, self);
+    if (failed(scope, dict))
+        return { };
+    return jsNumber(dict->size());
+}
 
 enum class ProxyList : uint8_t { Keys, Values, Items };
 template<ProxyList what>
 static JSValue proxyList(JSGlobalObject* globalObject, JSValue self)
 {
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     PyDict* dict = proxyToDict(globalObject, self);
+    if (failed(scope, dict))
+        return { };
     Vector<JSValue, 16> items;
     MarkedArgumentBuffer keepAlive;
     unsigned position = 0;
@@ -1198,7 +1212,7 @@ static JSValue proxyList(JSGlobalObject* globalObject, JSValue self)
         keepAlive.append(item);
         items.append(item);
     }
-    return newList(globalObject, items.span());
+    RELEASE_AND_RETURN(scope, newList(globalObject, items.span()));
 }
 
 static JSValue proxyIter(JSGlobalObject* globalObject, JSValue self)
@@ -1212,35 +1226,47 @@ static JSValue proxyIter(JSGlobalObject* globalObject, JSValue self)
 
 static JSValue proxyReversed(JSGlobalObject* globalObject, JSValue self)
 {
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     PyDict* dict = proxyToDict(globalObject, self);
+    if (failed(scope, dict))
+        return { };
     Vector<JSValue, 16> keys;
     unsigned position = dict->endPosition();
     JSValue key, value;
     while (dict->previous(position, key, value))
         keys.append(key);
     ensureStillAliveHere(dict);
-    return newList(globalObject, keys.span());
+    RELEASE_AND_RETURN(scope, newList(globalObject, keys.span()));
 }
 
 static JSValue proxyRepr(JSGlobalObject* globalObject, JSValue self)
 {
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     ReprGuard guard(globalObject, self);
     if (guard.isRecursive())
         return makeStr(getVM(globalObject), "{...}"_s);
-    return repr(globalObject, proxyToDict(globalObject, self));
+    PyDict* dict = proxyToDict(globalObject, self);
+    if (failed(scope, dict))
+        return { };
+    RELEASE_AND_RETURN(scope, repr(globalObject, dict));
 }
 
 template<CompareOperator op>
 static JSValue proxyCompare(JSGlobalObject* globalObject, JSValue self, JSValue other)
 {
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     if (isFrameLocalsProxy(globalObject, other)) {
         bool isSame = frameOfProxy(self) == frameOfProxy(other);
         if (op == CompareOperator::Eq)
             return jsBoolean(isSame);
         if (op == CompareOperator::NotEq)
             return jsBoolean(!isSame);
-    } else if (PyDict::is(other))
-        return richCompare(globalObject, proxyToDict(globalObject, self), other, op);
+    } else if (PyDict::is(other)) {
+        PyDict* dict = proxyToDict(globalObject, self);
+        if (failed(scope, dict))
+            return { };
+        RELEASE_AND_RETURN(scope, richCompare(globalObject, dict, other, op));
+    }
     return runtime(globalObject).notImplemented();
 }
 
@@ -1291,7 +1317,8 @@ static bool proxyMerge(JSGlobalObject* globalObject, JSValue self, JSValue other
 // As in CPython, whatever goes wrong looks as if the operand were of the wrong type.
 static JSValue proxyIOr(JSGlobalObject* globalObject, JSValue self, JSValue other)
 {
-    if (proxyMerge(globalObject, self, other))
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    if (!failed(scope, proxyMerge(globalObject, self, other)))
         return self;
     takePendingException(globalObject);
     return runtime(globalObject).notImplemented();
@@ -1301,8 +1328,7 @@ static JSValue proxyUpdate(JSGlobalObject* globalObject, JSValue self, JSValue o
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    bool merged = proxyMerge(globalObject, self, other);
-    if (merged)
+    if (!failed(scope, proxyMerge(globalObject, self, other)))
         return jsUndefined();
     takePendingException(globalObject);
     return raiseTypeError(globalObject, scope, "update() argument must be dict or another FrameLocalsProxy"_s);
