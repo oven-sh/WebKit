@@ -121,6 +121,10 @@ void Runtime::visit(Visitor& visitor)
         visitor.append(slot);
     visitor.append(m_handledException);
     {
+        Locker locker { m_notedEntriesLock };
+        visitNotedEntries(visitor, m_notedEntries);
+    }
+    {
         Locker locker { m_catchesInJSLock };
         for (auto& entry : m_catchesInJS) {
             visitor.appendUnbarriered(entry.thrown);
@@ -393,10 +397,29 @@ void Runtime::setHandledExceptionInSlotOf(PyGenerator* generator, JSValue value)
         m_handledException.set(m_vm, m_globalObject, value);
 }
 
+template<typename Visitor>
+void Runtime::visitNotedEntries(Visitor& visitor, const NotedEntries& entries)
+{
+    for (auto& entry : entries) {
+        visitor.appendUnbarriered(entry.exception);
+        visitor.appendUnbarriered(entry.codeBlock);
+    }
+}
+
+template void Runtime::visitNotedEntries(AbstractSlotVisitor&, const NotedEntries&);
+template void Runtime::visitNotedEntries(SlotVisitor&, const NotedEntries&);
+
+static ALWAYS_INLINE JSValue seen(JSValue exception)
+{
+    if (exception)
+        PyException::from(exception)->willBeSeen();
+    return exception;
+}
+
 JSValue Runtime::handledExceptionInTopSlot() const
 {
     lookAtCatchesInJS();
-    return handledExceptionInSlotOf(m_runningGenerator);
+    return seen(handledExceptionInSlotOf(m_runningGenerator));
 }
 
 JSValue Runtime::setHandledExceptionInTopSlot(JSValue value)
@@ -701,9 +724,19 @@ JSValue Runtime::handledException() const
     lookAtCatchesInJS();
     for (PyGenerator* generator = m_runningGenerator; generator; generator = generator->resumedBy()) {
         if (JSValue value = generator->handledException())
-            return value;
+            return seen(value);
     }
-    return m_handledException.get();
+    return seen(m_handledException.get());
+}
+
+bool Runtime::isHandlingException() const
+{
+    lookAtCatchesInJS();
+    for (PyGenerator* generator = m_runningGenerator; generator; generator = generator->resumedBy()) {
+        if (generator->handledException())
+            return true;
+    }
+    return !!m_handledException;
 }
 
 void Runtime::takeThreadLocalState(ThreadLocalState& state)
@@ -731,6 +764,10 @@ void Runtime::takeThreadLocalState(ThreadLocalState& state)
     state.tracedLine = std::exchange(tracedLine, -1);
     state.tracedOffset = std::exchange(tracedOffset, -1);
     state.reprStack = std::exchange(reprStack, { });
+    {
+        Locker locker { m_notedEntriesLock };
+        state.notedEntries = std::exchange(m_notedEntries, { });
+    }
     state.reraisingFrame = std::exchange(reraisingFrame, nullptr);
     state.runtimeCall = std::exchange(runtimeCall, nullptr);
     state.frameDepth = std::exchange(frameDepth, 0);
@@ -769,6 +806,10 @@ void Runtime::putThreadLocalState(ThreadLocalState& state)
     tracedLine = state.tracedLine;
     tracedOffset = state.tracedOffset;
     reprStack = WTF::move(state.reprStack);
+    {
+        Locker locker { m_notedEntriesLock };
+        m_notedEntries = WTF::move(state.notedEntries);
+    }
     reraisingFrame = state.reraisingFrame;
     runtimeCall = state.runtimeCall;
     frameDepth = state.frameDepth;

@@ -1812,7 +1812,7 @@ JSValue Unit::keywordNames(Seq<Keyword*> keywords)
     return names;
 }
 
-RegisterID* Unit::call(Call* node, RegisterID* dst)
+RegisterID* Unit::call(Call* node, RegisterID* dst, RegisterID* calleeRegister)
 {
     unsigned temporary = takeTemporary(node);
     validateKeywords(node->keywords);
@@ -1822,7 +1822,7 @@ RegisterID* Unit::call(Call* node, RegisterID* dst)
     auto* method = node->func->tryAs<Attribute>();
     if (method && !looksLikeModule(method->value) && isSimpleCall(node->args, node->keywords, 2)) {
         Reg result = g.finalDestination(dst);
-        Reg callee = newTemporary();
+        Reg callee = calleeRegister ? Reg(calleeRegister) : newTemporary();
         unsigned count = node->args.size() + node->keywords.size();
         CallArguments arguments(g, nullptr, count + 1);
         bool isOfSuper = isAttributeOfSuper(method);
@@ -1883,7 +1883,7 @@ RegisterID* Unit::call(Call* node, RegisterID* dst)
     // instance and calls __init__ as it calls any function, and the call does not leave the interpreter.
     if (looksLikeClass(node->func) && isSimpleCall(node->args, node->keywords, 2)) {
         Reg result = g.finalDestination(dst);
-        Reg callee = newTemporary();
+        Reg callee = calleeRegister ? Reg(calleeRegister) : newTemporary();
         expr(node->func, callee.get());
         // The frame of the callee begins right after the arguments: what outlives the call comes before them.
         Reg init = newTemporary();
@@ -1918,7 +1918,7 @@ RegisterID* Unit::call(Call* node, RegisterID* dst)
     }
 
     checkCaller(node->func);
-    Reg callee = newTemporary();
+    Reg callee = calleeRegister ? Reg(calleeRegister) : newTemporary();
     expr(node->func, callee.get());
 
     if (auto* name = node->func->tryAs<NameExpr>(); name && node->args.size() == 1 && node->keywords.isEmpty() && node->args[0]->is<GeneratorExp>() && !c.m_symbols->scopeFor(node->args[0])->isCoroutine) {

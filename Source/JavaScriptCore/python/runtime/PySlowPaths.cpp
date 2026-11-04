@@ -107,7 +107,7 @@ static NEVER_INLINE JSValue raiseNameNotDefined(JSGlobalObject* globalObject, JS
     PyException* exception = newException(globalObject, rt.NameError(), makeString("name '"_s, stringOf(name), "' is not defined"_s));
     RETURN_IF_EXCEPTION(scope, { });
     exception->setField(vm, ExceptionField::nameErrorName, name);
-    return raiseException(globalObject, scope, exception);
+    return raiseNewException(globalObject, scope, exception);
 }
 
 static NEVER_INLINE JSValue raiseUnbound(JSGlobalObject* globalObject, const String& name, UnboundKind kind)
@@ -122,7 +122,7 @@ static NEVER_INLINE JSValue raiseUnbound(JSGlobalObject* globalObject, const Str
     // The name is there for suggestions, of which an UnboundLocalError gets none.
     if (kind != UnboundKind::Local)
         exception->setField(vm, ExceptionField::nameErrorName, makeStr(vm, name));
-    return raiseException(globalObject, scope, exception);
+    return raiseNewException(globalObject, scope, exception);
 }
 
 // mapping[name], or an empty value and no exception if there is no such key.
@@ -826,9 +826,13 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_catch)
     if (!throwScope.tryClearException()) [[unlikely]]
         CHECK_EXCEPTION();
     GET(bytecode.m_exception) = exception;
-    if (!bytecode.m_becomesHandled)
+    auto mode = static_cast<CatchMode>(bytecode.m_mode);
+    if (mode == CatchMode::Thrown)
         END_IMPL();
-    if (!PyException::is(exception)) [[unlikely]] {
+    if (auto* ours = PyException::tryFrom(exception)) [[likely]] {
+        if (mode != CatchMode::HandledUnseen)
+            ours->willBeSeen();
+    } else {
         // What goes wrong with this goes wrong in the handler, which the blocks around it cover.
         GET(bytecode.m_previous) = JSValue();
         setCurrentVPC(callFrame, codeBlock, codeBlock->instructions().at(whereHandlerBegins(codeBlock, codeBlock->bytecodeOffset(pc))).ptr());
@@ -838,6 +842,15 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_catch)
     }
     GET(bytecode.m_previous) = runtime(globalObject).setHandledExceptionInTopSlot(exception);
     END_IMPL();
+}
+
+// In builds with assertions: op_py_ret, which otherwise does without C++.
+JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_assert_frame_may_end)
+{
+#if ASSERT_ENABLED
+    runtime(callFrame->codeBlock()->globalObject()).assertNoNotedEntryOf(callFrame);
+#endif
+    return encodeResult(pc, callFrame);
 }
 
 JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_for_iter)
@@ -899,6 +912,9 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_generator_suspend)
 {
     BEGIN();
     auto bytecode = pc->as<OpPyGeneratorSuspend>();
+#if ASSERT_ENABLED
+    runtime(globalObject).assertNoNotedEntryOf(callFrame);
+#endif
     PyGenerator* generator = generatorOf(callFrame);
     for (unsigned i = 0; i < bytecode.m_count; ++i)
         generator->setSlot(vm, bytecode.m_offset + i, GET(VirtualRegister(bytecode.m_first.offset() - static_cast<int>(i))).jsValue());
@@ -1597,10 +1613,10 @@ static JSValue runRuntimeFunction(JSGlobalObject* globalObject, CallFrame* callF
     // ---- Exceptions ----
     case RuntimeFunction::Raise:
         // `raise` alone raises again what has been through this frame already.
-        if (!args[0] && rt.handledException())
+        if (!args[0] && rt.isHandlingException())
             rt.reraisingFrame = callFrame;
         scope.release();
-        raiseStatement(globalObject, args[0], args[1]);
+        raiseStatement(globalObject, args[0], args[1], args[2]);
         return { };
     case RuntimeFunction::Reraise:
     case RuntimeFunction::ReraiseGroup:
@@ -1622,6 +1638,9 @@ static JSValue runRuntimeFunction(JSGlobalObject* globalObject, CallFrame* callF
         RELEASE_AND_RETURN(scope, exceptionFromThrownValue(globalObject, args[0]));
     case RuntimeFunction::SetHandledException:
         return rt.setHandledExceptionInTopSlot(args[0]);
+    case RuntimeFunction::LeaveHandler:
+        rt.handlerIsLeft(callFrame, args[0]);
+        return jsUndefined();
     case RuntimeFunction::MatchExceptionGroup: {
         JSValue rest;
         JSValue match = matchExceptionGroup(globalObject, args[0], args[1], rest);

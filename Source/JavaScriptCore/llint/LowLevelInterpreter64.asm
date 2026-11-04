@@ -2698,6 +2698,9 @@ llintOp(op_ret, OpRet, macro (size, get, dispatch)
 end)
 
 llintOp(op_py_ret, OpPyRet, macro (size, get, dispatch)
+    if ASSERT_ENABLED
+        callSlowPath(_slow_path_py_assert_frame_may_end)
+    end
     loadp CodeBlock[cfr], t1
     loadp CodeBlock::m_globalObject[t1], t1
     loadp JSGlobalObject::m_pythonRuntime[t1], t1

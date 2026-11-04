@@ -1411,15 +1411,13 @@ public:
         JSGlobalObject* globalObject = m_codeBlock->globalObject();
         if (!m_isTermination) {
             BytecodeIndex index = visitor->bytecodeIndex();
-            if (isPython) {
-                m_thrownValue = Python::addTracebackEntry(globalObject, m_thrownValue, m_callFrame, index, frameBefore);
-                m_thrownValueHasNoTraceback = false;
-            }
             HandlerInfo* handler = findExceptionHandler(visitor, m_codeBlock, RequiredHandler::AnyHandler);
             m_handler = { handler, m_codeBlock };
-            if (isPython)
+            if (isPython) {
+                m_thrownValue = Python::addTracebackEntry(globalObject, m_thrownValue, m_callFrame, index, frameBefore, handler);
+                m_thrownValueHasNoTraceback = false;
                 m_thrownValue = Python::exceptionStaysOrLeaves(globalObject, m_thrownValue, m_callFrame, index, m_handler.m_valid);
-            else if (reachesMachineFrame && globalObject->pythonRuntime())
+            } else if (reachesMachineFrame && globalObject->pythonRuntime())
                 Python::addTracebackEntryForJS(globalObject, m_thrownValue, m_callFrame, m_codeBlock, index, throwsAgain(handler), m_thrownValueHasNoTraceback);
             if (m_handler.m_valid)
                 return true;
@@ -1428,6 +1426,7 @@ public:
             return false;
         // See Python::Runtime::frameDepth.
         Python::Runtime* runtime = globalObject->pythonRuntime();
+        runtime->frameIsLeftByException(m_callFrame, m_isTermination ? JSValue() : m_thrownValue);
         runtime->frameIsEnding(m_callFrame);
         if (m_codeBlock->unlinkedCodeBlock()->parseMode() != SourceParseMode::GeneratorBodyMode) {
             // op_py_bind_args counts a frame in. Before it comes op_enter, which polls for traps.
@@ -1442,6 +1441,9 @@ public:
             m_exception = exception;
 #endif
         }
+        // What called this is written in C++, and may keep what comes up to it.
+        if (visitor->callerIsEntryFrame())
+            Python::exceptionWillBeSeen(m_thrownValue);
         return false;
     }
 

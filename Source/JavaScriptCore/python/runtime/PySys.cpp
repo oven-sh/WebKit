@@ -552,6 +552,7 @@ static JSValue sysCurrentExceptions(JSGlobalObject* globalObject)
                     break;
                 }
             }
+            exceptionWillBeSeen(exception);
             exceptions->set(globalObject, makeInt(globalObject, thread.ident), exception ? exception : jsUndefined());
         }
     });

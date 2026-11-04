@@ -2092,6 +2092,7 @@ bool Monitoring::exceptionEvent(JSGlobalObject* globalObject, CallFrame* callFra
         monitor = monitorFor(callFrame->codeBlock());
     if (!monitor)
         return true;
+    exceptionWillBeSeen(exception);
     return fire(globalObject, callFrame, *monitor, offset, event, tools, exception);
 }
 
@@ -2465,7 +2466,7 @@ void Monitoring::jump(JSGlobalObject* globalObject, PyFrame* frame, int requeste
     for (unsigned i = from->size(); i-- > best->blocks.size();) {
         auto& block = from->at(i);
         if (block.kind == TracedBlock::ExceptionHandler || block.kind == TracedBlock::ExceptionHandlerWithMore)
-            m_runtime.setHandledExceptionInTopSlot(callFrame->r(block.reg).jsValue());
+            m_runtime.handlerIsLeft(callFrame, callFrame->r(block.reg).jsValue());
     }
     // (A `with` holds two registers, other blocks one.)
     auto next = [](VirtualRegister reg) { return VirtualRegister(reg.offset() - 1); };

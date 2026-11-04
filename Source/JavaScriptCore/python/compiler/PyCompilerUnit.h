@@ -421,7 +421,8 @@ private:
     RegisterID* compare(AST::Compare*, RegisterID* dst);
     RegisterID* emitCompare(RegisterID* dst, RegisterID* left, RegisterID* right, AST::CompareKind, Expr* rightExpr);
     void checkCompare(AST::Compare*);
-    RegisterID* call(AST::Call*, RegisterID* dst);
+    // `callee`: where to leave what is called.
+    RegisterID* call(AST::Call*, RegisterID* dst, RegisterID* callee = nullptr);
     enum class GoesThrough : uint8_t { All, Any, Tuple, List, Set };
     RegisterID* callOnGeneratorExpression(AST::Call*, RegisterID* callee, JSValue builtin, GoesThrough, RegisterID* dst, unsigned temporary);
     // It makes the generator in two places, from the same code: which of the functions of the code block that is.

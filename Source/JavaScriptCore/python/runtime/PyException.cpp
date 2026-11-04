@@ -353,7 +353,14 @@ PyException* exceptionOfThrownValueIfKnown(JSGlobalObject* globalObject, JSValue
 
 // ---- The raise statement ----
 
-void raiseStatement(JSGlobalObject* globalObject, JSValue exception, JSValue cause)
+bool isMadeWithoutCodeOfTheProgram(JSGlobalObject* globalObject, PyType* type)
+{
+    if (!type->has(TypeFlag::Heap) && !type->has(TypeFlag::Mutable)) [[likely]]
+        return true;
+    return type->type() == runtime(globalObject).typeType() && PyNativeFunction::is(type->lookup(Special::New)) && PyNativeFunction::is(type->lookup(Special::Init)) && !type->lookup(Special::Del);
+}
+
+void raiseStatement(JSGlobalObject* globalObject, JSValue exception, JSValue cause, JSValue callee)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
@@ -383,6 +390,7 @@ void raiseStatement(JSGlobalObject* globalObject, JSValue exception, JSValue cau
             raiseTypeError(globalObject, scope, "calling "_s, reprForMessage(globalObject, exception), " should have returned an instance of BaseException, not "_s, reprForMessage(globalObject, rt.typeOf(value)));
             return;
         }
+        callee = exception;
     } else if (PyException::is(exception))
         value = exception;
     else {
@@ -415,8 +423,13 @@ void raiseStatement(JSGlobalObject* globalObject, JSValue exception, JSValue cau
         }
         PyException::from(value)->setCause(vm, fixedCause);
         PyException::from(value)->setSuppressContext(true);
+        callee = { };
     }
-    raiseException(globalObject, scope, value);
+    // The class was called, and this is what its own __new__ made: nothing else has it.
+    if (callee && callee == JSValue(PyException::from(value)->type()))
+        raiseNewException(globalObject, scope, PyException::from(value));
+    else
+        raiseException(globalObject, scope, value);
 }
 
 // ---- BaseException ----

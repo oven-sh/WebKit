@@ -313,7 +313,8 @@ ParserError BytecodeGenerator::generate(unsigned& size)
 
         if (handler.isPython) {
             bool becomesHandled = handler.exceptionRegister.isValid();
-            OpPyCatch::emit(this, handler.thrownValueRegister, becomesHandled ? handler.exceptionRegister : handler.thrownValueRegister, becomesHandled);
+            auto mode = !becomesHandled ? Python::CatchMode::Thrown : handler.leavesItUnseen ? Python::CatchMode::HandledUnseen : Python::CatchMode::Handled;
+            OpPyCatch::emit(this, handler.thrownValueRegister, becomesHandled ? handler.exceptionRegister : handler.thrownValueRegister, static_cast<unsigned>(mode));
         } else
             OpCatch::emit(this, handler.exceptionRegister, handler.thrownValueRegister);
         realCatchTarget->setLocation(*this, m_lastInstruction.offset());
@@ -5073,6 +5074,18 @@ void BytecodeGenerator::emitOutOfLineCatchHandler(RegisterID* thrownValueRegiste
 void BytecodeGenerator::emitOutOfLinePyCatchHandler(RegisterID* exception, RegisterID* previousIfItBecomesHandled, TryData* data)
 {
     m_exceptionHandlersToEmit.append({ data, previousIfItBecomesHandled ? previousIfItBecomesHandled : VirtualRegister(), exception, VirtualRegister(), true });
+}
+
+void BytecodeGenerator::pyCatchHandlerLeavesItUnseen(TryData* data)
+{
+    for (auto& handler : m_exceptionHandlersToEmit | std::views::reverse) {
+        if (handler.tryData != data)
+            continue;
+        ASSERT(handler.isPython && handler.exceptionRegister.isValid());
+        handler.leavesItUnseen = true;
+        return;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 void BytecodeGenerator::emitOutOfLineFinallyHandler(RegisterID* exceptionRegister, RegisterID* completionTypeRegister, TryData* data)

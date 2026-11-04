@@ -915,6 +915,9 @@ void Runtime::frameIsEnding(CallFrame* callFrame)
 {
     if (!isPythonFrame(callFrame)) [[unlikely]]
         return;
+#if ASSERT_ENABLED
+    assertNoNotedEntryOf(callFrame);
+#endif
     PyFrame* frame = frameObjectIfAny(callFrame);
     // That of a generator may be from before it was last resumed.
     if (!frame && isGeneratorBody(callFrame))
@@ -1689,6 +1692,7 @@ static JSValue tracebackOfErrorOfJS(JSGlobalObject* globalObject, JSValue thrown
 
 void addTracebackEntryForJS(JSGlobalObject* globalObject, JSValue thrown, CallFrame* callFrame, CodeBlock* codeBlock, BytecodeIndex index, bool throwsAgain, bool& hasNoTraceback)
 {
+    exceptionWillBeSeen(thrown);
     auto& caught = runtime(globalObject).caughtToBeThrownAgainInJS;
     if (hasNoTraceback) {
         // There are no entries, so none can come twice.
@@ -1715,7 +1719,163 @@ void addTracebackEntryForJS(JSGlobalObject* globalObject, JSValue thrown, CallFr
         caught = { callFrame, codeBlock, JSValue::encode(thrown) };
 }
 
-JSValue addTracebackEntry(JSGlobalObject* globalObject, JSValue exceptionValue, CallFrame* callFrame, BytecodeIndex index, CallFrame* frameBefore)
+// ---- Entries that are only noted: see PyRuntime.h ----
+
+void Runtime::noteEntry(PyException* exception, CallFrame* callFrame, CodeBlock* codeBlock, unsigned offset)
+{
+    ASSERT(exception->isUnseen() && !exception->hasNotedEntry());
+    ASSERT(m_notedEntries.isEmpty() || m_notedEntries.last().callFrame >= callFrame);
+    exception->setHasNotedEntry(true);
+    Locker locker { m_notedEntriesLock };
+    m_notedEntries.append({ exception, callFrame, codeBlock, offset });
+}
+
+// The stack grows downwards.
+static bool isFrameOfRunningThread(VM& vm, CallFrame* wanted)
+{
+    EntryFrame* entryFrame = vm.topEntryFrame;
+    CallFrame* callFrame = vm.topCallFrame;
+    while (callFrame && callFrame < wanted)
+        callFrame = callFrame->callerFrame(entryFrame);
+    return callFrame == wanted;
+}
+
+#if ASSERT_ENABLED
+void Runtime::assertNoNotedEntryOf(CallFrame* callFrame) const
+{
+    for (auto& entry : m_notedEntries)
+        ASSERT(entry.callFrame != callFrame);
+}
+#endif
+
+static void makeEntry(JSGlobalObject* globalObject, const Runtime::NotedEntry& entry)
+{
+    VM& vm = getVM(globalObject);
+    ASSERT(!entry.exception->hasNotedEntry());
+    // Nothing is followed that is read out of the frame: the note keeps its code block alive, whatever has become of the frame.
+    CallFrame* callFrame = entry.callFrame;
+    bool isStillThere = !callFrame->isNativeCalleeFrame() && callFrame->codeBlock() == entry.codeBlock && callFrame->jsCallee() != entry.codeBlock->globalObject()->zombieFrameCallee();
+    ASSERT(isStillThere);
+    if (!isStillThere)
+        return;
+    DeferGC deferGC(vm);
+    PyFrame* frame = PyFrame::of(globalObject, callFrame);
+    // As exceptionIsRaised() would have had it, had there been a frame object.
+    if (frame->raisedAt < 0)
+        frame->raisedAt = entry.offset;
+    entry.exception->setTraceback(vm, PyTraceback::create(globalObject, entry.exception->traceback(), frame, entry.codeBlock, BytecodeIndex(entry.offset)));
+}
+
+static bool takeOut(Runtime::NotedEntries& entries, Lock& lock, PyException* exception, Runtime::NotedEntry& result)
+{
+    for (size_t i = entries.size(); i--;) {
+        if (entries[i].exception != exception)
+            continue;
+        result = entries[i];
+        exception->setHasNotedEntry(false);
+        Locker locker { lock };
+        entries.removeAt(i);
+        return true;
+    }
+    return false;
+}
+
+void Runtime::makeNotedEntry(PyException* exception)
+{
+    NotedEntry entry;
+    if (takeOut(m_notedEntries, m_notedEntriesLock, exception, entry)) {
+        bool isStillThere = isFrameOfRunningThread(m_vm, entry.callFrame);
+        ASSERT(isStillThere);
+        if (!isStillThere)
+            return;
+    } else {
+        // It is being handled by a thread that waits for the GIL, with its frames where they were.
+        bool isFound = false;
+        threads().forEachThread([&](ThreadState& thread) {
+            if (isFound || !thread.saved)
+                return;
+            for (auto& saved : thread.saved->entries) {
+                if (saved.runtime == this && !isFound)
+                    isFound = takeOut(saved.state.notedEntries, m_notedEntriesLock, exception, entry);
+            }
+        });
+        ASSERT(isFound);
+        if (!isFound) {
+            exception->setHasNotedEntry(false);
+            return;
+        }
+    }
+    makeEntry(m_globalObject, entry);
+}
+
+void exceptionWillBeSeen(JSValue thrown)
+{
+    if (auto* exception = PyException::tryFrom(thrown))
+        exception->willBeSeen();
+}
+
+void PyException::makeNotedEntry()
+{
+    runtime(realm()).makeNotedEntry(this);
+}
+
+void Runtime::makeNotedEntries()
+{
+    while (!m_notedEntries.isEmpty())
+        m_notedEntries.last().exception->willBeSeen();
+    Vector<PyException*, 8> exceptions;
+    threads().forEachThread([&](ThreadState& thread) {
+        if (!thread.saved)
+            return;
+        for (auto& saved : thread.saved->entries) {
+            if (saved.runtime != this)
+                continue;
+            for (auto& entry : saved.state.notedEntries)
+                exceptions.append(entry.exception);
+        }
+    });
+    for (PyException* exception : exceptions)
+        exception->willBeSeen();
+}
+
+void Runtime::takeOutNotedEntriesOf(CallFrame* callFrame, JSValue thrown)
+{
+    // (The stack grows downwards. There is none of a frame further down.)
+    while (!m_notedEntries.isEmpty() && m_notedEntries.last().callFrame <= callFrame) {
+        ASSERT(m_notedEntries.last().callFrame == callFrame);
+        PyException* exception = m_notedEntries.last().exception;
+        // It goes on, and the frame it leaves is part of where it has been. Any other was being handled here, and that is over.
+        if (thrown == JSValue(exception) && m_notedEntries.last().callFrame == callFrame) {
+            makeNotedEntry(exception);
+            continue;
+        }
+        exception->setHasNotedEntry(false);
+        Locker locker { m_notedEntriesLock };
+        m_notedEntries.removeLast();
+    }
+}
+
+void Runtime::handlerIsLeft(CallFrame* callFrame, JSValue previous)
+{
+    JSValue handled = setHandledExceptionInTopSlot(previous);
+    if (m_notedEntries.isEmpty()) [[likely]]
+        return;
+    NotedEntry& entry = m_notedEntries.last();
+    // (An exception that is caught again in its own handler is still being handled when the inner handler is left.)
+    if (entry.callFrame != callFrame || JSValue(entry.exception) != handled || handled == previous)
+        return;
+    entry.exception->setHasNotedEntry(false);
+    Locker locker { m_notedEntriesLock };
+    m_notedEntries.removeLast();
+}
+
+// Whether the handler keeps to itself what it catches: see OpPyCatch.
+static bool handlerLeavesItUnseen(CodeBlock* codeBlock, const HandlerInfo& handler)
+{
+    return codeBlock->instructions().at(handler.target)->as<OpPyCatch>().m_mode == static_cast<unsigned>(CatchMode::HandledUnseen);
+}
+
+JSValue addTracebackEntry(JSGlobalObject* globalObject, JSValue exceptionValue, CallFrame* callFrame, BytecodeIndex index, CallFrame* frameBefore, const HandlerInfo* handler)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
@@ -1727,6 +1887,10 @@ JSValue addTracebackEntry(JSGlobalObject* globalObject, JSValue exceptionValue, 
     if (!isPastStart(codeBlock->unlinkedCodeBlock()->pythonMarks(), index.offset()))
         return exceptionValue;
     clearFrameMadeByInstruction(callFrame, codeBlock, index, frameBefore, exceptionValue);
+    if (auto* exception = PyException::tryFrom(exceptionValue); !isRaisedAgain && exception && exception->isUnseen() && handler && handlerLeavesItUnseen(codeBlock, *handler) && !rt.monitoring().wantsExceptions()) {
+        rt.noteEntry(exception, callFrame, codeBlock, index.offset());
+        return exceptionIsRaised(globalObject, exceptionValue, callFrame, index, false);
+    }
     if (!isRaisedAgain) {
         DeferGC deferGC(vm);
         auto makeEntry = [&](JSValue next) -> JSValue {

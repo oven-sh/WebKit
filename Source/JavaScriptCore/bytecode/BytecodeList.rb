@@ -1521,13 +1521,14 @@ op :py_unpack,
         afterPlusOne: unsigned,
     }
 
-# Where a handler begins, as op_catch is for JS. `exception` gets what was thrown. If it `becomesHandled`, that is the exception of
-# Python that it is or that stands for it, it is what sys.exception() gives from here on, and `previous` gets what that was before.
+# Where a handler begins, as op_catch is for JS. `exception` gets what was thrown. `mode`: Python::CatchMode. Unless that is Thrown,
+# it is the exception of Python that it is or that stands for it, it is what sys.exception() gives from here on, and `previous` gets what
+# that was before.
 op :py_catch,
     args: {
         exception: VirtualRegister,
         previous: VirtualRegister,
-        becomesHandled: bool,
+        mode: unsigned,
     }
 
 # Everything else. `function`: Python::RuntimeFunction. Its arguments are in `argc` registers from `argv` down.

@@ -36,8 +36,19 @@ public:
 
     PyTuple* args() const { return m_args.get(); }
     void setArgs(VM& vm, PyTuple* args) { m_args.set(vm, this, args); }
-    JSValue traceback() const { return m_traceback.get(); } // A PyTraceback, or empty.
-    void setTraceback(VM& vm, JSValue value) { m_traceback.set(vm, this, value); }
+    // A PyTraceback, or empty.
+    JSValue traceback() const
+    {
+        if (m_hasNotedEntry) [[unlikely]]
+            const_cast<PyException*>(this)->willBeSeen();
+        return m_traceback.get();
+    }
+    void setTraceback(VM& vm, JSValue value)
+    {
+        if (m_hasNotedEntry) [[unlikely]]
+            willBeSeen();
+        m_traceback.set(vm, this, value);
+    }
     JSValue cause() const { return m_cause.get(); } // Empty: None. So for the context.
     void setCause(VM& vm, JSValue value) { m_cause.set(vm, this, value); }
     JSValue context() const { return m_context.get(); }
@@ -50,8 +61,25 @@ public:
     JSValue field(unsigned index) const { return m_fields[index].get(); } // Empty: not set.
     void setField(VM& vm, unsigned index, JSValue value) { m_fields[index].set(vm, this, value); }
 
+    // ---- See "Entries of tracebacks that are only noted" in PyRuntime.h ----
+
+    // Nothing of the program's refers to it, or can come to without the runtime knowing.
+    bool isUnseen() const { return m_isUnseen; }
+    // The runtime has just made it, without running code of the program, and is about to raise it.
+    void wasMadeToBeRaised() { m_isUnseen = true; }
+    // The program is about to get it, or something that leads to it.
+    ALWAYS_INLINE void willBeSeen()
+    {
+        m_isUnseen = false;
+        if (m_hasNotedEntry) [[unlikely]]
+            makeNotedEntry();
+    }
+    bool hasNotedEntry() const { return m_hasNotedEntry; }
+    void setHasNotedEntry(bool value) { m_hasNotedEntry = value; }
+
 private:
     PyException(VM&, Structure*, PyType*);
+    void makeNotedEntry();
 
     WriteBarrier<PyTuple> m_args;
     WriteBarrier<Unknown> m_traceback;
@@ -59,6 +87,8 @@ private:
     WriteBarrier<Unknown> m_context;
     WriteBarrier<PyDict> m_dict;
     bool m_suppressContext { false };
+    bool m_isUnseen { false };
+    bool m_hasNotedEntry { false };
     std::array<WriteBarrier<Unknown>, numberOfFields> m_fields;
 };
 
@@ -222,7 +252,11 @@ PyException* newException(JSGlobalObject*, PyType*, std::span<const JSValue> arg
 PyException* newException(JSGlobalObject*, PyType*, const String& message);
 
 // What a `raise` statement does. Either may be empty.
-void raiseStatement(JSGlobalObject*, JSValue exception, JSValue cause);
+// `callee`: not empty if the exception is what calling that has just given.
+void raiseStatement(JSGlobalObject*, JSValue exception, JSValue cause, JSValue callee);
+// Whether calling the type makes an instance and does nothing else that a program could tell, then or later: it runs no __new__, __init__ or
+// __del__ of the program's.
+bool isMadeWithoutCodeOfTheProgram(JSGlobalObject*, PyType*);
 
 // What JS code, or the VM itself, threw, as an exception `except` clauses can catch.
 JSValue exceptionFromThrownValue(JSGlobalObject*, JSValue thrown);

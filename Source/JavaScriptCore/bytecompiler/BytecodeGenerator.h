@@ -1149,6 +1149,7 @@ namespace JSC {
 
         void emitOutOfLineCatchHandler(RegisterID* thrownValueRegister, RegisterID* completionTypeRegister, TryData*);
         void emitOutOfLinePyCatchHandler(RegisterID* exception, RegisterID* previousIfItBecomesHandled, TryData*);
+        void pyCatchHandlerLeavesItUnseen(TryData*); // Python::CatchMode::HandledUnseen
         void emitOutOfLineFinallyHandler(RegisterID* exceptionRegister, RegisterID* completionTypeRegister, TryData*);
 
         void pushClassHeadLexicalScope(VariableEnvironment&);
@@ -1672,7 +1673,9 @@ namespace JSC {
             VirtualRegister exceptionRegister;
             VirtualRegister thrownValueRegister;
             VirtualRegister completionTypeRegister;
-            bool isPython { false }; // op_py_catch: `thrownValueRegister` is its `exception`, `exceptionRegister` its `previous` if there is one.
+            // op_py_catch: `thrownValueRegister` is its `exception`, `exceptionRegister` its `previous` if there is one.
+            bool isPython { false };
+            bool leavesItUnseen { false };
         };
         Vector<CatchEntry> m_exceptionHandlersToEmit;
 

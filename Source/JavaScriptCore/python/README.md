@@ -401,6 +401,16 @@ passes (`addTracebackEntry`), which is how tracebacks are built. A frame that ha
 (`PythonMark::Start`) is not in the traceback: arguments that do not fit, the first iterable of a generator expression.
 An entry holds the code block and the place in the bytecode, like a `StackFrame` of JS; `tb_lineno` and `tb_lasti` are found when something asks (`PyTraceback::findPlace()`). So for
 `f_lineno` and `f_lasti` of a frame object whose call has ended (`PyFrame::callIsEnding()`).
+Most exceptions are caught by a handler that never looks at them (`except KeyError: pass`), and for those **the entry of the frame that catches is only noted**: the exception, the frame, the code block and
+the place, in a small stack that belongs to the thread (`Runtime::NotedEntry`). No traceback object is made and no frame object, so the call returns the short way, and the frame object of its caller is not made either
+(`f_back`), nor that one's caller's. The entry is made from the note if anybody could come to look, as an `ErrorInstance` makes `stack` of the raw stack it keeps. That rests on one bit: an exception is *unseen* from where the runtime
+makes it in order to raise it (what C++ raises; `raise Error`; `raise Error(...)`, if `Error` turns out to be the class of what is raised; in each case only if no `__new__`, `__init__` or `__del__` of the program's
+and no metaclass is involved) until something of the program's could get hold of it. `PyException::willBeSeen()` ends that and makes the entry. It is called by whatever gives out the exception being handled
+(`sys.exception()`, `exc_info()`, `_current_exceptions()`, a `raise` without an exception, the `__context__` of what is raised meanwhile) or the pending one (`pendingException()`), by `op_py_catch` for a handler that names the exception or hands it
+on (`as`, `with`, `finally`, `except*`) or that can be suspended, by every way to raise an object that is there already, before a tool is told, where the unwinder comes to a frame of JS or to a function of C++ that called
+Python, by `traceback()` itself, and when the program is handed objects it had no reference to (`gc.get_objects()`: `temporariesMayHaveEscaped()`). So while there is a note, only the slot, the registers of the handler and the VM refer to the
+exception, and when the handler is left (`RuntimeFunction::LeaveHandler`) the note is dropped with it. If the exception goes on instead, the entry is made when the frame is left. A note is gone before its frame is: builds with assertions
+check that wherever a frame ends or is put away. Missing a way to get at an exception would cost a line in a traceback, not a pointer to a frame that is gone.
 A handler begins with `op_py_catch`, which is to Python what `op_catch` is to JS: it stands at the end of the code, as that does, and jumps to the handler. It takes what was thrown, makes it the exception
 being handled and keeps what that was before, in one call of C++, and profiles nothing, there being no other tier. Which of the two routines the unwinder goes to is settled when the code is linked
 (`HandlerInfo::initialize()`), so a `catch` of JS runs what it always ran.

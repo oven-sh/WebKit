@@ -5573,7 +5573,9 @@ protected:
     // 17: op_to_number says what it was written as.
     // 18: op_page2 and the opcodes behind it (opcode numbering).
     // 19: Python::CodeInfo::isLambda.
-    static constexpr uint32_t cachedTypesFormatRevision = 20;
+    // 20: op_py_catch (opcode numbering).
+    // 21: op_py_catch has a mode; Python::RuntimeFunction::Raise takes what was called, LeaveHandler (numbering of the functions).
+    static constexpr uint32_t cachedTypesFormatRevision = 21;
     static uint32_t currentCacheVersion() { return computeJSCBytecodeCacheVersion() ^ (cachedTypesFormatRevision * 0x9E3779B9u); }
 
     GenericCacheEntry(Encoder& encoder, CachedCodeBlockTag tag)

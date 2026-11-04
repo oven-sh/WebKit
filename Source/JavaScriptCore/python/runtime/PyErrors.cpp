@@ -98,16 +98,29 @@ void unwrapPendingException(JSGlobalObject* globalObject)
 
 JSValue raiseException(JSGlobalObject* globalObject, ThrowScope& scope, JSValue exception)
 {
-    if (auto* pyException = PyException::tryFrom(exception))
+    if (auto* pyException = PyException::tryFrom(exception)) {
+        pyException->willBeSeen();
         chainContext(globalObject, pyException, runtime(globalObject).handledException());
+    }
+    throwPythonException(globalObject, scope, exception);
+    return { };
+}
+
+JSValue raiseNewException(JSGlobalObject* globalObject, ThrowScope& scope, PyException* exception)
+{
+    if (isMadeWithoutCodeOfTheProgram(globalObject, exception->type()))
+        exception->wasMadeToBeRaised();
+    chainContext(globalObject, exception, runtime(globalObject).handledException());
     throwPythonException(globalObject, scope, exception);
     return { };
 }
 
 JSValue raiseExceptionThrownIntoGenerator(JSGlobalObject* globalObject, ThrowScope& scope, JSValue exception)
 {
-    if (auto* pyException = PyException::tryFrom(exception))
+    if (auto* pyException = PyException::tryFrom(exception)) {
+        pyException->willBeSeen();
         chainContext(globalObject, pyException, runtime(globalObject).handledExceptionInTopSlot());
+    }
     throwPythonException(globalObject, scope, exception);
     return { };
 }
@@ -116,14 +129,14 @@ JSValue raise(JSGlobalObject* globalObject, ThrowScope& scope, PyType* type, con
 {
     PyException* exception = newException(globalObject, type, message);
     RETURN_IF_EXCEPTION(scope, { });
-    return raiseException(globalObject, scope, exception);
+    return raiseNewException(globalObject, scope, exception);
 }
 
 JSValue raiseWithArgs(JSGlobalObject* globalObject, ThrowScope& scope, PyType* type, std::initializer_list<JSValue> args)
 {
     PyException* exception = newException(globalObject, type, std::span<const JSValue> { args.begin(), args.size() });
     RETURN_IF_EXCEPTION(scope, { });
-    return raiseException(globalObject, scope, exception);
+    return raiseNewException(globalObject, scope, exception);
 }
 
 JSValue raiseKeyError(JSGlobalObject* globalObject, ThrowScope& scope, JSValue key)
@@ -138,7 +151,7 @@ JSValue raiseAttributeError(JSGlobalObject* globalObject, ThrowScope& scope, JSV
     RETURN_IF_EXCEPTION(scope, { });
     exception->setField(vm, ExceptionField::attributeErrorName, name);
     exception->setField(vm, ExceptionField::attributeErrorObj, object);
-    return raiseException(globalObject, scope, exception);
+    return raiseNewException(globalObject, scope, exception);
 }
 
 JSValue raiseStopIteration(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value)
@@ -151,7 +164,7 @@ JSValue raiseStopIteration(JSGlobalObject* globalObject, ThrowScope& scope, JSVa
     PyException* exception = PyException::create(vm, rt.structure<PyException>(), rt.StopIteration());
     exception->setArgs(vm, rt.emptyTuple());
     exception->setField(vm, ExceptionField::stopIterationValue, jsUndefined());
-    return raiseException(globalObject, scope, exception);
+    return raiseNewException(globalObject, scope, exception);
 }
 
 JSValue raiseStopIterationWithValue(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value)
@@ -161,6 +174,7 @@ JSValue raiseStopIterationWithValue(JSGlobalObject* globalObject, ThrowScope& sc
     PyException* exception = PyException::create(vm, rt.structure<PyException>(), rt.StopIteration());
     exception->setArgs(vm, PyTuple::create(globalObject, { value }));
     exception->setField(vm, ExceptionField::stopIterationValue, value);
+    exception->wasMadeToBeRaised();
     throwPythonException(globalObject, scope, exception);
     return { };
 }
@@ -184,7 +198,8 @@ JSValue raiseBadInternalCall(JSGlobalObject* globalObject, ThrowScope& scope)
 
 // ---- The pending exception ----
 
-JSValue pendingException(JSGlobalObject* globalObject)
+// For a look at it that leaves nothing behind.
+static JSValue pendingExceptionToLookAt(JSGlobalObject* globalObject)
 {
     VM& vm = getVM(globalObject);
     Exception* exception = vm.exceptionForInspection();
@@ -203,9 +218,17 @@ JSValue pendingException(JSGlobalObject* globalObject)
     return wrapped;
 }
 
+JSValue pendingException(JSGlobalObject* globalObject)
+{
+    JSValue exception = pendingExceptionToLookAt(globalObject);
+    if (exception)
+        PyException::from(exception)->willBeSeen();
+    return exception;
+}
+
 bool pendingExceptionMatches(JSGlobalObject* globalObject, PyType* type)
 {
-    JSValue exception = pendingException(globalObject);
+    JSValue exception = pendingExceptionToLookAt(globalObject);
     return exception && typeOf(globalObject, exception)->isSubtypeOf(type);
 }
 

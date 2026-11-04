@@ -302,13 +302,14 @@ constexpr unsigned makeFunctionIndexShift = 3;
     v(ImportFrom, 2) /* module, name */ \
     v(ImportStar, 2) /* module, namespace */ \
     /* Exceptions */ \
-    v(Raise, 2) /* exception or empty, cause or empty */ \
+    v(Raise, 3) /* exception or empty; cause or empty; if the exception is what a call gave, with nothing in between: what was called */ \
     v(Reraise, 1) \
     v(ReraiseOutOfHandler, 2) /* exception, what was being handled before: that is put back first */ \
     v(ReraiseUnseen, 2) /* the same, at the end of a handler that CPython's code has not: tools hear nothing of it */ \
     v(ReraiseGroup, 1) /* at the end of `except*`: the frame is not shown where the exception was first raised */ \
     v(CatchException, 1) /* What was thrown, as a Python exception. */ \
     v(SetHandledException, 1) /* exception or empty: the one handled before, or empty */ \
+    v(LeaveHandler, 1) /* what was being handled before the handler began, or empty */ \
     v(MatchExceptionGroup, 2) /* exception, type: the match or None; the rest is set aside */ \
     v(TakeExceptionGroupRest, 0) \
     v(PrepareReraiseStar, 2) /* the original, a list of what was raised: what to raise, or None */ \
@@ -348,6 +349,15 @@ enum class RuntimeFunction : uint8_t {
 #define PY_DEFINE_RUNTIME_FUNCTION(name, argc) name,
     FOR_EACH_PY_RUNTIME_FUNCTION(PY_DEFINE_RUNTIME_FUNCTION)
 #undef PY_DEFINE_RUNTIME_FUNCTION
+};
+
+// op_py_catch
+enum class CatchMode : uint8_t {
+    Thrown, // What was thrown, as it is: the handler tidies up and raises it again.
+    Handled,
+    // The same, and nothing in the handler names the exception, hands it on or can be suspended: see "Entries of tracebacks that are only
+    // noted" in PyRuntime.h.
+    HandledUnseen,
 };
 
 // RuntimeFunction::LoadSpecial

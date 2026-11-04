@@ -1260,7 +1260,7 @@ Unit::Reg Unit::beginExceptionHandler(Try& tryRange, Reg& previous)
 
 void Unit::restoreHandledException(RegisterID* previous)
 {
-    callRuntimeForEffect(RuntimeFunction::SetHandledException, { previous });
+    callRuntimeForEffect(RuntimeFunction::LeaveHandler, { previous });
 }
 
 void Unit::reraise(RegisterID* exception)
@@ -1994,11 +1994,18 @@ void Unit::breakOrContinue(Stmt* node, bool isBreak)
 
 void Unit::raiseStatement(Raise* node)
 {
-    Arguments arguments(*this, 2);
-    if (node->exc)
-        expr(node->exc, arguments[0]);
-    else
-        g.move(arguments[0], emptyValue());
+    Arguments arguments(*this, 3);
+    // `raise Error(...)`: if Error turns out to be the class of what is raised, nobody else has that yet.
+    auto* made = node->exc && !node->cause ? node->exc->tryAs<Call>() : nullptr;
+    if (made)
+        call(made, arguments[0], arguments[2]);
+    else {
+        if (node->exc)
+            expr(node->exc, arguments[0]);
+        else
+            g.move(arguments[0], emptyValue());
+        g.move(arguments[2], emptyValue());
+    }
     if (node->cause)
         expr(node->cause, arguments[1]);
     else
@@ -2076,6 +2083,7 @@ void Unit::tryExcept(AST::Try* node, Last isLast)
 
     Reg previous;
     Reg exception = beginExceptionHandler(body, previous);
+    unsigned yieldPointsBefore = g.yieldPoints();
     Try cleanup = beginTry();
     pushBlock({ .kind = BlockKind::ExceptionHandler, .tryDepth = cleanup.depthBefore, .saved = previous.get() });
 
@@ -2139,6 +2147,9 @@ void Unit::tryExcept(AST::Try* node, Last isLast)
         g.emitLabel(next.get());
     }
     popBlock();
+
+    if (g.yieldPoints() == yieldPointsBefore && std::ranges::none_of(node->handlers, [](ExceptHandler* handler) { return !!handler->name; }))
+        g.pyCatchHandlerLeavesItUnseen(body.data);
 
     // No clause caught it.
     endTry(cleanup);
@@ -2332,9 +2343,10 @@ void Unit::assertStatement(Assert* node)
         return;
     Ref<Label> end = g.newLabel();
     jumpIf(node->test, end.get(), true);
-    Arguments arguments(*this, 2);
+    Arguments arguments(*this, 3);
     line(node->range);
     g.move(arguments[0], constant(runtime().AssertionError()));
+    g.move(arguments[2], node->msg ? arguments[0] : emptyValue());
     if (node->msg) {
         Reg message = expr(node->msg);
         emitSimpleCall(arguments[0], arguments[0], { message.get() }, node->range);
@@ -2561,7 +2573,7 @@ void Unit::emitAnnotationsPrologue(const Range& range)
     loc(range);
     g.emitPyCompare(isOther.get(), g.pythonParameter(0), constant(jsNumber(2)), CompareOperator::Gt);
     g.emitPyJumpIfFalse(isOther.get(), body.get());
-    callRuntimeForEffect(RuntimeFunction::Raise, { constant(runtime().NotImplementedError()), emptyValue() });
+    callRuntimeForEffect(RuntimeFunction::Raise, { constant(runtime().NotImplementedError()), emptyValue(), emptyValue() });
     g.emitLabel(body.get());
 }
 

@@ -460,9 +460,59 @@ public:
     struct HandledException {
         WriteBarrier<Unknown> value; // Empty: none.
     };
+    // For whoever may hand it on: see below.
     JSValue handledExceptionInTopSlot() const;
-    JSValue setHandledExceptionInTopSlot(JSValue); // Returns what was there.
     JSValue handledException() const; // In the topmost slot that has one. Empty: none.
+    bool isHandlingException() const;
+    JSValue setHandledExceptionInTopSlot(JSValue); // Returns what was there.
+    // A handler of the frame is left, otherwise than by an exception that goes on: what was being handled before is so again.
+    void handlerIsLeft(CallFrame*, JSValue previous);
+
+    // ---- Entries of tracebacks that are only noted ----
+    //
+    // Most exceptions are caught by a handler that never looks at them: `except KeyError: pass`. For such a one the entry of the
+    // frame that catches is not made: a traceback object, the frame object it refers to, and, because there is a frame object, all
+    // that a call has to do for it when it returns (PyFrame::callIsEnding()), which makes the frame object of the caller, and so on up
+    // the stack. What the entry would be made of is noted here, and the entry is made if anybody could come to look. (So an
+    // ErrorInstance keeps the raw stack, and makes `stack` of it when that is first asked for.)
+    //
+    // An exception is unseen (PyException::isUnseen()) from where the runtime makes it in order to raise it, without running code of
+    // the program, until something of the program's could get hold of it: PyException::willBeSeen(). That is called by what gives out the
+    // exception being handled or the pending one, by a handler that names it or hands it on (`as`, `with`, `except*`) or that can be
+    // suspended, when it is raised otherwise than by the compiler's own instructions, when tools are told of it, when it comes up to a frame of JS or
+    // to a function of C++, and when the program is handed objects that it had no reference to. So while there is a note, only the slot, the
+    // registers of the handler and the VM refer to the exception, and when the handler is left the note can be dropped: nobody
+    // will ever know.
+    //
+    // A note is gone before its frame is. It is taken out when the entry is made, when the handler is left, and when the unwinder
+    // leaves the frame. A handler that can be suspended has none.
+    //
+    // The notes of the running thread are visited (visitNotedEntries()). Those of a thread that waits for its turn go with its saved state, and
+    // are not. That is sound as long as its stack is scanned: while there is a note, the registers of the handler hold the exception and
+    // the frame holds the code block. Saved states that are visited visit the notes too.
+    struct NotedEntry {
+        PyException* exception;
+        CallFrame* callFrame;
+        CodeBlock* codeBlock;
+        unsigned offset; // Of the instruction that raised it, or called what did.
+    };
+    // The innermost frame last. (No inline capacity: a saved state is on a stack that is scanned, and what is unused of a buffer there is whatever
+    // deeper calls have left, held for as long as the thread waits.)
+    using NotedEntries = Vector<NotedEntry>;
+    // For the unwinder: the frame is about to catch the exception, which is unseen.
+    void noteEntry(PyException*, CallFrame*, CodeBlock*, unsigned offset);
+    void makeNotedEntry(PyException*);
+    void makeNotedEntries(); // Of all threads.
+    // For the unwinder: `thrown` leaves the frame. Empty: the thread is to end.
+    ALWAYS_INLINE void frameIsLeftByException(CallFrame* callFrame, JSValue thrown)
+    {
+        if (!m_notedEntries.isEmpty()) [[unlikely]]
+            takeOutNotedEntriesOf(callFrame, thrown);
+    }
+    template<typename Visitor> static void visitNotedEntries(Visitor&, const NotedEntries&);
+#if ASSERT_ENABLED
+    void assertNoNotedEntryOf(CallFrame*) const;
+#endif
     // What a `catch` of JS has caught is being handled while the code of the clause runs, and what it calls. Nothing in that code
     // says where it is left. So the catch is only noted here, with where the clause begins and ends (PythonMark::CatchOfJS), and whoever
     // next asks for a slot first looks at the stack: a catch whose frame is gone, or has gone on to other code, is over. What
@@ -511,6 +561,7 @@ public:
         int tracedLine { -1 };
         int tracedOffset { -1 };
         Vector<JSCell*, 8> reprStack;
+        NotedEntries notedEntries;
         CallFrame* reraisingFrame { nullptr };
         RuntimeCall* runtimeCall { nullptr };
         int frameDepth { 0 };
@@ -741,6 +792,7 @@ public:
     {
         forgetTemporaries();
         ++m_ownershipEpoch;
+        makeNotedEntries();
     }
     // A generator function is about to return the generator to whoever called it.
     void didMakeGenerator(PyGenerator*, CallFrame* frameOfFunction);
@@ -904,6 +956,9 @@ private:
 
     WriteBarrier<Unknown> m_handledException;
     PyGenerator* m_runningGenerator { nullptr }; // The frame of its body refers to it.
+    NotedEntries m_notedEntries;
+    Lock m_notedEntriesLock; // For the collector.
+    void takeOutNotedEntriesOf(CallFrame*, JSValue thrown);
     uint64_t m_contextVariablesVersion { 0 };
     struct CatchInJS {
         enum State : uint8_t { Noted, BeingPutInSlot, InSlot };

@@ -85,6 +85,7 @@ JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_jtrue);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_jfalse);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_get_iter);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_catch);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_assert_frame_may_end);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_for_iter);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_unpack);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_runtime);

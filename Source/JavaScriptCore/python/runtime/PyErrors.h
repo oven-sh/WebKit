@@ -34,6 +34,8 @@ JSValue raise(JSGlobalObject*, ThrowScope&, PyType*, const String& message);
 JSValue raiseWithArgs(JSGlobalObject*, ThrowScope&, PyType*, std::initializer_list<JSValue> args);
 // raise exception, an instance of BaseException
 JSValue raiseException(JSGlobalObject*, ThrowScope&, JSValue exception);
+// One that was made for this, and that nothing else refers to.
+JSValue raiseNewException(JSGlobalObject*, ThrowScope&, PyException*);
 // What throw() was given is raised in the generator that is running. Its context becomes what the generator itself is handling. If
 // that is nothing it keeps the one it has: what those who called throw() are handling does not count.
 JSValue raiseExceptionThrownIntoGenerator(JSGlobalObject*, ThrowScope&, JSValue exception);
