@@ -669,7 +669,7 @@ JSValue tryNumberBinaryOperation(JSGlobalObject* globalObject, BinaryOperator op
     // A float, or a float and an int that a double holds exactly.
     auto asDouble = [&](JSValue value, bool isInteger, double& result) {
         if (value.isNumber()) {
-            result = value.asNumber();
+            result = numberValue(value);
             return true;
         }
         if (isInteger || !PyFloat::is(value))
@@ -692,7 +692,7 @@ JSValue tryNumberBinaryOperation(JSGlobalObject* globalObject, BinaryOperator op
 static bool convertOperand(JSGlobalObject* globalObject, JSValue value, double& number, JSValue& result)
 {
     if (value.isNumber()) {
-        number = value.asNumber();
+        number = numberValue(value);
         return true;
     }
     if (isFloat(value)) {

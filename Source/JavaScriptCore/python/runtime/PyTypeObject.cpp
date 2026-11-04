@@ -98,7 +98,7 @@ JSValue identityOf(JSGlobalObject* globalObject, JSValue value)
     if (value.isCell())
         return makeInt(globalObject, static_cast<uint64_t>(std::bit_cast<uintptr_t>(value.asCell())));
     if (value.isNumber())
-        value = jsNumber(value.asNumber());
+        value = jsNumber(numberValue(value));
     else if (value.isNull())
         value = jsUndefined();
     return makeInt(globalObject, static_cast<uint64_t>(JSValue::encode(value)));

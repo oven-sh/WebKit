@@ -17,6 +17,7 @@ namespace Python {
 //
 // A JS number does not say which it is: how one is tagged depends on how it was computed. So its value decides.
 // An integer that JS can hold exactly ("small" below) is an int. A float with such a value is boxed, in a PyFloat.
+// -0 is such an integer, 0: it is what JS makes of `-i` and of `0 * -1`. Python's -0.0 is boxed, as its 0.0 is.
 
 static constexpr double maxSmallInt = 9007199254740991.0; // Number.MAX_SAFE_INTEGER
 static constexpr int64_t maxSmallInt64 = 9007199254740991;
@@ -25,8 +26,7 @@ ALWAYS_INLINE bool isSmallIntValue(double value)
 {
     if (!(std::abs(value) <= maxSmallInt))
         return false;
-    int64_t truncated = static_cast<int64_t>(value);
-    return static_cast<double>(truncated) == value && (truncated || !std::signbit(value));
+    return static_cast<double>(static_cast<int64_t>(value)) == value;
 }
 
 ALWAYS_INLINE bool isSmallInt(JSValue value) { return value.isInt32() || (value.isDouble() && isSmallIntValue(value.asDouble())); }
@@ -35,6 +35,8 @@ ALWAYS_INLINE int64_t smallIntValue(JSValue value)
     ASSERT(isSmallInt(value));
     return value.isInt32() ? value.asInt32() : static_cast<int64_t>(value.asDouble());
 }
+// The value of an int or a float that is a number. The int 0 has no sign.
+ALWAYS_INLINE double numberValue(JSValue value) { return value.isInt32() ? value.asInt32() : value.asDouble() + 0.0; }
 ALWAYS_INLINE bool fitsSmallInt(int64_t value) { return value >= -maxSmallInt64 && value <= maxSmallInt64; }
 ALWAYS_INLINE JSValue smallInt(int64_t value)
 {

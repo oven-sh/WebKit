@@ -401,7 +401,7 @@ int toCInt(JSGlobalObject* globalObject, JSValue value)
 double toDouble(JSGlobalObject* globalObject, JSValue value)
 {
     if (value.isNumber()) [[likely]]
-        return value.asNumber();
+        return numberValue(value);
     if (isFloat(value))
         return floatValue(value);
     return toDoubleAsFloatDoes(globalObject, value);
@@ -410,7 +410,7 @@ double toDouble(JSGlobalObject* globalObject, JSValue value)
 double toDoubleAsFloatDoes(JSGlobalObject* globalObject, JSValue value)
 {
     if (value.isNumber()) [[likely]]
-        return value.asNumber();
+        return numberValue(value);
     if (isFloat(value) && typeOf(globalObject, value) == runtime(globalObject).floatType())
         return floatValue(value);
 

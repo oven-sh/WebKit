@@ -2741,8 +2741,8 @@ end)
 # What the instructions do is in python/runtime/PySlowPaths.cpp. Here are the cases that are common and short; for any other,
 # and whenever something has to be allocated or raised, the slow path does the whole instruction.
 #
-# Numbers (python/runtime/PyNumbers.h): a number that is whole, not -0.0, and below 2^53 in magnitude is an int, however it is
-# encoded. Any other is a float. A float with the value of such an int is an object, and so is a NaN that Python made: no
+# Numbers (python/runtime/PyNumbers.h): a number that is whole and below 2^53 in magnitude is an int, however it is encoded, and
+# -0.0 is the int 0. Any other is a float. A float with the value of such an int is an object, and so is a NaN that Python made: no
 # instruction here may store those as numbers. The booleans are not numbers here.
 
 if C_LOOP

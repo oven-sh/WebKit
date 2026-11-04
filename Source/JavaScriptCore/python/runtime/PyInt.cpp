@@ -134,7 +134,7 @@ std::optional<uint64_t> tryUInt64(JSValue value)
 double intToDouble(JSValue value)
 {
     if (value.isNumber())
-        return value.asNumber();
+        return numberValue(value);
     return JSBigInt::toNumberHeap(value.asHeapBigInt()).asNumber();
 }
 
@@ -377,7 +377,7 @@ JSValue intTrueDivide(JSGlobalObject* globalObject, JSValue a, JSValue b)
         return raiseZeroDivisionError(globalObject, scope, "division by zero"_s);
     // Both are exact as doubles, so the quotient is correctly rounded.
     if (a.isNumber() && b.isNumber()) [[likely]]
-        RELEASE_AND_RETURN(scope, makeFloat(globalObject, a.asNumber() / b.asNumber()));
+        RELEASE_AND_RETURN(scope, makeFloat(globalObject, numberValue(a) / numberValue(b)));
     if (!intSign(a))
         RELEASE_AND_RETURN(scope, makeFloat(globalObject, intSign(b) < 0 ? -0.0 : 0.0));
 
@@ -430,6 +430,9 @@ JSValue intTrueDivide(JSGlobalObject* globalObject, JSValue a, JSValue b)
     RELEASE_AND_RETURN(scope, makeFloat(globalObject, negative ? -result : result));
 }
 
+// The operand is the result. JS, which may have encoded a 0 as -0.0, can tell the two apart.
+static ALWAYS_INLINE JSValue sameInt(JSValue value) { return value.isDouble() ? jsNumber(numberValue(value)) : value; }
+
 JSValue intNegate(JSGlobalObject* globalObject, JSValue a)
 {
     if (isSmallInt(a)) [[likely]]
@@ -439,7 +442,7 @@ JSValue intNegate(JSGlobalObject* globalObject, JSValue a)
 
 JSValue intAbsolute(JSGlobalObject* globalObject, JSValue a)
 {
-    return intSign(a) < 0 ? intNegate(globalObject, a) : a;
+    return intSign(a) < 0 ? intNegate(globalObject, a) : sameInt(a);
 }
 
 JSValue intInvert(JSGlobalObject* globalObject, JSValue a)
@@ -735,7 +738,7 @@ static JSValue intCompareMethod(JSGlobalObject* globalObject, JSValue self, JSVa
 static JSValue intNegMethod(JSGlobalObject* globalObject, JSValue self) { return intNegate(globalObject, intValue(self)); }
 static JSValue intAbsMethod(JSGlobalObject* globalObject, JSValue self) { return intAbsolute(globalObject, intValue(self)); }
 static JSValue intInvertMethod(JSGlobalObject* globalObject, JSValue self) { return intInvert(globalObject, intValue(self)); }
-static JSValue intIdentity(JSGlobalObject*, JSValue self) { return intValue(self); }
+static JSValue intIdentity(JSGlobalObject*, JSValue self) { return sameInt(intValue(self)); }
 static JSValue intBoolMethod(JSGlobalObject*, JSValue self) { return jsBoolean(!!intSign(intValue(self))); }
 static JSValue intHashMethod(JSGlobalObject* globalObject, JSValue self) { return makeInt(globalObject, hashOfInt(intValue(self))); }
 
@@ -771,7 +774,7 @@ static JSValue intRoundMethod(JSGlobalObject* globalObject, JSValue self, JSValu
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue value = intValue(self);
+    JSValue value = sameInt(intValue(self));
     if (!digits || isNone(digits))
         return value;
     JSValue count = toIndex(globalObject, digits);
@@ -1159,7 +1162,7 @@ static JSValue intNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs&
 
     PyType* type = PyType::from(cls);
     if (type == rt.intType())
-        return result;
+        return sameInt(result);
     return PyInt::create(vm, rt.structure<PyInt>(), type, result);
 }
 

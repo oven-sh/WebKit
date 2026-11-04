@@ -1161,7 +1161,7 @@ bool isIdentical(JSValue a, JSValue b)
         return true;
     // The same number may be tagged in two ways, and None is two values.
     if (a.isNumber() && b.isNumber())
-        return a.asNumber() == b.asNumber() && std::signbit(a.asNumber()) == std::signbit(b.asNumber());
+        return a.asNumber() == b.asNumber();
     // Cells that share their text are one str: that is what interning amounts to.
     if (a.isString() && b.isString()) {
         const StringImpl* impl = asString(a)->tryGetValueImpl();
