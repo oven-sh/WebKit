@@ -298,6 +298,8 @@ public:
     JSValue places(JSGlobalObject*, PyCode*);
     // code.co_branches(), as a list
     JSArray* branches(JSGlobalObject*, PyCode*);
+    // When the runtime is set up.
+    void createState();
 
 private:
     friend class CodeMonitor;
@@ -305,8 +307,8 @@ private:
     enum class What : uint8_t { Call, Line, Return, Exception, Opcode, CCall, CReturn, CException };
 
     Outcome handle(JSGlobalObject*, CallFrame*, const JSInstruction*, CodeMonitor&, CodeMonitor::Point*);
-    JSArray* state();
-    JSValue nameOf(What what) { return m_namesOfWhat[static_cast<unsigned>(what)]; } // Once there is a state().
+    JSArray* state() const { return asArray(m_runtime.slot(Runtime::Slot::Monitoring)); }
+    JSValue nameOf(What what) { return m_namesOfWhat[static_cast<unsigned>(what)]; }
     void updateAll();
     void noteWhatIsWanted();
     void findAllCode();

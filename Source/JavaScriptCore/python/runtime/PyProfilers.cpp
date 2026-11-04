@@ -174,7 +174,8 @@ static JSValue profilerUserObject(JSGlobalObject* globalObject, JSValue object)
     ASCIILiteral name = native->def().name;
     if (JSValue self = native->self(); self && !PyModule::is(self)) {
         if (JSValue method = rt.typeOf(self)->lookup(internString(vm, name))) {
-            if (JSString* text = repr(globalObject, method))
+            JSString* text = repr(globalObject, method);
+            if (!failed(scope, text))
                 return text;
             scope.clearException();
         }
@@ -186,6 +187,7 @@ static JSValue profilerUserObject(JSGlobalObject* globalObject, JSValue object)
 
 static void profilerEnterCall(JSGlobalObject* globalObject, JSValue self, const void* key, JSValue object)
 {
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     ProfilerState& state = profilerState(self);
     // (A program can call the callbacks itself, with anything for the code.)
     if (state.activeTimers || !key)
@@ -200,9 +202,12 @@ static void profilerEnterCall(JSGlobalObject* globalObject, JSValue self, const 
         entry = owned.get();
         entry->userObject = listLength(userObjects);
         listAppend(globalObject, userObjects, userObject);
+        RETURN_IF_EXCEPTION(scope, void());
         // What the key is the address of stays where it is.
-        if (userObject != object && !PyNativeFunction::is(object))
+        if (userObject != object && !PyNativeFunction::is(object)) {
             listAppend(globalObject, userObjects, object);
+            RETURN_IF_EXCEPTION(scope, void());
+        }
         state.entries.add(key, WTF::move(owned));
         state.entriesInOrder.append(entry);
     }
@@ -263,13 +268,17 @@ static void profilerLeaveCall(JSGlobalObject* globalObject, JSValue self, const 
 
 static JSValue profilerPyStart(JSGlobalObject* globalObject, JSValue self, JSValue code, JSValue)
 {
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     profilerEnterCall(globalObject, self, code.isCell() ? code.asCell() : nullptr, code);
+    RETURN_IF_EXCEPTION(scope, { });
     return jsUndefined();
 }
 
 static JSValue profilerPyThrow(JSGlobalObject* globalObject, JSValue self, JSValue code, JSValue, JSValue)
 {
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     profilerEnterCall(globalObject, self, code.isCell() ? code.asCell() : nullptr, code);
+    RETURN_IF_EXCEPTION(scope, { });
     return jsUndefined();
 }
 
@@ -297,7 +306,7 @@ static PyNativeFunction* profilerBuiltin(JSGlobalObject* globalObject, JSValue c
         if (first == rt.monitoring().missing())
             return nullptr;
         JSValue bound = bindDescriptor(globalObject, callable, first, rt.typeOf(first));
-        if (!bound) {
+        if (failed(scope, bound)) {
             scope.clearException();
             return nullptr;
         }
@@ -312,9 +321,12 @@ static PyNativeFunction* profilerBuiltin(JSGlobalObject* globalObject, JSValue c
 
 static JSValue profilerCCall(JSGlobalObject* globalObject, JSValue self, JSValue, JSValue, JSValue callable, JSValue first)
 {
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     if (profilerState(self).builtins) {
-        if (auto* native = profilerBuiltin(globalObject, callable, first))
+        if (auto* native = profilerBuiltin(globalObject, callable, first)) {
             profilerEnterCall(globalObject, self, &native->def(), native);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
     }
     return jsUndefined();
 }
@@ -450,10 +462,12 @@ static JSValue profilerGetStats(JSGlobalObject* globalObject, JSValue self, cons
                 const ProfilerCounts& counts = entry->calls.find(callee)->value;
                 listAppend(globalObject, list, makeStructSeq(globalObject, subentryType, { listGet(userObjects, callee->userObject), makeInt(globalObject, counts.callCount),
                     makeInt(globalObject, counts.recursiveCallCount), makeFloat(globalObject, factor * counts.totalTime), makeFloat(globalObject, factor * counts.inlineTime) }));
+                RETURN_IF_EXCEPTION(scope, { });
             }
         }
         listAppend(globalObject, result, makeStructSeq(globalObject, entryType, { listGet(userObjects, entry->userObject), makeInt(globalObject, entry->callCount),
             makeInt(globalObject, entry->recursiveCallCount), makeFloat(globalObject, factor * entry->totalTime), makeFloat(globalObject, factor * entry->inlineTime), calls }));
+        RETURN_IF_EXCEPTION(scope, { });
     }
     return result;
 }

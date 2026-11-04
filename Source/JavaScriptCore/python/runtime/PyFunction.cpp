@@ -1204,18 +1204,28 @@ static JSValue codeRepr(JSGlobalObject* globalObject, JSValue self)
 CodeBlock* codeBlockOf(JSGlobalObject* globalObject, PyCode* code)
 {
     VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto link = [&](FunctionExecutable* executable) -> CodeBlock* {
         CodeBlock* codeBlock = executable->codeBlockForCall();
         if (!codeBlock) {
             // It has never been called.
             PyFunction* function = PyFunction::create(globalObject, executable, PyDict::create(globalObject));
             executable->prepareForExecution<FunctionExecutable>(vm, function, function->scope(), CodeSpecializationKind::CodeForCall, codeBlock);
+            RETURN_IF_EXCEPTION(scope, nullptr);
         }
         return codeBlock;
     };
     CodeBlock* codeBlock = link(code->executable());
     if (codeBlock && code->codeInfo().isGeneratorLike())
         codeBlock = link(codeBlock->functionExpr(CodeInfo::generatorBodyIndex));
+    return codeBlock;
+}
+
+CodeBlock* codeBlockIfAny(PyCode* code)
+{
+    CodeBlock* codeBlock = code->executable()->codeBlockForCall();
+    if (codeBlock && code->codeInfo().isGeneratorLike())
+        codeBlock = codeBlock->functionExpr(CodeInfo::generatorBodyIndex)->codeBlockForCall();
     return codeBlock;
 }
 

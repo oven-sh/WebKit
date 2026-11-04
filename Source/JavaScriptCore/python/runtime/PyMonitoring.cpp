@@ -83,8 +83,9 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_instrumented)
     JSGlobalObject* globalObject = codeBlock->globalObject();
     VM& vm = codeBlock->vm();
     SlowPathFrameTracer tracer(vm, callFrame);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto outcome = runtime(globalObject).monitoring().handle(globalObject, callFrame, pc);
-    if (!outcome.pc) [[unlikely]]
+    if (failed(scope, outcome.pc)) [[unlikely]]
         return encodeResult(LLInt::returnToThrow(vm), LLInt::exceptionSignal());
     return encodeResult(outcome.pc, std::bit_cast<void*>(static_cast<uintptr_t>(outcome.opcode)));
 }
@@ -874,41 +875,38 @@ Monitoring::~Monitoring()
 // A list: the names of the tools; their callbacks, by tool and event; DISABLE; MISSING; what trace and profile functions are told (What).
 enum StateField : unsigned { StateNames, StateCallbacks, StateDisable, StateMissing, StateWhat, StateFieldCount };
 
-JSArray* Monitoring::state()
+void Monitoring::createState()
 {
     auto scope = DECLARE_THROW_SCOPE(m_runtime.vm());
-    if (JSValue state = m_runtime.slot(Runtime::Slot::Monitoring))
-        return asArray(state);
     JSGlobalObject* globalObject = m_runtime.globalObject();
     JSArray* state = newList(globalObject);
     JSArray* names = newList(globalObject);
     for (unsigned i = 0; i < numberOfMonitoringTools; ++i) {
         listAppend(globalObject, names, jsUndefined());
-        RETURN_IF_EXCEPTION(scope, nullptr);
+        RETURN_IF_EXCEPTION(scope, void());
     }
     JSArray* callbacks = newList(globalObject);
     for (unsigned i = 0; i < numberOfMonitoringTools * Event::count; ++i) {
         listAppend(globalObject, callbacks, jsUndefined());
-        RETURN_IF_EXCEPTION(scope, nullptr);
+        RETURN_IF_EXCEPTION(scope, void());
     }
     listAppend(globalObject, state, names);
-    RETURN_IF_EXCEPTION(scope, nullptr);
+    RETURN_IF_EXCEPTION(scope, void());
     listAppend(globalObject, state, callbacks);
-    RETURN_IF_EXCEPTION(scope, nullptr);
+    RETURN_IF_EXCEPTION(scope, void());
     listAppend(globalObject, state, PyObject::create(m_runtime.vm(), m_runtime.structure<PyObject>(), m_runtime.objectType()));
-    RETURN_IF_EXCEPTION(scope, nullptr);
+    RETURN_IF_EXCEPTION(scope, void());
     listAppend(globalObject, state, PyObject::create(m_runtime.vm(), m_runtime.structure<PyObject>(), m_runtime.objectType()));
-    RETURN_IF_EXCEPTION(scope, nullptr);
+    RETURN_IF_EXCEPTION(scope, void());
     JSArray* what = newList(globalObject);
     for (ASCIILiteral name : { "call"_s, "line"_s, "return"_s, "exception"_s, "opcode"_s, "c_call"_s, "c_return"_s, "c_exception"_s }) {
         m_namesOfWhat[listLength(what)] = internString(m_runtime.vm(), name);
         listAppend(globalObject, what, m_namesOfWhat[listLength(what)]);
-        RETURN_IF_EXCEPTION(scope, nullptr);
+        RETURN_IF_EXCEPTION(scope, void());
     }
     listAppend(globalObject, state, what);
-    RETURN_IF_EXCEPTION(scope, nullptr);
+    RETURN_IF_EXCEPTION(scope, void());
     m_runtime.setSlot(Runtime::Slot::Monitoring, state);
-    return state;
 }
 
 JSValue Monitoring::disable() { return listGet(state(), StateDisable); }
@@ -1136,7 +1134,6 @@ void Monitoring::tracingThreadCountChanged(int traceDelta, int profileDelta)
 
 void Monitoring::setTraceFunction(JSValue function)
 {
-    state();
     int delta = !!function - !!m_runtime.slot(Runtime::Slot::TraceFunction);
     m_runtime.setSlot(Runtime::Slot::TraceFunction, function);
     tracingThreadCountChanged(delta, 0);
@@ -1149,7 +1146,6 @@ void Monitoring::setTraceFunction(JSValue function)
 
 void Monitoring::setProfileFunction(JSValue function)
 {
-    state();
     int delta = !!function - !!m_runtime.slot(Runtime::Slot::ProfileFunction);
     m_runtime.setSlot(Runtime::Slot::ProfileFunction, function);
     tracingThreadCountChanged(0, delta);
@@ -1157,7 +1153,9 @@ void Monitoring::setProfileFunction(JSValue function)
 
 void Monitoring::setTracesOpcodes(JSGlobalObject* globalObject, PyFrame* frame, bool enable)
 {
-    CodeMonitor* monitor = monitorFor(globalObject, codeOf(globalObject, frame->function()));
+    // A generator that has not begun: whatever happens first in the frame leads here again (legacyEvent()).
+    CodeBlock* codeBlock = codeBlockIfAny(codeOf(globalObject, frame->function()));
+    CodeMonitor* monitor = codeBlock ? monitorFor(codeBlock) : nullptr;
     if (!monitor)
         return;
     uint32_t events = monitor->localEvents(traceTool);
@@ -1179,6 +1177,7 @@ void Monitoring::toolIsInterrupted()
 // Nothing that happens meanwhile is told of.
 JSValue Monitoring::callWhileTracing(JSGlobalObject* globalObject, CallFrame* callFrame, unsigned event, Shown shown, JSValue function, const CallArgs& arguments)
 {
+    auto scope = DECLARE_THROW_SCOPE(m_runtime.vm());
     SetForScope tracedEvent(m_runtime.tracedEvent, static_cast<int>(event));
     SetForScope tracedCallFrame(m_runtime.tracedCallFrame, callFrame);
     SetForScope tracedLine(m_runtime.tracedLine, shown.line);
@@ -1199,6 +1198,7 @@ JSValue Monitoring::callWhileTracing(JSGlobalObject* globalObject, CallFrame* ca
         monitor = nullptr;
     ++m_runtime.tracingDepth;
     JSValue result = call(globalObject, function, arguments);
+    EXCEPTION_ASSERT_UNUSED(scope, !!scope.exception() == !result);
     --m_runtime.tracingDepth;
     if (monitor) {
         m_codeLeftAlone = nullptr;
@@ -1211,6 +1211,7 @@ JSValue Monitoring::callWhileTracing(JSGlobalObject* globalObject, CallFrame* ca
 bool Monitoring::callTraceFunction(JSGlobalObject* globalObject, PyFrame* frame, unsigned event, Shown shown, What what, JSValue argument)
 {
     VM& vm = m_runtime.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue traceFunction = m_runtime.slot(Runtime::Slot::TraceFunction);
     if (!traceFunction)
         return true;
@@ -1220,14 +1221,10 @@ bool Monitoring::callTraceFunction(JSGlobalObject* globalObject, PyFrame* frame,
         return true;
     JSValue arguments[3] = { frame, nameOf(what), argument };
     JSValue result = callWhileTracing(globalObject, frame->callFrame(), event, shown, function, CallArgs(arguments));
-    if (!result) {
-        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        Exception* exception = scope.exception();
-        scope.clearException();
+    if (failed(scope, result)) {
+        SuspendExceptionScope suspended(vm);
         setTraceFunction({ });
         frame->setTrace(vm, { });
-        auto throwScope = DECLARE_THROW_SCOPE(vm);
-        throwException(globalObject, throwScope, exception);
         return false;
     }
     if (!isNone(result) && result != frame->trace())
@@ -1238,18 +1235,15 @@ bool Monitoring::callTraceFunction(JSGlobalObject* globalObject, PyFrame* frame,
 bool Monitoring::callProfileFunction(JSGlobalObject* globalObject, PyFrame* frame, unsigned event, Shown shown, What what, JSValue argument)
 {
     VM& vm = m_runtime.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue function = m_runtime.slot(Runtime::Slot::ProfileFunction);
     if (!function)
         return true;
     JSValue arguments[3] = { frame, nameOf(what), argument };
-    if (callWhileTracing(globalObject, frame->callFrame(), event, shown, function, CallArgs(arguments)))
+    if (!failed(scope, callWhileTracing(globalObject, frame->callFrame(), event, shown, function, CallArgs(arguments))))
         return true;
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    Exception* exception = scope.exception();
-    scope.clearException();
+    SuspendExceptionScope suspended(vm);
     setProfileFunction({ });
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    throwException(globalObject, throwScope, exception);
     return false;
 }
 
@@ -1306,6 +1300,7 @@ static Monitoring::Shown whatToShow(CallFrame* callFrame, CodeMonitor& monitor, 
 // What legacy_tracing.c does in CPython.
 bool Monitoring::legacyEvent(JSGlobalObject* globalObject, CallFrame* callFrame, CodeMonitor& monitor, unsigned tool, unsigned event, unsigned offset, JSValue third, JSValue fourth, bool& disable)
 {
+    auto scope = DECLARE_THROW_SCOPE(m_runtime.vm());
     if (!m_runtime.slot(tool == traceTool ? Runtime::Slot::TraceFunction : Runtime::Slot::ProfileFunction))
         return true;
     PyFrame* frame = frameObjectOf(globalObject, callFrame);
@@ -1316,20 +1311,21 @@ bool Monitoring::legacyEvent(JSGlobalObject* globalObject, CallFrame* callFrame,
         case Event::PyStart:
         case Event::PyResume:
         case Event::PyThrow:
-            return callProfileFunction(globalObject, frame, event, shown, What::Call, jsUndefined());
+            RELEASE_AND_RETURN(scope, callProfileFunction(globalObject, frame, event, shown, What::Call, jsUndefined()));
         case Event::PyReturn:
         case Event::PyYield:
-            return callProfileFunction(globalObject, frame, event, shown, What::Return, third);
+            RELEASE_AND_RETURN(scope, callProfileFunction(globalObject, frame, event, shown, What::Return, third));
         case Event::PyUnwind:
-            return callProfileFunction(globalObject, frame, event, shown, What::Return, jsUndefined());
+            RELEASE_AND_RETURN(scope, callProfileFunction(globalObject, frame, event, shown, What::Return, jsUndefined()));
         case Event::Call:
         case Event::CReturn:
         case Event::CRaise: {
             What what = event == Event::Call ? What::CCall : event == Event::CReturn ? What::CReturn : What::CException;
             JSValue function = builtinFunctionToProfile(globalObject, third, fourth);
+            RETURN_IF_EXCEPTION(scope, false);
             if (!function)
-                return !m_runtime.vm().exceptionForInspection();
-            return callProfileFunction(globalObject, frame, event, shown, what, function);
+                return true;
+            RELEASE_AND_RETURN(scope, callProfileFunction(globalObject, frame, event, shown, what, function));
         }
         default:
             return true;
@@ -1342,22 +1338,22 @@ bool Monitoring::legacyEvent(JSGlobalObject* globalObject, CallFrame* callFrame,
     case Event::PyStart:
     case Event::PyResume:
     case Event::PyThrow:
-        return callTraceFunction(globalObject, frame, event, shown, What::Call, jsUndefined());
+        RELEASE_AND_RETURN(scope, callTraceFunction(globalObject, frame, event, shown, What::Call, jsUndefined()));
     case Event::PyReturn:
     case Event::PyYield:
         // What ends the body of a module or a class goes with the line before it, whichever that was. A function has a return of its
         // own for each way that leads to its end.
         if (functionOf(callFrame)->codeInfo().takesNamespace)
             shown = { frame->lastLine, frame->lastLineOffset };
-        return callTraceFunction(globalObject, frame, event, shown, What::Return, third);
+        RELEASE_AND_RETURN(scope, callTraceFunction(globalObject, frame, event, shown, What::Return, third));
     case Event::PyUnwind:
-        return callTraceFunction(globalObject, frame, event, shown, What::Return, jsUndefined());
+        RELEASE_AND_RETURN(scope, callTraceFunction(globalObject, frame, event, shown, What::Return, jsUndefined()));
     case Event::Raise:
     case Event::StopIteration: {
         JSValue traceback = jsUndefined();
         if (auto* exception = PyException::tryFrom(third); exception && exception->traceback())
             traceback = exception->traceback();
-        return callTraceFunction(globalObject, frame, event, shown, What::Exception, PyTuple::create(globalObject, { m_runtime.typeOf(third), third, traceback }));
+        RELEASE_AND_RETURN(scope, callTraceFunction(globalObject, frame, event, shown, What::Exception, PyTuple::create(globalObject, { m_runtime.typeOf(third), third, traceback })));
     }
     case Event::Jump: {
         // A trace function is told of a line each time a loop comes round to it, even if the whole loop is on that line.
@@ -1369,14 +1365,14 @@ bool Monitoring::legacyEvent(JSGlobalObject* globalObject, CallFrame* callFrame,
         }
         frame->lastLine = line;
         frame->lastLineOffset = target;
-        return traceLine(globalObject, frame, { line, static_cast<int>(target) });
+        RELEASE_AND_RETURN(scope, traceLine(globalObject, frame, { line, static_cast<int>(target) }));
     }
     case Event::Instruction:
         if (!frame->tracesOpcodes) {
             setTracesOpcodes(globalObject, frame, false);
             return true;
         }
-        return callTraceFunction(globalObject, frame, event, shown, What::Opcode, jsUndefined());
+        RELEASE_AND_RETURN(scope, callTraceFunction(globalObject, frame, event, shown, What::Opcode, jsUndefined()));
     default:
         return true;
     }
@@ -1386,11 +1382,12 @@ bool Monitoring::legacyEvent(JSGlobalObject* globalObject, CallFrame* callFrame,
 
 int Monitoring::callTool(JSGlobalObject* globalObject, CallFrame* callFrame, unsigned tool, unsigned event, Shown shown, std::span<const JSValue> arguments)
 {
+    auto scope = DECLARE_THROW_SCOPE(m_runtime.vm());
     JSValue function = callback(tool, event);
     if (!function)
         return 0;
     JSValue result = callWhileTracing(globalObject, callFrame, event, shown, function, CallArgs(arguments));
-    if (!result)
+    if (failed(scope, result))
         return -1;
     return result == disable();
 }
@@ -1405,6 +1402,7 @@ bool Monitoring::fire(JSGlobalObject* globalObject, CallFrame* callFrame, CodeMo
     if (!tools)
         return true;
     VM& vm = m_runtime.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue arguments[4] = { { }, { }, third, fourth };
     unsigned count = fourth ? 4 : third ? 3 : 2;
     if (tools & ((1 << numberOfFreeMonitoringTools) - 1)) {
@@ -1420,7 +1418,7 @@ bool Monitoring::fire(JSGlobalObject* globalObject, CallFrame* callFrame, CodeMo
             result = legacyEvent(globalObject, callFrame, monitor, tool, event, offset, third, fourth, disable) ? disable : -1;
         } else
             result = callTool(globalObject, callFrame, tool, event, whatToShow(callFrame, monitor, event, offset), std::span<const JSValue>(arguments, count));
-        if (result < 0)
+        if (failed(scope, result >= 0))
             return false;
         if (!result)
             continue;
@@ -1438,7 +1436,6 @@ bool Monitoring::fire(JSGlobalObject* globalObject, CallFrame* callFrame, CodeMo
             noteWhatIsWanted();
         } else {
             setCallback(tool, event, { });
-            auto scope = DECLARE_THROW_SCOPE(vm);
             raiseValueError(globalObject, scope, "Cannot disable "_s, eventNames[event], " events. Callback removed."_s);
             return false;
         }
@@ -1474,7 +1471,7 @@ bool Monitoring::fireLineStart(JSGlobalObject* globalObject, CallFrame* callFram
         if (!(tools >> tool & 1))
             continue;
         int result = callTool(globalObject, callFrame, tool, Event::Line, shown, arguments);
-        if (result < 0)
+        if (failed(scope, result >= 0))
             return false;
         if (!result)
             continue;
@@ -1488,6 +1485,7 @@ bool Monitoring::fireLineStart(JSGlobalObject* globalObject, CallFrame* callFram
 
 bool Monitoring::fireLine(JSGlobalObject* globalObject, CallFrame* callFrame, CodeMonitor& monitor, const CodeMonitor::Point& point, bool comesFromSameLine)
 {
+    auto scope = DECLARE_THROW_SCOPE(m_runtime.vm());
     unsigned offset = point.offset;
     unsigned first = point.firstLineStart;
     unsigned count = point.lineStartCount;
@@ -1513,7 +1511,7 @@ bool Monitoring::fireLine(JSGlobalObject* globalObject, CallFrame* callFrame, Co
         }
         if (!isNews)
             continue;
-        if (!fireLineStart(globalObject, callFrame, monitor, offset, first + i))
+        if (failed(scope, fireLineStart(globalObject, callFrame, monitor, offset, first + i)))
             return false;
         if (!frame)
             frame = frameObjectIfThereIsOne(callFrame);
@@ -1554,19 +1552,23 @@ static SlowPathFunction slowPathOfBranch(OpcodeID opcode)
 static JSValue nextOfLoop(JSGlobalObject* globalObject, JSValue iterator, JSValue& stopIteration)
 {
     Runtime& rt = runtime(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(rt.vm());
     if (auto* generator = PyGenerator::tryFrom(iterator); generator && generator->kind() == PyGenerator::Kind::Generator) {
         JSValue returned;
         JSValue item = generatorSend(globalObject, generator, jsUndefined(), returned);
-        if (!item && returned && !isNone(returned))
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!item && returned && !isNone(returned)) {
+            scope.release();
             stopIteration = newException(globalObject, rt.StopIteration(), std::span<const JSValue> { &returned, 1 });
+        }
         return item;
     }
     PyType* type = rt.typeOf(iterator);
     JSValue method = type->isHeapType() ? type->lookup(Special::Next) : JSValue();
     if (!method || isNone(method))
-        return iterNext(globalObject, iterator);
+        RELEASE_AND_RETURN(scope, iterNext(globalObject, iterator));
     JSValue item = callSpecial(globalObject, method, iterator);
-    if (!item && pendingExceptionMatches(globalObject, rt.StopIteration()))
+    if (failed(scope, item) && pendingExceptionMatches(globalObject, rt.StopIteration()))
         stopIteration = takePendingException(globalObject);
     return item;
 }
@@ -1595,6 +1597,7 @@ Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject, CallFrame* 
 NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject, CallFrame* callFrame, const JSInstruction* pc, CodeMonitor& monitor, CodeMonitor::Point* point)
 {
     VM& vm = m_runtime.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     // A tool is shown the first argument of a call, and can assign to the variables of the frame.
     m_runtime.forgetOwnedTemporaries();
     CodeBlock* codeBlock = callFrame->codeBlock();
@@ -1653,7 +1656,7 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
             frame->lastLine = monitor.m_lineStarts[lineStart].line;
             frame->lastLineOffset = monitor.m_lineStarts[lineStart].offset;
         }
-        if (!fireLineStart(globalObject, callFrame, monitor, offset, lineStart)) {
+        if (failed(scope, fireLineStart(globalObject, callFrame, monitor, offset, lineStart))) {
             outcome = threw;
             return false;
         }
@@ -1665,7 +1668,7 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
         PyFrame* frame = frameObjectIfAny(callFrame);
         if (frame && frame->jumpedTo && std::exchange(frame->jumpsToStart, false))
             frame->jumpedTo = std::nullopt;
-        else if (!fire(globalObject, callFrame, monitor, offset, Event::PyStart, wanted(Event::PyStart))) {
+        else if (failed(scope, fire(globalObject, callFrame, monitor, offset, Event::PyStart, wanted(Event::PyStart)))) {
             // The call has not begun: no `try` of its own catches this. The unwinder takes a frame at offset 0 for one that
             // op_py_bind_args has not counted in yet.
             setCurrentOffset(0);
@@ -1682,15 +1685,15 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
         bool isThrow = callFrame->uncheckedArgument(static_cast<int>(JSGenerator::Argument::ResumeMode) - 1).asInt32() != static_cast<int32_t>(JSGenerator::ResumeMode::NormalMode);
         if (isThrow) {
             JSValue exception = callFrame->uncheckedArgument(static_cast<int>(JSGenerator::Argument::Value) - 1);
-            if (!fire(globalObject, callFrame, monitor, offset, Event::PyThrow, monitor.tools(Event::PyThrow), exception))
+            if (failed(scope, fire(globalObject, callFrame, monitor, offset, Event::PyThrow, monitor.tools(Event::PyThrow), exception)))
                 return threw;
-        } else if (!fire(globalObject, callFrame, monitor, offset, Event::PyResume, wanted(Event::PyResume)))
+        } else if (failed(scope, fire(globalObject, callFrame, monitor, offset, Event::PyResume, wanted(Event::PyResume))))
             return threw;
         if (jumped(elsewhere))
             return elsewhere;
     }
     if (kinds & bit(Event::Line)) {
-        if (!fireLine(globalObject, callFrame, monitor, *currentPoint(), comesFromSameLine))
+        if (failed(scope, fireLine(globalObject, callFrame, monitor, *currentPoint(), comesFromSameLine)))
             return threw;
         if (jumped(elsewhere))
             return elsewhere;
@@ -1698,13 +1701,13 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
             return runIt;
     }
     if (kinds & bit(Event::Instruction)) {
-        if (!fire(globalObject, callFrame, monitor, offset, Event::Instruction, wanted(Event::Instruction)))
+        if (failed(scope, fire(globalObject, callFrame, monitor, offset, Event::Instruction, wanted(Event::Instruction))))
             return threw;
     }
 
     switch (opcode) {
     case op_py_ret:
-        if (!fire(globalObject, callFrame, monitor, offset, Event::PyReturn, wanted(Event::PyReturn), callFrame->r(pc->as<OpPyRet>().m_value).jsValue()))
+        if (failed(scope, fire(globalObject, callFrame, monitor, offset, Event::PyReturn, wanted(Event::PyReturn), callFrame->r(pc->as<OpPyRet>().m_value).jsValue())))
             return threw;
         return runIt;
 
@@ -1712,7 +1715,7 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
     case op_py_generator_return: {
         unsigned event = opcode == op_py_generator_suspend ? Event::PyYield : Event::PyReturn;
         VirtualRegister value = opcode == op_py_generator_suspend ? pc->as<OpPyGeneratorSuspend>().m_value : pc->as<OpPyGeneratorReturn>().m_value;
-        if (!fire(globalObject, callFrame, monitor, offset, event, wanted(event), callFrame->r(value).jsValue()))
+        if (failed(scope, fire(globalObject, callFrame, monitor, offset, event, wanted(event), callFrame->r(value).jsValue())))
             return threw;
         if (jumped(elsewhere))
             return elsewhere;
@@ -1767,7 +1770,7 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
             callable = method->function();
             first = method->self();
         }
-        if (!fire(globalObject, callFrame, monitor, offset, Event::Call, tools, callable, first))
+        if (failed(scope, fire(globalObject, callFrame, monitor, offset, Event::Call, tools, callable, first)))
             return threw;
         // What is not a function written in Python is also told of when it is over. So it is called from here.
         if (PyFunction::is(callable) || PyMethod::is(callable))
@@ -1783,19 +1786,16 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
         JSValue result = call(globalObject, callee, CallArgs(arguments, count - (keywordNames ? keywordNames->length() : 0), keywordNames));
         // It may have been sys.monitoring.set_events().
         listening &= wanted(Event::Call);
-        if (!result) {
-            auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        if (failed(scope, result)) {
             Exception* exception = scope.exception();
-            scope.clearException();
-            if (fire(globalObject, callFrame, monitor, offset, Event::CRaise, listening, callable, first)) {
-                auto throwScope = DECLARE_THROW_SCOPE(vm);
-                throwException(globalObject, throwScope, exception);
-            }
+            TRY_CLEAR_EXCEPTION(scope, threw);
+            if (!failed(scope, fire(globalObject, callFrame, monitor, offset, Event::CRaise, listening, callable, first)))
+                throwException(globalObject, scope, exception);
             return threw;
         }
         // The result goes to its register last. To the collector the frame is still at the call, and what a call sets is dead until
         // it is over (liveLocalsOfFrame()): a collection while a tool runs would empty the register.
-        if (!fire(globalObject, callFrame, monitor, offset, Event::CReturn, listening, callable, first))
+        if (failed(scope, fire(globalObject, callFrame, monitor, offset, Event::CReturn, listening, callable, first)))
             return threw;
         callFrame->uncheckedR(dst) = result;
         return { next(), goOn };
@@ -1806,7 +1806,7 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
         if (!(kinds & (bit(Event::BranchLeft) | bit(Event::BranchRight))))
             return runIt;
         unsigned event = kinds & bit(Event::BranchLeft) ? Event::BranchLeft : Event::BranchRight;
-        if (!fire(globalObject, callFrame, monitor, offset, event, wanted(event), jsNumber(shownOffset(shownTarget)), { }, event == Event::BranchRight ? source : offset))
+        if (failed(scope, fire(globalObject, callFrame, monitor, offset, event, wanted(event), jsNumber(shownOffset(shownTarget)), { }, event == Event::BranchRight ? source : offset)))
             return threw;
         return runIt;
     }
@@ -1827,7 +1827,7 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
                     break;
                 last = other->target;
             }
-            if (!fire(globalObject, callFrame, monitor, offset, Event::Jump, tools, jsNumber(shownOffset(last))))
+            if (failed(scope, fire(globalObject, callFrame, monitor, offset, Event::Jump, tools, jsNumber(shownOffset(last)))))
                 return threw;
             if (jumped(elsewhere))
                 return elsewhere;
@@ -1852,7 +1852,7 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
         const void* target;
         const void* signal;
         decodeResult(slow_path_py_send(callFrame, pc), target, signal);
-        if (signal == LLInt::exceptionSignal())
+        if (failed(scope, signal != LLInt::exceptionSignal()))
             return threw;
         setCurrentOffset(offset);
         auto* destination = static_cast<const JSInstruction*>(target);
@@ -1866,7 +1866,7 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
             exception = newException(globalObject, m_runtime.StopIteration(), std::span<const JSValue> { });
         else
             exception = newException(globalObject, m_runtime.StopIteration(), std::span<const JSValue> { &value, 1 });
-        if (!exception || !fire(globalObject, callFrame, monitor, offset, Event::StopIteration, tools, exception))
+        if (failed(scope, exception) || failed(scope, fire(globalObject, callFrame, monitor, offset, Event::StopIteration, tools, exception)))
             return threw;
         callFrame->uncheckedR(bytecode.m_dst) = value; // Again: see op_call above.
         return { destination, goOn };
@@ -1888,16 +1888,15 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
             auto bytecode = pc->as<OpPyForIter>();
             JSValue stopIteration;
             item = nextOfLoop(globalObject, callFrame->uncheckedR(bytecode.m_iterator).jsValue(), stopIteration);
-            if (vm.exceptionForInspection())
-                return threw;
+            RETURN_IF_EXCEPTION(scope, threw);
             destination = item ? next() : at(target);
-            if (stopIteration && !fire(globalObject, callFrame, monitor, offset, Event::Raise, monitor.tools(Event::Raise), stopIteration))
+            if (stopIteration && failed(scope, fire(globalObject, callFrame, monitor, offset, Event::Raise, monitor.tools(Event::Raise), stopIteration)))
                 return threw;
         } else {
             const void* result;
             const void* signal;
             decodeResult(slowPathOfBranch(opcode)(callFrame, pc), result, signal);
-            if (signal == LLInt::exceptionSignal())
+            if (failed(scope, signal != LLInt::exceptionSignal()))
                 return threw;
             setCurrentOffset(offset);
             destination = static_cast<const JSInstruction*>(result);
@@ -1906,7 +1905,7 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
         unsigned shownDestination = event == Event::BranchLeft ? offsetOfNext : shownTarget;
         if (event == Event::BranchLeft && kinds & CodeMonitor::Point::goesOnInItself)
             shownDestination = whereItGoesOnInItself(shownDestination);
-        if (!fire(globalObject, callFrame, monitor, offset, event, wanted(event), jsNumber(shownOffset(shownDestination))))
+        if (failed(scope, fire(globalObject, callFrame, monitor, offset, event, wanted(event), jsNumber(shownOffset(shownDestination)))))
             return threw;
         if (event == Event::BranchRight) {
             if (!tellOfLineAt(target, elsewhere))
@@ -1954,12 +1953,14 @@ static JSValue tellOfException(JSGlobalObject* globalObject, JSValue thrown, Cal
         rt.framesToldOfException.removeLast(callFrame);
     });
     JSValue exception = exceptionFromThrownValue(globalObject, thrown);
-    if (exception && rt.monitoring().exceptionEvent(globalObject, callFrame, offset, event, exception)) {
+    if (failed(scope, exception) || failed(scope, rt.monitoring().exceptionEvent(globalObject, callFrame, offset, event, exception)))
+        return scope.exception()->value();
+    {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
         throwException(globalObject, throwScope, pending);
-        return thrown;
     }
-    return scope.exception()->value();
+    EXCEPTION_ASSERT(scope.exception());
+    return thrown;
 }
 
 JSValue exceptionIsRaised(JSGlobalObject* globalObject, JSValue exception, CallFrame* callFrame, BytecodeIndex index, bool isRaisedAgain)
@@ -2466,8 +2467,10 @@ JSValue Monitoring::places(JSGlobalObject* globalObject, PyCode* code)
 
 JSArray* Monitoring::branches(JSGlobalObject* globalObject, PyCode* code)
 {
+    auto scope = DECLARE_THROW_SCOPE(m_runtime.vm());
     JSArray* result = newList(globalObject);
     CodeMonitor* monitor = monitorFor(globalObject, code);
+    RETURN_IF_EXCEPTION(scope, nullptr);
     if (!monitor)
         return result;
     if (!monitor->m_hasPoints) {
@@ -2485,6 +2488,7 @@ JSArray* Monitoring::branches(JSGlobalObject* globalObject, PyCode* code)
         if (point.kinds & CodeMonitor::Point::goesOnInItself)
             left = whereItGoesOnInItself(left);
         listAppend(globalObject, result, PyTuple::create(globalObject, { jsNumber(shownOffset(visibleOffset(marks, source))), jsNumber(shownOffset(left)), jsNumber(shownOffset(point.shownTarget)) }));
+        RETURN_IF_EXCEPTION(scope, nullptr);
     }
     return result;
 }
@@ -2508,6 +2512,9 @@ PyModule* makeMonitoringModule(JSGlobalObject* globalObject)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    rt.monitoring().createState();
+    RETURN_IF_EXCEPTION(scope, nullptr);
     PyModule* module = PyModule::create(globalObject, "sys.monitoring"_s);
     module->addFunctions(globalObject, monitoringFunctions);
     PyDict* events = PyDict::create(globalObject);

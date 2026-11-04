@@ -360,6 +360,8 @@ PositionInJS positionInJS(VM&, CodeBlock*, BytecodeIndex);
 PyDict* namespaceOfFileOfJS(JSGlobalObject*, const String& filename);
 // The code as it is run: that of the body, for a generator function. Null: an exception.
 CodeBlock* codeBlockOf(JSGlobalObject*, PyCode*);
+// Null: the code has not run yet.
+CodeBlock* codeBlockIfAny(PyCode*);
 // In PyMonitoring.cpp.
 PyModule* makeMonitoringModule(JSGlobalObject*);
 JSValue sysSetTrace(JSGlobalObject*, JSValue function);
