@@ -102,6 +102,8 @@ private:
         RegisterID* reg { nullptr };
         Kind kind { Kind::Fast };
         bool mayBeUnbound { true };
+        bool isAssignedInExpression { false }; // By :=.
+        unsigned firstUse { 0 }; // It is the so-manieth of the variables that code was emitted for. 0: there has been none.
         // Its number in BytecodeGenerator::pythonBoundVariables(), by which most of the checks for a value are found to be
         // needless. -1: it has none. That is so for a variable that `del` or the end of an `except` clause takes the value from.
         int8_t boundBit { -1 };
@@ -259,6 +261,7 @@ private:
     RegisterID* usedName(Name);
     // For co_consts.
     void noteConstant(JSValue, bool isUsed = true);
+    void noteConstant(const CodeInfo::Constant&);
     void noteFoldedConstant(AST::Expr*, JSValue);
     void noteWhatConstantIsMadeOf(AST::Expr*);
     void noteConstantMade(JSValue);
@@ -269,6 +272,9 @@ private:
     JSValue constantValue(const AST::ConstantValue&);
     JSValue makeConstantValue(const AST::ConstantValue&);
     Vector<CodeInfo::Constant> m_foldedConstants;
+    // Where they are in m_info.constants, by register, and what is in m_info.names.
+    UncheckedKeyHashMap<int, unsigned> m_indexOfConstant;
+    UncheckedKeyHashSet<UniquedStringImpl*> m_usedNames;
     bool tryConstantValue(Expr*, JSValue&);
     JSValue valueCPythonsCompilerWorksOut(Expr*);
     JSValue valueCPythonsCompilerWorksOut(AST::Operator, JSValue left, JSValue right);
@@ -292,8 +298,15 @@ private:
     void declareVariables();
     void trackWhetherBound(Variable&);
     bool isKnownToBeBound(const Variable& variable) const { return variable.boundBit >= 0 && (g.pythonBoundVariables() >> variable.boundBit) & 1; }
-    void noteBound(const Variable& variable)
+    // Code that reads, assigns to or deletes it is about to be emitted, or has just been: see finishVariables().
+    void noteUse(Variable& variable)
     {
+        if (!variable.firstUse)
+            variable.firstUse = ++m_usedVariableCount;
+    }
+    void noteBound(Variable& variable)
+    {
+        noteUse(variable);
         if (variable.boundBit >= 0)
             g.setPythonBoundVariables(g.pythonBoundVariables() | static_cast<uint64_t>(1) << variable.boundBit);
     }
@@ -303,6 +316,7 @@ private:
             g.setPythonBoundVariables(g.pythonBoundVariables() & ~(static_cast<uint64_t>(1) << variable.boundBit));
     }
     void declareComprehensionVariables(Scope*);
+    void finishVariables();
     void recordVariable(Name, const Variable&, bool isHidden);
     bool isParameterRegister(RegisterID*);
     Access resolve(Name mangled);
@@ -497,13 +511,13 @@ private:
     UncheckedKeyHashMap<Scope*, std::unique_ptr<VariableMap>> m_variables;
     Vector<Scope*, 2> m_overlays; // The inlined comprehensions being compiled, the innermost last.
     RegisterID* m_namespace { nullptr }; // Module, class: where the names live.
-    bool m_copyLocals;
     struct CellParameter {
         RegisterID* reg;
         Name name;
     };
     Vector<CellParameter, 2> m_cellParameters; // The parameters that enclosed functions use.
     unsigned m_boundBitCount { 0 };
+    unsigned m_usedVariableCount { 0 };
     void markLine(int lineno);
     void place(const Range&);
     int m_markedLine { -1 }; // What line() was last given, and where in the instructions.

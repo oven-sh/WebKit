@@ -758,7 +758,7 @@ bool SymbolTable::extendNamedExpressionScope(NameExpr* target)
             if (!addDefinition(name, (lookup(scope, name) & DefGlobal) ? DefGlobal : DefNonlocal, target->range))
                 return false;
             recordDirective(name, target->range);
-            return addDefinitionTo(scope, name, DefLocal, target->range);
+            return addDefinitionTo(scope, name, DefLocal | AssignedInExpression, target->range);
         case ScopeKind::Module:
             if (!addDefinition(name, DefGlobal, target->range))
                 return false;
@@ -785,12 +785,7 @@ bool SymbolTable::visitNamedExpression(NamedExpr* expression)
         return fail(expression->range, "assignment expression cannot be used in a comprehension iterable expression"_s);
     if (m_current->comprehension != ComprehensionKind::None && !extendNamedExpressionScope(expression->target->as<NameExpr>()))
         return false;
-    for (size_t i = m_stack.size(); i--;) {
-        m_stack[i]->hasNamedExpression = true;
-        if (m_stack[i]->comprehension == ComprehensionKind::None)
-            break;
-    }
-    return visit(expression->value) && visit(expression->target);
+    return visit(expression->value) && visit(expression->target) && addDefinition(expression->target->as<NameExpr>()->id, AssignedInExpression, expression->target->range);
 }
 
 bool SymbolTable::raiseIfAnnotationBlock(ASCIILiteral what, Expr* expression)

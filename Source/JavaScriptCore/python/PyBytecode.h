@@ -270,6 +270,7 @@ constexpr unsigned makeFunctionIndexShift = 3;
     v(DictUpdate, 2) \
     v(DictMerge, 3) /* dict, mapping, the function being called */ \
     v(FormatValue, 3) /* value, conversion (0, 's', 'r' or 'a'), format spec or empty */ \
+    v(FormatSimple, 1) /* value: no conversion, no format spec */ \
     v(ConvertValue, 2) /* value, conversion ('s', 'r' or 'a') */ \
     v(BuildInterpolation, 4) /* value, str, conversion, format spec or empty */ \
     v(BuildTemplate, 2) /* strings, interpolations */ \

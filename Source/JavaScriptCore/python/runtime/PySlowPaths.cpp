@@ -856,6 +856,17 @@ static void unpackIterable(JSGlobalObject* globalObject, CallFrame* callFrame, J
         return;
     }
 
+    // The registers may be variables, which keep what they have if this fails, and while the iterator runs.
+    MarkedArgumentBuffer items;
+    auto store = [&] {
+        if (items.hasOverflowed()) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return;
+        }
+        for (unsigned i = 0; i < items.size(); ++i)
+            target(i) = items.at(i);
+    };
+
     for (unsigned i = 0; i < before; ++i) {
         JSValue item = iterNext(globalObject, iterator);
         RETURN_IF_EXCEPTION(scope, void());
@@ -866,14 +877,14 @@ static void unpackIterable(JSGlobalObject* globalObject, CallFrame* callFrame, J
                 raiseValueError(globalObject, scope, "not enough values to unpack (expected at least "_s, before + after, ", got "_s, i, ')');
             return;
         }
-        target(i) = item;
+        items.append(item);
     }
 
     if (after < 0) {
         JSValue extra = iterNext(globalObject, iterator);
         RETURN_IF_EXCEPTION(scope, void());
         if (!extra)
-            return;
+            return store();
         std::optional<size_t> size;
         if (isExactList(iterable))
             size = listLength(asList(iterable));
@@ -896,11 +907,12 @@ static void unpackIterable(JSGlobalObject* globalObject, CallFrame* callFrame, J
         raiseValueError(globalObject, scope, "not enough values to unpack (expected at least "_s, before + trailing, ", got "_s, before + length, ')');
         return;
     }
-    target(before) = rest;
+    items.append(rest);
     for (unsigned i = 0; i < trailing; ++i)
-        target(before + 1 + i) = listGet(rest, length - trailing + i);
-    scope.release();
+        items.append(listGet(rest, length - trailing + i));
     listTruncate(globalObject, rest, length - trailing);
+    RETURN_IF_EXCEPTION(scope, void());
+    store();
 }
 
 JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_unpack)
@@ -1354,6 +1366,8 @@ static JSValue runRuntimeFunction(JSGlobalObject* globalObject, CallFrame* callF
         return jsUndefined();
     case RuntimeFunction::FormatValue:
         RELEASE_AND_RETURN(scope, formatValue(globalObject, args[0], args[1], args[2]));
+    case RuntimeFunction::FormatSimple:
+        RELEASE_AND_RETURN(scope, formatValue(globalObject, args[0], jsNumber(0), JSValue()));
     case RuntimeFunction::ConvertValue:
         RELEASE_AND_RETURN(scope, convertValue(globalObject, args[0], args[1]));
     case RuntimeFunction::BuildInterpolation: {

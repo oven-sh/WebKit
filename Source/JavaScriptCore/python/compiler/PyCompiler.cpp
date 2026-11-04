@@ -335,6 +335,7 @@ UnlinkedFunctionExecutable* Compiler::compileCode(Unit* parent, const CodeSpec& 
             unit.emitPrologue();
             emitBody(unit);
             unit.finishConstants();
+            unit.finishVariables();
         });
     }
 
@@ -347,6 +348,7 @@ UnlinkedFunctionExecutable* Compiler::compileCode(Unit* parent, const CodeSpec& 
             unit.emitPrologue();
             emitBody(unit);
             unit.finishConstants();
+            unit.finishVariables();
         }, &slotCount);
         unsigned index = generator.addPythonFunction(body);
         ASSERT_UNUSED(index, index == CodeInfo::generatorBodyIndex);
@@ -368,7 +370,6 @@ Unit::Unit(Compiler& compiler, Unit* parent, const CodeSpec& spec, BytecodeGener
     , m_private(spec.privateName ? spec.privateName : parent ? parent->m_private : nullptr)
     , m_arguments(spec.arguments)
     , m_iterateFirstParameter(spec.iterateFirstParameter)
-    , m_copyLocals(spec.scope->hasNamedExpression)
 {
 }
 
@@ -617,7 +618,7 @@ void Unit::place(const Range& range)
 // A name the code looks up somewhere other than among its own variables: one of co_names.
 RegisterID* Unit::usedName(Name name)
 {
-    if (!m_info.names.contains(*name))
+    if (m_usedNames.add(name->impl()).isNewEntry)
         m_info.names.append(*name);
     return nameConstant(name);
 }
@@ -626,14 +627,16 @@ RegisterID* Unit::usedName(Name name)
 // and what that gives comes after all the others.
 void Unit::noteConstant(JSValue value, bool isUsed)
 {
-    VirtualRegister reg = constant(value)->virtualRegister();
-    for (auto& known : m_info.constants) {
-        if (known.reg == reg) {
-            known.isUsed |= isUsed;
-            return;
-        }
-    }
-    m_info.constants.append({ reg, 0, isUsed });
+    noteConstant({ constant(value)->virtualRegister(), 0, isUsed });
+}
+
+void Unit::noteConstant(const CodeInfo::Constant& noted)
+{
+    auto result = m_indexOfConstant.add(noted.reg.offset(), m_info.constants.size());
+    if (result.isNewEntry)
+        m_info.constants.append(noted);
+    else
+        m_info.constants[result.iterator->value].isUsed |= noted.isUsed;
 }
 
 void Unit::noteFoldedConstant(Expr* node, JSValue value)
@@ -689,17 +692,8 @@ void Unit::noteCode(unsigned functionIndex)
 
 void Unit::finishConstants()
 {
-    for (auto& folded : m_foldedConstants) {
-        bool isKnown = false;
-        for (auto& known : m_info.constants) {
-            if (known.reg == folded.reg) {
-                known.isUsed = true;
-                isKnown = true;
-            }
-        }
-        if (!isKnown)
-            m_info.constants.append(folded);
-    }
+    for (auto& folded : m_foldedConstants)
+        noteConstant(folded);
     m_foldedConstants.clear();
 }
 
@@ -839,7 +833,7 @@ void Unit::declareVariables()
                 m_cellParameters.append({ parameterRegisters[i], name });
                 continue;
             }
-            Variable variable { parameterRegisters[i], Variable::Kind::Fast, !!(symbol->flags & Deleted) };
+            Variable variable { parameterRegisters[i], Variable::Kind::Fast, !!(symbol->flags & Deleted), !!(symbol->flags & AssignedInExpression) };
             map->add(name->impl(), variable);
             recordVariable(name, variable, false);
         }
@@ -847,7 +841,7 @@ void Unit::declareVariables()
             if (symbol.binding == Binding::Local) {
                 if (symbol.flags & DefParam)
                     continue;
-                Variable variable { g.addVar(), Variable::Kind::Fast, true };
+                Variable variable { g.addVar(), Variable::Kind::Fast, true, !!(symbol.flags & AssignedInExpression) };
                 if (!(symbol.flags & Deleted))
                     trackWhetherBound(variable);
                 map->add(symbol.name->impl(), variable);
@@ -921,15 +915,57 @@ void Unit::emitPrologue()
         }
     }
 
-    // From here on their order is what locals(), f_locals and co_cellvars show. In CPython that is: the parameters; the other
-    // variables that no inner function uses; those that one does, by name; those of outer functions, by name.
+    g.addPythonMark(PythonMark::Start, 0);
+    m_markedLine = -1;
+}
+
+// Their order is what co_varnames, locals(), f_locals and co_cellvars show. In CPython that is: the parameters; the other variables that no inner
+// function uses, those of inlined comprehensions among them, in the order in which its compiler comes to emit code for them, and none
+// that it emits no code for (`x: int`); those that an inner function uses, by name; those of outer functions, by name.
+void Unit::finishVariables()
+{
+    UncheckedKeyHashMap<UniquedStringImpl*, size_t> indexOfParameter;
+    for (size_t index = 0; index < m_info.parameterNames.size(); ++index)
+        indexOfParameter.add(m_info.parameterNames[index].impl(), index);
+    UncheckedKeyHashMap<int, unsigned> firstUse;
+    for (auto& map : m_variables.values()) {
+        for (auto& variable : map->values()) {
+            if (variable.firstUse)
+                firstUse.add(variable.reg->virtualRegister().offset(), variable.firstUse);
+        }
+    }
+
+    m_info.variables.removeAllMatching([&](auto& variable) {
+        if (variable.isHidden || variable.kind != CodeInfo::VariableKind::Local || firstUse.contains(variable.reg.offset()) || indexOfParameter.contains(variable.name.impl()))
+            return false;
+        Symbol* symbol = m_scope->find(variable.name.impl());
+        return symbol && (symbol->flags & DefAnnot);
+    });
+
+    // There a variable of an inlined comprehension and a variable of the same name are one.
+    UncheckedKeyHashMap<UniquedStringImpl*, unsigned> firstUseOfName;
+    for (auto& variable : m_info.variables) {
+        auto use = firstUse.find(variable.reg.offset());
+        if (variable.kind != CodeInfo::VariableKind::Local || use == firstUse.end())
+            continue;
+        auto result = firstUseOfName.add(variable.name.impl(), use->value);
+        result.iterator->value = std::min(result.iterator->value, use->value);
+    }
+
+    size_t parameterCount = m_info.parameterNames.size();
     auto rank = [&](const CodeInfo::Variable& variable) -> size_t {
+        if (!variable.isHidden) {
+            auto parameter = indexOfParameter.find(variable.name.impl());
+            if (parameter != indexOfParameter.end())
+                return parameter->value;
+        }
+        if (variable.kind == CodeInfo::VariableKind::Local) {
+            auto use = firstUseOfName.find(variable.name.impl());
+            return parameterCount + (use != firstUseOfName.end() ? use->value : m_usedVariableCount + 1);
+        }
         if (variable.isHidden)
             return std::numeric_limits<size_t>::max();
-        size_t parameter = m_info.parameterNames.find(variable.name);
-        if (parameter != notFound)
-            return parameter;
-        return m_info.parameterNames.size() + static_cast<size_t>(variable.kind);
+        return parameterCount + m_usedVariableCount + 2 + static_cast<size_t>(variable.kind);
     };
     std::stable_sort(m_info.variables.begin(), m_info.variables.end(), [&](auto& a, auto& b) {
         size_t rankOfA = rank(a);
@@ -938,9 +974,6 @@ void Unit::emitPrologue()
             return rankOfA < rankOfB;
         return !a.isHidden && a.kind != CodeInfo::VariableKind::Local && codePointCompareLessThan(a.name.string(), b.name.string());
     });
-
-    g.addPythonMark(PythonMark::Start, 0);
-    m_markedLine = -1;
 }
 
 bool Unit::isParameterRegister(RegisterID* reg)
@@ -1074,6 +1107,7 @@ RegisterID* Unit::loadName(Name name, RegisterID* dst, const Range& range)
     switch (access.kind) {
     case Access::Kind::Fast: {
         RegisterID* reg = access.variable->reg;
+        noteUse(*access.variable);
         if (access.variable->mayBeUnbound && !isKnownToBeBound(*access.variable)) {
             loc(range);
             g.emitTDZCheck(reg);
@@ -1082,7 +1116,7 @@ RegisterID* Unit::loadName(Name name, RegisterID* dst, const Range& range)
         if (dst)
             return g.move(dst, reg);
         // What is read now must not change if the variable is assigned to before the value is used.
-        if (m_copyLocals)
+        if (access.variable->isAssignedInExpression)
             return g.move(g.newTemporary(), reg);
         return reg;
     }
@@ -1152,6 +1186,7 @@ void Unit::deleteName(Name name, const Range& range)
     switch (access.kind) {
     case Access::Kind::Fast:
         RELEASE_ASSERT(access.variable->boundBit < 0);
+        noteUse(*access.variable);
         g.emitTDZCheck(access.variable->reg);
         g.move(access.variable->reg, emptyValue());
         return;
@@ -1579,14 +1614,41 @@ void Unit::assign(Assign* node)
             for (Expr* item : values->elts)
                 isPlain &= !item->is<Starred>();
             if (isPlain) {
-                Vector<Reg, 8> temporaries;
-                for (Expr* item : values->elts) {
-                    Reg temporary = newTemporary();
-                    expr(item, temporary.get());
-                    temporaries.append(WTF::move(temporary));
+                // If all the targets are variables in registers, nothing of the program runs between the last value and the last store. Then
+                // a variable that is no target can stay where it is, and the last value can be computed where it goes, unless
+                // an earlier target is the same variable. (On several lines, a tool that is told of the lines sees the variables assigned to one by one.)
+                unsigned count = targets->elts.size();
+                Vector<Variable*, 8> variables;
+                for (Expr* target : targets->elts) {
+                    auto* name = target->tryAs<NameExpr>();
+                    if (!name)
+                        break;
+                    Access access = resolve(mangle(name->id));
+                    if (access.kind != Access::Kind::Fast)
+                        break;
+                    variables.append(access.variable);
                 }
-                for (unsigned i = 0; i < targets->elts.size(); ++i)
-                    store(targets->elts[i], temporaries[i].get());
+                bool areVariables = count && variables.size() == count;
+                bool lastIsComputedInPlace = areVariables && variables.find(variables.last()) == count - 1 && node->range.lineno == node->range.endLineno;
+                Vector<Reg, 8> evaluated;
+                for (unsigned i = 0; i < count; ++i) {
+                    Expr* item = values->elts[i];
+                    auto* name = item->tryAs<NameExpr>();
+                    if (item->is<Constant>() || (name && areVariables && !variables.contains(resolve(mangle(name->id)).variable)))
+                        evaluated.append(expr(item));
+                    else if (lastIsComputedInPlace && i + 1 == count)
+                        evaluated.append(expr(item, variables.last()->reg));
+                    else {
+                        Reg temporary = newTemporary();
+                        expr(item, temporary.get());
+                        evaluated.append(WTF::move(temporary));
+                    }
+                }
+                // Where CPython has what is left of making the tuple, and of taking it apart.
+                line(values->range);
+                line(targets->range);
+                for (unsigned i = 0; i < count; ++i)
+                    store(targets->elts[i], evaluated[i].get());
                 return;
             }
         }
@@ -1688,7 +1750,10 @@ void Unit::annotatedAssign(AnnAssign* node)
 {
     Expr* target = node->target;
     if (node->value) {
-        Reg value = expr(node->value);
+        // As in assign().
+        auto* name = target->tryAs<NameExpr>();
+        Access access = name ? resolve(mangle(name->id)) : Access { Access::Kind::Name };
+        Reg value = expr(node->value, access.kind == Access::Kind::Fast ? access.variable->reg : nullptr);
         store(target, value.get());
     }
     switch (target->kind) {
@@ -1935,8 +2000,12 @@ void Unit::returnStatement(Return* node)
     Reg value;
     if (node->value) {
         value = expr(node->value);
-        // A `finally` clause that runs on the way out may assign to the variable.
-        if (!value->isTemporary() && !value->virtualRegister().isConstant() && !m_blocks.isEmpty())
+        // What runs on the way out may assign to the variable: a `finally` clause, the end of `except ... as variable`; an __exit__, or a
+        // generator that the loop closes, that has got hold of the frame.
+        bool mayBeAssignedTo = m_blocks.containsIf([](auto& block) {
+            return block.kind == BlockKind::FinallyTry || block.kind == BlockKind::HandlerCleanup || block.kind == BlockKind::With || block.kind == BlockKind::AsyncWith || block.ownsIterator;
+        });
+        if (mayBeAssignedTo && !value->isTemporary() && !value->virtualRegister().isConstant())
             value = g.move(g.newTemporary(), value.get());
     } else
         value = constant(jsUndefined());

@@ -1122,16 +1122,31 @@ void Unit::unpack(Seq<Expr*> targets, RegisterID* value, const Range& range)
         star = i;
     }
     Reg held = value;
-    Arguments items(*this, count);
+    auto targetAt = [&](unsigned i) { return targets[i]->is<Starred>() ? targets[i]->as<Starred>()->value : targets[i]; };
+
+    // Variables in registers that follow one another are a run of registers: the items go where they belong. (The instruction stores
+    // nothing unless it has all of them. If the targets are on several lines, a tool that is told of the lines sees them assigned to one by one.)
+    RegisterID* firstVariable = nullptr;
+    for (unsigned i = 0; i < count && range.lineno == range.endLineno; ++i) {
+        auto* name = targetAt(i)->tryAs<NameExpr>();
+        Access access = name ? resolve(mangle(name->id)) : Access { Access::Kind::Name };
+        if (access.kind != Access::Kind::Fast || (i && access.variable->reg->virtualRegister().offset() != firstVariable->virtualRegister().offset() - static_cast<int>(i))) {
+            firstVariable = nullptr;
+            break;
+        }
+        if (!i)
+            firstVariable = access.variable->reg;
+    }
+
+    Arguments items(*this, firstVariable ? 0 : count);
+    RegisterID* first = firstVariable ? firstVariable : items.first();
     loc(range);
     if (star < 0)
-        g.emitPyUnpack(items.first() ? items.first() : value, value, count, -1);
+        g.emitPyUnpack(first ? first : value, value, count, -1);
     else
-        g.emitPyUnpack(items.first(), value, star, count - star - 1);
-    for (unsigned i = 0; i < count; ++i) {
-        Expr* target = targets[i];
-        store(target->is<Starred>() ? target->as<Starred>()->value : target, items[i]);
-    }
+        g.emitPyUnpack(first, value, star, count - star - 1);
+    for (unsigned i = 0; i < count; ++i)
+        store(targetAt(i), firstVariable ? resolve(mangle(targetAt(i)->as<NameExpr>()->id)).variable->reg : items[i]);
 }
 
 void Unit::store(Expr* target, RegisterID* value)
@@ -1246,8 +1261,9 @@ RegisterID* Unit::sequence(SequenceKind kind, Seq<Expr*> items, RegisterID* dst,
         }
     }
 
-    Reg result = g.tempDestination(dst);
     if (!hasStar && total <= maxItemsInRegisters) {
+        // The items are where they are taken from before anything is written.
+        Reg result = g.finalDestination(dst);
         Arguments values(*this, total);
         unsigned next = 0;
         for (RegisterID* value : pushed)
@@ -1275,10 +1291,11 @@ RegisterID* Unit::sequence(SequenceKind kind, Seq<Expr*> items, RegisterID* dst,
             callRuntime(result.get(), RuntimeFunction::BuildSet, values);
             break;
         }
-        return dst ? g.move(dst, result.get()) : result.get();
+        return result.get();
     }
 
     // A tuple is built as a list.
+    Reg result = g.tempDestination(dst);
     bool isSet = kind == SequenceKind::Set;
     if (isSet)
         callRuntime(result.get(), RuntimeFunction::BuildSet);
@@ -1319,18 +1336,18 @@ RegisterID* Unit::dict(Dict* node, RegisterID* dst)
     for (Expr* key : node->keys)
         hasUnpacking |= !key;
 
-    Reg result = g.tempDestination(dst);
     if (!hasUnpacking && count * 2 <= maxItemsInRegisters) {
+        Reg result = g.finalDestination(dst);
         Arguments items(*this, count * 2);
         for (unsigned i = 0; i < count; ++i) {
             expr(node->keys[i], items[i * 2]);
             expr(node->values[i], items[i * 2 + 1]);
         }
         loc(node->range);
-        callRuntime(result.get(), RuntimeFunction::BuildMap, items);
-        return dst ? g.move(dst, result.get()) : result.get();
+        return callRuntime(result.get(), RuntimeFunction::BuildMap, items);
     }
 
+    Reg result = g.tempDestination(dst);
     callRuntime(result.get(), RuntimeFunction::BuildMap);
     for (unsigned i = 0; i < count; ++i) {
         if (!node->keys[i]) {
@@ -1365,6 +1382,11 @@ RegisterID* Unit::formattedValue(FormattedValue* node, RegisterID* dst)
     if (!checkConversion(node->conversion))
         return emptyValue();
     Reg result = g.finalDestination(dst);
+    if (node->conversion < 0 && !node->formatSpec) {
+        Reg value = expr(node->value);
+        loc(node->range);
+        return callRuntime(result.get(), RuntimeFunction::FormatSimple, { value.get() });
+    }
     Arguments arguments(*this, 3);
     expr(node->value, arguments[0]);
     int conversion = node->conversion < 0 ? 0 : node->conversion;
@@ -1397,16 +1419,16 @@ RegisterID* Unit::joinedStr(JoinedStr* node, RegisterID* dst)
     if (count == 1)
         return expr(node->values[0], dst);
 
-    Reg result = g.tempDestination(dst);
     if (count <= maxItemsInRegisters) {
+        Reg result = g.finalDestination(dst);
         Arguments parts(*this, count);
         for (unsigned i = 0; i < count; ++i)
             expr(node->values[i], parts[i]);
         loc(node->range);
-        callRuntime(result.get(), RuntimeFunction::BuildString, parts);
-        return dst ? g.move(dst, result.get()) : result.get();
+        return callRuntime(result.get(), RuntimeFunction::BuildString, parts);
     }
     // In runs.
+    Reg result = g.tempDestination(dst);
     load(result.get(), g.addStringConstant(vm().propertyNames->emptyIdentifier));
     for (unsigned start = 0; start < count; start += maxItemsInRegisters - 1) {
         unsigned runLength = std::min(count - start, maxItemsInRegisters - 1);
@@ -1941,16 +1963,16 @@ RegisterID* Unit::yield(Yield* node, RegisterID* dst, bool isForEffect)
         fail(node->range, "'yield' outside function"_s);
         return g.finalDestination(dst);
     }
-    Reg result = g.tempDestination(dst);
-    if (node->value)
-        expr(node->value, result.get());
-    else
-        load(result.get(), jsUndefined());
+    Reg value = node->value ? expr(node->value) : constant(jsUndefined());
     loc(node->range);
     if (isAsyncGenerator())
-        callRuntime(result.get(), RuntimeFunction::AsyncGenWrap, { result.get() });
-    emitYield(isForEffect ? nullptr : result.get(), result.get());
-    return dst ? g.move(dst, result.get()) : result.get();
+        value = callRuntime(g.finalDestination(nullptr, value.get()), RuntimeFunction::AsyncGenWrap, { value.get() });
+    if (isForEffect) {
+        emitYield(nullptr, value.get());
+        return value.get();
+    }
+    Reg result = g.finalDestination(dst, value.get());
+    return emitYield(result.get(), value.get());
 }
 
 RegisterID* Unit::emitDelegate(RegisterID* dst, RegisterID* iterator, int firstMode)
@@ -2039,7 +2061,7 @@ void Unit::comprehensionElement(ComprehensionKind kind, Expr* element, Expr* val
             g.emitPyForIter(item.get(), iterator.get(), end.get());
             if (isAsyncGenerator())
                 callRuntime(item.get(), RuntimeFunction::AsyncGenWrap, { item.get() });
-            emitYield(item.get(), item.get());
+            emitYield(nullptr, item.get());
             jump(start.get());
             g.emitLabel(end.get());
             return;
@@ -2049,7 +2071,7 @@ void Unit::comprehensionElement(ComprehensionKind kind, Expr* element, Expr* val
         loc(element->range);
         if (isAsyncGenerator())
             callRuntime(item.get(), RuntimeFunction::AsyncGenWrap, { item.get() });
-        emitYield(item.get(), item.get());
+        emitYield(nullptr, item.get());
         return;
     }
     case ComprehensionKind::List:
@@ -2183,9 +2205,9 @@ void Unit::comprehensionGenerator(ComprehensionKind kind, Seq<Comprehension*> ge
     Reg iterator = firstIterator;
     if (!iterator) {
         iterator = newTemporary();
-        exprToIterateOverOrSearch(generator->iter, iterator.get());
+        Reg iterable = exprToIterateOverOrSearch(generator->iter);
         loc(generator->iter->range);
-        g.emitPyGetIter(iterator.get(), iterator.get());
+        g.emitPyGetIter(iterator.get(), iterable.get());
     }
     g.settlePythonLineMark();
     g.emitLabel(start.get());
@@ -2245,9 +2267,15 @@ RegisterID* Unit::comprehension(Expr* node, ComprehensionKind kind, Seq<Comprehe
         // The first iterable is evaluated where the comprehension is.
         Reg iterator = newTemporary();
         // (CPython has something between this and the call of iter(), so it is a list if it is written as one.)
-        expr(outermost->iter, iterator.get());
+        // Nothing of the program runs in between: a variable can stay where it is.
+        Reg iterable = outermost->iter->is<NameExpr>() ? expr(outermost->iter) : expr(outermost->iter, iterator.get());
 
         VariableMap& variables = *m_variables.get(scope);
+        // Here CPython puts aside what variables of the same names hold.
+        for (auto& symbol : scope->symbols) {
+            if (auto it = variables.find(symbol.name->impl()); it != variables.end())
+                noteUse(it->value);
+        }
         auto resetVariables = [&] {
             for (auto& variable : variables.values()) {
                 g.move(variable.reg, emptyValue());
@@ -2265,9 +2293,10 @@ RegisterID* Unit::comprehension(Expr* node, ComprehensionKind kind, Seq<Comprehe
             guard = beginTry();
         loc(outermost->iter->range);
         if (outermost->isAsync)
-            callRuntime(iterator.get(), RuntimeFunction::GetAIterOfLoop, { iterator.get() });
+            callRuntime(iterator.get(), RuntimeFunction::GetAIterOfLoop, { iterable.get() });
         else
-            g.emitPyGetIter(iterator.get(), iterator.get());
+            g.emitPyGetIter(iterator.get(), iterable.get());
+        iterable = nullptr;
         m_overlays.append(scope);
         pushBlock({ .kind = BlockKind::InlinedComprehension, .tryDepth = guard ? guard->depthBefore : g.tryDepth(), .comprehension = scope });
         emitContainer(*this, result.get());

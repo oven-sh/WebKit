@@ -39,6 +39,7 @@ enum SymbolFlag : uint16_t {
     DefCompIter = 1 << 8, // An iteration variable of a comprehension.
     DefTypeParam = 1 << 9,
     Deleted = 1 << 10, // `del`, or what follows `as` in an `except` clause: it may lose its value.
+    AssignedInExpression = 1 << 11, // By :=, so between the evaluation of one operand and that of the next.
     DefBound = DefLocal | DefParam | DefImport,
 };
 
@@ -136,7 +137,6 @@ public:
     // Of the function that evaluates the annotations of a class: it asks which of the statements were reached, which is in a cell
     // of the class. That is a free variable of the code and no symbol: the name means whatever it means to the program.
     bool readsConditionalAnnotationsCell : 1 { false };
-    bool hasNamedExpression : 1 { false }; // A variable may change while an expression is evaluated.
 
     // While the tree is visited.
     bool inComprehensionTarget : 1 { false };

@@ -124,6 +124,12 @@ Whether there is an object to pass is one `op_jeq_ptr` against the empty value.
 there is a first parameter and a `__class__` cell). The global `super`, the class, the object and the name go to one function of the runtime (`loadSuperAttribute()`), which walks the MRO
 if the global is the built-in and does what is written otherwise; for a call it gives the function and the object, like `op_py_get_method`. It remembers nothing.
 
+**Where values go.** As in `NodesCodegen.cpp`, an expression is given the register its value is wanted in, and writes there last of all: `x = [a, x]`, `x: int = f(x)`, `x = yield x`. Where the
+order of evaluation could be told from the order of the writes, a temporary stands in: a variable that `:=` assigns to somewhere in the function is copied when it is read
+(`Variable::isAssignedInExpression`; JSC asks the same of the right operand, `rightHasAssignments`); `return x` copies `x` if a `finally`, the end of an `except ... as`, an `__exit__` or the closing of
+a generator lies on the way out. `a, b = b, a + b` makes no tuple, and if the targets are variables in registers, the last value is computed in its variable. `a, b = t` and `for a, b in pairs`
+unpack into the variables themselves if their registers follow one another and they are written on one line (`Unit::unpack()`): `op_py_unpack` stores nothing before it has all the items.
+
 **Constants.** What CPython's compiler works out, this one does, with the same limits (`Unit::valueCPythonsCompilerWorksOut()`): operations on constants, from the left for as long as they are on
 constants (`60 * 60 * x`); tuples of constants; a list or a set of constants that is only searched or iterated over is a constant tuple or frozenset, and a list of anything else that is only
 searched or iterated over is built as a tuple (`Unit::exprToIterateOverOrSearch()`). `co_consts` shows what CPython's shows, except that a list or set display of three constants or more, which

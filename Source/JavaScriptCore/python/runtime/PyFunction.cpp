@@ -1320,16 +1320,14 @@ static JSValue codeGetVarNames(JSGlobalObject* globalObject, JSValue self)
     MarkedArgumentBuffer names;
     for (auto& parameter : info.parameterNames)
         names.append(jsString(vm, parameter.string().string()));
-    // Those of inlined comprehensions come last, and share the place of a variable of the same name.
+    // Those of inlined comprehensions share the place of a variable of the same name.
     Vector<Identifier, 16> seen;
-    for (bool hidden : { false, true }) {
-        for (auto& variable : info.variables) {
-            // (A parameter may be known to the code by another name than the one it shows: the `format` of __annotate__.)
-            if (variable.isHidden != hidden || variable.kind != CodeInfo::VariableKind::Local || variable.reg.isArgument() || info.parameterNames.contains(variable.name) || seen.contains(variable.name))
-                continue;
-            seen.append(variable.name);
-            names.append(jsString(vm, variable.name.string().string()));
-        }
+    for (auto& variable : info.variables) {
+        // (A parameter may be known to the code by another name than the one it shows: the `format` of __annotate__.)
+        if (variable.kind != CodeInfo::VariableKind::Local || variable.reg.isArgument() || info.parameterNames.contains(variable.name) || seen.contains(variable.name))
+            continue;
+        seen.append(variable.name);
+        names.append(jsString(vm, variable.name.string().string()));
     }
     return PyTuple::create(globalObject, spanOf(names));
 }
