@@ -94,6 +94,8 @@ struct SignalState {
     std::atomic<VM*> vm { nullptr };
     Runtime* runtime { nullptr };
     pthread_t thread { };
+    // installSignalHandlers()
+    bool isProgram { false };
 };
 
 } // namespace
@@ -394,17 +396,15 @@ static JSValue signalDefaultIntHandler(JSGlobalObject* globalObject, JSValue num
     return raiseWithArgs(globalObject, scope, rt.KeyboardInterrupt(), { });
 }
 
-bool signalMayBeHandled(JSGlobalObject* globalObject)
+bool signalMayEndWait(JSGlobalObject* globalObject)
 {
     if (!signalCanHandle(globalObject))
         return false;
+    if (s_signalState.isProgram)
+        return true;
     JSArray* handlers = signalHandlers(globalObject);
     for (int number = 1; number < signalLimit; ++number) {
-        JSValue handler = listGet(handlers, number);
-        if (!signalIsFunction(handler))
-            continue;
-        auto* native = PyNativeFunction::tryFrom(handler);
-        if (!native || native->def().pointer.f2 != signalDefaultIntHandler)
+        if (signalIsFunction(listGet(handlers, number)))
             return true;
     }
     return false;
@@ -590,7 +590,10 @@ void installSignalHandlers(JSGlobalObject* globalObject)
     JSValue module = importModule(globalObject, "_signal"_s);
     RETURN_IF_EXCEPTION(scope, void());
     JSArray* handlers = signalHandlers(globalObject);
-    if (!signalCanHandle(globalObject) || !signalIsAction(listGet(handlers, SIGINT), signalDefault))
+    if (!signalCanHandle(globalObject))
+        return;
+    s_signalState.isProgram = true;
+    if (!signalIsAction(listGet(handlers, SIGINT), signalDefault))
         return;
     JSValue handler = getAttr(globalObject, module, internString(vm, "default_int_handler"_s));
     RETURN_IF_EXCEPTION(scope, void());
@@ -1310,7 +1313,7 @@ void initializeSignalModule(JSGlobalObject* globalObject, PyModule* module)
 // FIXME: Signals on Windows.
 bool checkSignals(JSGlobalObject*) { return true; }
 bool checkOnlySignals(JSGlobalObject*) { return true; }
-bool signalMayBeHandled(JSGlobalObject*) { return false; }
+bool signalMayEndWait(JSGlobalObject*) { return false; }
 bool simulateSignal(JSGlobalObject*, int number) { return number >= 1 && number < 23; }
 void installSignalHandlers(JSGlobalObject*) { }
 void finalizeSignals(JSGlobalObject*) { }

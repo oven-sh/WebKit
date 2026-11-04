@@ -325,8 +325,9 @@ bool checkOnlySignals(JSGlobalObject*);
 // Before the handlers it makes the calls that the thread owes, which may be what it was woken for. They are code of the
 // program: whoever calls this holds nothing that only a variable of C++ refers to. See Runtime::releaseUnreachableBuffers().
 bool checkSignals(JSGlobalObject*);
-// Whether the program has given a function for any signal. (Not counting the one SIGINT has to begin with.)
-bool signalMayBeHandled(JSGlobalObject*);
+// Whether a signal may end a wait that nothing else can end. Where Python is the program, always: `threading.Event().wait()` sleeps
+// until Ctrl-C raises KeyboardInterrupt, or until a signal ends the process. Elsewhere, if there is a function for any signal.
+bool signalMayEndWait(JSGlobalObject*);
 // As if the signal had arrived. Nothing happens if it is ignored or has its default effect. False: there is no such signal.
 // (PyErr_SetInterruptEx)
 bool simulateSignal(JSGlobalObject*, int number);

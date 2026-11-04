@@ -909,17 +909,20 @@ bool Threads::waitUntil(JSGlobalObject* globalObject, const void* address, int64
 
     ThreadState& thread = current();
     while (true) {
-        if (timeout < 0 && !m_runningCount && !signalMayBeHandled(globalObject)) {
-            // Unless it is a finalizer that brings about what is waited for, which in CPython would have run by now.
+        if (timeout < 0 && !m_runningCount) {
+            // Only a finalizer can bring about what is waited for, which in CPython would have run by now.
             if (failed(scope, idle.collectAsLastResort()))
                 return false;
             if (isOver())
                 return true;
-            // CPython would hang until it is interrupted from the keyboard.
-            raiseRuntimeError(globalObject, scope, "deadlock: "_s, whatIsWaitedFor, ", and there is no other thread"_s);
-            return false;
-        }
-        idle.canBeEnded();
+            // Or a signal. A program of Python sleeps until one comes, as it does in CPython. One of JS that has called into Python
+            // would only hang: nothing of JS runs while this thread waits.
+            if (!signalMayEndWait(globalObject)) {
+                raiseRuntimeError(globalObject, scope, "deadlock: "_s, whatIsWaitedFor, ", and there is no other thread"_s);
+                return false;
+            }
+        } else
+            idle.canBeEnded();
 
         m_waiters.add(address, Deque<ThreadState*>()).iterator->value.append(&thread);
         thread.isQueued = true;

@@ -770,6 +770,10 @@ lock (`runtime/PyThreads.h`). To hold it is to hold the VM's `JSLock`, with what
   while the thread is in a system call, cannot detach or shrink it.
 - A thread that waits for others for more than 50 ms, having allocated since it last did so, collects and runs finalizers: the
   others may be waiting for what a dropped object holds open, and in CPython it would have been closed when it was dropped.
+- A wait without a time limit while there is no other thread can be ended by a finalizer, so the thread collects at once, or by a
+  signal. A program of Python sleeps until one comes, as in CPython: `threading.Event().wait()` until Ctrl-C. Where Python is not the
+  program (JS has called into it) and has no function for any signal, the wait is a `RuntimeError` ("deadlock: ..."): nothing of JS
+  runs while the thread waits, so it would only hang.
 - At exit the threads that are not daemons are joined, unless the wait is interrupted; daemon threads never get the lock again.
 - **A VM that goes away while the process goes on takes its threads with it** (`stopThreads()`, `Threads::stopAll()`): a worker of the host's
   that ends, or is terminated. A thread that merely never ran again would be left with frames that refer to the VM, and may have
