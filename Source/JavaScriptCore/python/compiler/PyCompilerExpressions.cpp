@@ -194,7 +194,7 @@ RegisterID* Unit::exprToIterateOverOrSearch(Expr* node, RegisterID* dst)
         items = set->elts;
     if (node->range.lineno == node->range.endLineno || m_sameLineDepth || items.isEmpty() || items.size() > maxItemsCPythonHasOnItsStack || !areConstants(items))
         return expr(node, dst);
-    line(node->range.lineno);
+    line(node->range);
     SameLine sameLine(*this);
     return expr(node, dst);
 }
@@ -349,7 +349,7 @@ JSValue Unit::valueCPythonsCompilerWorksOut(Expr* node)
 void Unit::exprForEffect(Expr* node)
 {
     if (node->is<Constant>())
-        return line(node->range.lineno);
+        return line(node->range);
     if (auto* yielding = node->tryAs<Yield>(); yielding && isSafeToRecurse()) {
         Reg ignored = yield(yielding, nullptr, true);
         return;
@@ -364,9 +364,9 @@ RegisterID* Unit::expr(Expr* node, RegisterID* dst)
 
     // Of anything else, what comes first is a part of it.
     if (node->is<NameExpr>() || node->is<Constant>())
-        line(node->range.lineno);
+        line(node->range);
     if (node->range.lineno != node->range.endLineno && !m_sameLineDepth && (node->is<BinOp>() || node->is<UnaryOp>()) && valueCPythonsCompilerWorksOut(node)) [[unlikely]] {
-        line(node->range.lineno);
+        line(node->range);
         SameLine sameLine(*this);
         return expr(node, dst);
     }
@@ -434,7 +434,7 @@ RegisterID* Unit::expr(Expr* node, RegisterID* dst)
     case ExprKind::Tuple: {
         JSValue value;
         if (tryConstantValue(node, value)) {
-            line(node->range.lineno);
+            line(node->range);
             noteFoldedConstant(node, value);
             return load(dst, value);
         }
@@ -522,7 +522,7 @@ RegisterID* Unit::chain(Expr* node, RegisterID* dst)
         node = first;
     }
     if (node->is<BinOp>()) {
-        line(node->range.lineno);
+        line(node->range);
         noteFoldedConstant(node, constant);
     }
     if (chain.isEmpty())
@@ -570,7 +570,7 @@ RegisterID* Unit::unaryOp(UnaryOp* node, RegisterID* dst)
 {
     JSValue value;
     if (tryConstantValue(node, value)) {
-        line(node->range.lineno);
+        line(node->range);
         noteFoldedConstant(node, value);
         return load(dst, value);
     }
@@ -588,7 +588,7 @@ RegisterID* Unit::ifExp(IfExp* node, RegisterID* dst)
     Ref<Label> end = g.newLabel();
     jumpIf(node->test, orelse.get(), false);
     expr(node->body, result.get());
-    g.emitJump(end.get());
+    jump(end.get());
     g.emitLabel(orelse.get());
     expr(node->orelse, result.get());
     g.emitLabel(end.get());
@@ -756,10 +756,10 @@ void Unit::jumpIf(Expr* node, Label& target, bool condition)
     } else if (branchTarget.loopOfComprehension) {
         Ref<Label> goesOn = g.newLabel();
         jumpIfTo(node, goesOn.get(), !condition);
-        line(branchTarget.lineOfJumpThere);
-        g.emitJump(*branchTarget.loopOfComprehension);
+        line(branchTarget.placeOfJumpThere);
+        jump(*branchTarget.loopOfComprehension);
         g.emitLabel(goesOn.get());
-        line(branchTarget.lineOfJumpThere);
+        line(branchTarget.placeOfJumpThere);
     } else if (branchTarget.returns) {
         int lineno = node->range.lineno;
         size_t index = branchTarget.returns->findIf([&](auto& entry) { return entry.first == lineno; });
@@ -770,7 +770,7 @@ void Unit::jumpIf(Expr* node, Label& target, bool condition)
         jumpIfTo(node, branchTarget.returns->at(index).second.get(), condition);
     } else {
         jumpIfTo(node, target, condition);
-        line(branchTarget.lineOfJumpThere);
+        line(branchTarget.placeOfJumpThere);
     }
     m_branchTarget = branchTarget;
 }
@@ -781,9 +781,9 @@ void Unit::jumpIfTo(Expr* node, Label& target, bool condition)
         return;
 
     if (auto truth = constantTruth(node)) {
-        line(node->range.lineno);
+        line(node->range);
         if (*truth == condition)
-            g.emitJump(target);
+            jump(target);
         return;
     }
 
@@ -814,7 +814,7 @@ void Unit::jumpIfTo(Expr* node, Label& target, bool condition)
         Ref<Label> end = g.newLabel();
         jumpIf(ifExp->test, orelse.get(), false);
         jumpIf(ifExp->body, target, condition);
-        g.emitJump(end.get());
+        jump(end.get());
         g.emitLabel(orelse.get());
         jumpIf(ifExp->orelse, target, condition);
         g.emitLabel(end.get());
@@ -835,6 +835,7 @@ void Unit::jumpIfTo(Expr* node, Label& target, bool condition)
             Label& destination = isLast ? target : isFalse.get();
             bool jumpOn = isLast ? condition : false;
             if (isNoneLiteral(rightExpr) && (op == AST::CompareKind::Is || op == AST::CompareKind::IsNot)) {
+                loc(compare->range);
                 g.emitPyIsNone(result.get(), left.get());
                 if ((op == AST::CompareKind::Is) == jumpOn)
                     g.emitPyJumpIfTrue(result.get(), destination);
@@ -858,9 +859,9 @@ void Unit::jumpIfTo(Expr* node, Label& target, bool condition)
         if (last && !condition) {
             // A comparison before the last that is false makes the whole false.
             Ref<Label> end = g.newLabel();
-            g.emitJump(end.get());
+            jump(end.get());
             g.emitLabel(isFalse.get());
-            g.emitJump(target);
+            jump(target);
             g.emitLabel(end.get());
         } else
             g.emitLabel(isFalse.get());
@@ -1004,7 +1005,7 @@ void Unit::store(Expr* target, RegisterID* value)
     if (!isSafeToRecurse())
         return;
     Reg held = value;
-    line(target->range.lineno);
+    line(target->range);
     switch (target->kind) {
     case ExprKind::Name:
         return storeName(target->as<NameExpr>()->id, value, target->range);
@@ -1097,7 +1098,7 @@ RegisterID* Unit::sequence(SequenceKind kind, Seq<Expr*> items, RegisterID* dst,
     // It makes constants of more tuples than tryConstantValue() does.
     std::optional<SameLine> sameLine;
     if ((kind == SequenceKind::Tuple || count >= 3) && count <= maxItemsCPythonHasOnItsStack && total == count && range.lineno != range.endLineno && !m_sameLineDepth && areConstants(items)) {
-        line(range.lineno);
+        line(range);
         sameLine.emplace(*this);
     }
 
@@ -1110,11 +1111,11 @@ RegisterID* Unit::sequence(SequenceKind kind, Seq<Expr*> items, RegisterID* dst,
         // CPython adds the items of a long display one by one, which is of the line the display begins on.
         bool isLong = total > maxItemsCPythonHasOnItsStack;
         if (isLong)
-            line(range.lineno);
+            line(range);
         for (Expr* item : items) {
             expr(item, values[next++]);
             if (isLong)
-                line(range.lineno);
+                line(range);
         }
         if (injected)
             loadName(injected, values[next++], range);
@@ -1734,7 +1735,7 @@ RegisterID* Unit::callOnGeneratorExpression(Call* node, RegisterID* callee, JSVa
         Reg item = newTemporary();
         g.settlePythonLineMark();
         g.emitLabel(loop.get());
-        line(range.lineno);
+        line(range);
         loc(range);
         g.emitPyForIter(item.get(), generator.get(), exhausted.get());
         if (what == GoesThrough::Set)
@@ -1747,24 +1748,24 @@ RegisterID* Unit::callOnGeneratorExpression(Call* node, RegisterID* callee, JSVa
                 g.emitPyJumpIfFalse(item.get(), isDecided.get());
             else
                 g.emitPyJumpIfTrue(item.get(), isDecided.get());
-            g.emitJump(loop.get());
+            jump(loop.get());
             g.emitLabel(isDecided.get());
             // In CPython nothing refers to the generator any more.
             callRuntimeForEffect(RuntimeFunction::DropGenerator, { generator.get() });
             g.move(result.get(), constant(jsBoolean(what == GoesThrough::Any)));
-            g.emitJump(done.get());
+            jump(done.get());
         }
         if (collects)
-            g.emitJump(loop.get());
+            jump(loop.get());
         g.emitLabel(exhausted.get());
-        silentLine(range.lineno);
+        silentLine(range);
         if (what == GoesThrough::Tuple)
             callRuntime(result.get(), RuntimeFunction::ListToTuple, { collected.get() });
         else if (collects)
             g.move(result.get(), collected.get());
         else
             g.move(result.get(), constant(jsBoolean(what == GoesThrough::All)));
-        g.emitJump(done.get());
+        jump(done.get());
     }
     g.emitLabel(isSomethingElse.get());
     emitCall(result.get(), callee, { }, node->args, node->keywords, nullptr, node->range, temporary);
@@ -1891,7 +1892,7 @@ void Unit::comprehensionElement(ComprehensionKind kind, Expr* element, Expr* val
             if (isAsyncGenerator())
                 callRuntime(item.get(), RuntimeFunction::AsyncGenWrap, { item.get() });
             emitYield(item.get(), item.get());
-            g.emitJump(start.get());
+            jump(start.get());
             g.emitLabel(end.get());
             return;
         }
@@ -1953,19 +1954,24 @@ void Unit::comprehensionGenerator(ComprehensionKind kind, Seq<Comprehension*> ge
     Ref<Label> next = g.newLabel();
     Ref<Label> end = g.newLabel();
     Label* loop = start.ptr();
+    Range placeOfElement = element->range;
+    if (value) {
+        placeOfElement.endLineno = value->range.endLineno;
+        placeOfElement.endColOffset = value->range.endColOffset;
+    }
 
     auto emitInner = [&] {
         for (Expr* condition : generator->ifs) {
             // CPython's compiler has the branches go where the jump at `next` goes, and then they are of the line of that jump.
-            SetForScope branchTarget(m_branchTarget, BranchTarget { next.ptr(), element->range.lineno, nullptr, { }, loop });
+            SetForScope branchTarget(m_branchTarget, BranchTarget { next.ptr(), placeOfElement, nullptr, { }, loop });
             jumpIf(condition, next.get(), false);
         }
         if (index + 1 < generators.size()) {
             comprehensionGenerator(kind, generators, index + 1, element, value, result, nullptr, range);
             // So nothing jumps to where the inner loop goes on when it has ended.
             if (!generator->ifs.isEmpty()) {
-                line(element->range.lineno);
-                g.emitJump(start.get());
+                line(placeOfElement);
+                jump(start.get());
             }
         } else
             comprehensionElement(kind, element, value, result);
@@ -1982,7 +1988,7 @@ void Unit::comprehensionGenerator(ComprehensionKind kind, Seq<Comprehension*> ge
         g.settlePythonLineMark();
         Try whole = beginTry();
         g.emitLabel(start.get());
-        line(range.lineno);
+        line(range);
         Try guard = beginTry();
         Reg item = newTemporary();
         loc(range);
@@ -1993,11 +1999,11 @@ void Unit::comprehensionGenerator(ComprehensionKind kind, Seq<Comprehension*> ge
         item = nullptr;
         emitInner();
         g.emitLabel(next.get());
-        line(element->range.lineno);
-        g.emitJump(start.get());
+        line(placeOfElement);
+        jump(start.get());
 
         Reg thrown = beginHandler(guard);
-        silentLine(range.lineno);
+        silentLine(range);
         loc(range);
         callRuntimeForEffect(RuntimeFunction::EndAsyncFor, { thrown.get(), iterator.get() });
         thrown = nullptr;
@@ -2035,7 +2041,7 @@ void Unit::comprehensionGenerator(ComprehensionKind kind, Seq<Comprehension*> ge
     }
     g.settlePythonLineMark();
     g.emitLabel(start.get());
-    line(generator->iter->range.lineno);
+    line(generator->iter->range);
     loc(generator->iter->range);
     bool stored = false;
     if (auto* target = generator->target->tryAs<NameExpr>()) {
@@ -2051,15 +2057,15 @@ void Unit::comprehensionGenerator(ComprehensionKind kind, Seq<Comprehension*> ge
         g.emitPyForIter(item.get(), iterator.get(), end.get());
         store(generator->target, item.get());
     } else
-        line(generator->target->range.lineno);
+        line(generator->target->range);
     emitInner();
     g.emitLabel(next.get());
-    line(element->range.lineno);
-    g.emitJump(start.get());
+    line(placeOfElement);
+    jump(start.get());
     g.emitLabel(end.get());
     // A generator expression returns from there.
     if (kind == ComprehensionKind::Generator && !index)
-        line(generator->iter->range.lineno);
+        line(generator->iter->range);
 }
 
 RegisterID* Unit::comprehension(Expr* node, ComprehensionKind kind, Seq<Comprehension*> generators, Expr* element, Expr* value, RegisterID* dst)
@@ -2117,7 +2123,7 @@ RegisterID* Unit::comprehension(Expr* node, ComprehensionKind kind, Seq<Comprehe
         pushBlock({ .kind = BlockKind::InlinedComprehension, .tryDepth = guard ? guard->depthBefore : g.tryDepth(), .comprehension = scope });
         emitContainer(*this, result.get());
         comprehensionGenerator(kind, generators, 0, element, value, result.get(), iterator.get(), range);
-        line(range.lineno);
+        line(range);
         popBlock();
         m_overlays.removeLast();
         if (guard) {
@@ -2129,7 +2135,7 @@ RegisterID* Unit::comprehension(Expr* node, ComprehensionKind kind, Seq<Comprehe
             resetVariables();
             reraise(thrown.get());
             g.emitLabel(end.get());
-            silentLine(range.lineno);
+            silentLine(range);
         }
         return dst ? g.move(dst, result.get()) : result.get();
     }

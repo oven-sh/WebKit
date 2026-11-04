@@ -332,10 +332,10 @@ void Unit::patternOr(MatchOr* node, RegisterID* subject, PatternContext& context
                 return;
             }
         }
-        g.emitJump(end.get());
+        jump(end.get());
         g.emitLabel(next.get());
     }
-    g.emitJump(*context.fail);
+    jump(*context.fail);
     g.emitLabel(end.get());
 
     for (auto& captured : control) {
@@ -376,7 +376,7 @@ void Unit::pattern(Pattern* node, RegisterID* subject, PatternContext& context)
 void Unit::matchStatement(Match* node, Last isLast)
 {
     Reg subject = newTemporary();
-    line(node->subject->range.lineno);
+    line(node->subject->range);
     expr(node->subject, subject.get());
     Ref<Label> end = g.newLabel();
 
@@ -390,7 +390,7 @@ void Unit::matchStatement(Match* node, Last isLast)
         context.allowIrrefutable = matchCase->guard || i == count - 1;
         pushBlock({ .kind = BlockKind::MatchSubject, .tryDepth = g.tryDepth() });
         m_statementStart = g.instructions().size();
-        line(matchCase->pattern->range.lineno);
+        line(matchCase->pattern->range);
         pattern(matchCase->pattern, subject.get(), context);
         for (auto& captured : context.captures)
             storeName(captured.name, captured.reg.get(), matchCase->pattern->range);
@@ -398,10 +398,17 @@ void Unit::matchStatement(Match* node, Last isLast)
         if (matchCase->guard)
             jumpIf(matchCase->guard, next.get(), false);
         popBlock();
-        statements(matchCase->body, 0, isLast);
-        leaveStatement(end.get(), isLast, JumpIs::OfTheProgram);
+        // After the last case there is nothing to jump over.
+        bool isLastCase = i + 1 == count;
+        statements(matchCase->body, 0, isLastCase ? isLast : lastBeforeJump(end.get(), isLast));
+        if (isLast || !isLastCase)
+            leaveStatement(end.get(), isLast, JumpIs::OfTheProgram);
+        // (A pattern that always matches.)
+        if (!next->isBound())
+            continue;
         g.emitLabel(next.get());
-        lineOfImplicitReturn(matchCase->pattern->range.lineno, isLast.onlyIf(i + 1 == count));
+        if (isLast && isLastCase)
+            line(matchCase->pattern->range);
     }
     endOfStatement(end.get());
 }

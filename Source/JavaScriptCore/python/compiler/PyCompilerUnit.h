@@ -10,11 +10,15 @@
 namespace JSC {
 namespace Python {
 
-// What comes after a statement: something else, the end of the function, or the end of the body of a loop. See Unit::leaveStatement().
+// What comes after a statement: something else, the end of the function, the end of the body of a loop, or a jump. See Unit::leaveStatement().
 struct Last {
-    enum Kind : uint8_t { No, OfFunction, OfLoopBody };
+    enum Kind : uint8_t { No, OfFunction, OfLoopBody, BeforeJump };
     Kind kind { No };
     unsigned loop { 0 }; // OfLoopBody: which of Unit::m_blocks.
+    // BeforeJump: where to, and how many blocks and `try` ranges are open there.
+    Label* target { nullptr };
+    unsigned blockCount { 0 };
+    unsigned tryDepth { 0 };
     explicit operator bool() const { return kind != No; }
     Last onlyIf(bool condition) const { return condition ? *this : Last { }; }
 };
@@ -185,11 +189,15 @@ private:
     // Says where the instructions that follow come from.
     void loc(const Range&);
     // Only the line, which is what is told to whoever traces the program. A line of which no instruction comes is told of too.
+    void line(const Range&);
     void line(int lineno);
+    // A jump of the program's. Its place is that of whatever came before it, as in CPython. (One that goes back looks for signals, so a
+    // handler may find the frame there, and a traceback show the place.)
+    void jump(Label&);
     // What follows is of no line: the program did not write it, and it is not reached from what it wrote last.
     void noLine();
     // It is of this line, but nobody is told that the line begins.
-    void silentLine(int lineno);
+    void silentLine(const Range&);
     // A jump that is there because of how the code is laid out here. In CPython there is none, or one that nobody is told of:
     // what handles exceptions is out of the way, at the end of the code.
     static Range rangeOfAttributeName(AST::Attribute*);
@@ -200,14 +208,17 @@ private:
     bool cannotGetHere();
     void emitImplicitReturn(const Range& = { });
     void emitImplicitContinue(unsigned loop, const Range& = { });
+    void emitImplicitJump(Last, const Range& = { });
     void leave(Last, const Range& = { });
+    Last lastBeforeJump(Label&, Last);
+    bool canBranchTo(Last);
     using ReturnsByLine = Vector<std::pair<int, Ref<Label>>, 4>;
     void jumpIfOrLeave(Expr* test, Label& target, Last, ReturnsByLine&);
     void emitReturnsByLine(ReturnsByLine&);
     // What jumpIf() does about the branches that go to the label.
     struct BranchTarget {
         Label* label { nullptr };
-        int lineOfJumpThere { 0 }; // They are of this line: see comprehensionGenerator().
+        Range placeOfJumpThere { }; // They are of this place: see comprehensionGenerator().
         ReturnsByLine* returns { nullptr }; // Each goes to one of these instead, by the line it is of.
         // Each is turned round, to jump over a jump
         std::optional<unsigned> loop { }; // to where this loop, one of m_blocks, goes on,
@@ -481,7 +492,10 @@ private:
     };
     Vector<CellParameter, 2> m_cellParameters; // The parameters that enclosed functions use.
     unsigned m_boundBitCount { 0 };
+    void markLine(int lineno);
+    void place(const Range&);
     int m_markedLine { -1 }; // What line() was last given, and where in the instructions.
+    Range m_place; // All of it, if more than the line was given.
     size_t m_markedPosition { 0 };
     unsigned m_sameLineDepth { 0 };
     size_t m_statementStart { std::numeric_limits<size_t>::max() }; // Where in the instructions the last statement begins.

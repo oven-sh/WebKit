@@ -734,6 +734,11 @@ units: a `NOP` for each byte, `RESUME` before the program's own code, which is h
 with the distances they have here: `JUMP_FORWARD`, `JUMP_BACKWARD`, `POP_JUMP_IF_TRUE`, `POP_JUMP_IF_FALSE`, `FOR_ITER`, `RETURN_VALUE`, `YIELD_VALUE`, `RAISE_VARARGS`, `RERAISE`.
 `coverage.py` follows them from where a branch went to the next line, to tell which of the branches in the source that was.
 
+**Places.** Columns come from JSC's table of where expressions are, which has an entry for what may raise; what has none is of the place before it if that is on its
+line. A jump of the program's has one: the place of whatever CPython's compiler emitted last (`Unit::m_place`), which is where its jumps get theirs. It matters for jumps that go back: they look for signals, so a
+`KeyboardInterrupt` in a busy loop is raised there, and the traceback marks the place. As in CPython no jump leads to a jump: what would fall off the end of a statement into
+a jump (the end of the body of an `if` that has an `else`, of a `case`, of a `try` with handlers) goes where that goes (`Last::BeforeJump`), as it returns if the function ends there and goes round if the body of a loop does.
+
 **Comparing code.** Code objects are equal if their names, flags, first lines, variables and instructions (as the compiler left them) are, and then their text, or, for code made from a tree,
 their constants (by type and bits: `0`, `0.0`, `-0.0` and `False` are four) and `co_positions()`. The hash leaves the instructions out: `bdb` keeps code objects in dictionaries while it traces them.
 

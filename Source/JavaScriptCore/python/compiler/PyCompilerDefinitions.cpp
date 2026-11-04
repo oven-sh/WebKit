@@ -63,7 +63,7 @@ void Unit::emitDefaults(AST::Arguments* arguments, FunctionParts& parts, const R
         // The tuple is of the line the definition begins on: all there is, if it is a constant.
         std::optional<SameLine> sameLine;
         if (!m_sameLineDepth && areConstants(arguments->defaults)) {
-            line(range.lineno);
+            line(range);
             sameLine.emplace(*this);
         }
         sequence(SequenceKind::Tuple, arguments->defaults, parts.defaults.get(), range);
@@ -79,7 +79,7 @@ void Unit::emitDefaults(AST::Arguments* arguments, FunctionParts& parts, const R
     for (unsigned i = 0; i < arguments->kwonlyargs.size(); ++i) {
         if (!arguments->kwDefaults[i])
             continue;
-        line(range.lineno);
+        line(range);
         g.move(items[next++], nameConstant(mangle(arguments->kwonlyargs[i]->arg)));
         expr(arguments->kwDefaults[i], items[next++]);
     }
@@ -200,7 +200,7 @@ void Unit::functionDefinition(FunctionDef* node)
     }
 
     applyDecorators(node->decoratorList, decorators, function.get());
-    line(node->range.lineno);
+    line(node->range);
     storeName(node->name, function.get(), node->range);
 }
 
@@ -337,7 +337,7 @@ void Unit::classDefinition(ClassDef* node)
     }
 
     applyDecorators(node->decoratorList, decorators, result.get());
-    line(node->range.lineno);
+    line(node->range);
     storeName(node->name, result.get(), node->range);
 }
 
