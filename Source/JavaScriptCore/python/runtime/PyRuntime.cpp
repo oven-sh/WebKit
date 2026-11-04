@@ -118,6 +118,8 @@ void Runtime::visit(Visitor& visitor)
             visitor.appendUnbarriered(entry.thrown);
             visitor.appendUnbarriered(entry.previous);
             visitor.appendUnbarriered(entry.slotOwner);
+            // So that no other code comes to lie at its address.
+            visitor.appendUnbarriered(entry.code);
         }
     }
     visitor.append(m_asyncGenFirstIter);

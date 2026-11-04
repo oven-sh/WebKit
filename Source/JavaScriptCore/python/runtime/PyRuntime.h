@@ -807,7 +807,7 @@ private:
     PyGenerator* m_runningGenerator { nullptr }; // The frame of its body refers to it.
     struct CatchInJS {
         enum State : uint8_t { Noted, BeingPutInSlot, InSlot };
-        CallFrame* callFrame; // These two are only ever compared.
+        CallFrame* callFrame; // Only ever compared.
         UnlinkedCodeBlock* code;
         unsigned start;
         unsigned end;
