@@ -1189,6 +1189,9 @@ static bool isClassOfJS(JSCell* callee)
 
 bool prepareForeignCall(JSGlobalObject* globalObject, CallFrame* calleeFrame)
 {
+    // A list is an array of JS. The caller says that it cannot be called, on whichever thread.
+    if (!asObject(calleeFrame->guaranteedJSValueCallee())->isCallable())
+        return false;
     if (!ensureMainThreadForJS(globalObject))
         return false;
     VM& vm = getVM(globalObject);
