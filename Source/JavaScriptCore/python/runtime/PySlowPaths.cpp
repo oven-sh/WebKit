@@ -505,7 +505,7 @@ static ALWAYS_INLINE Register* registersOfOperator(CallFrame* callFrame, CodeBlo
 }
 
 // As pyGiveUpFrameOfOperator: all that is left for the interpreter to do is to move the stack pointer.
-static_assert(sizeOfFrameMadeByInstruction(RegisterOfOperator::End) - CallerFrameAndPC::sizeInRegisters == 12, "pyGiveUpFrameOfOperator");
+static_assert(sizeOfFrameMadeByInstruction(RegisterOfOperator::End) - CallerFrameAndPC::sizeInRegisters == 12 && sizeOfFrameMadeByInstruction(2) - CallerFrameAndPC::sizeInRegisters == 6, "pyGiveUpFrame...");
 static ALWAYS_INLINE void clearFrameOfOperator(CallFrame* callFrame, CodeBlock* codeBlock)
 {
     Register* end = endOfFrameMadeByInstruction(callFrame, codeBlock);

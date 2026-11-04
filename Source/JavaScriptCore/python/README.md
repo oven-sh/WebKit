@@ -136,7 +136,7 @@ finds is a C++ function of its own that takes just the operands (`PyType::isNati
 that function. These are the slots of CPython's types, found out on first use and forgotten when the type changes. What calling a
 built-in type comes to is remembered in the same way (`PyType::Construction`).
 
-**Methods written in Python that the language itself calls** (`__add__`, `__lt__`) are called by the instruction,
+**Methods written in Python that the language itself calls** (`__add__`, `__lt__`, `__getitem__`) are called by the instruction,
 not by C++: an entry into the interpreter from C++ costs more than the call, and the frames of C++ would lie on the stack for as
 long as the method runs. The frame of the callee goes below the registers of the caller: the stack grows for the call and shrinks
 after it, as for the getters that JSC's inline caches call (`InlineCacheCompiler.cpp`), so it costs code that never comes to such a

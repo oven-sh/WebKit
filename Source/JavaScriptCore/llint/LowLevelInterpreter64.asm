@@ -2824,6 +2824,7 @@ end
 # the call and the prologue of the callee push, and up again when the instruction has no more use for it. Every word of that is written
 # when the frame is made, and zeroed before it is given up: that part of the stack will be the frames of others, which do not write
 # all of their words. (If an exception comes out of the callee: clearFrameMadeByInstruction() in PyFrame.cpp.)
+const PyRoomForFrameWithTwoArguments = (constexpr (Python::sizeOfFrameMadeByInstruction(2))) * 8 - CallerFrameAndPCSize
 const PyRoomForFrameOfOperator = (constexpr (Python::sizeOfFrameMadeByInstruction(Python::RegisterOfOperator::End))) * 8 - CallerFrameAndPCSize
 const PyFirstArgumentOfCallee = FirstArgumentOffset - CallerFrameAndPCSize
 
@@ -2884,6 +2885,14 @@ macro pyGiveUpFrame(room, clear)
 end
 
 # So many bytes: see the static_assert in PySlowPaths.cpp.
+macro pyGiveUpFrameWithTwoArguments()
+    pyGiveUpFrame(PyRoomForFrameWithTwoArguments, macro (clear16Bytes)
+        clear16Bytes(0)
+        clear16Bytes(16)
+        clear16Bytes(32)
+    end)
+end
+
 macro pyGiveUpFrameOfOperator()
     pyGiveUpFrame(PyRoomForFrameOfOperator, macro (clear16Bytes)
         clear16Bytes(0)
@@ -4031,6 +4040,28 @@ llintOpWithReturn(op_py_get_item, OpPyGetItem, macro (size, get, dispatch, retur
     return(t0)
 
 .slow:
+    if ARM64E
+        jmp .generic
+    end
+    get(m_base, t0)
+    loadConstantOrVariableCell(size, t0, t3, .generic)
+    bbneq JSCell::m_type[t3], PyInstanceType, .generic
+    loadp (constexpr (Python::PyObject::offsetOfType()))[t3], t1
+    bbneq (constexpr (Python::PyType::offsetOfSpecialStates())) + (constexpr Python::Special::GetItem)[t1], constexpr Python::PyType::specialIsFunction, .generic
+    loadq (constexpr (Python::PyType::offsetOfSpecials())) + (constexpr Python::Special::GetItem) * 8[t1], t2
+    get(m_key, t1)
+    loadConstantOrVariable(size, t1, t0)
+    pyLoadCodeBlockOfCallee()
+    pyCheckCodeBlockOfCallee(2, .generic)
+    subp PyRoomForFrameWithTwoArguments, sp
+    pyStoreHeaderOfCallee(2)
+    storeq t3, PyFirstArgumentOfCallee[sp]
+    storeq t0, PyFirstArgumentOfCallee + 8[sp]
+    pyCallFrame()
+    pyGiveUpFrameWithTwoArguments()
+    return(r0)
+
+.generic:
     callSlowPath(_slow_path_py_get_item)
     dispatch()
 end)
