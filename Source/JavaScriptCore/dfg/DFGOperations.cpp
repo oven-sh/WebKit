@@ -1491,11 +1491,21 @@ JSC_DEFINE_JIT_OPERATION(operationArrayUnshiftMultiple, EncodedJSValue, (JSGloba
     auto scope = DECLARE_THROW_SCOPE(vm);
     ActiveScratchBufferScope activeScratchBufferScope(ScratchBuffer::fromData(buffer), elementCount);
 
-    // We assume that multiple unshift calls with ArrayWithInt32/ArrayWithContiguous do not cause JS traps.
-    // If it can cause any JS interactions, we can call the caller JS function of this function and overwrite the
-    // content of ScratchBuffer. If the IndexingType is now ArrayWithInt32/ArrayWithContiguous, we can ensure
-    // that there is no indexed accessors in this object and its prototype chain.
+    // The elements to store are in the scratch buffer, and unshift() below runs user code when it moves a hole
+    // that the prototype chain answers. That code reaches this scratch buffer through another DFG operation of
+    // its own, so take the elements out of the buffer first whenever unshift() can run user code at all.
     ASSERT(!shouldUseSlowPut(array->indexingType()));
+    MarkedArgumentBuffer elements;
+    bool elementsStayInTheBuffer = !array->holesMustForwardToPrototype();
+    if (!elementsStayInTheBuffer) [[unlikely]] {
+        elements.ensureCapacity(elementCount);
+        for (int32_t k = 0; k < elementCount; ++k)
+            elements.append(JSValue::decode(buffer[k]));
+        if (elements.hasOverflowed()) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            OPERATION_RETURN(scope, encodedJSValue());
+        }
+    }
 
     uint64_t length = toLength(globalObject, array);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
@@ -1510,7 +1520,8 @@ JSC_DEFINE_JIT_OPERATION(operationArrayUnshiftMultiple, EncodedJSValue, (JSGloba
         // FIXME: Potentially we can do gcSafeMemcpy / memcpy for this operation. But be careful that the above unshift may
         // convert JSArray type to ArrayStorage when increased size exceeds ArrayStorage threshold.
         for (int32_t k = 0; k < elementCount; ++k) {
-            array->putByIndexInline(globalObject, static_cast<unsigned>(k), JSValue::decode(buffer[k]), true);
+            JSValue element = elementsStayInTheBuffer ? JSValue::decode(buffer[k]) : elements.at(k);
+            array->putByIndexInline(globalObject, static_cast<unsigned>(k), element, true);
             OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
         }
     }
@@ -1529,7 +1540,19 @@ JSC_DEFINE_JIT_OPERATION(operationArrayUnshiftDoubleMultiple, EncodedJSValue, (J
     auto scope = DECLARE_THROW_SCOPE(vm);
     ActiveScratchBufferScope activeScratchBufferScope(ScratchBuffer::fromData(buffer), elementCount);
 
+    // Take the elements out of the scratch buffer first when unshift() can run user code, as in
+    // operationArrayUnshiftMultiple above.
     ASSERT(array->indexingMode() == ArrayWithDouble);
+    Vector<double, 8> elements;
+    bool elementsStayInTheBuffer = !array->holesMustForwardToPrototype();
+    if (!elementsStayInTheBuffer) [[unlikely]] {
+        if (!elements.tryReserveCapacity(elementCount)) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            OPERATION_RETURN(scope, encodedJSValue());
+        }
+        for (int32_t k = 0; k < elementCount; ++k)
+            elements.append(buffer[k]);
+    }
 
     uint64_t length = toLength(globalObject, array);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
@@ -1537,10 +1560,6 @@ JSC_DEFINE_JIT_OPERATION(operationArrayUnshiftDoubleMultiple, EncodedJSValue, (J
     if (length + elementCount > maxSafeIntegerAsUInt64()) [[unlikely]]
         OPERATION_RETURN(scope, throwVMTypeError(globalObject, scope, unshiftArrayLengthExceeded));
 
-    // We assume that multiple unshift calls with ArrayWithDouble do not cause JS traps.
-    // If it can cause any JS interactions, we can call the caller JS function of this function and overwrite the
-    // content of ScratchBuffer. If the IndexingType is now ArrayWithDouble, we can ensure
-    // that there is no indexed accessors in this object and its prototype chain.
     if (elementCount > 0) {
         unshift(globalObject, array, 0, 0, static_cast<uint32_t>(elementCount), length);
         OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
@@ -1548,7 +1567,8 @@ JSC_DEFINE_JIT_OPERATION(operationArrayUnshiftDoubleMultiple, EncodedJSValue, (J
         // FIXME: Potentially we can do gcSafeMemcpy / memcpy for this operation. But be careful that the above unshift may
         // convert JSArray type to ArrayStorage when increased size exceeds ArrayStorage threshold.
         for (int32_t k = 0; k < elementCount; ++k) {
-            array->putByIndexInline(globalObject, static_cast<unsigned>(k), JSValue(JSValue::EncodeAsDouble, buffer[k]), true);
+            double element = elementsStayInTheBuffer ? buffer[k] : elements[k];
+            array->putByIndexInline(globalObject, static_cast<unsigned>(k), JSValue(JSValue::EncodeAsDouble, element), true);
             OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
         }
     }
@@ -1645,7 +1665,8 @@ static ALWAYS_INLINE EncodedJSValue arraySpliceImpl(JSGlobalObject* globalObject
                 return true;
             }
             case ArrayWithUndecided: {
-                return true;
+                // Every element of the range is a hole, so the prototype chain answers every one of them.
+                return !base->structure()->holesMustForwardToPrototype(base);
             }
             default:
                 return false;
