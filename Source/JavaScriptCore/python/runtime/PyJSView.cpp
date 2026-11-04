@@ -691,8 +691,16 @@ JSC_DEFINE_HOST_FUNCTION(jsViewNext, (JSGlobalObject* globalObject, CallFrame* c
     JSValue result;
     if (auto* generator = jsViewPlainGenerator(iterator))
         item = generatorSend(globalObject, generator, generator->isStarted() ? callFrame->argument(0) : jsUndefined(), result);
-    else
-        item = iterNext(globalObject, iterator);
+    else {
+        // Not iterNext(): the value of the StopIteration is what `yield*` gives.
+        Runtime& rt = runtime(globalObject);
+        JSValue method = rt.typeOf(iterator)->lookup(Special::Next);
+        if (!method)
+            return JSValue::encode(raiseTypeError(globalObject, scope, '\'', typeName(globalObject, iterator), "' object is not an iterator"_s));
+        item = callSpecial(globalObject, method, iterator);
+        if (!item && pendingExceptionMatches(globalObject, rt.StopIteration()))
+            result = PyException::from(takePendingException(globalObject))->field(ExceptionField::stopIterationValue);
+    }
     RETURN_IF_EXCEPTION(scope, { });
     if (item)
         RELEASE_AND_RETURN(scope, JSValue::encode(createIteratorResultObject(globalObject, valueForJS(item), false)));
