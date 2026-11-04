@@ -271,6 +271,10 @@ JSValue unaryOperatorForJS(JSGlobalObject*, JSOperator op, JSValue operand)
 template<MethodsWrittenInPython methods>
 static NEVER_INLINE JSValue askMethodsFromTheStart(JSGlobalObject* globalObject, unsigned op, bool inPlace, JSValue a, JSValue b)
 {
+    // With two numbers the interpreter does not look at what comes back (pyArithmeticSlowPathOfNumbers). 1 @ 2 gets this far, and what is
+    // in the dict of int can be written to behind its back (gc.get_referents(int.__dict__)).
+    if (methods == MethodsWrittenInPython::AreLeftToCaller && a.isNumber() && b.isNumber()) [[unlikely]]
+        return goOnWithBinaryOperation(globalObject, op, inPlace, a, b, OperatorProgress::Nothing, MethodsWrittenInPython::AreCalled);
     return goOnWithBinaryOperation(globalObject, op, inPlace, a, b, OperatorProgress::Nothing, methods);
 }
 

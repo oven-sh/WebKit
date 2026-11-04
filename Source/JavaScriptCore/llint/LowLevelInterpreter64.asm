@@ -2910,70 +2910,79 @@ end
 #   a class derived from that of the left;
 # - the left one is a number, and the right one such an instance: all that the number has to say to it is NotImplemented.
 # The macros below end with the left operand in t3, the right one in t0, the function in t2, and in t6 how far the instruction will
-# have got, with IsReflected if the method is that of the right operand.
+# have got, with IsReflected if the method is that of the right operand. `loadLeft()` puts the left operand in t3, and then
+# `loadRight()` the right one in t0: an instruction that has them in t0 and t1 only moves them (pyOperandsInRegisters), so
+# neither of these is written before loadRight(). They may use t6.
+macro pyOperandsInRegisters(find)
+    find(macro () move t0, t3 end, macro () move t1, t0 end)
+end
+
+macro pyOperandsInFrame(size, get, find)
+    find(macro ()
+        get(m_lhs, t6)
+        loadConstantOrVariable(size, t6, t3)
+    end, macro ()
+        get(m_rhs, t6)
+        loadConstantOrVariable(size, t6, t0)
+    end)
+end
 
 # Most of what comes here has nothing to do with instances (strs, lists, large ints), and the left operand tells. If it is such an
-# instance, t1 is its class.
-macro pyLoadLeftOperand(size, get, isNoCell, generic)
-    get(m_lhs, t1)
-    loadConstantOrVariable(size, t1, t3)
+# instance, t5 is its class.
+macro pyCheckLeftOperand(loadLeft, isNoCell, generic)
+    loadLeft()
     btqnz t3, notCellMask, isNoCell
     bbneq JSCell::m_type[t3], PyInstanceType, generic
-    loadp (constexpr (Python::PyObject::offsetOfType()))[t3], t1
+    loadp (constexpr (Python::PyObject::offsetOfType()))[t3], t5
 end
 
-macro pyLoadRightOperand(size, get)
-    get(m_rhs, t6)
-    loadConstantOrVariable(size, t6, t0)
-end
-
-# The left operand is such an instance, and t1 its class. `afterLeft`: how far the instruction has got once that has been asked,
+# The left operand is such an instance, and t5 its class. `afterLeft`: how far the instruction has got once that has been asked,
 # if the right operand is of another class.
-macro pyCheckOperandRightOfInstance(size, get, afterLeft, everything, generic)
-    pyLoadRightOperand(size, get)
+macro pyCheckOperandRightOfInstance(loadRight, afterLeft, everything, generic)
+    loadRight()
     move afterLeft, t6
     btqnz t0, notCellMask, .pyRightIsFine
     bbneq JSCell::m_type[t0], PyInstanceType, generic
-    bpneq t1, (constexpr (Python::PyObject::offsetOfType()))[t0], generic
+    bpneq t5, (constexpr (Python::PyObject::offsetOfType()))[t0], generic
     move everything, t6
 .pyRightIsFine:
 end
 
-# The left operand is no cell. Then t1 is the class of the right one.
-macro pyCheckNumberAndInstance(size, get, generic)
+# The left operand is no cell. Then t5 is the class of the right one.
+macro pyCheckNumberAndInstance(loadRight, generic)
     btqz t3, numberTag, generic
-    pyLoadRightOperand(size, get)
+    loadRight()
     btqnz t0, notCellMask, generic
     bbneq JSCell::m_type[t0], PyInstanceType, generic
-    loadp (constexpr (Python::PyObject::offsetOfType()))[t0], t1
+    loadp (constexpr (Python::PyObject::offsetOfType()))[t0], t5
 end
 
-# t7: which method (Python::Special) of the class in t1.
+# t7: which method (Python::Special) of the class in t5.
 macro pyLoadOperatorMethod(generic)
-    bbneq (constexpr (Python::PyType::offsetOfSpecialStates()))[t1, t7, 1], constexpr Python::PyType::specialIsFunction, generic
-    loadq (constexpr (Python::PyType::offsetOfSpecials()))[t1, t7, 8], t2
+    bbneq (constexpr (Python::PyType::offsetOfSpecialStates()))[t5, t7, 1], constexpr Python::PyType::specialIsFunction, generic
+    loadq (constexpr (Python::PyType::offsetOfSpecials()))[t5, t7, 8], t2
 end
 
 # For an instruction with m_operation, a Python::BinaryOperator.
-macro pyFindBinaryOperatorMethod(size, opcodeStruct, get, generic)
-    pyLoadLeftOperand(size, get, .pyLeftIsNoCell, generic)
+macro pyFindBinaryOperatorMethod(size, opcodeStruct, loadLeft, loadRight, generic)
+    pyCheckLeftOperand(loadLeft, .pyLeftIsNoCell, generic)
     getu(size, opcodeStruct, m_operation, t7)
     bib t7, constexpr Python::BinaryOperator::FirstInPlace, .pyNotInPlace
     # a += b
     addi (constexpr Python::Special::IAdd) - (constexpr Python::BinaryOperator::FirstInPlace), t7
-    loadb (constexpr (Python::PyType::offsetOfSpecialStates()))[t1, t7, 1], t2
+    loadb (constexpr (Python::PyType::offsetOfSpecialStates()))[t5, t7, 1], t2
     bbeq t2, constexpr Python::PyType::specialIsFunction, .pyInPlace
     bbneq t2, constexpr Python::PyType::specialIsOfNoParticularKind, generic
-    loadq (constexpr (Python::PyType::offsetOfSpecials()))[t1, t7, 8], t2
+    loadq (constexpr (Python::PyType::offsetOfSpecials()))[t5, t7, 8], t2
     btqnz t2, generic
     # The class has no such method.
     subi constexpr Python::Special::IAdd, t7
 .pyNotInPlace:
     addi constexpr Python::Special::Add, t7
-    pyCheckOperandRightOfInstance(size, get, constexpr Python::OperatorProgress::Left, constexpr Python::OperatorProgress::Everything, generic)
+    pyCheckOperandRightOfInstance(loadRight, constexpr Python::OperatorProgress::Left, constexpr Python::OperatorProgress::Everything, generic)
     jmp .pyLoad
 .pyLeftIsNoCell:
-    pyCheckNumberAndInstance(size, get, generic)
+    pyCheckNumberAndInstance(loadRight, generic)
     getu(size, opcodeStruct, m_operation, t7)
     bib t7, constexpr Python::BinaryOperator::FirstInPlace, .pyReflected
     subi constexpr Python::BinaryOperator::FirstInPlace, t7
@@ -2982,19 +2991,19 @@ macro pyFindBinaryOperatorMethod(size, opcodeStruct, get, generic)
     move (constexpr Python::OperatorProgress::Everything) + (constexpr Python::OperatorProgress::IsReflected), t6
     jmp .pyLoad
 .pyInPlace:
-    pyLoadRightOperand(size, get)
+    loadRight()
     move constexpr Python::OperatorProgress::InPlace, t6
 .pyLoad:
     pyLoadOperatorMethod(generic)
 end
 
-macro pyFindComparisonMethod(size, get, special, reflected, generic)
-    pyLoadLeftOperand(size, get, .pyLeftIsNoCell, generic)
-    pyCheckOperandRightOfInstance(size, get, constexpr Python::ComparisonProgress::Left, constexpr Python::ComparisonProgress::Left, generic)
+macro pyFindComparisonMethod(loadLeft, loadRight, special, reflected, generic)
+    pyCheckLeftOperand(loadLeft, .pyLeftIsNoCell, generic)
+    pyCheckOperandRightOfInstance(loadRight, constexpr Python::ComparisonProgress::Left, constexpr Python::ComparisonProgress::Left, generic)
     move special, t7
     jmp .pyLoad
 .pyLeftIsNoCell:
-    pyCheckNumberAndInstance(size, get, generic)
+    pyCheckNumberAndInstance(loadRight, generic)
     move reflected, t7
     move (constexpr Python::ComparisonProgress::Everything) + (constexpr Python::ComparisonProgress::IsReflected), t6
 .pyLoad:
@@ -3097,10 +3106,23 @@ macro pyBinaryOperatorSlowPath(size, get, dispatch, findMethod, slowPath, slowPa
     end, dispatch)
 end
 
-macro pyArithmeticSlowPath(size, opcodeName, opcodeStruct, get, dispatch)
+# `operands(find)`: pyOperandsInRegisters, or pyOperandsInFrame with its first two arguments.
+macro pyArithmeticSlowPath(size, opcodeName, opcodeStruct, get, dispatch, operands)
     pyBinaryOperatorSlowPath(size, get, dispatch, macro (generic)
-        pyFindBinaryOperatorMethod(size, opcodeStruct, get, generic)
+        operands(macro (loadLeft, loadRight)
+            pyFindBinaryOperatorMethod(size, opcodeStruct, loadLeft, loadRight, generic)
+        end)
     end, _slow_path_%opcodeName%, _slow_path_%opcodeName%_again)
+end
+
+macro pyArithmeticSlowPathWithOperandsInFrame(size, opcodeName, opcodeStruct, get, dispatch)
+    pyArithmeticSlowPath(size, opcodeName, opcodeStruct, get, dispatch, macro (find) pyOperandsInFrame(size, get, find) end)
+end
+
+# Both operands are numbers: no method is left to the interpreter (askMethodsFromTheStart() in PyOperators.cpp).
+macro pyArithmeticSlowPathOfNumbers(opcodeName, dispatch)
+    callSlowPath(_slow_path_%opcodeName%)
+    dispatch()
 end
 
 # After `value` has been stored in `owner`. As Heap::writeBarrier(): unlike writeBarrierOnCellWithReload, without a fence unless
@@ -3536,8 +3558,8 @@ macro pyArithmeticOp(opcodeName, opcodeStruct, integerOperation, doubleOperation
 
         macro branchIfNotInt(value, bits)
             truncated value, ft3
-            bdnequn value, ft3, .slow
-            branchIfNotNonZeroPythonInt(bits, .slow)
+            bdnequn value, ft3, .numbers
+            branchIfNotNonZeroPythonInt(bits, .numbers)
         end
 
         get(m_rhs, t0)
@@ -3567,7 +3589,7 @@ macro pyArithmeticOp(opcodeName, opcodeStruct, integerOperation, doubleOperation
         operateOnDoubles(.wholeIfLhsIsInt)
 
     .neitherInt32:
-        btqz t1, numberTag, .slow
+        btqz t1, numberTag, .lhsIsDouble
         addq numberTag, t1
         fq2d t1, ft1
         operateOnDoubles(.wholeIfBothAreInts)
@@ -3590,12 +3612,18 @@ macro pyArithmeticOp(opcodeName, opcodeStruct, integerOperation, doubleOperation
     .wholeOfInts:
         fd2q ft2, t0
         move t0, t1
-        branchIfNotNonZeroPythonInt(t1, .slow)
+        branchIfNotNonZeroPythonInt(t1, .numbers)
         subq numberTag, t0
         storeResult(t0)
 
+    .numbers:
+        pyArithmeticSlowPathOfNumbers(opcodeName, dispatch)
+
+    .lhsIsDouble:
+        subq numberTag, t0
+    # t0 and t1 are the operands.
     .slow:
-        pyArithmeticSlowPath(size, opcodeName, opcodeStruct, get, dispatch)
+        pyArithmeticSlowPath(size, opcodeName, opcodeStruct, get, dispatch, pyOperandsInRegisters)
     end)
 end
 
@@ -3636,13 +3664,16 @@ llintOpWithReturn(op_py_div, OpPyDiv, macro (size, get, dispatch, return)
 .rhsReady:
     divd ft1, ft0
     truncated ft0, ft3
-    bdequn ft0, ft3, .slow
+    bdequn ft0, ft3, .numbers
     fd2q ft0, t0
     subq numberTag, t0
     return(t0)
 
+.numbers:
+    pyArithmeticSlowPathOfNumbers(py_div, dispatch)
+
 .slow:
-    pyArithmeticSlowPath(size, py_div, OpPyDiv, get, dispatch)
+    pyArithmeticSlowPathWithOperandsInFrame(size, py_div, OpPyDiv, get, dispatch)
 end)
 
 
@@ -3653,8 +3684,8 @@ macro pyFloorDivisionOp(opcodeName, opcodeStruct, finish)
         get(m_lhs, t2)
         loadConstantOrVariableInt32(size, t0, t1, .slow)
         loadConstantOrVariableInt32(size, t2, t0, .slow)
-        btiz t1, .slow
-        bieq t1, -1, .slow
+        btiz t1, .numbers
+        bieq t1, -1, .numbers
         ci2ds t0, ft0
         ci2ds t1, ft1
         divd ft1, ft0
@@ -3664,8 +3695,11 @@ macro pyFloorDivisionOp(opcodeName, opcodeStruct, finish)
         orq numberTag, t2
         return(t2)
 
+    .numbers:
+        pyArithmeticSlowPathOfNumbers(opcodeName, dispatch)
+
     .slow:
-        pyArithmeticSlowPath(size, opcodeName, opcodeStruct, get, dispatch)
+        pyArithmeticSlowPathWithOperandsInFrame(size, opcodeName, opcodeStruct, get, dispatch)
     end)
 end
 
@@ -3694,18 +3728,18 @@ llintOpWithReturn(op_py_binary, OpPyBinary, macro (size, get, dispatch, return)
     bieq t2, constexpr Python::BinaryOperator::BitOr, .bitOr
     bieq t2, constexpr Python::BinaryOperator::BitXor, .bitXor
     bieq t2, constexpr Python::BinaryOperator::RShift, .rightShift
-    bineq t2, constexpr Python::BinaryOperator::LShift, .slow
-    bia t3, 31, .slow
+    bineq t2, constexpr Python::BinaryOperator::LShift, .numbers
+    bia t3, 31, .numbers
     sxi2q t0, t0
     lshiftq t3, t0
     sxi2q t0, t1
-    bqneq t0, t1, .slow
+    bqneq t0, t1, .numbers
     zxi2q t0, t0
     orq numberTag, t0
     return(t0)
 
 .rightShift:
-    bilt t3, 0, .slow
+    bilt t3, 0, .numbers
     bibeq t3, 31, .shiftCountReady
     move 31, t3
 .shiftCountReady:
@@ -3726,8 +3760,11 @@ llintOpWithReturn(op_py_binary, OpPyBinary, macro (size, get, dispatch, return)
     orq numberTag, t0
     return(t0)
 
+.numbers:
+    pyArithmeticSlowPathOfNumbers(py_binary, dispatch)
+
 .slow:
-    pyArithmeticSlowPath(size, py_binary, OpPyBinary, get, dispatch)
+    pyArithmeticSlowPathWithOperandsInFrame(size, py_binary, OpPyBinary, get, dispatch)
 end)
 
 
@@ -3803,9 +3840,12 @@ macro pyCompareOp(opcodeName, opcodeStruct, special, reflected, integerCompareAn
         orq ValueFalse, t0
         return(t0)
 
+    # t0 and t1 are the operands.
     .slow:
         pyBinaryOperatorSlowPath(size, get, dispatch, macro (generic)
-            pyFindComparisonMethod(size, get, special, reflected, generic)
+            pyOperandsInRegisters(macro (loadLeft, loadRight)
+                pyFindComparisonMethod(loadLeft, loadRight, special, reflected, generic)
+            end)
         end, _slow_path_%opcodeName%, _slow_path_%opcodeName%_again)
     end)
 end
@@ -3912,11 +3952,13 @@ macro pyCompareJumpOp(opcodeName, opcodeStruct, special, reflected, jumpsOn, goe
     .jumpTarget:
         jump(m_targetLabel)
 
-    # What a method has returned that is neither True nor False goes where the instruction keeps how far it has got, for the slow
-    # path that finds out whether it is true.
+    # t0 and t1 are the operands. What a method has returned that is neither True nor False goes where the instruction keeps how far it
+    # has got, for the slow path that finds out whether it is true.
     .slow:
         pyOperatorSlowPath(size, get, macro (generic)
-            pyFindComparisonMethod(size, get, special, reflected, generic)
+            pyOperandsInRegisters(macro (loadLeft, loadRight)
+                pyFindComparisonMethod(loadLeft, loadRight, special, reflected, generic)
+            end)
         end, _slow_path_%opcodeName%_begin, _slow_path_%opcodeName%_again, macro (again)
             bqeq r0, jumpsOn, .jump
             bqeq r0, goesOnOn, .noJump
