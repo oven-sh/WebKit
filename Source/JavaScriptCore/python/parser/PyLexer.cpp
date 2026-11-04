@@ -777,7 +777,7 @@ bool Lexer::lexIndentation(Token& token, bool& blankLine)
     back(c);
 
     // A line of only white space or a comment says nothing about indentation.
-    blankLine = c == '#' || c == '\n';
+    blankLine = c == '#' || c == '\n' || c == '\r';
     if (blankLine || !m_brackets.isEmpty())
         return true;
 
@@ -1334,7 +1334,7 @@ again:
     if (c == '#') {
         do {
             c = next();
-        } while (c != endOfFile && c != '\n');
+        } while (c != endOfFile && c != '\n' && c != '\r');
 
         if (m_flags.contains(Flag::TypeComments)) {
             // "# type: " with any amount of blanks where it has one, none included.
@@ -1452,6 +1452,11 @@ again:
         }
         return;
     }
+
+    // Only `tokenize` gets here with one, in the middle of a line that it was given. It belongs to the token that follows, which is
+    // no longer looked at as a name.
+    if (c == '\r')
+        c = next();
 
     if (c == '\n') {
         m_atLineStart = true;

@@ -214,9 +214,11 @@ private:
             if (type > static_cast<int>(TokenKind::Dedent) && type < static_cast<int>(TokenKind::Op))
                 type = static_cast<int>(TokenKind::Op);
             else if (token.kind == TokenKind::Newline) {
-                text = hasImplicitNewline ? empty : makeStr(m_vm, hasCarriageReturn ? "\r\n"_s : "\n"_s);
+                if (!hasImplicitNewline)
+                    text = makeStr(m_vm, hasCarriageReturn ? "\r\n"_s : "\n"_s);
                 ++endColumn;
-            }
+            } else if (token.kind == TokenKind::NL && hasImplicitNewline)
+                text = empty;
         }
 
         return PyTuple::create(m_globalObject, {
