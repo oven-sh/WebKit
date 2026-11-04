@@ -70,6 +70,13 @@ void IncrementalSweeper::doWork(VM& vm)
 
 void IncrementalSweeper::doSweep(VM& vm, ApproximateTime deadline, SweepTrigger trigger)
 {
+    // Another time. A block that sweep() leaves as it is must not be freed, and would be the next to be found again.
+    if (!vm.heap.mayRunEmbedderFinalizers()) [[unlikely]] {
+        if (trigger == SweepTrigger::Timer)
+            scheduleTimer();
+        return;
+    }
+
     std::optional<TraceScope> traceScope;
     if (Options::useTracePoints()) [[unlikely]]
         traceScope.emplace(IncrementalSweepStart, IncrementalSweepEnd, vm.heap.size(), vm.heap.capacity());
@@ -106,7 +113,8 @@ bool IncrementalSweeper::sweepNextBlock(VM& vm, SweepTrigger trigger)
     
     if (block) {
         DeferGCForAWhile deferGC(vm);
-        block->sweep(nullptr);
+        bool didSweep = block->sweep(nullptr);
+        ASSERT_UNUSED(didSweep, didSweep);
 
         bool blockIsFreed = false;
         if (trigger == SweepTrigger::Timer) {
