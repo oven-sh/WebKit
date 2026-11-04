@@ -1130,6 +1130,7 @@ void ScriptExecutable::prepareForExecution(VM& vm, JSFunction* function, JSScope
             static_assert(std::same_as<ExecutableType, FunctionExecutable>);
             resultCodeBlock = uncheckedDowncast<ExecutableType>(this)->codeBlockFor(kind);
         }
+        ASSERT(vm.heap.mayRunEmbedderFinalizers() || resultCodeBlock->unlinkedCodeBlock()->isPython()); // See VM::isIdle().
         return;
     }
 

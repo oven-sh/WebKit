@@ -432,6 +432,7 @@ void ScriptExecutable::prepareForExecutionImpl(VM& vm, JSFunction* function, JSS
     RETURN_IF_EXCEPTION(throwScope, void());
 
     ASSERT(codeBlock);
+    ASSERT(vm.heap.mayRunEmbedderFinalizers() || codeBlock->unlinkedCodeBlock()->isPython()); // See VM::isIdle().
     resultCodeBlock = codeBlock;
 
     if (Options::validateBytecode())
