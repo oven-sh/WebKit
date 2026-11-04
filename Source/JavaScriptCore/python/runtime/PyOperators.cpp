@@ -61,27 +61,40 @@ static ALWAYS_INLINE OperatorMethodToAsk nextMethodToAsk(Runtime& rt, Special me
 {
     PyType* typeA = rt.typeOf(a);
     PyType* typeB = rt.typeOf(b);
-    auto lookUp = [&](PyType* type, Special special, JSValue operand) {
-        JSValue found = type->lookup(special);
-        if (found && (isSequenceOperation(found) || (language == OperatorOf::JSConcatenation && !isPyObject(operand))))
-            return JSValue();
+    // The two methods of a class, if it takes part as a number. A sequence does not: list.__add__ has its turn later. But a class
+    // derived from list with an __add__ or an __radd__ of its own does, and then whichever of the two it has not is list's.
+    struct Methods {
+        JSValue direct;
+        JSValue reflected;
+        explicit operator bool() const { return direct || reflected; }
+    };
+    auto lookUp = [&](PyType* type, JSValue operand) -> Methods {
+        if (language == OperatorOf::JSConcatenation && !isPyObject(operand))
+            return { };
+        Methods found { type->lookup(method), type->lookup(reflected) };
+        if ((!found.direct || isSequenceOperation(found.direct)) && (!found.reflected || isSequenceOperation(found.reflected)))
+            return { };
         return found;
     };
     switch (progress) {
     case OperatorProgress::Nothing:
         if (inPlace) {
-            if (JSValue found = typeA->lookup(*inPlace); found && !isSequenceOperation(found))
+            // (A class derived from list finds list.__iadd__ where the methods of numbers are, an accident of how CPython fills its tables:
+            // it comes before an __add__ of the class, and before the __radd__ of the other operand. list.__imul__ does not.)
+            if (JSValue found = typeA->lookup(*inPlace); found && (!isSequenceOperation(found) || (*inPlace == Special::IAdd && typeA->isHeapType())))
                 return { found, typeA, *inPlace, false, OperatorProgress::InPlace };
         }
         [[fallthrough]];
     case OperatorProgress::InPlace: {
-        JSValue left = lookUp(typeA, method, a);
-        bool asksLeft = left || lookUp(typeA, reflected, a);
+        Methods ofA = lookUp(typeA, a);
+        JSValue left = ofA.direct;
+        bool asksLeft = !!ofA;
         JSValue right;
         bool asksRight = false;
         if (typeB != typeA) {
-            right = lookUp(typeB, reflected, b);
-            asksRight = right || lookUp(typeB, method, b);
+            Methods ofB = lookUp(typeB, b);
+            right = ofB.reflected;
+            asksRight = !!ofB;
         }
         // A subclass that has its own idea of the reflected operation goes first.
         if (right && typeB->isSubtypeOf(typeA) && right != typeA->lookup(reflected))
@@ -93,12 +106,12 @@ static ALWAYS_INLINE OperatorMethodToAsk nextMethodToAsk(Runtime& rt, Special me
         return { };
     }
     case OperatorProgress::ReflectedFirst:
-        if (JSValue left = lookUp(typeA, method, a))
+        if (JSValue left = lookUp(typeA, a).direct)
             return { left, typeA, method, false, OperatorProgress::Everything };
         return { };
     case OperatorProgress::Left:
         if (typeB != typeA) {
-            if (JSValue right = lookUp(typeB, reflected, b))
+            if (JSValue right = lookUp(typeB, b).reflected)
                 return { right, typeB, reflected, true, OperatorProgress::Everything };
         }
         return { };
@@ -162,30 +175,36 @@ static JSValue sequenceOperation(JSGlobalObject* globalObject, unsigned op, JSVa
     bool asksB = language == OperatorOf::Python || isPyObject(b);
 
     // Concatenation and repetition of sequences.
-    auto sequenceMethod = [&](Special method, Special inPlaceMethod) {
-        PyType* type = rt.typeOf(a);
-        if (inPlace) {
-            if (JSValue found = type->lookup(inPlaceMethod); found && isSequenceOperation(found))
-                return found;
-        }
-        return type->lookup(method);
+    auto sequenceMethod = [&](PyType* type, Special method) {
+        JSValue found = type->lookup(method);
+        return found && isSequenceOperation(found) ? found : JSValue();
     };
+    // list.__mul__ and list.__rmul__ are one thing, which a class with either of its own no longer has.
+    auto repetition = [&](PyType* type) {
+        JSValue reflected = type->lookup(Special::RMul);
+        return !reflected || isSequenceOperation(reflected) ? sequenceMethod(type, Special::Mul) : JSValue();
+    };
+    PyType* typeA = rt.typeOf(a);
     if (op == static_cast<unsigned>(BinaryOperator::Add)) {
-        JSValue method = asksA ? sequenceMethod(Special::Add, Special::IAdd) : JSValue();
-        if (method && isSequenceOperation(method))
+        JSValue method = asksA && inPlace ? sequenceMethod(typeA, Special::IAdd) : JSValue();
+        if (!method && asksA)
+            method = sequenceMethod(typeA, Special::Add);
+        if (method)
             RELEASE_AND_RETURN(scope, callSpecial(globalObject, method, a, b));
     } else if (op == static_cast<unsigned>(BinaryOperator::Mult)) {
-        JSValue method = asksA ? sequenceMethod(Special::Mul, Special::IMul) : JSValue();
-        if (method && isSequenceOperation(method)) {
+        JSValue method = asksA && inPlace ? sequenceMethod(typeA, Special::IMul) : JSValue();
+        if (!method && asksA)
+            method = repetition(typeA);
+        if (method) {
             if (!hasIndex(globalObject, b))
                 return raiseTypeError(globalObject, scope, "can't multiply sequence by non-int of type '"_s, typeName(globalObject, b), '\'');
             RELEASE_AND_RETURN(scope, callSpecial(globalObject, method, a, b));
         }
         // PyNumber_InPlaceMultiply() goes on to the right operand only if the type of the left one has no table of sequence methods.
-        if (inPlace && hasTableOfSequenceMethods(rt.typeOf(a)))
+        if (inPlace && hasTableOfSequenceMethods(typeA))
             return rt.notImplemented();
-        method = asksB ? rt.typeOf(b)->lookup(Special::Mul) : JSValue();
-        if (method && isSequenceOperation(method)) {
+        method = asksB ? repetition(rt.typeOf(b)) : JSValue();
+        if (method) {
             if (!hasIndex(globalObject, a))
                 return raiseTypeError(globalObject, scope, "can't multiply sequence by non-int of type '"_s, typeName(globalObject, a), '\'');
             RELEASE_AND_RETURN(scope, callSpecial(globalObject, method, b, a));
