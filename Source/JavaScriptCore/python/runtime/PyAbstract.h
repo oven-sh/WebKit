@@ -208,23 +208,16 @@ int64_t hash(JSGlobalObject*, JSValue); // -1: an exception.
 int64_t hashForContainer(JSGlobalObject*, JSValue, ASCIILiteral what);
 bool isTrue(JSGlobalObject*, JSValue);
 
-// Operators, for the interpreter, which calls the methods that are written in Python itself: begin...() returns the result (empty: an
-// exception), or nothing, and says which function is to be called, with the operands. What that returns is the result, unless it
-// is NotImplemented: then continue...(), given `progress`, says how it goes on.
-struct MethodToCall {
-    // Where the caller will read the operands again. Those may be variables, and a method that C++ has called in the meantime can
-    // have given them other values (frame.f_locals): then C++ calls the rest as well.
-    const Register& left;
-    const Register& right;
-    PyFunction* function { nullptr };
-    unsigned progress; // With IsReflected.
-    bool willFindOperands(JSValue a, JSValue b) const { return left.jsValue() == a && right.jsValue() == b; }
-};
+// Operators, for the interpreter, which calls the methods that are written in Python itself. begin...() returns the result. If it returns
+// nothing and has raised nothing, Runtime::methodToCall is the function to be called, with the operands. What that returns is the
+// result, unless it is NotImplemented: then continue...(), given `progress`, says how it goes on, in the same way, or calls
+// whatever there is to call.
+enum class MethodsWrittenInPython : bool { AreCalled, AreLeftToCaller };
 
 // One of Eq, NotEq, Lt, LtE, Gt, GtE.
 JSValue richCompare(JSGlobalObject*, JSValue, JSValue, CompareOperator);
-JSValue beginComparison(JSGlobalObject*, JSValue, JSValue, CompareOperator, MethodToCall&);
-JSValue continueComparison(JSGlobalObject*, JSValue, JSValue, CompareOperator, unsigned progress, MethodToCall&);
+JSValue beginComparison(JSGlobalObject*, JSValue, JSValue, CompareOperator);
+JSValue continueComparison(JSGlobalObject*, JSValue, JSValue, CompareOperator, unsigned progress, MethodsWrittenInPython);
 // The same as a bool; an object is taken to equal itself.
 bool richCompareBool(JSGlobalObject*, JSValue, JSValue, CompareOperator);
 inline bool isEqual(JSGlobalObject* globalObject, JSValue a, JSValue b) { return richCompareBool(globalObject, a, b, CompareOperator::Eq); }
@@ -252,8 +245,8 @@ bool forEach(JSGlobalObject*, JSValue iterable, const Function&);
 // ---- Numbers ----
 
 JSValue binaryOperation(JSGlobalObject*, BinaryOperator, JSValue, JSValue);
-JSValue beginBinaryOperation(JSGlobalObject*, BinaryOperator, JSValue, JSValue, MethodToCall&);
-JSValue continueBinaryOperation(JSGlobalObject*, BinaryOperator, JSValue, JSValue, unsigned progress, MethodToCall&);
+JSValue beginBinaryOperation(JSGlobalObject*, BinaryOperator, JSValue, JSValue);
+JSValue continueBinaryOperation(JSGlobalObject*, BinaryOperator, JSValue, JSValue, unsigned progress, MethodsWrittenInPython);
 JSValue unaryOperation(JSGlobalObject*, UnaryOperator, JSValue);
 JSValue power(JSGlobalObject*, JSValue base, JSValue exponent, JSValue modulus);
 JSValue divmod(JSGlobalObject*, JSValue, JSValue);

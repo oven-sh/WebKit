@@ -121,7 +121,7 @@ static ALWAYS_INLINE OperatorMethodToAsk nextMethodToAsk(Runtime& rt, Special me
 }
 
 // The result, or NotImplemented, or, if the caller wants it so, nothing and a function for it to call.
-static ALWAYS_INLINE JSValue askMethods(JSGlobalObject* globalObject, Special method, Special reflected, std::optional<Special> inPlace, JSValue a, JSValue b, OperatorOf language, unsigned progress, MethodToCall* forCaller)
+static ALWAYS_INLINE JSValue askMethods(JSGlobalObject* globalObject, Special method, Special reflected, std::optional<Special> inPlace, JSValue a, JSValue b, OperatorOf language, unsigned progress, MethodsWrittenInPython methods)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
@@ -131,10 +131,9 @@ static ALWAYS_INLINE JSValue askMethods(JSGlobalObject* globalObject, Special me
         OperatorMethodToAsk next = nextMethodToAsk(rt, method, reflected, inPlace, a, b, language, progress);
         if (!next.method)
             return notImplemented;
-        if (forCaller) {
+        if (methods == MethodsWrittenInPython::AreLeftToCaller) {
             if (PyFunction* function = PyFunction::tryFrom(next.method); function && canBeCalledByOperator(function)) {
-                forCaller->function = function;
-                forCaller->progress = next.progress | (next.isReflected ? OperatorProgress::IsReflected : 0);
+                rt.methodToCall = { function, next.progress | (next.isReflected ? OperatorProgress::IsReflected : 0), JSValue::encode(a), JSValue::encode(b) };
                 return { };
             }
         }
@@ -146,15 +145,13 @@ static ALWAYS_INLINE JSValue askMethods(JSGlobalObject* globalObject, Special me
         if (result != notImplemented)
             return result;
         progress = next.progress;
-        if (forCaller && !forCaller->willFindOperands(a, b)) [[unlikely]]
-            forCaller = nullptr;
     }
 }
 
 // The result, or NotImplemented.
 static JSValue numberOperation(JSGlobalObject* globalObject, Special method, Special reflected, JSValue a, JSValue b, OperatorOf language = OperatorOf::Python)
 {
-    return askMethods(globalObject, method, reflected, std::nullopt, a, b, language, OperatorProgress::Nothing, nullptr);
+    return askMethods(globalObject, method, reflected, std::nullopt, a, b, language, OperatorProgress::Nothing, MethodsWrittenInPython::AreCalled);
 }
 
 static NEVER_INLINE JSValue raiseUnsupportedOperands(JSGlobalObject* globalObject, ASCIILiteral symbol, JSValue a, JSValue b)
@@ -214,11 +211,11 @@ static JSValue sequenceOperation(JSGlobalObject* globalObject, unsigned op, JSVa
 }
 
 // `op`: not one of those in place.
-static ALWAYS_INLINE JSValue goOnWithBinaryOperation(JSGlobalObject* globalObject, unsigned op, bool inPlace, JSValue a, JSValue b, unsigned progress, MethodToCall* forCaller)
+static ALWAYS_INLINE JSValue goOnWithBinaryOperation(JSGlobalObject* globalObject, unsigned op, bool inPlace, JSValue a, JSValue b, unsigned progress, MethodsWrittenInPython methods)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue result = askMethods(globalObject, methodFor(op), reflectedMethodFor(op), inPlace ? std::optional(inPlaceMethodFor(op)) : std::nullopt, a, b, OperatorOf::Python, progress, forCaller);
+    JSValue result = askMethods(globalObject, methodFor(op), reflectedMethodFor(op), inPlace ? std::optional(inPlaceMethodFor(op)) : std::nullopt, a, b, OperatorOf::Python, progress, methods);
     RETURN_IF_EXCEPTION(scope, { });
     JSValue notImplemented = runtime(globalObject).notImplemented();
     if (result != notImplemented)
@@ -270,7 +267,15 @@ JSValue unaryOperatorForJS(JSGlobalObject*, JSOperator op, JSValue operand)
     return valueForJS(result);
 }
 
-static ALWAYS_INLINE JSValue binaryOperationImpl(JSGlobalObject* globalObject, BinaryOperator binaryOperator, JSValue a, JSValue b, MethodToCall* forCaller)
+// Apart from what comes first, which is all there is to most operations that get this far.
+template<MethodsWrittenInPython methods>
+static NEVER_INLINE JSValue askMethodsFromTheStart(JSGlobalObject* globalObject, unsigned op, bool inPlace, JSValue a, JSValue b)
+{
+    return goOnWithBinaryOperation(globalObject, op, inPlace, a, b, OperatorProgress::Nothing, methods);
+}
+
+template<MethodsWrittenInPython methods>
+static ALWAYS_INLINE JSValue binaryOperationImpl(JSGlobalObject* globalObject, BinaryOperator binaryOperator, JSValue a, JSValue b)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -286,24 +291,24 @@ static ALWAYS_INLINE JSValue binaryOperationImpl(JSGlobalObject* globalObject, B
         return fast;
     if (op == static_cast<unsigned>(BinaryOperator::Add) && a.isString() && b.isString())
         RELEASE_AND_RETURN(scope, jsString(globalObject, asString(a), asString(b)));
-    RELEASE_AND_RETURN(scope, goOnWithBinaryOperation(globalObject, op, inPlace, a, b, OperatorProgress::Nothing, forCaller));
+    RELEASE_AND_RETURN(scope, askMethodsFromTheStart<methods>(globalObject, op, inPlace, a, b));
 }
 
 JSValue binaryOperation(JSGlobalObject* globalObject, BinaryOperator binaryOperator, JSValue a, JSValue b)
 {
-    return binaryOperationImpl(globalObject, binaryOperator, a, b, nullptr);
+    return binaryOperationImpl<MethodsWrittenInPython::AreCalled>(globalObject, binaryOperator, a, b);
 }
 
-JSValue beginBinaryOperation(JSGlobalObject* globalObject, BinaryOperator binaryOperator, JSValue a, JSValue b, MethodToCall& method)
+JSValue beginBinaryOperation(JSGlobalObject* globalObject, BinaryOperator binaryOperator, JSValue a, JSValue b)
 {
-    return binaryOperationImpl(globalObject, binaryOperator, a, b, &method);
+    return binaryOperationImpl<MethodsWrittenInPython::AreLeftToCaller>(globalObject, binaryOperator, a, b);
 }
 
-JSValue continueBinaryOperation(JSGlobalObject* globalObject, BinaryOperator binaryOperator, JSValue a, JSValue b, unsigned progress, MethodToCall& method)
+JSValue continueBinaryOperation(JSGlobalObject* globalObject, BinaryOperator binaryOperator, JSValue a, JSValue b, unsigned progress, MethodsWrittenInPython methods)
 {
     unsigned op = static_cast<unsigned>(binaryOperator);
     bool inPlace = op >= numberOfBinaryOperators;
-    return goOnWithBinaryOperation(globalObject, inPlace ? op - numberOfBinaryOperators : op, inPlace, a, b, progress & ~OperatorProgress::IsReflected, &method);
+    return goOnWithBinaryOperation(globalObject, inPlace ? op - numberOfBinaryOperators : op, inPlace, a, b, progress & ~OperatorProgress::IsReflected, methods);
 }
 
 // pow(base, exponent, modulus) as Decimal does it. NotImplemented: the modulus is no Decimal, or another operand is not for it. (PyDecimalType.cpp)

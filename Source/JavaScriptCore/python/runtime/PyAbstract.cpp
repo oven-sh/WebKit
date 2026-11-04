@@ -1500,7 +1500,7 @@ std::optional<bool> equalForJS(JSGlobalObject*, JSValue a, JSValue b)
 // them, C++ and the interpreter: see askMethods() in PyOperators.cpp, and ComparisonProgress in PyBytecode.h.
 
 // The result, or NotImplemented, or, if the caller wants it so, nothing and a function for it to call.
-static ALWAYS_INLINE JSValue askComparisonMethods(JSGlobalObject* globalObject, JSValue a, JSValue b, CompareOperator op, unsigned progress, MethodToCall* forCaller)
+static ALWAYS_INLINE JSValue askComparisonMethods(JSGlobalObject* globalObject, JSValue a, JSValue b, CompareOperator op, unsigned progress, MethodsWrittenInPython methods)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
@@ -1540,10 +1540,9 @@ static ALWAYS_INLINE JSValue askComparisonMethods(JSGlobalObject* globalObject, 
         }
         if (!method)
             continue;
-        if (forCaller) {
+        if (methods == MethodsWrittenInPython::AreLeftToCaller) {
             if (PyFunction* function = PyFunction::tryFrom(method); function && canBeCalledByOperator(function)) {
-                forCaller->function = function;
-                forCaller->progress = progress | (isReflected ? ComparisonProgress::IsReflected : 0);
+                rt.methodToCall = { function, progress | (isReflected ? ComparisonProgress::IsReflected : 0), JSValue::encode(a), JSValue::encode(b) };
                 return { };
             }
         }
@@ -1551,18 +1550,16 @@ static ALWAYS_INLINE JSValue askComparisonMethods(JSGlobalObject* globalObject, 
         RETURN_IF_EXCEPTION(scope, { });
         if (result != notImplemented)
             return result;
-        if (forCaller && !forCaller->willFindOperands(a, b)) [[unlikely]]
-            forCaller = nullptr;
     }
     return notImplemented;
 }
 
-static ALWAYS_INLINE JSValue goOnWithComparison(JSGlobalObject* globalObject, JSValue a, JSValue b, CompareOperator op, unsigned progress, MethodToCall* forCaller)
+static ALWAYS_INLINE JSValue goOnWithComparison(JSGlobalObject* globalObject, JSValue a, JSValue b, CompareOperator op, unsigned progress, MethodsWrittenInPython methods)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue result = askComparisonMethods(globalObject, a, b, op, progress, forCaller);
+    JSValue result = askComparisonMethods(globalObject, a, b, op, progress, methods);
     RETURN_IF_EXCEPTION(scope, { });
     if (result != rt.notImplemented()) [[likely]]
         return result;
@@ -1592,7 +1589,15 @@ static ALWAYS_INLINE JSValue tryCompareWithoutMethods(JSGlobalObject* globalObje
     return { };
 }
 
-static ALWAYS_INLINE JSValue richCompareImpl(JSGlobalObject* globalObject, JSValue a, JSValue b, CompareOperator op, MethodToCall* forCaller)
+// Apart from what comes first, which is all there is to most comparisons that get this far.
+template<MethodsWrittenInPython methods>
+static NEVER_INLINE JSValue askComparisonMethodsFromTheStart(JSGlobalObject* globalObject, JSValue a, JSValue b, CompareOperator op)
+{
+    return goOnWithComparison(globalObject, a, b, op, ComparisonProgress::Nothing, methods);
+}
+
+template<MethodsWrittenInPython methods>
+static ALWAYS_INLINE JSValue richCompareImpl(JSGlobalObject* globalObject, JSValue a, JSValue b, CompareOperator op)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1600,22 +1605,22 @@ static ALWAYS_INLINE JSValue richCompareImpl(JSGlobalObject* globalObject, JSVal
     RETURN_IF_EXCEPTION(scope, { });
     if (result)
         return result;
-    RELEASE_AND_RETURN(scope, goOnWithComparison(globalObject, a, b, op, ComparisonProgress::Nothing, forCaller));
+    RELEASE_AND_RETURN(scope, askComparisonMethodsFromTheStart<methods>(globalObject, a, b, op));
 }
 
 JSValue richCompare(JSGlobalObject* globalObject, JSValue a, JSValue b, CompareOperator op)
 {
-    return richCompareImpl(globalObject, a, b, op, nullptr);
+    return richCompareImpl<MethodsWrittenInPython::AreCalled>(globalObject, a, b, op);
 }
 
-JSValue beginComparison(JSGlobalObject* globalObject, JSValue a, JSValue b, CompareOperator op, MethodToCall& method)
+JSValue beginComparison(JSGlobalObject* globalObject, JSValue a, JSValue b, CompareOperator op)
 {
-    return richCompareImpl(globalObject, a, b, op, &method);
+    return richCompareImpl<MethodsWrittenInPython::AreLeftToCaller>(globalObject, a, b, op);
 }
 
-JSValue continueComparison(JSGlobalObject* globalObject, JSValue a, JSValue b, CompareOperator op, unsigned progress, MethodToCall& method)
+JSValue continueComparison(JSGlobalObject* globalObject, JSValue a, JSValue b, CompareOperator op, unsigned progress, MethodsWrittenInPython methods)
 {
-    return goOnWithComparison(globalObject, a, b, op, progress & ~ComparisonProgress::IsReflected, &method);
+    return goOnWithComparison(globalObject, a, b, op, progress & ~ComparisonProgress::IsReflected, methods);
 }
 
 static JSValue richCompareOrNotImplemented(JSGlobalObject* globalObject, JSValue a, JSValue b, CompareOperator op)
@@ -1626,7 +1631,7 @@ static JSValue richCompareOrNotImplemented(JSGlobalObject* globalObject, JSValue
     RETURN_IF_EXCEPTION(scope, { });
     if (result)
         return result;
-    RELEASE_AND_RETURN(scope, askComparisonMethods(globalObject, a, b, op, ComparisonProgress::Nothing, nullptr));
+    RELEASE_AND_RETURN(scope, askComparisonMethods(globalObject, a, b, op, ComparisonProgress::Nothing, MethodsWrittenInPython::AreCalled));
 }
 
 bool richCompareBool(JSGlobalObject* globalObject, JSValue a, JSValue b, CompareOperator op)

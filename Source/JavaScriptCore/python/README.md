@@ -161,7 +161,7 @@ function is called in this way once it has been called in the ordinary way, whic
 - _Everything else about operators_ goes to the slow path, which goes through the protocol a step at a time (`askMethods()` in
   `PyOperators.cpp`, `askComparisonMethods()` in `PyAbstract.cpp`). What is not a function written in Python it calls itself. When it
   comes to one, it returns the function in place of where to go on, and how far the operator will have got in place of the frame
-  (`operatorSlowPath()`), and the interpreter makes the call.
+  (`operatorSlowPath()`, by way of `Runtime::methodToCall`), and the interpreter makes the call.
 - _What the method of an operator returns_ is the result, unless it is `NotImplemented`. Then a second slow path (`..._again`) goes
   on, and may come up with another method. What it goes by is in registers behind the arguments (`RegisterOfOperator`): how far
   the instruction has got (`OperatorProgress`, `ComparisonProgress`) and the two operands, since the method may have given the

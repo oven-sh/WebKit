@@ -813,6 +813,13 @@ public:
 
     StructureID iteratorStructureID; // Of PyIterator.
     StructureID functionStructureID; // Of PyFunction.
+    // What beginBinaryOperation() and its like leave to their caller, which reads it at once. `progress`: with IsReflected.
+    struct {
+        PyFunction* function { nullptr };
+        unsigned progress { 0 };
+        EncodedJSValue left { };
+        EncodedJSValue right { };
+    } methodToCall;
     PyType* lazyImportType { nullptr }; // Of the placeholders of `lazy import`. Null: there has been none. typeFor() keeps it alive.
     static constexpr ptrdiff_t offsetOfType(TypeID id) { return OBJECT_OFFSETOF(Runtime, m_types) + static_cast<unsigned>(id) * sizeof(WriteBarrier<PyType>); }
 

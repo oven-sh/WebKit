@@ -533,48 +533,82 @@ static ALWAYS_INLINE void clearFrameOfOperator(CallFrame* callFrame, CodeBlock* 
 
 enum class ResultOfOperator { IsStored, JumpsIfTrue, JumpsIfFalse };
 
-// `isGoingOn`: a method has returned NotImplemented. `operate(lhs, rhs, progress, method)`: begin...() or continue...().
-template<typename Op, bool isGoingOn, ResultOfOperator whatBecomesOfResult, typename Operate>
-static ALWAYS_INLINE UGPRPair operatorSlowPath(CallFrame* callFrame, const JSInstruction* pc, const Operate& operate)
+#define SETTLE_OPERATOR(result) do { \
+        if constexpr (isGoingOn) \
+            clearFrameOfOperator(callFrame, codeBlock); \
+        if constexpr (whatBecomesOfResult == ResultOfOperator::IsStored) { \
+            GET(bytecode.m_dst) = result; \
+            END_IMPL(); \
+        } else \
+            JUMP_IF(isTrue(globalObject, result) == (whatBecomesOfResult == ResultOfOperator::JumpsIfTrue)); \
+    } while (false)
+
+// begin...() or continue...() has returned nothing. On its own, so that what returns a result need not keep anything for this.
+template<typename Op, bool isGoingOn, ResultOfOperator whatBecomesOfResult, typename GoOn>
+static NEVER_INLINE UGPRPair operatorSlowPathWithoutResult(CallFrame* callFrame, const JSInstruction* pc, const GoOn& goOn)
+{
+    BEGIN();
+    auto bytecode = pc->as<Op>();
+    if (isGoingOn && throwScope.exception())
+        clearFrameOfOperator(callFrame, codeBlock);
+    CHECK_EXCEPTION();
+    auto method = std::exchange(runtime(globalObject).methodToCall, { });
+    RELEASE_ASSERT(method.function);
+    ASSERT(canBeCalledByOperator(method.function));
+    JSValue lhs = JSValue::decode(method.left);
+    JSValue rhs = JSValue::decode(method.right);
+    // The interpreter takes the operands from where the slow path has.
+    if (isGoingOn || (GET_C(bytecode.m_lhs).jsValue() == lhs && GET_C(bytecode.m_rhs).jsValue() == rhs)) [[likely]]
+        return encodeResult(method.function, std::bit_cast<void*>(static_cast<uintptr_t>(method.progress)));
+    // Those are variables, and a method that C++ has called in the meantime has given them other values (frame.f_locals).
+    bool isReflected = method.progress & OperatorProgress::IsReflected;
+    JSValue result = call(globalObject, method.function, isReflected ? rhs : lhs, isReflected ? lhs : rhs);
+    CHECK_EXCEPTION();
+    if (result == runtime(globalObject).notImplemented()) {
+        result = goOn(globalObject, bytecode, lhs, rhs, method.progress, MethodsWrittenInPython::AreCalled);
+        CHECK_EXCEPTION();
+    }
+    SETTLE_OPERATOR(result);
+}
+
+// `isGoingOn`: a method has returned NotImplemented. `begin(bytecode, lhs, rhs)`, `goOn(bytecode, lhs, rhs, progress, methods)`: begin...()
+// and continue...().
+template<typename Op, bool isGoingOn, ResultOfOperator whatBecomesOfResult, typename Begin, typename GoOn>
+static ALWAYS_INLINE UGPRPair operatorSlowPath(CallFrame* callFrame, const JSInstruction* pc, const Begin& begin, const GoOn& goOn)
 {
     BEGIN();
     auto bytecode = pc->as<Op>();
     Register* registers = isGoingOn ? registersOfOperator(callFrame, codeBlock) : nullptr;
-    MethodToCall method { isGoingOn ? registers[RegisterOfOperator::Left] : GET_C(bytecode.m_lhs), isGoingOn ? registers[RegisterOfOperator::Right] : GET_C(bytecode.m_rhs) };
-    unsigned progress = isGoingOn ? registers[RegisterOfOperator::Progress].jsValue().asInt32() : 0;
-    JSValue lhs = method.left.jsValue();
-    JSValue rhs = method.right.jsValue();
-    JSValue result = operate(globalObject, bytecode, lhs, rhs, progress, method);
-    if (isGoingOn && !method.function)
-        clearFrameOfOperator(callFrame, codeBlock);
-    CHECK_EXCEPTION();
-    if (method.function) [[unlikely]] {
-        ASSERT(canBeCalledByOperator(method.function) && method.willFindOperands(lhs, rhs));
-        return encodeResult(method.function, std::bit_cast<void*>(static_cast<uintptr_t>(method.progress)));
-    }
-    if constexpr (whatBecomesOfResult == ResultOfOperator::IsStored) {
-        GET(bytecode.m_dst) = result;
-        END_IMPL();
-    } else
-        JUMP_IF(isTrue(globalObject, result) == (whatBecomesOfResult == ResultOfOperator::JumpsIfTrue));
+    JSValue lhs = (isGoingOn ? registers[RegisterOfOperator::Left] : GET_C(bytecode.m_lhs)).jsValue();
+    JSValue rhs = (isGoingOn ? registers[RegisterOfOperator::Right] : GET_C(bytecode.m_rhs)).jsValue();
+    JSValue result = isGoingOn ? goOn(globalObject, bytecode, lhs, rhs, registers[RegisterOfOperator::Progress].jsValue().asInt32(), MethodsWrittenInPython::AreLeftToCaller) : begin(globalObject, bytecode, lhs, rhs);
+    EXCEPTION_ASSERT(!throwScope.exception() || !result);
+    if (!result) [[unlikely]]
+        RELEASE_AND_RETURN(throwScope, (operatorSlowPathWithoutResult<Op, isGoingOn, whatBecomesOfResult>(callFrame, pc, goOn)));
+    SETTLE_OPERATOR(result);
 }
 
 template<typename Op, bool isGoingOn>
 static ALWAYS_INLINE UGPRPair binaryOperatorSlowPath(CallFrame* callFrame, const JSInstruction* pc)
 {
-    return operatorSlowPath<Op, isGoingOn, ResultOfOperator::IsStored>(callFrame, pc, [](JSGlobalObject* globalObject, const Op& bytecode, JSValue lhs, JSValue rhs, unsigned progress, MethodToCall& method) ALWAYS_INLINE_LAMBDA {
-        auto binaryOperator = static_cast<BinaryOperator>(bytecode.m_operation);
-        return isGoingOn ? continueBinaryOperation(globalObject, binaryOperator, lhs, rhs, progress, method) : beginBinaryOperation(globalObject, binaryOperator, lhs, rhs, method);
+    return operatorSlowPath<Op, isGoingOn, ResultOfOperator::IsStored>(callFrame, pc, [](JSGlobalObject* globalObject, const Op& bytecode, JSValue lhs, JSValue rhs) ALWAYS_INLINE_LAMBDA {
+        return beginBinaryOperation(globalObject, static_cast<BinaryOperator>(bytecode.m_operation), lhs, rhs);
+    }, [](JSGlobalObject* globalObject, const Op& bytecode, JSValue lhs, JSValue rhs, unsigned progress, MethodsWrittenInPython methods) ALWAYS_INLINE_LAMBDA {
+        return continueBinaryOperation(globalObject, static_cast<BinaryOperator>(bytecode.m_operation), lhs, rhs, progress, methods);
     });
 }
 
 template<typename Op, CompareOperator compareOperator, bool isGoingOn, ResultOfOperator whatBecomesOfResult>
 static ALWAYS_INLINE UGPRPair comparisonSlowPath(CallFrame* callFrame, const JSInstruction* pc)
 {
-    return operatorSlowPath<Op, isGoingOn, whatBecomesOfResult>(callFrame, pc, [](JSGlobalObject* globalObject, const Op&, JSValue lhs, JSValue rhs, unsigned progress, MethodToCall& method) ALWAYS_INLINE_LAMBDA {
-        return isGoingOn ? continueComparison(globalObject, lhs, rhs, compareOperator, progress, method) : beginComparison(globalObject, lhs, rhs, compareOperator, method);
+    return operatorSlowPath<Op, isGoingOn, whatBecomesOfResult>(callFrame, pc, [](JSGlobalObject* globalObject, const Op&, JSValue lhs, JSValue rhs) ALWAYS_INLINE_LAMBDA {
+        return beginComparison(globalObject, lhs, rhs, compareOperator);
+    }, [](JSGlobalObject* globalObject, const Op&, JSValue lhs, JSValue rhs, unsigned progress, MethodsWrittenInPython methods) ALWAYS_INLINE_LAMBDA {
+        return continueComparison(globalObject, lhs, rhs, compareOperator, progress, methods);
     });
 }
+
+#undef SETTLE_OPERATOR
 
 // The second of each pair: a method has returned NotImplemented.
 #define DEFINE_ARITHMETIC_SLOW_PATH(name, Op) \
