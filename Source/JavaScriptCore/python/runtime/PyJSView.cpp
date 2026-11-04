@@ -17,6 +17,7 @@
 #include "JSPromise.h"
 #include "ObjectConstructor.h"
 #include "PropertyNameArray.h"
+#include "ProxyObject.h"
 #include "PyAbstract.h"
 #include "PyErrors.h"
 #include "PyException.h"
@@ -535,9 +536,26 @@ void JSView::getOwnPropertyNames(JSObject* object, PropertyNameArrayBuilder& bui
 
 // ---- What all Python objects inherit ----
 
+// `this`. What JS has put around an object of Python's (a Proxy) or made of one (Object.create()) inherits these functions too, and they
+// are about that object then: to Python the thing around it is an object of JS, whose str() is its toString().
+static JSValue jsViewThis(CallFrame* callFrame)
+{
+    JSValue self = callFrame->thisValue();
+    for (JSValue value = self; value.isObject();) {
+        JSObject* object = asObject(value);
+        if (isPyObject(object) || PyType::is(object) || PyFunction::is(object) || PyNativeFunction::is(object) || PyListObject::is(object))
+            return object;
+        if (auto* proxy = dynamicDowncast<ProxyObject>(object))
+            value = proxy->target();
+        else
+            value = object->getPrototypeDirect();
+    }
+    return self;
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsViewToString, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
-    return JSValue::encode(str(globalObject, callFrame->thisValue()));
+    return JSValue::encode(str(globalObject, jsViewThis(callFrame)));
 }
 
 // [Symbol.for("nodejs.util.inspect.custom")](): what console.log() and util.inspect() show in Node and Bun. repr(object); for
@@ -546,7 +564,7 @@ JSC_DEFINE_HOST_FUNCTION(jsViewInspect, (JSGlobalObject* globalObject, CallFrame
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue self = callFrame->thisValue();
+    JSValue self = jsViewThis(callFrame);
     if (!PyException::is(self))
         RELEASE_AND_RETURN(scope, JSValue::encode(repr(globalObject, self)));
     String text = formatException(globalObject, self);
@@ -558,7 +576,7 @@ JSC_DEFINE_HOST_FUNCTION(jsViewInspect, (JSGlobalObject* globalObject, CallFrame
 
 JSC_DEFINE_HOST_FUNCTION(jsViewValueOf, (JSGlobalObject*, CallFrame* callFrame))
 {
-    JSValue self = callFrame->thisValue();
+    JSValue self = jsViewThis(callFrame);
     if (JSValue number = jsViewNumberOf(self))
         return JSValue::encode(number);
     if (PyStr::is(self))
@@ -571,7 +589,7 @@ JSC_DEFINE_HOST_FUNCTION(jsViewToPrimitive, (JSGlobalObject* globalObject, CallF
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue self = callFrame->thisValue();
+    JSValue self = jsViewThis(callFrame);
     JSValue hint = callFrame->argument(0);
     String hintText = hint.isString() ? asString(hint)->value(globalObject) : String();
     RETURN_IF_EXCEPTION(scope, { });
@@ -598,7 +616,7 @@ JSC_DEFINE_HOST_FUNCTION(jsViewToJSON, (JSGlobalObject* globalObject, CallFrame*
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue self = callFrame->thisValue();
+    JSValue self = jsViewThis(callFrame);
     if (JSValue number = jsViewNumberOf(self))
         return JSValue::encode(number);
     if (PyStr::is(self))
@@ -646,7 +664,7 @@ JSC_DEFINE_HOST_FUNCTION(jsViewIterator, (JSGlobalObject* globalObject, CallFram
     auto scope = DECLARE_THROW_SCOPE(vm);
     // A dict is to JS what a Map is: [key, value] pairs. That is what takes a dict wherever an object or a Map of options,
     // headers or entries goes, since what can be iterated over is taken to be a list of pairs.
-    if (auto* dict = PyDict::tryFrom(callFrame->thisValue())) {
+    if (auto* dict = PyDict::tryFrom(jsViewThis(callFrame))) {
         JSArray* entries = newList(globalObject);
         RETURN_IF_EXCEPTION(scope, { });
         JSValue key, value;
@@ -658,7 +676,7 @@ JSC_DEFINE_HOST_FUNCTION(jsViewIterator, (JSGlobalObject* globalObject, CallFram
         }
         return JSValue::encode(JSArrayIterator::create(vm, globalObject->arrayIteratorStructure(), entries, IterationKind::Values));
     }
-    JSValue iterator = getIter(globalObject, callFrame->thisValue());
+    JSValue iterator = getIter(globalObject, jsViewThis(callFrame));
     RETURN_IF_EXCEPTION(scope, { });
     RELEASE_AND_RETURN(scope, JSValue::encode(jsViewWrapIterator(globalObject, JSViewObject::IteratorPrototype, iterator)));
 }
@@ -668,7 +686,7 @@ JSC_DEFINE_HOST_FUNCTION(jsViewNext, (JSGlobalObject* globalObject, CallFrame* c
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue iterator = jsViewIteratorOf(globalObject, callFrame->thisValue());
+    JSValue iterator = jsViewIteratorOf(globalObject, jsViewThis(callFrame));
     JSValue item;
     JSValue result;
     if (auto* generator = jsViewPlainGenerator(iterator))
@@ -687,7 +705,7 @@ JSC_DEFINE_HOST_FUNCTION(jsViewReturn, (JSGlobalObject* globalObject, CallFrame*
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue iterator = jsViewIteratorOf(globalObject, callFrame->thisValue());
+    JSValue iterator = jsViewIteratorOf(globalObject, jsViewThis(callFrame));
     if (auto* generator = jsViewPlainGenerator(iterator))
         generatorClose(globalObject, generator);
     else {
@@ -705,7 +723,7 @@ JSC_DEFINE_HOST_FUNCTION(jsViewThrow, (JSGlobalObject* globalObject, CallFrame* 
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue iterator = jsViewIteratorOf(globalObject, callFrame->thisValue());
+    JSValue iterator = jsViewIteratorOf(globalObject, jsViewThis(callFrame));
     JSValue thrown = callFrame->argument(0);
     auto* generator = jsViewPlainGenerator(iterator);
     if (!generator) {
@@ -801,7 +819,7 @@ JSC_DEFINE_HOST_FUNCTION(jsViewThen, (JSGlobalObject* globalObject, CallFrame* c
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue promise = jsViewPromiseOfAwaitable(globalObject, callFrame->thisValue());
+    JSValue promise = jsViewPromiseOfAwaitable(globalObject, jsViewThis(callFrame));
     RETURN_IF_EXCEPTION(scope, { });
     RELEASE_AND_RETURN(scope, JSValue::encode(jsViewChain(globalObject, promise, callFrame->argument(0), callFrame->argument(1))));
 }
@@ -810,7 +828,7 @@ JSC_DEFINE_HOST_FUNCTION(jsViewAsyncIterator, (JSGlobalObject* globalObject, Cal
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue iterator = getAIter(globalObject, callFrame->thisValue());
+    JSValue iterator = getAIter(globalObject, jsViewThis(callFrame));
     RETURN_IF_EXCEPTION(scope, { });
     RELEASE_AND_RETURN(scope, JSValue::encode(jsViewWrapIterator(globalObject, JSViewObject::AsyncIteratorPrototype, iterator)));
 }
@@ -844,7 +862,7 @@ JSC_DEFINE_HOST_FUNCTION(jsViewAsyncNext, (JSGlobalObject* globalObject, CallFra
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue iterator = jsViewIteratorOf(globalObject, callFrame->thisValue());
+    JSValue iterator = jsViewIteratorOf(globalObject, jsViewThis(callFrame));
     JSValue promise;
     if (JSValue method = rt.typeOf(iterator)->lookup(Special::ANext)) {
         JSValue awaitable = callSpecial(globalObject, method, iterator);
@@ -861,7 +879,7 @@ JSC_DEFINE_HOST_FUNCTION(jsViewAsyncReturn, (JSGlobalObject* globalObject, CallF
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue iterator = jsViewIteratorOf(globalObject, callFrame->thisValue());
+    JSValue iterator = jsViewIteratorOf(globalObject, jsViewThis(callFrame));
     JSValue result = createIteratorResultObject(globalObject, callFrame->argument(0), true);
     JSValue promise;
     JSValue close = getAttrIfPresent(globalObject, iterator, internString(vm, "aclose"_s));
