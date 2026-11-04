@@ -71,12 +71,22 @@ DEFINE_VISIT_CHILDREN(PyException);
 
 // ---- Making them from C++ ----
 
+static JSValue baseExceptionNew(JSGlobalObject*, JSValue cls, const CallArgs&);
+static JSValue baseExceptionInit(JSGlobalObject*, JSValue object, const CallArgs&);
+
+static ALWAYS_INLINE bool isNative(JSValue method, JSValue (*function)(JSGlobalObject*, JSValue, const CallArgs&))
+{
+    auto* native = PyNativeFunction::tryFrom(method);
+    return native && native->def().signature.isVariadic && native->def().signature.hasSelf && native->def().pointer.variadicWithSelf == function;
+}
+
 PyException* newException(JSGlobalObject* globalObject, PyType* type, std::span<const JSValue> args)
 {
-    // A RecursionError is made where the stack is as good as used up. A call would find that out in its turn, and raise another.
-    // Calling the type runs nothing of the program's, so this is what comes of it.
+    // Most types of exceptions have the __new__ and the __init__ of BaseException. Then this is what comes of calling the type, and
+    // nothing of the program's would be run. (One of them is RecursionError, which is made where the stack is as good as used up: a call would
+    // find that out in its turn, and raise another.)
     Runtime& rt = runtime(globalObject);
-    if (type == rt.RecursionError()) [[unlikely]] {
+    if (type->type() == rt.typeType() && isNative(type->lookup(Special::New), baseExceptionNew) && isNative(type->lookup(Special::Init), baseExceptionInit)) [[likely]] {
         PyException* exception = PyException::create(rt.vm(), rt.structure<PyException>(), type);
         exception->setArgs(rt.vm(), PyTuple::create(globalObject, args));
         return exception;
@@ -440,7 +450,11 @@ static JSValue baseExceptionInit(JSGlobalObject* globalObject, JSValue object, c
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (failed(scope, rejectKeywords(globalObject, object, args)))
         return { };
-    self(object)->setArgs(getVM(globalObject), PyTuple::create(globalObject, args.positional()));
+    // (__new__ has just made a tuple of the same.)
+    auto positional = args.positional();
+    if (PyTuple* existing = self(object)->args(); existing && std::ranges::equal(existing->span(), positional))
+        return jsUndefined();
+    self(object)->setArgs(vm, PyTuple::create(globalObject, positional));
     return jsUndefined();
 }
 
