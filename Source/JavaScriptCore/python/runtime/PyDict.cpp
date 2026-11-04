@@ -188,6 +188,9 @@ restart:
                 // __eq__ may have changed the dict.
                 if (m_storage.get() != storage || entries[index].key.get() != candidate)
                     goto restart;
+                // Or have taken the key out and put it back: popitem() frees the entry, so it is the same again, but the slot may be another.
+                if (storage->indexAt(slot) != index) [[unlikely]]
+                    goto restart;
             }
             if (equal) {
                 if (slotResult)
