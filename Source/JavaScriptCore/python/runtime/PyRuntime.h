@@ -380,7 +380,15 @@ public:
     void setDefaultImportFunction(JSValue value) { set(m_defaultImportFunction, value); }
     // The contextvars.Context the thread is in; empty until something needs one.
     JSValue currentContext() const { return slot(Slot::CurrentContext); }
-    void setCurrentContext(JSValue value) { setSlot(Slot::CurrentContext, value); }
+    void setCurrentContext(JSValue value)
+    {
+        setSlot(Slot::CurrentContext, value);
+        didChangeContextVariables();
+    }
+    // A number that changes whenever a context variable may have another value than before: the thread has entered or left a context,
+    // a variable has been set, another thread has taken over. What was read from a variable holds for as long as the number stays.
+    uint64_t contextVariablesVersion() const { return m_contextVariablesVersion; }
+    void didChangeContextVariables() { ++m_contextVariablesVersion; }
 
     // State of the native modules that programs must not see (it is not in a module's dict) and that outlives the modules.
     enum class Slot : unsigned {
@@ -421,6 +429,7 @@ public:
         NamespacesOfFilesOfJS, // dict: see namespaceOfFileOfJS() in PyFrame.cpp.
         BuiltinAll, // The functions, whatever the names are bound to.
         BuiltinAny,
+        Decimal, // See Decimal::State in PyDecimal.h.
         Count
     };
     JSValue slot(Slot which) const { return m_slots[static_cast<unsigned>(which)].get(); }
@@ -827,6 +836,7 @@ private:
 
     WriteBarrier<Unknown> m_handledException;
     PyGenerator* m_runningGenerator { nullptr }; // The frame of its body refers to it.
+    uint64_t m_contextVariablesVersion { 0 };
     struct CatchInJS {
         enum State : uint8_t { Noted, BeingPutInSlot, InSlot };
         CallFrame* callFrame; // Only ever compared.

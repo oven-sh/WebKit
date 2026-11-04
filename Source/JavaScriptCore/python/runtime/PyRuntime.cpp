@@ -523,6 +523,7 @@ void Runtime::takeThreadLocalState(ThreadLocalState& state)
     auto& thrownException = m_slots[static_cast<unsigned>(Slot::ThrownException)];
     auto& throwArguments = m_slots[static_cast<unsigned>(Slot::ThrowArguments)];
     state.currentContext = take(m_slots[static_cast<unsigned>(Slot::CurrentContext)]);
+    didChangeContextVariables();
     state.handledException = take(m_handledException);
     state.runningGenerator = std::exchange(m_runningGenerator, nullptr);
     state.asyncGenFirstIter = take(m_asyncGenFirstIter);
@@ -558,6 +559,7 @@ void Runtime::putThreadLocalState(ThreadLocalState& state)
             slot.clear();
     };
     put(m_slots[static_cast<unsigned>(Slot::CurrentContext)], state.currentContext);
+    didChangeContextVariables();
     put(m_handledException, state.handledException);
     m_runningGenerator = state.runningGenerator;
     put(m_asyncGenFirstIter, state.asyncGenFirstIter);

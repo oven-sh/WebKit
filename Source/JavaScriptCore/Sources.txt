@@ -852,6 +852,13 @@ python/runtime/PyDateTimeDate.cpp
 python/runtime/PyDateTimeDateTime.cpp
 python/runtime/PyDateTimeDelta.cpp
 python/runtime/PyDateTimeTime.cpp
+python/runtime/PyDecimal.cpp
+python/runtime/PyDecimalContext.cpp
+python/runtime/PyDecimalFunctions.cpp
+python/runtime/PyDecimalNumber.cpp
+python/runtime/PyDecimalText.cpp
+python/runtime/PyDecimalTransform.cpp
+python/runtime/PyDecimalType.cpp
 python/runtime/PyDescriptors.cpp
 python/runtime/PyDict.cpp
 python/runtime/PyDictType.cpp

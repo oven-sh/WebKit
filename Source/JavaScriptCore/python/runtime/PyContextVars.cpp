@@ -336,6 +336,7 @@ static void replaceContextValue(JSGlobalObject* globalObject, PyRecord* context,
         values->remove(globalObject, variable);
     RETURN_IF_EXCEPTION(scope, void());
     context->set(vm, ContextValues, values);
+    runtime(globalObject).didChangeContextVariables();
 }
 
 static JSValue contextVarSet(JSGlobalObject* globalObject, JSValue self, JSValue value)
@@ -352,6 +353,30 @@ static JSValue contextVarSet(JSGlobalObject* globalObject, JSValue self, JSValue
     replaceContextValue(globalObject, context, self, value);
     RETURN_IF_EXCEPTION(scope, { });
     return token;
+}
+
+JSValue newContextVariable(JSGlobalObject* globalObject, ASCIILiteral name)
+{
+    VM& vm = getVM(globalObject);
+    PyRecord* variable = PyRecord::create(globalObject, contextVarType(globalObject), ContextVarFieldCount);
+    variable->set(vm, ContextVarName, makeStr(vm, name));
+    return variable;
+}
+
+JSValue contextVariableValue(JSGlobalObject* globalObject, JSValue variable)
+{
+    JSValue context = runtime(globalObject).currentContext();
+    if (!context)
+        return { };
+    return contextValues(PyRecord::from(context))->get(globalObject, variable);
+}
+
+bool setContextVariable(JSGlobalObject* globalObject, JSValue variable, JSValue value)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    replaceContextValue(globalObject, currentContext(globalObject), variable, value);
+    return !scope.exception();
 }
 
 static JSValue contextVarReset(JSGlobalObject* globalObject, JSValue self, JSValue tokenValue)

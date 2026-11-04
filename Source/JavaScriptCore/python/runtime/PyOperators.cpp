@@ -218,6 +218,9 @@ JSValue binaryOperation(JSGlobalObject* globalObject, BinaryOperator binaryOpera
     RELEASE_AND_RETURN(scope, binaryOperationSlow(globalObject, op, a, b, inPlace ? inPlaceSymbols[op] : binarySymbols[op], inPlace));
 }
 
+// pow(base, exponent, modulus) as Decimal does it. NotImplemented: the modulus is no Decimal, or another operand is not for it. (PyDecimalType.cpp)
+JSValue decimalPowerWithModulus(JSGlobalObject*, JSValue base, JSValue exponent, JSValue modulus);
+
 JSValue power(JSGlobalObject* globalObject, JSValue base, JSValue exponent, JSValue modulus)
 {
     Runtime& rt = runtime(globalObject);
@@ -251,8 +254,12 @@ JSValue power(JSGlobalObject* globalObject, JSValue base, JSValue exponent, JSVa
         if (result != notImplemented)
             return result;
     }
-    // The type of the third is asked last, and those that are numbers only have this to say.
+    // The type of the third is asked last. Decimal computes with ints as its other operands; other numbers only have this to say.
     PyType* typeC = rt.typeOf(modulus);
+    JSValue result = decimalPowerWithModulus(globalObject, base, exponent, modulus);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (result != notImplemented)
+        return result;
     if (typeC->has(TypeFlag::FloatSubclass))
         return raiseTypeError(globalObject, scope, "pow() 3rd argument not allowed unless all arguments are integers"_s);
     if (typeC->isSubtypeOf(rt.complexType()))

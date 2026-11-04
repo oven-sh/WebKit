@@ -20,5 +20,12 @@ bool isContext(JSGlobalObject*, JSValue);
 bool enterContext(JSGlobalObject*, JSValue context);
 bool exitContext(JSGlobalObject*, JSValue context);
 
+// contextvars.ContextVar(name)
+JSValue newContextVariable(JSGlobalObject*, ASCIILiteral name);
+// variable.get(), but for the default. Empty, without an exception: it has no value in the context the thread is in.
+JSValue contextVariableValue(JSGlobalObject*, JSValue variable);
+// variable.set(value), without the token. False: an exception.
+bool setContextVariable(JSGlobalObject*, JSValue variable, JSValue value);
+
 } // namespace Python
 } // namespace JSC

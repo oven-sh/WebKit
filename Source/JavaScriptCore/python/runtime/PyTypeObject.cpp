@@ -1956,6 +1956,8 @@ static constexpr std::pair<ASCIILiteral, ASCIILiteral> typeSignatures[] = {
     { "datetime.time"_s, "(hour=0, minute=0, second=0, microsecond=0, tzinfo=None, *, fold=0)"_s },
     { "datetime.timedelta"_s, "(days=0, seconds=0, microseconds=0, milliseconds=0, minutes=0,\n          hours=0, weeks=0)"_s },
     { "datetime.timezone"_s, "(offset, name=<unrepresentable>)"_s },
+    { "decimal.Context"_s, "(prec=None, rounding=None, Emin=None, Emax=None, capitals=None,\n        clamp=None, flags=None, traps=None)"_s },
+    { "decimal.Decimal"_s, "(value='0', context=None)"_s },
     { "ellipsis"_s, "()"_s },
     { "enumerate"_s, "(iterable, start=0)"_s },
     { "filter"_s, "(function, iterable, /)"_s },
