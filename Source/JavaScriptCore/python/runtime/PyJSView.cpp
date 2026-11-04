@@ -428,6 +428,11 @@ bool JSView::defineOwnProperty(JSObject* object, PropertyName propertyName, cons
     RELEASE_AND_RETURN(scope, put(object, propertyName, descriptor.value(), shouldThrow));
 }
 
+bool propertiesArePythons(JSObject* object)
+{
+    return isPyObject(object) || PyType::is(object) || PyFunction::is(object) || PyNativeFunction::is(object) || PyListObject::is(object) || object->inherits<PyPrototypeView>();
+}
+
 // ---- Keys ----
 
 static void jsViewAddKey(JSGlobalObject* globalObject, PropertyNameArrayBuilder& builder, JSValue key, bool skipDunder = false)

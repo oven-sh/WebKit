@@ -82,6 +82,11 @@ JSValue resultForCaller(JSGlobalObject*, CallFrame*, JSValue result);
 // Whether the frame, of something in Python, was called by Python code or by the runtime on its behalf, as opposed to JS code or the host.
 bool isCalledByPython(JSGlobalObject*, CallFrame*);
 
+// Whether what JS sees as the properties of the object is what Python has for it (attributes, items): an object, class, module or
+// function of Python's, the `prototype` of a class. What a host stores in such an object directly (putDirect()) no script ever sees:
+// it is to go through the method table, as for a Proxy.
+JS_EXPORT_PRIVATE bool propertiesArePythons(JSObject*);
+
 // The operators of JS on objects of Python (mayOverloadOperators() in JSCJSValueInlines.h says which values those are):
 // a + b is what it is in Python if the class of one of them says what it is (__add__, __radd__). If neither does, the
 // operator does what it does to any other object in JS.
