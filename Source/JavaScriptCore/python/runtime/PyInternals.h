@@ -92,6 +92,12 @@ constexpr size_t stackBytesWipedForWaiting = 64 * KB;
 #else
 constexpr size_t stackBytesWipedForWaiting = 16 * KB;
 #endif
+// Room for the frames from PyGenerator::resume() down to the body of the generator.
+#if ASAN_ENABLED || ASSERT_ENABLED
+constexpr size_t stackBytesWipedForGeneratorBody = 8 * KB;
+#else
+constexpr size_t stackBytesWipedForGeneratorBody = 1 * KB;
+#endif
 // If all that callee(...) does is self = object.__new__(callee), then callee.__init__(self, ...), and that is a function written
 // in Python: the function, and a new `self`. Otherwise the empty value.
 JSValue prepareConstruct(JSGlobalObject*, JSValue callee, JSValue& self);
