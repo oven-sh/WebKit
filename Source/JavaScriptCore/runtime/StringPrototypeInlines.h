@@ -467,7 +467,10 @@ ALWAYS_INLINE JSString* stringReplaceAllStringString(JSGlobalObject* globalObjec
         if (matchStart == notFound)
             break;
 
-        matchStarts.append(matchStart);
+        if (!matchStarts.tryAppend(matchStart)) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return nullptr;
+        }
         matchStart += searchLength;
         if (search.isEmpty())
             ++matchStart;
@@ -1349,7 +1352,8 @@ struct StringReplaceTemplatePart {
 
 using StringReplaceTemplateParts = Vector<StringReplaceTemplatePart, 16>;
 
-ALWAYS_INLINE void parseReplacementTemplate(StringReplaceTemplateParts& parts, StringView replacement, RegExp* regExp, size_t dollarPos)
+// Returns false when parts cannot grow.
+[[nodiscard]] ALWAYS_INLINE bool parseReplacementTemplate(StringReplaceTemplateParts& parts, StringView replacement, RegExp* regExp, size_t dollarPos)
 {
     bool hasNamedCaptures = regExp->hasNamedCaptures();
     size_t i = dollarPos;
@@ -1362,8 +1366,8 @@ ALWAYS_INLINE void parseReplacementTemplate(StringReplaceTemplateParts& parts, S
         if (ref == '$') {
             // "$$" -> "$"
             ++i;
-            if (i - offset)
-                parts.append(StringReplaceTemplatePart::literal(offset, i - offset));
+            if (i - offset && !parts.tryAppend(StringReplaceTemplatePart::literal(offset, i - offset))) [[unlikely]]
+                return false;
             offset = i + 1;
             continue;
         }
@@ -1409,15 +1413,17 @@ ALWAYS_INLINE void parseReplacementTemplate(StringReplaceTemplateParts& parts, S
         } else
             continue;
 
-        if (i - offset)
-            parts.append(StringReplaceTemplatePart::literal(offset, i - offset));
+        if (i - offset && !parts.tryAppend(StringReplaceTemplatePart::literal(offset, i - offset))) [[unlikely]]
+            return false;
         i += 1 + advance;
         offset = i + 1;
-        parts.append(part);
+        if (!parts.tryAppend(part)) [[unlikely]]
+            return false;
     } while ((i = replacement.find('$', i + 1)) != notFound);
 
-    if (replacement.length() - offset)
-        parts.append(StringReplaceTemplatePart::literal(offset, replacement.length() - offset));
+    if (replacement.length() - offset && !parts.tryAppend(StringReplaceTemplatePart::literal(offset, replacement.length() - offset))) [[unlikely]]
+        return false;
+    return true;
 }
 
 ALWAYS_INLINE void appendReplacementUsingTemplate(StringBuilder& result, std::span<const StringReplaceTemplatePart> parts, StringView replacement, StringView source, const int* ovector, RegExp* regExp)
@@ -1484,7 +1490,8 @@ ALWAYS_INLINE JSString* replaceAllWithStringUsingRegExpSearch(VM& vm, JSGlobalOb
 
         if (!anyMatch) {
             anyMatch = true;
-            parseReplacementTemplate(templateParts, replacementString, regExp, dollarPos);
+            if (!parseReplacementTemplate(templateParts, replacementString, regExp, dollarPos)) [[unlikely]]
+                OUT_OF_MEMORY(globalObject, scope);
             firstMatch = result;
             firstOvector.append(std::span<const int> { ovector, static_cast<size_t>(regExp->offsetVectorSize()) });
         } else {
