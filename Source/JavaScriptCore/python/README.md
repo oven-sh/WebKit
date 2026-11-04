@@ -213,6 +213,9 @@ runner shows the exception among its own lines (`stack`). An `Error` of JS whose
 **Warnings** count calls of functions of JS among the levels of the stack (`forEachCallOfEitherLanguage`): `warn()` called by JS, or with a `stacklevel` that leads to JS, is about that file
 and line, `skip_file_prefixes` goes for such files, the module is named after the file (as `warn_explicit()` does without a name), and `__warningregistry__` is in the dict the runtime keeps for
 the file. What the host has written in Python to serve JS (its frozen modules: `with()` of `bun:python`) does not count, as importlib does not.
+The file that a program in JS began with is `__main__`, as the file of a program in Python is, so a `DeprecationWarning` about its code is shown though nobody has set a filter. The host
+says which file that is (`setIsMainFileFunction`; in Bun it is `Bun.main`: in a worker the file of the worker, which has an interpreter and a `__main__` of its own, and under
+`bun test` the file of tests that is running). (A decision that can still be changed.)
 
 ## Syntax errors
 
@@ -888,7 +891,29 @@ while any thread has a function. The side tables are only changed with the GIL, 
   `ERR_INVALID_ARG_TYPE` of Node, and so does `except JSError` (`exceptionFromThrownValue`). To JS an instance of Python's `TypeError`, or of
   a class derived from it, is an `instanceof TypeError`: behind it comes `TypeError.prototype` where the other exceptions have
   `Error.prototype`. All exceptions have one `Structure`, and an object can change its class, so the prototype is asked for
-  (`PyException::getPrototype`). No other class of errors is linked. (A decision that can still be changed.)
+  (`PyException::getPrototype`). (A decision that can still be changed.)
+- **An error of the system is an `OSError`.** Node and Bun throw an `Error` with the name of the error number as its `code` (`"ENOENT"`) and a number as
+  its `errno`. What stands for one is of the class that `OSError(errno, ...)` makes and a `JSError` as well: `JSFileNotFoundError(JSError,
+  FileNotFoundError)`, `JSPermissionError`, or `JSOSError` where there is no class for the number (`osErrorFromThrownValue`; the classes are made when
+  they are first wanted, also by `from _js import JSFileNotFoundError`). `e.errno` is the number that goes with the name on this system, positive as in Python,
+  whatever the `errno` of JS is (Node's are negative, and libuv's own on Windows); `e.strerror` is `os.strerror()` of it, `e.filename` the `path`, `e.filename2` the
+  `dest`, and `str(e)` reads as for any `OSError`. What JS said is still there: `e.message`, `e.code`, `e.syscall`, `e.value`. A `code` that names no error number
+  (`ENOTFOUND`, `ERR_...`) makes no `OSError`. The other way round an `OSError` of Python's has, for JS, a `code` (by `errno.errorcode`), a `path` and a `dest`, which is what code written for
+  Node asks; its `errno` is Python's attribute, positive, and it has no `syscall`. What a `JSError` stands for has a field of the exception to itself, so the
+  fields of `OSError` are free. No other class of errors is linked. (A decision that can still be changed.)
+- **A class of JS can stand in an `except` clause**, alone or in a tuple: `except js.RangeError`, `except (ValueError, AppError) as e`. It catches an exception that stands
+  for what JS threw, if that is an instance of the class. Any class will do (`isClassOfJS`, the test that decides whether a call constructs), since JS can throw
+  anything; what is no class is the `TypeError` it always was. It goes by the prototypes and runs no code (`standsForInstanceOfJS`), as CPython's matching runs none: a
+  `Symbol.hasInstance` or a proxy is not asked, and it works in any thread. It catches nothing of Python's, though to JS every exception of Python's is an
+  `Error`: `except js.Error` is not to swallow a `KeyboardInterrupt` or a `CancelledError`. The same for `except*`, and for `split()` and `subgroup()` of a group, where
+  a class of JS is a class and any other function a predicate. `isinstance(e, js.RangeError)` asks about what was thrown too (by `instanceof`).
+  The class of such an exception is `JSError` whatever was thrown, so who asks `issubclass(type(e), cls)` is told no: `contextlib.suppress(js.RangeError)` suppresses nothing,
+  and `assertRaises()` takes only classes of Python's. (A decision that can still be changed.)
+- **`raise js.RangeError("x")`** throws that very object: JS catches what it expects, and Python the `JSError` that stands for it. `raise js.RangeError` makes the
+  instance. Only an `Error`, or a class of them; anything else is the `TypeError` it was. So after `from`: `raise ValueError() from js.Error("x")`. And
+  `new Error(message, { cause })` is `raise ... from cause`: if the `cause` is an own property and an `Error` or an exception of Python's, it is the `__cause__` of
+  the `JSError`, from when that is made. `raise js.Error("x") from e` sets the `__cause__` of the `JSError` and leaves the object of JS as it is.
+  (A decision that can still be changed.)
 - `len()` is `length`, or `size`, or the number of own properties. Of what can be iterated over and has neither it is a `TypeError`.
 - **`async for` is `for await`**, also where it is left before the end: by `break`, `return` or an exception (a cancellation too), in a
   statement or a comprehension. Then the iterator's `return()` is called and awaited, which is what an object of JS counts on to
@@ -901,21 +926,27 @@ while any thread has a function. The side tables are only changed with the GIL, 
   promise, an `Error`, a `Date`, a `Response`, an iterator. So `if error:` and `if callback:` do what they say.
 - An object that JS does not iterate over is a mapping of its own enumerable properties: `keys()`, `values()`, `items()`, `get()`, `pop()`,
   `popitem()`, `setdefault()`, `update()`, `clear()` (those of `collections.abc.MutableMapping`), unless it has properties of these
-  names; so `dict(object)`. What JS iterates over has none of them: `dict(map.entries())` takes the pairs.
+  names; so `dict(object)`. What JS iterates over has none of them, unless it is a mapping by its methods: `dict(map.entries())` takes the pairs.
 - **A plain object**, one whose prototype is `Object.prototype` or `null`, has a type of its own, `_js.JSPlainObject`, which derives from `JSObject` and adds
   nothing to it but what it says to others: it is registered as a `collections.abc.MutableMapping` (when the interpreter starts, `registerInteropTypes`: the
   type has instances before any module is imported that could do it), a mapping pattern of `match` takes it (`TypeFlag::Mapping`), and
   `json.dumps()` writes it as it writes a dict, wherever it is found. It is no `dict`: `isinstance(o, dict)` is false, and `o == {...}` goes by identity.
   So `json.dump()` and `JSONEncoder.iterencode()`, whose encoder is the library's own in Python and asks `isinstance(o, dict)`, take it only with
   `default=dict`. `typeOf()` tells by the type of the cell and one comparison of its prototype. (A decision that can still be changed.)
-- **A mapping by its methods.** An object that is not plain, that JS iterates over and that has `get()`, `has()` and `keys()` is a mapping by those, as a `Map`
-  is: `Headers`, `URLSearchParams`, `FormData`, `CookieMap`, a cache from a package (`isMappingByMethods`, asked at each use). `o[k]` is `get(k)`, or a
+- **A mapping by its methods.** An object that is not plain, that JS iterates over and that has `get()`, `has()` and `keys()` is a mapping by those: a `Map`,
+  `Headers`, `URLSearchParams`, `FormData`, `CookieMap`, a cache from a package (`isMappingByMethods`, asked at each use). `o[k]` is `get(k)`, or a
   `KeyError` if not `has(k)`; `k in o` is `has(k)`; `o[k] = v` is `set(k, v)`; `del o[k]` is `delete(k)`; iteration is over `keys()`; `len()` is
   `length`, `size` or the number of keys; an empty one is false. So `dict(o)` and `**o`. `items()`, `pop()`, `popitem()`, `setdefault()` and `update()` are
   those of a mapping, made of the above. What the object has itself comes first as ever: `o.get(k)` is JS's, which knows no default, and
   `o.keys()`, `o.values()` and `o.entries()` give iterators of JS. Its properties are attributes only. A key that is there twice
-  (`URLSearchParams`) is iterated over twice, and `[]` gives what `get()` gives, the first. A `Map` is as it was: it iterates by pairs, as in JS, and has no `items()`.
+  (`URLSearchParams`) is iterated over twice, and `[]` gives what `get()` gives, the first.
   (A decision that can still be changed.)
+- **A `Map`** is the mapping of JS whose keys can be anything, and they are compared as JS compares them: `1` and `"1"` are two keys, and so are two equal tuples. It is iterated
+  over by its keys, as every mapping of Python's is, not by pairs as in JS: `for k, v in m.items()`, or `m.entries()`. It has a type of its own, `_js.JSMap`, which
+  like that of a plain object adds nothing to `JSObject` but what it says to others: it is registered as a `MutableMapping`, and a mapping pattern of `match` takes it. (`typeOf()`
+  tells by the type of the cell. `class Cache(js.Map)` derives from it.) Where a method is `Map`'s own there is no need to call it (`mapWithItsOwnMethods` looks the
+  method up and sees what function it is); a class derived from `Map` with a `get()` of its own is asked. `json.dumps()` does not take it: `dict(m)`.
+  A `Set` is as it was: iteration over its members, `in`, `len()`. A `WeakMap` and a `WeakSet` have their methods and no items. (A decision that can still be changed.)
 - **What can be disposed of is a context manager.** `with o:` is `using`: it gives `o`, and calls `o[Symbol.dispose]()` at the end. `async with o:` is
   `await using`: it awaits `o[Symbol.asyncDispose]()`, or calls `o[Symbol.dispose]()` if there is no such method. JS tells a disposable nothing of the
   exception that leaves the block, and whatever the method returns the exception goes on.
@@ -948,8 +979,7 @@ while any thread has a function. The side tables are only changed with the GIL, 
 - What JS forbids is refused as in strict code: to assign to or delete a property of a frozen object is a `TypeError` of JS.
 - `dir()` lists the names of the properties, inherited ones too, once each; not `arguments` and `caller` of `Function.prototype`, which throw.
 - `str()` is `String()`; of what JS can make no string of (an object without a prototype, the namespace of a module), `repr()`.
-- The items of a `Map` are its entries (`m[key]`, `m[key] = v`, `del m[key]`, `key in m`), so `dict(m)` copies it. `in` asks a `Set`.
-  Iterating over them is what it is in JS: pairs, for a `Map`.
+- `in` asks a `Set`, and to iterate over one is what it is in JS.
 - An iterator that the engine makes (of arrays, maps, sets, strings, matches; iterator helpers) is an iterator: `next()`, and
   `__iter__` may return it. A generator is a generator: `send()`, `throw()`, `close()` (which is `return()`), `yield from`, so
   `contextlib.contextmanager` takes a `function*`. Any other object with a `next` method can be iterated over if it has
@@ -967,12 +997,19 @@ while any thread has a function. The side tables are only changed with the GIL, 
   wrote there before Python started and with the variables of `.env` files), and from then on each hears of what changes in the other.
   `os.putenv()` and `os.unsetenv()`, which `os.environ` calls, tell the host (`didChange`; for another thread the main one does it, as soon as it
   has the VM again). A write to `process.env`, or a `delete`, changes the dict in which `os.environ` keeps the variables
-  (`hostDidChangeEnvironment`), and on the main thread the environment of the process too, which Bun itself leaves as it found it: that is what the
-  children of Python inherit. To JS names and values are text, with U+FFFD for what is not UTF-8. Such bytes stay what they are in
+  (`hostDidChangeEnvironment`). It does not change the environment of the process, with Python no more than without: `setenv()` is not safe while
+  other threads call `getenv()`, and Bun has such threads. Python's own writes go on calling it, as in CPython (`TZ` and `time.tzset()`, `LANG` and
+  `locale` need it). So the two can differ, and where they do is kept (`Threads::variablesOfHost()`: what the host has for a name, or that it has nothing; an entry goes when
+  Python writes that variable, or the host what the process has). A program that Python starts or gives way to without being told its environment inherits that
+  of the process in CPython. Here it is given that with the differences applied (`PosixChildEnvironment`), on whatever thread, without asking the host:
+  `subprocess`, `os.system()`, `os.popen()`, `os.spawnv()` and its kin, `os.posix_spawn(..., None)`, `os.execv()` and its kin, `multiprocessing`. While there is
+  no difference nothing is built, and `os.system()` is `system(3)`. `os.reload_environ()` gives the same. What is left: the C library, and whatever else calls
+  `getenv()`, does not see what JS wrote, as in Bun without Python: after `process.env.TZ = ...`, `time.tzset()` changes nothing.
+  To JS names and values are text, with U+FFFD for what is not UTF-8. Such bytes stay what they are in
   `os.environb` until JS writes another text. A name that no environment can hold (`A=B`) stays in `process.env` alone.
-  In a worker `process.env` is a copy, or what `new Worker(file, { env })` gave it, and `os.environ` is the same as that. What JS writes there
-  goes no further; what Python writes there also changes the environment of the process, as in a subinterpreter of CPython, and no other
-  thread is told. (A decision that can still be changed.)
+  In a worker `process.env` is a copy, or what `new Worker(file, { env })` gave it, and `os.environ` is the same as that, and so is what the programs get that Python
+  starts there. What JS writes there goes no further; what Python writes there also changes the environment of the process, as in a subinterpreter of
+  CPython, and no other thread is told. (A decision that can still be changed.)
 
 ## JavaScript without Python
 
