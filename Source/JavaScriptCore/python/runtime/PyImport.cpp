@@ -208,6 +208,11 @@ static JSValue loadNativeModule(JSGlobalObject* globalObject, JSString* name, co
         ensureNativeModuleSpec(globalObject, PyModule::from(module));
         RETURN_IF_EXCEPTION(scope, { });
     }
+    if (def.execute) {
+        def.execute(globalObject, PyModule::from(module));
+        RETURN_IF_EXCEPTION(scope, { });
+        module = rt.modules()->get(name);
+    }
     return module;
 }
 

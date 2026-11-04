@@ -144,6 +144,7 @@ static constexpr NativeModuleDef nativeModuleTable[] = {
     { "errno"_s, initializeErrnoModule },
     { "gc"_s, initializeGCModule },
     { "itertools"_s, initializeItertoolsModule },
+    { "js"_s, initializeGlobalObjectModule, executeGlobalObjectModule },
     { "marshal"_s, initializeMarshalModule },
     { "math"_s, initializeMathModule },
     { "pyexpat"_s, initializeExpatModule },

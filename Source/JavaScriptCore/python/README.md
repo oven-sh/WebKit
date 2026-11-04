@@ -755,6 +755,11 @@ while any thread has a function. The side tables are only changed with the GIL, 
 
 `runtime/PyInterop.cpp`. Properties are attributes and items, those of JS before what the Python type has. Besides:
 
+- **`import js`** gives the global object. It is in `sys.modules` from then on, not before: a program that has nothing to do with JS finds nothing
+  of JS's there. `js` is a module written in C++ that puts the global object in its own place in `sys.modules` when it runs
+  (`NativeModuleDef::execute`), so what `importlib` writes into a new module (`__spec__`, `__loader__`) does not end up in the global object.
+  Code of the host's that is not to be seen importing it has `_js.globalThis`.
+
 - `len()` is `length`, or `size`, or the number of own properties. Of what can be iterated over and has neither it is a `TypeError`.
 - **`async for` is `for await`**, also where it is left before the end: by `break`, `return` or an exception (a cancellation too), in a
   statement or a comprehension. Then the iterator's `return()` is called and awaited, which is what an object of JS counts on to

@@ -710,6 +710,8 @@ void reportUnraisable(JSGlobalObject*, const String& message, JSValue object);
 
 void initializeGCModule(JSGlobalObject*, PyModule*); // gc
 void initializeJSModule(JSGlobalObject*, PyModule*); // _js
+void initializeGlobalObjectModule(JSGlobalObject*, PyModule*); // js
+void executeGlobalObjectModule(JSGlobalObject*, PyModule*);
 void initializeThreadModule(JSGlobalObject*, PyModule*); // _thread
 void initializeQueueModule(JSGlobalObject*, PyModule*); // _queue
 void initializeSignalModule(JSGlobalObject*, PyModule*); // _signal

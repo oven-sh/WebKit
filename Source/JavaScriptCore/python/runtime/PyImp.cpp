@@ -88,7 +88,20 @@ static JSValue impCreateBuiltin(JSGlobalObject* globalObject, JSValue spec)
     RELEASE_AND_RETURN(scope, createNativeModule(globalObject, name, *def));
 }
 
-static JSValue impExecBuiltin(JSGlobalObject*, JSValue) { return jsNumber(0); }
+static JSValue impExecBuiltin(JSGlobalObject* globalObject, JSValue value)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* module = PyModule::tryFrom(value);
+    JSValue name = module ? module->dict()->get(runtime(globalObject).names.dName()) : JSValue();
+    if (!name || !isStr(name) || !module->isNative())
+        return jsNumber(0);
+    if (auto* def = findNativeModule(stringOf(strValue(name))); def && def->execute) {
+        def->execute(globalObject, module);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    return jsNumber(0);
+}
 
 static JSValue impLockHeld(JSGlobalObject* globalObject) { return jsBoolean(runtime(globalObject).threads().importLock.isHeld()); }
 

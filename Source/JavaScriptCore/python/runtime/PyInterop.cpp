@@ -1372,10 +1372,23 @@ static constexpr NativeDef jsModuleFunctions[] = {
 
 PyType* jsTypedArrayType(Runtime&); // PyJSBuffers.cpp
 
-// The module _js: what Python code needs to name when it deals with JS. (`import js` is the global object of JS.)
+// `import js` gives the global object of JS, whose properties are its attributes. The import system writes what it knows of a
+// module into the module (__spec__, __loader__), and hands out what is in sys.modules once the module has run. So there is a module for
+// it to write into, which puts the global object in its own place. Not before a program asks for it: a program that has nothing to do
+// with JS finds nothing of JS's when it goes through sys.modules.
+void initializeGlobalObjectModule(JSGlobalObject*, PyModule*) { }
+
+void executeGlobalObjectModule(JSGlobalObject* globalObject, PyModule* module)
+{
+    Runtime& rt = runtime(globalObject);
+    rt.modules()->set(rt.vm(), asString(module->dict()->get(rt.names.dName())), globalObject->globalThis());
+}
+
+// The module _js: what Python code needs to name when it deals with JS.
 void initializeJSModule(JSGlobalObject* globalObject, PyModule* module)
 {
     Runtime& rt = runtime(globalObject);
+    module->add(globalObject, "globalThis"_s, globalObject->globalThis());
     module->add(globalObject, "JSError"_s, rt.JSError());
     module->add(globalObject, "JSObject"_s, rt.jsObjectType());
     module->add(globalObject, "JSFunction"_s, rt.jsFunctionType());

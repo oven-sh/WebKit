@@ -249,8 +249,6 @@ void Runtime::initializeModules()
     m_sysModule.set(vm, globalObject, sys);
     m_sysDict.set(vm, globalObject, sys->dict());
     m_modules->set(vm, names.sys(), sys);
-    // `import js`: the global object of JS, whose properties are its attributes.
-    m_modules->set(vm, internString(vm, "js"_s), globalObject->globalThis());
 
     initializeBuiltinsModule(globalObject, builtins);
     RETURN_IF_EXCEPTION(scope, void());

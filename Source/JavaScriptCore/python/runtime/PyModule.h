@@ -44,6 +44,8 @@ struct NativeModuleDef {
     ASCIILiteral name;
     // Fills the module, which has its name. What throws says so through the VM.
     void (*initialize)(JSGlobalObject*, PyModule*);
+    // Runs at every import, when the module is in sys.modules, as the code of a module written in Python does. It may put something else there.
+    void (*execute)(JSGlobalObject*, PyModule*) { nullptr };
 };
 std::span<const NativeModuleDef> nativeModules();
 // More of them, from the host: those that need libraries JSC does not have (compression, hashes, databases). The table is
