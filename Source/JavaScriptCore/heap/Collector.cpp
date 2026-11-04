@@ -471,11 +471,9 @@ NEVER_INLINE bool Collector::runBeginPhase(GCConductor conn)
                 bytesToVisit += heap.m_sizeAfterLastCollect;
             });
         }
-        // TEMPORARY-AB: for measuring both ways with one binary.
-        static const bool isAsBefore = getenv("JSC_EAGER_GC_HELPERS");
         if (startsHelpersLazily())
             m_helperClient.pool().ensureThreads(std::clamp<size_t>(bytesToVisit / bytesPerHelper, 1, maxHelpers));
-        else if (bytesToVisit >= bytesPerHelper || isAsBefore)
+        else if (bytesToVisit >= bytesPerHelper)
             startHelpers();
     }
 

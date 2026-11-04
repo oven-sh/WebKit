@@ -527,8 +527,11 @@ void SlotVisitor::donateKnownParallel(MarkStackArray& from, MarkStackArray& to)
         return;
 
     // Helpers that do not run yet cost half a millisecond to start and to see off, a whole one of processor time: as long as it takes
-    // this visitor to mark 30,000 to 60,000 cells by itself. How much is left to mark nobody knows. What is on the stack is the
-    // least of it, and comes with its descendants; what has been marked so far says what kind of collection this is.
+    // this visitor to mark 7,000 to 24,000 cells by itself. How much is left to mark nobody knows. What is on the stack is the
+    // least of it, and may come with descendants; what has been marked so far says what kind of collection this is.
+    // (What is on the stack has been counted as marked too, so it weighs nine times.)
+    // The number is measured: python/README.md, "JavaScript without Python". It lets a stack of 14,500 cells start the helpers. By then
+    // they are sure to be started anyway, when the conductor lets the mutator run: see donateAll().
     constexpr size_t cellsWorthStartingHelpersFor = 131072;
     if (!collector().hasStartedHelpers() && m_visitCount + 8 * from.size() < cellsWorthStartingHelpersFor)
         return;

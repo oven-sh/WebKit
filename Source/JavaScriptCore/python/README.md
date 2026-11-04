@@ -1033,14 +1033,24 @@ the beginning of every collection and waited for at its end, which takes 0.4 ms 
 them, on an idle machine, where a collection of the young generation that finds little takes 0.03 ms by itself. Now they are started
 when there is work for them (`Collector::runBeginPhase`, `SlotVisitor::donateKnownParallel`, `donateAll`): at once if the
 collection expects to visit 16 MB or more; otherwise when what the conductor has marked by itself, plus eight times what it has on
-its stack, comes to 131,072 cells (it marks 30,000 to 60,000 in the time that starting them costs); and whenever it leaves
-marking to them to let the mutator run. Nothing in the protocol depends on how many run. Termination is "no marker is active, this visitor and the shared stacks are empty", and a
+its stack, comes to 131,072 cells (it marks 7,000 to 24,000 in the time that starting them costs); and whenever it leaves
+marking to them to let the mutator run, which is after 0.3 ms at the least: 4,500 to 15,000 cells. Nothing in the protocol depends on how many run.
+Termination is "no marker is active, this visitor and the shared stacks are empty", and a
 helper that was never started is not active and owns nothing. What is in a shared stack is always taken by somebody: with the
 world stopped the conductor ends in `drainFromShared(MainDrain)`, which steals for itself, and every way into the concurrent
 phase goes through `donateAll()`. All visitors are set up in the Begin phase, started or not; the start happens once (an atomic
 exchange), never in the End phase; tasks of the constraint solver are run by the conductor too and waited for by
 reference count. (Programs compiled ahead of time already did this, and also create the threads one by one.) A loop in JS that
 allocates 30 million objects of which 1000 are alive at a time went from 680 to 318 ms, and from 1001 to 348 ms of processor time.
+A collection of the young generation that is over before the conductor would let the mutator run (4,000 cells in a list, 8,000 to 9,000
+in arrays or a tree, 14,000 old cells that are looked at again) takes a tenth to a half of the time it took; a larger one takes what it
+took, with two exceptions. One that finds 20,000 to 40,000 cells, a third of them in one array and the others hanging from those, takes
+11 to 22 % longer: 7,000 to 13,000 cells on the stack do not start the helpers, so they come after 0.3 ms. A lower number cures that
+(32,768: 0.97 to 1.05) and costs more than it gives: an array of 4,000 to 9,000 cells that have no descendants, or as many old cells to
+look at again, then takes 0.55 to 0.8 ms in place of 0.13 to 0.35. And a collection that the program asks for and waits for (`edenGC()`)
+and that finds 30,000 to 60,000 cells in a tree takes a quarter to a third longer, whatever the number: the stack of the visitor stays
+small, the helpers come after 0.3 ms, the thread that waits marks no more, and the first helper to wake takes most of the tree.
+Collections that come by themselves do not show it (a splay tree of 8,000 to 400,000 nodes: 0.99 to 1.03).
 
 One thing that Python needs of WTF is a setting of the process, `Thread::setSurvivesFailedCreation()`: a program may lower its own
 limit on threads (`resource.setrlimit`) and go on, and the collector then does without the threads it cannot start. Bun makes that setting
