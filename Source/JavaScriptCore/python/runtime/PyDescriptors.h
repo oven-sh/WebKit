@@ -27,6 +27,8 @@ public:
     WriteBarrier<Unknown> name; // Empty: not known.
     bool docIsFromGetter { false };
 
+    static constexpr ptrdiff_t offsetOfGetter() { return OBJECT_OFFSETOF(PyProperty, getter); }
+
 private:
     PyProperty(VM&, Structure*, PyType*);
 };

@@ -392,6 +392,7 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_get_attr)
     // See "Calls that instructions make" below. Nothing of the program's has run: the interpreter finds the object where it was.
     if (getter) {
         ASSERT(canBeCalledByInstruction(getter, 1) && GET_C(bytecode.m_base).jsValue() == base);
+        rememberAttribute(globalObject, bytecode.metadata(codeBlock), base, name, false);
         return encodeResult(getter, nullptr);
     }
     rememberAttribute(globalObject, bytecode.metadata(codeBlock), base, name, false);

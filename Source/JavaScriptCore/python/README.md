@@ -111,7 +111,7 @@ unpacking, cells, the binding of arguments when they are simply the parameters, 
   remembers Structure, version and offset, or the value found in the class, or the method to call. `obj.__dict__` moves the
   attributes into a real dict, for good, and gives the object a Structure that says so.
   What is found in the class may also be a `staticmethod` or a `classmethod` (what it wraps is read each time, since `__init__` can
-  replace it) or the field of a named tuple. The object may be a class itself: then its own number is checked, and that of its class.
+  replace it), the field of a named tuple, or a property (below). The object may be a class itself: then its own number is checked, and that of its class.
   The numbers are finite, so a type takes one only when something is to be remembered about it, and at most 1000, as in CPython:
   about a class that keeps changing (`C.count += 1`) nothing is remembered after that.
 - _Calls_ are JSC's.
@@ -180,8 +180,10 @@ function is called in this way once it has been called in the ordinary way, whic
   third slow path (`..._finish`). Between the arguments and those registers is room for two more parameters
   (`def __add__(self, other, context=None)`); a method with more is called by C++.
 - _The getter of a property_ is found by the slow path of `op_py_get_attr` in the ordinary lookup (`genericGetAttr()` knows a
-  `property`), and returned to the interpreter in the same way. No cache. Not for a class with a `__getattr__`, which is asked when
-  the getter raises `AttributeError`: then C++ makes the call. No `getAttr()` is on the way of what the getter raises, so it is the
+  `property`), and returned to the interpreter in the same way. The instruction remembers the property, as it remembers a
+  `staticmethod`: while the Structure of the object and the version of its class are the same, it reads the getter out of the
+  property (`property.__init__` can replace it) and does without the slow path. Not for a class with a `__getattr__`, which is asked
+  when the getter raises `AttributeError`: then C++ makes the call. No `getAttr()` is on the way of what the getter raises, so it is the
   unwinder that tells an `AttributeError` which attribute it was, if it does not say. The object is kept in the frame, behind the
   argument (`RegisterOfGetter`).
 - _Nothing is left behind._ Where the frame was, the frames of others will be, and C++ does not write every word of its own: what

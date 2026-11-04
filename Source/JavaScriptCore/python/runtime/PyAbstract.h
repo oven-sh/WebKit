@@ -61,10 +61,11 @@ struct AttributeCache {
     static constexpr int32_t staticMethod = -4; // `payload` is a staticmethod: the attribute is what that wraps now.
     static constexpr int32_t classMethod = -5; // op_py_get_method only: `payload` is a classmethod. What that wraps now takes the class of the object as its first argument.
     static constexpr int32_t tupleItem = -6; // op_py_get_attr only: the attribute is item `payload` of the object, a tuple.
-    // The object is a class, and the attribute was found in it or in one of its bases. As the three above.
-    static constexpr int32_t valueOfClass = -7;
-    static constexpr int32_t staticMethodOfClass = -8;
-    static constexpr int32_t classMethodOfClass = -9; // The first argument is the object.
+    static constexpr int32_t propertyGetter = -7; // op_py_get_attr only: `payload` is a property: the attribute is what the getter it has now returns for the object.
+    // The object is a class, and the attribute was found in it or in one of its bases. As classValue, staticMethod, classMethod.
+    static constexpr int32_t valueOfClass = -8;
+    static constexpr int32_t staticMethodOfClass = -9;
+    static constexpr int32_t classMethodOfClass = -10; // The first argument is the object.
     // Whether `payload` is a value. The versions vouch for it: while they hold, the class has it. The collector does not go by
     // that, since a dict can be written to behind the back of its class (gc.get_referents(C.__dict__)): what is remembered about
     // a value that is gone is forgotten, as it is for a Structure. See CodeBlock::reconcileLLIntInlineCachesAtGCEnd().

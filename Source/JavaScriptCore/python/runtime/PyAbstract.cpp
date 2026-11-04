@@ -751,6 +751,12 @@ static bool describeAttributeOfObject(JSGlobalObject* globalObject, JSCell* cell
             return true;
         }
     }
+    // A property. If its getter raises AttributeError, __getattr__ is asked: that is for C++.
+    if (!forCall && descriptor && descriptor.isCell() && descriptor.asCell()->type() == PyObjectType && rt.typeOf(descriptor) == rt.propertyType() && !type->lookup(Special::GetAttr)) {
+        cache.offset = AttributeCache::propertyGetter;
+        cache.payload = JSValue::encode(descriptor);
+        return true;
+    }
     if (isDataDescriptor(descriptor) || !structureTellsAttributes(rt, cell, type, structure))
         return false;
 

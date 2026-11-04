@@ -3334,6 +3334,7 @@ llintOpWithMetadata(op_py_get_attr, OpPyGetAttr, macro (size, get, dispatch, met
     pyCheckTypeVersion(OpPyGetAttr, .slow)
     loadq OpPyGetAttr::Metadata::m_payload[t5], t0
     bieq t1, constexpr Python::AttributeCache::staticMethod, .wrapped
+    bieq t1, constexpr Python::AttributeCache::propertyGetter, .propertyGetter
     # tupleItem
     loadi (constexpr (Python::PyTuple::offsetOfLength()))[t3], t1
     bqaeq t0, t1, .slow
@@ -3357,6 +3358,20 @@ llintOpWithMetadata(op_py_get_attr, OpPyGetAttr, macro (size, get, dispatch, met
     pyCallSlowPathThatLeavesCalls(_slow_path_py_get_attr, .callGetter)
     dispatch()
 
+.propertyGetter:
+    if ARM64E
+        jmp .slow
+    end
+    loadq (constexpr (Python::PyProperty::offsetOfGetter()))[t0], t2
+    btqnz t2, notCellMask, .slow
+    loadPythonRuntime(t0)
+    loadi Python::Runtime::functionStructureID[t0], t0
+    bineq t0, JSCell::m_structureID[t2], .slow
+    pyLoadCodeBlockOfCallee()
+    # As canBeCalledByInstruction().
+    pyCheckCodeBlockOfCallee(1, .slow)
+    jmp .makeFrameOfGetter
+
 # Of a property.
 .callGetter:
     move r0, t2
@@ -3364,6 +3379,7 @@ llintOpWithMetadata(op_py_get_attr, OpPyGetAttr, macro (size, get, dispatch, met
     get(m_base, t1)
     loadConstantOrVariable(size, t1, t3)
     pyLoadCodeBlockOfCallee()
+.makeFrameOfGetter:
     subp PyRoomForFrameWithTwoRegisters, sp
     pyStoreHeaderOfCallee(1)
     storeq t3, PyFirstArgumentOfCallee[sp]
