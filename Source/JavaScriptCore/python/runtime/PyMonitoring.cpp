@@ -2208,22 +2208,27 @@ JSValue exceptionIsRaised(JSGlobalObject* globalObject, JSValue exception, CallF
     bool isWanted = monitoring.wantsExceptions();
     CodeMonitor* monitor = codeInfoOf(callFrame).monitor.get();
     bool isAwake = monitor && monitor->isAwake();
-    auto marks = callFrame->codeBlock()->unlinkedCodeBlock()->pythonMarks();
+    CodeBlock* codeBlock = callFrame->codeBlock();
     // What raises it again on behalf of the program, from no line, does so as if from here: see PyFrame::findPlace().
     if (PyFrame* frame = isWanted ? PyFrame::of(globalObject, callFrame) : frameObjectIfAny(callFrame)) {
-        if (!isRaisedAgain || lineOfMarks(marks, index.offset()) >= 0)
+        if (!isRaisedAgain || lineOfMarks(codeBlock->unlinkedCodeBlock()->pythonMarks(), index.offset()) >= 0)
             frame->raisedAt = index.offset();
     }
-    auto* instruction = callFrame->codeBlock()->instructionAt(index);
-    if (isWanted && isRaisedAgain && instruction->opcodeID() == op_py_runtime && static_cast<RuntimeFunction>(instruction->as<OpPyRuntime>().m_function) == RuntimeFunction::ReraiseUnseen)
-        isWanted = false;
     // Only whoever is told of lines asks for the line.
     if (!isAwake) [[likely]] {
         monitoring.noteWhereItIsRaised(nullptr, -1);
         if (!isWanted) [[likely]]
             return exception;
+    }
+    auto* instruction = codeBlock->instructionAt(index);
+    if (isWanted && isRaisedAgain && instruction->opcodeID() == op_py_runtime && static_cast<RuntimeFunction>(instruction->as<OpPyRuntime>().m_function) == RuntimeFunction::ReraiseUnseen)
+        isWanted = false;
+    if (!isAwake) {
+        if (!isWanted)
+            return exception;
         return tellOfException(globalObject, exception, callFrame, index.offset(), isRaisedAgain ? Event::Reraise : Event::Raise);
     }
+    auto marks = codeBlock->unlinkedCodeBlock()->pythonMarks();
     // What throw() raises comes from outside: a handler on the line of the `yield` is told of as a line that begins.
     bool isThrownIn = instruction->opcodeID() == op_py_runtime && static_cast<RuntimeFunction>(instruction->as<OpPyRuntime>().m_function) == RuntimeFunction::ThrowIntoGenerator;
     int line = isThrownIn ? -1 : lineOfMarks(marks, index.offset());

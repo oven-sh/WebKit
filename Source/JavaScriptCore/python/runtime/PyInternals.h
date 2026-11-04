@@ -645,7 +645,7 @@ UncheckedKeyHashSet<JSCell*> cellsReachedFrom(VM&, std::span<JSCell* const>, con
 bool liveLocalsOfFrame(CallFrame*, CodeBlock*, bool isCalling, FastBitVector& live);
 // Where the frames end that the instructions of a frame of Python make below its registers (PyBytecode.h).
 Register* endOfFrameMadeByInstruction(CallFrame*, CodeBlock*);
-std::span<const BlockPiece> blockPiecesOf(CodeBlock*, bool onlyIfALoopOwnsItsIterator = false);
+std::span<const BlockPiece> blockPiecesOf(CodeBlock*);
 // The op_py_catch of a handler is at the end of the code, out of the way, and jumps to where the compiler began the handler: that is
 // the place which is in a loop or in a `try`, or not.
 unsigned whereHandlerBegins(CodeBlock*, unsigned offsetOfCatch);
