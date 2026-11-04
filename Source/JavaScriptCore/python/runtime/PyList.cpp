@@ -1319,7 +1319,8 @@ static JSValue compareSequences(JSGlobalObject* globalObject, CompareOperator op
             return jsBoolean(false);
         if (op == CompareOperator::NotEq)
             return jsBoolean(true);
-        RELEASE_AND_RETURN(scope, richCompare(globalObject, a, b, op));
+        // (What is there now: the comparison may have put other items in their place.)
+        RELEASE_AND_RETURN(scope, richCompare(globalObject, first.at(i), second.at(i), op));
     }
     unsigned a = first.length();
     unsigned b = second.length();
