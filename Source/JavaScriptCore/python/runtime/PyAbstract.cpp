@@ -789,18 +789,20 @@ bool describeAttribute(JSGlobalObject* globalObject, JSValue object, JSString* n
 {
     if (!object.isCell())
         return false;
-    // A type is asked for its version last: it has only so many to give.
+    // A type is asked for its version last: it has only so many to give. And if code of the program has run meanwhile, that may no
+    // longer be the version of what was found.
+    uint64_t timesLookupRanCode = PyType::timesLookupRanCode();
     JSCell* cell = object.asCell();
     if (PyType::is(cell)) {
         auto* cls = uncheckedDowncast<PyType>(cell);
-        if (!describeAttributeOfClass(runtime(globalObject), cls, name, forCall, cache))
+        if (!describeAttributeOfClass(runtime(globalObject), cls, name, forCall, cache) || PyType::timesLookupRanCode() != timesLookupRanCode)
             return false;
         cache.typeVersion = cls->version();
         cache.metatypeVersion = cls->type()->version();
         return cache.typeVersion && cache.metatypeVersion;
     }
     PyType* type = nullptr;
-    if (!describeAttributeOfObject(globalObject, cell, name, forCall, cache, type))
+    if (!describeAttributeOfObject(globalObject, cell, name, forCall, cache, type) || PyType::timesLookupRanCode() != timesLookupRanCode)
         return false;
     if (!type)
         return true;
@@ -814,8 +816,9 @@ bool describeSpecialMethod(JSGlobalObject* globalObject, JSValue object, Special
         return false;
     Runtime& rt = runtime(globalObject);
     PyType* type = rt.typeOf(object);
+    uint64_t timesLookupRanCode = PyType::timesLookupRanCode();
     JSValue descriptor = type->lookup(special);
-    if (!descriptor || !isMethodDescriptor(descriptor))
+    if (!descriptor || !isMethodDescriptor(descriptor) || PyType::timesLookupRanCode() != timesLookupRanCode)
         return false;
     cache.structureID = object.asCell()->structureID();
     cache.typeVersion = type->version();
@@ -833,20 +836,28 @@ bool describeSetAttribute(JSGlobalObject* globalObject, JSValue object, JSString
     VM& vm = rt.vm();
     auto* cell = uncheckedDowncast<PyObject>(object.asCell());
     PyType* type = cell->type();
+    uint64_t timesLookupRanCode = PyType::timesLookupRanCode();
     if (!isNative(type->lookup(Special::SetAttr), objectSetAttr))
         return false;
-    Structure* structure = cell->structure();
-    if (structure->isDictionary() || oldStructure->isDictionary())
-        return false;
-
     JSValue descriptor = type->lookup(name);
     if (mayBecomeAnotherKindOfDescriptor(rt, descriptor, type))
         return false;
+    bool isSlot = descriptor && descriptor.isCell() && descriptor.asCell()->type() == PyObjectType && descriptor.asCell()->classInfo() == PyMemberDescriptor::info();
+    if (!isSlot && isDataDescriptor(descriptor))
+        return false;
+    // The Structure is looked at when the lookups are over. Code that one of them ran may have given the object another, and a
+    // collection may have freed this one.
+    if (PyType::timesLookupRanCode() != timesLookupRanCode) [[unlikely]]
+        return false;
+
+    Structure* structure = cell->structure();
+    if (structure->isDictionary() || oldStructure->isDictionary())
+        return false;
     UniquedStringImpl* key;
-    if (descriptor && descriptor.isCell() && descriptor.asCell()->type() == PyObjectType && descriptor.asCell()->classInfo() == PyMemberDescriptor::info())
+    if (isSlot)
         key = &uncheckedDowncast<PyMemberDescriptor>(descriptor.asCell())->key()->uid();
     else {
-        if (isDataDescriptor(descriptor) || cell->JSCell::type() != PyInstanceType || !type->has(TypeFlag::HasDict) || !structureTellsAttributes(rt, cell, type, structure))
+        if (cell->JSCell::type() != PyInstanceType || !type->has(TypeFlag::HasDict) || !structureTellsAttributes(rt, cell, type, structure))
             return false;
         key = propertyKeyOfAttribute(name);
         if (!key)

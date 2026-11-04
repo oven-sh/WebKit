@@ -148,6 +148,10 @@ public:
             return entry.value.get();
         return lookupSlow(name);
     }
+    // lookup() runs code of the program in one case: a key that is no str, in the dict of a class, is asked whether it equals the name.
+    // Whoever looks things up, in whatever classes, and then counts on it that nothing has changed meanwhile sees by this number
+    // whether that has happened, here or in another thread.
+    static uint64_t timesLookupRanCode() { return s_timesLookupRanCode.load(std::memory_order_relaxed); }
     ALWAYS_INLINE JSValue lookup(Special special)
     {
         unsigned index = static_cast<unsigned>(special);
@@ -242,6 +246,7 @@ private:
     }
 
     JSValue lookupSlow(JSString* name);
+    static std::atomic<uint64_t> s_timesLookupRanCode;
     JSValue lookupSpecialSlow(Special);
     Structure* createInstanceStructure(VM&);
     uint32_t takeVersion();

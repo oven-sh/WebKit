@@ -258,6 +258,8 @@ bool PyType::isSubtypeOf(const PyType* other) const
     return false;
 }
 
+std::atomic<uint64_t> PyType::s_timesLookupRanCode;
+
 JSValue PyType::lookupSlow(JSString* name)
 {
     PyTuple* mro = m_mro.get();
@@ -276,6 +278,7 @@ JSValue PyType::lookupSlow(JSString* name)
         if (vm.exceptionForInspection())
             continue;
         JSGlobalObject* globalObject = realm();
+        s_timesLookupRanCode.fetch_add(1, std::memory_order_relaxed);
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         value = dict->get(globalObject, name);
         if (scope.exception()) [[unlikely]]

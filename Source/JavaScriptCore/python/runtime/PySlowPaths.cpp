@@ -405,7 +405,8 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_set_attr)
     auto bytecode = pc->as<OpPySetAttr>();
     JSValue base = GET_C(bytecode.m_base).jsValue();
     JSString* name = asString(GET_C(bytecode.m_name).jsValue());
-    Structure* oldStructure = base.isCell() ? base.asCell()->structure() : nullptr;
+    // opaque(): so that what is kept over the call is the pointer, which the collector knows, not the 32 bits it can be made of.
+    Structure* oldStructure = base.isCell() ? WTF::opaque(base.asCell()->structure()) : nullptr;
     setAttr(globalObject, base, name, GET_C(bytecode.m_value).jsValue());
     CHECK_EXCEPTION();
     auto& metadata = bytecode.metadata(codeBlock);
