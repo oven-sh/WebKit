@@ -76,8 +76,6 @@ struct Context {
     int64_t precision { 28 };
     int64_t emax { 999999 };
     int64_t emin { -999999 };
-    uint32_t traps { invalidOperationSignal | DivisionByZero | Overflow };
-    uint32_t status { 0 };
     Rounding rounding { Rounding::HalfEven };
     bool clamp { false };
 
@@ -309,8 +307,8 @@ static inline int64_t limbsForDigits(int64_t digits) { return (digits + digitsPe
 
 // ---- The operations ----
 //
-// Each sets `result` and adds the conditions it met to `status`; the status and the traps of the context are not looked at. The result
-// may be one of the operands.
+// Each sets `result` and adds the conditions it met to `status`: what becomes of them is the caller's business. The result may be one of
+// the operands.
 
 void finalize(Number&, const Context&, uint32_t& status);
 

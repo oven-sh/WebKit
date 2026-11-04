@@ -175,14 +175,14 @@ static Conversion convertForComparison(JSGlobalObject* globalObject, State& stat
     if (isFloat(other)) {
         if (!isEquality && failed(scope, !addStatus(globalObject, state, context, FloatOperation)))
             return Conversion::Raised;
-        context->context.status |= FloatOperation;
+        context->signals->status |= FloatOperation;
         numberFromDouble(b, floatValue(other), status);
         RELEASE_AND_RETURN(scope, report());
     }
     if (auto* complex = PyComplex::tryFrom(other); complex && isEquality) {
         if (complex->imaginary())
             return Conversion::NotImplemented;
-        context->context.status |= FloatOperation;
+        context->signals->status |= FloatOperation;
         numberFromDouble(b, complex->real(), status);
         RELEASE_AND_RETURN(scope, report());
     }

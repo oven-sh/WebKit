@@ -135,27 +135,26 @@ bool roundingArgument(JSGlobalObject* globalObject, State& state, JSValue value,
 
 // ---- context.traps and context.flags ----
 //
-// A mapping from the signals to bools that reads and writes the context. Field 0 is the context; it is empty or None in one that a
-// program made by calling the type, or parted from its context by calling __init__(). `number` says which of the two it is.
+// A mapping from the signals to bools that reads and writes the signals of a context. Field 0 is the cell that has them; it is empty or None in
+// a mapping that a program made by calling the type, or parted from its context by calling __init__(). `number` says which of the two it is.
 
 enum SignalDictKind : int64_t { SignalDictOfTraps, SignalDictOfFlags };
 
-static PyRecord* newSignalDict(JSGlobalObject* globalObject, PyType* type, PyDecimalContext* context, SignalDictKind kind)
+static PyRecord* newSignalDict(JSGlobalObject* globalObject, PyType* type, PyDecimalSignals* signals, SignalDictKind kind)
 {
     PyRecord* mapping = PyRecord::create(globalObject, type, 1);
-    if (context)
-        mapping->set(getVM(globalObject), 0, context);
+    if (signals)
+        mapping->set(getVM(globalObject), 0, signals);
     mapping->number = kind;
     return mapping;
 }
 
 static ALWAYS_INLINE uint32_t* tryConditionsOfSignalDict(PyRecord* mapping)
 {
-    JSValue context = mapping->get(0);
-    if (!context || !context.isCell()) [[unlikely]]
+    JSValue signals = mapping->get(0);
+    if (!signals || !signals.isCell()) [[unlikely]]
         return nullptr;
-    Context& limits = PyDecimalContext::from(context)->context;
-    return mapping->number == SignalDictOfTraps ? &limits.traps : &limits.status;
+    return mapping->number == SignalDictOfTraps ? &PyDecimalSignals::from(signals)->traps : &PyDecimalSignals::from(signals)->status;
 }
 
 // Null: a ValueError.
@@ -324,10 +323,15 @@ PyDecimalContext* newContext(JSGlobalObject* globalObject, State& state, PyType*
 {
     VM& vm = getVM(globalObject);
     auto* context = PyDecimalContext::create(vm, state.contextStructure.get(), type);
-    if (auto* defaults = state.defaultContext.get())
+    auto* signals = PyDecimalSignals::create(vm, state.signalsStructure.get(), state.signalsType.get());
+    context->signals.set(vm, context, signals);
+    if (auto* defaults = state.defaultContext.get()) {
         context->context = defaults->context;
-    context->traps.set(vm, context, newSignalDict(globalObject, state.signalDictType.get(), context, SignalDictOfTraps));
-    context->flags.set(vm, context, newSignalDict(globalObject, state.signalDictType.get(), context, SignalDictOfFlags));
+        signals->traps = defaults->signals->traps;
+        signals->status = defaults->signals->status;
+    }
+    context->traps.set(vm, context, newSignalDict(globalObject, state.signalDictType.get(), signals, SignalDictOfTraps));
+    context->flags.set(vm, context, newSignalDict(globalObject, state.signalDictType.get(), signals, SignalDictOfFlags));
     return context;
 }
 
@@ -336,6 +340,8 @@ PyDecimalContext* copyContext(JSGlobalObject* globalObject, State& state, PyDeci
     PyDecimalContext* copy = newContext(globalObject, state, state.contextType.get());
     copy->context = original->context;
     copy->capitals = original->capitals;
+    copy->signals->traps = original->signals->traps;
+    copy->signals->status = original->signals->status;
     return copy;
 }
 
@@ -447,7 +453,7 @@ static bool setSignals(JSGlobalObject* globalObject, State& state, PyDecimalCont
         conditions = *those;
     } else if (conditionsOfDict(globalObject, state, value, conditions) != DictOfSignals::Valid)
         return false;
-    (kind == SignalDictOfTraps ? context->context.traps : context->context.status) = conditions;
+    (kind == SignalDictOfTraps ? context->signals->traps : context->signals->status) = conditions;
     return true;
 }
 
@@ -576,9 +582,9 @@ static JSValue contextRepr(JSGlobalObject* globalObject, JSValue self)
     StringBuilder builder;
     builder.append("Context(prec="_s, limits.precision, ", rounding="_s, namesOfRoundings[static_cast<unsigned>(limits.rounding)], ", Emin="_s, limits.emin, ", Emax="_s, limits.emax,
         ", capitals="_s, context->capitals, ", clamp="_s, limits.clamp ? 1 : 0, ", flags="_s);
-    appendSignals(builder, limits.status);
+    appendSignals(builder, context->signals->status);
     builder.append(", traps="_s);
-    appendSignals(builder, limits.traps);
+    appendSignals(builder, context->signals->traps);
     builder.append(')');
     return makeStr(globalObject, builder.toString());
 }
@@ -595,8 +601,8 @@ static JSValue contextReduce(JSGlobalObject* globalObject, JSValue self)
     State& state = stateOf(globalObject);
     auto* context = PyDecimalContext::from(self);
     const Context& limits = context->context;
-    JSValue flags = signalsAsList(globalObject, state, limits.status);
-    JSValue traps = signalsAsList(globalObject, state, limits.traps);
+    JSValue flags = signalsAsList(globalObject, state, context->signals->status);
+    JSValue traps = signalsAsList(globalObject, state, context->signals->traps);
     JSValue precision = makeInt(globalObject, limits.precision);
     RETURN_IF_EXCEPTION(scope, { });
     JSValue emin = makeInt(globalObject, limits.emin);
@@ -613,13 +619,13 @@ static JSValue contextEtop(JSGlobalObject* globalObject, JSValue self) { return 
 
 static JSValue contextClearFlags(JSGlobalObject*, JSValue self)
 {
-    limitsOf(self).status = 0;
+    PyDecimalContext::from(self)->signals->status = 0;
     return jsUndefined();
 }
 
 static JSValue contextClearTraps(JSGlobalObject*, JSValue self)
 {
-    limitsOf(self).traps = 0;
+    PyDecimalContext::from(self)->signals->traps = 0;
     return jsUndefined();
 }
 

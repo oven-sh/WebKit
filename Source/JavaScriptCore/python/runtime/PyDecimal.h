@@ -63,6 +63,22 @@ private:
     uint8_t m_flags;
 };
 
+// The traps and the flags of a context, as conditions. Never seen from Python. They are apart from the context because its two mappings read and
+// write them as well: so those need not refer to the context, which refers to them, and a context is not part of a cycle. (In CPython
+// the mappings point into the context without that counting as a reference.)
+class PyDecimalSignals final : public PyObject {
+public:
+    PY_DECLARE_CELL(PyDecimalSignals, PyObject, PyObjectType);
+
+    static PyDecimalSignals* create(VM&, Structure*, PyType*);
+
+    uint32_t traps { invalidOperationSignal | DivisionByZero | Overflow };
+    uint32_t status { 0 };
+
+private:
+    PyDecimalSignals(VM&, Structure*, PyType*);
+};
+
 class PyDecimalContext final : public PyObject {
 public:
     PY_DECLARE_CELL(PyDecimalContext, PyObject, PyObjectType);
@@ -72,7 +88,8 @@ public:
 
     Context context;
     int capitals { 1 };
-    // The mappings context.traps and context.flags, which read and write `context`.
+    WriteBarrier<PyDecimalSignals> signals;
+    // The mappings context.traps and context.flags, which read and write `signals`.
     WriteBarrier<Unknown> traps;
     WriteBarrier<Unknown> flags;
 
@@ -119,6 +136,7 @@ public:
     WriteBarrier<PyType> decimalType;
     WriteBarrier<PyType> contextType;
     WriteBarrier<PyType> contextManagerType;
+    WriteBarrier<PyType> signalsType;
     WriteBarrier<PyType> signalDictMixinType;
     WriteBarrier<PyType> signalDictType;
     WriteBarrier<PyType> decimalTupleType;
@@ -130,6 +148,7 @@ public:
 
     WriteBarrier<Structure> decimalStructure;
     WriteBarrier<Structure> contextStructure;
+    WriteBarrier<Structure> signalsStructure;
 
     WriteBarrier<PyDecimalContext> defaultContext;
     WriteBarrier<PyDecimalContext> basicContext;
@@ -196,8 +215,9 @@ bool roundingArgument(JSGlobalObject*, State&, JSValue, Rounding&);
 bool addStatusSlow(JSGlobalObject*, State&, PyDecimalContext*, uint32_t status);
 ALWAYS_INLINE bool addStatus(JSGlobalObject* globalObject, State& state, PyDecimalContext* context, uint32_t status)
 {
-    context->context.status |= status;
-    if (status & (context->context.traps | OutOfMemory)) [[unlikely]]
+    PyDecimalSignals* signals = context->signals.get();
+    signals->status |= status;
+    if (status & (signals->traps | OutOfMemory)) [[unlikely]]
         return addStatusSlow(globalObject, state, context, status);
     return false;
 }

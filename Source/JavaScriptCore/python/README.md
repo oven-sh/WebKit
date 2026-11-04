@@ -639,8 +639,9 @@ root of the leading half. No operation can be interrupted, as in CPython.
 
 **The objects** (`PyDecimal.h`). A `Decimal` is one cell with the limbs behind it, 64 bytes for up to 38 digits, and never changes. An operand is
 read where it is (`PyDecimal::lend()`), an int is converted on the stack, the result is computed on the stack and copied into a cell of
-its size: one allocation for an operation. A `Context` is a cell with the limits, the traps and the flags; `context.traps` and `context.flags` are mappings
-that read and write it, and keep it alive.
+its size: one allocation for an operation. A `Context` is a cell with the limits. Its traps and flags are in a small cell of their own, which the
+mappings `context.traps` and `context.flags` read and write as well: the context refers to them, they do not refer to it, and so a context is
+not part of a cycle.
 
 **The current context** is the value of a `ContextVar`, as in CPython, so threads, tasks and `contextvars.Context.run()` each have theirs. Finding it
 costs a load and a comparison: `Runtime::contextVariablesVersion()` changes whenever a context variable may have another value than before (one

@@ -43,8 +43,6 @@ bool Context::forIEEE(int64_t bits, Context& context)
     context.emax = 3 * (static_cast<int64_t>(1) << (bits / 16 + 3));
     context.emin = 1 - context.emax;
     context.rounding = Rounding::HalfEven;
-    context.traps = 0;
-    context.status = 0;
     context.clamp = true;
     return true;
 }

@@ -29,6 +29,7 @@ namespace Decimal {
 
 PY_DEFINE_CELL(PyDecimal);
 PY_DEFINE_CELL(PyDecimalContext);
+PY_DEFINE_CELL(PyDecimalSignals);
 const ClassInfo State::s_info = { "PyDecimalState"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(State) };
 
 PyDecimal::PyDecimal(VM& vm, Structure* structure, PyType* type, const Number& number)
@@ -57,6 +58,18 @@ PyDecimal* PyDecimal::tryCreate(VM& vm, Structure* structure, PyType* type, cons
     return decimal;
 }
 
+PyDecimalSignals::PyDecimalSignals(VM& vm, Structure* structure, PyType* type)
+    : Base(vm, structure, type)
+{
+}
+
+PyDecimalSignals* PyDecimalSignals::create(VM& vm, Structure* structure, PyType* type)
+{
+    auto* signals = new (NotNull, allocateCell<PyDecimalSignals>(vm)) PyDecimalSignals(vm, structure, type);
+    signals->finishCreation(vm);
+    return signals;
+}
+
 PyDecimalContext::PyDecimalContext(VM& vm, Structure* structure, PyType* type)
     : Base(vm, structure, type)
 {
@@ -74,6 +87,7 @@ void PyDecimalContext::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
     auto* thisObject = uncheckedDowncast<PyDecimalContext>(cell);
     Base::visitChildren(thisObject, visitor);
+    visitor.append(thisObject->signals);
     visitor.append(thisObject->traps);
     visitor.append(thisObject->flags);
 }
@@ -100,6 +114,7 @@ void State::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->decimalType);
     visitor.append(thisObject->contextType);
     visitor.append(thisObject->contextManagerType);
+    visitor.append(thisObject->signalsType);
     visitor.append(thisObject->signalDictMixinType);
     visitor.append(thisObject->signalDictType);
     visitor.append(thisObject->decimalTupleType);
@@ -113,6 +128,7 @@ void State::visitChildrenImpl(JSCell* cell, Visitor& visitor)
         visitor.append(rounding);
     visitor.append(thisObject->decimalStructure);
     visitor.append(thisObject->contextStructure);
+    visitor.append(thisObject->signalsStructure);
     visitor.append(thisObject->defaultContext);
     visitor.append(thisObject->basicContext);
     visitor.append(thisObject->extendedContext);
@@ -150,7 +166,7 @@ bool addStatusSlow(JSGlobalObject* globalObject, State& state, PyDecimalContext*
         raiseMemoryError(globalObject, scope, String());
         return true;
     }
-    uint32_t trapped = context->context.traps & status;
+    uint32_t trapped = context->signals->traps & status;
     unsigned first = 0;
     while (!(trapped & conditionsOfSignal[first]))
         ++first;
@@ -191,7 +207,7 @@ PyDecimalContext* currentContextSlow(JSGlobalObject* globalObject, State& state)
     } else {
         context = copyContext(globalObject, state, state.defaultContext.get());
         RETURN_IF_EXCEPTION(scope, nullptr);
-        context->context.status = 0;
+        context->signals->status = 0;
         if (failed(scope, setContextVariable(globalObject, state.contextVariable.get(), context)))
             return nullptr;
     }
@@ -213,7 +229,7 @@ bool setCurrentContext(JSGlobalObject* globalObject, State& state, JSValue value
     if (context == state.defaultContext.get() || context == state.basicContext.get() || context == state.extendedContext.get()) {
         context = copyContext(globalObject, state, context);
         RETURN_IF_EXCEPTION(scope, false);
-        context->context.status = 0;
+        context->signals->status = 0;
     }
     RELEASE_AND_RETURN(scope, setContextVariable(globalObject, state.contextVariable.get(), context));
 }
@@ -744,6 +760,7 @@ JSValue applyPower(JSGlobalObject* globalObject, State& state, PyDecimalContext*
 
 // Never seen from Python.
 static constexpr TypeDef stateTypeDef { "decimal._state"_s, { TypeFlag::OwnLayout, TypeFlag::DisallowInstantiation, TypeFlag::Internal }, { }, { }, { } };
+static constexpr TypeDef signalsTypeDef { "decimal._signals"_s, { TypeFlag::OwnLayout, TypeFlag::DisallowInstantiation, TypeFlag::Internal }, { }, { }, { } };
 
 State* createState(JSGlobalObject* globalObject)
 {
@@ -755,6 +772,7 @@ State* createState(JSGlobalObject* globalObject)
     state->decimalType.set(vm, state, rt.typeFor(decimalTypeDef));
     state->contextType.set(vm, state, rt.typeFor(contextTypeDef));
     state->contextManagerType.set(vm, state, rt.typeFor(contextManagerTypeDef));
+    state->signalsType.set(vm, state, rt.typeFor(signalsTypeDef));
     PyType* mixin = rt.typeFor(signalDictMixinTypeDef);
     state->signalDictMixinType.set(vm, state, mixin);
     if (!mixin->dict()->get(rt.name(Special::Hash))) {
@@ -763,6 +781,7 @@ State* createState(JSGlobalObject* globalObject)
     }
     state->decimalStructure.set(vm, state, PyDecimal::createStructure(vm, globalObject));
     state->contextStructure.set(vm, state, PyDecimalContext::createStructure(vm, globalObject));
+    state->signalsStructure.set(vm, state, PyDecimalSignals::createStructure(vm, globalObject));
     JSString* moduleName = internString(vm, "decimal"_s);
 
     // numbers.Number.register(Decimal)
@@ -852,17 +871,15 @@ State* createState(JSGlobalObject* globalObject)
 
     PyDecimalContext* basicContext = newContext(globalObject, *state, state->contextType.get());
     RETURN_IF_EXCEPTION(scope, nullptr);
-    basicContext->context = Context();
     basicContext->context.precision = 9;
-    basicContext->context.traps |= Underflow | Clamped;
     basicContext->context.rounding = Rounding::HalfUp;
+    basicContext->signals->traps |= Underflow | Clamped;
     state->basicContext.set(vm, state, basicContext);
 
     PyDecimalContext* extendedContext = newContext(globalObject, *state, state->contextType.get());
     RETURN_IF_EXCEPTION(scope, nullptr);
-    extendedContext->context = Context();
     extendedContext->context.precision = 9;
-    extendedContext->context.traps = 0;
+    extendedContext->signals->traps = 0;
     state->extendedContext.set(vm, state, extendedContext);
 
     rt.setSlot(Runtime::Slot::Decimal, state);
@@ -928,6 +945,8 @@ static JSValue moduleIEEEContext(JSGlobalObject* globalObject, JSValue bitsValue
     PyDecimalContext* context = newContext(globalObject, state, state.contextType.get());
     RETURN_IF_EXCEPTION(scope, { });
     context->context = limits;
+    context->signals->traps = 0;
+    context->signals->status = 0;
     return context;
 }
 
