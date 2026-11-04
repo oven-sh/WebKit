@@ -4,7 +4,8 @@ Python 3.15 as a second language of the engine. JSC parses it, compiles it to JS
 same heap and the same stack as JavaScript. There is no CPython in here and no translation to JavaScript source: the only thing
 taken from CPython is its standard library in Python (`Lib/`), unchanged, which the host (Bun) supplies.
 
-What is not done, and what was decided against, is in [DEFERRED.md](DEFERRED.md).
+What is not done, and what was decided against, is in [DEFERRED.md](DEFERRED.md). How much memory programs take, and where it goes, is in
+[MEMORY.md](MEMORY.md).
 
 ## Layout
 
