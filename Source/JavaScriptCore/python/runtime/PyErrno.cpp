@@ -762,6 +762,26 @@ static constexpr ErrnoEntry errnoTable[] = {
 #endif
 };
 
+std::optional<int> errnoForName(StringView name)
+{
+    for (auto& entry : errnoTable) {
+        if (name == entry.name)
+            return entry.code;
+    }
+    return std::nullopt;
+}
+
+ASCIILiteral nameOfErrno(int code)
+{
+    // As in errno.errorcode.
+    ASCIILiteral name;
+    for (auto& entry : errnoTable) {
+        if (entry.code == code)
+            name = entry.name;
+    }
+    return name;
+}
+
 void initializeErrnoModule(JSGlobalObject* globalObject, PyModule* module)
 {
     Runtime& rt = runtime(globalObject);

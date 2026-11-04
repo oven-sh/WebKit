@@ -245,6 +245,20 @@ static bool jsViewAdaptorProperty(JSGlobalObject* globalObject, JSObject* object
         RETURN_IF_EXCEPTION(scope, false);
         return jsViewFound(object, slot, makeStr(vm, text), hidden);
     }
+    // What code written for Node asks an error of the system: error.code === "ENOENT", error.path.
+    if (type->isSubtypeOf(rt.OSError()) && !propertyName.isSymbol()) {
+        auto* exception = uncheckedDowncast<PyException>(object);
+        StringView name = propertyName.uid();
+        if (name == "code"_s) {
+            JSValue number = exception->field(ExceptionField::osErrorErrno);
+            ASCIILiteral code = number && number.isInt32() ? nameOfErrno(number.asInt32()) : ASCIILiteral();
+            return !code.isNull() && jsViewFound(object, slot, jsNontrivialString(vm, String(code)), hidden);
+        }
+        if (name == "path"_s || name == "dest"_s) {
+            JSValue file = exception->field(name == "path"_s ? ExceptionField::osErrorFilename : ExceptionField::osErrorFilename2);
+            return file && !isNone(file) && jsViewFound(object, slot, valueForJS(file), hidden);
+        }
+    }
     return false;
 }
 

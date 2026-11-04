@@ -517,6 +517,17 @@ JSValue attributeFromPrototypeOfJS(JSGlobalObject*, JSObject* prototype, JSValue
 JSValue attributeFromPropertyOfJS(JSGlobalObject*, JSObject*, JSString* name);
 // _js.JSTypeError. It is made when it is first asked for; JSError, if it cannot be made.
 PyType* jsTypeErrorType(JSGlobalObject*);
+// The same for OSError or a built-in class derived from it: _js.JSFileNotFoundError.
+PyType* jsErrorTypeFor(JSGlobalObject*, PyType* base);
+// Whether to call the function of JS is to construct it.
+bool isClassOfJS(JSCell*);
+// What `except` takes besides classes of exceptions: a class of JS.
+bool isClassOfJSToCatch(JSGlobalObject*, JSValue);
+// Whether the exception stands for something that JS threw and that is an instance of the class, going by the prototypes. It runs no code.
+bool standsForInstanceOfJS(JSGlobalObject*, JSValue exception, JSValue classOfJS);
+// errno.ENOENT for "ENOENT", and the other way round (null: no name).
+std::optional<int> errnoForName(StringView);
+ASCIILiteral nameOfErrno(int);
 // exception.name, for JS. Empty: there is none, or an exception.
 JSValue attributeOfExceptionForJS(JSGlobalObject*, PyException*, JSString* name);
 // `with object:` is `using`. The method, bound to the object. Empty: it is no object of JS, or an exception: it cannot be disposed of.

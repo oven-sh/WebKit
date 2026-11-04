@@ -30,7 +30,7 @@ public:
     static JSValue getPrototype(JSObject*, JSGlobalObject*);
 
     // Some of the built-in classes have attributes of their own, which are kept here: OSError.errno and so on.
-    static constexpr unsigned numberOfFields = 9;
+    static constexpr unsigned numberOfFields = 10;
 
     static PyException* create(VM&, Structure*, PyType*);
 
@@ -73,7 +73,8 @@ static constexpr unsigned osErrorErrno = 0, osErrorStrerror = 1, osErrorFilename
 static constexpr unsigned syntaxErrorMsg = 0, syntaxErrorFilename = 1, syntaxErrorLineno = 2, syntaxErrorOffset = 3, syntaxErrorText = 4, syntaxErrorEndLineno = 5, syntaxErrorEndOffset = 6, syntaxErrorPrintFileAndLine = 7, syntaxErrorMetadata = 8;
 static constexpr unsigned unicodeErrorEncoding = 0, unicodeErrorObject = 1, unicodeErrorStart = 2, unicodeErrorEnd = 3, unicodeErrorReason = 4;
 static constexpr unsigned exceptionGroupMessage = 0, exceptionGroupExceptions = 1;
-static constexpr unsigned jsErrorValue = 0;
+// It has a place to itself: a JSError may be a TypeError or an OSError as well.
+static constexpr unsigned jsErrorValue = 9;
 }
 
 // A frame object: a call of a Python function, as programs see it.

@@ -425,7 +425,7 @@ public:
         IntactPycFile, // See readPycFile() in PyCodeCache.cpp.
         GCGarbage, // gc.garbage and gc.callbacks, lists. The program has them too.
         GCCallbacks,
-        JSTypeError, // The class of what stands for a TypeError of JS: see exceptionFromThrownValue().
+        JSErrorClasses, // dict: see jsErrorTypeFor() in PyException.cpp.
         BoundMethodsOfJS, // A JSWeakMap: see bindIfFunction() in PyInterop.cpp.
         TypesOfJSClasses, // A JSWeakMap: see typeForClassOfJS() in PyJSClass.cpp.
         ArgumentsOfJSConstructors, // A JSWeakMap: see classOfJSNew() there.

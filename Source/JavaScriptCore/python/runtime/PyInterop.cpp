@@ -1206,7 +1206,7 @@ static bool isClassWrittenInJS(JSFunction* function)
     return executable->isClassConstructorFunction() || (executable->constructAbility() == ConstructAbility::CanConstruct && hasSomethingForInstancesToInherit(function));
 }
 
-static bool isClassOfJS(JSCell* callee)
+bool isClassOfJS(JSCell* callee)
 {
     while (auto* bound = dynamicDowncast<JSBoundFunction>(callee))
         callee = bound->targetFunction();
@@ -1337,14 +1337,14 @@ static JSValue jsFunctionGet(JSGlobalObject* globalObject, JSValue self, JSValue
 
 static JSValue jsFunctionCall(JSGlobalObject* globalObject, JSValue self, const CallArgs& args) { return callForeignFunction(globalObject, self, args); }
 
-// isinstance(value, function): `value instanceof function`
+// isinstance(value, function): `value instanceof function`. Of an exception that stands for what JS threw, it is that which is asked about.
 static JSValue jsFunctionInstanceCheck(JSGlobalObject* globalObject, JSValue self, JSValue value)
 {
     if (!ensureMainThreadForJS(globalObject))
         return { };
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    bool result = asObject(self)->hasInstance(globalObject, valueForJS(value));
+    bool result = asObject(self)->hasInstance(globalObject, valueForJS(thrownValueFor(globalObject, value)));
     RETURN_IF_EXCEPTION(scope, { });
     return jsBoolean(result);
 }
@@ -1784,7 +1784,25 @@ static JSValue jsSpecialMethod(JSGlobalObject* globalObject, JSValue object, JSV
     return jsUndefined();
 }
 
+// _js.JSOSError, _js.JSFileNotFoundError and so on are made when they are first asked for.
+static JSValue jsModuleGetAttr(JSGlobalObject* globalObject, JSValue nameValue)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSString* name = attributeName(globalObject, nameValue);
+    RETURN_IF_EXCEPTION(scope, { });
+    String text = stringOf(name);
+    if (text.startsWith("JS"_s)) {
+        PyType* base = PyType::tryFrom(rt.builtins()->get(internString(vm, text.substring(2))));
+        if (base && !base->isHeapType() && base->isSubtypeOf(rt.OSError()))
+            return jsErrorTypeFor(globalObject, base);
+    }
+    return raiseAttributeError(globalObject, scope, jsUndefined(), name, makeString("module '_js' has no attribute '"_s, text, '\''));
+}
+
 static constexpr NativeDef jsModuleFunctions[] = {
+    PY_FUNCTION("__getattr__", jsModuleGetAttr, "(name, /)"),
     PY_FUNCTION("exception_for", jsExceptionFor, "(thrown, /)"),
     PY_FUNCTION("special_method", jsSpecialMethod, "(object, name, /)"),
 };

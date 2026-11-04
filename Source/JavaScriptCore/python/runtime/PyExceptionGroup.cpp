@@ -59,10 +59,10 @@ static bool groupIsSequence(JSGlobalObject* globalObject, JSValue value)
     return type->isHeapType() || !type->has(TypeFlag::Mapping);
 }
 
-static bool groupIsExceptionClass(JSValue value)
+static bool groupIsExceptionClass(JSGlobalObject* globalObject, JSValue value)
 {
     PyType* type = PyType::tryFrom(value);
-    return type && type->has(TypeFlag::ExceptionSubclass);
+    return type ? type->has(TypeFlag::ExceptionSubclass) : isClassOfJSToCatch(globalObject, value);
 }
 
 // BaseExceptionGroup(message, exceptions)
@@ -244,17 +244,17 @@ static bool groupMatcherFor(JSGlobalObject* globalObject, JSValue value, GroupMa
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     matcher.value = value;
-    if (!PyType::is(value) && isCallable(globalObject, value)) {
+    if (!PyType::is(value) && !isClassOfJSToCatch(globalObject, value) && isCallable(globalObject, value)) {
         matcher.kind = GroupMatcher::Kind::Predicate;
         return true;
     }
     matcher.kind = GroupMatcher::Kind::Type;
-    if (groupIsExceptionClass(value))
+    if (groupIsExceptionClass(globalObject, value))
         return true;
     if (auto* tuple = PyTuple::tryFrom(value); tuple && tuple->type() == runtime(globalObject).tupleType()) {
         bool allAreClasses = true;
         for (unsigned i = 0; i < tuple->length(); ++i)
-            allAreClasses &= groupIsExceptionClass(tuple->at(i));
+            allAreClasses &= groupIsExceptionClass(globalObject, tuple->at(i));
         if (allAreClasses)
             return true;
     }
@@ -400,12 +400,14 @@ static bool groupCheckExceptStarType(JSGlobalObject* globalObject, JSValue type)
     if (auto* tuple = PyTuple::tryFrom(type))
         classes = tuple->span();
     for (JSValue cls : classes) {
-        if (!groupIsExceptionClass(cls)) {
+        if (!groupIsExceptionClass(globalObject, cls)) {
             raiseTypeError(globalObject, scope, "catching classes that do not inherit from BaseException is not allowed"_s);
             return false;
         }
     }
     for (JSValue cls : classes) {
+        if (!PyType::is(cls))
+            continue;
         bool isGroupClass = isSubclass(globalObject, cls, rt.BaseExceptionGroup());
         RETURN_IF_EXCEPTION(scope, false);
         if (isGroupClass) {

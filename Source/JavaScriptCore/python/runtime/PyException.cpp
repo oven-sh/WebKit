@@ -7,6 +7,7 @@
 #include "PyException.h"
 
 #include "ErrorInstance.h"
+#include "JSBoundFunction.h"
 #include "JSCInlines.h"
 #include "PyAbstract.h"
 #include "PyBytes.h"
@@ -102,35 +103,94 @@ static bool keepsItsException(Runtime& rt, JSValue thrown)
     return type == rt.jsObjectType() || type == rt.jsPlainObjectType() || type == rt.jsFunctionType();
 }
 
-// `thrown instanceof TypeError`, without running code.
-static bool isTypeErrorOfJS(JSObject* thrown)
+// `object instanceof` the class whose prototype it is, without running code.
+static bool inheritsFromPrototypeOfJS(JSObject* object, JSObject* wanted)
 {
-    JSObject* typeErrorPrototype = thrown->realm()->errorStructure(ErrorType::TypeError)->storedPrototypeObject();
-    for (JSValue prototype = thrown->getPrototypeDirect(); prototype.isObject(); prototype = asObject(prototype)->getPrototypeDirect()) {
-        if (asObject(prototype) == typeErrorPrototype)
+    for (JSValue prototype = object->getPrototypeDirect(); prototype.isObject(); prototype = asObject(prototype)->getPrototypeDirect()) {
+        if (asObject(prototype) == wanted)
             return true;
     }
     return false;
 }
 
-// class JSTypeError(JSError, TypeError): what stands for a TypeError of JS, so that `except TypeError` catches it.
-PyType* jsTypeErrorType(JSGlobalObject* globalObject)
+static bool isTypeErrorOfJS(JSObject* thrown)
+{
+    return inheritsFromPrototypeOfJS(thrown, thrown->realm()->errorStructure(ErrorType::TypeError)->storedPrototypeObject());
+}
+
+static bool isErrorOfJS(JSValue value)
+{
+    return value.isObject() && !isPyObject(value) && inheritsFromPrototypeOfJS(asObject(value), asObject(value)->realm()->errorPrototype());
+}
+
+// class JSTypeError(JSError, TypeError): what stands for a TypeError of JS, so that `except TypeError` catches it. So for OSError
+// and the classes derived from it. They are made when they are first asked for. JSError: it cannot be made.
+PyType* jsErrorTypeFor(JSGlobalObject* globalObject, PyType* base)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
-    if (JSValue type = rt.slot(Runtime::Slot::JSTypeError))
-        return PyType::from(type);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    if (!rt.slot(Runtime::Slot::JSErrorClasses))
+        rt.setSlot(Runtime::Slot::JSErrorClasses, PyDict::create(globalObject));
+    PyDict* classes = PyDict::from(rt.slot(Runtime::Slot::JSErrorClasses));
+    if (JSValue type = classes->get(base->nameString()))
+        return PyType::from(type);
     PyDict* ns = PyDict::create(globalObject);
     ns->set(vm, rt.names.dModule(), internString(vm, "_js"_s));
-    JSValue type = call(globalObject, rt.typeType(), makeStr(vm, "JSTypeError"_s), PyTuple::create(globalObject, { rt.JSError(), rt.TypeError() }), ns);
+    JSValue type = call(globalObject, rt.typeType(), makeStr(vm, makeString("JS"_s, base->name())), PyTuple::create(globalObject, { rt.JSError(), base }), ns);
     // There may be next to no stack left, or memory.
     if (scope.exception()) [[unlikely]] {
         (void)scope.tryClearException();
         return rt.JSError();
     }
-    rt.setSlot(Runtime::Slot::JSTypeError, type);
+    classes->set(vm, base->nameString(), type);
     return PyType::from(type);
+}
+
+PyType* jsTypeErrorType(JSGlobalObject* globalObject)
+{
+    return jsErrorTypeFor(globalObject, runtime(globalObject).TypeError());
+}
+
+static PyType* osErrorSubclassFor(Runtime&, int errorNumber);
+
+// An error of the system, as Node and Bun throw them, has the name of the error number as its `code` (and the number, negated or libuv's
+// own, as its `errno`). In Python that is an OSError, of the class that OSError(errno, ...) makes. Null: it is no such error.
+static PyException* osErrorFromThrownValue(JSGlobalObject* globalObject, JSObject* thrown)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    if (!isErrorOfJS(thrown))
+        return nullptr;
+    auto property = [&](ASCIILiteral name) {
+        JSValue value = thrown->get(globalObject, Identifier::fromString(vm, name));
+        if (scope.exception()) [[unlikely]] {
+            (void)scope.tryClearException();
+            return JSValue();
+        }
+        return value;
+    };
+    JSValue number = property("errno"_s);
+    JSValue code = number && number.isNumber() ? property("code"_s) : JSValue();
+    if (!code || !code.isString())
+        return nullptr;
+    auto errorNumber = errnoForName(asString(code)->view(globalObject));
+    if (!errorNumber)
+        return nullptr;
+    JSValue path = property("path"_s);
+    JSValue destination = property("dest"_s);
+    PyType* base = osErrorSubclassFor(rt, *errorNumber);
+    bool hasPath = path && path.isString();
+    bool hasDestination = hasPath && destination && destination.isString();
+    JSValue arguments[] = { jsNumber(*errorNumber), makeStr(vm, String::fromUTF8(strerror(*errorNumber))), path, jsUndefined(), destination };
+    PyType* type = jsErrorTypeFor(globalObject, base ? base : rt.OSError());
+    if (type == rt.JSError())
+        return nullptr;
+    PyException* exception = newException(globalObject, type, std::span<const JSValue> { arguments }.first(hasDestination ? 5 : hasPath ? 3 : 2));
+    if (scope.exception()) [[unlikely]]
+        (void)scope.tryClearException();
+    return exception;
 }
 
 JSValue exceptionFromThrownValue(JSGlobalObject* globalObject, JSValue thrown)
@@ -153,12 +213,15 @@ JSValue exceptionFromThrownValue(JSGlobalObject* globalObject, JSValue thrown)
     else if (error && error->isOutOfMemoryError())
         exception = newException(globalObject, rt.MemoryError(), std::span<const JSValue> { });
     else {
-        String message = thrown.toWTFString(globalObject);
-        if (scope.exception()) {
-            scope.clearException();
-            message = "<exception>"_s;
+        exception = thrown.isObject() ? osErrorFromThrownValue(globalObject, asObject(thrown)) : nullptr;
+        if (!exception) {
+            String message = thrown.toWTFString(globalObject);
+            if (scope.exception()) {
+                scope.clearException();
+                message = "<exception>"_s;
+            }
+            exception = newException(globalObject, thrown.isObject() && isTypeErrorOfJS(asObject(thrown)) ? jsTypeErrorType(globalObject) : rt.JSError(), message);
         }
-        exception = newException(globalObject, thrown.isObject() && isTypeErrorOfJS(asObject(thrown)) ? jsTypeErrorType(globalObject) : rt.JSError(), message);
         if (!failed(scope, exception))
             exception->setField(vm, ExceptionField::jsErrorValue, thrown);
     }
@@ -168,8 +231,65 @@ JSValue exceptionFromThrownValue(JSGlobalObject* globalObject, JSValue thrown)
         setHiddenField(globalObject, thrown, jsErrorHiddenField, exception);
         if (JSValue traceback = hiddenField(globalObject, thrown, jsErrorTracebackHiddenField))
             exception->setTraceback(vm, traceback);
+        // new Error(message, { cause }) is `raise ... from cause`, if the cause is something that can be raised.
+        JSValue cause = asObject(thrown)->getDirect(vm, vm.propertyNames->cause);
+        if (cause && (PyException::is(cause) || isErrorOfJS(cause)) && vm.isSafeToRecurseSoft()) {
+            if (JSValue causeInPython = exceptionFromThrownValue(globalObject, cause)) {
+                exception->setCause(vm, causeInPython);
+                exception->setSuppressContext(true);
+            }
+        }
     }
     return exception;
+}
+
+bool isClassOfJSToCatch(JSGlobalObject* globalObject, JSValue value)
+{
+    Runtime& rt = runtime(globalObject);
+    return value.isObject() && rt.typeOf(value) == rt.jsFunctionType() && isClassOfJS(value.asCell());
+}
+
+bool standsForInstanceOfJS(JSGlobalObject* globalObject, JSValue value, JSValue classOfJS)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    // Who only looks runs nothing that could raise.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto* exception = PyException::tryFrom(value);
+    if (!exception || !exception->type()->isSubtypeOf(rt.JSError()))
+        return false;
+    JSValue thrown = exception->field(ExceptionField::jsErrorValue);
+    if (!thrown || !thrown.isObject())
+        return false;
+    JSObject* function = asObject(classOfJS);
+    while (auto* bound = dynamicDowncast<JSBoundFunction>(function))
+        function = bound->targetFunction();
+    // (A function makes its prototype when it is first asked for.)
+    PropertySlot slot(function, PropertySlot::InternalMethodType::VMInquiry, &vm);
+    bool found = function->methodTable()->getOwnPropertySlot(function, globalObject, vm.propertyNames->prototype, slot);
+    scope.assertNoException();
+    if (!found || !slot.isValue())
+        return false;
+    JSValue prototype = slot.getValue(globalObject, vm.propertyNames->prototype);
+    return prototype.isObject() && inheritsFromPrototypeOfJS(asObject(thrown), asObject(prototype));
+}
+
+// `raise js.RangeError("x")`, `raise js.RangeError`: what stands for the error, which is what is thrown. Empty: it is no Error of JS and
+// no class of them, or an exception.
+static JSValue exceptionForRaisedErrorOfJS(JSGlobalObject* globalObject, JSValue value)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (isClassOfJSToCatch(globalObject, value)) {
+        JSValue prototype = asObject(value)->getDirect(vm, vm.propertyNames->prototype);
+        if (!prototype || !prototype.isObject() || (asObject(prototype) != asObject(prototype)->realm()->errorPrototype() && !isErrorOfJS(prototype)))
+            return { };
+        value = call(globalObject, value);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    if (!isErrorOfJS(value))
+        return { };
+    RELEASE_AND_RETURN(scope, exceptionFromThrownValue(globalObject, value));
 }
 
 bool addTracebackEntryToThrownObject(JSGlobalObject* globalObject, JSValue thrown, const ScopedLambda<JSValue(JSValue next)>& makeEntry)
@@ -231,8 +351,12 @@ void raiseStatement(JSGlobalObject* globalObject, JSValue exception, JSValue cau
     } else if (PyException::is(exception))
         value = exception;
     else {
-        raiseTypeError(globalObject, scope, "exceptions must derive from BaseException"_s);
-        return;
+        value = exceptionForRaisedErrorOfJS(globalObject, exception);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (!value) {
+            raiseTypeError(globalObject, scope, "exceptions must derive from BaseException"_s);
+            return;
+        }
     }
 
     if (cause) {
@@ -247,8 +371,12 @@ void raiseStatement(JSGlobalObject* globalObject, JSValue exception, JSValue cau
         } else if (PyException::is(cause))
             fixedCause = cause;
         else if (!isNone(cause)) {
-            raiseTypeError(globalObject, scope, "exception causes must derive from BaseException"_s);
-            return;
+            fixedCause = exceptionForRaisedErrorOfJS(globalObject, cause);
+            RETURN_IF_EXCEPTION(scope, void());
+            if (!fixedCause) {
+                raiseTypeError(globalObject, scope, "exception causes must derive from BaseException"_s);
+                return;
+            }
         }
         PyException::from(value)->setCause(vm, fixedCause);
         PyException::from(value)->setSuppressContext(true);

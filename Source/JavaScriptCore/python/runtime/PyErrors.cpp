@@ -11,6 +11,7 @@
 #include "JSCInlines.h"
 #include "PyAbstract.h"
 #include "PyException.h"
+#include "PyInternals.h"
 #include "PyNumbers.h"
 #include "PyStr.h"
 #include "PyType.h"
@@ -66,7 +67,7 @@ void willThrowInJS(JSGlobalObject* globalObject, JSValue thrown)
         chainContext(globalObject, exception, runtime(globalObject).handledException());
 }
 
-static JSValue thrownValueFor(JSGlobalObject* globalObject, JSValue value)
+JSValue thrownValueFor(JSGlobalObject* globalObject, JSValue value)
 {
     auto* exception = PyException::tryFrom(value);
     if (!exception || !exception->type()->isSubtypeOf(runtime(globalObject).JSError()))
@@ -221,13 +222,18 @@ bool exceptionMatches(JSGlobalObject* globalObject, JSValue exception, JSValue t
     auto scope = DECLARE_THROW_SCOPE(vm);
     Runtime& rt = runtime(globalObject);
 
+    // A class of JS catches what JS threw that is an instance of it: `except js.RangeError`.
     auto isExceptionClass = [&](JSValue value) {
         PyType* type = PyType::tryFrom(value);
-        return type && type->has(TypeFlag::ExceptionSubclass);
+        return type ? type->has(TypeFlag::ExceptionSubclass) : isClassOfJSToCatch(globalObject, value);
     };
     static constexpr auto message = "catching classes that do not inherit from BaseException is not allowed"_s;
 
     PyType* exceptionType = rt.typeOf(exception);
+    auto isInstance = [&](JSValue cls) {
+        PyType* type = PyType::tryFrom(cls);
+        return type ? exceptionType->isSubtypeOf(type) : standsForInstanceOfJS(globalObject, exception, cls);
+    };
     if (auto* tuple = PyTuple::tryFrom(typeOrTuple)) {
         for (unsigned i = 0; i < tuple->length(); ++i) {
             if (!isExceptionClass(tuple->at(i))) {
@@ -236,7 +242,7 @@ bool exceptionMatches(JSGlobalObject* globalObject, JSValue exception, JSValue t
             }
         }
         for (unsigned i = 0; i < tuple->length(); ++i) {
-            if (exceptionType->isSubtypeOf(PyType::from(tuple->at(i))))
+            if (isInstance(tuple->at(i)))
                 return true;
         }
         return false;
@@ -245,7 +251,7 @@ bool exceptionMatches(JSGlobalObject* globalObject, JSValue exception, JSValue t
         raiseTypeError(globalObject, scope, message);
         return false;
     }
-    return exceptionType->isSubtypeOf(PyType::from(typeOrTuple));
+    return isInstance(typeOrTuple);
 }
 
 } // namespace Python

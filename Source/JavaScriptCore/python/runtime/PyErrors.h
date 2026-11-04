@@ -85,6 +85,8 @@ String typeNameOfArgument(JSGlobalObject*, JSValue);
 
 // Throws the exception, an instance of BaseException (for a JSError that stands for a value, the value), as it is: nothing is chained.
 void throwPythonException(JSGlobalObject*, ThrowScope&, JSValue exception);
+// What that throws.
+JSValue thrownValueFor(JSGlobalObject*, JSValue exception);
 // If such a JSError is propagating (a generator was made to throw it), the value does from now on.
 void unwrapPendingException(JSGlobalObject*);
 
