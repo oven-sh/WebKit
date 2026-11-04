@@ -1234,8 +1234,24 @@ static JSValue jsExceptionFor(JSGlobalObject* globalObject, JSValue thrown)
     return exceptionFromThrownValue(globalObject, thrown);
 }
 
+// A method that the language itself calls, as the language finds it: in the class alone, bound to the object. None: there is none.
+static JSValue jsSpecialMethod(JSGlobalObject* globalObject, JSValue object, JSValue nameValue)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSString* name = attributeName(globalObject, nameValue);
+    RETURN_IF_EXCEPTION(scope, { });
+    PyType* type = rt.typeOf(object);
+    JSValue found = type->lookup(name);
+    if (!found)
+        return jsUndefined();
+    RELEASE_AND_RETURN(scope, bindDescriptor(globalObject, found, object, type));
+}
+
 static constexpr NativeDef jsModuleFunctions[] = {
     PY_FUNCTION("exception_for", jsExceptionFor, "(thrown, /)"),
+    PY_FUNCTION("special_method", jsSpecialMethod, "(object, name, /)"),
 };
 
 // The module _js: what Python code needs to name when it deals with JS. (`import js` is the global object of JS.)
