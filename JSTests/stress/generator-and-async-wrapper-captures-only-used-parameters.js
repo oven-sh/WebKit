@@ -2,6 +2,10 @@
 // closure that the body creates must keep alive only the parameters the body refers to. Before, the wrapper put
 // every parameter in its activation, so such a closure kept every parameter, and a chain of calls
 // `current = await refresh(current)` kept every value ever passed.
+//
+// Each check allocates many payloads and counts the ones that survive a collection. The retention under test keeps
+// all of them. A conservative root (a word of a JIT frame, the values an in-flight DFG plan keeps) can keep one or
+// two, so a check does not rest on a single WeakRef.
 
 function assert(condition, message) {
     if (!condition)
@@ -29,6 +33,16 @@ function collect(allocate) {
         $.gc();
     }
     return allocated;
+}
+
+const payloadCount = 32;
+function survivors(refs) {
+    let alive = 0;
+    for (const ref of refs) {
+        if (ref.deref() !== undefined)
+            ++alive;
+    }
+    return alive;
 }
 
 // Runs a generator to its return value, or settles a promise. Returns the closure the body returned.
@@ -96,15 +110,21 @@ const unused = {
 };
 
 for (const [name, call] of Object.entries(unused)) {
-    const { ref, closure } = collect(() => {
-        let payload = { name };
-        const ref = new WeakRef(payload);
-        const closure = finish(call(payload));
-        payload = null;
-        return { ref, closure };
+    const { refs, closures } = collect(() => {
+        const refs = [];
+        const closures = [];
+        for (let i = 0; i < payloadCount; ++i) {
+            let payload = { name, i };
+            refs.push(new WeakRef(payload));
+            closures.push(finish(call(payload)));
+            payload = null;
+        }
+        return { refs, closures };
     });
-    assert(ref.deref() === undefined, `${name}: the closure kept an unused parameter alive`);
-    assert(closure() >= 3, `${name}: the closure still reads its own data`);
+    const alive = survivors(refs);
+    assert(alive <= 2, `${name}: the closures kept ${alive} of ${payloadCount} unused parameters alive`);
+    for (const closure of closures)
+        assert(closure() >= 3, `${name}: the closure still reads its own data`);
 }
 
 // The reported shape: each call takes the previous closure and returns a new one.
@@ -114,21 +134,24 @@ for (const [name, call] of Object.entries(unused)) {
         const data = new Array(1000).fill(1);
         return () => data.length;
     }
-    const { firstRef, current } = collect(() => {
+    const { refs, current } = collect(() => {
         let current = null;
-        let firstRef;
-        for (let i = 0; i < 50; ++i) {
+        const refs = [];
+        for (let i = 0; i < payloadCount; ++i) {
             current = finish(refresh(current));
-            if (i === 0)
-                firstRef = new WeakRef(current);
+            if (i < payloadCount - 1)
+                refs.push(new WeakRef(current));
         }
-        return { firstRef, current };
+        return { refs, current };
     });
-    assert(firstRef.deref() === undefined, "a chain of async calls kept every earlier closure alive");
+    const alive = survivors(refs);
+    assert(alive <= 2, `a chain of async calls kept ${alive} of ${payloadCount - 1} earlier closures alive`);
     assert(current() === 1000, "the last closure still works");
 }
 
-// A parameter the body refers to stays alive: a read, a write, a nested function, a `var` of the same name.
+// A parameter the body refers to is in the wrapper's activation, so a closure from the body keeps it: a read, a
+// nested function, a `var` of the same name. This is what the engine does today. A read that no closure needs could
+// one day stop keeping the parameter, as V8 does.
 {
     const used = {
         "read after await": async function (previous) { await 0; return () => previous; },
@@ -145,7 +168,7 @@ for (const [name, call] of Object.entries(unused)) {
             payload = null;
             return { ref, closure };
         });
-        assert(ref.deref() === closure(), `${name}: the closure must keep the parameter it reads`);
+        assert(ref.deref() === closure(), `${name}: the closure keeps the parameter the body refers to`);
     }
 }
 
