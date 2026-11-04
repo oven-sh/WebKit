@@ -304,6 +304,15 @@ void dictMergeForCall(JSGlobalObject*, PyDict*, JSValue mapping, JSValue functio
 JSValue dictSubscript(JSGlobalObject*, PyDict*, JSValue key);
 JSValue makeMappingProxy(JSGlobalObject*, JSValue mapping);
 void setUpdate(JSGlobalObject*, JSValue set, JSValue iterable);
+// The __getitem__ of these types. That of bytes is bytearray's too.
+JSValue listGetItem(JSGlobalObject*, JSValue self, JSValue key);
+JSValue tupleGetItem(JSGlobalObject*, JSValue self, JSValue key);
+JSValue strGetItem(JSGlobalObject*, JSValue self, JSValue key);
+JSValue bytesGetItem(JSGlobalObject*, JSValue self, JSValue key);
+// `item in container`, as the __contains__ of these types has it.
+bool listContains(JSGlobalObject*, JSArray*, JSValue item);
+bool tupleContains(JSGlobalObject*, PyTuple*, JSValue item);
+bool strContains(JSGlobalObject*, JSString*, JSValue item);
 int64_t hashOfTuple(JSGlobalObject*, PyTuple*);
 PyType* orderedDictType(JSGlobalObject*); // collections.OrderedDict (PyOrderedDict.cpp)
 JSValue makeRangeIterator(JSGlobalObject*, JSValue range);

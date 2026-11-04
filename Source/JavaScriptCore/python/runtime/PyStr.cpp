@@ -800,20 +800,31 @@ static size_t reverseFindText(StringView haystack, StringView needle)
 static bool startsWithText(StringView text, StringView prefix) { return text.startsWith(prefix) && !splitsSurrogatePair(text, 0, prefix.length()); }
 static bool endsWithText(StringView text, StringView suffix) { return text.endsWith(suffix) && !splitsSurrogatePair(text, text.length() - suffix.length(), suffix.length()); }
 
-static JSValue strContains(JSGlobalObject* globalObject, JSValue self, JSValue item)
+bool strContains(JSGlobalObject* globalObject, JSString* string, JSValue item)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!isStr(item))
-        return raiseTypeError(globalObject, scope, "'in <string>' requires string as left operand, not "_s, typeName(globalObject, item));
-    auto haystack = strValue(self)->view(globalObject);
-    RETURN_IF_EXCEPTION(scope, { });
+    if (!isStr(item)) {
+        raiseTypeError(globalObject, scope, "'in <string>' requires string as left operand, not "_s, typeName(globalObject, item));
+        return false;
+    }
+    auto haystack = string->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
     auto needle = strValue(item)->view(globalObject);
-    RETURN_IF_EXCEPTION(scope, { });
-    return jsBoolean(findText(haystack, needle) != notFound);
+    RETURN_IF_EXCEPTION(scope, false);
+    return findText(haystack, needle) != notFound;
 }
 
-static JSValue strGetItem(JSGlobalObject* globalObject, JSValue self, JSValue key)
+static JSValue strContainsMethod(JSGlobalObject* globalObject, JSValue self, JSValue item)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    bool found = strContains(globalObject, strValue(self), item);
+    RETURN_IF_EXCEPTION(scope, { });
+    return jsBoolean(found);
+}
+
+JSValue strGetItem(JSGlobalObject* globalObject, JSValue self, JSValue key)
 {
     PY_STR_METHOD_PROLOGUE(view);
     if (hasIndex(globalObject, key)) {
@@ -2032,7 +2043,7 @@ static constexpr NativeDef strMethods[] = {
     PY_SLOT("__iter__", strIter, "($self, /)"),
     PY_SLOT("__len__", strLenMethod, "($self, /)"),
     PY_SLOT("__getitem__", strGetItem, "($self, key, /)"),
-    PY_SLOT("__contains__", strContains, "($self, key, /)"),
+    PY_SLOT("__contains__", strContainsMethod, "($self, key, /)"),
     PY_SEQUENCE_SLOT("__add__", strAdd, "($self, value, /)"),
     PY_SEQUENCE_SLOT("__mul__", strMul, "($self, value, /)"),
     PY_SEQUENCE_SLOT("__rmul__", strMul, "($self, value, /)"),

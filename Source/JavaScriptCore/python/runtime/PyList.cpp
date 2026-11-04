@@ -1461,7 +1461,7 @@ static bool listSliceIndices(JSGlobalObject* globalObject, JSArray* list, PySlic
     return true;
 }
 
-static JSValue listGetItemMethod(JSGlobalObject* globalObject, JSValue self, JSValue key)
+JSValue listGetItem(JSGlobalObject* globalObject, JSValue self, JSValue key)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1614,18 +1614,26 @@ static JSValue listReversed(JSGlobalObject* globalObject, JSValue self)
     return iterator;
 }
 
-static JSValue listContains(JSGlobalObject* globalObject, JSValue self, JSValue item)
+bool listContains(JSGlobalObject* globalObject, JSArray* list, JSValue item)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSArray* list = asList(self);
     for (unsigned i = 0; i < list->length(); ++i) {
         bool equal = isEqual(globalObject, listGet(list, i), item);
-        RETURN_IF_EXCEPTION(scope, { });
+        RETURN_IF_EXCEPTION(scope, false);
         if (equal)
-            return jsBoolean(true);
+            return true;
     }
-    return jsBoolean(false);
+    return false;
+}
+
+static JSValue listContainsMethod(JSGlobalObject* globalObject, JSValue self, JSValue item)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    bool found = listContains(globalObject, asList(self), item);
+    RETURN_IF_EXCEPTION(scope, { });
+    return jsBoolean(found);
 }
 
 static JSValue listAdd(JSGlobalObject* globalObject, JSValue self, JSValue other)
@@ -1874,10 +1882,10 @@ static constexpr NativeDef listMethods[] = {
     PY_SLOT("__ge__", listCompare<CompareOperator::GtE>, "($self, value, /)"),
     PY_SLOT("__iter__", listIter, "($self, /)"),
     PY_SLOT("__len__", listLen, "($self, /)"),
-    PY_METHOD("__getitem__", listGetItemMethod, "($self, index, /)"),
+    PY_METHOD("__getitem__", listGetItem, "($self, index, /)"),
     PY_SLOT("__setitem__", listSetItemMethod, "($self, key, value, /)"),
     PY_SLOT("__delitem__", listDelItemMethod, "($self, key, /)"),
-    PY_SLOT("__contains__", listContains, "($self, key, /)"),
+    PY_SLOT("__contains__", listContainsMethod, "($self, key, /)"),
     PY_SEQUENCE_SLOT("__add__", listAdd, "($self, value, /)"),
     PY_SEQUENCE_SLOT("__mul__", listMul, "($self, value, /)"),
     PY_SEQUENCE_SLOT("__rmul__", listMul, "($self, value, /)"),
@@ -2007,7 +2015,7 @@ static JSValue tupleCompare(JSGlobalObject* globalObject, JSValue self, JSValue 
 
 static JSValue tupleLen(JSGlobalObject*, JSValue self) { return jsNumber(PyTuple::from(self)->length()); }
 
-static JSValue tupleGetItem(JSGlobalObject* globalObject, JSValue self, JSValue key)
+JSValue tupleGetItem(JSGlobalObject* globalObject, JSValue self, JSValue key)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
@@ -2038,18 +2046,26 @@ static JSValue tupleGetItem(JSGlobalObject* globalObject, JSValue self, JSValue 
 
 static JSValue tupleIter(JSGlobalObject* globalObject, JSValue self) { return PyIterator::create(globalObject, PyIterator::Kind::Tuple, self); }
 
-static JSValue tupleContains(JSGlobalObject* globalObject, JSValue self, JSValue item)
+bool tupleContains(JSGlobalObject* globalObject, PyTuple* tuple, JSValue item)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    PyTuple* tuple = PyTuple::from(self);
     for (unsigned i = 0; i < tuple->length(); ++i) {
         bool equal = isEqual(globalObject, tuple->at(i), item);
-        RETURN_IF_EXCEPTION(scope, { });
+        RETURN_IF_EXCEPTION(scope, false);
         if (equal)
-            return jsBoolean(true);
+            return true;
     }
-    return jsBoolean(false);
+    return false;
+}
+
+static JSValue tupleContainsMethod(JSGlobalObject* globalObject, JSValue self, JSValue item)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    bool found = tupleContains(globalObject, PyTuple::from(self), item);
+    RETURN_IF_EXCEPTION(scope, { });
+    return jsBoolean(found);
 }
 
 static JSValue tupleAdd(JSGlobalObject* globalObject, JSValue self, JSValue other)
@@ -2150,7 +2166,7 @@ static constexpr NativeDef tupleMethods[] = {
     PY_SLOT("__iter__", tupleIter, "($self, /)"),
     PY_SLOT("__len__", tupleLen, "($self, /)"),
     PY_SLOT("__getitem__", tupleGetItem, "($self, key, /)"),
-    PY_SLOT("__contains__", tupleContains, "($self, key, /)"),
+    PY_SLOT("__contains__", tupleContainsMethod, "($self, key, /)"),
     PY_SEQUENCE_SLOT("__add__", tupleAdd, "($self, value, /)"),
     PY_SEQUENCE_SLOT("__mul__", tupleMul, "($self, value, /)"),
     PY_SEQUENCE_SLOT("__rmul__", tupleMul, "($self, value, /)"),

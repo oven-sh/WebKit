@@ -1057,7 +1057,7 @@ static JSValue bytesIter(JSGlobalObject* globalObject, JSValue self)
     return PyIterator::create(globalObject, bytesIsArray(self) ? PyIterator::Kind::ByteArray : PyIterator::Kind::Bytes, self);
 }
 
-static JSValue bytesGetItem(JSGlobalObject* globalObject, JSValue self, JSValue key)
+JSValue bytesGetItem(JSGlobalObject* globalObject, JSValue self, JSValue key)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();

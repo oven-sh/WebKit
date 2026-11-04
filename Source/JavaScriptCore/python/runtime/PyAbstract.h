@@ -238,6 +238,10 @@ JSValue getItem(JSGlobalObject*, JSValue object, JSValue key);
 void setItem(JSGlobalObject*, JSValue object, JSValue key, JSValue value);
 void delItem(JSGlobalObject*, JSValue object, JSValue key);
 bool contains(JSGlobalObject*, JSValue container, JSValue item);
+// What these do with an object that they have no case for (PyAbstractInlines.h).
+JSValue getItemByMethod(JSGlobalObject*, JSValue object, JSValue key);
+void setItemByMethod(JSGlobalObject*, JSValue object, JSValue key, JSValue value);
+bool containsByMethod(JSGlobalObject*, JSValue container, JSValue item);
 
 JSValue getIter(JSGlobalObject*, JSValue);
 // Empty, with no exception, when there are no more.

@@ -13,7 +13,7 @@
 #include "LLIntData.h"
 #include "LLIntExceptions.h"
 #include "MaxFrameExtentForSlowPathCall.h"
-#include "PyAbstract.h"
+#include "PyAbstractInlines.h"
 #include "PyBytecode.h"
 #include "PyDescriptors.h"
 #include "PyErrors.h"
@@ -545,14 +545,14 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_get_item)
 {
     BEGIN();
     auto bytecode = pc->as<OpPyGetItem>();
-    RETURN(getItem(globalObject, GET_C(bytecode.m_base).jsValue(), GET_C(bytecode.m_key).jsValue()));
+    RETURN(getItemInline(globalObject, GET_C(bytecode.m_base).jsValue(), GET_C(bytecode.m_key).jsValue()));
 }
 
 JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_set_item)
 {
     BEGIN();
     auto bytecode = pc->as<OpPySetItem>();
-    setItem(globalObject, GET_C(bytecode.m_base).jsValue(), GET_C(bytecode.m_key).jsValue(), GET_C(bytecode.m_value).jsValue());
+    setItemInline(globalObject, GET_C(bytecode.m_base).jsValue(), GET_C(bytecode.m_key).jsValue(), GET_C(bytecode.m_value).jsValue());
     END();
 }
 
@@ -710,7 +710,15 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_compare)
 {
     BEGIN();
     auto bytecode = pc->as<OpPyCompare>();
-    RETURN(compare(globalObject, GET_C(bytecode.m_lhs).jsValue(), GET_C(bytecode.m_rhs).jsValue(), static_cast<CompareOperator>(bytecode.m_operation)));
+    JSValue lhs = GET_C(bytecode.m_lhs).jsValue();
+    JSValue rhs = GET_C(bytecode.m_rhs).jsValue();
+    auto operation = static_cast<CompareOperator>(bytecode.m_operation);
+    if (operation == CompareOperator::In || operation == CompareOperator::NotIn) {
+        bool found = containsInline(globalObject, rhs, lhs);
+        CHECK_EXCEPTION();
+        RETURN(jsBoolean(found == (operation == CompareOperator::In)));
+    }
+    RETURN(compare(globalObject, lhs, rhs, operation));
 }
 
 // The interpreter has put the result of the comparison where the instruction keeps how far it has got.

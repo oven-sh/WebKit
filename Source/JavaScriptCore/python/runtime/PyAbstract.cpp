@@ -10,6 +10,7 @@
 #include "FunctionCodeBlock.h"
 #include "JSCInlines.h"
 #include "LLIntThunks.h"
+#include "PyAbstractInlines.h"
 #include "PyBytes.h"
 #include "PyDescriptors.h"
 #include "PyErrors.h"
@@ -1827,53 +1828,14 @@ static JSValue indexIntoSequence(JSGlobalObject* globalObject, JSValue key)
 
 JSValue getItem(JSGlobalObject* globalObject, JSValue object, JSValue key)
 {
+    return getItemInline(globalObject, object, key);
+}
+
+JSValue getItemByMethod(JSGlobalObject* globalObject, JSValue object, JSValue key)
+{
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-
-    if (object.isCell()) {
-        JSCell* cell = object.asCell();
-        switch (cell->type()) {
-        case ArrayType:
-            if (key.isInt32()) {
-                auto* list = uncheckedDowncast<JSArray>(cell);
-                int64_t index = key.asInt32();
-                int64_t size = list->length();
-                if (index < 0)
-                    index += size;
-                if (index >= 0 && index < size) [[likely]]
-                    return listGet(list, static_cast<unsigned>(index));
-                return raiseIndexError(globalObject, scope, "list index out of range"_s);
-            }
-            break;
-        case PyTupleType:
-            if (key.isInt32()) {
-                auto* tuple = uncheckedDowncast<PyTuple>(cell);
-                if (tuple->type() != rt.tupleType())
-                    break;
-                int64_t index = key.asInt32();
-                int64_t size = tuple->length();
-                if (index < 0)
-                    index += size;
-                if (index >= 0 && index < size) [[likely]]
-                    return tuple->at(static_cast<unsigned>(index));
-                return raiseIndexError(globalObject, scope, "tuple index out of range"_s);
-            }
-            break;
-        case PyDictType: {
-            auto* dict = uncheckedDowncast<PyDict>(cell);
-            if (dict->type() != rt.dictType())
-                break;
-            JSValue value = dict->get(globalObject, key);
-            RETURN_IF_EXCEPTION(scope, { });
-            if (value) [[likely]]
-                return value;
-            return raiseKeyError(globalObject, scope, key);
-        }
-        default:
-            break;
-        }
-    }
 
     PyType* type = rt.typeOf(object);
     if (JSValue method = type->lookup(Special::GetItem)) {
@@ -1916,28 +1878,14 @@ bool hasTableOfSequenceMethods(PyType* type)
 
 void setItem(JSGlobalObject* globalObject, JSValue object, JSValue key, JSValue value)
 {
+    setItemInline(globalObject, object, key, value);
+}
+
+void setItemByMethod(JSGlobalObject* globalObject, JSValue object, JSValue key, JSValue value)
+{
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-
-    if (object.isCell()) {
-        JSCell* cell = object.asCell();
-        if (cell->type() == PyDictType) {
-            auto* dict = uncheckedDowncast<PyDict>(cell);
-            if (dict->type() == rt.dictType())
-                RELEASE_AND_RETURN(scope, dict->set(globalObject, key, value));
-        } else if (cell->type() == ArrayType && key.isInt32()) {
-            auto* list = uncheckedDowncast<JSArray>(cell);
-            int64_t index = key.asInt32();
-            int64_t size = list->length();
-            if (index < 0)
-                index += size;
-            if (index >= 0 && index < size) [[likely]]
-                RELEASE_AND_RETURN(scope, listSet(globalObject, list, static_cast<unsigned>(index), value));
-            raiseIndexError(globalObject, scope, "list assignment index out of range"_s);
-            return;
-        }
-    }
 
     PyType* type = rt.typeOf(object);
     JSValue method = type->lookup(Special::SetItem);
@@ -2010,9 +1958,15 @@ static bool isIterableThroughGetItem(Runtime& rt, PyType* type)
 
 bool contains(JSGlobalObject* globalObject, JSValue container, JSValue item)
 {
+    return containsInline(globalObject, container, item);
+}
+
+bool containsByMethod(JSGlobalObject* globalObject, JSValue container, JSValue item)
+{
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+
     PyType* type = rt.typeOf(container);
     JSValue method = type->lookup(Special::Contains);
     if (method && !isNone(method)) {
