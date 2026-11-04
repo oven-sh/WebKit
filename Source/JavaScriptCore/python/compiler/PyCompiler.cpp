@@ -505,9 +505,23 @@ void Unit::emitImplicitReturn(Last isLast, const Range& range)
         reraiseOutOfHandler(isLast.exception, isLast.previous);
     } else if (m_valueToReturn)
         g.emitReturn(m_valueToReturn);
+    else if (m_endsOfClassBody)
+        hiddenJump(endOfClassBodyForLine(m_markedLine));
     else
         emitReturnNone();
     resumeTry(WTF::move(suspended));
+}
+
+// What ends the body of a class is more than a return, and cannot be compiled before all of the body has been. There is one copy for each line
+// that the body is left on, behind the body.
+Label& Unit::endOfClassBodyForLine(int lineno)
+{
+    for (auto& [line, label] : *m_endsOfClassBody) {
+        if (line == lineno)
+            return label.get();
+    }
+    m_endsOfClassBody->append({ lineno, g.newLabel() });
+    return m_endsOfClassBody->last().second.get();
 }
 
 void Unit::emitImplicitContinue(unsigned loop, const Range& range)

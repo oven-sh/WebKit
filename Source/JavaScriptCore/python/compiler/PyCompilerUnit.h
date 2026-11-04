@@ -222,6 +222,8 @@ private:
     using ReturnsByLine = Vector<std::pair<int, Ref<Label>>, 4>;
     void jumpIfOrLeave(Expr* test, Label& target, Last, ReturnsByLine&);
     void emitReturnsByLine(ReturnsByLine&, Last);
+    ReturnsByLine* m_endsOfClassBody { nullptr };
+    Label& endOfClassBodyForLine(int lineno);
     // What jumpIf() does about the branches that go to the label.
     struct BranchTarget {
         Label* label { nullptr };

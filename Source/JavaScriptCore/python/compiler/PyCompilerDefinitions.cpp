@@ -264,29 +264,46 @@ void Unit::compileClassBody(ClassDef* node, int firstLineNumber)
             storeName(c.name("__doc__"_s), stringConstant(docstring), node->body[0]->range);
         }
     }
-    for (unsigned i = first; i < node->body.size(); ++i)
-        statement(node->body[i]);
-    if (!c.m_future.annotations)
+    // What comes after the last statement is of the line that was run last, as where a function returns None, unless it has a line of its own.
+    ReturnsByLine ends;
+    bool hasDeferredAnnotations = !c.m_future.annotations && !m_deferredAnnotations.isEmpty();
+    {
+        SetForScope endsOfClassBody(m_endsOfClassBody, hasDeferredAnnotations ? nullptr : &ends);
+        statements(node->body, first, Last { Last::OfFunction }.onlyIf(!hasDeferredAnnotations));
+    }
+    if (hasDeferredAnnotations)
         emitDeferredAnnotations(start);
 
-    SameLine sameLine(*this);
     std::ranges::sort(m_staticAttributes, [](Name a, Name b) { return codePointCompareLessThan(a->string(), b->string()); });
     Vector<JSValue, 8> attributes;
     for (Name name : m_staticAttributes)
         attributes.append(g.addStringConstant(*name));
     JSValue staticAttributes = PyTuple::create(globalObject(), attributes.span());
     noteConstant(staticAttributes);
-    storeName(c.name("__static_attributes__"_s), constant(staticAttributes), start);
 
-    if (m_scope->needsClassDict)
-        storeName(c.name("__classdictcell__"_s), cellFor(names().classDict), start);
-    if (m_scope->needsClassClosure) {
-        // type.__new__ puts the class in the cell, for super() and __class__ in the methods.
-        RegisterID* cell = cellFor(names().classCell);
-        storeName(c.name("__classcell__"_s), cell, start);
-        g.emitReturn(cell);
-    } else
-        emitReturnNone();
+    auto emitEnd = [&] {
+        SameLine sameLine(*this);
+        storeName(c.name("__static_attributes__"_s), constant(staticAttributes), start);
+        if (m_scope->needsClassDict)
+            storeName(c.name("__classdictcell__"_s), cellFor(names().classDict), start);
+        if (m_scope->needsClassClosure) {
+            // type.__new__ puts the class in the cell, for super() and __class__ in the methods.
+            RegisterID* cell = cellFor(names().classCell);
+            storeName(c.name("__classcell__"_s), cell, start);
+            g.emitReturn(cell);
+        } else
+            emitReturnNone();
+    };
+    if (!cannotGetHere())
+        emitEnd();
+    for (auto& [lineno, label] : ends) {
+        g.emitLabel(label.get());
+        if (lineno > 0)
+            line(lineno);
+        else
+            noLine();
+        emitEnd();
+    }
 }
 
 // name = __build_class__(body, "name", *bases, **keywords)

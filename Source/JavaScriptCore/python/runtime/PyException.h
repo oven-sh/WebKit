@@ -131,9 +131,8 @@ public:
     void setTrace(VM& vm, JSValue function) { m_trace.set(vm, this, function); }
     bool tracesLines { true }; // f_trace_lines
     bool tracesOpcodes { false }; // f_trace_opcodes
-    // The line the call was last found to be on, and where that begins (as f_lasti has it). -1: none yet.
+    // The line the call was last found to be on. -1: none yet.
     int lastLine { -1 };
-    int lastLineOffset { -1 };
     // The instruction of the program that last raised an exception in the call: its offset in the bytecode. -1: none has.
     int raisedAt { -1 };
     // Where a trace function has said to go on (f_lineno = line): the offset of an instruction. Then, where it has just gone.

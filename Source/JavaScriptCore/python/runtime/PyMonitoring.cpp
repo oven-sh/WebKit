@@ -1099,11 +1099,8 @@ void Monitoring::wakeCodeOfCallsInProgress()
             if (!monitor->m_needsLastLine && !(m_globalTools[Event::Line] >> traceTool & 1))
                 continue;
             PyFrame* frame = PyFrame::of(globalObject, callFrame);
-            if (frame->lastLine < 0) {
-                auto marks = callFrame->codeBlock()->unlinkedCodeBlock()->pythonMarks();
-                frame->lastLine = lineOfMarks(marks, callFrame->bytecodeIndex().offset());
-                frame->lastLineOffset = visibleOffset(marks, callFrame->bytecodeIndex().offset());
-            }
+            if (frame->lastLine < 0)
+                frame->lastLine = lineOfMarks(callFrame->codeBlock()->unlinkedCodeBlock()->pythonMarks(), callFrame->bytecodeIndex().offset());
         }
     };
     walk(vm.topCallFrame, vm.topEntryFrame);
@@ -1422,10 +1419,6 @@ bool Monitoring::legacyEvent(JSGlobalObject* globalObject, CallFrame* callFrame,
         RELEASE_AND_RETURN(scope, callTraceFunction(globalObject, frame, event, shown, What::Call, jsUndefined()));
     case Event::PyReturn:
     case Event::PyYield:
-        // What ends the body of a module or a class goes with the line before it, whichever that was. A function has a return of its
-        // own for each way that leads to its end.
-        if (codeInfoOf(callFrame).takesNamespace)
-            shown = { frame->lastLine, frame->lastLineOffset };
         RELEASE_AND_RETURN(scope, callTraceFunction(globalObject, frame, event, shown, What::Return, third));
     case Event::PyUnwind:
         RELEASE_AND_RETURN(scope, callTraceFunction(globalObject, frame, event, shown, What::Return, jsUndefined()));
@@ -1445,7 +1438,6 @@ bool Monitoring::legacyEvent(JSGlobalObject* globalObject, CallFrame* callFrame,
             return true;
         }
         frame->lastLine = line;
-        frame->lastLineOffset = target;
         RELEASE_AND_RETURN(scope, traceLine(globalObject, frame, { line, static_cast<int>(target) }));
     }
     case Event::Instruction:
@@ -1579,17 +1571,14 @@ bool Monitoring::fireLine(JSGlobalObject* globalObject, CallFrame* callFrame, Co
     if (frame && frame->jumpedTo) {
         if (*std::exchange(frame->jumpedTo, std::nullopt) == offset) {
             frame->lastLine = monitor.m_lineStarts[first + count - 1].line;
-            frame->lastLineOffset = monitor.m_lineStarts[first + count - 1].offset;
             return true;
         }
     }
     for (unsigned i = 0; i < count; ++i) {
         int line = monitor.m_lineStarts[first + i].line;
         bool isNews = i || (!comesFromSameLine && (!firstLineIsInDoubt || line != frame->lastLine));
-        if (frame) {
+        if (frame)
             frame->lastLine = line;
-            frame->lastLineOffset = monitor.m_lineStarts[first + i].offset;
-        }
         if (!isNews)
             continue;
         if (failed(scope, fireLineStart(globalObject, callFrame, monitor, offset, first + i)))
@@ -1761,11 +1750,8 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
             return true;
         }
         unsigned lineStart = point->lineStartOfTarget;
-        if (monitor.m_needsLastLine || monitor.tools(Event::Line) >> traceTool) {
-            PyFrame* frame = frameObjectOf(globalObject, callFrame);
-            frame->lastLine = monitor.m_lineStarts[lineStart].line;
-            frame->lastLineOffset = monitor.m_lineStarts[lineStart].offset;
-        }
+        if (monitor.m_needsLastLine || monitor.tools(Event::Line) >> traceTool)
+            frameObjectOf(globalObject, callFrame)->lastLine = monitor.m_lineStarts[lineStart].line;
         if (failed(scope, fireLineStart(globalObject, callFrame, monitor, offset, lineStart))) {
             outcome = threw;
             return false;
@@ -1790,10 +1776,8 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
         }
     }
     if (kinds & bit(Event::PyResume)) {
-        if (PyFrame* frame = frameObjectIfAny(callFrame)) {
+        if (PyFrame* frame = frameObjectIfAny(callFrame))
             frame->lastLine = monitor.lineAt(offset);
-            frame->lastLineOffset = offset;
-        }
         bool isThrow = isResumedToThrow(callFrame);
         if (isThrow) {
             JSValue exception = callFrame->uncheckedArgument(static_cast<int>(JSGenerator::Argument::Value) - 1);
@@ -2146,7 +2130,6 @@ bool Monitoring::lineOfSendIsToldOfAgain(JSGlobalObject* globalObject, CallFrame
     if (tools >> traceTool & 1) {
         PyFrame* frame = frameObjectOf(globalObject, callFrame);
         frame->lastLine = line;
-        frame->lastLineOffset = offset;
         if (frame->trace() && failed(scope, traceLine(globalObject, frame, shown)))
             return false;
     }
@@ -2495,7 +2478,6 @@ void Monitoring::jump(JSGlobalObject* globalObject, PyFrame* frame, int requeste
     frame->jumpTarget = best->offset;
     frame->jumpsToStart = best->isStart;
     frame->lastLine = line;
-    frame->lastLineOffset = best->visibleOffset;
     m_runtime.tracedLine = frame->shownLine = line;
     m_runtime.tracedOffset = frame->shownOffset = best->visibleOffset;
 }
