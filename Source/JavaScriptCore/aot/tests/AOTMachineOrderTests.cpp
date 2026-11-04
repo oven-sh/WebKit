@@ -1160,9 +1160,9 @@ static std::optional<uint64_t> orderTestInstructionsForSwitchWith(unsigned numbe
 static void testMachineOrderGrowsAsEdgesOfSwitchDo()
 {
     constexpr unsigned numberOfCases = 5000;
-    std::optional<uint64_t> small = orderTestInstructionsForSwitchWith(numberOfCases);
+    std::optional<uint64_t> smaller = orderTestInstructionsForSwitchWith(numberOfCases);
     std::optional<uint64_t> large = orderTestInstructionsForSwitchWith(4 * numberOfCases);
-    AOT_TEST_CHECK(growsAsSizeDoes(small, large));
+    AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
 // anchor(value), then a Branch whose other way never rejoins. The Phi asks for a move though one edge alone leads to its block.
@@ -2040,9 +2040,9 @@ template<bool sameTest>
 static void testMachineThreadingGrowsAsTestsInRowDo()
 {
     constexpr unsigned numberOfTerms = 4000;
-    std::optional<uint64_t> small = orderTestInstructionsForRowOfTests(numberOfTerms, sameTest);
+    std::optional<uint64_t> smaller = orderTestInstructionsForRowOfTests(numberOfTerms, sameTest);
     std::optional<uint64_t> large = orderTestInstructionsForRowOfTests(4 * numberOfTerms, sameTest);
-    AOT_TEST_CHECK(growsAsSizeDoes(small, large));
+    AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
 // `o.flags & 4`: the entry leaves for `empty` where first is 0, and the next block leaves for `slow` where first is below 1000.
@@ -2599,9 +2599,9 @@ static void testMachineFusionOfLoadBelowTwoComparisons()
         const AbstractHeap& heap = test.testProcedure.heaps().argumentBuffer;
         LBasicBlock holds = out.newBlock();
         LBasicBlock fails = out.newBlock();
-        LValue small = loaded & firstIsLoaded ? out.load64(out.address(heap, test.third)) : test.first;
+        LValue smaller = loaded & firstIsLoaded ? out.load64(out.address(heap, test.third)) : test.first;
         LValue other = loaded & secondIsLoaded ? out.load64(out.address(heap, test.third, 8)) : test.first;
-        LValue isBelow = out.below(small, out.constInt64(4));
+        LValue isBelow = out.below(smaller, out.constInt64(4));
         LValue isEqual = out.equal(other, test.second);
         LValue tested = out.binary(combination, isBelow, isEqual);
         out.branch(tested, normalEdge(holds), normalEdge(fails));
@@ -2611,7 +2611,7 @@ static void testMachineFusionOfLoadBelowTwoComparisons()
 
         const Liveness& liveness = test.procedure().liveness();
         AOT_ORDER_TEST_CHECK(test, liveness.isFused(tested) && liveness.isFused(isBelow) && liveness.isFused(isEqual));
-        AOT_ORDER_TEST_CHECK(test, liveness.isFused(small) + liveness.isFused(other) == isX86_64());
+        AOT_ORDER_TEST_CHECK(test, liveness.isFused(smaller) + liveness.isFused(other) == isX86_64());
         for (int64_t smallWord : { 3, 4 }) {
             for (int64_t otherWord : { 7, 8 }) {
                 int64_t words[] = { smallWord, otherWord };

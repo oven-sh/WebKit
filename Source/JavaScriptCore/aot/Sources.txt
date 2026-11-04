@@ -138,6 +138,7 @@ aot/image/AOTImage.cpp
 aot/image/AOTImageLoading.cpp
 aot/image/AOTImageText.cpp
 aot/image/AOTMentions.cpp
+aot/image/AOTRegExpInProcessLoader.cpp
 aot/image/AOTRegExpRequests.cpp
 aot/image/AOTRelocation.cpp
 aot/image/AOTSharedCode.cpp

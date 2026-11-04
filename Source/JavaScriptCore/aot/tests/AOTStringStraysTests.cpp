@@ -119,9 +119,9 @@ static void testPlanGrowsAsTextsThatMeetDo()
 {
     constexpr unsigned numberOfFunctions = 1500;
     InstructionCounts::begin();
-    std::optional<uint64_t> small = instructionsOfPlanForStringStraysTests(textsThatMeetForStringStraysTests(numberOfFunctions), 2 * numberOfFunctions);
+    std::optional<uint64_t> smaller = instructionsOfPlanForStringStraysTests(textsThatMeetForStringStraysTests(numberOfFunctions), 2 * numberOfFunctions);
     std::optional<uint64_t> large = instructionsOfPlanForStringStraysTests(textsThatMeetForStringStraysTests(4 * numberOfFunctions), 8 * numberOfFunctions);
-    AOT_TEST_CHECK(growsAsSizeDoes(small, large));
+    AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
 // ---- The ladder of names
@@ -170,9 +170,9 @@ static void testWalkGrowsAsValuesThatClimbLadderDo()
 {
     constexpr unsigned numberOfValues = 1500;
     InstructionCounts::begin();
-    std::optional<uint64_t> small = instructionsOfWalkForStringStraysTests(valuesThatClimbLadderForStringStraysTests(numberOfValues), FunctionID(1u));
+    std::optional<uint64_t> smaller = instructionsOfWalkForStringStraysTests(valuesThatClimbLadderForStringStraysTests(numberOfValues), FunctionID(1u));
     std::optional<uint64_t> large = instructionsOfWalkForStringStraysTests(valuesThatClimbLadderForStringStraysTests(4 * numberOfValues), FunctionID(1u));
-    AOT_TEST_CHECK(growsAsSizeDoes(small, large));
+    AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
 std::span<const NativeTest> stringStraysTests()

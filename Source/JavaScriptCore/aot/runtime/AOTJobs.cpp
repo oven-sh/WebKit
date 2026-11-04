@@ -849,7 +849,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPromiseThen, void, (Instance* instance, JSC
 JSC_DEFINE_JIT_OPERATION(operationAOTPromiseCatch, JSCell*, (Instance* instance, JSCell* promise, EncodedJSValue onRejected))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTPromiseCatch);
-    JSPromise* derived = JSPromise::create(vm, globalObject->promiseStructure());
+    JSPromise* derived = JSPromise::create(vm, WTF::opaque(globalObject->promiseStructure()));
     uncheckedDowncast<JSPromise>(promise)->performPromiseThen(vm, globalObject, jsUndefined(), JSValue::decode(onRejected), derived);
     OPERATION_RETURN(scope, derived);
 }

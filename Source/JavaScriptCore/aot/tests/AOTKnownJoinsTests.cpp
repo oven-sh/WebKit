@@ -94,9 +94,9 @@ static void testWalkGrowsAsJoinsBehindKnownVariablesDo()
 {
     constexpr unsigned numberOfJoins = 1500;
     InstructionCounts::begin();
-    std::optional<uint64_t> small = instructionsOfWalkForKnownJoinsTests(joinsBehindKnownVariablesForKnownJoinsTests(numberOfJoins));
+    std::optional<uint64_t> smaller = instructionsOfWalkForKnownJoinsTests(joinsBehindKnownVariablesForKnownJoinsTests(numberOfJoins));
     std::optional<uint64_t> large = instructionsOfWalkForKnownJoinsTests(joinsBehindKnownVariablesForKnownJoinsTests(4 * numberOfJoins));
-    AOT_TEST_CHECK(growsAsSizeDoes(small, large));
+    AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
 // Whether an object has another name behind the join is told by where it was made. Where the join goes through the values that are live at its head, the work is the square of the number of joins.
@@ -104,9 +104,9 @@ static void testWalkGrowsAsJoinsOfObjectsUnderLiveValuesDo()
 {
     constexpr unsigned numberOfJoins = 1500;
     InstructionCounts::begin();
-    std::optional<uint64_t> small = instructionsOfWalkForKnownJoinsTests(joinsOfObjectsUnderLiveValuesForKnownJoinsTests(numberOfJoins));
+    std::optional<uint64_t> smaller = instructionsOfWalkForKnownJoinsTests(joinsOfObjectsUnderLiveValuesForKnownJoinsTests(numberOfJoins));
     std::optional<uint64_t> large = instructionsOfWalkForKnownJoinsTests(joinsOfObjectsUnderLiveValuesForKnownJoinsTests(4 * numberOfJoins));
-    AOT_TEST_CHECK(growsAsSizeDoes(small, large));
+    AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
 std::span<const NativeTest> knownJoinsTests()

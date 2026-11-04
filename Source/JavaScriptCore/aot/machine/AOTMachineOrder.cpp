@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTMachineTarget.h"
 #include <algorithm>
 #include <limits>
 #include <optional>

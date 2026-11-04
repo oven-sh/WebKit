@@ -491,8 +491,8 @@ static void testMemoryConstantAddedToIndexMovesIntoOffset()
     AOT_TEST_CHECK(byte->child(0)->opcode() == Add && byte->child(0)->child(0) == base && byte->child(0)->child(1) == index);
 
     // A distance has 32 bits.
-    LValue far = out.load8ZeroExt32(out.address(heap, out.add(base, out.shl(out.add(index, int64_t { 1 } << 30), 3))));
-    AOT_TEST_CHECK(!far->offset());
+    LValue farAway = out.load8ZeroExt32(out.address(heap, out.add(base, out.shl(out.add(index, int64_t { 1 } << 30), 3))));
+    AOT_TEST_CHECK(!farAway->offset());
 
     out.ret(out.add(scaled, out.zeroExtPtr(byte)));
 

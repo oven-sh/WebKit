@@ -25,3 +25,4 @@ JSC::AOT::createMatchValue                   # the realm's own Structure of the 
 JSC::AOT::tryDefineAbsentProperty            # JSObject::tryPutDirectByExistingTransition(): a register holds the pointer to the new Structure across the calls, and what is decoded is its low half, which the object has by then
 JSC::AOT::PropertyWalk::collectKeysInOrder   # the typed object is alive and holds the object of extra properties, which keeps its Structure
 JSC::AOT::VMPropertyCaches::keepChainDependent    # ChainDependents::didCreateMembers(), its only caller, defers collections, and the ID is decoded only behind a find() that hit
+JSC::AOT::stateOfClassHolder                 # no decode: AOT::sort()'s own begin + offset; the offset's register held structureIDBase in the block above, which does not lead here

@@ -38,6 +38,7 @@
 #include <wtf/DataLog.h>
 #include <wtf/text/MakeString.h>
 
+#include "AOTRegExpInProcessLoader.h"
 #include "AOTRegExpRecords.h"
 #include "AOTRuntimeReporter.h"
 
@@ -438,6 +439,10 @@ static Yarr::PatternAnalysis patternAnalysisFor(VM& vm)
 {
     // validateRegExpFlatProgram lets a shell that runs no compiled program test the flat program.
     bool isPerformed = vm.hasCompiledCode() || Options::validateRegExpFlatProgram();
+#if ENABLE(AOT)
+    // Where nothing compiles a pattern as for an image, the JIT takes the pattern as it is written.
+    isPerformed |= Options::useRegExpImageMode();
+#endif
     return isPerformed ? Yarr::PatternAnalysis::Performed : Yarr::PatternAnalysis::Skipped;
 }
 
@@ -553,7 +558,8 @@ int RegExp::matchWithImageCode(JSGlobalObject* nullOrGlobalObject, VM& vm, Strin
     if (result != static_cast<int>(Yarr::JSRegExpResult::JITCodeFailure))
         return result;
 
-    bool isLongSearch = imageRecord()->handsLongSearchesOver;
+    const AOT::ImageRegExp* record = imageRecord();
+    bool isLongSearch = record && record->handsLongSearchesOver;
     byteCodeCompileIfNecessary(&vm, isLongSearch ? BytecodeIsFor::LongSearch : BytecodeIsFor::Interpreter);
     if (m_state == ParseError) {
         if (nullOrGlobalObject) {
@@ -595,10 +601,17 @@ bool RegExp::compileWithJIT(VM* vm, Yarr::YarrPattern& pattern, Yarr::CharSize c
 {
 #if ENABLE(JIT)
     auto& jitCode = ensureRegExpJITCode();
-    callRemovable<RemovableFeature::JIT, RemovedFeatureStub::Abort, &Yarr::jitCompile>(pattern, StringView(m_patternString), charSize, sampleString, vm, jitCode, mode);
+    RegExpState stateWithCode = JITCode;
+#if ENABLE(AOT)
+    if (Options::useRegExpImageMode()) [[unlikely]] {
+        callRemovable<RemovableFeature::ImageCompiler, RemovedFeatureStub::Abort, &AOT::jitCompileThroughImage>(StringView(m_patternString), m_flags, jitCode);
+        stateWithCode = ImageCode;
+    } else
+#endif
+        callRemovable<RemovableFeature::JIT, RemovedFeatureStub::Abort, &Yarr::jitCompile>(pattern, StringView(m_patternString), charSize, sampleString, vm, jitCode, mode);
     if (jitCode.failureReason())
         return false;
-    m_state = JITCode;
+    m_state = stateWithCode;
     m_minimumSize = pattern.m_body->m_minimumSize;
     return true;
 #else

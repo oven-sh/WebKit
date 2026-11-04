@@ -341,11 +341,11 @@ static void testWhoMayNameAFunctionGrowsWithTheProgram()
         });
         return sizes;
     };
-    Sizes small = sizesWith(64);
+    Sizes smaller = sizesWith(64);
     Sizes large = sizesWith(128);
-    AOT_TEST_CHECK(small.referrers >= 3 * 64);
-    AOT_TEST_CHECK(large.referrers <= 2 * small.referrers);
-    AOT_TEST_CHECK(large.cyclesAwaited <= 2 * small.cyclesAwaited);
+    AOT_TEST_CHECK(smaller.referrers >= 3 * 64);
+    AOT_TEST_CHECK(large.referrers <= 2 * smaller.referrers);
+    AOT_TEST_CHECK(large.cyclesAwaited <= 2 * smaller.cyclesAwaited);
 }
 
 // Without tables nothing is ordered, so whoever likes may mention whatever there is.

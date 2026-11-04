@@ -615,9 +615,9 @@ static std::optional<uint64_t> allocationTestInstructionsForEdgesWithMovesIntoOn
 static void allocatorWorkGrowsAsEdgesWithMovesIntoOneBlockDo()
 {
     constexpr unsigned numberOfEdges = 10000;
-    std::optional<uint64_t> small = allocationTestInstructionsForEdgesWithMovesIntoOneBlock(numberOfEdges);
+    std::optional<uint64_t> smaller = allocationTestInstructionsForEdgesWithMovesIntoOneBlock(numberOfEdges);
     std::optional<uint64_t> large = allocationTestInstructionsForEdgesWithMovesIntoOneBlock(4 * numberOfEdges);
-    AOT_TEST_CHECK(growsAsSizeDoes(small, large));
+    AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
 // Guards that leave for one Return, ahead of a part with a call, which alone gets the frame.
@@ -652,9 +652,9 @@ static std::optional<uint64_t> allocationTestInstructionsForGuardsAheadOfFramedP
 static void allocatorWorkGrowsAsGuardsAheadOfFramedPartDo()
 {
     constexpr unsigned numberOfGuards = 5000;
-    std::optional<uint64_t> small = allocationTestInstructionsForGuardsAheadOfFramedPart(numberOfGuards);
+    std::optional<uint64_t> smaller = allocationTestInstructionsForGuardsAheadOfFramedPart(numberOfGuards);
     std::optional<uint64_t> large = allocationTestInstructionsForGuardsAheadOfFramedPart(4 * numberOfGuards);
-    AOT_TEST_CHECK(growsAsSizeDoes(small, large));
+    AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
 // Two Switches lead to the same blocks. The first fixes their heads. At the second a value lies elsewhere, so each of its edges gets a move and with it a block.
@@ -696,9 +696,9 @@ static std::optional<uint64_t> allocationTestInstructionsForSwitchWhoseEdgesGetM
 static void allocatorWorkGrowsAsEdgesOfSwitchThatGetMovesDo()
 {
     constexpr unsigned numberOfCases = 5000;
-    std::optional<uint64_t> small = allocationTestInstructionsForSwitchWhoseEdgesGetMoves(numberOfCases);
+    std::optional<uint64_t> smaller = allocationTestInstructionsForSwitchWhoseEdgesGetMoves(numberOfCases);
     std::optional<uint64_t> large = allocationTestInstructionsForSwitchWhoseEdgesGetMoves(4 * numberOfCases);
-    AOT_TEST_CHECK(growsAsSizeDoes(small, large));
+    AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
 // An operand under SomeRegister might be given the register that the generator writes for another operand before it reads this one. So the operands of such a Patch stay held to their registers.

@@ -137,9 +137,9 @@ static void testPlanGrowsAsMembersOfClassDo()
 {
     constexpr unsigned numberOfMethods = 1500;
     InstructionCounts::begin();
-    std::optional<uint64_t> small = instructionsOfPlanForGrowthTests(classWithManyMethodsForGrowthTests(numberOfMethods));
+    std::optional<uint64_t> smaller = instructionsOfPlanForGrowthTests(classWithManyMethodsForGrowthTests(numberOfMethods));
     std::optional<uint64_t> large = instructionsOfPlanForGrowthTests(classWithManyMethodsForGrowthTests(4 * numberOfMethods));
-    AOT_TEST_CHECK(growsAsSizeDoes(small, large));
+    AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
 // function run(p0, p1, ..) { return p0; }  sink(run)
@@ -225,9 +225,9 @@ static void testFactsGrowAsClassesBelowOneClassDo()
 {
     constexpr unsigned numberOfClasses = 3000;
     InstructionCounts::begin();
-    std::optional<uint64_t> small = instructionsOfFactsForGrowthTests(classesBelowOneClassForGrowthTests(numberOfClasses));
+    std::optional<uint64_t> smaller = instructionsOfFactsForGrowthTests(classesBelowOneClassForGrowthTests(numberOfClasses));
     std::optional<uint64_t> large = instructionsOfFactsForGrowthTests(classesBelowOneClassForGrowthTests(4 * numberOfClasses));
-    AOT_TEST_CHECK(growsAsSizeDoes(small, large));
+    AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
 enum class LoopInRowForGrowthTests : uint8_t {
@@ -292,9 +292,9 @@ static void testWalkGrowsAsLoopsInRowDo()
 {
     constexpr unsigned numberOfLoops = 1500;
     InstructionCounts::begin();
-    std::optional<uint64_t> small = instructionsOfWalkForGrowthTests(loopsInRowForGrowthTests(LoopInRowForGrowthTests::Empty, numberOfLoops), FunctionID(1u));
+    std::optional<uint64_t> smaller = instructionsOfWalkForGrowthTests(loopsInRowForGrowthTests(LoopInRowForGrowthTests::Empty, numberOfLoops), FunctionID(1u));
     std::optional<uint64_t> large = instructionsOfWalkForGrowthTests(loopsInRowForGrowthTests(LoopInRowForGrowthTests::Empty, 4 * numberOfLoops), FunctionID(1u));
-    AOT_TEST_CHECK(growsAsSizeDoes(small, large));
+    AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
 // function run(end) { let sum = 0; for (let i = 0; i < end; i++) sum += i; { let k = 2; while (k-- > 0) sum += k; } .. return sum }  sink(run)
@@ -334,9 +334,9 @@ static void testWalkGrowsAsLoopsUpToOneBoundDo()
 {
     constexpr unsigned numberOfPairs = 3000;
     InstructionCounts::begin();
-    std::optional<uint64_t> small = instructionsOfWalkForGrowthTests(loopsUpToOneBoundForGrowthTests(numberOfPairs), FunctionID(1u));
+    std::optional<uint64_t> smaller = instructionsOfWalkForGrowthTests(loopsUpToOneBoundForGrowthTests(numberOfPairs), FunctionID(1u));
     std::optional<uint64_t> large = instructionsOfWalkForGrowthTests(loopsUpToOneBoundForGrowthTests(4 * numberOfPairs), FunctionID(1u));
-    AOT_TEST_CHECK(growsAsSizeDoes(small, large));
+    AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
 // The position of an iteration by index comes round in a parameter of its head. Where the head or the edge that comes round goes through the iterations of the whole body, the work is the square of their number.
@@ -344,9 +344,9 @@ static void testWalkGrowsAsIterationsInRowDo()
 {
     constexpr unsigned numberOfLoops = 3000;
     InstructionCounts::begin();
-    std::optional<uint64_t> small = instructionsOfWalkForGrowthTests(loopsInRowForGrowthTests(LoopInRowForGrowthTests::OverList, numberOfLoops), FunctionID(1u));
+    std::optional<uint64_t> smaller = instructionsOfWalkForGrowthTests(loopsInRowForGrowthTests(LoopInRowForGrowthTests::OverList, numberOfLoops), FunctionID(1u));
     std::optional<uint64_t> large = instructionsOfWalkForGrowthTests(loopsInRowForGrowthTests(LoopInRowForGrowthTests::OverList, 4 * numberOfLoops), FunctionID(1u));
-    AOT_TEST_CHECK(growsAsSizeDoes(small, large));
+    AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
 enum class StatementInRowForGrowthTests : uint8_t {
@@ -441,9 +441,9 @@ static void testLivenessGrowsAsValuesReadAtEndDo()
 {
     constexpr unsigned numberOfStatements = 4000;
     InstructionCounts::begin();
-    std::optional<uint64_t> small = instructionsOfLivenessForGrowthTests(valuesReadAtEndForGrowthTests(kind, numberOfStatements));
+    std::optional<uint64_t> smaller = instructionsOfLivenessForGrowthTests(valuesReadAtEndForGrowthTests(kind, numberOfStatements));
     std::optional<uint64_t> large = instructionsOfLivenessForGrowthTests(valuesReadAtEndForGrowthTests(kind, 4 * numberOfStatements));
-    AOT_TEST_CHECK(growsAsSizeDoes(small, large));
+    AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
 // `a + b + c + ..`, `.. + (c + (b + a))` and `"(" + ("(" + .. + ")") + ")"`, each as long as a generated table. A join costs the same however long its pieces are, and only the text that is read is written out.
@@ -532,9 +532,9 @@ static void testWalkGrowsAsTermsOfSumOfTextsDo()
 {
     constexpr unsigned numberOfTerms = 6000;
     InstructionCounts::begin();
-    std::optional<uint64_t> small = instructionsOfWalkForGrowthTests(sumOfTextsForGrowthTests(numberOfTerms), FunctionID(1u));
+    std::optional<uint64_t> smaller = instructionsOfWalkForGrowthTests(sumOfTextsForGrowthTests(numberOfTerms), FunctionID(1u));
     std::optional<uint64_t> large = instructionsOfWalkForGrowthTests(sumOfTextsForGrowthTests(4 * numberOfTerms), FunctionID(1u));
-    AOT_TEST_CHECK(growsAsSizeDoes(small, large));
+    AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
 // The sum is longer than the longest text that folding makes, so it is joined of several when the program runs. Where each sum on the way leaves a join behind that nobody reads, with a text of its own,
@@ -543,9 +543,9 @@ static void testWalkGrowsAsTermsOfSumOfTextsDoPastLongestTextThatIsMade()
 {
     constexpr unsigned numberOfTerms = 20000;
     InstructionCounts::begin();
-    std::optional<uint64_t> small = instructionsOfWalkForGrowthTests(sumOfTextsForGrowthTests(numberOfTerms), FunctionID(1u));
+    std::optional<uint64_t> smaller = instructionsOfWalkForGrowthTests(sumOfTextsForGrowthTests(numberOfTerms), FunctionID(1u));
     std::optional<uint64_t> large = instructionsOfWalkForGrowthTests(sumOfTextsForGrowthTests(4 * numberOfTerms), FunctionID(1u));
-    AOT_TEST_CHECK(growsAsSizeDoes(small, large));
+    AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
 // begin(); import("./e1.js"); import("./e2.js"); ..; end(import("./eN.js"))        e1.js: import "./e1-1.js"        e1-1.js: import "./e1-2.js"        ..
@@ -603,18 +603,18 @@ static std::optional<uint64_t> instructionsOfRunForGrowthTests(const String& tex
 static void testRunGrowsAsGraphsAskedForInOneJobDo()
 {
     constexpr unsigned numberOfGraphs = 1000;
-    std::optional<uint64_t> small = instructionsOfRunForGrowthTests(graphsAskedForInOneJobForGrowthTests(numberOfGraphs, 1));
+    std::optional<uint64_t> smaller = instructionsOfRunForGrowthTests(graphsAskedForInOneJobForGrowthTests(numberOfGraphs, 1));
     std::optional<uint64_t> large = instructionsOfRunForGrowthTests(graphsAskedForInOneJobForGrowthTests(4 * numberOfGraphs, 1));
-    AOT_TEST_CHECK(growsAsSizeDoes(small, large));
+    AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
 // A graph of several levels has a way down on which its modules wait, and the plan of each graph asks whether it has found what waits on the way of another.
 static void testRunGrowsAsGraphsOfSeveralLevelsAskedForInOneJobDo()
 {
     constexpr unsigned numberOfGraphs = 1000;
-    std::optional<uint64_t> small = instructionsOfRunForGrowthTests(graphsAskedForInOneJobForGrowthTests(numberOfGraphs, 3));
+    std::optional<uint64_t> smaller = instructionsOfRunForGrowthTests(graphsAskedForInOneJobForGrowthTests(numberOfGraphs, 3));
     std::optional<uint64_t> large = instructionsOfRunForGrowthTests(graphsAskedForInOneJobForGrowthTests(4 * numberOfGraphs, 3));
-    AOT_TEST_CHECK(growsAsSizeDoes(small, large));
+    AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
 // async function run() { const calls = [() => 0, () => 0, ..]; let i = 0; for (; i < calls.length; i++) { calls[i](); await null; } return i; }        begin(); run(); end(run())
@@ -649,18 +649,18 @@ static String awaitsBehindLongListForGrowthTests(unsigned numberOfClosures, unsi
 static void testRunGrowsAsAwaitsBehindLongListDo()
 {
     constexpr unsigned numberOfClosures = 2000;
-    std::optional<uint64_t> small = instructionsOfRunForGrowthTests(awaitsBehindLongListForGrowthTests(numberOfClosures, 32));
+    std::optional<uint64_t> smaller = instructionsOfRunForGrowthTests(awaitsBehindLongListForGrowthTests(numberOfClosures, 32));
     std::optional<uint64_t> large = instructionsOfRunForGrowthTests(awaitsBehindLongListForGrowthTests(4 * numberOfClosures, 32));
-    AOT_TEST_CHECK(growsAsSizeDoes(small, large));
+    AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
 // What one operation takes lies in the frame until then, and none of it lives across an await. Where each resumption goes through the whole frame, the work is the square of the number of operands.
 static void testResumptionCostsWhatWasKeptHoweverLargeFrameIs()
 {
     constexpr unsigned numberOfClosures = 2000;
-    std::optional<uint64_t> small = instructionsOfRunForGrowthTests(awaitsBehindLongListForGrowthTests(numberOfClosures, numberOfClosures));
+    std::optional<uint64_t> smaller = instructionsOfRunForGrowthTests(awaitsBehindLongListForGrowthTests(numberOfClosures, numberOfClosures));
     std::optional<uint64_t> large = instructionsOfRunForGrowthTests(awaitsBehindLongListForGrowthTests(4 * numberOfClosures, 4 * numberOfClosures));
-    AOT_TEST_CHECK(growsAsSizeDoes(small, large));
+    AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
 std::span<const NativeTest> growthOfWorkTests()

@@ -65,9 +65,9 @@ static void testLinkGrowsAsLayoutsOfCopiedFamilyDo()
 {
     constexpr unsigned numberOfLayouts = 1500;
     InstructionCounts::begin();
-    std::optional<uint64_t> small = instructionsOfFactsForLinkGrowthTests(copyThroughFamilyOfManyLayoutsForLinkGrowthTests(numberOfLayouts));
+    std::optional<uint64_t> smaller = instructionsOfFactsForLinkGrowthTests(copyThroughFamilyOfManyLayoutsForLinkGrowthTests(numberOfLayouts));
     std::optional<uint64_t> large = instructionsOfFactsForLinkGrowthTests(copyThroughFamilyOfManyLayoutsForLinkGrowthTests(4 * numberOfLayouts));
-    AOT_TEST_CHECK(growsAsSizeDoes(small, large));
+    AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
 std::span<const NativeTest> linkGrowthTests()

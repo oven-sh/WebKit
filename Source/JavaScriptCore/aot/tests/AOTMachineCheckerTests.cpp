@@ -254,9 +254,9 @@ static std::optional<uint64_t> checkerTestInstructionsToValidateRowOfGuards(unsi
 static void checkerWorkGrowsAsRowOfGuardsIntoOneBlockDoes()
 {
     constexpr unsigned numberOfGuards = 5000;
-    std::optional<uint64_t> small = checkerTestInstructionsToValidateRowOfGuards(numberOfGuards);
+    std::optional<uint64_t> smaller = checkerTestInstructionsToValidateRowOfGuards(numberOfGuards);
     std::optional<uint64_t> large = checkerTestInstructionsToValidateRowOfGuards(4 * numberOfGuards);
-    AOT_TEST_CHECK(growsAsSizeDoes(small, large));
+    AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
 static void checkerRefusesEdgeWithoutUpsilonForPhi()

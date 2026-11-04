@@ -26,6 +26,7 @@ struct WordOfGetterForSiteAnswers {
 
 // For answerOfSlot() of AOTPropertyCaches.cpp, of a Slot::Kind::Getter that the tables hold: THE WORD THAT HOLDS THE GetterSetter, named as the forms of a value name the word that holds the value.
 // The stub loads the word at every read, so the answer says no more than the Slot does, and ends where the Slot ends: with the Structure, and where an object above the receiver changes.
+// No own getter of a compiled object comes here: a field of such an object may leave its slot under one Structure. PropertyCaches::fillSiteAnswers() sees to that.
 inline std::optional<WordOfGetterForSiteAnswers> findWordOfGetterForSiteAnswers(SiteUse use, const Slot& slot, uintptr_t cageBase, bool usesWideReferences)
 {
     using Form = SiteAnswers::Form;
@@ -35,9 +36,6 @@ inline std::optional<WordOfGetterForSiteAnswers> findWordOfGetterForSiteAnswers(
         return std::nullopt;
     int32_t wordIndex = slot.wordIndex();
     if (slot.has(Slot::isOwn)) {
-        // A field of a compiled object may leave its slot under one Structure.
-        if (compiledObjectStructureOrNull(slot.structureID.decode()))
-            return std::nullopt;
         if (slot.has(Slot::isOutOfLine))
             return WordOfGetterForSiteAnswers { Form::OwnGetterInStorage, static_cast<uint32_t>(wordIndex) };
         return WordOfGetterForSiteAnswers { Form::OwnGetterInCell, static_cast<uint32_t>(static_cast<uint32_t>(wordIndex) * sizeof(EncodedJSValue)) };

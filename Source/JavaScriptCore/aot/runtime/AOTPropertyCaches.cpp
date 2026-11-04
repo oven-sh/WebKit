@@ -2361,6 +2361,9 @@ void PropertyCaches::fillSiteAnswers(uint32_t place, JSCell* base, uint32_t iden
     // What the extra properties of one object are may change under its Structure.
     if (slot && slot->kind == Slot::Kind::ExtraProperty && belongsToOneObject(structure))
         slot = std::nullopt;
+    // A field of a compiled object may leave its slot under one Structure.
+    if (slot && slot->kind == Slot::Kind::Getter && slot->has(Slot::isOwn) && compiledObjectStructureOrNull(structure))
+        slot = std::nullopt;
     std::optional<AnswersAtSites::AnswerByStructure> answer = slot ? answerOfSlot(use, *slot, m_vm.heap.cage().base(), m_state.instance.options().useWideReferences(), m_state.objectThatHoldsUndefined) : std::nullopt;
     if (!answer) {
         m_answersAtSites.didFailToFill(place);

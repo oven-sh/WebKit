@@ -123,18 +123,18 @@ static void testPlansGrowAsChainOfCallsDoes()
 {
     constexpr unsigned numberOfFunctions = 3000;
     InstructionCounts::begin();
-    std::optional<uint64_t> small = instructionsOfBothPlansForStackTestPlanTests(chainOfCallsForStackTestPlanTests(CallInChainForStackTestPlanTests::ComesBack, numberOfFunctions));
+    std::optional<uint64_t> smaller = instructionsOfBothPlansForStackTestPlanTests(chainOfCallsForStackTestPlanTests(CallInChainForStackTestPlanTests::ComesBack, numberOfFunctions));
     std::optional<uint64_t> large = instructionsOfBothPlansForStackTestPlanTests(chainOfCallsForStackTestPlanTests(CallInChainForStackTestPlanTests::ComesBack, 4 * numberOfFunctions));
-    AOT_TEST_CHECK(growsAsSizeDoes(small, large));
+    AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
 static void testPlansGrowAsChainOfTailCallsDoes()
 {
     constexpr unsigned numberOfFunctions = 3000;
     InstructionCounts::begin();
-    std::optional<uint64_t> small = instructionsOfBothPlansForStackTestPlanTests(chainOfCallsForStackTestPlanTests(CallInChainForStackTestPlanTests::InTailPosition, numberOfFunctions));
+    std::optional<uint64_t> smaller = instructionsOfBothPlansForStackTestPlanTests(chainOfCallsForStackTestPlanTests(CallInChainForStackTestPlanTests::InTailPosition, numberOfFunctions));
     std::optional<uint64_t> large = instructionsOfBothPlansForStackTestPlanTests(chainOfCallsForStackTestPlanTests(CallInChainForStackTestPlanTests::InTailPosition, 4 * numberOfFunctions));
-    AOT_TEST_CHECK(growsAsSizeDoes(small, large));
+    AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
 // Twice the callers and twice the callees are four times the calls.
@@ -142,9 +142,9 @@ static void testPlansGrowAsCallsOfEveryCalleeByEveryCallerDo()
 {
     constexpr unsigned numberOfCallers = 60;
     InstructionCounts::begin();
-    std::optional<uint64_t> small = instructionsOfBothPlansForStackTestPlanTests(everyCallerCallsEveryCalleeForStackTestPlanTests(numberOfCallers));
+    std::optional<uint64_t> smaller = instructionsOfBothPlansForStackTestPlanTests(everyCallerCallsEveryCalleeForStackTestPlanTests(numberOfCallers));
     std::optional<uint64_t> large = instructionsOfBothPlansForStackTestPlanTests(everyCallerCallsEveryCalleeForStackTestPlanTests(2 * numberOfCallers));
-    AOT_TEST_CHECK(growsAsSizeDoes(small, large));
+    AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
 // Below a test stand at most maxNestedFunctionsWithoutStackCheck frames that make none, however long the chain is.

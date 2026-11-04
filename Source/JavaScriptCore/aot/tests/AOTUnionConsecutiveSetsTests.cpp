@@ -139,13 +139,13 @@ static void testTreeGrowsAsItsLeavesDo()
 {
     constexpr uint32_t numberOfLeaves = 1 << 15;
     InstructionCounts::begin();
-    std::optional<uint64_t> small = instructionsOfAllThreadsIn([&] {
+    std::optional<uint64_t> smaller = instructionsOfAllThreadsIn([&] {
         keepManySetsTogetherForConsecutiveSetsTests(numberOfLeaves);
     });
     std::optional<uint64_t> large = instructionsOfAllThreadsIn([&] {
         keepManySetsTogetherForConsecutiveSetsTests(4 * numberOfLeaves);
     });
-    AOT_TEST_CHECK(growsAsSizeDoes(small, large));
+    AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
 // Unions of four records each. Two of the four list `kind`, at different places, one lists `parent` alone, and a function reads both through the union.
@@ -226,9 +226,9 @@ static void testPlanGrowsAsUnionsDo()
 {
     constexpr unsigned numberOfUnions = 400;
     InstructionCounts::begin();
-    std::optional<uint64_t> small = instructionsOfPlanForConsecutiveSetsTests(manyUnionsForConsecutiveSetsTests(numberOfUnions));
+    std::optional<uint64_t> smaller = instructionsOfPlanForConsecutiveSetsTests(manyUnionsForConsecutiveSetsTests(numberOfUnions));
     std::optional<uint64_t> large = instructionsOfPlanForConsecutiveSetsTests(manyUnionsForConsecutiveSetsTests(4 * numberOfUnions));
-    AOT_TEST_CHECK(growsAsSizeDoes(small, large));
+    AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
 static void appendModuleThatHandsOutFirstFunctionForConsecutiveSetsTests(StringBuilder& text)
@@ -303,18 +303,18 @@ static void testWalkGrowsAsLinksOfChainDo()
 {
     constexpr unsigned numberOfLinks = 1500;
     InstructionCounts::begin();
-    std::optional<uint64_t> small = instructionsOfWalkForConsecutiveSetsTests(chainOfComparisonsForConsecutiveSetsTests(numberOfLinks));
+    std::optional<uint64_t> smaller = instructionsOfWalkForConsecutiveSetsTests(chainOfComparisonsForConsecutiveSetsTests(numberOfLinks));
     std::optional<uint64_t> large = instructionsOfWalkForConsecutiveSetsTests(chainOfComparisonsForConsecutiveSetsTests(4 * numberOfLinks));
-    AOT_TEST_CHECK(growsAsSizeDoes(small, large));
+    AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
 static void testWalkGrowsAsAlternativesOfRowDo()
 {
     constexpr unsigned numberOfAlternatives = 1500;
     InstructionCounts::begin();
-    std::optional<uint64_t> small = instructionsOfWalkForConsecutiveSetsTests(rowOfAlternativesForConsecutiveSetsTests(numberOfAlternatives));
+    std::optional<uint64_t> smaller = instructionsOfWalkForConsecutiveSetsTests(rowOfAlternativesForConsecutiveSetsTests(numberOfAlternatives));
     std::optional<uint64_t> large = instructionsOfWalkForConsecutiveSetsTests(rowOfAlternativesForConsecutiveSetsTests(4 * numberOfAlternatives));
-    AOT_TEST_CHECK(growsAsSizeDoes(small, large));
+    AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
 std::span<const NativeTest> unionConsecutiveSetsTests()

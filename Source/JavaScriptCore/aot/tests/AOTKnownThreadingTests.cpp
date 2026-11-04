@@ -95,9 +95,9 @@ static void testWalkGrowsAsJoinsFedByJoinInFrontDo()
 {
     constexpr unsigned numberOfJoins = 1500;
     InstructionCounts::begin();
-    std::optional<uint64_t> small = instructionsOfWalkForKnownThreadingTests(joinsInRowForKnownThreadingTests(JoinInRowForKnownThreadingTests::FedByJoinInFront, numberOfJoins));
+    std::optional<uint64_t> smaller = instructionsOfWalkForKnownThreadingTests(joinsInRowForKnownThreadingTests(JoinInRowForKnownThreadingTests::FedByJoinInFront, numberOfJoins));
     std::optional<uint64_t> large = instructionsOfWalkForKnownThreadingTests(joinsInRowForKnownThreadingTests(JoinInRowForKnownThreadingTests::FedByJoinInFront, 4 * numberOfJoins));
-    AOT_TEST_CHECK(growsAsSizeDoes(small, large));
+    AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
 // Every edge is asked for each value that has a name of its own on each way whether it brings one. Where a value stays on that list behind its last reader, the work is the square of the number of joins.
@@ -105,9 +105,9 @@ static void testWalkGrowsAsJoinsWhoseValuesAreReadBehindThemDo()
 {
     constexpr unsigned numberOfJoins = 1500;
     InstructionCounts::begin();
-    std::optional<uint64_t> small = instructionsOfWalkForKnownThreadingTests(joinsInRowForKnownThreadingTests(JoinInRowForKnownThreadingTests::ReadBehind, numberOfJoins));
+    std::optional<uint64_t> smaller = instructionsOfWalkForKnownThreadingTests(joinsInRowForKnownThreadingTests(JoinInRowForKnownThreadingTests::ReadBehind, numberOfJoins));
     std::optional<uint64_t> large = instructionsOfWalkForKnownThreadingTests(joinsInRowForKnownThreadingTests(JoinInRowForKnownThreadingTests::ReadBehind, 4 * numberOfJoins));
-    AOT_TEST_CHECK(growsAsSizeDoes(small, large));
+    AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
 std::span<const NativeTest> knownThreadingTests()

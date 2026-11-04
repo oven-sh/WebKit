@@ -68,9 +68,9 @@ static void testWalkGrowsAsCasesOfSwitchDo()
 {
     constexpr unsigned numberOfCases = 3000;
     InstructionCounts::begin();
-    std::optional<uint64_t> small = instructionsOfWalkForBranchesGrowthTests(switchWithManyCasesForBranchesGrowthTests(numberOfCases), FunctionID(1u));
+    std::optional<uint64_t> smaller = instructionsOfWalkForBranchesGrowthTests(switchWithManyCasesForBranchesGrowthTests(numberOfCases), FunctionID(1u));
     std::optional<uint64_t> large = instructionsOfWalkForBranchesGrowthTests(switchWithManyCasesForBranchesGrowthTests(4 * numberOfCases), FunctionID(1u));
-    AOT_TEST_CHECK(growsAsSizeDoes(small, large));
+    AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
 std::span<const NativeTest> branchesGrowthTests()

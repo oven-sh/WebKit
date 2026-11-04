@@ -71,9 +71,9 @@ static void testCallsOfSeveralGrowAsCallsAndCalleesDo()
     InstructionCounts::begin();
     size_t keptBySmall = 0;
     size_t keptByLarge = 0;
-    std::optional<uint64_t> small = instructionsOfFactsForKnownEffectsTests(callsOfLostClosuresForKnownEffectsTests(size), keptBySmall);
+    std::optional<uint64_t> smaller = instructionsOfFactsForKnownEffectsTests(callsOfLostClosuresForKnownEffectsTests(size), keptBySmall);
     std::optional<uint64_t> large = instructionsOfFactsForKnownEffectsTests(callsOfLostClosuresForKnownEffectsTests(4 * size), keptByLarge);
-    AOT_TEST_CHECK(growsAsSizeDoes(small, large));
+    AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
     // Calls that enter the lost closures and nothing else share what they do.
     AOT_TEST_CHECK(keptBySmall == 2 && keptByLarge == 2);
 }

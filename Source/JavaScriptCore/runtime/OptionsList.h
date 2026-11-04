@@ -159,6 +159,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, verifyAOTProgram, true, Normal, "When compiling: verify the program as read, its placement, its representations and the program handed to the back end. No byte of the output depends on it. Bun turns it off outside its own tests."_s) \
     v(Bool, verifyAOTMachineCode, false, Normal, "When compiling: the back end checks itself in every function: the operations as emitted, the register allocation, the rules of the collector, the frame. No byte of the output depends on it. A validating build runs the same checks, on the other code that it makes."_s) \
     v(OptionString, aotMapFilePath, nullptr, Normal, "When compiling: write a map of the image (the location and key of each function, and the identifier of each inline cache slot) to this file, for symbolicating profiles."_s) \
+    v(Bool, useRegExpImageMode, false, Normal, "jsc and testRegExp. Yarr compiles every pattern as for an image, and that code runs. For running the regexp corpus against image mode."_s) \
     v(Bool, dropLastFastVisitReferenceForTesting, false, Normal, "For testing. With verifyGC: the last cell that each inline visit of the collector marked counts as missed, so the check of inline visits crashes."_s) \
     \
     v(Unsigned, repatchCountForCoolDown, 8, Normal, nullptr) \

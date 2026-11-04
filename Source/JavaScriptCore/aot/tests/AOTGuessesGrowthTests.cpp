@@ -100,9 +100,9 @@ static void testPlanGrowsAsUnionsOfRecordsThatAreAlikeDo()
 {
     constexpr unsigned numberOfUnions = 400;
     InstructionCounts::begin();
-    std::optional<uint64_t> small = instructionsOfPlanForGuessesGrowthTests(manyUnionsOfRecordsThatAreAlikeForGuessesGrowthTests(numberOfUnions));
+    std::optional<uint64_t> smaller = instructionsOfPlanForGuessesGrowthTests(manyUnionsOfRecordsThatAreAlikeForGuessesGrowthTests(numberOfUnions));
     std::optional<uint64_t> large = instructionsOfPlanForGuessesGrowthTests(manyUnionsOfRecordsThatAreAlikeForGuessesGrowthTests(4 * numberOfUnions));
-    AOT_TEST_CHECK(growsAsSizeDoes(small, large));
+    AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
 std::span<const NativeTest> guessesGrowthTests()

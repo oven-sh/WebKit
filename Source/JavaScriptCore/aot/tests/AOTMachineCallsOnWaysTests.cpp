@@ -407,9 +407,9 @@ static std::optional<uint64_t> callsOnWaysTestInstructionsForArmsThatCall(unsign
 static void workGrowsAsArmsThatCallDo()
 {
     constexpr unsigned numberOfArms = 5000;
-    std::optional<uint64_t> small = callsOnWaysTestInstructionsForArmsThatCall(numberOfArms);
+    std::optional<uint64_t> smaller = callsOnWaysTestInstructionsForArmsThatCall(numberOfArms);
     std::optional<uint64_t> large = callsOnWaysTestInstructionsForArmsThatCall(4 * numberOfArms);
-    AOT_TEST_CHECK(growsAsSizeDoes(small, large));
+    AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
 #undef AOT_CALLS_ON_WAYS_TEST_CHECK
