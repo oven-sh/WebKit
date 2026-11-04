@@ -26,6 +26,7 @@
 #include "config.h"
 #include "ExpressionInfo.h"
 
+#include "Options.h"
 #include "SourceProvider.h"
 #include "VM.h"
 #include <numeric>
@@ -151,7 +152,7 @@ namespace JSC {
     EncodedInfo vector is large.
 
     To mitigate against this, we break the EncodedInfo regions into Chapters every
-    numberOfWordsBetweenChapters (currently 10000) words or so. A Chapter is always started
+    Options::expressionInfoWordsBetweenChapters() (256) words or so. A Chapter is always started
     with an AbsInstPC (Absolute Instruction PC) word. Unlike other EncodedInfo words with defines
     delta values for fields to add, AbsInstPC defines an absolute value (currently 26 bits) for
     the InstPC to mark the start of the Chapter. If 26-bits isn't enough, we can always add
@@ -161,7 +162,11 @@ namespace JSC {
     clears to 0 the cummulative delta for all the other fields. As a result, we can always jump
     to the start of a Chapter and start decoding from there (instead of starting from the start
     of the EncodedInfo vector). It limits the number of words that we need to decode to around
-    numberOfWordsBetweenChapters.
+    that many.
+
+    A Chapter is 16 bytes in most functions: its Chapter info, its AbsInstPC word, and a Wide
+    word for the Divot, whose delta starts over from 0. Every ExpressionInfo with more words
+    than one Chapter holds pays that, looked up or not, which is why a Chapter is not shorter.
 
     Now, all we need to know is which Chapter a given InstPC falls into.
  
@@ -172,7 +177,7 @@ namespace JSC {
 
     The first Chapter always starts at InstPC 0 and EncodedInfo index 0. Hence, we do not emit
     a Chapter entry for the 1st Chapter. Hence, for most small functions that do not have
-    more than numberOfWordsBetweenChapters EncodedInfo, there is no Chapter info in the
+    more than expressionInfoWordsBetweenChapters EncodedInfo, there is no Chapter info in the
     ExpressionInfo.
 
     Additional Compression Details (of Basic word fields)
@@ -491,7 +496,7 @@ void ExpressionInfo::Encoder::encode(InstPC instPC, unsigned divot, unsigned sta
 
     unsigned currentEncodedInfoIndex = m_expressionInfoEncodedInfo.size();
     unsigned chapterSize = currentEncodedInfoIndex - m_currentChapterStartIndex;
-    if (chapterSize >= numberOfWordsBetweenChapters) {
+    if (chapterSize >= Options::expressionInfoWordsBetweenChapters()) {
         m_expressionInfoChapters.append({ instPC, currentEncodedInfoIndex });
         m_currentChapterStartIndex = currentEncodedInfoIndex;
         unsigned absInstPC = std::min(instPC, maxSingleValue);
@@ -906,6 +911,17 @@ auto ExpressionInfo::decodeEntryForInstPC(InstPC instPC) -> Entry
     decoder.setNextInfo(chapterStart);
     while (decoder.decode(instPC) != IterationStatus::Done) { }
     return decoder.entry();
+}
+
+unsigned ExpressionInfo::numberOfEncodedInfoDecodedForInstPC(InstPC instPC)
+{
+    Decoder decoder(*this);
+
+    auto* chapterStart = findChapterEncodedInfoJustBelow(instPC);
+    decoder.setNextInfo(chapterStart);
+    while (decoder.decode(instPC) != IterationStatus::Done) { }
+    // Done leaves currentInfo() at the entry that decode() did not keep, or at the end.
+    return decoder.currentInfo() - chapterStart;
 }
 
 LineColumn ExpressionInfo::lineColumnInTextForInstPC(InstPC instPC, SourceProvider& provider, unsigned sourceOffset)
