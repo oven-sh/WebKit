@@ -296,6 +296,11 @@ JSValue genericGetAttr(JSGlobalObject* globalObject, JSValue object, JSString* n
                         RELEASE_AND_RETURN(scope, raiseDescriptorDoesNotApply(globalObject, stringOf(member->name()), member->owner(), object));
                     RELEASE_AND_RETURN(scope, memberDescriptorGet(globalObject, member, object));
                 }
+                // As property.__get__(). (A class derived from property may have its own.)
+                if (info == PyProperty::info() && uncheckedDowncast<PyProperty>(cell)->type() == rt.propertyType()) {
+                    if (JSValue function = uncheckedDowncast<PyProperty>(cell)->getter.get(); !isNone(function))
+                        RELEASE_AND_RETURN(scope, call(globalObject, function, object));
+                }
             }
             PyType* descriptorType = uncheckedDowncast<PyObject>(cell)->type();
             getter = descriptorType->lookup(Special::Get);
@@ -365,6 +370,14 @@ void genericSetAttr(JSGlobalObject* globalObject, JSValue object, JSString* name
                     return;
                 }
                 RELEASE_AND_RETURN(scope, memberDescriptorSet(globalObject, member, object, value));
+            }
+            // As property.__set__().
+            if (value && info == PyProperty::info() && uncheckedDowncast<PyProperty>(cell)->type() == rt.propertyType()) {
+                if (JSValue function = uncheckedDowncast<PyProperty>(cell)->setter.get(); !isNone(function)) {
+                    scope.release();
+                    call(globalObject, function, object, value);
+                    return;
+                }
             }
         }
         PyType* descriptorType = uncheckedDowncast<PyObject>(cell)->type();
