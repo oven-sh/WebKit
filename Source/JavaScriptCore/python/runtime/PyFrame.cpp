@@ -16,6 +16,7 @@
 #include "PyCommandLine.h"
 #include "PyDescriptors.h"
 #include "PyErrors.h"
+#include "PyExec.h"
 #include "PyGenerator.h"
 #include "PyHooks.h"
 #include "PyInternals.h"
@@ -865,6 +866,13 @@ PositionInJS positionInJS(VM& vm, CodeBlock* codeBlock, BytecodeIndex index)
     return position;
 }
 
+static bool (*s_isMainFile)(JSGlobalObject*, const String&);
+
+void setIsMainFileFunction(bool (*function)(JSGlobalObject*, const String&))
+{
+    s_isMainFile = function;
+}
+
 PyDict* namespaceOfFileOfJS(JSGlobalObject* globalObject, const String& filename)
 {
     Runtime& rt = runtime(globalObject);
@@ -878,8 +886,9 @@ PyDict* namespaceOfFileOfJS(JSGlobalObject* globalObject, const String& filename
     if (JSValue existing = namespaces->get(name))
         return PyDict::from(existing);
     PyDict* result = PyDict::create(globalObject);
-    // As warnings.warn_explicit() names a module of which it knows the file only.
-    result->set(vm, rt.names.dName(), name);
+    // As warnings.warn_explicit() names a module of which it knows the file only. The file that a program in JS begins with is what
+    // __main__ is in a program in Python: a DeprecationWarning about its code is shown.
+    result->set(vm, rt.names.dName(), s_isMainFile && s_isMainFile(globalObject, filename) ? rt.names.dMain() : name);
     result->set(vm, internString(vm, "__file__"_s), name);
     namespaces->set(vm, name, result);
     return result;

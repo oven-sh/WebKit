@@ -89,6 +89,11 @@ JS_EXPORT_PRIVATE void hostDidChangeEnvironment(JSGlobalObject*, const String& n
 // expect() of a test runner is: whether the constructor is one of those. The function throws nothing and runs no code.
 JS_EXPORT_PRIVATE void setClassIsCalledFunction(bool (*)(JSObject*));
 
+// For a host whose programs need not be written in Python: whether the file, which is not, is the one that the program began with. Its
+// code is then that of `__main__` to whoever goes by the name of a module, as the filters of `warnings` do. The function throws nothing
+// and runs no code.
+JS_EXPORT_PRIVATE void setIsMainFileFunction(bool (*)(JSGlobalObject*, const String& filename));
+
 // `import` of a file, for code that is not Python: the module, or an exception. `source`, if it is not null, is taken for what
 // is in the file. If the host's module for the import system (setImportSystemModule) has a function import_file(path, source),
 // that decides what module the file is.
