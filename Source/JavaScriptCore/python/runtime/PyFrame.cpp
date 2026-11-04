@@ -1457,7 +1457,9 @@ static bool proxyMerge(JSGlobalObject* globalObject, JSValue self, JSValue other
 static JSValue proxyIOr(JSGlobalObject* globalObject, JSValue self, JSValue other)
 {
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
-    if (!failed(scope, proxyMerge(globalObject, self, other)))
+    bool isMerged = proxyMerge(globalObject, self, other);
+    EXCEPTION_ASSERT(!scope.exception() || !isMerged);
+    if (isMerged)
         return self;
     takePendingException(globalObject);
     return runtime(globalObject).notImplemented();
@@ -1467,7 +1469,9 @@ static JSValue proxyUpdate(JSGlobalObject* globalObject, JSValue self, JSValue o
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!failed(scope, proxyMerge(globalObject, self, other)))
+    bool isMerged = proxyMerge(globalObject, self, other);
+    EXCEPTION_ASSERT(!scope.exception() || !isMerged);
+    if (isMerged)
         return jsUndefined();
     takePendingException(globalObject);
     return raiseTypeError(globalObject, scope, "update() argument must be dict or another FrameLocalsProxy"_s);
@@ -1783,7 +1787,20 @@ static void tracebackSetNext(JSGlobalObject* globalObject, JSValue self, JSValue
 }
 
 static JSValue tracebackGetFrame(JSGlobalObject*, JSValue self) { return PyTraceback::from(self)->frame(); }
-static JSValue tracebackGetLineNo(JSGlobalObject*, JSValue self) { return jsNumber(PyTraceback::from(self)->lineNumber()); }
+static JSValue tracebackGetLineNo(JSGlobalObject* globalObject, JSValue self)
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    auto* traceback = PyTraceback::from(self);
+    int line = traceback->lineNumber();
+    // As in CPython, that stands for the line of tb_lasti.
+    if (line == -1) {
+        line = lineOfShownOffset(globalObject, traceback->frame()->code(globalObject), traceback->lastI());
+        RETURN_IF_EXCEPTION(scope, { });
+        if (line < 0)
+            return jsUndefined();
+    }
+    return jsNumber(line);
+}
 static JSValue tracebackGetLastI(JSGlobalObject*, JSValue self) { return jsNumber(PyTraceback::from(self)->lastI()); }
 
 static JSValue tracebackDir(JSGlobalObject* globalObject, JSValue)

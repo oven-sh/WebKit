@@ -385,6 +385,8 @@ PositionInJS positionInJS(VM&, CodeBlock*, BytecodeIndex);
 PyDict* namespaceOfFileOfJS(JSGlobalObject*, const String& filename);
 // The code as it is run: that of the body, for a generator function. Null: an exception.
 CodeBlock* codeBlockOf(JSGlobalObject*, PyCode*);
+// The line that co_lines() gives for an offset such as f_lasti. -1: none, or an exception.
+int lineOfShownOffset(JSGlobalObject*, PyCode*, int offset);
 // Null: the code has not run yet.
 CodeBlock* codeBlockIfAny(PyCode*);
 // In PyMonitoring.cpp.

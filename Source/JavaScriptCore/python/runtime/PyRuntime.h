@@ -407,7 +407,7 @@ public:
         Warnings, // See warningsState() in PyWarnings.cpp.
         SignalHandlers, // list
         ThrownException, // What generator.throw() is throwing,
-        ThrowArguments, // and the tuple of arguments it was made from.
+        ThrowArguments, // and the tuple of arguments it was made from. Null: it is raised where the generator waits, whomever it waits for.
         RecentBufferOwners, // See getBytesLike().
         InstanceDictDescriptor, // The __dict__ and the __weakref__ in the dict of every class that adds them.
         InstanceWeakrefDescriptor,

@@ -1877,6 +1877,20 @@ static Vector<LineRun> lineRunsOf(const CodeInfo& info, CodeBlock* codeBlock)
     return runs;
 }
 
+int lineOfShownOffset(JSGlobalObject* globalObject, PyCode* code, int offset)
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    if (offset < 0)
+        return code->codeInfo().firstLineNumber;
+    CodeBlock* codeBlock = codeBlockOf(globalObject, code);
+    RETURN_IF_EXCEPTION(scope, -1);
+    for (auto& run : lineRunsOf(code->codeInfo(), codeBlock)) {
+        if (static_cast<unsigned>(offset) < shownOffset(run.end))
+            return run.line;
+    }
+    return -1;
+}
+
 // (start, end, line) for each of them.
 static JSValue codeLines(JSGlobalObject* globalObject, JSValue self)
 {

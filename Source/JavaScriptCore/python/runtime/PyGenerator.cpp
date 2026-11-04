@@ -424,6 +424,10 @@ JSValue sendToDelegate(JSGlobalObject* globalObject, JSValue iterator, JSValue v
         return { };
     };
 
+    // See throwWhatMakesNoException().
+    if (mode != ResumeMode::NormalMode && rt.slot(Runtime::Slot::ThrowArguments).isNull() && rt.slot(Runtime::Slot::ThrownException) == value)
+        return raiseWhereItWaits();
+
     JSValue yielded;
     JSValue result;
     JSValue visible = iterator;
@@ -739,8 +743,9 @@ static JSValue generatorNext(JSGlobalObject* globalObject, JSValue selfValue) { 
 static JSValue generatorIter(JSGlobalObject*, JSValue selfValue) { return selfValue; }
 static JSValue generatorCloseMethod(JSGlobalObject* globalObject, JSValue selfValue) { return generatorCloseWithResult(globalObject, generatorOf(selfValue)); }
 
-// The exception that throw(type[, value[, traceback]]) raises. Empty: the arguments are wrong.
-static JSValue exceptionForThrow(JSGlobalObject* globalObject, ASCIILiteral function, const CallArgs& args, bool warnsOfSignature = true)
+// The exception that throw(type[, value[, traceback]]) raises. Empty: the arguments are wrong. `makeNoException`: it is then set if there are as many
+// as there may be, and they are not what an exception is made from.
+static JSValue exceptionForThrow(JSGlobalObject* globalObject, ASCIILiteral function, const CallArgs& args, bool warnsOfSignature = true, bool* makeNoException = nullptr)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
@@ -758,6 +763,9 @@ static JSValue exceptionForThrow(JSGlobalObject* globalObject, ASCIILiteral func
     JSValue traceback = args.get(2);
     if (traceback && isNone(traceback))
         traceback = JSValue();
+    bool ignored;
+    bool& isWrong = makeNoException ? *makeNoException : ignored;
+    isWrong = true;
     if (traceback && !PyTraceback::is(traceback))
         return raiseTypeError(globalObject, scope, "throw() third argument must be a traceback object"_s);
 
@@ -777,8 +785,10 @@ static JSValue exceptionForThrow(JSGlobalObject* globalObject, ASCIILiteral func
         // If it cannot be made, what says so is thrown in its place.
         if (scope.exception()) [[unlikely]] {
             exception = takePendingException(globalObject);
-            if (!exception)
+            if (!exception) {
+                isWrong = false;
                 return { };
+            }
         }
     } else if (PyException::is(type)) {
         if (value && !isNone(value))
@@ -786,6 +796,7 @@ static JSValue exceptionForThrow(JSGlobalObject* globalObject, ASCIILiteral func
         exception = type;
     } else
         return raiseTypeError(globalObject, scope, "exceptions must be classes or instances deriving from BaseException, not "_s, typeName(globalObject, type));
+    isWrong = false;
     if (traceback)
         PyException::from(exception)->setTraceback(vm, traceback);
     return exception;
@@ -803,24 +814,66 @@ static JSValue throwInto(JSGlobalObject* globalObject, PyGenerator* generator, J
     RELEASE_AND_RETURN(scope, raiseStop(globalObject, generator, result));
 }
 
-static JSValue generatorThrowMethod(JSGlobalObject* globalObject, JSValue selfValue, const CallArgs& args)
+// `arguments`: what throw() was given, for whom the generator waits for; null: that one is not asked.
+static JSValue throwIntoWithArguments(JSGlobalObject* globalObject, PyGenerator* generator, JSValue exception, JSValue arguments)
 {
-    VM& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue exception = exceptionForThrow(globalObject, "throw"_s, args);
-    RETURN_IF_EXCEPTION(scope, { });
-    if (!exception)
-        return { };
     Runtime& rt = runtime(globalObject);
     JSValue outerException = rt.slot(Runtime::Slot::ThrownException);
     JSValue outerArguments = rt.slot(Runtime::Slot::ThrowArguments);
     rt.setSlot(Runtime::Slot::ThrownException, exception);
-    rt.setSlot(Runtime::Slot::ThrowArguments, PyTuple::create(globalObject, args.positional()));
-    scope.release();
-    JSValue result = throwInto(globalObject, generatorOf(selfValue), exception, throwAndClose);
+    rt.setSlot(Runtime::Slot::ThrowArguments, arguments);
+    JSValue result = throwInto(globalObject, generator, exception, throwAndClose);
     rt.setSlot(Runtime::Slot::ThrownException, outerException);
     rt.setSlot(Runtime::Slot::ThrowArguments, outerArguments);
     return result;
+}
+
+// The arguments of throw() make no exception, which is what `error` says. As in CPython, a generator that waits for another hands them on as they are before it
+// looks at them. The one that looks stays as it is, and what it raises is raised in the one that waits for it.
+static JSValue throwWhatMakesNoException(JSGlobalObject* globalObject, PyGenerator* generator, const CallArgs& args, JSValue error)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (generator->isCompleted() && generator->kind() == PyGenerator::Kind::Coroutine)
+        return raiseRuntimeError(globalObject, scope, "cannot reuse already awaited coroutine"_s);
+    JSValue delegate = generator->isRunning() || generator->isCompleted() ? JSValue() : generator->delegate();
+    JSValue method;
+    PyGenerator* inner = delegate ? asGeneratorOrCoroutine(delegate) : nullptr;
+    if (delegate && !inner) {
+        method = getAttrIfPresent(globalObject, delegate, rt.names.throw_());
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    if (!inner && !method) {
+        throwPythonException(globalObject, scope, error);
+        return { };
+    }
+    JSValue yielded = inner ? throwWhatMakesNoException(globalObject, inner, args, error) : call(globalObject, method, args);
+    EXCEPTION_ASSERT(!scope.exception() || !yielded);
+    if (yielded)
+        return yielded;
+    JSValue raised = takePendingException(globalObject);
+    if (!raised)
+        return { };
+    RELEASE_AND_RETURN(scope, throwIntoWithArguments(globalObject, generator, raised, jsNull()));
+}
+
+static JSValue generatorThrowMethod(JSGlobalObject* globalObject, JSValue selfValue, const CallArgs& args)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    bool makeNoException = false;
+    JSValue exception = exceptionForThrow(globalObject, "throw"_s, args, true, &makeNoException);
+    if (scope.exception() && makeNoException) [[unlikely]] {
+        JSValue error = takePendingException(globalObject);
+        if (!error)
+            return { };
+        RELEASE_AND_RETURN(scope, throwWhatMakesNoException(globalObject, generatorOf(selfValue), args, error));
+    }
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!exception)
+        return { };
+    RELEASE_AND_RETURN(scope, throwIntoWithArguments(globalObject, generatorOf(selfValue), exception, PyTuple::create(globalObject, args.positional())));
 }
 
 static JSValue generatorRepr(JSGlobalObject* globalObject, JSValue selfValue)
