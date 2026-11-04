@@ -547,7 +547,8 @@ static void objectSetClass(JSGlobalObject* globalObject, JSValue self, JSValue v
         raiseTypeError(globalObject, scope, "__class__ assignment only supported for mutable types or ModuleType subclasses"_s);
         return;
     }
-    if (!layoutsAreCompatible(oldType, newType)) {
+    // (A class without an order of its bases is still being made: this is the mro() of its metaclass.)
+    if (!newType->mro() || !layoutsAreCompatible(oldType, newType)) {
         raiseTypeError(globalObject, scope, "__class__ assignment: '"_s, newType->nameInMessages(), "' object layout differs from '"_s, oldType->nameInMessages(), '\'');
         return;
     }

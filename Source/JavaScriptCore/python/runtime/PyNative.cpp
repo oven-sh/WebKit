@@ -623,6 +623,9 @@ JSValue PyNativeFunction::invokeNew(JSGlobalObject* globalObject, const CallArgs
         return raiseTypeError(globalObject, scope, type->nameInMessages(), ".__new__(X): X is not a type object ("_s, typeName(globalObject, args[0]), ')');
     if (!subtype->isSubtypeOf(type))
         return raiseTypeError(globalObject, scope, type->nameInMessages(), ".__new__("_s, subtype->nameInMessages(), "): "_s, subtype->nameInMessages(), " is not a subtype of "_s, type->nameInMessages());
+    // The class is still being made: this is the mro() of its metaclass. Nothing can be looked up in it yet.
+    if (!subtype->mro()) [[unlikely]]
+        return raiseTypeError(globalObject, scope, "cannot create '"_s, subtype->nameInMessages(), "' instances"_s);
     // object.__new__(dict) would make a dict that dict.__new__ had no say in.
     PyType* staticBase = subtype;
     while (staticBase && staticBase->isHeapType())
