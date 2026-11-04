@@ -739,12 +739,16 @@ static JSValue enumerateNew(JSGlobalObject* globalObject, JSValue cls, const Cal
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (args.size() > 2)
-        return raiseTypeError(globalObject, scope, "enumerate() takes at most 2 arguments ("_s, args.totalCount(), " given)"_s);
+    bool isExact = cls == JSValue(runtime(globalObject).enumerateType());
+    if (args.totalCount() > 2) {
+        if (isExact && !args.size())
+            return raiseTypeError(globalObject, scope, "enumerate() missing required argument 'iterable'"_s);
+        return raiseTypeError(globalObject, scope, "enumerate() takes at most 2 "_s, args.size() ? ""_s : "keyword "_s, "arguments ("_s, args.totalCount(), " given)"_s);
+    }
     JSValue iterable = args.get(0);
     JSValue start = args.get(1);
     // enumerate itself goes by how many arguments there are, and then expects the names that go with that.
-    if (cls == JSValue(runtime(globalObject).enumerateType()) && args.hasKeywords() && args.totalCount() <= 2) {
+    if (isExact && args.hasKeywords()) {
         auto isNamed = [&](unsigned index, ASCIILiteral name) { return stringOf(args.keywordName(index)) == name; };
         auto invalid = [&](unsigned index) {
             return raiseTypeError(globalObject, scope, '\'', stringOf(args.keywordName(index)), "' is an invalid keyword argument for enumerate()"_s);
@@ -760,17 +764,23 @@ static JSValue enumerateNew(JSGlobalObject* globalObject, JSValue cls, const Cal
         else if (!isNamed(1, "start"_s))
             return invalid(1);
     }
+    String unexpected;
     for (unsigned i = 0; i < args.keywordCount(); ++i) {
         String keyword = stringOf(args.keywordName(i));
         JSValue& target = keyword == "iterable"_s ? iterable : start;
-        if (keyword != "iterable"_s && keyword != "start"_s)
-            return raiseTypeError(globalObject, scope, "enumerate() got an unexpected keyword argument '"_s, keyword, '\'');
+        if (keyword != "iterable"_s && keyword != "start"_s) {
+            if (unexpected.isNull())
+                unexpected = keyword;
+            continue;
+        }
         if (target)
             return raiseTypeError(globalObject, scope, "argument for enumerate() given by name ('"_s, keyword, "') and position ("_s, keyword == "iterable"_s ? 1 : 2, ')');
         target = args.keywordValue(i);
     }
     if (!iterable)
-        return raiseTypeError(globalObject, scope, "enumerate() missing required argument 'iterable'"_s);
+        return raiseTypeError(globalObject, scope, "enumerate() missing required argument 'iterable'"_s, isExact ? ""_s : " (pos 1)"_s);
+    if (!unexpected.isNull())
+        return raiseTypeError(globalObject, scope, "enumerate() got an unexpected keyword argument '"_s, unexpected, '\'');
     JSValue count = jsNumber(0);
     if (start) {
         count = toIndex(globalObject, start);

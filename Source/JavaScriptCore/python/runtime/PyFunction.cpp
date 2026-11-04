@@ -661,7 +661,7 @@ static JSValue functionNew(JSGlobalObject* globalObject, JSValue, JSValue code, 
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* codeObject = PyCode::tryFrom(code);
     if (!codeObject)
-        return raiseTypeError(globalObject, scope, "function() argument 'code' must be code, not "_s, typeName(globalObject, code));
+        return raiseTypeError(globalObject, scope, "function() argument 'code' must be code, not "_s, typeNameOfArgument(globalObject, code));
     if (!isDict(globals))
         return raiseTypeError(globalObject, scope, "function() argument 'globals' must be dict, not "_s, typeName(globalObject, globals));
     if (name && !isNone(name) && !isStr(name))

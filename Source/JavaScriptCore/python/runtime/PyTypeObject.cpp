@@ -812,6 +812,8 @@ JSValue typeCall(JSGlobalObject* globalObject, PyType* type, const CallArgs& all
     if (type == rt.typeType() && !derived) {
         if (args.size() == 1 && !args.hasKeywords())
             return rt.typeOf(args[0]);
+        if (args.size() == 1)
+            return raiseTypeError(globalObject, scope, "type() takes no keyword arguments"_s);
         if (args.size() != 3)
             return raiseTypeError(globalObject, scope, "type() takes 1 or 3 arguments"_s);
     }
@@ -887,6 +889,11 @@ JSValue typeCall(JSGlobalObject* globalObject, PyType* type, const CallArgs& all
 
 static JSValue typeCallMethod(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
 {
+    // In CPython only a call of type itself has words of its own for this.
+    if (self == JSValue(runtime(globalObject).typeType()) && args.size() == 1 && args.hasKeywords()) {
+        auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+        return raiseTypeError(globalObject, scope, "type() takes 1 or 3 arguments"_s);
+    }
     return typeCall(globalObject, PyType::from(self), args);
 }
 
