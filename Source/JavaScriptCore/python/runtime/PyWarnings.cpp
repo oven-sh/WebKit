@@ -484,7 +484,7 @@ static bool warningsDoWarn(JSGlobalObject* globalObject, JSValue message, JSValu
     bool countsAll = stackLevel <= 0;
     forEachCallOfEitherLanguage(vm, [&](const CallOfEitherLanguage& call) {
         auto filename = [&] {
-            return call.python ? PyFunction::from(call.python->jsCallee())->codeInfo().filename : positionInJS(vm, call.codeBlock, call.index).filename;
+            return call.python ? codeInfoOf(call.python).filename : positionInJS(vm, call.codeBlock, call.index).filename;
         };
         bool isInternal = call.python && warningsIsInternalFile(filename());
         if (std::exchange(isFirst, false))
@@ -503,7 +503,7 @@ static bool warningsDoWarn(JSGlobalObject* globalObject, JSValue message, JSValu
     if (found && found->python) {
         PyFrame* frame = PyFrame::of(globalObject, found->python);
         globals = frame->function()->globals();
-        filename = makeStr(vm, frame->function()->codeInfo().filename);
+        filename = makeStr(vm, frame->codeInfo().filename);
         lineno = frame->lineNumber();
     } else if (found) {
         PositionInJS position = positionInJS(vm, found->codeBlock, found->index);

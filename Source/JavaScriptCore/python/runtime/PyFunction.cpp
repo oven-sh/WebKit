@@ -269,14 +269,17 @@ DEFINE_VISIT_CHILDREN(PyFunction);
 // - call sites that are linked to the function jump to its code without looking: they are unlinked;
 // - code from the optimizing compilers that has the function for a constant may call the executable it had then: it is thrown away.
 //   (They never look into code written in Python, so that is all they can know about it.)
-// A call in progress goes on in the old code, which its frame keeps.
+// A call in progress goes on in the old code, which its frame keeps: see executableOf(). So do the generators there are.
 void PyFunction::setCode(VM& vm, PyCode* code)
 {
     FunctionExecutable* previous = functionExecutable();
     FunctionExecutable* next = code->executable();
+    PyCode* previousCode = m_code.get();
     m_code.set(vm, this, code);
     if (next == previous)
         return;
+    if (PyFunction* body = m_generatorBody.get())
+        body->m_code.set(vm, body, previousCode ? previousCode : PyCode::of(globalObject(), previous));
 
     next->setNeverInline(true);
     next->setNeverOptimize(true);
@@ -312,7 +315,10 @@ PyFunction* PyFunction::generatorBody(JSGlobalObject* globalObject, CodeBlock* o
     PyFunction* body = create(globalObject, ownCodeBlock->functionExpr(CodeInfo::generatorBodyIndex), globals());
     body->setClosure(vm, closure());
     body->m_generatorOwner.set(vm, body, this);
-    m_generatorBody.set(vm, this, body);
+    if (ownCodeBlock->ownerExecutable() == functionExecutable()) [[likely]]
+        m_generatorBody.set(vm, this, body);
+    else
+        body->m_code.set(vm, body, PyCode::of(globalObject, uncheckedDowncast<FunctionExecutable>(ownCodeBlock->ownerExecutable())));
     return body;
 }
 
@@ -405,11 +411,10 @@ String calculateSuggestion(const Vector<String>& candidates, const String& name)
     return best;
 }
 
-static NEVER_INLINE void raiseMissingArguments(JSGlobalObject* globalObject, PyFunction* function, const JSValue* slots, unsigned start, unsigned end, ASCIILiteral kind)
+static NEVER_INLINE void raiseMissingArguments(JSGlobalObject* globalObject, PyFunction* function, const CodeInfo& info, const JSValue* slots, unsigned start, unsigned end, ASCIILiteral kind)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    CodeInfo& info = function->codeInfo();
     Vector<String, 4> names;
     for (unsigned i = start; i < end; ++i) {
         if (!slots[i])
@@ -432,11 +437,10 @@ static NEVER_INLINE void raiseMissingArguments(JSGlobalObject* globalObject, PyF
     raiseTypeError(globalObject, scope, qualnameForMessage(globalObject, function), "() missing "_s, count, " required "_s, kind, " argument"_s, count == 1 ? ""_s : "s"_s, ": "_s, list.toString());
 }
 
-static NEVER_INLINE void raiseTooManyPositional(JSGlobalObject* globalObject, PyFunction* function, const JSValue* slots, unsigned given)
+static NEVER_INLINE void raiseTooManyPositional(JSGlobalObject* globalObject, PyFunction* function, const CodeInfo& info, const JSValue* slots, unsigned given)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    CodeInfo& info = function->codeInfo();
     unsigned keywordOnlyGiven = 0;
     for (unsigned i = info.argCount; i < info.argCount + info.kwOnlyCount; ++i)
         keywordOnlyGiven += !!slots[i];
@@ -462,7 +466,8 @@ static NEVER_INLINE bool bindArgumentsSlow(JSGlobalObject* globalObject, CallFra
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    CodeInfo& info = function->codeInfo();
+    // (Not the function's: what has run since the call began may have given it other code.)
+    CodeInfo& info = codeInfoOf(callFrame);
     unsigned argCount = info.argCount;
     unsigned namedCount = argCount + info.kwOnlyCount;
     bool hasVarArgs = info.flags.contains(CodeFlag::VarArgs);
@@ -564,7 +569,7 @@ static NEVER_INLINE bool bindArgumentsSlow(JSGlobalObject* globalObject, CallFra
 
     if (positionalCount > argCount && !hasVarArgs) {
         scope.release();
-        raiseTooManyPositional(globalObject, function, slots, positionalCount);
+        raiseTooManyPositional(globalObject, function, info, slots, positionalCount);
         return false;
     }
 
@@ -575,7 +580,7 @@ static NEVER_INLINE bool bindArgumentsSlow(JSGlobalObject* globalObject, CallFra
         for (unsigned i = positionalCount; i < required; ++i) {
             if (!slots[i]) {
                 scope.release();
-                raiseMissingArguments(globalObject, function, slots, 0, required, "positional"_s);
+                raiseMissingArguments(globalObject, function, info, slots, 0, required, "positional"_s);
                 return false;
             }
         }
@@ -603,7 +608,7 @@ static NEVER_INLINE bool bindArgumentsSlow(JSGlobalObject* globalObject, CallFra
         }
         if (isMissing) {
             scope.release();
-            raiseMissingArguments(globalObject, function, slots, argCount, namedCount, "keyword-only"_s);
+            raiseMissingArguments(globalObject, function, info, slots, argCount, namedCount, "keyword-only"_s);
             return false;
         }
     }
@@ -1155,10 +1160,24 @@ PyCode* PyCode::ofWithFlags(JSGlobalObject* globalObject, FunctionExecutable* ex
 
 PyCode* codeOf(JSGlobalObject* globalObject, PyFunction* function)
 {
+    if (PyCode* code = function->assignedCode())
+        return code;
     function = function->codeOwner();
     if (PyCode* code = function->assignedCode())
         return code;
     return PyCode::of(globalObject, function->functionExecutable());
+}
+
+PyCode* codeOf(JSGlobalObject* globalObject, PyFunction* function, FunctionExecutable* executable)
+{
+    if (function->functionExecutable() == executable) [[likely]]
+        return codeOf(globalObject, function);
+    return PyCode::of(globalObject, executable);
+}
+
+PyCode* codeOf(JSGlobalObject* globalObject, CallFrame* callFrame)
+{
+    return codeOf(globalObject, uncheckedDowncast<PyFunction>(callFrame->jsCallee()), executableOf(callFrame));
 }
 
 template<typename Visitor>

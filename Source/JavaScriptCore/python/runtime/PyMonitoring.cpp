@@ -99,11 +99,6 @@ static constexpr unsigned goOn = 256; // See Monitoring::Outcome.
 
 static constexpr uint16_t bit(unsigned event) { return static_cast<uint16_t>(1 << event); }
 
-static ALWAYS_INLINE PyFunction* functionOf(CallFrame* callFrame)
-{
-    return uncheckedDowncast<PyFunction>(callFrame->jsCallee());
-}
-
 // frameObjectIfAny(), and PyFrame::of(), for where every call counts.
 static ALWAYS_INLINE PyFrame* frameObjectIfThereIsOne(CallFrame* callFrame)
 {
@@ -1075,7 +1070,7 @@ void Monitoring::wakeCodeOfCallsInProgress()
                 continue;
             if (callFrame->codeBlock()->globalObject() != globalObject)
                 continue;
-            CodeMonitor* monitor = m_knowsAllCode ? monitorFor(callFrame->codeBlock()) : functionOf(callFrame)->codeInfo().monitor.get();
+            CodeMonitor* monitor = m_knowsAllCode ? monitorFor(callFrame->codeBlock()) : codeInfoOf(callFrame).monitor.get();
             if (!monitor)
                 continue;
             monitor->wake();
@@ -1204,7 +1199,7 @@ void Monitoring::setProfileFunction(JSValue function)
 void Monitoring::setTracesOpcodes(JSGlobalObject* globalObject, PyFrame* frame, bool enable)
 {
     // A generator that has not begun: whatever happens first in the frame leads here again (legacyEvent()).
-    CodeBlock* codeBlock = codeBlockIfAny(codeOf(globalObject, frame->function()));
+    CodeBlock* codeBlock = codeBlockIfAny(frame->code(globalObject));
     CodeMonitor* monitor = codeBlock ? monitorFor(codeBlock) : nullptr;
     if (!monitor)
         return;
@@ -1411,7 +1406,7 @@ bool Monitoring::legacyEvent(JSGlobalObject* globalObject, CallFrame* callFrame,
     case Event::PyYield:
         // What ends the body of a module or a class goes with the line before it, whichever that was. A function has a return of its
         // own for each way that leads to its end.
-        if (functionOf(callFrame)->codeInfo().takesNamespace)
+        if (codeInfoOf(callFrame).takesNamespace)
             shown = { frame->lastLine, frame->lastLineOffset };
         RELEASE_AND_RETURN(scope, callTraceFunction(globalObject, frame, event, shown, What::Return, third));
     case Event::PyUnwind:
@@ -1474,7 +1469,7 @@ bool Monitoring::fire(JSGlobalObject* globalObject, CallFrame* callFrame, CodeMo
     JSValue arguments[4] = { { }, { }, third, fourth };
     unsigned count = fourth ? 4 : third ? 3 : 2;
     if (tools & ((1 << numberOfFreeMonitoringTools) - 1)) {
-        arguments[0] = codeOf(globalObject, functionOf(callFrame));
+        arguments[0] = codeOf(globalObject, callFrame);
         arguments[1] = jsNumber(shownOffset(visibleOffset(monitor.code()->pythonMarks(), shownOffsetOfPlace.value_or(offset))));
     }
     while (tools) {
@@ -1534,7 +1529,7 @@ bool Monitoring::fireLineStart(JSGlobalObject* globalObject, CallFrame* callFram
     tools &= (1 << numberOfFreeMonitoringTools) - 1;
     if (!tools)
         return true;
-    JSValue arguments[2] = { codeOf(globalObject, functionOf(callFrame)), jsNumber(line) };
+    JSValue arguments[2] = { codeOf(globalObject, callFrame), jsNumber(line) };
     for (unsigned tool = numberOfFreeMonitoringTools; tool--;) {
         if (!(tools >> tool & 1))
             continue;
@@ -1661,7 +1656,7 @@ static JSValue nextOfLoop(JSGlobalObject* globalObject, JSValue iterator, JSValu
 
 Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject, CallFrame* callFrame, const JSInstruction* pc)
 {
-    CodeMonitor* monitor = functionOf(callFrame)->codeInfo().monitor.get();
+    CodeMonitor* monitor = codeInfoOf(callFrame).monitor.get();
     ASSERT(monitor);
     unsigned offset = reinterpret_cast<const uint8_t*>(pc) - monitor->instructions();
     if (!monitor->isAwake()) {
@@ -2050,7 +2045,7 @@ bool Monitoring::exceptionEvent(JSGlobalObject* globalObject, CallFrame* callFra
 {
     if (m_runtime.tracingDepth)
         return true;
-    CodeMonitor* monitor = functionOf(callFrame)->codeInfo().monitor.get();
+    CodeMonitor* monitor = codeInfoOf(callFrame).monitor.get();
     uint8_t tools = m_globalTools[event] | (monitor ? monitor->localTools(event) : 0);
     if (!tools)
         return true;
@@ -2064,7 +2059,7 @@ bool Monitoring::exceptionEvent(JSGlobalObject* globalObject, CallFrame* callFra
 bool Monitoring::lineOfSendIsToldOfAgain(JSGlobalObject* globalObject, CallFrame* callFrame, unsigned offset)
 {
     auto scope = DECLARE_THROW_SCOPE(m_runtime.vm());
-    CodeMonitor* monitor = functionOf(callFrame)->codeInfo().monitor.get();
+    CodeMonitor* monitor = codeInfoOf(callFrame).monitor.get();
     if (m_runtime.tracingDepth || !monitor || !monitor->isAwake())
         return true;
     auto* point = monitor->pointAt(offset);
@@ -2083,7 +2078,7 @@ bool Monitoring::lineOfSendIsToldOfAgain(JSGlobalObject* globalObject, CallFrame
         if (frame->trace() && failed(scope, traceLine(globalObject, frame, shown)))
             return false;
     }
-    JSValue arguments[2] = { codeOf(globalObject, functionOf(callFrame)), jsNumber(line) };
+    JSValue arguments[2] = { codeOf(globalObject, callFrame), jsNumber(line) };
     for (unsigned tool = numberOfFreeMonitoringTools; tool--;) {
         if (!(tools >> tool & 1))
             continue;
@@ -2103,7 +2098,7 @@ bool Monitoring::lineOfSendIsToldOfAgain(JSGlobalObject* globalObject, CallFrame
 void Monitoring::delegateReturnedWhenThrownInto(JSGlobalObject* globalObject, CallFrame* callFrame, unsigned offset, JSValue result)
 {
     auto scope = DECLARE_THROW_SCOPE(m_runtime.vm());
-    CodeMonitor* monitor = functionOf(callFrame)->codeInfo().monitor.get();
+    CodeMonitor* monitor = codeInfoOf(callFrame).monitor.get();
     if (m_runtime.tracingDepth || !monitor || !monitor->isAwake())
         return;
     PyException* exception = isNone(result) ? newException(globalObject, m_runtime.StopIteration(), std::span<const JSValue> { }) : newException(globalObject, m_runtime.StopIteration(), std::span<const JSValue> { &result, 1 });
@@ -2168,7 +2163,7 @@ JSValue exceptionIsRaised(JSGlobalObject* globalObject, JSValue exception, CallF
             frame->raisedAtOffset = visibleOffset(marks, index.offset());
         }
     }
-    CodeMonitor* monitor = functionOf(callFrame)->codeInfo().monitor.get();
+    CodeMonitor* monitor = codeInfoOf(callFrame).monitor.get();
     if (!monitor || !monitor->isAwake() || isRaisedAgain || !isSendThatThrows(callFrame, instruction)) [[likely]] {
         if (!isWanted) [[likely]]
             return exception;
@@ -2199,7 +2194,7 @@ JSValue exceptionStaysOrLeaves(JSGlobalObject* globalObject, JSValue exception, 
             offset = handler->target;
     }
     // In CPython all of a generator is in a handler, which makes a RuntimeError of a StopIteration and raises anything else again.
-    if (!isCaught && functionOf(callFrame)->codeInfo().isGeneratorLike()) {
+    if (!isCaught && codeInfoOf(callFrame).isGeneratorLike()) {
         exception = tellOfException(globalObject, exception, callFrame, offset, Event::ExceptionHandled);
         exception = tellOfException(globalObject, exception, callFrame, offset, Event::Reraise);
     }
@@ -2285,7 +2280,7 @@ void Monitoring::jump(JSGlobalObject* globalObject, PyFrame* frame, int requeste
         return;
     }
 
-    const CodeInfo& info = frame->function()->codeInfo();
+    const CodeInfo& info = frame->codeInfo();
     if (requestedLine < info.firstLineNumber) {
         raiseValueError(globalObject, scope, "line "_s, requestedLine, " comes before the current code block"_s);
         return;

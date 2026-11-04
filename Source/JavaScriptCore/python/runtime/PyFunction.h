@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "CodeBlock.h"
 #include "FunctionExecutable.h"
 #include "JSFunction.h"
 #include "PyCodeInfo.h"
@@ -128,7 +129,8 @@ public:
     JSValue annotations() const { return m_annotations.get(); } // Empty: not computed.
     JSValue annotate() const { return m_annotate.get(); } // Empty: none.
     JSValue typeParams() const { return m_typeParams.get(); } // Empty: ().
-    PyCode* assignedCode() const { return m_code.get(); } // What __code__ was set to. Null: it was not.
+    // What __code__ was set to. Null: it was not. For the body of generators: what the generator function had before it was set.
+    PyCode* assignedCode() const { return m_code.get(); }
     bool isIterableCoroutine() const { return m_code && m_code->flags().contains(CodeFlag::IterableCoroutine); }
 
     void setClosure(VM& vm, PyTuple* value) { m_closure.setMayBeNull(vm, this, value); }
@@ -181,6 +183,14 @@ private:
 
 // function.__code__
 PyCode* codeOf(JSGlobalObject*, PyFunction*);
+
+// The code that a call runs. Its function may have been given other code since it began (function.__code__ = code), so whatever is about
+// the registers of a call, or about where it has got to, asks these and not the function.
+ALWAYS_INLINE FunctionExecutable* executableOf(CallFrame* callFrame) { return uncheckedDowncast<FunctionExecutable>(callFrame->codeBlock()->ownerExecutable()); }
+ALWAYS_INLINE CodeInfo& codeInfoOf(CallFrame* callFrame) { return *executableOf(callFrame)->unlinkedExecutable()->pythonCodeInfo(); }
+PyCode* codeOf(JSGlobalObject*, CallFrame*);
+// The same for a call that ran this code, or will.
+PyCode* codeOf(JSGlobalObject*, PyFunction*, FunctionExecutable*);
 
 // Puts the arguments of a call in the parameters of the function that is starting in the frame. False: an exception.
 bool bindArguments(JSGlobalObject*, CallFrame*, PyFunction*);

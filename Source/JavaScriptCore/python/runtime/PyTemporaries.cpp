@@ -403,7 +403,7 @@ static bool hasNothingToClose(PyGenerator* generator)
     if (generator->finalization() != PyGenerator::Finalization::None || generator->delegate())
         return false;
     // A tool is told of the GeneratorExit all the same.
-    if (CodeMonitor* monitor = generator->function()->codeInfo().monitor.get(); monitor && monitor->isAwake())
+    if (CodeMonitor* monitor = generator->body()->codeInfo().monitor.get(); monitor && monitor->isAwake())
         return false;
     for (unsigned i = 0; i < generator->slotCount(); ++i) {
         if (auto* held = PyGenerator::tryFrom(generator->slot(i)); held && held->loopOwnership)

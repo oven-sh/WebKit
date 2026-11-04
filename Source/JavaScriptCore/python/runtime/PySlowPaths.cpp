@@ -247,6 +247,7 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_bind_args)
     if (auto* call = rt.runtimeCall; call && !call->entryFrame)
         call->entryFrame = vm.topEntryFrame;
     PyFunction* callee = calleeOf(callFrame);
+    // (Nothing has run since the call began: the function still has the code.)
     if (!callee->codeInfo().takesNamespace) {
         bindArguments(globalObject, callFrame, callee);
         CHECK_EXCEPTION();
@@ -848,7 +849,7 @@ static JSValue makeGenerator(JSGlobalObject* globalObject, CallFrame* callFrame,
 {
     VM& vm = getVM(globalObject);
     PyFunction* function = calleeOf(callFrame);
-    CodeInfo& info = function->codeInfo();
+    CodeInfo& info = codeInfoOf(callFrame);
     unsigned count = info.takesNamespace ? 1 : info.parameterCount();
     ASSERT(count + !!extra <= slotCount);
     PyGenerator* generator = PyGenerator::create(globalObject, function, function->generatorBody(globalObject, callFrame->codeBlock()), slotCount);
@@ -922,7 +923,7 @@ static JSValue importNameForInstruction(JSGlobalObject* globalObject, CallFrame*
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyFunction* function = calleeOf(callFrame);
-    CodeInfo& info = function->codeInfo();
+    CodeInfo& info = codeInfoOf(callFrame);
     JSValue locals = info.takesNamespace ? callFrame->r(info.namespaceRegister).jsValue() : jsUndefined();
 
     bool isLazy = mode == ImportMode::Lazy;
@@ -1333,7 +1334,8 @@ static JSValue runRuntimeFunction(JSGlobalObject* globalObject, CallFrame* callF
 
     // ---- Generators and coroutines ----
     case RuntimeFunction::GetYieldFromIter:
-        RELEASE_AND_RETURN(scope, getYieldFromIter(globalObject, args[0], calleeOf(callFrame)->codeOwner()->isIterableCoroutine() || calleeOf(callFrame)->codeInfo().flags.contains(CodeFlag::Coroutine)));
+        // (The body of a generator is called with the generator.)
+        RELEASE_AND_RETURN(scope, getYieldFromIter(globalObject, args[0], PyGenerator::from(callFrame->uncheckedArgument(0))->isIterableCoroutine || codeInfoOf(callFrame).flags.contains(CodeFlag::Coroutine)));
     case RuntimeFunction::GetAIterOfLoop:
         RELEASE_AND_RETURN(scope, getAIterOfLoop(globalObject, args[0]));
     case RuntimeFunction::LeaveAsyncFor:

@@ -91,6 +91,10 @@ public:
     static PyFrame* createSuspended(JSGlobalObject*, PyFunction*, int32_t state);
 
     PyFunction* function() const { return m_function.get(); }
+    // The code of the call, which the function may not have any more.
+    FunctionExecutable* executable() const { return m_executable.get(); }
+    CodeInfo& codeInfo() const;
+    PyCode* code(JSGlobalObject*) const; // f_code
     // Where the call has got to, or had when it ended.
     int lineNumber();
     unsigned bytecodeOffset();
@@ -146,9 +150,10 @@ public:
 
 private:
     PyFrame(VM&, Structure*, PyType*);
-    static PyFrame* create(JSGlobalObject*, PyFunction*);
+    static PyFrame* create(JSGlobalObject*, PyFunction*, FunctionExecutable*);
 
     WriteBarrier<PyFunction> m_function;
+    WriteBarrier<FunctionExecutable> m_executable;
     WriteBarrier<PyObject> m_generator;
     WriteBarrier<Unknown> m_back;
     WriteBarrier<PyTuple> m_values;

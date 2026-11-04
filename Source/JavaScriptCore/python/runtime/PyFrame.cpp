@@ -202,7 +202,7 @@ void forEachVariableOfRunningGenerators(VM& vm, const ScopedLambda<void(PyGenera
             if (!isPythonFrame(callFrame) || !isGeneratorBody(callFrame))
                 continue;
             auto* generator = uncheckedDowncast<PyGenerator>(callFrame->uncheckedArgument(0).asCell());
-            for (auto& variable : generator->function()->codeInfo().variables) {
+            for (auto& variable : codeInfoOf(callFrame).variables) {
                 if (JSValue value = callFrame->r(variable.reg).jsValue())
                     function(generator, value);
             }
@@ -300,7 +300,7 @@ bool findSuperArguments(JSGlobalObject* globalObject, JSValue& type, JSValue& in
     CallFrame* callFrame = pythonCallFrame(vm, 0);
     if (!callFrame)
         return fail("super(): no current frame"_s);
-    CodeInfo& info = functionOf(callFrame)->codeInfo();
+    CodeInfo& info = codeInfoOf(callFrame);
     if (!info.argCount)
         return fail("super(): no arguments"_s);
     const auto* first = findVariable(info, info.parameterNames[0].impl());
@@ -338,7 +338,7 @@ JSValue coroutineOrigin(JSGlobalObject* globalObject, unsigned depth)
             continue;
         if (std::exchange(isCoroutineFunction, false))
             continue;
-        CodeInfo& info = functionOf(callFrame)->codeInfo();
+        CodeInfo& info = codeInfoOf(callFrame);
         int line = lineNumberForBytecodeIndex(callFrame->codeBlock(), callFrame->bytecodeIndex());
         entries.append(PyTuple::create(globalObject, { makeStr(vm, info.filename), jsNumber(line), makeStr(vm, info.name.string()) }));
     }
@@ -356,7 +356,7 @@ PyFunction* currentFunction(JSGlobalObject* globalObject)
 // The call of a generator function only makes the generator. CodeInfo::variables says where the variables of the body are.
 static bool hasVariables(CallFrame* callFrame)
 {
-    return !functionOf(callFrame)->codeInfo().isGeneratorLike() || isGeneratorBody(callFrame);
+    return !codeInfoOf(callFrame).isGeneratorLike() || isGeneratorBody(callFrame);
 }
 
 void forEachValueInFramesOfParkedThreads(VM& vm, const ScopedLambda<void(JSValue)>& function)
@@ -376,7 +376,7 @@ void forEachValueInFramesOfParkedThreads(VM& vm, const ScopedLambda<void(JSValue
                 CodeBlock* codeBlock = callFrame->codeBlock();
                 // A variable is held until the frame goes, read again or not.
                 if (hasVariables(callFrame)) {
-                    for (auto& variable : functionOf(callFrame)->codeInfo().variables)
+                    for (auto& variable : codeInfoOf(callFrame).variables)
                         function(callFrame->r(variable.reg).jsValue());
                 }
                 // In a register that the code does not read again may be what is left of the frame of an earlier call.
@@ -409,14 +409,14 @@ public:
     // Of a call in progress.
     FrameVariables(VM& vm, CallFrame* callFrame)
         : m_vm(vm)
-        , m_info(functionOf(callFrame)->codeInfo())
+        , m_info(codeInfoOf(callFrame))
         , m_callFrame(hasVariables(callFrame) ? callFrame : nullptr)
     {
     }
 
     FrameVariables(VM& vm, PyFrame* frame)
         : m_vm(vm)
-        , m_info(frame->function()->codeInfo())
+        , m_info(frame->codeInfo())
         , m_callFrame(frame->callFrame())
     {
         if (m_callFrame) {
@@ -647,23 +647,27 @@ PyFrame::PyFrame(VM& vm, Structure* structure, PyType* type)
 {
 }
 
-PyFrame* PyFrame::create(JSGlobalObject* globalObject, PyFunction* function)
+PyFrame* PyFrame::create(JSGlobalObject* globalObject, PyFunction* function, FunctionExecutable* executable)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto* frame = new (NotNull, allocateCell<PyFrame>(vm)) PyFrame(vm, rt.structure<PyFrame>(), rt.frameType());
     frame->finishCreation(vm);
     frame->m_function.set(vm, frame, function);
-    frame->m_lineNumber = function->codeInfo().firstLineNumber;
+    frame->m_executable.set(vm, frame, executable);
+    frame->m_lineNumber = frame->codeInfo().firstLineNumber;
     return frame;
 }
+
+CodeInfo& PyFrame::codeInfo() const { return *m_executable->unlinkedExecutable()->pythonCodeInfo(); }
+PyCode* PyFrame::code(JSGlobalObject* globalObject) const { return codeOf(globalObject, m_function.get(), m_executable.get()); }
 
 PyFrame* PyFrame::of(JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     if (PyFrame* frame = frameObjectIfAny(callFrame))
         return frame;
     // The body of a generator is called with the generator.
-    PyFrame* frame = isGeneratorBody(callFrame) ? of(globalObject, uncheckedDowncast<PyGenerator>(callFrame->uncheckedArgument(0).asCell())) : create(globalObject, functionOf(callFrame));
+    PyFrame* frame = isGeneratorBody(callFrame) ? of(globalObject, uncheckedDowncast<PyGenerator>(callFrame->uncheckedArgument(0).asCell())) : create(globalObject, functionOf(callFrame), executableOf(callFrame));
     frame->m_callFrame = callFrame;
     callFrame->r(frameObjectRegister()) = JSValue(frame);
     if (Runtime& rt = runtime(globalObject); rt.tracedCallFrame == callFrame) {
@@ -678,7 +682,7 @@ PyFrame* PyFrame::of(JSGlobalObject* globalObject, PyGenerator* generator)
     if (PyFrame* frame = generator->frameObject())
         return frame;
     VM& vm = getVM(globalObject);
-    PyFrame* frame = create(globalObject, generator->body());
+    PyFrame* frame = create(globalObject, generator->body(), generator->body()->functionExecutable());
     frame->m_generator.set(vm, frame, generator);
     generator->setFrameObject(vm, frame);
     return frame;
@@ -695,7 +699,7 @@ static bool bytecodeOffsetOfState(PyFunction* body, int32_t state, unsigned& res
 
 PyFrame* PyFrame::createSuspended(JSGlobalObject* globalObject, PyFunction* function, int32_t state)
 {
-    PyFrame* frame = create(globalObject, function);
+    PyFrame* frame = create(globalObject, function, function->functionExecutable());
     if (bytecodeOffsetOfState(function, state, frame->m_bytecodeOffset))
         frame->m_lineNumber = lineNumberForBytecodeIndex(function->functionExecutable()->codeBlockForCall(), BytecodeIndex(frame->m_bytecodeOffset));
     return frame;
@@ -707,6 +711,7 @@ void PyFrame::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     auto* thisObject = uncheckedDowncast<PyFrame>(cell);
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_function);
+    visitor.append(thisObject->m_executable);
     visitor.append(thisObject->m_generator);
     visitor.append(thisObject->m_back);
     visitor.append(thisObject->m_values);
@@ -763,7 +768,7 @@ unsigned PyFrame::bytecodeOffset()
         auto marks = callFrame->codeBlock()->unlinkedCodeBlock()->pythonMarks();
         m_bytecodeOffset = visibleOffset(marks, index.offset());
         if (int line = lineOfMarks(marks, index.offset()); line >= 0) [[likely]] {
-            m_lineNumber = line + function()->codeInfo().lineDelta;
+            m_lineNumber = line + codeInfo().lineDelta;
             m_isOnNoLine = false;
             return m_bytecodeOffset;
         }
@@ -775,7 +780,7 @@ unsigned PyFrame::bytecodeOffset()
             auto instruction = callFrame->codeBlock()->instructionAt(index);
             if (instruction->opcodeID() == op_py_runtime && static_cast<RuntimeFunction>(instruction->as<OpPyRuntime>().m_function) == RuntimeFunction::Reraise) {
                 m_bytecodeOffset = raisedAtOffset;
-                m_lineNumber = raisedOnLine + function()->codeInfo().lineDelta;
+                m_lineNumber = raisedOnLine + codeInfo().lineDelta;
                 m_isOnNoLine = false;
             }
         }
@@ -800,7 +805,7 @@ void PyFrame::callIsEnding(JSGlobalObject* globalObject, CallFrame* callFrame)
     bytecodeOffset();
 
     if (hasVariables(callFrame)) {
-        const CodeInfo& info = m_function->codeInfo();
+        const CodeInfo& info = codeInfo();
         PyTuple* values = PyTuple::create(globalObject, info.variables.size());
         for (unsigned i = 0; i < info.variables.size(); ++i)
             values->initializeAt(vm, i, callFrame->r(info.variables[i].reg).jsValue());
@@ -969,7 +974,7 @@ static JSValue frameGetLocals(JSGlobalObject* globalObject, JSValue self)
     return PyWrapperObject::create(globalObject, runtime(globalObject).frameLocalsProxyType(), self);
 }
 
-static JSValue frameGetCode(JSGlobalObject* globalObject, JSValue self) { return codeOf(globalObject, PyFrame::from(self)->function()); }
+static JSValue frameGetCode(JSGlobalObject* globalObject, JSValue self) { return PyFrame::from(self)->code(globalObject); }
 static JSValue frameGetGlobals(JSGlobalObject*, JSValue self) { return PyFrame::from(self)->function()->globals(); }
 static JSValue frameGetBuiltins(JSGlobalObject*, JSValue self) { return PyFrame::from(self)->function()->builtinsObject(); }
 static JSValue frameGetLastI(JSGlobalObject*, JSValue self) { return jsNumber(shownOffset(PyFrame::from(self)->bytecodeOffset())); }
@@ -1061,7 +1066,7 @@ static void frameSetLineNo(JSGlobalObject* globalObject, JSValue self, JSValue v
 static JSValue frameRepr(JSGlobalObject* globalObject, JSValue self)
 {
     auto* frame = PyFrame::from(self);
-    CodeInfo& info = frame->function()->codeInfo();
+    CodeInfo& info = frame->codeInfo();
     return makeStr(globalObject, makeString("<frame at "_s, addressForRepr(globalObject, self), ", file "_s, strRepr(info.filename), ", line "_s, frame->lineNumber(), ", code "_s, info.name.string(), '>'));
 }
 
@@ -1869,12 +1874,12 @@ private:
             m_groupDepth = 0;
     }
 
-    static String sourceLine(PyFunction* function, int lineNumber)
+    static String sourceLine(PyFrame* frame, int lineNumber)
     {
         if (lineNumber < 1)
             return { };
-        SourceProvider* provider = function->functionExecutable()->source().provider();
-        if (function->codeInfo().filename.startsWith('<') && !shownSources().contains(provider))
+        SourceProvider* provider = frame->executable()->source().provider();
+        if (frame->codeInfo().filename.startsWith('<') && !shownSources().contains(provider))
             return { };
         StringView source = provider->source();
         unsigned start = 0;
@@ -1915,7 +1920,7 @@ private:
         if (withHeader)
             m_out.append("Traceback (most recent call last):\n"_s);
         // A long run of the same line, as endless recursion leaves, is cut short.
-        PyFunction* lastFunction = nullptr;
+        CodeInfo* lastInfo = nullptr;
         int lastLine = -1;
         unsigned repeats = 0;
         auto flushRepeats = [&] {
@@ -1924,20 +1929,19 @@ private:
         };
         for (; traceback; traceback = PyTraceback::from(traceback)->next()) {
             auto* entry = PyTraceback::from(traceback);
-            PyFunction* function = entry->frame()->function();
-            if (lastFunction && &function->codeInfo() == &lastFunction->codeInfo() && entry->lineNumber() == lastLine)
+            CodeInfo& info = entry->frame()->codeInfo();
+            if (&info == lastInfo && entry->lineNumber() == lastLine)
                 ++repeats;
             else {
                 flushRepeats();
                 repeats = 1;
-                lastFunction = function;
+                lastInfo = &info;
                 lastLine = entry->lineNumber();
             }
             if (repeats > 3)
                 continue;
-            CodeInfo& info = function->codeInfo();
             m_out.append("  File \""_s, info.filename, "\", line "_s, entry->lineNumber(), ", in "_s, info.name.string(), '\n');
-            String line = entry->isOfJS() ? sourceLineOfJS(info.filename, entry->lineNumber()) : sourceLine(function, entry->lineNumber());
+            String line = entry->isOfJS() ? sourceLineOfJS(info.filename, entry->lineNumber()) : sourceLine(entry->frame(), entry->lineNumber());
             if (!line.isEmpty())
                 m_out.append("    "_s, line, '\n');
         }

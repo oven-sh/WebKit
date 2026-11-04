@@ -819,7 +819,7 @@ static int inheritedCompileFlags(JSGlobalObject* globalObject)
     PyFrame* frame = currentFrame(globalObject);
     if (!frame)
         return 0;
-    auto flags = frame->function()->codeInfo().flags;
+    auto flags = frame->codeInfo().flags;
     return static_cast<int>((flags & OptionSet<CodeFlag> { CodeFlag::FutureAnnotations, CodeFlag::FutureBarryAsBDFL }).toRaw());
 }
 

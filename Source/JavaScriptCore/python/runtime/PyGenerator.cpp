@@ -50,7 +50,7 @@ PyGenerator* PyGenerator::create(JSGlobalObject* globalObject, PyFunction* funct
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
-    auto flags = function->codeInfo().flags;
+    auto flags = body->codeInfo().flags;
     Kind kind = flags.contains(CodeFlag::AsyncGenerator) ? Kind::AsyncGenerator : flags.contains(CodeFlag::Coroutine) ? Kind::Coroutine : Kind::Generator;
     PyType* type = kind == Kind::AsyncGenerator ? rt.asyncGeneratorType() : kind == Kind::Coroutine ? rt.coroutineType() : rt.generatorType();
     auto* generator = new (NotNull, allocateCell<PyGenerator>(vm, allocationSize(slotCount))) PyGenerator(vm, rt.structure<PyGenerator>(), type, kind, slotCount);
@@ -283,7 +283,7 @@ static JSValue generatorThrowWithMode(JSGlobalObject* globalObject, PyGenerator*
     if (!generator->isStarted()) {
         // There is nothing in it that could catch the exception, which passes through it all the same.
         if (auto* thrown = PyException::tryFrom(exception))
-            thrown->setTraceback(vm, PyTraceback::create(globalObject, thrown->traceback(), PyFrame::of(globalObject, generator), generator->function()->codeInfo().firstLineNumber, 0));
+            thrown->setTraceback(vm, PyTraceback::create(globalObject, thrown->traceback(), PyFrame::of(globalObject, generator), generator->body()->codeInfo().firstLineNumber, 0));
         generator->complete();
         throwPythonException(globalObject, scope, exception);
         return { };
@@ -865,7 +865,7 @@ static JSValue generatorGetDelegate(JSGlobalObject*, JSValue selfValue)
 
 static JSValue generatorGetRunning(JSGlobalObject*, JSValue selfValue) { return jsBoolean(generatorOf(selfValue)->isRunning()); }
 static JSValue generatorGetSuspended(JSGlobalObject*, JSValue selfValue) { return jsBoolean(generatorOf(selfValue)->state() > 0); }
-static JSValue generatorGetCode(JSGlobalObject* globalObject, JSValue selfValue) { return codeOf(globalObject, generatorOf(selfValue)->function()); }
+static JSValue generatorGetCode(JSGlobalObject* globalObject, JSValue selfValue) { return codeOf(globalObject, generatorOf(selfValue)->body()); }
 static JSValue generatorGetOrigin(JSGlobalObject*, JSValue selfValue)
 {
     JSValue origin = generatorOf(selfValue)->origin();
